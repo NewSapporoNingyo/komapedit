@@ -20,6 +20,6 @@ for /f "delims=" %%D in ('dir /b /ad "%TARGET%"') do (
 )
 
 echo build_release cleaned for distribution.
-echo Kept: kobushi_gui.exe, maploader.dll
+echo Kept: komapedit.exe, maploader.dll
 
 pause
