@@ -49,7 +49,7 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [x] Support jumping to stations.
 - [x] Import a background image and adjust its position, size, rotation, and brightness.
 - [x] Align a background image using two station positions.
-- [ ] Scenery and repeater placement markers on the plan view.
+- [ ] Structure and repeater placement markers on the plan view.
 - [ ] Cab-brightness setting position markers.
 - [ ] Fog-effect change position markers.
 
@@ -58,16 +58,16 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [x] Load the station list CSV specified by `Station.Load`.
 - [x] Display the station list alongside `Station.Put` placement data from the map.
 - [x] Display the other-track list, with controls for visibility, range, and color.
-- [x] Display map scenery placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
-- [x] Load and display scenery model lists referenced by `Structure.Load` (`.txt` or `.csv`).
+- [x] Display map Structure placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
+- [x] Load and display Structure model lists referenced by `Structure.Load` (`.txt` or `.csv`).
 - [x] Display `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` data, with Begin/End distances merged for readability.
-- [x] Right-click source file paths in the scenery and repeater tables to open their folders in File Explorer.
+- [x] Right-click source file paths in the Structure and repeater tables to open their folders in File Explorer.
 - [ ] Edit Structure model lists.
 - [ ] Edit station lists and station positions.
 
 ### 3D Canvas
 
-- [ ] 3D preview for scenery models.
+- [ ] 3D preview for Structure models.
 - [ ] 3D scene preview canvas.
 - [ ] Structure position editing tools in the 3D canvas.
 
@@ -115,7 +115,7 @@ On startup, the application creates or reads the following files next to the exe
    - `Other Tracks`: toggle other-track display and adjust visible range and color.
    - `Station List`: view the station list and `Station.Put` placement data.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map.
-   - `Scenery Model List`: view the structure keys and model files from the `Structure.Load` structure list.
+   - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list.
    - `Repeater List`: view merged `Repeater.Begin/End` data.
 8. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 9. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
@@ -235,7 +235,7 @@ Field reference:
 | center | Track center offset |
 | gauge | Track gauge |
 
-Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, scenery, repeaters, sounds, fog, or 3D scene data.
+Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, Structures, repeaters, sounds, fog, or 3D scene data.
 
 ## About This Project
 

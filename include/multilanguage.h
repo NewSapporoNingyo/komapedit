@@ -22,7 +22,7 @@ struct Translation {
             {"button.apply", "Apply"}, {"button.reset", "Reset"}, {"button.ok", "OK"}, {"button.cancel", "Cancel"}, {"button.clear", "Clear"},
             {"button.import_bg", "Import"}, {"button.adjust_bg", "Adjust"}, {"button.align_to_station", "Align to Station"},
             {"frame.controls", "Controls"}, {"frame.console", "Console"}, {"frame.plots", "2D View"}, {"frame.othertracks", "Other Tracks"}, {"frame.station_list", "Station List"},
-            {"frame.structures", "Map Structure List"}, {"frame.structure_models", "Scenery Model List"}, {"frame.repeaters", "Repeater List"}, {"frame.aux_info", "Auxiliary Info"},
+            {"frame.structures", "Map Structure List"}, {"frame.structure_models", "Structure Model List"}, {"frame.repeaters", "Repeater List"}, {"frame.aux_info", "Auxiliary Info"},
             {"frame.chart_visibility", "Chart Visibility"}, {"frame.grid", "Grid"}, {"frame.mode", "Mode"}, {"frame.bgimage", "Background Image"},
             {"column.file_name", "File Name"},
             {"chk.station_pos", "Station Position"}, {"chk.station_name", "Station Name"}, {"chk.station_mileage", "Station Mileage"},
