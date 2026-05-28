@@ -12,7 +12,7 @@ struct Translation {
 
     Translation() {
         en = {
-            {"app.title", "Kobushi.cpp"},
+            {"app.title", "komapedit"},
             {"menu.file", "File"}, {"menu.options", "Options"}, {"menu.map_info", "Map Info"}, {"menu.view_2d", "2D View"}, {"menu.lang", "Language"}, {"menu.help", "Help"},
             {"menu.open", "Open..."}, {"menu.recent_maps", "Recent Maps"}, {"menu.none", "None"}, {"menu.clear_recent_maps", "Clear List"}, {"menu.reload", "Reload"}, {"menu.export_csv", "Export CSV..."}, {"menu.exit", "Exit"},
             {"menu.controlpoints", "Control Points..."}, {"menu.plotlimit", "Plot Range..."}, {"menu.ui_settings", "UI Settings..."}, {"menu.font_size", "UI Settings..."}, {"menu.about", "About"},
@@ -41,10 +41,10 @@ struct Translation {
             {"label.font_size_current", "Text size:"}, {"label.ui_component_size_current", "Component size:"}, {"label.ui_theme_color_current", "Theme color:"}, {"label.font_size_preview", "Preview text"},
             {"status.no_map", "No map loaded"}, {"status.loading", "Loading..."}, {"status.ready", "Ready"},
             {"dialog.ui_settings", "UI Settings"}, {"dialog.bgimage_adjust", "Adjust Background Image"}, {"dialog.align_to_station", "Align Background to Stations"}, {"button.pick_on_bg", "Pick station on Plan"}, {"button.pick_on_bg_ok", "Picked"},
-            {"about.text", "Kobushi.cpp\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
+            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi - kobushi trackviewer\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
         };
         zh = {
-            {"app.title", "Kobushi.cpp"},
+            {"app.title", "komapedit"},
             {"menu.file", "文件"}, {"menu.options", "选项"}, {"menu.map_info", "地图信息"}, {"menu.view_2d", "2D视图"}, {"menu.lang", "语言"}, {"menu.help", "帮助"},
             {"menu.open", "打开..."}, {"menu.recent_maps", "最近打开的地图"}, {"menu.none", "无"}, {"menu.clear_recent_maps", "清除列表"}, {"menu.reload", "重新加载"}, {"menu.export_csv", "导出 CSV..."}, {"menu.exit", "退出"},
             {"menu.controlpoints", "控制点间隔..."}, {"menu.plotlimit", "绘图范围..."}, {"menu.ui_settings", "用户界面设置..."}, {"menu.font_size", "用户界面设置..."}, {"menu.about", "关于"},
@@ -73,10 +73,10 @@ struct Translation {
             {"label.font_size_current", "文字大小："}, {"label.ui_component_size_current", "组件大小："}, {"label.ui_theme_color_current", "主题色："}, {"label.font_size_preview", "预览文字"},
             {"status.no_map", "未加载地图"}, {"status.loading", "加载中..."}, {"status.ready", "就绪"},
             {"dialog.ui_settings", "用户界面设置"}, {"dialog.bgimage_adjust", "调整背景图"}, {"dialog.align_to_station", "按车站对齐背景图"}, {"button.pick_on_bg", "在平面图选点"}, {"button.pick_on_bg_ok", "已选点"},
-            {"about.text", "Kobushi.cpp\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
+            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi - kobushi trackviewer\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
         };
         ja = {
-            {"app.title", "Kobushi.cpp"},
+            {"app.title", "komapedit"},
             {"menu.file", "ファイル"}, {"menu.options", "オプション"}, {"menu.map_info", "マップ情報"}, {"menu.view_2d", "2Dプロット"}, {"menu.lang", "言語"}, {"menu.help", "ヘルプ"},
             {"menu.open", "開く..."}, {"menu.recent_maps", "最近開いたマップ"}, {"menu.none", "なし"}, {"menu.clear_recent_maps", "リストをクリア"}, {"menu.reload", "再読込"}, {"menu.export_csv", "CSV 出力..."}, {"menu.exit", "終了"},
             {"menu.controlpoints", "制御点間隔..."}, {"menu.plotlimit", "描画範囲..."}, {"menu.ui_settings", "UI設定..."}, {"menu.font_size", "UI設定..."}, {"menu.about", "このアプリについて"},
@@ -105,7 +105,7 @@ struct Translation {
             {"label.font_size_current", "文字サイズ："}, {"label.ui_component_size_current", "部品サイズ："}, {"label.ui_theme_color_current", "テーマカラー："}, {"label.font_size_preview", "プレビューテキスト"},
             {"status.no_map", "地図が読み込まれていません"}, {"status.loading", "読込中..."}, {"status.ready", "準備完了"},
             {"dialog.ui_settings", "UI設定"}, {"dialog.bgimage_adjust", "背景画像の調整"}, {"dialog.align_to_station", "背景画像を駅に合わせる"}, {"button.pick_on_bg", "平面図で駅を選択"}, {"button.pick_on_bg_ok", "選択済み"},
-            {"about.text", "Kobushi.cpp\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
+            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi - kobushi trackviewer\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
         };
     }
 

@@ -2811,7 +2811,7 @@ void App::render_menu() {
     }
     if (ImGui::BeginMenu(tr("menu.help").c_str())) {
         if (ImGui::MenuItem(tr("menu.online_docs").c_str())) {
-            ShellExecuteW(nullptr, L"open", L"https://github.com/NewSapporoNingyo/kobushi-trackviewer-modified", nullptr, nullptr, SW_SHOWNORMAL);
+            ShellExecuteW(nullptr, L"open", L"https://github.com/NewSapporoNingyo/komapedit", nullptr, nullptr, SW_SHOWNORMAL);
         }
         if (ImGui::MenuItem(tr("menu.about").c_str())) show_about_popup_ = true;
         ImGui::EndMenu();
@@ -4096,9 +4096,9 @@ int main(int, char**) {
     ImGui_ImplWin32_EnableDpiAwareness();
     float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
 
-    WNDCLASSEXW wc = {sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"Kobushi.cpp", nullptr};
+    WNDCLASSEXW wc = {sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"komapedit", nullptr};
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Kobushi.cpp", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"komapedit", WS_OVERLAPPEDWINDOW,
                               100, 100, static_cast<int>(1440 * scale), static_cast<int>(900 * scale),
                               nullptr, nullptr, wc.hInstance, nullptr);
     g_main_hwnd = hwnd;
