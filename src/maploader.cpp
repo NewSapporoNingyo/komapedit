@@ -533,6 +533,15 @@ struct SpeedLimitEvent {
     Value speed;
 };
 
+struct StationPut {
+    double distance = 0.0;
+    Value station_key;
+    Value door;
+    Value margin1;
+    Value margin2;
+    int order = 0;
+};
+
 struct Matrix {
     std::vector<double> data;
     size_t rows = 0;
@@ -562,6 +571,8 @@ struct MapContext {
     std::vector<OwnTrackEvent> own_track;
     std::map<double, std::string> station_position;
     std::map<std::string, std::string> station_key;
+    std::vector<StationPut> station_puts;
+    std::map<std::string, std::array<std::string, 13>> station_list;
     std::map<std::string, std::vector<OtherTrackEvent>> othertrack;
     std::vector<std::string> othertrack_order;
     std::map<std::string, std::pair<double, double>> othertrack_range;
@@ -1112,7 +1123,16 @@ private:
 
     void dispatch_station(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "put" && !a.empty()) {
-            ctx_.station_position[ctx_.distance] = key_text(a.at(0));
+            std::string key = key_text(a.at(0));
+            ctx_.station_position[ctx_.distance] = key;
+            StationPut row;
+            row.distance = ctx_.distance;
+            row.station_key = Value::str(key);
+            row.door = arg_or_null(a, 1);
+            row.margin1 = arg_or_null(a, 2);
+            row.margin2 = arg_or_null(a, 3);
+            row.order = ctx_.next_parse_order();
+            ctx_.station_puts.push_back(std::move(row));
         } else if (fn == "load" && !a.empty()) {
             std::filesystem::path path = join_path(ctx_.rootpath, as_text(a.at(0)));
             LoadedText loaded = load_header_text(path, "BveTs Station List ", 0.04);
@@ -1124,20 +1144,35 @@ private:
         std::istringstream input(body);
         std::string line;
         while (std::getline(input, line)) {
-            size_t hash = line.find('#');
-            if (hash != std::string::npos) line.erase(hash);
-            line = trim_copy(line);
-            if (line.empty()) continue;
-            size_t comma = line.find(',');
-            if (comma == std::string::npos) continue;
-            size_t next_comma = line.find(',', comma + 1);
-            std::string key = ascii_lower(trim_copy(line.substr(0, comma)));
-            std::string name = next_comma == std::string::npos
-                ? line.substr(comma + 1)
-                : line.substr(comma + 1, next_comma - comma - 1);
-            name = trim_copy(name);
-            name.erase(std::remove(name.begin(), name.end(), '"'), name.end());
-            ctx_.station_key[key] = name;
+            std::vector<std::string> fields;
+            std::string field;
+            bool quoted = false;
+            for (size_t i = 0; i < line.size(); ++i) {
+                char ch = line[i];
+                if (ch == '"') {
+                    if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
+                        field.push_back('"');
+                        ++i;
+                    } else {
+                        quoted = !quoted;
+                    }
+                } else if (ch == ',' && !quoted) {
+                    fields.push_back(trim_copy(field));
+                    field.clear();
+                } else if (ch == '#' && !quoted) {
+                    break;
+                } else {
+                    field.push_back(ch);
+                }
+            }
+            fields.push_back(trim_copy(field));
+            if (fields.empty() || fields[0].empty()) continue;
+
+            std::array<std::string, 13> row{};
+            for (size_t i = 0; i < row.size() && i < fields.size(); ++i) row[i] = fields[i];
+            std::string key = ascii_lower(row[0]);
+            ctx_.station_key[key] = row[1];
+            ctx_.station_list[key] = std::move(row);
         }
     }
 
@@ -1980,6 +2015,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.structure_betweens.begin(), ctx.structure_betweens.end(), by_distance);
     std::stable_sort(ctx.repeaters.begin(), ctx.repeaters.end(), by_distance);
     std::stable_sort(ctx.speedlimits.begin(), ctx.speedlimits.end(), by_distance);
+    std::stable_sort(ctx.station_puts.begin(), ctx.station_puts.end(), by_distance);
 }
 
 void build_structure_put_buffer(MapContext& ctx) {
@@ -2041,6 +2077,15 @@ void append_structure_put_json(std::ostringstream& out, const StructurePut& row,
         << "\",\"order\":" << row.order << "}";
 }
 
+void append_station_put_json(std::ostringstream& out, const StationPut& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"stationKey\":" << json_value(row.station_key)
+        << ",\"door\":" << json_value(row.door)
+        << ",\"margin1\":" << json_value(row.margin1)
+        << ",\"margin2\":" << json_value(row.margin2)
+        << ",\"order\":" << row.order << "}";
+}
+
 std::string build_ir_json(MapContext& ctx) {
     std::ostringstream out;
     out << "{\"rootpath\":\"" << json_escape(ctx.rootpath_utf8) << "\"";
@@ -2071,12 +2116,34 @@ std::string build_ir_json(MapContext& ctx) {
         first = false;
         out << "[" << json_number(kv.first) << ",\"" << json_escape(kv.second) << "\"]";
     }
+    out << "],\"put\":[";
+    for (size_t i = 0; i < ctx.station_puts.size(); ++i) {
+        if (i) out << ",";
+        append_station_put_json(out, ctx.station_puts[i]);
+    }
     out << "],\"stationkey\":{";
     first = true;
     for (const auto& kv : ctx.station_key) {
         if (!first) out << ",";
         first = false;
         out << "\"" << json_escape(kv.first) << "\":\"" << json_escape(kv.second) << "\"";
+    }
+    out << "},\"list\":{";
+    static const char* station_list_keys[] = {
+        "stationKey", "stationName", "arrivalTime", "depertureTime", "stoppageTime",
+        "defaultTime", "signalFlag", "alightingTime", "passengers", "arrivalSoundKey",
+        "depertureSoundKey", "doorReopen", "stuckInDoor"
+    };
+    first = true;
+    for (const auto& kv : ctx.station_list) {
+        if (!first) out << ",";
+        first = false;
+        out << "\"" << json_escape(kv.first) << "\":{";
+        for (size_t i = 0; i < kv.second.size(); ++i) {
+            if (i) out << ",";
+            out << "\"" << station_list_keys[i] << "\":\"" << json_escape(kv.second[i]) << "\"";
+        }
+        out << "}";
     }
     out << "}}";
 

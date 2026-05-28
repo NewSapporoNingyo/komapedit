@@ -409,6 +409,7 @@ struct TableUiCache {
     bool valid = false;
     float font_size = 0.0f;
     float cell_padding_x = 0.0f;
+    std::vector<CachedTableRow> station_rows;
     std::vector<CachedTableRow> structure_rows;
     std::vector<CachedTableRow> repeater_rows;
     float structure_file_path_width = 200.0f;
@@ -444,6 +445,27 @@ static const TableColumnDef kRepeaterColumns[] = {
 constexpr int kRepeaterDistanceColumn = 1;
 constexpr int kRepeaterIntervalColumn = 13;
 constexpr int kRepeaterFilePathColumn = IM_ARRAYSIZE(kRepeaterColumns) - 1;
+
+static const TableColumnDef kStationListColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"posKey", "key", 80.0f},
+    {"door", "door", 55.0f},
+    {"margin1", "back", 65.0f},
+    {"margin2", "front", 65.0f},
+    {"stationKey", "stKey", 80.0f},
+    {"stationName", "name", 120.0f},
+    {"arrivalTime", "arr", 70.0f},
+    {"depertureTime", "dep", 70.0f},
+    {"stoppageTime", "stop", 60.0f},
+    {"defaultTime", "def", 70.0f},
+    {"signalFlag", "sig", 55.0f},
+    {"alightingTime", "alight", 65.0f},
+    {"passengers", "pax", 60.0f},
+    {"arrivalSoundKey", "arrSnd", 85.0f},
+    {"depertureSoundKey", "depSnd", 85.0f},
+    {"doorReopen", "reopen", 70.0f},
+    {"stuckInDoor", "stuck", 65.0f},
+};
 
 std::string display_name_from_path(const std::string& path);
 
@@ -544,6 +566,7 @@ struct MapModel {
     std::vector<TrackEvent> own_events;
     std::vector<SpeedLimit> speedlimits;
     std::vector<double> controlpoints;
+    std::vector<TableRow> station_list_rows;
     std::vector<TableRow> structures;
     std::vector<TableRow> structures_between;
     std::vector<TableRow> repeaters;
@@ -1425,6 +1448,7 @@ private:
     bool reset_profile_axes_next_ = true;
     bool reset_radius_axes_next_ = true;
 
+    bool show_station_list_window_ = false;
     bool show_structures_window_ = false;
     bool show_repeaters_window_ = false;
     bool show_range_popup_ = false;
@@ -1483,6 +1507,7 @@ private:
     void render_profile_plot(const ProfileData& data, ImVec2 size);
     void render_radius_plot(const ProfileData& data, ImVec2 size);
     void render_othertracks_window();
+    void render_station_list_window();
     void render_structures_window();
     void render_repeaters_window();
     void render_popups();
@@ -1553,6 +1578,16 @@ void App::ensure_table_cache() {
     cache.valid = true;
     cache.font_size = font_size;
     cache.cell_padding_x = cell_padding_x;
+
+    cache.station_rows.reserve(model_.station_list_rows.size());
+    for (const auto& row : model_.station_list_rows) {
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kStationListColumns));
+        for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
+            cached.cells[i] = table_cell(row, kStationListColumns[i].key);
+        }
+        cache.station_rows.push_back(std::move(cached));
+    }
 
     auto append_structure_rows = [&](const std::vector<TableRow>& rows) {
         cache.structure_rows.reserve(cache.structure_rows.size() + rows.size());
@@ -1923,6 +1958,61 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     model.structures = make_table_rows(structure.at("data"));
     model.structures_between = make_table_rows(structure.at("between_data"));
     model.repeaters = make_table_rows(root.at("repeater"));
+
+    std::map<std::string, TableRow> station_rows_by_key;
+    const auto& station_list = station.at("list");
+    if (station_list.is_object()) {
+        for (const auto& kv : station_list.object) {
+            TableRow row;
+            if (kv.second.is_object()) {
+                for (const auto& cell : kv.second.object) row.cells[cell.first] = table_cell_text(cell.second);
+            }
+            if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = kv.first;
+            station_rows_by_key[ascii_lower(kv.first)] = std::move(row);
+        }
+    }
+    auto append_station_table_row = [&](TableRow row, const std::string& key) {
+        auto it = station_rows_by_key.find(ascii_lower(key));
+        if (it != station_rows_by_key.end()) {
+            for (const auto& cell : it->second.cells) row.cells[cell.first] = cell.second;
+        }
+        model.station_list_rows.push_back(std::move(row));
+    };
+    const auto& station_puts = station.at("put");
+    if (station_puts.is_array()) {
+        for (const auto& item : station_puts.array) {
+            if (!item.is_object()) continue;
+            std::string key = item.at("stationKey").scalar_text();
+            TableRow row;
+            row.cells["_distance"] = format_double(item.at("distance").number);
+            row.cells["_order"] = item.at("order").scalar_text();
+            row.cells["posKey"] = key;
+            row.cells["door"] = item.at("door").scalar_text();
+            row.cells["margin1"] = item.at("margin1").scalar_text();
+            row.cells["margin2"] = item.at("margin2").scalar_text();
+            append_station_table_row(std::move(row), key);
+        }
+    } else if (positions.is_array()) {
+        int order_index = 0;
+        for (const auto& item : positions.array) {
+            if (!item.is_array() || item.array.size() < 2) continue;
+            std::string key = item.array[1].scalar_text();
+            TableRow row;
+            row.cells["_distance"] = format_double(item.array[0].number);
+            row.cells["_order"] = std::to_string(++order_index);
+            row.cells["posKey"] = key;
+            append_station_table_row(std::move(row), key);
+        }
+    }
+    std::stable_sort(model.station_list_rows.begin(), model.station_list_rows.end(), [](const TableRow& a, const TableRow& b) {
+        double da = table_cell_number(a, "_distance");
+        double db = table_cell_number(b, "_distance");
+        if (da != db) return da < db;
+        return table_cell_number(a, "_order") < table_cell_number(b, "_order");
+    });
+    for (size_t i = 0; i < model.station_list_rows.size(); ++i) {
+        model.station_list_rows[i].cells["rowNumber"] = std::to_string(i + 1);
+    }
 
     if (!model.stations.empty()) {
         double mn = model.stations.front().distance;
@@ -2681,6 +2771,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGuiID dock_console = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.32f, nullptr, &dock_right);
     dock_right_id_ = dock_right;
     ImGui::DockBuilderDockWindow("OtherTracks", dock_right);
+    ImGui::DockBuilderDockWindow("StationList", dock_right);
     ImGui::DockBuilderDockWindow("Structures", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
@@ -2750,6 +2841,9 @@ void App::render_menu() {
     if (ImGui::BeginMenu(tr("menu.map_info").c_str())) {
         if (ImGui::MenuItem(tr("frame.othertracks").c_str(), nullptr, false, !show_othertracks_window_)) {
             show_othertracks_window_ = true;
+        }
+        if (ImGui::MenuItem(tr("frame.station_list").c_str(), nullptr, false, !show_station_list_window_)) {
+            show_station_list_window_ = true;
         }
         if (ImGui::MenuItem(tr("button.structure_list").c_str(), nullptr, false, !show_structures_window_)) {
             show_structures_window_ = true;
@@ -3651,6 +3745,43 @@ void App::render_othertracks_window() {
     ImGui::End();
 }
 
+void App::render_station_list_window() {
+    if (!show_station_list_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    std::string title = tr("frame.station_list") + "###StationList";
+    if (!ImGui::Begin(title.c_str(), &show_station_list_window_)) {
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("station_list", IM_ARRAYSIZE(kStationListColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+        for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
+            ImGui::TableSetupColumn(kStationListColumns[i].header, ImGuiTableColumnFlags_WidthFixed, kStationListColumns[i].width);
+        }
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(table_cache_.station_rows.size()));
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.station_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (!value.empty()) ImGui::TextUnformatted(value.c_str());
+                }
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
 void App::render_structures_window() {
     if (!show_structures_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
@@ -4003,6 +4134,7 @@ void App::render() {
     ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
     setup_initial_dockspace(dockspace_id);
     render_othertracks_window();
+    render_station_list_window();
     render_console();
     render_plots();
     render_structures_window();
