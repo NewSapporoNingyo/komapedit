@@ -56,23 +56,23 @@ add_library(implot STATIC
 target_include_directories(implot PUBLIC ${IMPLOT_DIR})
 target_link_libraries(implot PUBLIC imgui)
 
-add_executable(kobushi_gui
+add_executable(komapedit
     src/gui_app.cpp
 )
-set_target_properties(kobushi_gui PROPERTIES WIN32_EXECUTABLE TRUE)
-target_include_directories(kobushi_gui PRIVATE
+set_target_properties(komapedit PROPERTIES WIN32_EXECUTABLE TRUE)
+target_include_directories(komapedit PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_compile_definitions(kobushi_gui PRIVATE
+target_compile_definitions(komapedit PRIVATE
     UNICODE
     _UNICODE
     NOMINMAX
     WIN32_LEAN_AND_MEAN
 )
 if(MSVC)
-    target_link_options(kobushi_gui PRIVATE /ENTRY:mainCRTStartup)
+    target_link_options(komapedit PRIVATE /ENTRY:mainCRTStartup)
 endif()
-target_link_libraries(kobushi_gui PRIVATE
+target_link_libraries(komapedit PRIVATE
     maploader
     implot
     imgui
