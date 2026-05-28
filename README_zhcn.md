@@ -58,10 +58,10 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - [x] 显示车站列表与地图中 `Station.Put` 的放置位置。
 - [x] 显示他轨道列表，可切换显示、设置范围和颜色。
 - [x] 显示 `Structure.Put`、`Structure.Put0`、`Structure.PutBetween` 的地图布景放置表。
-- [x] 记录 `Structure.Load` 事件，但尚未解析目标布景列表 CSV。
+- [x] 读取并显示 `Structure.Load` 指定的布景模型列表（`.txt` 或 `.csv`）。
 - [x] 显示 `Repeater.Begin`、`Repeater.Begin0`、`Repeater.End` 的连续布景表，并合并 Begin/End 距离。
 - [x] 布景表和连续布景表中的源文件路径支持右键在资源管理器中打开所在目录。
-- [ ] 布景模型列表读取与查看/编辑。
+- [ ] 布景模型列表编辑。
 - [ ] 车站列表与车站位置编辑。
 
 ### 3D画布
@@ -114,6 +114,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
    - `其他轨道`：切换他轨道显示、调整显示范围和颜色。
    - `车站列表`：查看车站列表和 `Station.Put` 放置数据。
    - `地图布景列表`：查看地图中的 `Structure.Put`、`Structure.Put0`、`Structure.PutBetween`。
+   - `布景模型列表`：查看 `Structure.Load` 指定列表中的 structureKey 和模型文件。
    - `连续布景列表`：查看并合并显示 `Repeater.Begin/End`。
 8. 在 `2D 视图 -> 背景图` 中导入背景图，可手动调整位置、尺寸、旋转和亮度，也可按两个车站对齐。
 9. 在 `文件 -> 导出 CSV...` 中选择输出目录，导出自轨道和他轨道几何 CSV。

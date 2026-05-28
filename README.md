@@ -59,17 +59,17 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [x] Display the station list alongside `Station.Put` placement data from the map.
 - [x] Display the other-track list, with controls for visibility, range, and color.
 - [x] Display map scenery placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
-- [x] Record `Structure.Load` events, though the referenced scenery list CSV is not parsed yet.
+- [x] Load and display scenery model lists referenced by `Structure.Load` (`.txt` or `.csv`).
 - [x] Display `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` data, with Begin/End distances merged for readability.
 - [x] Right-click source file paths in the scenery and repeater tables to open their folders in File Explorer.
-- [ ] Load, view, and edit scenery model lists.
+- [ ] Edit Structure model lists.
 - [ ] Edit station lists and station positions.
 
 ### 3D Canvas
 
 - [ ] 3D preview for scenery models.
 - [ ] 3D scene preview canvas.
-- [ ] Scenery editing tools in the 3D canvas.
+- [ ] Structure position editing tools in the 3D canvas.
 
 ### Environmental Effects
 
@@ -115,6 +115,7 @@ On startup, the application creates or reads the following files next to the exe
    - `Other Tracks`: toggle other-track display and adjust visible range and color.
    - `Station List`: view the station list and `Station.Put` placement data.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map.
+   - `Scenery Model List`: view the structure keys and model files from the `Structure.Load` structure list.
    - `Repeater List`: view merged `Repeater.Begin/End` data.
 8. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 9. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.

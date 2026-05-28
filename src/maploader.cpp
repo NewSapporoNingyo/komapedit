@@ -77,6 +77,34 @@ std::string trim_copy(const std::string& s) {
     return s.substr(begin, end - begin);
 }
 
+std::string trim_field_copy(const std::string& s) {
+    size_t begin = 0;
+    size_t end = s.size();
+    while (begin < end) {
+        if (std::isspace(static_cast<unsigned char>(s[begin]))) {
+            ++begin;
+        } else if (begin + 2 <= end && s.compare(begin, 2, "\xC2\xA0") == 0) {
+            begin += 2;
+        } else if (begin + 3 <= end && s.compare(begin, 3, "\xE3\x80\x80") == 0) {
+            begin += 3;
+        } else {
+            break;
+        }
+    }
+    while (end > begin) {
+        if (std::isspace(static_cast<unsigned char>(s[end - 1]))) {
+            --end;
+        } else if (end >= begin + 2 && s.compare(end - 2, 2, "\xC2\xA0") == 0) {
+            end -= 2;
+        } else if (end >= begin + 3 && s.compare(end - 3, 3, "\xE3\x80\x80") == 0) {
+            end -= 3;
+        } else {
+            break;
+        }
+    }
+    return s.substr(begin, end - begin);
+}
+
 bool ascii_ieq(const std::string& a, const std::string& b) {
     return ascii_lower(a) == ascii_lower(b);
 }
@@ -466,6 +494,32 @@ std::string json_value(const Value& value) {
     return "null";
 }
 
+std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_hash) {
+    std::vector<std::string> fields;
+    std::string field;
+    bool quoted = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        char ch = line[i];
+        if (ch == '"') {
+            if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
+                field.push_back('"');
+                ++i;
+            } else {
+                quoted = !quoted;
+            }
+        } else if (ch == ',' && !quoted) {
+            fields.push_back(trim_field_copy(field));
+            field.clear();
+        } else if (ch == '#' && !quoted && stop_on_inline_hash) {
+            break;
+        } else {
+            field.push_back(ch);
+        }
+    }
+    fields.push_back(trim_field_copy(field));
+    return fields;
+}
+
 struct OwnTrackEvent {
     double distance = 0.0;
     std::string key;
@@ -487,6 +541,11 @@ struct StructureLoad {
     Value load_file_path;
     std::string file_path;
     int order = 0;
+};
+
+struct StructureModel {
+    std::string structure_key;
+    std::string file_path;
 };
 
 struct StructurePut {
@@ -577,6 +636,7 @@ struct MapContext {
     std::vector<std::string> othertrack_order;
     std::map<std::string, std::pair<double, double>> othertrack_range;
     std::vector<StructureLoad> structure_loads;
+    std::vector<StructureModel> structure_models;
     std::vector<StructurePut> structure_puts;
     std::vector<StructurePut> structure_betweens;
     std::vector<RepeaterEvent> repeaters;
@@ -1144,28 +1204,7 @@ private:
         std::istringstream input(body);
         std::string line;
         while (std::getline(input, line)) {
-            std::vector<std::string> fields;
-            std::string field;
-            bool quoted = false;
-            for (size_t i = 0; i < line.size(); ++i) {
-                char ch = line[i];
-                if (ch == '"') {
-                    if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
-                        field.push_back('"');
-                        ++i;
-                    } else {
-                        quoted = !quoted;
-                    }
-                } else if (ch == ',' && !quoted) {
-                    fields.push_back(trim_copy(field));
-                    field.clear();
-                } else if (ch == '#' && !quoted) {
-                    break;
-                } else {
-                    field.push_back(ch);
-                }
-            }
-            fields.push_back(trim_copy(field));
+            std::vector<std::string> fields = parse_comma_separated_fields(line, true);
             if (fields.empty() || fields[0].empty()) continue;
 
             std::array<std::string, 13> row{};
@@ -1173,6 +1212,29 @@ private:
             std::string key = ascii_lower(row[0]);
             ctx_.station_key[key] = row[1];
             ctx_.station_list[key] = std::move(row);
+        }
+    }
+
+    void parse_structure_list(const std::string& body, const std::filesystem::path& root) {
+        std::istringstream input(body);
+        std::string line;
+        while (std::getline(input, line)) {
+            std::string trimmed = trim_field_copy(line);
+            if (trimmed.empty() || trimmed[0] == '#') continue;
+
+            std::vector<std::string> fields = parse_comma_separated_fields(line, true);
+            if (fields.empty() || fields[0].empty()) continue;
+
+            StructureModel row;
+            row.structure_key = fields[0];
+            if (fields.size() > 1 && !fields[1].empty()) {
+                std::filesystem::path model_path = join_path(root, fields[1]);
+                std::error_code ec;
+                std::filesystem::path abs = std::filesystem::absolute(model_path, ec);
+                if (!ec) model_path = abs;
+                row.file_path = path_to_utf8(model_path.lexically_normal());
+            }
+            ctx_.structure_models.push_back(std::move(row));
         }
     }
 
@@ -1248,6 +1310,16 @@ private:
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             ctx_.structure_loads.push_back(row);
+            std::string list_path_text = as_text(row.load_file_path);
+            if (!list_path_text.empty()) {
+                try {
+                    std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
+                    LoadedText loaded = load_header_text(path, "BveTs Structure List ", 1.0);
+                    parse_structure_list(loaded.body, loaded.root);
+                } catch (const std::exception& e) {
+                    log_warn(e.what());
+                }
+            }
         } else if (fn == "put" && a.size() >= 10) {
             StructurePut row;
             row.distance = ctx_.distance;
@@ -2193,6 +2265,13 @@ std::string build_ir_json(MapContext& ctx) {
     for (size_t i = 0; i < ctx.structure_betweens.size(); ++i) {
         if (i) out << ",";
         append_structure_put_json(out, ctx.structure_betweens[i], true);
+    }
+    out << "],\"models\":[";
+    for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
+        if (i) out << ",";
+        const auto& row = ctx.structure_models[i];
+        out << "{\"structureKey\":\"" << json_escape(row.structure_key)
+            << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"}";
     }
     out << "]}";
 

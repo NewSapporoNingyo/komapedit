@@ -411,12 +411,21 @@ struct TableUiCache {
     float cell_padding_x = 0.0f;
     std::vector<CachedTableRow> station_rows;
     std::vector<CachedTableRow> structure_rows;
+    std::vector<CachedTableRow> structure_model_rows;
     std::vector<CachedTableRow> repeater_rows;
     float structure_file_path_width = 200.0f;
+    float structure_model_file_path_width = 200.0f;
     float repeater_distance_width = 110.0f;
     float repeater_interval_width = 70.0f;
     float repeater_file_path_width = 200.0f;
 };
+
+static const TableColumnDef kStructureModelColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"structureKey", "structureKey", 120.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kStructureModelFilePathColumn = IM_ARRAYSIZE(kStructureModelColumns) - 1;
 
 static const char* kStructureColumns[] = {
     "distance", "method", "structureKey", "trackKey", "x", "y", "z", "rx", "ry", "rz",
@@ -569,6 +578,7 @@ struct MapModel {
     std::vector<double> controlpoints;
     std::vector<TableRow> station_list_rows;
     std::vector<TableRow> structures;
+    std::vector<TableRow> structure_models;
     std::vector<TableRow> structures_between;
     std::vector<TableRow> repeaters;
     double distance_origin = 0.0;
@@ -813,7 +823,8 @@ void open_parent_directory_in_explorer(const std::string& file_path) {
     }
 }
 
-void render_file_path_cell_with_context(const std::string& display_text, const std::string& open_path, const std::string& menu_label) {
+void render_file_path_cell_with_context(const std::string& display_text, const std::string& open_path,
+                                        const std::string& menu_label, const std::string& tooltip_text = {}) {
     if (display_text.empty()) return;
 
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -824,6 +835,7 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
     ImGui::InvisibleButton("file_path_cell", item_size);
     if (ImGui::IsItemHovered()) {
         ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y), ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+        if (!tooltip_text.empty()) ImGui::SetTooltip("%s", tooltip_text.c_str());
     }
     ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), display_text.c_str());
 
@@ -1451,6 +1463,7 @@ private:
 
     bool show_station_list_window_ = false;
     bool show_structures_window_ = false;
+    bool show_structure_models_window_ = false;
     bool show_repeaters_window_ = false;
     bool show_range_popup_ = false;
     bool show_cp_popup_ = false;
@@ -1510,6 +1523,7 @@ private:
     void render_othertracks_window();
     void render_station_list_window();
     void render_structures_window();
+    void render_structure_models_window();
     void render_repeaters_window();
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);
@@ -1588,6 +1602,19 @@ void App::ensure_table_cache() {
             cached.cells[i] = table_cell(row, kStationListColumns[i].key);
         }
         cache.station_rows.push_back(std::move(cached));
+    }
+
+    cache.structure_model_rows.reserve(model_.structure_models.size());
+    for (size_t row_index = 0; row_index < model_.structure_models.size(); ++row_index) {
+        const TableRow& row = model_.structure_models[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kStructureModelColumns));
+        cached.cells[0] = std::to_string(row_index + 1);
+        cached.cells[1] = table_cell(row, "structureKey");
+        cached.open_path = table_cell(row, "filePath");
+        cached.cells[2] = display_name_from_path(cached.open_path);
+        expand_width_for_text(cache.structure_model_file_path_width, cached.cells[2]);
+        cache.structure_model_rows.push_back(std::move(cached));
     }
 
     auto append_structure_rows = [&](const std::vector<TableRow>& rows) {
@@ -1957,6 +1984,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     };
     const auto& structure = root.at("structure");
     model.structures = make_table_rows(structure.at("data"));
+    model.structure_models = make_table_rows(structure.at("models"));
     model.structures_between = make_table_rows(structure.at("between_data"));
     model.repeaters = make_table_rows(root.at("repeater"));
 
@@ -2778,6 +2806,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("OtherTracks", dock_right);
     ImGui::DockBuilderDockWindow("StationList", dock_right);
     ImGui::DockBuilderDockWindow("Structures", dock_right);
+    ImGui::DockBuilderDockWindow("StructureModels", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
@@ -2852,6 +2881,9 @@ void App::render_menu() {
         }
         if (ImGui::MenuItem(tr("button.structure_list").c_str(), nullptr, false, !show_structures_window_)) {
             show_structures_window_ = true;
+        }
+        if (ImGui::MenuItem(tr("frame.structure_models").c_str(), nullptr, false, !show_structure_models_window_)) {
+            show_structure_models_window_ = true;
         }
         if (ImGui::MenuItem(tr("button.repeater_list").c_str(), nullptr, false, !show_repeaters_window_)) {
             show_repeaters_window_ = true;
@@ -3828,6 +3860,49 @@ void App::render_structures_window() {
     ImGui::End();
 }
 
+void App::render_structure_models_window() {
+    if (!show_structure_models_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    std::string title = tr("frame.structure_models") + "###StructureModels";
+    if (!ImGui::Begin(title.c_str(), &show_structure_models_window_)) {
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(kStructureModelColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+        std::string file_name_header = tr("column.file_name");
+        for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
+            float width = kStructureModelColumns[i].width;
+            if (i == kStructureModelFilePathColumn) width = table_cache_.structure_model_file_path_width;
+            const char* header = i == kStructureModelFilePathColumn ? file_name_header.c_str() : kStructureModelColumns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(table_cache_.structure_model_rows.size()));
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.structure_model_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                ImGui::PushID(row_index);
+                for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (value.empty()) continue;
+                    if (i == kStructureModelFilePathColumn) {
+                        render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"), row.open_path);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
 void App::render_repeaters_window() {
     if (!show_repeaters_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
@@ -4143,6 +4218,7 @@ void App::render() {
     render_console();
     render_plots();
     render_structures_window();
+    render_structure_models_window();
     render_repeaters_window();
     render_popups();
 }
