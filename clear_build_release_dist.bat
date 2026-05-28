@@ -10,7 +10,7 @@ if not exist "%TARGET%\" (
 )
 
 for /f "delims=" %%F in ('dir /b /a-d "%TARGET%"') do (
-    if /I not "%%F"=="kobushi_gui.exe" if /I not "%%F"=="maploader.dll" (
+    if /I not "%%F"=="komapedit.exe" if /I not "%%F"=="maploader.dll" (
         del /f /q "%TARGET%\%%F"
     )
 )
