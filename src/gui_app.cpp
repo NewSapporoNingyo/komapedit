@@ -448,6 +448,7 @@ constexpr int kRepeaterFilePathColumn = IM_ARRAYSIZE(kRepeaterColumns) - 1;
 
 static const TableColumnDef kStationListColumns[] = {
     {"rowNumber", "#", 40.0f},
+    {"dist", "dist", 70.0f},
     {"posKey", "key", 80.0f},
     {"door", "door", 55.0f},
     {"margin1", "back", 65.0f},
@@ -1983,9 +1984,11 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
         for (const auto& item : station_puts.array) {
             if (!item.is_object()) continue;
             std::string key = item.at("stationKey").scalar_text();
+            double distance = item.at("distance").number;
             TableRow row;
-            row.cells["_distance"] = format_double(item.at("distance").number);
+            row.cells["_distance"] = format_double(distance);
             row.cells["_order"] = item.at("order").scalar_text();
+            row.cells["dist"] = format_double(distance - model.distance_origin, 0);
             row.cells["posKey"] = key;
             row.cells["door"] = item.at("door").scalar_text();
             row.cells["margin1"] = item.at("margin1").scalar_text();
@@ -1997,9 +2000,11 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
         for (const auto& item : positions.array) {
             if (!item.is_array() || item.array.size() < 2) continue;
             std::string key = item.array[1].scalar_text();
+            double distance = item.array[0].number;
             TableRow row;
-            row.cells["_distance"] = format_double(item.array[0].number);
+            row.cells["_distance"] = format_double(distance);
             row.cells["_order"] = std::to_string(++order_index);
+            row.cells["dist"] = format_double(distance - model.distance_origin, 0);
             row.cells["posKey"] = key;
             append_station_table_row(std::move(row), key);
         }
