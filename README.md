@@ -55,7 +55,7 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 
 ### Map Data Tables
 
-- [x] Load the station list CSV specified by `Station.Load`.
+- [x] Load the station list specified by `Station.Load`.
 - [x] Display the station list alongside `Station.Put` placement data from the map.
 - [x] Display the other-track list, with controls for visibility, range, and color.
 - [x] Display map Structure placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
