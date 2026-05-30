@@ -1,0 +1,1174 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
+ */
+
+#pragma execution_character_set("utf-8")
+
+#include "kme.h"
+
+#include "imgui.h"
+#include "implot.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+void set_crosshair_cursor() {
+    ::SetCursor(::LoadCursor(nullptr, IDC_CROSS));
+}
+
+void set_move_cursor() {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    ::SetCursor(::LoadCursor(nullptr, IDC_SIZEALL));
+}
+
+} // namespace
+
+size_t App::nearest_own_index(double distance) const {
+    if (model_.own.empty()) return 0;
+    size_t lo = 0, hi = model_.own.rows;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (model_.own.at(mid, 0) < distance) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == 0) return 0;
+    if (lo >= model_.own.rows) return model_.own.rows - 1;
+    double a = std::abs(model_.own.at(lo, 0) - distance);
+    double b = std::abs(model_.own.at(lo - 1, 0) - distance);
+    return a < b ? lo : lo - 1;
+}
+
+double App::interp_own_z(double distance) const {
+    if (model_.own.empty()) return 0.0;
+    size_t idx = nearest_own_index(distance);
+    return model_.own.at(idx, 3) - model_.height_origin;
+}
+
+std::optional<TrackPoint> App::track_info_at(double distance) const {
+    if (model_.own.empty()) return std::nullopt;
+    if (distance < model_.own.at(0, 0) || distance > model_.own.at(model_.own.rows - 1, 0)) return std::nullopt;
+    size_t idx = nearest_own_index(distance);
+    TrackPoint p;
+    p.d = distance;
+    p.x = model_.own.at(idx, 1);
+    p.y = model_.own.at(idx, 2);
+    p.z = model_.own.at(idx, 3) - model_.height_origin;
+    p.theta = model_.own.at(idx, 4);
+    p.radius = model_.own.at(idx, 5);
+    p.gradient = model_.own.at(idx, 6);
+    return p;
+}
+
+std::optional<SpeedLimit> App::speed_at(double distance) const {
+    std::optional<SpeedLimit> result;
+    for (const auto& s : model_.speedlimits) {
+        if (s.distance > distance) break;
+        result = s;
+    }
+    return result;
+}
+
+std::vector<Section> App::curve_sections(bool transition) const {
+    std::vector<Section> sections;
+    std::vector<TrackEvent> radius;
+    for (const auto& e : model_.own_events) {
+        if (e.key == "radius") radius.push_back(e);
+    }
+    for (size_t i = 0; i < radius.size();) {
+        const auto& e = radius[i];
+        if (!transition && e.flag.empty() && e.value_number && e.number != 0.0) {
+            double start = e.distance;
+            double value = e.number;
+            ++i;
+            double end = model_.own.empty() ? start : model_.own.at(model_.own.rows - 1, 0);
+            while (i < radius.size()) {
+                if (radius[i].flag.empty()) {
+                    end = radius[i].distance;
+                    break;
+                }
+                ++i;
+            }
+            if (start < dmax_ && end > dmin_) {
+                sections.push_back({std::max(start, dmin_), std::min(end, dmax_), value});
+            }
+        } else if (transition && e.flag == "bt") {
+            double start = e.distance;
+            ++i;
+            double end = model_.own.empty() ? start : model_.own.at(model_.own.rows - 1, 0);
+            while (i < radius.size()) {
+                if (radius[i].flag.empty()) {
+                    end = radius[i].distance;
+                    break;
+                }
+                ++i;
+            }
+            if (start < dmax_ && end > dmin_) {
+                sections.push_back({std::max(start, dmin_), std::min(end, dmax_), 0.0});
+            }
+        } else {
+            ++i;
+        }
+    }
+    return sections;
+}
+
+static ImVec2 rotate_xy(double x, double y, double angle) {
+    double c = std::cos(angle);
+    double s = std::sin(angle);
+    return ImVec2(static_cast<float>(c * x - s * y), static_cast<float>(s * x + c * y));
+}
+
+PlanData App::build_plan_data() const {
+    PlanData out;
+    if (!has_model_ || model_.own.empty()) return out;
+
+    for (size_t r = 0; r < model_.own.rows; ++r) {
+        double d = model_.own.at(r, 0);
+        if (d < dmin_ || d > dmax_) continue;
+        TrackPoint p;
+        p.d = d;
+        p.x = model_.own.at(r, 1);
+        p.y = model_.own.at(r, 2);
+        p.z = model_.own.at(r, 3);
+        p.theta = model_.own.at(r, 4);
+        p.radius = model_.own.at(r, 5);
+        p.gradient = model_.own.at(r, 6);
+        out.own.push_back(p);
+    }
+    if (out.own.empty()) return out;
+    out.origin_angle = out.own.front().theta;
+    double angle = -out.origin_angle;
+    auto rotate_point = [angle](TrackPoint p) {
+        ImVec2 q = rotate_xy(p.x, p.y, angle);
+        p.x = q.x;
+        p.y = q.y;
+        p.theta += angle;
+        return p;
+    };
+    for (auto& p : out.own) p = rotate_point(p);
+
+    auto extend_bounds = [&](double x, double y) {
+        if (out.xmin > out.xmax) {
+            out.xmin = out.xmax = x;
+            out.ymin = out.ymax = y;
+        } else {
+            out.xmin = std::min(out.xmin, x);
+            out.xmax = std::max(out.xmax, x);
+            out.ymin = std::min(out.ymin, y);
+            out.ymax = std::max(out.ymax, y);
+        }
+    };
+    out.xmin = 1.0;
+    out.xmax = -1.0;
+    for (const auto& p : out.own) extend_bounds(p.x, p.y);
+
+    for (const auto& t : model_.other_tracks) {
+        if (!t.visible || t.points.empty()) continue;
+        PlanOther po;
+        po.key = t.key;
+        po.color = t.color;
+        double rmin = std::max(dmin_, t.range_min);
+        double rmax = std::min(dmax_, t.range_max);
+        for (size_t r = 0; r < t.points.rows; ++r) {
+            double d = t.points.at(r, 0);
+            if (d < rmin || d > rmax) continue;
+            TrackPoint p;
+            p.d = d;
+            p.x = t.points.at(r, 1);
+            p.y = t.points.at(r, 2);
+            p.z = t.points.at(r, 3);
+            ImVec2 q = rotate_xy(p.x, p.y, angle);
+            p.x = q.x;
+            p.y = q.y;
+            po.points.push_back(p);
+            extend_bounds(p.x, p.y);
+        }
+        if (!po.points.empty()) out.other.push_back(std::move(po));
+    }
+
+    for (const auto& s : model_.stations) {
+        if (s.distance < dmin_ || s.distance > dmax_) continue;
+        ImVec2 q = rotate_xy(s.x, s.y, angle);
+        out.stations.push_back({s, q.x, q.y});
+    }
+
+    for (const auto& s : model_.speedlimits) {
+        if (s.distance < dmin_ || s.distance > dmax_) continue;
+        size_t idx = nearest_own_index(s.distance);
+        TrackPoint p;
+        p.x = model_.own.at(idx, 1);
+        p.y = model_.own.at(idx, 2);
+        p.theta = model_.own.at(idx, 4);
+        p = rotate_point(p);
+        out.speedlimits.push_back({p.x, p.y, p.theta, s.has_speed, s.speed});
+    }
+
+    out.curve_sections = curve_sections(false);
+    out.transition_sections = curve_sections(true);
+
+    double pad = std::max({out.xmax - out.xmin, out.ymax - out.ymin, 1.0}) * 0.05;
+    out.xmin -= pad; out.xmax += pad; out.ymin -= pad; out.ymax += pad;
+    return out;
+}
+
+ProfileData App::build_profile_data() const {
+    ProfileData out;
+    if (!has_model_ || model_.own.empty()) return out;
+
+    for (size_t r = 0; r < model_.own.rows; ++r) {
+        double d = model_.own.at(r, 0);
+        if (d < dmin_ || d > dmax_) continue;
+        out.own_x.push_back(d);
+        out.own_y.push_back(model_.own.at(r, 3) - model_.height_origin);
+    }
+    if (!out.own_y.empty()) {
+        auto [mn, mx] = std::minmax_element(out.own_y.begin(), out.own_y.end());
+        if (*mn != *mx) {
+            out.ymin = *mn - (*mx - *mn) * 0.2;
+            out.ymax = *mx + (*mx - *mn) * 0.1;
+        } else {
+            out.ymin = *mn - 5.0;
+            out.ymax = *mx + 5.0;
+        }
+    }
+
+    for (size_t r = 0; r < model_.curve.rows; ++r) {
+        double d = model_.curve.at(r, 0);
+        if (d < dmin_ || d > dmax_) continue;
+        out.curve_x.push_back(d);
+        double radius = model_.curve.at(r, 1);
+        out.curve_y.push_back(radius > 0 ? 1.0 : (radius < 0 ? -1.0 : 0.0));
+    }
+
+    if (show_profile_other_) {
+        for (const auto& t : model_.other_tracks) {
+            if (!t.visible || t.points.empty()) continue;
+            ProfileOther po;
+            po.key = t.key;
+            po.color = t.color;
+            double rmin = std::max(dmin_, t.range_min);
+            double rmax = std::min(dmax_, t.range_max);
+            for (size_t r = 0; r < t.points.rows; ++r) {
+                double d = t.points.at(r, 0);
+                if (d < rmin || d > rmax) continue;
+                po.x.push_back(d);
+                po.y.push_back(t.points.at(r, 3) - model_.height_origin);
+            }
+            if (!po.x.empty()) out.other.push_back(std::move(po));
+        }
+    }
+
+    for (const auto& s : model_.stations) {
+        if (s.distance >= dmin_ && s.distance <= dmax_) out.stations.push_back(s);
+    }
+
+    std::vector<TrackEvent> gradients;
+    std::vector<TrackEvent> radii;
+    for (const auto& e : model_.own_events) {
+        if (e.key == "gradient") gradients.push_back(e);
+        if (e.key == "radius") radii.push_back(e);
+    }
+    for (const auto& e : gradients) {
+        if (e.distance >= dmin_ && e.distance <= dmax_) {
+            out.gradient_points.push_back({e.distance, interp_own_z(e.distance), ""});
+        }
+    }
+    double last_d = model_.own.empty() ? dmin_ : model_.own.at(0, 0);
+    double last_g = 0.0;
+    bool in_transition = false;
+    auto append_gradient_label = [&](double start, double end, double value) {
+        double seg_start = std::max(start, dmin_);
+        double seg_end = std::min(end, dmax_);
+        if (seg_end > seg_start) {
+            double mid = (seg_start + seg_end) * 0.5;
+            out.gradient_labels.push_back({mid, 0.0, value == 0.0 ? tr("plot.level") : format_double(std::abs(value), 1)});
+        }
+    };
+    for (const auto& e : gradients) {
+        if (!in_transition) append_gradient_label(last_d, e.distance, last_g);
+        if (e.value_number) last_g = e.number;
+        if (e.flag == "bt" || e.flag == "i") in_transition = true;
+        else if (e.flag.empty()) in_transition = false;
+        last_d = e.distance;
+    }
+    if (last_d < dmax_) {
+        if (!in_transition) append_gradient_label(last_d, dmax_, last_g);
+    }
+
+    for (size_t i = 0; i + 1 < radii.size(); ++i) {
+        const auto& e = radii[i];
+        if (!e.value_number || e.number == 0.0) continue;
+        double start = std::max(e.distance, dmin_);
+        double end = std::min(radii[i + 1].distance, dmax_);
+        if (end > start) {
+            out.radius_labels.push_back({(start + end) * 0.5, e.number > 0 ? 1.5 : -1.5, format_double(std::abs(e.number), 0)});
+        }
+    }
+    return out;
+}
+
+void App::clear_measure() {
+    measure_distance_.reset();
+    measure_text_.clear();
+}
+
+void App::update_measure(double distance) {
+    auto info = track_info_at(distance);
+    if (!info) {
+        clear_measure();
+        return;
+    }
+    measure_distance_ = distance;
+    auto sp = speed_at(distance);
+    std::string speed_text = tr("info.no_limit");
+    if (sp && sp->has_speed) speed_text = format_double(sp->speed, 0) + " km/h";
+    std::ostringstream out;
+    out << tr("info.mileage") << ": " << format_double(distance - model_.distance_origin, 0) << "m | "
+        << tr("info.elevation") << ": " << format_double(info->z, 1) << "m | "
+        << tr("info.gradient") << ": " << format_double(info->gradient, 1) << "‰ | "
+        << tr("info.radius") << ": " << format_double(info->radius, 0) << "m | "
+        << tr("info.speedlimit") << ": " << speed_text;
+    measure_text_ = out.str();
+}
+
+void App::center_plan_at_distance(double distance) {
+    PlanData pd = build_plan_data();
+    if (pd.own.empty()) return;
+    auto it = std::lower_bound(pd.own.begin(), pd.own.end(), distance, [](const TrackPoint& p, double d) { return p.d < d; });
+    if (it == pd.own.end()) {
+        --it;
+    } else if (it != pd.own.begin() && std::abs((it - 1)->d - distance) < std::abs(it->d - distance)) {
+        --it;
+    }
+    plan_view_.cx = it->x;
+    plan_view_.cy = it->y;
+    plan_view_.fitted = true;
+    keep_plan_view_ = true;
+}
+
+void App::request_plot_focus(double distance, bool include_profile, bool include_radius) {
+    if (include_profile && show_profile_graph_) {
+        focus_profile_next_ = true;
+        focus_profile_distance_ = distance;
+    }
+    if (include_radius && show_radius_graph_) {
+        focus_radius_next_ = true;
+        focus_radius_distance_ = distance;
+    }
+}
+
+void App::handle_measure_plot_double_click(bool include_profile, bool include_radius) {
+    if (mode_ != Mode::Measure || !ImPlot::IsPlotHovered() || !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) return;
+    ImPlotPoint p = ImPlot::GetPlotMousePos();
+    if (p.x < dmin_ || p.x > dmax_) return;
+    update_measure(p.x);
+    center_plan_at_distance(p.x);
+    request_plot_focus(p.x, include_profile, include_radius);
+}
+
+void App::focus_station(double distance) {
+    PlanData pd = build_plan_data();
+    for (const auto& s : pd.stations) {
+        if (std::abs(s.station.distance - distance) < 1e-6) {
+            plan_view_.cx = s.x;
+            plan_view_.cy = s.y;
+            plan_view_.fitted = true;
+            keep_plan_view_ = true;
+            break;
+        }
+    }
+    request_plot_focus(distance, true, true);
+}
+
+std::optional<ImVec2> App::background_uv_from_world(ImVec2 world) const {
+    if (bg_width_ <= 0.0 || bg_height_ <= 0.0) return std::nullopt;
+    double rot = bg_rotation_deg_ * 3.14159265358979323846 / 180.0;
+    double dx = world.x - bg_x_;
+    double dy = world.y - bg_y_;
+    double local_x = dx * std::cos(rot) + dy * std::sin(rot);
+    double local_y = -dx * std::sin(rot) + dy * std::cos(rot);
+    return ImVec2(static_cast<float>(local_x / bg_width_), static_cast<float>(local_y / bg_height_));
+}
+
+void App::draw_background(ImDrawList* draw, const View2D& view, ImVec2 origin, ImVec2 size) {
+    if (!bg_show_ || !bg_image_.srv || bg_width_ <= 0 || bg_height_ <= 0) return;
+    double rot = bg_rotation_deg_ * 3.14159265358979323846 / 180.0;
+    double c = std::cos(rot);
+    double s = std::sin(rot);
+    double hw = bg_width_ * 0.5;
+    double hh = bg_height_ * 0.5;
+    ImVec2 local[4] = {
+        ImVec2(static_cast<float>(-hw), static_cast<float>(-hh)),
+        ImVec2(static_cast<float>( hw), static_cast<float>(-hh)),
+        ImVec2(static_cast<float>( hw), static_cast<float>( hh)),
+        ImVec2(static_cast<float>(-hw), static_cast<float>( hh))
+    };
+    ImVec2 p[4];
+    for (int i = 0; i < 4; ++i) {
+        double x = bg_x_ + c * local[i].x - s * local[i].y;
+        double y = bg_y_ + s * local[i].x + c * local[i].y;
+        p[i] = view.world_to_screen(x, y, origin, size);
+    }
+    draw->AddImageQuad((void*)bg_image_.srv, p[0], p[1], p[2], p[3]);
+}
+
+void App::apply_background_alignment() {
+    if (!has_model_ || model_.stations.size() < 2 || !align_pick1_ || !align_pick2_) return;
+    if (bg_image_.path.empty() || bg_width_ <= 0.0 || bg_height_ <= 0.0) return;
+    align_station1_ = std::clamp(align_station1_, 0, static_cast<int>(model_.stations.size()) - 1);
+    align_station2_ = std::clamp(align_station2_, 0, static_cast<int>(model_.stations.size()) - 1);
+    PlanData pd = build_plan_data();
+    auto find_station = [&](const std::string& key) -> std::optional<ImVec2> {
+        for (const auto& s : pd.stations) {
+            if (s.station.key == key) return ImVec2(static_cast<float>(s.x), static_cast<float>(s.y));
+        }
+        return std::nullopt;
+    };
+    auto s1 = find_station(model_.stations[align_station1_].key);
+    auto s2 = find_station(model_.stations[align_station2_].key);
+    if (!s1 || !s2) return;
+
+    double dsx = s2->x - s1->x;
+    double dsy = s2->y - s1->y;
+    double ds_dist = std::hypot(dsx, dsy);
+    if (ds_dist < 1e-6) return;
+
+    ImVec2 q1 = *align_pick1_;
+    ImVec2 q2 = *align_pick2_;
+    ImVec2 u1(static_cast<float>(q1.x * bg_width_), static_cast<float>(q1.y * bg_height_));
+    ImVec2 u2(static_cast<float>(q2.x * bg_width_), static_cast<float>(q2.y * bg_height_));
+    double du = u2.x - u1.x;
+    double dv = u2.y - u1.y;
+    double duv_dist = std::hypot(du, dv);
+    if (duv_dist < 1e-6) return;
+    double scale = ds_dist / duv_dist;
+    double angle_duv = std::atan2(dv, du);
+    double angle_ds = std::atan2(dsy, dsx);
+    double new_rot = angle_ds - angle_duv;
+    double cosr = std::cos(new_rot);
+    double sinr = std::sin(new_rot);
+    double sx_u1 = scale * (u1.x * cosr - u1.y * sinr);
+    double sy_u1 = scale * (u1.x * sinr + u1.y * cosr);
+    bg_x_ = s1->x - sx_u1;
+    bg_y_ = s1->y - sy_u1;
+    bg_width_ *= scale;
+    bg_height_ *= scale;
+    bg_rotation_deg_ = std::fmod(new_rot * 180.0 / 3.14159265358979323846 + 360.0, 360.0);
+    sync_pending_background_values();
+    save_current_background_to_history();
+}
+
+void App::render_mode_grid_controls() {
+    ImGui::PushID("PlanModeGridControls");
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("%s:", tr("frame.mode").c_str());
+    ImGui::SameLine();
+    Mode previous_mode = mode_;
+    int mode = mode_ == Mode::Pan ? 0 : 1;
+    if (ImGui::RadioButton(tr("mode.pan").c_str(), &mode, 0)) mode_ = Mode::Pan;
+    ImGui::SameLine();
+    if (ImGui::RadioButton(tr("mode.measure").c_str(), &mode, 1)) mode_ = Mode::Measure;
+    if (previous_mode != mode_ && mode_ == Mode::Pan) clear_measure();
+
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("%s:", tr("frame.grid").c_str());
+    ImGui::SameLine();
+    int grid = grid_mode_ == GridMode::Fixed ? 0 : (grid_mode_ == GridMode::Movable ? 1 : 2);
+    if (ImGui::RadioButton(tr("grid.fixed").c_str(), &grid, 0)) grid_mode_ = GridMode::Fixed;
+    ImGui::SameLine();
+    if (ImGui::RadioButton(tr("grid.movable").c_str(), &grid, 1)) grid_mode_ = GridMode::Movable;
+    ImGui::SameLine();
+    if (ImGui::RadioButton(tr("grid.none").c_str(), &grid, 2)) grid_mode_ = GridMode::None;
+    ImGui::PopID();
+}
+
+static ImU32 color_u32(const ImVec4& color) {
+    return ImGui::ColorConvertFloat4ToU32(color);
+}
+
+static void draw_polyline(ImDrawList* draw, const std::vector<TrackPoint>& points, const View2D& view,
+                          ImVec2 origin, ImVec2 size, ImU32 color, float thickness) {
+    if (points.size() < 2) return;
+    std::vector<ImVec2> screen;
+    screen.reserve(points.size());
+    for (const auto& p : points) screen.push_back(view.world_to_screen(p.x, p.y, origin, size));
+    draw->AddPolyline(screen.data(), static_cast<int>(screen.size()), color, ImDrawFlags_None, thickness);
+}
+
+static double grid_step(double span) {
+    double raw = std::max(span / 8.0, 1e-9);
+    double mag = std::pow(10.0, std::floor(std::log10(raw)));
+    for (double f : {1.0, 2.0, 5.0, 10.0}) {
+        if (raw <= f * mag) return f * mag;
+    }
+    return 10.0 * mag;
+}
+
+static double friendly_scalebar_length(double raw_length) {
+    if (raw_length <= 0.0 || !std::isfinite(raw_length)) return 1.0;
+    double magnitude = std::pow(10.0, std::floor(std::log10(raw_length)));
+    double best = magnitude;
+    double best_diff = std::numeric_limits<double>::max();
+    for (int exp_offset : {-1, 0, 1, 2}) {
+        double base = magnitude * std::pow(10.0, exp_offset);
+        for (double factor : {1.0, 2.0, 3.0, 5.0}) {
+            double candidate = factor * base;
+            if (candidate <= 0.0) continue;
+            double diff = std::abs(candidate - raw_length);
+            if (diff < best_diff) {
+                best = candidate;
+                best_diff = diff;
+            }
+        }
+    }
+    return best;
+}
+
+static std::string format_scalebar_label(double length) {
+    if (length >= 1000.0) {
+        double km = length / 1000.0;
+        return format_double(km, std::abs(km - std::round(km)) < 1e-9 ? 0 : 1) + "km";
+    }
+    return format_double(length, std::abs(length - std::round(length)) < 1e-9 ? 0 : 1) + "m";
+}
+
+static void draw_scalebar(ImDrawList* draw, const View2D& view, ImVec2 origin, ImVec2 size) {
+    if (view.scale <= 0.0 || !std::isfinite(view.scale)) return;
+    float target_px = std::clamp(size.x * 0.18f, 90.0f, 180.0f);
+    double length = friendly_scalebar_length(static_cast<double>(target_px) / view.scale);
+    float bar_px = static_cast<float>(length * view.scale);
+    if (!std::isfinite(bar_px) || bar_px <= 0.0f) return;
+
+    float margin = 24.0f;
+    float tick = 10.0f;
+    ImVec2 p2(origin.x + size.x - margin, origin.y + size.y - margin);
+    ImVec2 p1(p2.x - bar_px, p2.y);
+    if (p1.x < origin.x + margin) return;
+
+    ImU32 color = IM_COL32(255, 255, 255, 255);
+    ImVec2 points[] = {ImVec2(p1.x, p1.y - tick), p1, p2, ImVec2(p2.x, p2.y - tick)};
+    draw->AddPolyline(points, IM_ARRAYSIZE(points), color, ImDrawFlags_None, 2.0f);
+    std::string label = format_scalebar_label(length);
+    ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
+    draw->AddText(ImVec2((p1.x + p2.x - text_size.x) * 0.5f, p1.y - tick - 4.0f - text_size.y),
+                  color, label.c_str());
+}
+
+void App::render_plan_canvas(ImVec2 size) {
+    PlanData data = build_plan_data();
+    ImGui::BeginChild("PlanCanvasChild", size, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    avail.x = std::max(avail.x, 50.0f);
+    avail.y = std::max(avail.y, 50.0f);
+    ImGui::InvisibleButton("PlanCanvasButton", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    bool hovered = ImGui::IsItemHovered();
+    bool picking_background_station = pick_slot_ != 0;
+    if (hovered && picking_background_station) {
+        set_crosshair_cursor();
+    }
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), IM_COL32(12, 13, 15, 255));
+    draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), true);
+
+    if (!data.own.empty() && (!plan_view_.fitted || !keep_plan_view_)) {
+        plan_view_.fit(data.xmin, data.ymin, data.xmax, data.ymax, avail);
+        keep_plan_view_ = true;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 mouse = io.MousePos;
+    auto nearest_measure_distance = [&]() -> std::optional<double> {
+        double best = std::numeric_limits<double>::max();
+        const TrackPoint* best_p = nullptr;
+        for (const auto& p : data.own) {
+            ImVec2 sp = plan_view_.world_to_screen(p.x, p.y, origin, avail);
+            double dist = std::hypot(sp.x - mouse.x, sp.y - mouse.y);
+            if (dist < best) {
+                best = dist;
+                best_p = &p;
+            }
+        }
+        if (best_p && best <= 30.0) return best_p->d;
+        return std::nullopt;
+    };
+    std::optional<double> hovered_measure_distance;
+    if (hovered && mode_ == Mode::Measure && !data.own.empty()) {
+        hovered_measure_distance = nearest_measure_distance();
+        if (hovered_measure_distance) set_crosshair_cursor();
+    }
+    if (hovered && io.MouseWheel != 0.0f) {
+        if (io.KeyShift) {
+            plan_view_.rotation += io.MouseWheel * 5.0 * 3.14159265358979323846 / 180.0;
+        } else {
+            double factor = io.MouseWheel > 0 ? 1.15 : 1.0 / 1.15;
+            plan_view_.scale = std::clamp(plan_view_.scale * factor, 0.001, 10000.0);
+        }
+    }
+
+    bool rotate_plan = hovered && (ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+                                   (io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left)));
+    if (hovered && mode_ == Mode::Pan && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan) {
+        if (!plan_view_.dragging) {
+            plan_view_.dragging = true;
+            plan_view_.last_mouse = mouse;
+        } else {
+            ImVec2 delta(mouse.x - plan_view_.last_mouse.x, mouse.y - plan_view_.last_mouse.y);
+            plan_view_.pan_by_screen_delta(delta);
+            plan_view_.last_mouse = mouse;
+        }
+        set_move_cursor();
+    } else {
+        plan_view_.dragging = false;
+    }
+
+    if (rotate_plan) {
+        if (!plan_view_.rotating) {
+            plan_view_.rotating = true;
+            plan_view_.last_mouse = mouse;
+        } else {
+            ImVec2 center(origin.x + avail.x * 0.5f, origin.y + avail.y * 0.5f);
+            double a0 = std::atan2(plan_view_.last_mouse.y - center.y, plan_view_.last_mouse.x - center.x);
+            double a1 = std::atan2(mouse.y - center.y, mouse.x - center.x);
+            plan_view_.rotation += a1 - a0;
+            plan_view_.last_mouse = mouse;
+        }
+    } else {
+        plan_view_.rotating = false;
+    }
+
+    if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        ImVec2 world = plan_view_.screen_to_world(mouse, origin, avail);
+        if (pick_slot_ == 1) {
+            if (auto uv = background_uv_from_world(world)) align_pick1_ = *uv;
+            pick_slot_ = 0;
+            show_align_popup_ = true;
+        } else if (pick_slot_ == 2) {
+            if (auto uv = background_uv_from_world(world)) align_pick2_ = *uv;
+            pick_slot_ = 0;
+            show_align_popup_ = true;
+        } else if (mode_ == Mode::Measure) {
+            if (auto clicked_distance = nearest_measure_distance()) {
+                update_measure(*clicked_distance);
+                request_plot_focus(*clicked_distance, true, true);
+            }
+        } else if (!data.own.empty()) {
+            plan_view_.fit(data.xmin, data.ymin, data.xmax, data.ymax, avail);
+        }
+    }
+
+    if (grid_mode_ == GridMode::Fixed) {
+        for (float x = origin.x; x <= origin.x + avail.x; x += 80.0f) draw->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + avail.y), IM_COL32(48, 52, 58, 255));
+        for (float y = origin.y; y <= origin.y + avail.y; y += 80.0f) draw->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + avail.x, y), IM_COL32(48, 52, 58, 255));
+    } else if (grid_mode_ == GridMode::Movable) {
+        ImVec2 screen_corners[] = {
+            origin,
+            ImVec2(origin.x + avail.x, origin.y),
+            ImVec2(origin.x, origin.y + avail.y),
+            ImVec2(origin.x + avail.x, origin.y + avail.y)
+        };
+        ImVec2 first = plan_view_.screen_to_world(screen_corners[0], origin, avail);
+        double xmin = first.x, xmax = first.x;
+        double ymin = first.y, ymax = first.y;
+        for (int i = 1; i < IM_ARRAYSIZE(screen_corners); ++i) {
+            ImVec2 c = plan_view_.screen_to_world(screen_corners[i], origin, avail);
+            xmin = std::min(xmin, static_cast<double>(c.x));
+            xmax = std::max(xmax, static_cast<double>(c.x));
+            ymin = std::min(ymin, static_cast<double>(c.y));
+            ymax = std::max(ymax, static_cast<double>(c.y));
+        }
+        double step = grid_step(std::max(xmax - xmin, ymax - ymin));
+        xmin = std::floor(xmin / step) * step - step;
+        xmax = std::ceil(xmax / step) * step + step;
+        ymin = std::floor(ymin / step) * step - step;
+        ymax = std::ceil(ymax / step) * step + step;
+        for (double x = xmin; x <= xmax; x += step) {
+            ImVec2 a = plan_view_.world_to_screen(x, ymin, origin, avail);
+            ImVec2 b = plan_view_.world_to_screen(x, ymax, origin, avail);
+            draw->AddLine(a, b, IM_COL32(48, 52, 58, 255));
+        }
+        for (double y = ymin; y <= ymax; y += step) {
+            ImVec2 a = plan_view_.world_to_screen(xmin, y, origin, avail);
+            ImVec2 b = plan_view_.world_to_screen(xmax, y, origin, avail);
+            draw->AddLine(a, b, IM_COL32(48, 52, 58, 255));
+        }
+    }
+
+    draw_background(draw, plan_view_, origin, avail);
+
+    auto draw_section = [&](const Section& sec, ImU32 color, float width) {
+        std::vector<TrackPoint> pts;
+        for (const auto& p : data.own) if (p.d >= sec.start && p.d <= sec.end) pts.push_back(p);
+        draw_polyline(draw, pts, plan_view_, origin, avail, color, width);
+    };
+    if (show_curve_values_) {
+        for (const auto& s : data.curve_sections) draw_section(s, IM_COL32(130, 130, 130, 220), 10.0f);
+        for (const auto& s : data.transition_sections) draw_section(s, IM_COL32(84, 84, 84, 220), 8.0f);
+    }
+    draw_polyline(draw, data.own, plan_view_, origin, avail, IM_COL32(245, 245, 245, 255), 2.0f);
+    for (const auto& t : data.other) draw_polyline(draw, t.points, plan_view_, origin, avail, color_u32(t.color), 1.5f);
+
+    if (show_stations_) {
+        for (const auto& st : data.stations) {
+            ImVec2 p = plan_view_.world_to_screen(st.x, st.y, origin, avail);
+            draw->AddCircleFilled(p, station_marker_size_, IM_COL32(255, 255, 255, 255));
+            if (show_station_names_) draw->AddText(ImVec2(p.x + 8, p.y - 16), IM_COL32(255, 255, 255, 255), st.station.name.c_str());
+            if (show_station_mileage_) draw->AddText(ImVec2(p.x + 8, p.y + 4), IM_COL32(255, 216, 77, 255), (format_double(st.station.mileage, 0) + "m").c_str());
+        }
+    }
+
+    if (show_speedlimits_) {
+        for (const auto& sp : data.speedlimits) {
+            ImVec2 p = plan_view_.world_to_screen(sp.x, sp.y, origin, avail);
+            double wx = sp.x - std::sin(sp.theta);
+            double wy = sp.y + std::cos(sp.theta);
+            ImVec2 q = plan_view_.world_to_screen(wx, wy, origin, avail);
+            ImVec2 d(q.x - p.x, q.y - p.y);
+            float len = std::max(1.0f, std::sqrt(d.x * d.x + d.y * d.y));
+            d.x = d.x / len * 8.0f;
+            d.y = d.y / len * 8.0f;
+            draw->AddLine(ImVec2(p.x - d.x, p.y - d.y), ImVec2(p.x + d.x, p.y + d.y), IM_COL32(136, 204, 255, 255), 1.0f);
+            std::string label = sp.has_speed ? format_double(sp.speed, 0) : "x";
+            draw->AddText(ImVec2(p.x + 10, p.y - 15), IM_COL32(136, 204, 255, 255), label.c_str());
+        }
+    }
+
+    if (show_curve_values_) {
+        for (const auto& sec : data.curve_sections) {
+            double mid = (sec.start + sec.end) * 0.5;
+            auto it = std::lower_bound(data.own.begin(), data.own.end(), mid, [](const TrackPoint& p, double d) { return p.d < d; });
+            if (it != data.own.end()) {
+                ImVec2 p = plan_view_.world_to_screen(it->x, it->y, origin, avail);
+                draw->AddText(ImVec2(p.x + 8, p.y - 16), IM_COL32(136, 255, 136, 255), format_double(sec.value, 0).c_str());
+            }
+        }
+    }
+
+    if (hovered_measure_distance) {
+        update_measure(*hovered_measure_distance);
+    }
+
+    if (mode_ == Mode::Measure && measure_distance_ && !data.own.empty()) {
+        auto it = std::lower_bound(data.own.begin(), data.own.end(), *measure_distance_, [](const TrackPoint& p, double d) { return p.d < d; });
+        if (it == data.own.end()) {
+            --it;
+        } else if (it != data.own.begin() && std::abs((it - 1)->d - *measure_distance_) < std::abs(it->d - *measure_distance_)) {
+            --it;
+        }
+        ImVec2 p = plan_view_.world_to_screen(it->x, it->y, origin, avail);
+        draw->AddLine(ImVec2(p.x - 12, p.y - 12), ImVec2(p.x + 12, p.y + 12), IM_COL32(255, 51, 51, 255), 2.0f);
+        draw->AddLine(ImVec2(p.x - 12, p.y + 12), ImVec2(p.x + 12, p.y - 12), IM_COL32(255, 51, 51, 255), 2.0f);
+    }
+
+    draw->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(255, 255, 255, 255), tr("canvas.plan").c_str());
+    draw_scalebar(draw, plan_view_, origin, avail);
+    draw->PopClipRect();
+    ImGui::EndChild();
+}
+
+static void plot_line_vec(const char* label, const std::vector<double>& x, const std::vector<double>& y, ImVec4 color, float weight = 1.5f) {
+    if (x.size() < 2 || y.size() < 2) return;
+    ImPlotSpec spec;
+    spec.LineColor = color;
+    spec.LineWeight = weight;
+    ImPlot::PlotLine(label, x.data(), y.data(), static_cast<int>(std::min(x.size(), y.size())), spec);
+}
+
+static void draw_plot_overlay_labels(const std::string& title, const std::string& unit) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    draw->AddText(ImVec2(pos.x + 8.0f, pos.y + 6.0f), color, title.c_str());
+    ImVec2 unit_size = ImGui::CalcTextSize(unit.c_str());
+    draw->AddText(ImVec2(pos.x - unit_size.x - 8.0f, pos.y + size.y + 6.0f), color, unit.c_str());
+}
+
+static void mask_plot_axis_tick_edges(ImVec2 frame_min, ImVec2 frame_max, ImVec2 plot_pos, ImVec2 plot_size) {
+    ImVec2 plot_max(plot_pos.x + plot_size.x, plot_pos.y + plot_size.y);
+    if (plot_size.x <= 0.0f || plot_size.y <= 0.0f) return;
+
+    ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    float bleed = ImGui::GetFontSize() * 1.6f;
+    ImVec2 outer_min(frame_min.x - bleed, frame_min.y - bleed);
+    ImVec2 outer_max(frame_max.x + bleed, frame_max.y + bleed);
+    auto fill = [&](ImVec2 min, ImVec2 max) {
+        if (max.x > min.x && max.y > min.y) draw->AddRectFilled(min, max, bg);
+    };
+
+    fill(outer_min, plot_pos);
+    fill(ImVec2(plot_max.x, outer_min.y), ImVec2(outer_max.x, plot_pos.y));
+    fill(ImVec2(outer_min.x, plot_max.y), ImVec2(plot_pos.x, outer_max.y));
+    fill(plot_max, outer_max);
+}
+
+static void draw_radius_side_markers() {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    ImVec2 clip_max(pos.x + size.x, pos.y + size.y);
+    ImVec2 zero = ImPlot::PlotToPixels(ImPlot::GetPlotLimits().X.Min, 0.0);
+    if (!std::isfinite(zero.y)) return;
+
+    ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    ImVec2 r_size = ImGui::CalcTextSize("R");
+    ImVec2 l_size = ImGui::CalcTextSize("L");
+    float x = pos.x - std::max(r_size.x, l_size.x) - 4.0f;
+    float gap = 3.0f;
+    float r_y = std::clamp(zero.y - r_size.y - gap, pos.y + 2.0f, clip_max.y - r_size.y - 2.0f);
+    float l_y = std::clamp(zero.y + gap, pos.y + 2.0f, clip_max.y - l_size.y - 2.0f);
+
+    draw->AddText(ImVec2(x, r_y), color, "R");
+    draw->AddText(ImVec2(x, l_y), color, "L");
+}
+
+static std::optional<std::pair<double, double>> plot_x_wheel_zoom_limits(const ImPlotRect& limits) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.MouseWheel == 0.0f || !ImPlot::IsPlotHovered()) return std::nullopt;
+    double min_x = limits.X.Min;
+    double max_x = limits.X.Max;
+    double span = max_x - min_x;
+    if (!std::isfinite(span) || span <= 1e-9) return std::nullopt;
+
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    if (size.x <= 1.0f) return std::nullopt;
+    float tx = std::clamp((io.MousePos.x - pos.x) / size.x, 0.0f, 1.0f);
+
+    float zoom_rate = 0.1f;
+    if (io.MouseWheel > 0.0f) {
+        zoom_rate = (-zoom_rate) / (1.0f + (2.0f * zoom_rate));
+    }
+    double new_min = min_x - span * tx * zoom_rate;
+    double new_max = max_x + span * (1.0f - tx) * zoom_rate;
+    if (!std::isfinite(new_min) || !std::isfinite(new_max) || new_max <= new_min) return std::nullopt;
+    return std::make_pair(new_min, new_max);
+}
+
+static void draw_bottom_locked_plot_labels(const std::vector<LabelPoint>& labels) {
+    ImDrawList* draw = ImPlot::GetPlotDrawList();
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    ImVec2 clip_max(pos.x + size.x, pos.y + size.y);
+    ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    draw->PushClipRect(pos, clip_max, true);
+    for (const auto& label : labels) {
+        ImVec2 p = ImPlot::PlotToPixels(label.x, 0.0);
+        if (p.x < pos.x || p.x > clip_max.x) continue;
+        ImVec2 text_size = ImGui::CalcTextSize(label.text.c_str());
+        draw->AddText(ImVec2(p.x + 6.0f - text_size.x, clip_max.y - text_size.y - 6.0f), color, label.text.c_str());
+    }
+    draw->PopClipRect();
+}
+
+enum class FixedPlotY {
+    Top,
+    Bottom
+};
+
+static std::string station_mileage_text(const Station& station) {
+    return format_double(station.mileage, 0) + "m";
+}
+
+static void draw_fixed_y_plot_text(double x, const std::string& text, ImU32 color, FixedPlotY fixed_y) {
+    if (text.empty()) return;
+    ImDrawList* draw = ImPlot::GetPlotDrawList();
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    ImVec2 clip_max(pos.x + size.x, pos.y + size.y);
+    ImVec2 p = ImPlot::PlotToPixels(x, 0.0);
+    if (!std::isfinite(p.x) || p.x < pos.x || p.x > clip_max.x) return;
+
+    ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+    float y = fixed_y == FixedPlotY::Top ? pos.y + 8.0f : clip_max.y - text_size.y - 8.0f;
+    draw->PushClipRect(pos, clip_max, true);
+    draw->AddText(ImVec2(p.x + 8.0f, y), color, text.c_str());
+    draw->PopClipRect();
+}
+
+static void draw_plot_point_right_text(double x, double y, const std::string& text, ImU32 color) {
+    if (text.empty()) return;
+    ImDrawList* draw = ImPlot::GetPlotDrawList();
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    ImVec2 clip_max(pos.x + size.x, pos.y + size.y);
+    ImVec2 p = ImPlot::PlotToPixels(x, y);
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || p.x < pos.x || p.x > clip_max.x) return;
+
+    draw->PushClipRect(pos, clip_max, true);
+    draw->AddText(ImVec2(p.x + 8.0f, p.y - 26.0f), color, text.c_str());
+    draw->PopClipRect();
+}
+
+enum class ProfileMarkerDirection {
+    Up,
+    Down
+};
+
+static void draw_profile_vertical_marker(double x, double track_y, ProfileMarkerDirection direction,
+                                         ImU32 line_color, float line_weight, bool draw_station_marker,
+                                         float station_marker_size = kDefaultStationMarkerSize) {
+    ImDrawList* draw = ImPlot::GetPlotDrawList();
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    ImVec2 clip_min = pos;
+    ImVec2 clip_max(pos.x + size.x, pos.y + size.y);
+    ImVec2 p = ImPlot::PlotToPixels(x, track_y);
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || p.x < clip_min.x || p.x > clip_max.x) return;
+
+    float unclipped_a = direction == ProfileMarkerDirection::Up ? clip_min.y : p.y;
+    float unclipped_b = direction == ProfileMarkerDirection::Up ? p.y : clip_max.y;
+    float line_min = std::max(std::min(unclipped_a, unclipped_b), clip_min.y);
+    float line_max = std::min(std::max(unclipped_a, unclipped_b), clip_max.y);
+
+    draw->PushClipRect(clip_min, clip_max, true);
+    if (line_max > line_min) {
+        draw->AddLine(ImVec2(p.x, line_min), ImVec2(p.x, line_max), line_color, line_weight);
+    }
+    if (draw_station_marker) {
+        float radius = clamp_station_marker_size(station_marker_size);
+        float outline_weight = std::max(1.0f, radius * 0.375f);
+        draw->AddCircleFilled(p, radius, IM_COL32(0, 0, 0, 255));
+        draw->AddCircle(p, radius, IM_COL32(255, 255, 255, 255), 0, outline_weight);
+    }
+    draw->PopClipRect();
+}
+
+class ScopedImPlotFitButton {
+public:
+    explicit ScopedImPlotFitButton(bool disabled) : active_(disabled) {
+        if (!active_) return;
+        ImPlotInputMap& input = ImPlot::GetInputMap();
+        old_fit_ = input.Fit;
+        // Extra mouse slot 3 is not enabled by ImPlot's plot button flags.
+        input.Fit = 3;
+    }
+
+    ~ScopedImPlotFitButton() {
+        if (active_) ImPlot::GetInputMap().Fit = old_fit_;
+    }
+
+private:
+    bool active_ = false;
+    ImGuiMouseButton old_fit_ = ImGuiMouseButton_Left;
+};
+
+class ScopedImPlotWheelZoomDisabled {
+public:
+    explicit ScopedImPlotWheelZoomDisabled(bool active) : active_(active) {
+        if (!active_) return;
+        ImPlotInputMap& input = ImPlot::GetInputMap();
+        old_zoom_rate_ = input.ZoomRate;
+        input.ZoomRate = 0.0f;
+    }
+
+    ~ScopedImPlotWheelZoomDisabled() {
+        if (active_) ImPlot::GetInputMap().ZoomRate = old_zoom_rate_;
+    }
+
+private:
+    bool active_ = false;
+    float old_zoom_rate_ = 0.0f;
+};
+
+static bool point_in_rect(ImVec2 p, ImVec2 pos, ImVec2 size) {
+    return p.x >= pos.x && p.x <= pos.x + size.x && p.y >= pos.y && p.y <= pos.y + size.y;
+}
+
+static double preserved_plot_span(double current_span, double fallback_min, double fallback_max) {
+    if (std::isfinite(current_span) && current_span > 1e-6) return current_span;
+    double fallback = fallback_max - fallback_min;
+    if (std::isfinite(fallback) && fallback > 1e-6) return fallback;
+    return 1000.0;
+}
+
+void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
+    if (!show_profile_graph_) return;
+    ScopedImPlotFitButton disable_fit(mode_ == Mode::Measure);
+    ImGuiIO& io = ImGui::GetIO();
+    bool mouse_in_profile_plot = profile_plot_rect_valid_ && point_in_rect(io.MousePos, profile_plot_pos_, profile_plot_size_);
+    ScopedImPlotWheelZoomDisabled disable_default_wheel_zoom(mouse_in_profile_plot);
+    ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(4.0f, 4.0f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_LabelPadding, ImVec2(2.0f, 2.0f));
+    bool consumed_profile_x_zoom = false;
+    if (ImPlot::BeginPlot("##ProfilePlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
+        ImVec2 frame_min = ImGui::GetItemRectMin();
+        ImVec2 frame_max = ImGui::GetItemRectMax();
+        ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoLabel, ImPlotAxisFlags_NoLabel);
+        ImPlotCond reset_cond = reset_profile_axes_next_ ? ImPlotCond_Always : ImPlotCond_Once;
+        if (focus_profile_next_) {
+            double span = preserved_plot_span(profile_x_span_, dmin_, dmax_);
+            ImPlot::SetupAxisLimits(ImAxis_X1, focus_profile_distance_ - span * 0.5, focus_profile_distance_ + span * 0.5, ImPlotCond_Always);
+            profile_x_zoom_pending_ = false;
+        } else if (!reset_profile_axes_next_ && profile_x_zoom_pending_) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, profile_x_zoom_min_, profile_x_zoom_max_, ImPlotCond_Always);
+            consumed_profile_x_zoom = true;
+        } else {
+            ImPlot::SetupAxisLimits(ImAxis_X1, dmin_, dmax_, reset_cond);
+            if (reset_profile_axes_next_) profile_x_zoom_pending_ = false;
+        }
+        ImPlot::SetupAxisLimits(ImAxis_Y1, data.ymin, data.ymax, reset_cond);
+        plot_line_vec("Own", data.own_x, data.own_y, ImVec4(1, 1, 1, 1), 2.0f);
+        for (const auto& t : data.other) plot_line_vec(t.key.c_str(), t.x, t.y, t.color, 1.2f);
+        if (show_gradient_pos_) {
+            for (const auto& p : data.gradient_points) {
+                draw_profile_vertical_marker(p.x, p.y, ProfileMarkerDirection::Down,
+                                             IM_COL32(255, 255, 255, 140), 1.0f, false);
+            }
+            if (show_gradient_values_) {
+                draw_bottom_locked_plot_labels(data.gradient_labels);
+            }
+        }
+        if (show_stations_) {
+            for (const auto& s : data.stations) {
+                double x = s.distance;
+                double y = s.z - model_.height_origin;
+                draw_profile_vertical_marker(x, y, ProfileMarkerDirection::Up,
+                                             IM_COL32(255, 255, 255, 191), 1.0f, true, station_marker_size_);
+                if (show_station_names_) draw_plot_point_right_text(x, y, s.name, IM_COL32(255, 255, 255, 255));
+                if (show_station_mileage_) draw_fixed_y_plot_text(x, station_mileage_text(s), IM_COL32(255, 216, 77, 255), FixedPlotY::Top);
+            }
+        }
+        if (mode_ == Mode::Measure && ImPlot::IsPlotHovered()) {
+            set_crosshair_cursor();
+            ImPlotPoint p = ImPlot::GetPlotMousePos();
+            if (p.x >= dmin_ && p.x <= dmax_) update_measure(p.x);
+        }
+        handle_measure_plot_double_click(false, true);
+        if (mode_ == Mode::Measure && measure_distance_) {
+            double x = *measure_distance_;
+            ImPlot::PlotInfLines("##measure_profile", &x, 1, {ImPlotProp_LineColor, ImVec4(1, 0.2f, 0.2f, 1), ImPlotProp_LineWeight, 2.0f, ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
+        }
+        ImPlotRect limits = ImPlot::GetPlotLimits();
+        profile_x_span_ = std::abs(limits.X.Size());
+        profile_plot_pos_ = ImPlot::GetPlotPos();
+        profile_plot_size_ = ImPlot::GetPlotSize();
+        profile_plot_rect_valid_ = profile_plot_size_.x > 0.0f && profile_plot_size_.y > 0.0f;
+        if (auto zoom_limits = plot_x_wheel_zoom_limits(limits)) {
+            profile_x_zoom_min_ = zoom_limits->first;
+            profile_x_zoom_max_ = zoom_limits->second;
+            profile_x_zoom_pending_ = true;
+        } else if (consumed_profile_x_zoom) {
+            profile_x_zoom_pending_ = false;
+        }
+        ImVec2 plot_pos = profile_plot_pos_;
+        ImVec2 plot_size = profile_plot_size_;
+        mask_plot_axis_tick_edges(frame_min, frame_max, plot_pos, plot_size);
+        draw_plot_overlay_labels(tr("plot.profile"), tr("unit.m"));
+        focus_profile_next_ = false;
+        reset_profile_axes_next_ = false;
+        ImPlot::EndPlot();
+    }
+    ImPlot::PopStyleVar(2);
+}
+
+void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
+    if (!show_radius_graph_) return;
+    ScopedImPlotFitButton disable_fit(mode_ == Mode::Measure);
+    ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(4.0f, 4.0f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_LabelPadding, ImVec2(2.0f, 2.0f));
+    if (ImPlot::BeginPlot("##RadiusPlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
+        ImVec2 frame_min = ImGui::GetItemRectMin();
+        ImVec2 frame_max = ImGui::GetItemRectMax();
+        ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_NoLabel);
+        ImPlot::SetupAxis(ImAxis_Y1, nullptr, ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickMarks | ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoHighlight | ImPlotAxisFlags_Lock);
+        ImPlotCond reset_cond = reset_radius_axes_next_ ? ImPlotCond_Always : ImPlotCond_Once;
+        if (focus_radius_next_) {
+            double span = preserved_plot_span(radius_x_span_, dmin_, dmax_);
+            ImPlot::SetupAxisLimits(ImAxis_X1, focus_radius_distance_ - span * 0.5, focus_radius_distance_ + span * 0.5, ImPlotCond_Always);
+        } else {
+            ImPlot::SetupAxisLimits(ImAxis_X1, dmin_, dmax_, reset_cond);
+        }
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -2.2, 2.2, ImPlotCond_Always);
+        plot_line_vec("RadiusSign", data.curve_x, data.curve_y, ImVec4(1, 1, 1, 1), 2.0f);
+        for (const auto& label : data.radius_labels) ImPlot::PlotText(label.text.c_str(), label.x, label.y, ImVec2(-6, 0), {ImPlotProp_Flags, ImPlotTextFlags_Vertical});
+        if (show_stations_) {
+            for (const auto& s : data.stations) {
+                double x = s.distance;
+                ImPlot::PlotInfLines(("##rst" + s.key).c_str(), &x, 1, {ImPlotProp_LineColor, ImVec4(1, 1, 1, 0.55f), ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
+                if (show_station_names_) draw_fixed_y_plot_text(x, s.name, IM_COL32(255, 255, 255, 255), FixedPlotY::Top);
+                if (show_station_mileage_) draw_fixed_y_plot_text(x, station_mileage_text(s), IM_COL32(255, 216, 77, 255), FixedPlotY::Bottom);
+            }
+        }
+        if (mode_ == Mode::Measure && ImPlot::IsPlotHovered()) {
+            set_crosshair_cursor();
+            ImPlotPoint p = ImPlot::GetPlotMousePos();
+            if (p.x >= dmin_ && p.x <= dmax_) update_measure(p.x);
+        }
+        handle_measure_plot_double_click(true, false);
+        if (mode_ == Mode::Measure && measure_distance_) {
+            double x = *measure_distance_;
+            ImPlot::PlotInfLines("##measure_radius", &x, 1, {ImPlotProp_LineColor, ImVec4(1, 0.2f, 0.2f, 1), ImPlotProp_LineWeight, 2.0f, ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
+        }
+        ImPlotRect limits = ImPlot::GetPlotLimits();
+        radius_x_span_ = std::abs(limits.X.Size());
+        ImVec2 plot_pos = ImPlot::GetPlotPos();
+        ImVec2 plot_size = ImPlot::GetPlotSize();
+        mask_plot_axis_tick_edges(frame_min, frame_max, plot_pos, plot_size);
+        draw_radius_side_markers();
+        draw_plot_overlay_labels(tr("plot.radius"), tr("unit.m"));
+        focus_radius_next_ = false;
+        reset_radius_axes_next_ = false;
+        ImPlot::EndPlot();
+    }
+    ImPlot::PopStyleVar(2);
+}
+
+void App::render_plots() {
+    std::string title = tr("frame.plots") + "###Plots";
+    ImGui::Begin(title.c_str());
+    render_mode_grid_controls();
+    if (pick_slot_ != 0) ImGui::TextUnformatted(tr("hint.pick_bg_station").c_str());
+    else if (mode_ == Mode::Measure && !measure_text_.empty()) ImGui::TextUnformatted(measure_text_.c_str());
+    else ImGui::TextDisabled("%s", has_model_ ? "" : tr("status.no_map").c_str());
+
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    float splitter_h = 6.0f;
+    float plan_h = avail.y;
+    bool any_graph = show_profile_graph_ || show_radius_graph_;
+    if (any_graph) plan_h = std::max(80.0f, avail.y * static_cast<float>(plan_height_) - splitter_h);
+    render_plan_canvas(ImVec2(avail.x, plan_h));
+
+    if (any_graph) {
+        ImGui::InvisibleButton("##vsplit", ImVec2(avail.x, splitter_h));
+        if (ImGui::IsItemActive()) {
+            plan_height_ += ImGui::GetIO().MouseDelta.y / std::max(1.0f, avail.y);
+            plan_height_ = std::clamp(plan_height_, 0.2, 0.86);
+        }
+        ProfileData profile = build_profile_data();
+        ImVec2 graph_avail = ImGui::GetContentRegionAvail();
+        if (show_profile_graph_ && show_radius_graph_) {
+            float left_w = graph_avail.x * static_cast<float>(graph_split_);
+            render_profile_plot(profile, ImVec2(left_w - 3.0f, graph_avail.y));
+            ImGui::SameLine();
+            ImGui::InvisibleButton("##hsplit", ImVec2(6.0f, graph_avail.y));
+            if (ImGui::IsItemActive()) {
+                graph_split_ += ImGui::GetIO().MouseDelta.x / std::max(1.0f, graph_avail.x);
+                graph_split_ = std::clamp(graph_split_, 0.2, 0.8);
+            }
+            ImGui::SameLine();
+            render_radius_plot(profile, ImVec2(-1.0f, graph_avail.y));
+        } else if (show_profile_graph_) {
+            render_profile_plot(profile, graph_avail);
+        } else if (show_radius_graph_) {
+            render_radius_plot(profile, graph_avail);
+        }
+    }
+    ImGui::End();
+}
+

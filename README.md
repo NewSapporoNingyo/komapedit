@@ -141,7 +141,10 @@ komapedit/
 │  └─ multilanguage.h              # UI localization strings
 ├─ src/
 │  ├─ maploader.cpp                # BVE Map parsing and geometry generation
-│  └─ gui_app.cpp                  # Win32/DirectX 11/ImGui GUI
+│  ├─ kme.h                        # App declaration and shared GUI state
+│  ├─ gui_kme.cpp                  # Main window, Win32/DirectX 11 setup, app loop
+│  ├─ canvas2D.cpp                 # 2D plan/profile/radius canvas rendering
+│  └─ datatable.cpp                # Data table columns, cache, and table windows
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui, docking branch
 │  └─ implot/                      # ImPlot

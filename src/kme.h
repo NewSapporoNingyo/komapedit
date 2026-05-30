@@ -1,0 +1,526 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
+ */
+
+#pragma once
+
+#include "multilanguage.h"
+
+#include "imgui.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstddef>
+#include <filesystem>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+struct ID3D11Device;
+struct ID3D11ShaderResourceView;
+
+inline constexpr float kDefaultFontSize = 18.0f;
+inline constexpr float kMinFontSize = 6.0f;
+inline constexpr float kMaxFontSize = 32.0f;
+inline constexpr float kDefaultUiComponentSize = 100.0f;
+inline constexpr float kMinUiComponentSize = 50.0f;
+inline constexpr float kMaxUiComponentSize = 200.0f;
+inline constexpr float kDefaultStationMarkerSize = 4.0f;
+inline constexpr float kMinStationMarkerSize = 1.0f;
+inline constexpr float kMaxStationMarkerSize = 16.0f;
+inline constexpr size_t kMaxRecentMaps = 10;
+
+std::wstring utf8_to_wide(const std::string& text);
+std::string wide_to_utf8(const std::wstring& text);
+std::string format_double(double value, int precision = 6);
+float clamp_font_size(float value);
+float clamp_ui_component_size(float value);
+float clamp_station_marker_size(float value);
+ImVec4 default_theme_color();
+ImVec4 clamp_theme_color(ImVec4 color);
+std::string theme_color_to_string(const ImVec4& color);
+std::string display_name_from_path(const std::string& path);
+
+struct Matrix {
+    std::vector<double> data;
+    size_t rows = 0;
+    size_t cols = 0;
+
+    double at(size_t r, size_t c) const {
+        return data[r * cols + c];
+    }
+
+    bool empty() const {
+        return rows == 0 || cols == 0;
+    }
+};
+
+struct TrackEvent {
+    double distance = 0.0;
+    std::string key;
+    std::string flag;
+    bool value_number = false;
+    double number = 0.0;
+    std::string text;
+};
+
+struct OtherTrack {
+    std::string key;
+    Matrix points;
+    bool visible = false;
+    double range_min = 0.0;
+    double range_max = 0.0;
+    ImVec4 color = ImVec4(0.2f, 0.7f, 1.0f, 1.0f);
+};
+
+struct Station {
+    std::string key;
+    std::string name;
+    double distance = 0.0;
+    double mileage = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+struct SpeedLimit {
+    double distance = 0.0;
+    bool has_speed = false;
+    double speed = 0.0;
+};
+
+struct TableRow {
+    std::map<std::string, std::string> cells;
+};
+
+struct TableColumnDef {
+    const char* key;
+    const char* header;
+    float width = 0.0f;
+};
+
+struct CachedTableRow {
+    std::vector<std::string> cells;
+    std::string open_path;
+};
+
+struct TableUiCache {
+    bool valid = false;
+    float font_size = 0.0f;
+    float cell_padding_x = 0.0f;
+    std::vector<CachedTableRow> station_rows;
+    std::vector<CachedTableRow> structure_rows;
+    std::vector<CachedTableRow> structure_model_rows;
+    std::vector<CachedTableRow> repeater_rows;
+    float structure_file_path_width = 200.0f;
+    float structure_model_file_path_width = 200.0f;
+    float repeater_distance_width = 110.0f;
+    float repeater_interval_width = 70.0f;
+    float repeater_file_path_width = 200.0f;
+};
+
+const std::string& table_cell(const TableRow& row, const std::string& key);
+double table_cell_number(const TableRow& row, const std::string& key);
+
+struct MapModel {
+    std::string path;
+    Matrix own;
+    Matrix curve;
+    std::vector<OtherTrack> other_tracks;
+    std::vector<Station> stations;
+    std::vector<TrackEvent> own_events;
+    std::vector<SpeedLimit> speedlimits;
+    std::vector<double> controlpoints;
+    std::vector<TableRow> station_list_rows;
+    std::vector<TableRow> structures;
+    std::vector<TableRow> structure_models;
+    std::vector<TableRow> structures_between;
+    std::vector<TableRow> repeaters;
+    double distance_origin = 0.0;
+    double height_origin = 0.0;
+    double origin_angle = 0.0;
+    double default_min = 0.0;
+    double default_max = 0.0;
+    double cp_default_min = 0.0;
+    double cp_default_max = 0.0;
+    double cp_arb[3] = {0.0, 0.0, 25.0};
+    bool has_cp_arb = false;
+};
+
+struct View2D {
+    double cx = 0.0;
+    double cy = 0.0;
+    double scale = 1.0;
+    double rotation = 0.0;
+    bool fitted = false;
+    bool dragging = false;
+    bool rotating = false;
+    ImVec2 last_mouse = ImVec2(0, 0);
+
+    ImVec2 world_to_screen(double x, double y, ImVec2 origin, ImVec2 size) const {
+        double dx = x - cx;
+        double dy = y - cy;
+        double c = std::cos(rotation);
+        double s = std::sin(rotation);
+        double rx = c * dx - s * dy;
+        double ry = s * dx + c * dy;
+        return ImVec2(origin.x + size.x * 0.5f + static_cast<float>(rx * scale),
+                      origin.y + size.y * 0.5f + static_cast<float>(ry * scale));
+    }
+
+    ImVec2 screen_to_world(ImVec2 p, ImVec2 origin, ImVec2 size) const {
+        double rx = (p.x - origin.x - size.x * 0.5) / scale;
+        double ry = (p.y - origin.y - size.y * 0.5) / scale;
+        double c = std::cos(rotation);
+        double s = std::sin(rotation);
+        return ImVec2(static_cast<float>(c * rx + s * ry + cx),
+                      static_cast<float>(-s * rx + c * ry + cy));
+    }
+
+    void pan_by_screen_delta(ImVec2 delta) {
+        double c = std::cos(rotation);
+        double s = std::sin(rotation);
+        double wx = -(c * delta.x / scale + s * delta.y / scale);
+        double wy = (s * delta.x / scale - c * delta.y / scale);
+        cx += wx;
+        cy += wy;
+    }
+
+    void fit(double xmin, double ymin, double xmax, double ymax, ImVec2 size) {
+        double dx = std::max(xmax - xmin, 1e-6);
+        double dy = std::max(ymax - ymin, 1e-6);
+        cx = (xmin + xmax) * 0.5;
+        cy = (ymin + ymax) * 0.5;
+        scale = std::max(0.001, std::min(size.x / dx, size.y / dy) * 0.88);
+        fitted = true;
+    }
+};
+
+struct TrackPoint {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double theta = 0.0;
+    double radius = 0.0;
+    double gradient = 0.0;
+};
+
+struct Section {
+    double start = 0.0;
+    double end = 0.0;
+    double value = 0.0;
+};
+
+struct PlanStation {
+    Station station;
+    double x = 0.0;
+    double y = 0.0;
+};
+
+struct PlanSpeed {
+    double x = 0.0;
+    double y = 0.0;
+    double theta = 0.0;
+    bool has_speed = false;
+    double speed = 0.0;
+};
+
+struct PlanOther {
+    std::string key;
+    std::vector<TrackPoint> points;
+    ImVec4 color;
+};
+
+struct PlanData {
+    std::vector<TrackPoint> own;
+    std::vector<PlanOther> other;
+    std::vector<PlanStation> stations;
+    std::vector<PlanSpeed> speedlimits;
+    std::vector<Section> curve_sections;
+    std::vector<Section> transition_sections;
+    double origin_angle = 0.0;
+    double xmin = -1.0;
+    double ymin = -1.0;
+    double xmax = 1.0;
+    double ymax = 1.0;
+};
+
+struct ProfileOther {
+    std::string key;
+    std::vector<double> x;
+    std::vector<double> y;
+    ImVec4 color;
+};
+
+struct LabelPoint {
+    double x = 0.0;
+    double y = 0.0;
+    std::string text;
+};
+
+struct ProfileData {
+    std::vector<double> own_x;
+    std::vector<double> own_y;
+    std::vector<double> curve_x;
+    std::vector<double> curve_y;
+    std::vector<ProfileOther> other;
+    std::vector<Station> stations;
+    std::vector<LabelPoint> gradient_points;
+    std::vector<LabelPoint> gradient_labels;
+    std::vector<LabelPoint> radius_labels;
+    double ymin = -5.0;
+    double ymax = 5.0;
+};
+
+struct TextureImage {
+    ID3D11ShaderResourceView* srv = nullptr;
+    std::vector<unsigned char> pixels_rgba;
+    int width = 0;
+    int height = 0;
+    double brightness = 100.0;
+    std::string path;
+
+    void release();
+};
+
+struct LogLine {
+    std::string text;
+    int severity = 0;
+};
+
+struct UserSettings {
+    Language language = Language::Zh;
+    float font_size = kDefaultFontSize;
+    float ui_component_size = kDefaultUiComponentSize;
+    float station_marker_size = kDefaultStationMarkerSize;
+    ImVec4 theme_color = default_theme_color();
+    std::filesystem::path path;
+};
+
+struct BackgroundHistory {
+    bool has_image = false;
+    std::string image_path;
+    double x = 0.0;
+    double y = 0.0;
+    double width = 0.0;
+    double height = 0.0;
+    double rotation_deg = 0.0;
+    double brightness = 100.0;
+};
+
+struct RecentMapEntry {
+    std::string path;
+    BackgroundHistory background;
+};
+
+class App {
+public:
+    explicit App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled);
+    ~App();
+
+    void render();
+    void add_log(std::string text);
+
+private:
+    ID3D11Device* device_ = nullptr;
+    float dpi_scale_ = 1.0f;
+    bool viewports_enabled_ = false;
+    Translation i18n_;
+    UserSettings settings_;
+    Language lang_ = Language::Zh;
+    float font_size_ = kDefaultFontSize;
+    float pending_font_size_ = kDefaultFontSize;
+    float font_size_before_dialog_ = kDefaultFontSize;
+    float ui_component_size_ = kDefaultUiComponentSize;
+    float pending_ui_component_size_ = kDefaultUiComponentSize;
+    float ui_component_size_before_dialog_ = kDefaultUiComponentSize;
+    float station_marker_size_ = kDefaultStationMarkerSize;
+    float pending_station_marker_size_ = kDefaultStationMarkerSize;
+    float station_marker_size_before_dialog_ = kDefaultStationMarkerSize;
+    ImVec4 theme_color_ = default_theme_color();
+    ImVec4 pending_theme_color_ = default_theme_color();
+    ImVec4 theme_color_before_dialog_ = default_theme_color();
+    std::filesystem::path history_path_;
+    std::vector<RecentMapEntry> recent_maps_;
+
+    void* handle_ = nullptr;
+    MapModel model_;
+    bool has_model_ = false;
+    std::string file_path_;
+
+    std::vector<LogLine> logs_;
+    std::mutex log_mutex_;
+    std::string last_log_;
+    int error_count_ = 0;
+    int warn_count_ = 0;
+
+    std::thread loader_;
+    std::atomic<bool> loading_{false};
+    struct LoadResult {
+        bool ok = false;
+        bool preserve_settings = false;
+        bool record_history = false;
+        std::optional<BackgroundHistory> background_to_restore;
+        void* handle = nullptr;
+        MapModel model;
+        std::string path;
+        std::string error;
+        double elapsed_seconds = 0.0;
+    };
+    std::mutex result_mutex_;
+    std::optional<LoadResult> pending_result_;
+
+    double dmin_ = 0.0;
+    double dmax_ = 0.0;
+    double plot_min_ = 0.0;
+    double plot_max_ = 0.0;
+    double cp_start_ = 0.0;
+    double cp_end_ = 0.0;
+    double cp_interval_ = 25.0;
+    double unit_distance_ = 25.0;
+
+    bool show_stations_ = true;
+    bool show_station_names_ = true;
+    bool show_station_mileage_ = true;
+    bool show_gradient_pos_ = true;
+    bool show_gradient_values_ = true;
+    bool show_curve_values_ = true;
+    bool show_profile_other_ = false;
+    bool show_speedlimits_ = true;
+    bool show_profile_graph_ = true;
+    bool show_radius_graph_ = true;
+    bool show_othertracks_window_ = true;
+
+    enum class GridMode { Fixed, Movable, None };
+    enum class Mode { Pan, Measure };
+    GridMode grid_mode_ = GridMode::Fixed;
+    Mode mode_ = Mode::Pan;
+
+    View2D plan_view_;
+    bool keep_plan_view_ = false;
+    double plan_height_ = 0.68;
+    double graph_split_ = 0.52;
+
+    std::optional<double> measure_distance_;
+    std::string measure_text_;
+    bool focus_profile_next_ = false;
+    double focus_profile_distance_ = 0.0;
+    bool focus_radius_next_ = false;
+    double focus_radius_distance_ = 0.0;
+    double profile_x_span_ = 0.0;
+    double radius_x_span_ = 0.0;
+    bool profile_x_zoom_pending_ = false;
+    double profile_x_zoom_min_ = 0.0;
+    double profile_x_zoom_max_ = 0.0;
+    bool profile_plot_rect_valid_ = false;
+    ImVec2 profile_plot_pos_ = ImVec2(0.0f, 0.0f);
+    ImVec2 profile_plot_size_ = ImVec2(0.0f, 0.0f);
+    bool reset_profile_axes_next_ = true;
+    bool reset_radius_axes_next_ = true;
+
+    bool show_station_list_window_ = false;
+    bool show_structures_window_ = false;
+    bool show_structure_models_window_ = false;
+    bool show_repeaters_window_ = false;
+    bool show_range_popup_ = false;
+    bool show_cp_popup_ = false;
+    bool show_bg_adjust_popup_ = false;
+    bool show_align_popup_ = false;
+    bool show_about_popup_ = false;
+    bool show_font_size_popup_ = false;
+    ImGuiID dock_right_id_ = 0;
+    TableUiCache table_cache_;
+
+    TextureImage bg_image_;
+    bool bg_show_ = true;
+    double bg_x_ = 0.0;
+    double bg_y_ = 0.0;
+    double bg_width_ = 5000.0;
+    double bg_height_ = 5000.0;
+    double bg_rotation_deg_ = 0.0;
+    double bg_brightness_ = 100.0;
+    double pending_bg_x_ = 0.0;
+    double pending_bg_y_ = 0.0;
+    double pending_bg_width_ = 5000.0;
+    double pending_bg_height_ = 5000.0;
+    double pending_bg_rotation_deg_ = 0.0;
+    double pending_bg_brightness_ = 100.0;
+    int station_jump_index_ = 0;
+    int align_station1_ = 0;
+    int align_station2_ = 1;
+    std::optional<ImVec2> align_pick1_;
+    std::optional<ImVec2> align_pick2_;
+    int pick_slot_ = 0;
+
+    const std::string& tr(const std::string& key) const { return i18n_.get(lang_, key); }
+
+    static void log_callback(const char* message);
+
+    void stop_loader();
+    void poll_loader();
+    void begin_load(std::string path, bool preserve_settings, bool record_history = false,
+                    std::optional<BackgroundHistory> background_to_restore = std::nullopt);
+    void apply_load_result(LoadResult result);
+    void regenerate_geometry();
+    static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step);
+    static MapModel build_model_from_handle(void* handle, const std::string& path);
+
+    void handle_shortcuts();
+    void render_menu();
+    void render_toolbar();
+    void render_mode_grid_controls();
+    void render_station_jump_combo();
+    void render_console();
+    void render_plots();
+    void render_plan_canvas(ImVec2 size);
+    void render_profile_plot(const ProfileData& data, ImVec2 size);
+    void render_radius_plot(const ProfileData& data, ImVec2 size);
+    void render_othertracks_window();
+    void render_station_list_window();
+    void render_structures_window();
+    void render_structure_models_window();
+    void render_repeaters_window();
+    void render_popups();
+    void setup_initial_dockspace(ImGuiID dockspace_id);
+    void invalidate_table_cache();
+    void ensure_table_cache();
+
+    PlanData build_plan_data() const;
+    ProfileData build_profile_data() const;
+    std::vector<Section> curve_sections(bool transition) const;
+    size_t nearest_own_index(double distance) const;
+    double interp_own_z(double distance) const;
+    std::optional<TrackPoint> track_info_at(double distance) const;
+    std::optional<SpeedLimit> speed_at(double distance) const;
+    void clear_measure();
+    void update_measure(double distance);
+    void center_plan_at_distance(double distance);
+    void request_plot_focus(double distance, bool include_profile, bool include_radius);
+    void handle_measure_plot_double_click(bool include_profile, bool include_radius);
+    void focus_station(double distance);
+    void export_csv();
+    void save_history();
+    void touch_recent_map(const std::string& path);
+    void save_current_background_to_history();
+    BackgroundHistory current_background_history() const;
+    void sync_pending_background_values();
+    void apply_pending_background_values(bool save_history_entry);
+    bool apply_background_history(const BackgroundHistory& background);
+    void clear_background_image();
+    bool load_background_image(const std::string& path, bool reset_parameters = true);
+    bool rebuild_background_texture();
+    std::optional<ImVec2> background_uv_from_world(ImVec2 world) const;
+    void draw_background(ImDrawList* draw, const View2D& view, ImVec2 origin, ImVec2 size);
+    void apply_background_alignment();
+    std::string open_map_dialog();
+    std::string open_image_dialog();
+    std::string choose_folder_dialog();
+};

@@ -57,7 +57,9 @@ target_include_directories(implot PUBLIC ${IMPLOT_DIR})
 target_link_libraries(implot PUBLIC imgui)
 
 add_executable(komapedit
-    src/gui_app.cpp
+    src/gui_kme.cpp
+    src/canvas2D.cpp
+    src/datatable.cpp
 )
 set_target_properties(komapedit PROPERTIES WIN32_EXECUTABLE TRUE)
 target_include_directories(komapedit PRIVATE

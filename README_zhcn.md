@@ -141,7 +141,10 @@ komapedit/
 │  └─ multilanguage.h              # 界面多语言文本
 ├─ src/
 │  ├─ maploader.cpp                # BVE Map 解析和几何生成
-│  └─ gui_app.cpp                  # Win32/DirectX11/ImGui GUI
+│  ├─ kme.h                        # App 声明与 GUI 共享状态
+│  ├─ gui_kme.cpp                  # 主窗口、Win32/DirectX11 初始化、主循环
+│  ├─ canvas2D.cpp                 # 2D 平面/纵断面/曲线半径画布渲染
+│  └─ datatable.cpp                # 数据表格列定义、缓存与表格窗口
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui，docking 分支
 │  └─ implot/                      # ImPlot
