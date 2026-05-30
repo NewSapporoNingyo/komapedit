@@ -1,5 +1,5 @@
 # komapedit
-
+[简体中文Readme](README_zhcn.md)
 ## Project Overview
 
 komapedit is a lightweight viewer and editor for BVE Trainsim map files. It reworks the track-geometry approach from `kobushi-trackviewer` as a C++/Win32 desktop application. The current version focuses on loading maps, generating track geometry, showing 2D plan/profile/radius views, displaying map data tables, and exporting track geometry to CSV.
@@ -52,7 +52,8 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [ ] Structure and repeater placement markers on the plan view.
 - [ ] Cab-brightness setting position markers.
 - [ ] Fog-effect change position markers.
-
+- [ ] Signal position markers.
+- [ ] Beacon position markers.
 ### Map Data Tables
 
 - [x] Load the station list specified by `Station.Load`.
@@ -64,7 +65,8 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [x] Right-click source file paths in the Structure and repeater tables to open their folders in File Explorer.
 - [ ] Edit Structure model lists.
 - [ ] Edit station lists and station positions.
-
+- [ ] Display/Edit signal lists.
+- [ ] Display/Edit Beacon lists.
 ### 3D Canvas
 
 - [ ] 3D preview for Structure models.
