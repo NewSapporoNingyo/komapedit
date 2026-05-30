@@ -9,6 +9,7 @@
 
 #include "kme.h"
 
+#include "canvas3D.h"
 #include "maploader.h"
 
 #include "imgui.h"
@@ -854,6 +855,7 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     : device_(device), settings_(std::move(settings)), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled) {
     g_app = this;
     kv_set_log_callback(&App::log_callback);
+    model_preview_canvas_ = std::make_unique<Canvas3D>(device_);
     lang_ = settings_.language;
     font_size_ = clamp_font_size(settings_.font_size);
     ui_component_size_ = clamp_ui_component_size(settings_.ui_component_size);
@@ -1620,6 +1622,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGuiID dock_main = dockspace_id;
     ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.23f, nullptr, &dock_main);
     ImGuiID dock_console = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.32f, nullptr, &dock_right);
+    dock_main_id_ = dock_main;
     dock_right_id_ = dock_right;
     ImGui::DockBuilderDockWindow("OtherTracks", dock_right);
     ImGui::DockBuilderDockWindow("StationList", dock_right);
@@ -1628,6 +1631,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
+    ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -1744,6 +1748,10 @@ void App::render_menu() {
             pick_slot_ = 0;
             show_align_popup_ = true;
         }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu(tr("menu.view_3d").c_str())) {
+        ImGui::MenuItem(tr("menu.structure_model_preview").c_str(), nullptr, &show_model_preview_window_);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.lang").c_str())) {
@@ -2122,6 +2130,34 @@ void App::handle_shortcuts() {
     }
 }
 
+void App::preview_structure_model(const std::string& path) {
+    if (path.empty()) {
+        add_log("[WARN]model preview: empty model path");
+        return;
+    }
+    show_model_preview_window_ = true;
+    focus_model_preview_next_ = true;
+    std::string error;
+    if (!model_preview_canvas_->load_model(path, error)) {
+        add_log("[ERROR]model preview: " + error);
+        return;
+    }
+    add_log("[INFO]model preview: " + path);
+}
+
+void App::render_model_preview_window() {
+    if (!show_model_preview_window_) return;
+    if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
+    if (focus_model_preview_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.model_preview") + "###ModelPreview3D";
+    if (ImGui::Begin(title.c_str(), &show_model_preview_window_)) {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        model_preview_canvas_->render(avail);
+    }
+    focus_model_preview_next_ = false;
+    ImGui::End();
+}
+
 void App::render() {
     poll_loader();
     handle_shortcuts();
@@ -2133,6 +2169,7 @@ void App::render() {
     render_station_list_window();
     render_console();
     render_plots();
+    render_model_preview_window();
     render_structures_window();
     render_structure_models_window();
     render_repeaters_window();

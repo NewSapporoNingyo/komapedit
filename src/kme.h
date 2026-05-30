@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -25,6 +26,7 @@
 
 struct ID3D11Device;
 struct ID3D11ShaderResourceView;
+class Canvas3D;
 
 inline constexpr float kDefaultFontSize = 18.0f;
 inline constexpr float kMinFontSize = 6.0f;
@@ -430,6 +432,8 @@ private:
     bool show_structures_window_ = false;
     bool show_structure_models_window_ = false;
     bool show_repeaters_window_ = false;
+    bool show_model_preview_window_ = true;
+    bool focus_model_preview_next_ = false;
     bool show_range_popup_ = false;
     bool show_cp_popup_ = false;
     bool show_bg_adjust_popup_ = false;
@@ -437,7 +441,9 @@ private:
     bool show_about_popup_ = false;
     bool show_font_size_popup_ = false;
     ImGuiID dock_right_id_ = 0;
+    ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
+    std::unique_ptr<Canvas3D> model_preview_canvas_;
 
     TextureImage bg_image_;
     bool bg_show_ = true;
@@ -488,6 +494,8 @@ private:
     void render_structures_window();
     void render_structure_models_window();
     void render_repeaters_window();
+    void render_model_preview_window();
+    void preview_structure_model(const std::string& path);
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);
     void invalidate_table_cache();

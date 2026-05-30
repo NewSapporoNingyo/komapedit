@@ -450,8 +450,33 @@ void App::render_structure_models_window() {
                 for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (value.empty()) continue;
-                    if (i == kStructureModelFilePathColumn) {
+                    if (i == 1) {
+                        ImVec2 pos = ImGui::GetCursorScreenPos();
+                        ImVec2 text_size = ImGui::CalcTextSize(value.c_str());
+                        ImVec2 item_size(
+                            std::max(1.0f, ImGui::GetContentRegionAvail().x),
+                            std::max(ImGui::GetTextLineHeight(), text_size.y));
+                        ImGui::InvisibleButton("structure_key_cell", item_size);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::GetWindowDrawList()->AddRectFilled(
+                                pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y),
+                                ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+                        }
+                        if (!value.empty()) {
+                            ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), value.c_str());
+                        }
+                        if (ImGui::BeginPopupContextItem("structure_key_context", ImGuiPopupFlags_MouseButtonRight)) {
+                            bool can_preview = !blank_ascii(row.open_path);
+                            ImGui::BeginDisabled(!can_preview);
+                            if (ImGui::MenuItem(tr("menu.preview_model").c_str())) {
+                                preview_structure_model(row.open_path);
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::EndPopup();
+                        }
+                    } else if (value.empty()) {
+                        continue;
+                    } else if (i == kStructureModelFilePathColumn) {
                         render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"), row.open_path);
                     } else {
                         ImGui::TextUnformatted(value.c_str());
@@ -507,4 +532,3 @@ void App::render_repeaters_window() {
     }
     ImGui::End();
 }
-
