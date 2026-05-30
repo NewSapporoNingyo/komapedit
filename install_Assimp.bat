@@ -1,3 +1,3 @@
 set VCPKG_ROOT=
-%VCPKG_ROOT%\vcpkg install assimp:x64-windows
+%VCPKG_ROOT%\vcpkg install assimp:x64-mingw-dynamic
 pause
