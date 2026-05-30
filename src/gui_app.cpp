@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
+ */
+
 #pragma execution_character_set("utf-8")
 
 #include "maploader.h"

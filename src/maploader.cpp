@@ -1,3 +1,13 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Portions of the map parsing and track-geometry design are derived from or
+ * reimplemented with reference to kobushi-trackviewer, Copyright (c) 2021-2024
+ * konawasabi, licensed under Apache License 2.0.
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ */
+
 #define MAPLOADER_EXPORTS
 #include "maploader.h"
 

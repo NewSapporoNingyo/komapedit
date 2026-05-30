@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ */
+
 #pragma once
 
 #include <stddef.h>

@@ -22,6 +22,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
+for %%F in (LICENSE NOTICE THIRD_PARTY_NOTICES.md) do (
+    if exist "%%F" copy /y "%%F" "build_release\%%F" >nul
+)
+
 echo kobushiCPP release built: %cd%\build_release
 
 pause

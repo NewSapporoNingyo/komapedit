@@ -130,9 +130,11 @@ komapedit/
 ├─ CMakeLists.txt                  # CMake build configuration
 ├─ README.md                       # Project documentation
 ├─ LICENSE                         # Apache License 2.0
+├─ NOTICE                          # Project copyright and Apache attribution notices
+├─ THIRD_PARTY_NOTICES.md          # Third-party library and reference-project notices
 ├─ build_dev.bat                   # Debug build script
 ├─ build_release.bat               # Release build script
-├─ clear_build_release_dist.bat    # Cleans Release output, keeping only the distributable exe/dll
+├─ clear_build_release_dist.bat    # Cleans Release output, keeping distributable binaries and notices
 ├─ get_3rd_party_packages.bat      # Fetches ImGui and ImPlot
 ├─ include/
 │  ├─ maploader.h                  # maploader C ABI
@@ -165,6 +167,10 @@ This script clones the following two projects. Make sure Git is installed first.
 - `third_party/imgui` -> the `docking` branch of `ocornut/imgui`
 - `third_party/implot` -> `epezent/implot`
 
+The cloned third-party source trees are ignored by Git. Their upstream license
+files remain under `third_party/`; distribution notices are summarized in
+`THIRD_PARTY_NOTICES.md`.
+
 ### Debug Build: `build_dev.bat`
 
 The output directory is `build`.
@@ -175,6 +181,9 @@ The output directory is `build_release`. The main build products are:
 
 - `komapedit.exe`
 - `maploader.dll`
+- `LICENSE`
+- `NOTICE`
+- `THIRD_PARTY_NOTICES.md`
 
 To clean the Release output for distribution, run `clear_build_release_dist.bat`.
 
@@ -239,14 +248,32 @@ Field reference:
 
 Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, Structures, repeaters, sounds, fog, or 3D scene data.
 
-## About This Project
+## License and Third-Party Notices
 
-This project is based on `kobushi-trackviewer` and is intended to help inspect and edit BVE Trainsim map files.
+komapedit is distributed under the Apache License, Version 2.0. See `LICENSE`
+for the license text and `NOTICE` for project attribution notices.
 
-Copyright and license:
+This project is based on `kobushi-trackviewer` and is intended to help inspect
+and edit BVE Trainsim map files. The C++/Win32 implementation and modifications
+are by Sapporo_ningyo.
 
-- Original project: konawasabi - [kobushi-trackviewer](https://github.com/konawasabi/kobushi-trackviewer)
-- Modified by: Sapporo_ningyo
-- License: Apache License, Version 2.0
+Reference project:
+
+| Project | Copyright | License |
+| --- | --- | --- |
+| [kobushi-trackviewer](https://github.com/konawasabi/kobushi-trackviewer) by konawasabi | Copyright (c) 2021-2024 konawasabi | Apache License, Version 2.0 |
+
+Third-party libraries used by the GUI:
+
+| Library | Use | Copyright | License |
+| --- | --- | --- | --- |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Docking GUI, Win32 backend, DirectX 11 backend, C++ std::string helper | Copyright (c) 2014-2026 Omar Cornut | MIT License |
+| [ImPlot](https://github.com/epezent/implot) | 2D plotting widgets | Copyright (c) 2020 Evan Pezent | MIT License |
+| stb single-file libraries bundled with Dear ImGui | Font/text/rectangle-packing support used by Dear ImGui | Copyright (c) 2017 Sean Barrett | MIT License or Public Domain |
+
+When distributing source or binaries built from this repository, include
+`LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`. If the `third_party/`
+source trees are distributed, keep their original license files and copyright
+notices intact.
 
 Project page: <https://github.com/NewSapporoNingyo/komapedit>

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ */
+
 #pragma once
 
 #include <map>
@@ -42,7 +48,7 @@ struct Translation {
             {"label.font_size_current", "Text size:"}, {"label.ui_component_size_current", "Component size:"}, {"label.ui_theme_color_current", "Theme color:"}, {"label.font_size_preview", "Preview text"},
             {"status.no_map", "No map loaded"}, {"status.loading", "Loading..."}, {"status.ready", "Ready"},
             {"dialog.ui_settings", "UI Settings"}, {"dialog.bgimage_adjust", "Adjust Background Image"}, {"dialog.align_to_station", "Align Background to Stations"}, {"button.pick_on_bg", "Pick station on Plan"}, {"button.pick_on_bg_ok", "Picked"},
-            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi - kobushi trackviewer\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
+            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
         zh = {
             {"app.title", "komapedit"},
@@ -75,7 +81,7 @@ struct Translation {
             {"label.font_size_current", "文字大小："}, {"label.ui_component_size_current", "组件大小："}, {"label.ui_theme_color_current", "主题色："}, {"label.font_size_preview", "预览文字"},
             {"status.no_map", "未加载地图"}, {"status.loading", "加载中..."}, {"status.ready", "就绪"},
             {"dialog.ui_settings", "用户界面设置"}, {"dialog.bgimage_adjust", "调整背景图"}, {"dialog.align_to_station", "按车站对齐背景图"}, {"button.pick_on_bg", "在平面图选点"}, {"button.pick_on_bg_ok", "已选点"},
-            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi - kobushi trackviewer\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
+            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
         ja = {
             {"app.title", "komapedit"},
@@ -108,7 +114,7 @@ struct Translation {
             {"label.font_size_current", "文字サイズ："}, {"label.ui_component_size_current", "部品サイズ："}, {"label.ui_theme_color_current", "テーマカラー："}, {"label.font_size_preview", "プレビューテキスト"},
             {"status.no_map", "地図が読み込まれていません"}, {"status.loading", "読込中..."}, {"status.ready", "準備完了"},
             {"dialog.ui_settings", "UI設定"}, {"dialog.bgimage_adjust", "背景画像の調整"}, {"dialog.align_to_station", "背景画像を駅に合わせる"}, {"button.pick_on_bg", "平面図で駅を選択"}, {"button.pick_on_bg_ok", "選択済み"},
-            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2021-2024 konawasabi - kobushi trackviewer\nModified by Sapporo_ningyo\nReleased under the Apache License, Version 2.0\nhttps://www.apache.org/licenses/LICENSE-2.0"}
+            {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\nkobushi-trackviewer に基づく\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
     }
 

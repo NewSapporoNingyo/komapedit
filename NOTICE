@@ -1,0 +1,16 @@
+komapedit
+Copyright (c) 2026 Sapporo_ningyo
+
+komapedit is licensed under the Apache License, Version 2.0. See LICENSE.
+
+This product includes work derived from or reimplemented with reference to
+kobushi-trackviewer:
+
+  kobushi-trackviewer
+  Copyright (c) 2021-2024 konawasabi
+  Licensed under the Apache License, Version 2.0
+  https://github.com/konawasabi/kobushi-trackviewer
+
+Modifications and the C++/Win32 implementation are by Sapporo_ningyo.
+
+Third-party library notices are listed in THIRD_PARTY_NOTICES.md.

@@ -130,9 +130,11 @@ komapedit/
 ├─ CMakeLists.txt                  # CMake 构建配置
 ├─ README.md                       # 项目说明
 ├─ LICENSE                         # Apache License 2.0
+├─ NOTICE                          # 项目版权与 Apache 归属声明
+├─ THIRD_PARTY_NOTICES.md          # 第三方库和参考项目声明
 ├─ build_dev.bat                   # Debug 构建脚本
 ├─ build_release.bat               # Release 构建脚本
-├─ clear_build_release_dist.bat    # 清理 Release 目录，仅保留发布所需 exe/dll
+├─ clear_build_release_dist.bat    # 清理 Release 目录，保留发布所需二进制和声明文件
 ├─ get_3rd_party_packages.bat      # 拉取 ImGui 和 ImPlot
 ├─ include/
 │  ├─ maploader.h                  # maploader C ABI
@@ -165,6 +167,10 @@ komapedit/
 - `third_party/imgui`→`ocornut/imgui` 的 `docking` 分支。
 - `third_party/implot`→`epezent/implot`。
 
+克隆得到的第三方源码目录被 Git 忽略。其上游许可证文件保留在
+`third_party/` 目录中，随项目分发所需的声明汇总在
+`THIRD_PARTY_NOTICES.md`。
+
 ### Debug 构建：build_dev.bat
 
 输出目录为 `build`。
@@ -175,6 +181,9 @@ komapedit/
 
 - `komapedit.exe`
 - `maploader.dll`
+- `LICENSE`
+- `NOTICE`
+- `THIRD_PARTY_NOTICES.md`
 
 如需整理发布目录，可执行`clear_build_release_dist.bat`
 
@@ -240,14 +249,30 @@ komapedit/
 
 导出的数值使用固定 6 位小数。当前 CSV 导出仅包含轨道几何，不导出车站、布景、连续布景、声音、雾或 3D 场景数据。
 
-## 关于本项目
+## 版权、许可和第三方声明
 
-本项目基于`kobushi-trackviewer`开发，用于辅助查看和编辑 BVE Trainsim 地图文件。
+komapedit 以 Apache License, Version 2.0 分发。许可证全文见 `LICENSE`，
+项目版权与归属声明见 `NOTICE`。
 
-版权和许可：
+本项目基于 `kobushi-trackviewer` 开发，用于辅助查看和编辑 BVE Trainsim
+地图文件。C++/Win32 实现和修改由 Sapporo_ningyo 完成。
 
-- 原项目：konawasabi - [kobushi-trackviewer](https://github.com/konawasabi/kobushi-trackviewer)
-- 修改：Sapporo_ningyo
-- 许可证：Apache License, Version 2.0
+参考项目：
+
+| 项目 | 版权 | 许可证 |
+| --- | --- | --- |
+| konawasabi 的 [kobushi-trackviewer](https://github.com/konawasabi/kobushi-trackviewer) | Copyright (c) 2021-2024 konawasabi | Apache License, Version 2.0 |
+
+GUI 使用的第三方库：
+
+| 库 | 用途 | 版权 | 许可证 |
+| --- | --- | --- | --- |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Docking GUI、Win32 后端、DirectX 11 后端、C++ std::string 辅助模块 | Copyright (c) 2014-2026 Omar Cornut | MIT License |
+| [ImPlot](https://github.com/epezent/implot) | 2D 图表控件 | Copyright (c) 2020 Evan Pezent | MIT License |
+| Dear ImGui 随附的 stb 单文件库 | Dear ImGui 使用的字体、文本编辑、矩形打包支持 | Copyright (c) 2017 Sean Barrett | MIT License 或 Public Domain |
+
+分发本仓库源码或由本仓库构建的二进制文件时，请一并包含 `LICENSE`、
+`NOTICE` 和 `THIRD_PARTY_NOTICES.md`。如果分发 `third_party/` 源码目录，
+请保留其中原始许可证文件和版权声明。
 
 项目在线地址：<https://github.com/NewSapporoNingyo/komapedit>
