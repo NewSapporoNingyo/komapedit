@@ -13,4 +13,5 @@ kobushi-trackviewer:
 
 Modifications and the C++/Win32 implementation are by Sapporo_ningyo.
 
-Third-party library notices are listed in THIRD_PARTY_NOTICES.md.
+Third-party library notices, including Dear ImGui, ImPlot, stb, and Assimp,
+are listed in THIRD_PARTY_NOTICES.md.

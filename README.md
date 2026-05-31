@@ -2,14 +2,15 @@
 [简体中文Readme](README_zhcn.md)
 ## Project Overview
 
-komapedit is a lightweight viewer and editor for BVE Trainsim map files. It reworks the track-geometry approach from `kobushi-trackviewer` as a C++/Win32 desktop application. The current version focuses on loading maps, generating track geometry, showing 2D plan/profile/radius views, displaying map data tables, and exporting track geometry to CSV.
+komapedit is a lightweight viewer and editor for BVE Trainsim map files. It reworks the track-geometry approach from `kobushi-trackviewer` as a C++/Win32 desktop application. The current version focuses on loading maps, generating track geometry, showing 2D plan/profile/radius views, displaying map data tables, previewing Structure models in 3D, and exporting track geometry to CSV.
 
-The application has two main components:
+The application has three main runtime components:
 
 - `maploader.dll`: loads `BveTs Map` files, parses part of the BVE Map syntax, generates own-track and other-track geometry, and exposes an intermediate JSON representation.
-- `komapedit.exe`: the desktop GUI, built with Dear ImGui, ImPlot, Win32, and DirectX 11.
+- `model_loader.dll`: loads Structure model files through Assimp and exposes mesh/material data for the 3D preview.
+- `komapedit.exe`: the desktop GUI, built with Dear ImGui, ImPlot, Win32, DirectX 11, and WIC.
 
-At this stage, komapedit is closer to a map inspector and track-geometry visualizer than a full map editor. Full object editing, 3D previews, sound editing, and environmental-effect editing are still planned.
+At this stage, komapedit is closer to a map inspector and track-geometry visualizer than a full map editor. Full object editing, full-map 3D scene preview, sound editing, and environmental-effect editing are still planned.
 
 ## Development Status (TODO List)
 
@@ -62,14 +63,17 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [x] Display map Structure placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
 - [x] Load and display Structure model lists referenced by `Structure.Load` (`.txt` or `.csv`).
 - [x] Display `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` data, with Begin/End distances merged for readability.
-- [x] Right-click source file paths in the Structure and repeater tables to open their folders in File Explorer.
+- [x] Right-click source file paths in the Structure, Structure model, and repeater tables to open their folders in File Explorer.
+- [x] Right-click Structure model keys to open a 3D preview of the referenced model.
 - [ ] Edit Structure model lists.
 - [ ] Edit station lists and station positions.
 - [ ] Display/Edit signal lists.
 - [ ] Display/Edit Beacon lists.
 ### 3D Canvas
 
-- [ ] 3D preview for Structure models.
+- [x] 3D preview for Structure models.
+- [x] Load model geometry, materials, and diffuse textures through `model_loader.dll`/Assimp.
+- [x] Rotate and zoom the Structure model preview.
 - [ ] 3D scene preview canvas.
 - [ ] Structure position editing tools in the 3D canvas.
 
@@ -93,7 +97,7 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 
 This repository does not currently provide a standalone installer. The recommended workflow is to build from source and run the generated executable.
 
-After building, make sure `komapedit.exe` and `maploader.dll` are in the same directory, then run `build_release\komapedit.exe`.
+After building, make sure `komapedit.exe`, `maploader.dll`, `model_loader.dll`, and any Assimp runtime DLLs copied by the build are in the same directory, then run `build_release\komapedit.exe`.
 
 On startup, the application creates or reads the following files next to the executable:
 
@@ -117,11 +121,12 @@ On startup, the application creates or reads the following files next to the exe
    - `Other Tracks`: toggle other-track display and adjust visible range and color.
    - `Station List`: view the station list and `Station.Put` placement data.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map.
-   - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list.
+   - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. Right-click a structure key and choose `Preview Model` to open the 3D model preview.
    - `Repeater List`: view merged `Repeater.Begin/End` data.
 8. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
-9. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
-10. Press `F5` or use `File -> Reload` to reload the current map.
+9. Use `3D View -> Structure Model Preview` to show or hide the preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
+10. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
+11. Press `F5` or use `File -> Reload` to reload the current map.
 
 ## Project Layout
 
@@ -134,17 +139,23 @@ komapedit/
 ├─ THIRD_PARTY_NOTICES.md          # Third-party library and reference-project notices
 ├─ build_dev.bat                   # Debug build script
 ├─ build_release.bat               # Release build script
-├─ clear_build_release_dist.bat    # Cleans Release output, keeping distributable binaries and notices
+├─ clear_build_release_dist.bat    # Release cleanup helper; verify runtime DLLs after use
 ├─ get_3rd_party_packages.bat      # Fetches ImGui and ImPlot
+├─ install_Assimp.bat              # Helper for installing Assimp with vcpkg
+├─ install_Assimp(local).bat        # Local-machine Assimp install helper
 ├─ include/
+│  ├─ canvas3D.h                   # 3D preview canvas interface
 │  ├─ maploader.h                  # maploader C ABI
+│  ├─ model_loader.h               # model_loader C ABI
 │  └─ multilanguage.h              # UI localization strings
 ├─ src/
-│  ├─ maploader.cpp                # BVE Map parsing and geometry generation
-│  ├─ kme.h                        # App declaration and shared GUI state
-│  ├─ gui_kme.cpp                  # Main window, Win32/DirectX 11 setup, app loop
 │  ├─ canvas2D.cpp                 # 2D plan/profile/radius canvas rendering
-│  └─ datatable.cpp                # Data table columns, cache, and table windows
+│  ├─ canvas3D.cpp                 # DirectX 11 model preview canvas rendering
+│  ├─ datatable.cpp                # Data table columns, cache, and table windows
+│  ├─ gui_kme.cpp                  # Main window, Win32/DirectX 11 setup, app loop
+│  ├─ kme.h                        # App declaration and shared GUI state
+│  ├─ maploader.cpp                # BVE Map parsing and geometry generation
+│  └─ model_loader.cpp             # Assimp-based Structure model loading
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui, docking branch
 │  └─ implot/                      # ImPlot
@@ -160,8 +171,9 @@ komapedit/
 - [CMake](https://cmake.org/) 3.20 or newer
 - [Ninja](https://github.com/ninja-build/ninja)
 - A C++17-capable compiler, such as MSVC or [MinGW](https://www.mingw-w64.org/)
-- Windows SDK / DirectX 11 development libraries
+- Windows SDK / DirectX 11 / WIC development libraries
 - Git, used to fetch third-party dependencies
+- Assimp, discoverable by CMake as `assimp::assimp`
 
 ### Fetch Third-Party Dependencies: `get_3rd_party_packages.bat`
 
@@ -174,6 +186,12 @@ The cloned third-party source trees are ignored by Git. Their upstream license
 files remain under `third_party/`; distribution notices are summarized in
 `THIRD_PARTY_NOTICES.md`.
 
+Assimp is not vendored under `third_party/`. Install it separately before
+configuring the project. The provided build scripts automatically use vcpkg when
+`VCPKG_ROOT` is set; if `VCPKG_DEFAULT_TRIPLET` is not set, they default to
+`x64-mingw-dynamic`. `install_Assimp.bat` is a small helper for installing
+`assimp:x64-mingw-dynamic` with vcpkg.
+
 ### Debug Build: `build_dev.bat`
 
 The output directory is `build`.
@@ -184,11 +202,15 @@ The output directory is `build_release`. The main build products are:
 
 - `komapedit.exe`
 - `maploader.dll`
+- `model_loader.dll`
+- Assimp runtime DLLs, depending on the selected toolchain/package manager
 - `LICENSE`
 - `NOTICE`
 - `THIRD_PARTY_NOTICES.md`
 
-To clean the Release output for distribution, run `clear_build_release_dist.bat`.
+Before packaging a Release output, verify that `model_loader.dll` and the Assimp
+runtime DLLs remain next to `komapedit.exe`; the 3D model preview depends on
+them at runtime.
 
 ## Appendix: CSV Data Formats
 
@@ -266,12 +288,13 @@ Reference project:
 | --- | --- | --- |
 | [kobushi-trackviewer](https://github.com/konawasabi/kobushi-trackviewer) by konawasabi | Copyright (c) 2021-2024 konawasabi | Apache License, Version 2.0 |
 
-Third-party libraries used by the GUI:
+Third-party libraries used by the GUI and model preview:
 
 | Library | Use | Copyright | License |
 | --- | --- | --- | --- |
 | [Dear ImGui](https://github.com/ocornut/imgui) | Docking GUI, Win32 backend, DirectX 11 backend, C++ std::string helper | Copyright (c) 2014-2026 Omar Cornut | MIT License |
 | [ImPlot](https://github.com/epezent/implot) | 2D plotting widgets | Copyright (c) 2020 Evan Pezent | MIT License |
+| [Assimp / Open Asset Import Library](https://github.com/assimp/assimp) | Structure model import for 3D preview | Copyright (c) 2006-2026, assimp team | Modified BSD 3-Clause License |
 | stb single-file libraries bundled with Dear ImGui | Font/text/rectangle-packing support used by Dear ImGui | Copyright (c) 2017 Sean Barrett | MIT License or Public Domain |
 
 When distributing source or binaries built from this repository, include

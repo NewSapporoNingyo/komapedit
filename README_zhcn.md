@@ -2,14 +2,15 @@
 
 ## 项目概述
 
-komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑工具，基于 `kobushi-trackviewer` 的轨道几何计算思路改写为 C++/Win32 桌面程序。当前版本主要提供地图读取、轨道几何生成、2D 平面图、坡度/曲线半径图、信息表格查看和轨道几何 CSV 导出能力。
+komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑工具，基于 `kobushi-trackviewer` 的轨道几何计算思路改写为 C++/Win32 桌面程序。当前版本主要提供地图读取、轨道几何生成、2D 平面图、坡度/曲线半径图、信息表格查看、布景模型 3D 预览和轨道几何 CSV 导出能力。
 
-程序由两个核心部分组成：
+程序由三个运行时核心部分组成：
 
 - `maploader.dll`：读取 `BveTs Map` 文件、解析部分 BVE Map 语法、生成自轨道/他轨道几何数据，并输出中间 JSON。
-- `komapedit.exe`：基于 Dear ImGui、ImPlot、Win32 和 DirectX 11 的桌面 GUI。
+- `model_loader.dll`：通过 Assimp 读取布景模型文件，并向 3D 预览提供网格/材质数据。
+- `komapedit.exe`：基于 Dear ImGui、ImPlot、Win32、DirectX 11 和 WIC 的桌面 GUI。
 
-当前项目更接近“地图检查器/轨道几何可视化工具”。地图对象的完整编辑、3D 预览和声音/环境效果编辑仍在开发计划中。
+当前项目更接近“地图查看器/轨道几何可视化工具”。地图对象的完整编辑、完整地图场景预览和声音/环境效果编辑仍在开发计划中。
 
 ## 开发状况（TODO List）
 
@@ -21,7 +22,8 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - [x] 支持 `$变量 = 表达式;`、`distance` 预定义变量和基础数学函数
 - [x] 支持 `#`、`//`、`/* ... */` 注释
 - [x] 支持异步加载地图，并在控制台窗口显示加载日志、警告和错误
-- [ ] 地图文件写回保存
+- [ ] 支持编辑地图文件中的元素
+- [ ] 保存修改的地图文件
 
 ### 自轨道与他轨道几何
 
@@ -62,14 +64,15 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - [x] 显示 `Structure.Put`、`Structure.Put0`、`Structure.PutBetween` 的地图布景放置表
 - [x] 读取并显示 `Structure.Load` 指定的布景模型列表（`.txt` 或 `.csv`）
 - [x] 显示 `Repeater.Begin`、`Repeater.Begin0`、`Repeater.End` 的连续布景表，并合并 Begin/End 距离
-- [x] 布景表和连续布景表中的源文件路径支持右键在资源管理器中打开所在目录
 - [ ] 布景模型列表编辑
 - [ ] 车站列表与车站位置编辑
 - [ ] 信号列表显示/编辑
 - [ ] 应答器列表显示/编辑
 ### 3D画布
 
-- [ ] 布景模型 3D 预览
+- [x] 布景模型 3D 预览
+- [x] 通过 `model_loader.dll`/Assimp 读取模型几何、材质和漫反射贴图
+- [x] 支持旋转和缩放布景模型预览
 - [ ] 3D 画布场景预览
 - [ ] 3D 画布中的布景编辑功能
 
@@ -93,7 +96,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 
 当前仓库未提供发行版本，推荐从源代码构建后运行。
 
-构建完成后，请确保 `komapedit.exe` 和 `maploader.dll` 位于同一目录，然后运行`build_release\komapedit.exe`
+构建完成后，请确保 `komapedit.exe`、`maploader.dll`、`model_loader.dll` 和构建复制的 Assimp 运行时 DLL 位于同一目录，然后运行 `build_release\komapedit.exe`。
 
 程序启动后会在可执行文件同目录创建或读取：
 
@@ -117,11 +120,12 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
    - `其他轨道`：切换他轨道显示、调整显示范围和颜色
    - `车站列表`：查看车站列表和 `Station.Put` 放置数据
    - `地图布景列表`：查看地图中的 `Structure.Put`、`Structure.Put0`、`Structure.PutBetween`
-   - `布景模型列表`：查看 `Structure.Load` 指定列表中的 structureKey 和模型文件
+   - `布景模型列表`：查看 `Structure.Load` 指定列表中的 structureKey 和模型文件；右键 structureKey 并选择 `预览模型` 可打开 3D 模型预览
    - `连续布景列表`：查看并合并显示 `Repeater.Begin/End`
 8. 在 `2D 视图 -> 背景图` 中导入背景图，可手动调整位置、尺寸、旋转和亮度，也可按两个车站对齐
-9. 在 `文件 -> 导出 CSV...` 中选择输出目录，导出自轨道和他轨道几何 CSV
-10. 按 `F5` 或菜单 `文件 -> 重新加载` 可重新读取当前地图
+9. 在 `3D 视图 -> 布景模型预览` 中显示或隐藏预览窗口。预览窗口内可用鼠标左键拖动旋转模型，用鼠标滚轮缩放
+10. 在 `文件 -> 导出 CSV...` 中选择输出目录，导出自轨道和他轨道几何 CSV
+11. 按 `F5` 或菜单 `文件 -> 重新加载` 可重新读取当前地图
 
 ## 项目文件结构
 
@@ -134,17 +138,22 @@ komapedit/
 ├─ THIRD_PARTY_NOTICES.md          # 第三方库和参考项目声明
 ├─ build_dev.bat                   # Debug 构建脚本
 ├─ build_release.bat               # Release 构建脚本
-├─ clear_build_release_dist.bat    # 清理 Release 目录，保留发布所需二进制和声明文件
+├─ clear_build_release_dist.bat    # Release 清理辅助脚本；使用后需确认运行时 DLL 仍保留
 ├─ get_3rd_party_packages.bat      # 拉取 ImGui 和 ImPlot
+├─ install_Assimp.bat              # 使用 vcpkg 安装 Assimp 的辅助脚本
 ├─ include/
+│  ├─ canvas3D.h                   # 3D 预览画布接口
 │  ├─ maploader.h                  # maploader C ABI
+│  ├─ model_loader.h               # model_loader C ABI
 │  └─ multilanguage.h              # 界面多语言文本
 ├─ src/
-│  ├─ maploader.cpp                # BVE Map 解析和几何生成
-│  ├─ kme.h                        # App 声明与 GUI 共享状态
-│  ├─ gui_kme.cpp                  # 主窗口、Win32/DirectX11 初始化、主循环
 │  ├─ canvas2D.cpp                 # 2D 平面/纵断面/曲线半径画布渲染
-│  └─ datatable.cpp                # 数据表格列定义、缓存与表格窗口
+│  ├─ canvas3D.cpp                 # DirectX 11 模型预览画布渲染
+│  ├─ datatable.cpp                # 数据表格列定义、缓存与表格窗口
+│  ├─ gui_kme.cpp                  # 主窗口、Win32/DirectX11 初始化、主循环
+│  ├─ kme.h                        # App 声明与 GUI 共享状态
+│  ├─ maploader.cpp                # BVE Map 解析和几何生成
+│  └─ model_loader.cpp             # 基于 Assimp 的布景模型加载
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui，docking 分支
 │  └─ implot/                      # ImPlot
@@ -160,8 +169,9 @@ komapedit/
 - [CMake](https://cmake.org/) 3.20 或更新版本
 - [Ninja](https://github.com/ninja-build/ninja)
 - 支持 C++17 的编译器，例如 MSVC 或 [MinGW](https://www.mingw-w64.org/)
-- Windows SDK / DirectX 11 开发库
+- Windows SDK / DirectX 11 / WIC 开发库
 - Git，用于拉取第三方依赖
+- Assimp，需能被 CMake 作为 `assimp::assimp` 找到
 
 ### 获取第三方依赖：get_3rd_party_packages.bat
 
@@ -171,6 +181,9 @@ komapedit/
 - `third_party/implot`→`epezent/implot`。
 
 克隆得到的第三方源码目录被 Git 忽略。其上游许可证文件保留在`third_party/` 目录中，随项目分发所需的声明汇总在`THIRD_PARTY_NOTICES.md`。
+
+Assimp 不放在 `third_party/` 目录中，需要在配置项目前单独安装。当前构建脚本在设置了 `VCPKG_ROOT` 时会自动使用 vcpkg；如果未设置 `VCPKG_DEFAULT_TRIPLET`，默认使用 `x64-mingw-dynamic`。
+`install_Assimp.bat` 是用于通过 vcpkg 安装 `assimp:x64-mingw-dynamic` 的辅助脚本，使用前需要手动编辑脚本，在其中填入本地的vcpkg所在的目录。
 
 ### Debug 构建：build_dev.bat
 
@@ -182,11 +195,13 @@ komapedit/
 
 - `komapedit.exe`
 - `maploader.dll`
+- `model_loader.dll`
+- Assimp 运行时 DLL，具体取决于所选工具链/包管理器
 - `LICENSE`
 - `NOTICE`
 - `THIRD_PARTY_NOTICES.md`
 
-如需整理发布目录，可执行`clear_build_release_dist.bat`
+打包 Release 输出前，请确认 `model_loader.dll` 和 Assimp 运行时 DLL 仍与 `komapedit.exe` 位于同一目录；3D 模型预览运行时依赖它们。
 
 
 ## 附录：CSV 数据格式
@@ -256,7 +271,7 @@ komapedit 以 Apache License, Version 2.0 分发。许可证全文见 `LICENSE`�
 项目版权与归属声明见 `NOTICE`。
 
 本项目基于 `kobushi-trackviewer` 开发，用于辅助查看和编辑 BVE Trainsim
-地图文件。C++/Win32 实现和修改由 Sapporo_ningyo 完成。
+地图文件。
 
 参考项目：
 
@@ -264,12 +279,13 @@ komapedit 以 Apache License, Version 2.0 分发。许可证全文见 `LICENSE`�
 | --- | --- | --- |
 | konawasabi 的 [kobushi-trackviewer](https://github.com/konawasabi/kobushi-trackviewer) | Copyright (c) 2021-2024 konawasabi | Apache License, Version 2.0 |
 
-GUI 使用的第三方库：
+GUI 和模型预览使用的第三方库：
 
 | 库 | 用途 | 版权 | 许可证 |
 | --- | --- | --- | --- |
 | [Dear ImGui](https://github.com/ocornut/imgui) | Docking GUI、Win32 后端、DirectX 11 后端、C++ std::string 辅助模块 | Copyright (c) 2014-2026 Omar Cornut | MIT License |
 | [ImPlot](https://github.com/epezent/implot) | 2D 图表控件 | Copyright (c) 2020 Evan Pezent | MIT License |
+| [Assimp / Open Asset Import Library](https://github.com/assimp/assimp) | 布景模型导入 | Copyright (c) 2006-2026, assimp team | Modified BSD 3-Clause License |
 | Dear ImGui 随附的 stb 单文件库 | Dear ImGui 使用的字体、文本编辑、矩形打包支持 | Copyright (c) 2017 Sean Barrett | MIT License 或 Public Domain |
 
 分发本仓库源码或由本仓库构建的二进制文件时，请一并包含 `LICENSE`、
