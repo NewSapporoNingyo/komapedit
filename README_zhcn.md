@@ -121,7 +121,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
    - `车站列表`：查看车站列表和 `Station.Put` 放置数据
    - `地图布景列表`：查看地图中的 `Structure.Put`、`Structure.Put0`、`Structure.PutBetween`
    - `布景模型列表`：查看 `Structure.Load` 指定列表中的 structureKey 和模型文件；右键 structureKey 并选择 `预览模型` 可打开 3D 模型预览
-   - `连续布景列表`：查看并合并显示 `Repeater.Begin/End`
+   - `连续布景列表`：查看 `Repeater.Begin/End`
 8. 在 `2D 视图 -> 背景图` 中导入背景图，可手动调整位置、尺寸、旋转和亮度，也可按两个车站对齐
 9. 在 `3D 视图 -> 布景模型预览` 中显示或隐藏预览窗口。预览窗口内可用鼠标左键拖动旋转模型，用鼠标滚轮缩放
 10. 在 `文件 -> 导出 CSV...` 中选择输出目录，导出自轨道和他轨道几何 CSV
@@ -180,8 +180,9 @@ komapedit/
 - `third_party/imgui`→`ocornut/imgui` 的 `docking` 分支。
 - `third_party/implot`→`epezent/implot`。
 
-克隆得到的第三方源码目录被 Git 忽略。其上游许可证文件保留在`third_party/` 目录中，随项目分发所需的声明汇总在`THIRD_PARTY_NOTICES.md`。
+克隆得到的第三方源码目录会被 Git 忽略。其上游许可证文件保留在`third_party/` 目录中，随项目分发所需的声明汇总在`THIRD_PARTY_NOTICES.md`。
 
+### 安装Assimp：install_Assimp.bat
 Assimp 不放在 `third_party/` 目录中，需要在配置项目前单独安装。当前构建脚本在设置了 `VCPKG_ROOT` 时会自动使用 vcpkg；如果未设置 `VCPKG_DEFAULT_TRIPLET`，默认使用 `x64-mingw-dynamic`。
 `install_Assimp.bat` 是用于通过 vcpkg 安装 `assimp:x64-mingw-dynamic` 的辅助脚本，使用前需要手动编辑脚本，在其中填入本地的vcpkg所在的目录。
 
