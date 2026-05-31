@@ -54,6 +54,34 @@ std::string wide_to_utf8_local(const std::wstring& text) {
     return out;
 }
 
+std::string path_filename_utf8(const std::string& path) {
+    try {
+        std::filesystem::path p = utf8_to_wide_local(path);
+#if defined(__cpp_char8_t)
+        auto s = p.filename().u8string();
+        std::string name(reinterpret_cast<const char*>(s.data()), s.size());
+#else
+        std::string name = p.filename().u8string();
+#endif
+        return name.empty() ? path : name;
+    } catch (...) {
+        return path;
+    }
+}
+
+float clamp_color_component(float value) {
+    if (!std::isfinite(value)) return 0.0f;
+    return std::clamp(value, 0.0f, 1.0f);
+}
+
+ImVec4 clamp_background_color(ImVec4 color) {
+    color.x = clamp_color_component(color.x);
+    color.y = clamp_color_component(color.y);
+    color.z = clamp_color_component(color.z);
+    color.w = 1.0f;
+    return color;
+}
+
 std::string win32_error_text(DWORD code) {
     if (code == 0) return {};
     wchar_t* buffer = nullptr;
@@ -266,9 +294,11 @@ VSOutput vs_main(VSInput input)
 
 float4 ps_main(VSOutput input) : SV_TARGET
 {
+    float4 color = materialColor;
     if (useTexture.x > 0.5)
-        return diffuseTexture.Sample(diffuseSampler, input.texcoord);
-    return materialColor;
+        color *= diffuseTexture.Sample(diffuseSampler, input.texcoord);
+    clip(color.a - 0.01);
+    return color;
 }
 )";
 
@@ -347,6 +377,7 @@ struct Canvas3D::Impl {
     ~Impl() {
         release_resources();
         release_render_target();
+        release_com(blend_state);
         release_com(depth_state);
         release_com(rasterizer_state);
         release_com(input_layout);
@@ -365,6 +396,22 @@ struct Canvas3D::Impl {
         bool ok = upload_model(data, path, error);
         loader.free_model(data);
         return ok;
+    }
+
+    bool reload_model(std::string& error) {
+        std::string path = model_path_value;
+        if (path.empty()) {
+            error = "model preview has no model to reload";
+            return false;
+        }
+        const float old_yaw = yaw;
+        const float old_pitch = pitch;
+        const float old_distance_factor = distance_factor;
+        if (!load_model(path, error)) return false;
+        yaw = old_yaw;
+        pitch = old_pitch;
+        distance_factor = old_distance_factor;
+        return true;
     }
 
     bool upload_model(const MlMeshData& data, const std::string& path, std::string& error) {
@@ -437,7 +484,7 @@ struct Canvas3D::Impl {
                 materials[i].diffuse[0] = src->diffuse[0];
                 materials[i].diffuse[1] = src->diffuse[1];
                 materials[i].diffuse[2] = src->diffuse[2];
-                materials[i].diffuse[3] = src->diffuse[3] > 0.0f ? src->diffuse[3] : 1.0f;
+                materials[i].diffuse[3] = std::clamp(src->diffuse[3], 0.0f, 1.0f);
                 if (src->texture_path && *src->texture_path) {
                     if (!load_texture(src->texture_path, &materials[i].texture, error)) {
                         release_resources();
@@ -573,7 +620,8 @@ fail:
             error = "Direct3D device is not available";
             return false;
         }
-        if (vertex_shader && pixel_shader && input_layout && constant_buffer && depth_state && rasterizer_state && sampler_state) return true;
+        if (vertex_shader && pixel_shader && input_layout && constant_buffer && depth_state &&
+            rasterizer_state && sampler_state && blend_state) return true;
 
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
@@ -669,6 +717,21 @@ fail:
             return false;
         }
 
+        D3D11_BLEND_DESC blend_desc = {};
+        blend_desc.RenderTarget[0].BlendEnable = TRUE;
+        blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+        blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        blend_desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        blend_desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        blend_desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        blend_desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        hr = device->CreateBlendState(&blend_desc, &blend_state);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBlendState", hr);
+            return false;
+        }
+
         return true;
     }
 
@@ -742,12 +805,13 @@ fail:
             if (last_error != error) last_error = error;
         }
 
-        const float clear_color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const ImVec4 bg = clamp_background_color(background_color_value);
+        const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
         context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-        if (has_model() && vertex_shader && pixel_shader && input_layout && constant_buffer) {
+        if (has_model() && vertex_shader && pixel_shader && input_layout && constant_buffer && blend_state) {
             D3D11_VIEWPORT viewport = {};
             viewport.Width = static_cast<float>(width);
             viewport.Height = static_cast<float>(height);
@@ -756,6 +820,8 @@ fail:
             context->RSSetViewports(1, &viewport);
             context->RSSetState(rasterizer_state);
             context->OMSetDepthStencilState(depth_state, 0);
+            const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
 
             Mat4 center_transform = translation(-center.x, -center.y, -center.z);
             Mat4 rotation = multiply(rotation_y(yaw), rotation_x(pitch));
@@ -796,10 +862,49 @@ fail:
             }
             ID3D11ShaderResourceView* null_srv = nullptr;
             context->PSSetShaderResources(0, 1, &null_srv);
+            context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         }
 
         ID3D11RenderTargetView* null_rtv = nullptr;
         context->OMSetRenderTargets(1, &null_rtv, nullptr);
+    }
+
+    void draw_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
+        if (!draw || size.x <= 0.0f || size.y <= 0.0f) return;
+
+        const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
+        const float rounding = 3.0f;
+        const ImU32 text_color = IM_COL32(255, 255, 255, 240);
+        const ImU32 bg_color = IM_COL32(0, 0, 0, 150);
+        char fps_text[32] = {};
+        std::snprintf(fps_text, sizeof(fps_text), "%.1f FPS", ImGui::GetIO().Framerate);
+
+        ImVec2 fps_size = ImGui::CalcTextSize(fps_text);
+        ImVec2 end(origin.x + size.x, origin.y + size.y);
+        ImVec2 fps_pos(end.x - pad * 2.0f - fps_size.x, end.y - pad * 2.0f - fps_size.y);
+        draw->AddRectFilled(ImVec2(fps_pos.x - pad, fps_pos.y - pad * 0.5f),
+                            ImVec2(fps_pos.x + fps_size.x + pad, fps_pos.y + fps_size.y + pad * 0.5f),
+                            bg_color, rounding);
+        draw->AddText(fps_pos, text_color, fps_text);
+
+        if (!has_model() || model_path_value.empty()) return;
+
+        std::string file_name = path_filename_utf8(model_path_value);
+        ImVec2 name_size = ImGui::CalcTextSize(file_name.c_str());
+        float right_reserved = fps_size.x + pad * 5.0f;
+        float max_name_width = std::max(0.0f, size.x - right_reserved - pad * 3.0f);
+        if (max_name_width <= 1.0f) return;
+
+        float visible_name_width = std::min(name_size.x, max_name_width);
+        ImVec2 name_pos(origin.x + pad * 2.0f, end.y - pad * 2.0f - name_size.y);
+        ImVec2 clip_min(name_pos.x, name_pos.y);
+        ImVec2 clip_max(name_pos.x + visible_name_width, name_pos.y + name_size.y);
+        draw->AddRectFilled(ImVec2(name_pos.x - pad, name_pos.y - pad * 0.5f),
+                            ImVec2(name_pos.x + visible_name_width + pad, name_pos.y + name_size.y + pad * 0.5f),
+                            bg_color, rounding);
+        draw->PushClipRect(clip_min, clip_max, true);
+        draw->AddText(name_pos, text_color, file_name.c_str());
+        draw->PopClipRect();
     }
 
     void render(ImVec2 requested_size) {
@@ -842,6 +947,7 @@ fail:
         } else {
             draw->AddRectFilled(origin, end, IM_COL32(0, 0, 0, 255));
         }
+        draw_overlay(draw, origin, avail);
     }
 
     void release_resources() {
@@ -880,6 +986,7 @@ fail:
     ID3D11SamplerState* sampler_state = nullptr;
     ID3D11DepthStencilState* depth_state = nullptr;
     ID3D11RasterizerState* rasterizer_state = nullptr;
+    ID3D11BlendState* blend_state = nullptr;
     ID3D11Buffer* vertex_buffer = nullptr;
     ID3D11Buffer* index_buffer = nullptr;
     std::vector<MeshPart> parts;
@@ -895,6 +1002,7 @@ fail:
     bool rotating = false;
     ImVec2 last_mouse = ImVec2(0.0f, 0.0f);
     std::string model_path_value;
+    ImVec4 background_color_value = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
     std::string last_error;
     ModelLoaderClient loader;
 };
@@ -908,6 +1016,10 @@ bool Canvas3D::load_model(const std::string& path, std::string& error) {
     return impl_->load_model(path, error);
 }
 
+bool Canvas3D::reload_model(std::string& error) {
+    return impl_->reload_model(error);
+}
+
 void Canvas3D::clear_model() {
     impl_->clear_model();
 }
@@ -918,6 +1030,14 @@ bool Canvas3D::has_model() const {
 
 const std::string& Canvas3D::model_path() const {
     return impl_->model_path_value;
+}
+
+void Canvas3D::set_background_color(ImVec4 color) {
+    impl_->background_color_value = clamp_background_color(color);
+}
+
+ImVec4 Canvas3D::background_color() const {
+    return impl_->background_color_value;
 }
 
 void Canvas3D::render(ImVec2 size) {

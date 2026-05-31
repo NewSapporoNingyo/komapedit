@@ -267,6 +267,10 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
             out.materials[material_index].diffuse[2] = diffuse.b;
             out.materials[material_index].diffuse[3] = diffuse.a;
         }
+        float opacity = 1.0f;
+        if (material->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS) {
+            out.materials[material_index].diffuse[3] = std::clamp(opacity, 0.0f, 1.0f);
+        }
 
         aiString texture_path;
         if (material->GetTexture(aiTextureType_DIFFUSE, 0, &texture_path) == AI_SUCCESS) {

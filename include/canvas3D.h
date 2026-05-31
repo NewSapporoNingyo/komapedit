@@ -22,9 +22,12 @@ public:
     Canvas3D& operator=(const Canvas3D&) = delete;
 
     bool load_model(const std::string& path, std::string& error);
+    bool reload_model(std::string& error);
     void clear_model();
     bool has_model() const;
     const std::string& model_path() const;
+    void set_background_color(ImVec4 color);
+    ImVec4 background_color() const;
 
     void render(ImVec2 size);
 

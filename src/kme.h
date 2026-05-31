@@ -444,6 +444,7 @@ private:
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
     std::unique_ptr<Canvas3D> model_preview_canvas_;
+    ImVec4 model_preview_bg_color_ = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
 
     TextureImage bg_image_;
     bool bg_show_ = true;
@@ -496,6 +497,8 @@ private:
     void render_repeaters_window();
     void render_model_preview_window();
     void preview_structure_model(const std::string& path);
+    void reload_model_preview();
+    void reload_current_map_and_model_preview();
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);
     void invalidate_table_cache();

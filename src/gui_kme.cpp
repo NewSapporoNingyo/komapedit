@@ -453,6 +453,24 @@ std::string theme_color_to_string(const ImVec4& color) {
     return out.str();
 }
 
+const std::array<ImVec4, 12>& ui_theme_palette() {
+    static const std::array<ImVec4, 12> palette = {
+        ImVec4(0.26f, 0.59f, 0.98f, 1.0f),
+        ImVec4(0.00f, 0.74f, 0.83f, 1.0f),
+        ImVec4(0.26f, 0.75f, 0.48f, 1.0f),
+        ImVec4(0.60f, 0.78f, 0.20f, 1.0f),
+        ImVec4(0.95f, 0.67f, 0.13f, 1.0f),
+        ImVec4(0.95f, 0.42f, 0.18f, 1.0f),
+        ImVec4(0.90f, 0.27f, 0.33f, 1.0f),
+        ImVec4(0.88f, 0.31f, 0.55f, 1.0f),
+        ImVec4(0.70f, 0.38f, 0.94f, 1.0f),
+        ImVec4(0.46f, 0.45f, 0.95f, 1.0f),
+        ImVec4(0.40f, 0.58f, 0.71f, 1.0f),
+        ImVec4(0.58f, 0.63f, 0.68f, 1.0f),
+    };
+    return palette;
+}
+
 int hex_digit(char ch) {
     if (ch >= '0' && ch <= '9') return ch - '0';
     if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
@@ -856,6 +874,7 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     g_app = this;
     kv_set_log_callback(&App::log_callback);
     model_preview_canvas_ = std::make_unique<Canvas3D>(device_);
+    model_preview_canvas_->set_background_color(model_preview_bg_color_);
     lang_ = settings_.language;
     font_size_ = clamp_font_size(settings_.font_size);
     ui_component_size_ = clamp_ui_component_size(settings_.ui_component_size);
@@ -1630,8 +1649,8 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("StructureModels", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
-    ImGui::DockBuilderDockWindow("Plots", dock_main);
     ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
+    ImGui::DockBuilderDockWindow("Plots", dock_main);
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -1662,8 +1681,10 @@ void App::render_menu() {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem(tr("menu.reload").c_str(), "F5", false, has_model_ && !loading_)) {
-            begin_load(file_path_, true);
+        if (ImGui::MenuItem(tr("menu.reload").c_str(), "F5", false,
+                            !loading_ && ((has_model_ && !file_path_.empty()) ||
+                                          (model_preview_canvas_ && model_preview_canvas_->has_model())))) {
+            reload_current_map_and_model_preview();
         }
         if (ImGui::MenuItem(tr("menu.export_csv").c_str(), nullptr, false, has_model_)) export_csv();
         if (ImGui::MenuItem(tr("menu.exit").c_str())) PostQuitMessage(0);
@@ -1797,9 +1818,10 @@ void App::render_toolbar() {
         }
         ImGui::SameLine();
 
-        const bool can_reload = has_model_ && !loading_ && !file_path_.empty();
+        const bool can_reload = !loading_ && ((has_model_ && !file_path_.empty()) ||
+                                             (model_preview_canvas_ && model_preview_canvas_->has_model()));
         ImGui::BeginDisabled(!can_reload);
-        if (ImGui::Button(tr("button.reload").c_str())) begin_load(file_path_, true);
+        if (ImGui::Button(tr("button.reload").c_str())) reload_current_map_and_model_preview();
         ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
@@ -1910,20 +1932,7 @@ void App::render_popups() {
         }
         ImGui::SameLine();
         ImGui::Text("#%s", theme_hex.c_str());
-        const std::array<ImVec4, 12> palette = {
-            ImVec4(0.26f, 0.59f, 0.98f, 1.0f),
-            ImVec4(0.00f, 0.74f, 0.83f, 1.0f),
-            ImVec4(0.26f, 0.75f, 0.48f, 1.0f),
-            ImVec4(0.60f, 0.78f, 0.20f, 1.0f),
-            ImVec4(0.95f, 0.67f, 0.13f, 1.0f),
-            ImVec4(0.95f, 0.42f, 0.18f, 1.0f),
-            ImVec4(0.90f, 0.27f, 0.33f, 1.0f),
-            ImVec4(0.88f, 0.31f, 0.55f, 1.0f),
-            ImVec4(0.70f, 0.38f, 0.94f, 1.0f),
-            ImVec4(0.46f, 0.45f, 0.95f, 1.0f),
-            ImVec4(0.40f, 0.58f, 0.71f, 1.0f),
-            ImVec4(0.58f, 0.63f, 0.68f, 1.0f),
-        };
+        const auto& palette = ui_theme_palette();
         if (ImGui::BeginPopup("theme_color_popup")) {
             ImGui::SetNextItemWidth(260.0f);
             if (ImGui::ColorPicker3("##theme_color_picker", &pending_theme_color_.x, color_flags)) {
@@ -2124,12 +2133,6 @@ void App::render_popups() {
     }
 }
 
-void App::handle_shortcuts() {
-    if (ImGui::IsKeyPressed(ImGuiKey_F5, false) && has_model_ && !loading_ && !file_path_.empty()) {
-        begin_load(file_path_, true);
-    }
-}
-
 void App::preview_structure_model(const std::string& path) {
     if (path.empty()) {
         add_log("[WARN]model preview: empty model path");
@@ -2145,12 +2148,104 @@ void App::preview_structure_model(const std::string& path) {
     add_log("[INFO]model preview: " + path);
 }
 
+void App::reload_model_preview() {
+    if (!model_preview_canvas_ || !model_preview_canvas_->has_model()) return;
+    std::string path = model_preview_canvas_->model_path();
+    std::string error;
+    if (!model_preview_canvas_->reload_model(error)) {
+        add_log("[ERROR]model preview reload: " + error);
+        return;
+    }
+    add_log("[INFO]model preview reloaded: " + path);
+}
+
+void App::reload_current_map_and_model_preview() {
+    if (loading_) return;
+    if (has_model_ && !file_path_.empty()) begin_load(file_path_, true);
+    reload_model_preview();
+}
+
+void App::handle_shortcuts() {
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+        reload_current_map_and_model_preview();
+    }
+}
+
 void App::render_model_preview_window() {
     if (!show_model_preview_window_) return;
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_model_preview_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.model_preview") + "###ModelPreview3D";
     if (ImGui::Begin(title.c_str(), &show_model_preview_window_)) {
+        ImGuiStyle& style = ImGui::GetStyle();
+        const bool has_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model();
+        ImGui::Spacing();
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * 1.35f, style.ItemSpacing.y));
+
+        ImGui::BeginDisabled(show_structure_models_window_);
+        if (ImGui::Button(tr("button.model_list").c_str())) show_structure_models_window_ = true;
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+
+        ImGui::BeginDisabled(!has_preview_model);
+        if (ImGui::Button(tr("button.reload").c_str())) reload_model_preview();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+
+        ImGui::BeginDisabled(!has_preview_model);
+        if (ImGui::Button(tr("button.clear").c_str())) model_preview_canvas_->clear_model();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+
+        if (ImGui::Button(tr("button.background_color").c_str())) {
+            ImGui::OpenPopup("model_preview_bg_color_popup");
+        }
+        if (ImGui::BeginPopup("model_preview_bg_color_popup")) {
+            const ImGuiColorEditFlags color_flags = ImGuiColorEditFlags_NoAlpha
+                | ImGuiColorEditFlags_DisplayRGB
+                | ImGuiColorEditFlags_InputRGB
+                | ImGuiColorEditFlags_Uint8
+                | ImGuiColorEditFlags_PickerHueBar;
+            ImGui::SetNextItemWidth(260.0f);
+            if (ImGui::ColorPicker3("##model_preview_bg_color_picker", &model_preview_bg_color_.x, color_flags)) {
+                model_preview_bg_color_ = clamp_theme_color(model_preview_bg_color_);
+                model_preview_canvas_->set_background_color(model_preview_bg_color_);
+            }
+            ImGui::Separator();
+            const float swatch_size = ImGui::GetFrameHeight();
+            const auto& palette = ui_theme_palette();
+            for (size_t i = 0; i < palette.size(); ++i) {
+                if (i > 0 && i % 6 != 0) ImGui::SameLine();
+                std::string id = "##model_preview_palette_" + std::to_string(i);
+                if (ImGui::ColorButton(id.c_str(), palette[i], ImGuiColorEditFlags_NoAlpha, ImVec2(swatch_size, swatch_size))) {
+                    model_preview_bg_color_ = clamp_theme_color(palette[i]);
+                    model_preview_canvas_->set_background_color(model_preview_bg_color_);
+                }
+            }
+            ImGui::Separator();
+            ImGui::TextUnformatted(tr("label.quick_colors").c_str());
+            const std::array<std::pair<const char*, ImVec4>, 5> quick_colors = {{
+                {"color.white", ImVec4(1.0f, 1.0f, 1.0f, 1.0f)},
+                {"color.black", ImVec4(0.0f, 0.0f, 0.0f, 1.0f)},
+                {"color.gray", ImVec4(0.5f, 0.5f, 0.5f, 1.0f)},
+                {"color.blue", ImVec4(0.0f, 0.0f, 1.0f, 1.0f)},
+                {"color.green", ImVec4(0.0f, 1.0f, 0.0f, 1.0f)},
+            }};
+            for (size_t i = 0; i < quick_colors.size(); ++i) {
+                if (i > 0) ImGui::SameLine();
+                std::string id = "##model_preview_quick_" + std::to_string(i);
+                if (ImGui::ColorButton(id.c_str(), quick_colors[i].second, ImGuiColorEditFlags_NoAlpha,
+                                       ImVec2(swatch_size, swatch_size))) {
+                    model_preview_bg_color_ = quick_colors[i].second;
+                    model_preview_canvas_->set_background_color(model_preview_bg_color_);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(quick_colors[i].first).c_str());
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar();
+        ImGui::Spacing();
+        ImGui::Separator();
         ImVec2 avail = ImGui::GetContentRegionAvail();
         model_preview_canvas_->render(avail);
     }
