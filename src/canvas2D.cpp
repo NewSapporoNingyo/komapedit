@@ -1131,6 +1131,8 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
 
 void App::render_plots() {
     std::string title = tr("frame.plots") + "###Plots";
+    if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
+    if (focus_plots_next_) ImGui::SetNextWindowFocus();
     ImGui::Begin(title.c_str());
     render_mode_grid_controls();
     if (pick_slot_ != 0) ImGui::TextUnformatted(tr("hint.pick_bg_station").c_str());
@@ -1169,6 +1171,6 @@ void App::render_plots() {
             render_radius_plot(profile, graph_avail);
         }
     }
+    focus_plots_next_ = false;
     ImGui::End();
 }
-

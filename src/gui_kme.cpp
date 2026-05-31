@@ -1651,6 +1651,10 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
+    if (ImGuiDockNode* main_node = ImGui::DockBuilderGetNode(dock_main)) {
+        main_node->SelectedTabId = ImHashStr("Plots");
+    }
+    focus_plots_next_ = true;
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -2176,13 +2180,15 @@ void App::render_model_preview_window() {
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_model_preview_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.model_preview") + "###ModelPreview3D";
+    ImGuiStyle& style = ImGui::GetStyle();
+    const float button_height = ImGui::GetFrameHeight();
+    const float toolbar_padding_y = button_height * 0.25f;
+    const float window_padding_x = style.WindowPadding.x;
+    const float item_spacing_x = style.ItemSpacing.x;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(window_padding_x, toolbar_padding_y));
     if (ImGui::Begin(title.c_str(), &show_model_preview_window_)) {
-        ImGuiStyle& style = ImGui::GetStyle();
         const bool has_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model();
-        const float button_height = ImGui::GetFrameHeight();
-        const float toolbar_padding_y = button_height * 0.25f;
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * 1.35f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(item_spacing_x * 1.35f, 0.0f));
 
         ImGui::BeginDisabled(show_structure_models_window_);
         if (ImGui::Button(tr("button.model_list").c_str())) show_structure_models_window_ = true;
@@ -2242,6 +2248,7 @@ void App::render_model_preview_window() {
     }
     focus_model_preview_next_ = false;
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 void App::render() {

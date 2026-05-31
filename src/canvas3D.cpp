@@ -871,28 +871,17 @@ fail:
 
     void draw_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
         if (!draw || size.x <= 0.0f || size.y <= 0.0f) return;
+        if (!has_model() || model_path_value.empty()) return;
 
         const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
         const float rounding = 3.0f;
         const ImU32 text_color = IM_COL32(255, 255, 255, 240);
         const ImU32 bg_color = IM_COL32(0, 0, 0, 150);
-        char fps_text[32] = {};
-        std::snprintf(fps_text, sizeof(fps_text), "%.1f FPS", ImGui::GetIO().Framerate);
-
-        ImVec2 fps_size = ImGui::CalcTextSize(fps_text);
         ImVec2 end(origin.x + size.x, origin.y + size.y);
-        ImVec2 fps_pos(end.x - pad * 2.0f - fps_size.x, end.y - pad * 2.0f - fps_size.y);
-        draw->AddRectFilled(ImVec2(fps_pos.x - pad, fps_pos.y - pad * 0.5f),
-                            ImVec2(fps_pos.x + fps_size.x + pad, fps_pos.y + fps_size.y + pad * 0.5f),
-                            bg_color, rounding);
-        draw->AddText(fps_pos, text_color, fps_text);
-
-        if (!has_model() || model_path_value.empty()) return;
 
         std::string file_name = path_filename_utf8(model_path_value);
         ImVec2 name_size = ImGui::CalcTextSize(file_name.c_str());
-        float right_reserved = fps_size.x + pad * 5.0f;
-        float max_name_width = std::max(0.0f, size.x - right_reserved - pad * 3.0f);
+        float max_name_width = std::max(0.0f, size.x - pad * 4.0f);
         if (max_name_width <= 1.0f) return;
 
         float visible_name_width = std::min(name_size.x, max_name_width);

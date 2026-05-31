@@ -434,6 +434,7 @@ private:
     bool show_repeaters_window_ = false;
     bool show_model_preview_window_ = true;
     bool focus_model_preview_next_ = false;
+    bool focus_plots_next_ = true;
     bool show_range_popup_ = false;
     bool show_cp_popup_ = false;
     bool show_bg_adjust_popup_ = false;
