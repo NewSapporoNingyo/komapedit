@@ -14,9 +14,13 @@ for %%F in (LICENSE NOTICE THIRD_PARTY_NOTICES.md) do (
 )
 
 for /f "delims=" %%F in ('dir /b /a-d "%TARGET%"') do (
-    if /I not "%%F"=="komapedit.exe" if /I not "%%F"=="maploader.dll" if /I not "%%F"=="LICENSE" if /I not "%%F"=="NOTICE" if /I not "%%F"=="THIRD_PARTY_NOTICES.md" (
-        del /f /q "%TARGET%\%%F"
-    )
+    set "KEEP="
+    if /I "%%F"=="komapedit.exe" set "KEEP=1"
+    if /I "%%~xF"==".dll" set "KEEP=1"
+    if /I "%%F"=="LICENSE" set "KEEP=1"
+    if /I "%%F"=="NOTICE" set "KEEP=1"
+    if /I "%%F"=="THIRD_PARTY_NOTICES.md" set "KEEP=1"
+    if not defined KEEP del /f /q "%TARGET%\%%F"
 )
 
 for /f "delims=" %%D in ('dir /b /ad "%TARGET%"') do (
@@ -24,6 +28,6 @@ for /f "delims=" %%D in ('dir /b /ad "%TARGET%"') do (
 )
 
 echo build_release cleaned for distribution.
-echo Kept: komapedit.exe, maploader.dll, LICENSE, NOTICE, THIRD_PARTY_NOTICES.md
+echo Kept: komapedit.exe, all DLL files, LICENSE, NOTICE, THIRD_PARTY_NOTICES.md
 
 pause

@@ -138,7 +138,7 @@ komapedit/
 ├─ THIRD_PARTY_NOTICES.md          # 第三方库和参考项目声明
 ├─ build_dev.bat                   # Debug 构建脚本
 ├─ build_release.bat               # Release 构建脚本
-├─ clear_build_release_dist.bat    # Release 清理辅助脚本；使用后需确认运行时 DLL 仍保留
+├─ clear_build_release_dist.bat    # 清理 Release 目录，保留可执行文件、DLL 和声明文件
 ├─ get_3rd_party_packages.bat      # 拉取 ImGui 和 ImPlot
 ├─ install_Assimp.bat              # 使用 vcpkg 安装 Assimp 的辅助脚本
 ├─ include/
@@ -202,7 +202,7 @@ Assimp 不放在 `third_party/` 目录中，需要在配置项目前单独安装
 - `NOTICE`
 - `THIRD_PARTY_NOTICES.md`
 
-打包 Release 输出前，请确认 `model_loader.dll` 和 Assimp 运行时 DLL 仍与 `komapedit.exe` 位于同一目录；3D 模型预览运行时依赖它们。
+如需整理发布目录，可执行 `clear_build_release_dist.bat`。该脚本会保留 `komapedit.exe`、所有 `.dll` 文件（包括 `maploader.dll`、`model_loader.dll`、Assimp 运行时 DLL 及其已复制的依赖 DLL），以及 `LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md`。
 
 
 ## 附录：CSV 数据格式

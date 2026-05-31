@@ -10,7 +10,7 @@ The application has three main runtime components:
 - `model_loader.dll`: loads Structure model files through Assimp and exposes mesh/material data for the 3D preview.
 - `komapedit.exe`: the desktop GUI, built with Dear ImGui, ImPlot, Win32, DirectX 11, and WIC.
 
-At this stage, komapedit is closer to a map inspector and track-geometry visualizer than a full map editor. Full object editing, full-map 3D scene preview, sound editing, and environmental-effect editing are still planned.
+At this stage, komapedit is closer to a map viewer and track-geometry visualizer than a full map editor. Full object editing, full-map scene preview, sound editing, and environmental-effect editing are still planned.
 
 ## Development Status (TODO List)
 
@@ -22,7 +22,8 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [x] Support `$variable = expression;`, the predefined `distance` variable, and basic math functions.
 - [x] Support `#`, `//`, and `/* ... */` comments.
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
-- [ ] Save changes back to map files.
+- [ ] Edit elements in map files.
+- [ ] Save modified map files.
 
 ### Own-Track and Other-Track Geometry
 
@@ -63,8 +64,6 @@ At this stage, komapedit is closer to a map inspector and track-geometry visuali
 - [x] Display map Structure placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
 - [x] Load and display Structure model lists referenced by `Structure.Load` (`.txt` or `.csv`).
 - [x] Display `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` data, with Begin/End distances merged for readability.
-- [x] Right-click source file paths in the Structure, Structure model, and repeater tables to open their folders in File Explorer.
-- [x] Right-click Structure model keys to open a 3D preview of the referenced model.
 - [ ] Edit Structure model lists.
 - [ ] Edit station lists and station positions.
 - [ ] Display/Edit signal lists.
@@ -122,7 +121,7 @@ On startup, the application creates or reads the following files next to the exe
    - `Station List`: view the station list and `Station.Put` placement data.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map.
    - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. Right-click a structure key and choose `Preview Model` to open the 3D model preview.
-   - `Repeater List`: view merged `Repeater.Begin/End` data.
+   - `Repeater List`: view `Repeater.Begin/End` data.
 8. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 9. Use `3D View -> Structure Model Preview` to show or hide the preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
 10. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
@@ -139,10 +138,9 @@ komapedit/
 ├─ THIRD_PARTY_NOTICES.md          # Third-party library and reference-project notices
 ├─ build_dev.bat                   # Debug build script
 ├─ build_release.bat               # Release build script
-├─ clear_build_release_dist.bat    # Release cleanup helper; verify runtime DLLs after use
+├─ clear_build_release_dist.bat    # Cleans Release output, keeping the executable, DLLs, and notices
 ├─ get_3rd_party_packages.bat      # Fetches ImGui and ImPlot
 ├─ install_Assimp.bat              # Helper for installing Assimp with vcpkg
-├─ install_Assimp(local).bat        # Local-machine Assimp install helper
 ├─ include/
 │  ├─ canvas3D.h                   # 3D preview canvas interface
 │  ├─ maploader.h                  # maploader C ABI
@@ -182,15 +180,20 @@ This script clones the following two projects. Make sure Git is installed first.
 - `third_party/imgui` -> the `docking` branch of `ocornut/imgui`
 - `third_party/implot` -> `epezent/implot`
 
-The cloned third-party source trees are ignored by Git. Their upstream license
+The cloned third-party source trees will be ignored by Git. Their upstream license
 files remain under `third_party/`; distribution notices are summarized in
 `THIRD_PARTY_NOTICES.md`.
+
+### Install Assimp: `install_Assimp.bat`
 
 Assimp is not vendored under `third_party/`. Install it separately before
 configuring the project. The provided build scripts automatically use vcpkg when
 `VCPKG_ROOT` is set; if `VCPKG_DEFAULT_TRIPLET` is not set, they default to
-`x64-mingw-dynamic`. `install_Assimp.bat` is a small helper for installing
-`assimp:x64-mingw-dynamic` with vcpkg.
+`x64-mingw-dynamic`.
+
+`install_Assimp.bat` is a helper for installing `assimp:x64-mingw-dynamic` with
+vcpkg. Edit the script before using it and fill in the path to your local vcpkg
+directory.
 
 ### Debug Build: `build_dev.bat`
 
@@ -208,9 +211,10 @@ The output directory is `build_release`. The main build products are:
 - `NOTICE`
 - `THIRD_PARTY_NOTICES.md`
 
-Before packaging a Release output, verify that `model_loader.dll` and the Assimp
-runtime DLLs remain next to `komapedit.exe`; the 3D model preview depends on
-them at runtime.
+To clean the Release output for distribution, run
+`clear_build_release_dist.bat`. It keeps `komapedit.exe`, all `.dll` files
+including `maploader.dll`, `model_loader.dll`, Assimp runtime DLLs and their
+copied dependencies, plus `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 
 ## Appendix: CSV Data Formats
 
@@ -279,8 +283,7 @@ komapedit is distributed under the Apache License, Version 2.0. See `LICENSE`
 for the license text and `NOTICE` for project attribution notices.
 
 This project is based on `kobushi-trackviewer` and is intended to help inspect
-and edit BVE Trainsim map files. The C++/Win32 implementation and modifications
-are by Sapporo_ningyo.
+and edit BVE Trainsim map files.
 
 Reference project:
 
@@ -294,7 +297,7 @@ Third-party libraries used by the GUI and model preview:
 | --- | --- | --- | --- |
 | [Dear ImGui](https://github.com/ocornut/imgui) | Docking GUI, Win32 backend, DirectX 11 backend, C++ std::string helper | Copyright (c) 2014-2026 Omar Cornut | MIT License |
 | [ImPlot](https://github.com/epezent/implot) | 2D plotting widgets | Copyright (c) 2020 Evan Pezent | MIT License |
-| [Assimp / Open Asset Import Library](https://github.com/assimp/assimp) | Structure model import for 3D preview | Copyright (c) 2006-2026, assimp team | Modified BSD 3-Clause License |
+| [Assimp / Open Asset Import Library](https://github.com/assimp/assimp) | Structure model import | Copyright (c) 2006-2026, assimp team | Modified BSD 3-Clause License |
 | stb single-file libraries bundled with Dear ImGui | Font/text/rectangle-packing support used by Dear ImGui | Copyright (c) 2017 Sean Barrett | MIT License or Public Domain |
 
 When distributing source or binaries built from this repository, include
