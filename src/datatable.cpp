@@ -9,6 +9,7 @@
 
 #include "kme.h"
 
+#include "canvas3D.h"
 #include "imgui.h"
 
 #include <windows.h>
@@ -45,9 +46,11 @@ void open_parent_directory_in_explorer(const std::string& file_path) {
 }
 
 void render_file_path_cell_with_context(const std::string& display_text, const std::string& open_path,
-                                        const std::string& menu_label, const std::string& tooltip_text = {}) {
+                                        const std::string& menu_label, const std::string& tooltip_text = {},
+                                        ImU32 text_color = 0) {
     if (display_text.empty()) return;
 
+    if (text_color == 0) text_color = ImGui::GetColorU32(ImGuiCol_Text);
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
     ImVec2 item_size(
@@ -58,7 +61,7 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
         ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y), ImGui::GetColorU32(ImGuiCol_HeaderHovered));
         if (!tooltip_text.empty()) ImGui::SetTooltip("%s", tooltip_text.c_str());
     }
-    ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), display_text.c_str());
+    ImGui::GetWindowDrawList()->AddText(pos, text_color, display_text.c_str());
 
     if (ImGui::BeginPopupContextItem("file_path_context", ImGuiPopupFlags_MouseButtonRight)) {
         bool can_open = !blank_ascii(open_path);
@@ -442,9 +445,15 @@ void App::render_structure_models_window() {
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
         clipper.Begin(static_cast<int>(table_cache_.structure_model_rows.size()));
+        const ImVec4 preview_text_color = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.structure_model_rows[static_cast<size_t>(row_index)];
+                const bool is_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model() &&
+                    row.open_path == model_preview_canvas_->model_path();
+                const ImU32 row_text_color = is_preview_model
+                    ? ImGui::GetColorU32(preview_text_color)
+                    : ImGui::GetColorU32(ImGuiCol_Text);
                 ImGui::TableNextRow();
                 ImGui::PushID(row_index);
                 for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
@@ -463,7 +472,7 @@ void App::render_structure_models_window() {
                                 ImGui::GetColorU32(ImGuiCol_HeaderHovered));
                         }
                         if (!value.empty()) {
-                            ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), value.c_str());
+                            ImGui::GetWindowDrawList()->AddText(pos, row_text_color, value.c_str());
                         }
                         if (ImGui::BeginPopupContextItem("structure_key_context", ImGuiPopupFlags_MouseButtonRight)) {
                             bool can_preview = !blank_ascii(row.open_path);
@@ -477,9 +486,11 @@ void App::render_structure_models_window() {
                     } else if (value.empty()) {
                         continue;
                     } else if (i == kStructureModelFilePathColumn) {
-                        render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"), row.open_path);
+                        render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"), row.open_path, row_text_color);
                     } else {
+                        if (is_preview_model) ImGui::PushStyleColor(ImGuiCol_Text, preview_text_color);
                         ImGui::TextUnformatted(value.c_str());
+                        if (is_preview_model) ImGui::PopStyleColor();
                     }
                 }
                 ImGui::PopID();

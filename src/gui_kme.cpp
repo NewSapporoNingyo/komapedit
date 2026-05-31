@@ -2219,9 +2219,8 @@ void App::render_model_preview_window() {
                 model_preview_bg_color_ = clamp_theme_color(model_preview_bg_color_);
                 model_preview_canvas_->set_background_color(model_preview_bg_color_);
             }
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y);
             const float swatch_size = ImGui::GetFrameHeight();
-            ImGui::Separator();
-            ImGui::TextUnformatted(tr("label.quick_colors").c_str());
             const std::array<std::pair<const char*, ImVec4>, 5> quick_colors = {{
                 {"color.white", ImVec4(1.0f, 1.0f, 1.0f, 1.0f)},
                 {"color.black", ImVec4(0.0f, 0.0f, 0.0f, 1.0f)},
