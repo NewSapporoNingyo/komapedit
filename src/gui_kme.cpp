@@ -2179,8 +2179,10 @@ void App::render_model_preview_window() {
     if (ImGui::Begin(title.c_str(), &show_model_preview_window_)) {
         ImGuiStyle& style = ImGui::GetStyle();
         const bool has_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model();
-        ImGui::Spacing();
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * 1.35f, style.ItemSpacing.y));
+        const float button_height = ImGui::GetFrameHeight();
+        const float toolbar_padding_y = button_height * 0.25f;
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * 1.35f, 0.0f));
 
         ImGui::BeginDisabled(show_structure_models_window_);
         if (ImGui::Button(tr("button.model_list").c_str())) show_structure_models_window_ = true;
@@ -2211,17 +2213,7 @@ void App::render_model_preview_window() {
                 model_preview_bg_color_ = clamp_theme_color(model_preview_bg_color_);
                 model_preview_canvas_->set_background_color(model_preview_bg_color_);
             }
-            ImGui::Separator();
             const float swatch_size = ImGui::GetFrameHeight();
-            const auto& palette = ui_theme_palette();
-            for (size_t i = 0; i < palette.size(); ++i) {
-                if (i > 0 && i % 6 != 0) ImGui::SameLine();
-                std::string id = "##model_preview_palette_" + std::to_string(i);
-                if (ImGui::ColorButton(id.c_str(), palette[i], ImGuiColorEditFlags_NoAlpha, ImVec2(swatch_size, swatch_size))) {
-                    model_preview_bg_color_ = clamp_theme_color(palette[i]);
-                    model_preview_canvas_->set_background_color(model_preview_bg_color_);
-                }
-            }
             ImGui::Separator();
             ImGui::TextUnformatted(tr("label.quick_colors").c_str());
             const std::array<std::pair<const char*, ImVec4>, 5> quick_colors = {{
@@ -2244,8 +2236,7 @@ void App::render_model_preview_window() {
             ImGui::EndPopup();
         }
         ImGui::PopStyleVar();
-        ImGui::Spacing();
-        ImGui::Separator();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
         ImVec2 avail = ImGui::GetContentRegionAvail();
         model_preview_canvas_->render(avail);
     }
