@@ -589,6 +589,21 @@ std::filesystem::path default_history_path() {
     return executable_directory() / L"history.ini";
 }
 
+std::filesystem::path default_imgui_ini_path() {
+    return executable_directory() / L"imgui.ini";
+}
+
+std::string bool_to_string(bool value) {
+    return value ? "true" : "false";
+}
+
+bool parse_bool(const std::string& value, bool fallback) {
+    std::string text = ascii_lower(trim_ascii(value));
+    if (text == "1" || text == "true" || text == "yes" || text == "on") return true;
+    if (text == "0" || text == "false" || text == "no" || text == "off") return false;
+    return fallback;
+}
+
 bool save_user_settings(const UserSettings& settings) {
     std::ofstream out(settings.path, std::ios::binary | std::ios::trunc);
     if (!out) return false;
@@ -598,6 +613,14 @@ bool save_user_settings(const UserSettings& settings) {
     out << "ui_component_size=" << std::fixed << std::setprecision(1) << clamp_ui_component_size(settings.ui_component_size) << "\n";
     out << "station_marker_size=" << std::fixed << std::setprecision(1) << clamp_station_marker_size(settings.station_marker_size) << "\n";
     out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
+    out << "\n[WindowVisibility]\n";
+    out << "show_othertracks_window=" << bool_to_string(settings.window_visibility.show_othertracks_window) << "\n";
+    out << "show_station_list_window=" << bool_to_string(settings.window_visibility.show_station_list_window) << "\n";
+    out << "show_structures_window=" << bool_to_string(settings.window_visibility.show_structures_window) << "\n";
+    out << "show_structure_models_window=" << bool_to_string(settings.window_visibility.show_structure_models_window) << "\n";
+    out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
+    out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
+    out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
     return true;
 }
 
@@ -655,6 +678,20 @@ UserSettings load_user_settings() {
             } else {
                 settings.theme_color = default_theme_color();
             }
+        } else if (key == "show_othertracks_window") {
+            settings.window_visibility.show_othertracks_window = parse_bool(value, settings.window_visibility.show_othertracks_window);
+        } else if (key == "show_station_list_window") {
+            settings.window_visibility.show_station_list_window = parse_bool(value, settings.window_visibility.show_station_list_window);
+        } else if (key == "show_structures_window") {
+            settings.window_visibility.show_structures_window = parse_bool(value, settings.window_visibility.show_structures_window);
+        } else if (key == "show_structure_models_window") {
+            settings.window_visibility.show_structure_models_window = parse_bool(value, settings.window_visibility.show_structure_models_window);
+        } else if (key == "show_repeaters_window") {
+            settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
+        } else if (key == "show_plots_window") {
+            settings.window_visibility.show_plots_window = parse_bool(value, settings.window_visibility.show_plots_window);
+        } else if (key == "show_model_preview_window") {
+            settings.window_visibility.show_model_preview_window = parse_bool(value, settings.window_visibility.show_model_preview_window);
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
@@ -662,6 +699,45 @@ UserSettings load_user_settings() {
     settings.station_marker_size = clamp_station_marker_size(settings.station_marker_size);
     settings.theme_color = clamp_theme_color(settings.theme_color);
     return settings;
+}
+
+bool load_imgui_layout(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || ec) return false;
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    std::string data = buffer.str();
+    if (data.empty()) return false;
+
+    ImGui::LoadIniSettingsFromMemory(data.data(), data.size());
+    return true;
+}
+
+bool save_imgui_layout(const std::filesystem::path& path) {
+    size_t size = 0;
+    const char* data = ImGui::SaveIniSettingsToMemory(&size);
+    if (!data || size == 0) return false;
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out.write(data, static_cast<std::streamsize>(size));
+    return static_cast<bool>(out);
+}
+
+void save_imgui_layout_if_requested(const std::filesystem::path& path) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantSaveIniSettings) return;
+    save_imgui_layout(path);
+    io.WantSaveIniSettings = false;
+}
+
+bool imgui_layout_save_pending() {
+    ImGuiContext* context = ImGui::GetCurrentContext();
+    return context && context->SettingsDirtyTimer > 0.0f;
 }
 
 bool ensure_history_file(const std::filesystem::path& path) {
@@ -870,8 +946,9 @@ void apply_ui_settings(float font_size, float component_size, ImVec4 theme_color
 }
 
 
-App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled)
-    : device_(device), settings_(std::move(settings)), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled) {
+App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout)
+    : device_(device), settings_(std::move(settings)), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled),
+      has_saved_layout_(has_saved_layout) {
     g_app = this;
     kv_set_log_callback(&App::log_callback);
     model_preview_canvas_ = std::make_unique<Canvas3D>(device_);
@@ -894,6 +971,9 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     station_marker_size_before_dialog_ = station_marker_size_;
     pending_theme_color_ = theme_color_;
     theme_color_before_dialog_ = theme_color_;
+    apply_window_visibility_settings(settings_.window_visibility);
+    last_saved_window_visibility_ = current_window_visibility();
+    settings_.window_visibility = last_saved_window_visibility_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -1635,9 +1715,10 @@ void App::export_csv() {
 }
 
 void App::setup_initial_dockspace(ImGuiID dockspace_id) {
-    static bool docked = false;
-    if (docked) return;
-    docked = true;
+    if (initial_dockspace_done_) return;
+    initial_dockspace_done_ = true;
+    if (has_saved_layout_) return;
+
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
@@ -1661,6 +1742,36 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     }
     focus_plots_next_ = true;
     ImGui::DockBuilderFinish(dockspace_id);
+}
+
+WindowVisibilitySettings App::current_window_visibility() const {
+    WindowVisibilitySettings visibility;
+    visibility.show_othertracks_window = show_othertracks_window_;
+    visibility.show_station_list_window = show_station_list_window_;
+    visibility.show_structures_window = show_structures_window_;
+    visibility.show_structure_models_window = show_structure_models_window_;
+    visibility.show_repeaters_window = show_repeaters_window_;
+    visibility.show_plots_window = show_plots_window_;
+    visibility.show_model_preview_window = show_model_preview_window_;
+    return visibility;
+}
+
+void App::apply_window_visibility_settings(const WindowVisibilitySettings& visibility) {
+    show_othertracks_window_ = visibility.show_othertracks_window;
+    show_station_list_window_ = visibility.show_station_list_window;
+    show_structures_window_ = visibility.show_structures_window;
+    show_structure_models_window_ = visibility.show_structure_models_window;
+    show_repeaters_window_ = visibility.show_repeaters_window;
+    show_plots_window_ = visibility.show_plots_window;
+    show_model_preview_window_ = visibility.show_model_preview_window;
+}
+
+void App::save_window_visibility_if_changed() {
+    WindowVisibilitySettings visibility = current_window_visibility();
+    if (visibility == last_saved_window_visibility_) return;
+    settings_.window_visibility = visibility;
+    last_saved_window_visibility_ = visibility;
+    save_user_settings(settings_);
 }
 
 void App::render_menu() {
@@ -1793,6 +1904,8 @@ void App::render_menu() {
             if (lang_ == lang) return;
             lang_ = lang;
             settings_.language = lang_;
+            settings_.window_visibility = current_window_visibility();
+            last_saved_window_visibility_ = settings_.window_visibility;
             save_user_settings(settings_);
         };
         if (ImGui::MenuItem("简体中文", nullptr, lang_ == Language::Zh)) set_language(Language::Zh);
@@ -1974,6 +2087,8 @@ void App::render_popups() {
             settings_.ui_component_size = ui_component_size_;
             settings_.station_marker_size = station_marker_size_;
             settings_.theme_color = theme_color_;
+            settings_.window_visibility = current_window_visibility();
+            last_saved_window_visibility_ = settings_.window_visibility;
             save_user_settings(settings_);
             apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
             ImGui::CloseCurrentPopup();
@@ -2275,6 +2390,7 @@ void App::render() {
     render_structure_models_window();
     render_repeaters_window();
     render_popups();
+    save_window_visibility_if_changed();
 }
 
 ID3D11Device* g_pd3dDevice = nullptr;
@@ -2403,6 +2519,10 @@ int main(int, char**) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    io.IniFilename = nullptr;
+    io.IniSavingRate = 0.25f;
+    std::filesystem::path layout_path = default_imgui_ini_path();
+    bool has_saved_layout = load_imgui_layout(layout_path);
 
     bool viewports_enabled = (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0;
     apply_ui_settings(settings.font_size, settings.ui_component_size, settings.theme_color, scale, viewports_enabled);
@@ -2428,7 +2548,7 @@ int main(int, char**) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-    App app(g_pd3dDevice, std::move(settings), scale, viewports_enabled);
+    App app(g_pd3dDevice, std::move(settings), scale, viewports_enabled, has_saved_layout);
 
     bool done = false;
     bool needs_render = true;
@@ -2484,7 +2604,11 @@ int main(int, char**) {
             --warmup_frames;
             needs_render = true;
         }
+        save_imgui_layout_if_requested(layout_path);
+        if (imgui_layout_save_pending()) needs_render = true;
     }
+
+    save_imgui_layout(layout_path);
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

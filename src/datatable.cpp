@@ -113,6 +113,10 @@ void set_all_flags(std::vector<unsigned char>& flags, bool value) {
     std::fill(flags.begin(), flags.end(), value ? 1 : 0);
 }
 
+void setup_fixed_table_header() {
+    ImGui::TableSetupScrollFreeze(0, 1);
+}
+
 } // namespace
 
 constexpr float kShowColumnWidth = 56.0f;
@@ -385,6 +389,7 @@ void App::render_othertracks_window() {
             ImGui::TableSetupColumn("From");
             ImGui::TableSetupColumn("To");
             ImGui::TableSetupColumn("Color");
+            setup_fixed_table_header();
             ImGui::TableHeadersRow();
             for (auto& t : model_.other_tracks) {
                 ImGui::TableNextRow();
@@ -427,6 +432,7 @@ void App::render_station_list_window() {
         for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
             ImGui::TableSetupColumn(kStationListColumns[i].header, ImGuiTableColumnFlags_WidthFixed, kStationListColumns[i].width);
         }
+        setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
         clipper.Begin(static_cast<int>(table_cache_.station_rows.size()));
@@ -469,6 +475,7 @@ void App::render_structures_window() {
                                     i == kStructureFilePathColumn ? ImGuiTableColumnFlags_WidthFixed : 0,
                                     i == kStructureFilePathColumn ? table_cache_.structure_file_path_width : 0.0f);
         }
+        setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
         clipper.Begin(static_cast<int>(table_cache_.structure_rows.size()));
@@ -528,6 +535,7 @@ void App::render_structure_models_window() {
             const char* header = i == kStructureModelFilePathColumn ? file_name_header.c_str() : kStructureModelColumns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
+        setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
         clipper.Begin(static_cast<int>(table_cache_.structure_model_rows.size()));
@@ -612,6 +620,7 @@ void App::render_repeaters_window() {
             if (i == kRepeaterFilePathColumn) width = table_cache_.repeater_file_path_width;
             ImGui::TableSetupColumn(kRepeaterColumns[i].header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
+        setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
         clipper.Begin(static_cast<int>(table_cache_.repeater_rows.size()));

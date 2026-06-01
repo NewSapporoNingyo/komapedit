@@ -325,12 +325,37 @@ struct LogLine {
     int severity = 0;
 };
 
+struct WindowVisibilitySettings {
+    bool show_othertracks_window = true;
+    bool show_station_list_window = false;
+    bool show_structures_window = false;
+    bool show_structure_models_window = false;
+    bool show_repeaters_window = false;
+    bool show_plots_window = true;
+    bool show_model_preview_window = true;
+
+    bool operator==(const WindowVisibilitySettings& other) const {
+        return show_othertracks_window == other.show_othertracks_window &&
+            show_station_list_window == other.show_station_list_window &&
+            show_structures_window == other.show_structures_window &&
+            show_structure_models_window == other.show_structure_models_window &&
+            show_repeaters_window == other.show_repeaters_window &&
+            show_plots_window == other.show_plots_window &&
+            show_model_preview_window == other.show_model_preview_window;
+    }
+
+    bool operator!=(const WindowVisibilitySettings& other) const {
+        return !(*this == other);
+    }
+};
+
 struct UserSettings {
     Language language = Language::Zh;
     float font_size = kDefaultFontSize;
     float ui_component_size = kDefaultUiComponentSize;
     float station_marker_size = kDefaultStationMarkerSize;
     ImVec4 theme_color = default_theme_color();
+    WindowVisibilitySettings window_visibility;
     std::filesystem::path path;
 };
 
@@ -352,7 +377,7 @@ struct RecentMapEntry {
 
 class App {
 public:
-    explicit App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled);
+    explicit App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout);
     ~App();
 
     void render();
@@ -377,6 +402,7 @@ private:
     ImVec4 theme_color_ = default_theme_color();
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
+    WindowVisibilitySettings last_saved_window_visibility_;
     std::filesystem::path history_path_;
     std::vector<RecentMapEntry> recent_maps_;
 
@@ -469,6 +495,8 @@ private:
     bool show_align_popup_ = false;
     bool show_about_popup_ = false;
     bool show_font_size_popup_ = false;
+    bool has_saved_layout_ = false;
+    bool initial_dockspace_done_ = false;
     ImGuiID dock_right_id_ = 0;
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
@@ -536,6 +564,9 @@ private:
     void reload_current_map_and_model_preview();
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);
+    WindowVisibilitySettings current_window_visibility() const;
+    void apply_window_visibility_settings(const WindowVisibilitySettings& visibility);
+    void save_window_visibility_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
     void rebuild_marker_overlay_cache();
