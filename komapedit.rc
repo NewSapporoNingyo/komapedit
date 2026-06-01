@@ -1,0 +1,3 @@
+#include "include/resource.h"
+
+IDI_KOMAPEDIT ICON "icons/komapedit_logo.ico"

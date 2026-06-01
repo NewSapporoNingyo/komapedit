@@ -15,8 +15,10 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -32,6 +34,95 @@ void set_crosshair_cursor() {
 void set_move_cursor() {
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
     ::SetCursor(::LoadCursor(nullptr, IDC_SIZEALL));
+}
+
+std::string normalize_track_key(std::string key) {
+    key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    }), key.end());
+    for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return key;
+}
+
+double angle_lerp(double a, double b, double t) {
+    double delta = std::atan2(std::sin(b - a), std::cos(b - a));
+    return a + delta * t;
+}
+
+double matrix_track_tangent(const Matrix& points, size_t row) {
+    if (points.rows < 2 || points.cols < 3) return 0.0;
+    size_t a = row == 0 ? 0 : row - 1;
+    size_t b = row + 1 < points.rows ? row + 1 : row;
+    if (a == b && b + 1 < points.rows) ++b;
+    if (a == b) return 0.0;
+    double dx = points.at(b, 1) - points.at(a, 1);
+    double dy = points.at(b, 2) - points.at(a, 2);
+    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
+    return std::atan2(dy, dx);
+}
+
+TrackPoint matrix_row_track_point(const Matrix& points, size_t row, bool has_theta_column) {
+    TrackPoint p;
+    p.d = points.at(row, 0);
+    p.x = points.at(row, 1);
+    p.y = points.at(row, 2);
+    p.z = points.cols > 3 ? points.at(row, 3) : 0.0;
+    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : matrix_track_tangent(points, row);
+    if (points.cols > 5) p.radius = points.at(row, 5);
+    if (points.cols > 6) p.gradient = points.at(row, 6);
+    return p;
+}
+
+std::optional<TrackPoint> sample_matrix_track_point(const Matrix& points, double distance, bool has_theta_column) {
+    if (points.empty() || points.cols < 3) return std::nullopt;
+    double first = points.at(0, 0);
+    double last = points.at(points.rows - 1, 0);
+    constexpr double eps = 1e-6;
+    if (distance < first - eps || distance > last + eps) return std::nullopt;
+    if (distance <= first) return matrix_row_track_point(points, 0, has_theta_column);
+    if (distance >= last) return matrix_row_track_point(points, points.rows - 1, has_theta_column);
+
+    size_t lo = 0;
+    size_t hi = points.rows;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (points.at(mid, 0) < distance) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == 0) return matrix_row_track_point(points, 0, has_theta_column);
+    size_t a_row = lo - 1;
+    size_t b_row = std::min(lo, points.rows - 1);
+    TrackPoint a = matrix_row_track_point(points, a_row, has_theta_column);
+    TrackPoint b = matrix_row_track_point(points, b_row, has_theta_column);
+    double span = b.d - a.d;
+    double t = std::abs(span) < eps ? 0.0 : std::clamp((distance - a.d) / span, 0.0, 1.0);
+
+    TrackPoint p;
+    p.d = distance;
+    p.x = a.x + (b.x - a.x) * t;
+    p.y = a.y + (b.y - a.y) * t;
+    p.z = a.z + (b.z - a.z) * t;
+    p.theta = has_theta_column ? angle_lerp(a.theta, b.theta, t) : std::atan2(b.y - a.y, b.x - a.x);
+    p.radius = a.radius + (b.radius - a.radius) * t;
+    p.gradient = a.gradient + (b.gradient - a.gradient) * t;
+    return p;
+}
+
+struct TrackSource {
+    const Matrix* points = nullptr;
+    bool has_theta_column = false;
+};
+
+TrackPoint offset_track_point(TrackPoint base, double lateral, double forward) {
+    double c = std::cos(base.theta);
+    double s = std::sin(base.theta);
+    base.x += c * forward - s * lateral;
+    base.y += s * forward + c * lateral;
+    return base;
+}
+
+int table_row_order(const TableRow& row) {
+    return static_cast<int>(std::round(table_cell_number(row, "order")));
 }
 
 } // namespace
@@ -214,6 +305,162 @@ PlanData App::build_plan_data() const {
         p.theta = model_.own.at(idx, 4);
         p = rotate_point(p);
         out.speedlimits.push_back({p.x, p.y, p.theta, s.has_speed, s.speed});
+    }
+
+    if (show_structure_positions_ || show_repeater_positions_) {
+        std::map<std::string, TrackSource> track_sources;
+        TrackSource own_source{&model_.own, true};
+        for (const char* key : {"", "0", "\\", "own", "main"}) {
+            track_sources[normalize_track_key(key)] = own_source;
+        }
+        for (const auto& track : model_.other_tracks) {
+            track_sources[normalize_track_key(track.key)] = TrackSource{&track.points, false};
+        }
+
+        auto find_track_source = [&](const std::string& key) -> std::optional<TrackSource> {
+            auto it = track_sources.find(normalize_track_key(key));
+            if (it == track_sources.end() || !it->second.points) return std::nullopt;
+            return it->second;
+        };
+
+        auto sample_track = [&](const std::string& key, double distance, double lateral, double forward) -> std::optional<TrackPoint> {
+            auto source = find_track_source(key);
+            if (!source) return std::nullopt;
+            auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+            if (!sampled) return std::nullopt;
+            return offset_track_point(*sampled, lateral, forward);
+        };
+
+        auto append_structure_marker = [&](TrackPoint p, const std::string& label) {
+            p = rotate_point(p);
+            out.structure_markers.push_back({p.x, p.y, label});
+            extend_bounds(p.x, p.y);
+        };
+
+        auto append_repeater_marker = [&](TrackPoint p, const std::string& label) {
+            p = rotate_point(p);
+            out.repeater_markers.push_back({p.x, p.y, label});
+            extend_bounds(p.x, p.y);
+        };
+
+        if (show_structure_positions_) {
+            for (const auto& row : model_.structures) {
+                double distance = table_cell_number(row, "distance");
+                if (distance < dmin_ || distance > dmax_) continue;
+                double lateral = table_cell_number(row, "x");
+                double forward = table_cell_number(row, "z");
+                if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
+                    append_structure_marker(*p, table_cell(row, "structureKey"));
+                }
+            }
+
+            for (const auto& row : model_.structures_between) {
+                double distance = table_cell_number(row, "distance");
+                if (distance < dmin_ || distance > dmax_) continue;
+                auto p1 = sample_track(table_cell(row, "trackKey1"), distance, 0.0, 0.0);
+                auto p2 = sample_track(table_cell(row, "trackKey2"), distance, 0.0, 0.0);
+                if (!p1 && !p2) continue;
+                TrackPoint p = p1 ? *p1 : *p2;
+                if (p1 && p2) {
+                    p.x = (p1->x + p2->x) * 0.5;
+                    p.y = (p1->y + p2->y) * 0.5;
+                    p.z = (p1->z + p2->z) * 0.5;
+                    p.theta = angle_lerp(p1->theta, p2->theta, 0.5);
+                }
+                append_structure_marker(p, table_cell(row, "structureKey"));
+            }
+        }
+
+        if (show_repeater_positions_) {
+            auto build_repeater_segment = [&](const std::string& key, double start, double end,
+                                              double lateral, double forward) -> PlanRepeaterSegment {
+                PlanRepeaterSegment segment;
+                if (end < start) std::swap(start, end);
+                double clipped_start = std::max(start, dmin_);
+                double clipped_end = std::min(end, dmax_);
+                if (clipped_end < clipped_start) return segment;
+                auto source = find_track_source(key);
+                if (!source) return segment;
+
+                auto append_at = [&](double distance) {
+                    auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+                    if (!sampled) return;
+                    TrackPoint p = rotate_point(offset_track_point(*sampled, lateral, forward));
+                    if (!segment.points.empty() && std::abs(segment.points.back().d - p.d) < 1e-6) {
+                        segment.points.back() = p;
+                    } else {
+                        segment.points.push_back(p);
+                    }
+                    extend_bounds(p.x, p.y);
+                };
+
+                append_at(clipped_start);
+                for (size_t row_index = 0; row_index < source->points->rows; ++row_index) {
+                    double distance = source->points->at(row_index, 0);
+                    if (distance > clipped_start && distance < clipped_end) append_at(distance);
+                }
+                append_at(clipped_end);
+                return segment;
+            };
+
+            struct RepeaterBeginState {
+                double distance = 0.0;
+                std::string track_key;
+                double lateral = 0.0;
+                double forward = 0.0;
+            };
+            std::vector<TableRow> repeater_events = model_.repeaters;
+            std::stable_sort(repeater_events.begin(), repeater_events.end(), [](const TableRow& a, const TableRow& b) {
+                int ao = table_row_order(a);
+                int bo = table_row_order(b);
+                if (ao != bo) return ao < bo;
+                return table_cell_number(a, "distance") < table_cell_number(b, "distance");
+            });
+            std::map<std::string, RepeaterBeginState> active_repeaters;
+            for (const auto& row : repeater_events) {
+                std::string key = table_cell(row, "repeaterKey");
+                if (key.empty()) continue;
+                std::string method = table_cell(row, "method");
+                double distance = table_cell_number(row, "distance");
+                if (method == "Begin" || method == "Begin0") {
+                    RepeaterBeginState next;
+                    next.distance = distance;
+                    next.track_key = table_cell(row, "trackKey");
+                    next.lateral = table_cell_number(row, "x");
+                    next.forward = table_cell_number(row, "z");
+                    if (distance >= dmin_ && distance <= dmax_) {
+                        if (auto p = sample_track(next.track_key, distance, next.lateral, next.forward)) {
+                            append_repeater_marker(*p, key);
+                        }
+                    }
+                    auto open_it = active_repeaters.find(key);
+                    if (open_it != active_repeaters.end()) {
+                        PlanRepeaterSegment segment = build_repeater_segment(open_it->second.track_key,
+                            open_it->second.distance, distance, open_it->second.lateral, open_it->second.forward);
+                        if (segment.points.size() >= 2) out.repeater_segments.push_back(std::move(segment));
+                    }
+                    active_repeaters[key] = std::move(next);
+                } else if (method == "End") {
+                    auto open_it = active_repeaters.find(key);
+                    if (open_it != active_repeaters.end()) {
+                        const RepeaterBeginState& begin = open_it->second;
+                        if (distance >= dmin_ && distance <= dmax_) {
+                            if (auto p = sample_track(begin.track_key, distance, begin.lateral, begin.forward)) {
+                                append_repeater_marker(*p, key);
+                            }
+                        }
+                        PlanRepeaterSegment segment = build_repeater_segment(begin.track_key, begin.distance,
+                            distance, begin.lateral, begin.forward);
+                        if (segment.points.size() >= 2) out.repeater_segments.push_back(std::move(segment));
+                        active_repeaters.erase(open_it);
+                    } else if (distance >= dmin_ && distance <= dmax_) {
+                        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+                            append_repeater_marker(*p, key);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     out.curve_sections = curve_sections(false);
@@ -505,7 +752,23 @@ static void draw_polyline(ImDrawList* draw, const std::vector<TrackPoint>& point
     if (points.size() < 2) return;
     std::vector<ImVec2> screen;
     screen.reserve(points.size());
-    for (const auto& p : points) screen.push_back(view.world_to_screen(p.x, p.y, origin, size));
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float max_x = -std::numeric_limits<float>::max();
+    float max_y = -std::numeric_limits<float>::max();
+    for (const auto& p : points) {
+        ImVec2 q = view.world_to_screen(p.x, p.y, origin, size);
+        screen.push_back(q);
+        min_x = std::min(min_x, q.x);
+        min_y = std::min(min_y, q.y);
+        max_x = std::max(max_x, q.x);
+        max_y = std::max(max_y, q.y);
+    }
+    const float margin = 32.0f;
+    if (max_x < origin.x - margin || min_x > origin.x + size.x + margin ||
+        max_y < origin.y - margin || min_y > origin.y + size.y + margin) {
+        return;
+    }
     draw->AddPolyline(screen.data(), static_cast<int>(screen.size()), color, ImDrawFlags_None, thickness);
 }
 
@@ -566,6 +829,39 @@ static void draw_scalebar(ImDrawList* draw, const View2D& view, ImVec2 origin, I
     ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
     draw->AddText(ImVec2((p1.x + p2.x - text_size.x) * 0.5f, p1.y - tick - 4.0f - text_size.y),
                   color, label.c_str());
+}
+
+static void draw_plan_triangle_marker(ImDrawList* draw, ImVec2 p, ImU32 color) {
+    const float r = 6.0f;
+    ImVec2 pts[3] = {
+        ImVec2(p.x, p.y - r),
+        ImVec2(p.x - r * 0.9f, p.y + r * 0.72f),
+        ImVec2(p.x + r * 0.9f, p.y + r * 0.72f),
+    };
+    draw->AddConvexPolyFilled(pts, IM_ARRAYSIZE(pts), color);
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(64, 48, 0, 255), ImDrawFlags_Closed, 1.0f);
+}
+
+static void draw_plan_diamond_marker(ImDrawList* draw, ImVec2 p, ImU32 color) {
+    const float r = 5.5f;
+    ImVec2 pts[4] = {
+        ImVec2(p.x, p.y - r),
+        ImVec2(p.x + r, p.y),
+        ImVec2(p.x, p.y + r),
+        ImVec2(p.x - r, p.y),
+    };
+    draw->AddConvexPolyFilled(pts, IM_ARRAYSIZE(pts), color);
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(80, 0, 48, 255), ImDrawFlags_Closed, 1.0f);
+}
+
+static void draw_plan_small_text(ImDrawList* draw, ImVec2 p, ImU32 color, const std::string& text) {
+    if (text.empty()) return;
+    draw->AddText(nullptr, ImGui::GetFontSize() * 0.78f, ImVec2(p.x + 8.0f, p.y - 9.0f), color, text.c_str());
+}
+
+static bool point_near_canvas(ImVec2 p, ImVec2 origin, ImVec2 size, float margin = 48.0f) {
+    return p.x >= origin.x - margin && p.x <= origin.x + size.x + margin &&
+           p.y >= origin.y - margin && p.y <= origin.y + size.y + margin;
 }
 
 void App::render_plan_canvas(ImVec2 size) {
@@ -744,6 +1040,29 @@ void App::render_plan_canvas(ImVec2 size) {
             draw->AddLine(ImVec2(p.x - d.x, p.y - d.y), ImVec2(p.x + d.x, p.y + d.y), IM_COL32(136, 204, 255, 255), 1.0f);
             std::string label = sp.has_speed ? format_double(sp.speed, 0) : "x";
             draw->AddText(ImVec2(p.x + 10, p.y - 15), IM_COL32(136, 204, 255, 255), label.c_str());
+        }
+    }
+
+    if (show_repeater_positions_) {
+        ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
+        for (const auto& segment : data.repeater_segments) {
+            draw_polyline(draw, segment.points, plan_view_, origin, avail, repeater_color, 1.25f);
+        }
+        for (const auto& marker : data.repeater_markers) {
+            ImVec2 p = plan_view_.world_to_screen(marker.x, marker.y, origin, avail);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            draw_plan_diamond_marker(draw, p, repeater_color);
+            draw_plan_small_text(draw, p, repeater_color, marker.label);
+        }
+    }
+
+    if (show_structure_positions_) {
+        ImU32 structure_color = IM_COL32(255, 216, 48, 255);
+        for (const auto& marker : data.structure_markers) {
+            ImVec2 p = plan_view_.world_to_screen(marker.x, marker.y, origin, avail);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            draw_plan_triangle_marker(draw, p, structure_color);
+            draw_plan_small_text(draw, p, structure_color, marker.label);
         }
     }
 
@@ -1130,10 +1449,15 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
 }
 
 void App::render_plots() {
+    if (!show_plots_window_) return;
     std::string title = tr("frame.plots") + "###Plots";
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_plots_next_) ImGui::SetNextWindowFocus();
-    ImGui::Begin(title.c_str());
+    if (!ImGui::Begin(title.c_str(), &show_plots_window_)) {
+        focus_plots_next_ = false;
+        ImGui::End();
+        return;
+    }
     render_mode_grid_controls();
     if (pick_slot_ != 0) ImGui::TextUnformatted(tr("hint.pick_bg_station").c_str());
     else if (mode_ == Mode::Measure && !measure_text_.empty()) ImGui::TextUnformatted(measure_text_.c_str());

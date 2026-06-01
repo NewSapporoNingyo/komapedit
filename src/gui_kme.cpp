@@ -11,6 +11,7 @@
 
 #include "canvas3D.h"
 #include "maploader.h"
+#include "resource.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -1738,6 +1739,10 @@ void App::render_menu() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
+        if (ImGui::MenuItem(tr("chk.view_2d_window").c_str(), nullptr, &show_plots_window_) && show_plots_window_) {
+            focus_plots_next_ = true;
+        }
+        ImGui::Separator();
         ImGui::MenuItem(tr("frame.aux_info").c_str(), nullptr, false, false);
         ImGui::MenuItem(tr("chk.station_pos").c_str(), nullptr, &show_stations_);
         ImGui::MenuItem(tr("chk.station_name").c_str(), nullptr, &show_station_names_);
@@ -1751,6 +1756,8 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
         ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
+        ImGui::MenuItem(tr("chk.structure_pos").c_str(), nullptr, &show_structure_positions_);
+        ImGui::MenuItem(tr("chk.repeater_pos").c_str(), nullptr, &show_repeater_positions_);
         ImGui::Separator();
         ImGui::MenuItem(tr("frame.bgimage").c_str(), nullptr, false, false);
         if (ImGui::MenuItem(tr("button.import_bg").c_str())) {
@@ -2352,15 +2359,33 @@ int main(int, char**) {
     ImGui_ImplWin32_EnableDpiAwareness();
     float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
 
-    WNDCLASSEXW wc = {sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"komapedit", nullptr};
+    HINSTANCE instance = GetModuleHandleW(nullptr);
+    HICON app_icon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_KOMAPEDIT), IMAGE_ICON,
+                                                   GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0));
+    HICON app_icon_small = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_KOMAPEDIT), IMAGE_ICON,
+                                                         GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
+
+    WNDCLASSEXW wc = {sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, instance, app_icon, nullptr, nullptr, nullptr, L"komapedit", app_icon_small};
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowW(wc.lpszClassName, L"komapedit", WS_OVERLAPPEDWINDOW,
                               100, 100, static_cast<int>(1440 * scale), static_cast<int>(900 * scale),
                               nullptr, nullptr, wc.hInstance, nullptr);
+    if (!hwnd) {
+        UnregisterClassW(wc.lpszClassName, wc.hInstance);
+        if (app_icon) DestroyIcon(app_icon);
+        if (app_icon_small) DestroyIcon(app_icon_small);
+        CoUninitialize();
+        return 1;
+    }
+    if (app_icon) SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(app_icon));
+    if (app_icon_small) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(app_icon_small));
     g_main_hwnd = hwnd;
     if (!CreateDeviceD3D(hwnd)) {
         CleanupDeviceD3D();
+        DestroyWindow(hwnd);
         UnregisterClassW(wc.lpszClassName, wc.hInstance);
+        if (app_icon) DestroyIcon(app_icon);
+        if (app_icon_small) DestroyIcon(app_icon_small);
         g_main_hwnd = nullptr;
         CoUninitialize();
         return 1;
@@ -2468,6 +2493,8 @@ int main(int, char**) {
     g_main_hwnd = nullptr;
     DestroyWindow(hwnd);
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
+    if (app_icon) DestroyIcon(app_icon);
+    if (app_icon_small) DestroyIcon(app_icon_small);
     CoUninitialize();
     return 0;
 }

@@ -241,11 +241,30 @@ struct PlanOther {
     ImVec4 color;
 };
 
+struct PlanStructureMarker {
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+};
+
+struct PlanRepeaterMarker {
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+};
+
+struct PlanRepeaterSegment {
+    std::vector<TrackPoint> points;
+};
+
 struct PlanData {
     std::vector<TrackPoint> own;
     std::vector<PlanOther> other;
     std::vector<PlanStation> stations;
     std::vector<PlanSpeed> speedlimits;
+    std::vector<PlanStructureMarker> structure_markers;
+    std::vector<PlanRepeaterMarker> repeater_markers;
+    std::vector<PlanRepeaterSegment> repeater_segments;
     std::vector<Section> curve_sections;
     std::vector<Section> transition_sections;
     double origin_angle = 0.0;
@@ -397,6 +416,8 @@ private:
     bool show_curve_values_ = true;
     bool show_profile_other_ = false;
     bool show_speedlimits_ = true;
+    bool show_structure_positions_ = false;
+    bool show_repeater_positions_ = false;
     bool show_profile_graph_ = true;
     bool show_radius_graph_ = true;
     bool show_othertracks_window_ = true;
@@ -432,6 +453,7 @@ private:
     bool show_structures_window_ = false;
     bool show_structure_models_window_ = false;
     bool show_repeaters_window_ = false;
+    bool show_plots_window_ = true;
     bool show_model_preview_window_ = true;
     bool focus_model_preview_next_ = false;
     bool focus_plots_next_ = true;

@@ -1,0 +1,6 @@
+#ifndef KOMAPEDIT_RESOURCE_H
+#define KOMAPEDIT_RESOURCE_H
+
+#define IDI_KOMAPEDIT 101
+
+#endif

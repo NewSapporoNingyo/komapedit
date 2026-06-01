@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(kobushi_maploader LANGUAGES CXX)
 
+if(WIN32)
+    enable_language(RC)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -128,6 +132,11 @@ add_executable(komapedit
 )
 add_dependencies(komapedit model_loader)
 set_target_properties(komapedit PROPERTIES WIN32_EXECUTABLE TRUE)
+if(WIN32)
+    target_sources(komapedit PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc
+    )
+endif()
 target_include_directories(komapedit PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
