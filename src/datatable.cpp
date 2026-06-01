@@ -274,12 +274,12 @@ void App::invalidate_table_cache() {
 }
 
 void App::reset_marker_visibility() {
-    structure_row_visible_.assign(structure_marker_cache_.size(), 1);
+    structure_row_visible_.assign(structure_marker_cache_.size(), 0);
     repeater_row_visible_.assign(repeater_marker_cache_.size(), 0);
 }
 
 void App::sync_marker_visibility_sizes() {
-    structure_row_visible_.resize(structure_marker_cache_.size(), 1);
+    structure_row_visible_.resize(structure_marker_cache_.size(), 0);
     repeater_row_visible_.resize(repeater_marker_cache_.size(), 0);
 }
 

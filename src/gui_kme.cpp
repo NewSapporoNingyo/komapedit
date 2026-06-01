@@ -604,6 +604,41 @@ bool parse_bool(const std::string& value, bool fallback) {
     return fallback;
 }
 
+int normalize_view_2d_mode(int value) {
+    return value == 1 ? 1 : 0;
+}
+
+int normalize_grid_mode(int value) {
+    return value >= 0 && value <= 2 ? value : 0;
+}
+
+std::string view_2d_mode_to_string(int value) {
+    return normalize_view_2d_mode(value) == 1 ? "measure" : "pan";
+}
+
+std::string grid_mode_to_string(int value) {
+    switch (normalize_grid_mode(value)) {
+        case 1: return "movable";
+        case 2: return "none";
+        default: return "fixed";
+    }
+}
+
+int view_2d_mode_from_string(const std::string& value, int fallback) {
+    std::string text = ascii_lower(trim_ascii(value));
+    if (text == "1" || text == "measure" || text == "measurement") return 1;
+    if (text == "0" || text == "pan" || text == "move") return 0;
+    return normalize_view_2d_mode(fallback);
+}
+
+int grid_mode_from_string(const std::string& value, int fallback) {
+    std::string text = ascii_lower(trim_ascii(value));
+    if (text == "0" || text == "fixed") return 0;
+    if (text == "1" || text == "movable" || text == "moveable") return 1;
+    if (text == "2" || text == "none" || text == "off") return 2;
+    return normalize_grid_mode(fallback);
+}
+
 bool save_user_settings(const UserSettings& settings) {
     std::ofstream out(settings.path, std::ios::binary | std::ios::trunc);
     if (!out) return false;
@@ -621,6 +656,20 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
     out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
     out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
+    out << "\n[View2D]\n";
+    out << "show_stations=" << bool_to_string(settings.view_2d.show_stations) << "\n";
+    out << "show_station_names=" << bool_to_string(settings.view_2d.show_station_names) << "\n";
+    out << "show_station_mileage=" << bool_to_string(settings.view_2d.show_station_mileage) << "\n";
+    out << "show_gradient_pos=" << bool_to_string(settings.view_2d.show_gradient_pos) << "\n";
+    out << "show_gradient_values=" << bool_to_string(settings.view_2d.show_gradient_values) << "\n";
+    out << "show_curve_values=" << bool_to_string(settings.view_2d.show_curve_values) << "\n";
+    out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
+    out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
+    out << "show_profile_graph=" << bool_to_string(settings.view_2d.show_profile_graph) << "\n";
+    out << "show_radius_graph=" << bool_to_string(settings.view_2d.show_radius_graph) << "\n";
+    out << "show_background_image=" << bool_to_string(settings.view_2d.show_background_image) << "\n";
+    out << "mode=" << view_2d_mode_to_string(settings.view_2d.mode) << "\n";
+    out << "grid_mode=" << grid_mode_to_string(settings.view_2d.grid_mode) << "\n";
     return true;
 }
 
@@ -639,6 +688,7 @@ UserSettings load_user_settings() {
     if (!in) return settings;
 
     std::string line;
+    std::set<std::string> view_2d_keys_seen;
     while (std::getline(in, line)) {
         std::string trimmed_line = trim_ascii(line);
         if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
@@ -692,12 +742,54 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_plots_window = parse_bool(value, settings.window_visibility.show_plots_window);
         } else if (key == "show_model_preview_window") {
             settings.window_visibility.show_model_preview_window = parse_bool(value, settings.window_visibility.show_model_preview_window);
+        } else if (key == "show_stations" || key == "show_station_pos" || key == "show_station_positions") {
+            view_2d_keys_seen.insert("show_stations");
+            settings.view_2d.show_stations = parse_bool(value, settings.view_2d.show_stations);
+        } else if (key == "show_station_names" || key == "show_station_name") {
+            view_2d_keys_seen.insert("show_station_names");
+            settings.view_2d.show_station_names = parse_bool(value, settings.view_2d.show_station_names);
+        } else if (key == "show_station_mileage") {
+            view_2d_keys_seen.insert("show_station_mileage");
+            settings.view_2d.show_station_mileage = parse_bool(value, settings.view_2d.show_station_mileage);
+        } else if (key == "show_gradient_pos" || key == "show_gradient_positions") {
+            view_2d_keys_seen.insert("show_gradient_pos");
+            settings.view_2d.show_gradient_pos = parse_bool(value, settings.view_2d.show_gradient_pos);
+        } else if (key == "show_gradient_values" || key == "show_gradient_value") {
+            view_2d_keys_seen.insert("show_gradient_values");
+            settings.view_2d.show_gradient_values = parse_bool(value, settings.view_2d.show_gradient_values);
+        } else if (key == "show_curve_values" || key == "show_curve_value") {
+            view_2d_keys_seen.insert("show_curve_values");
+            settings.view_2d.show_curve_values = parse_bool(value, settings.view_2d.show_curve_values);
+        } else if (key == "show_profile_other" || key == "show_profile_othertracks") {
+            view_2d_keys_seen.insert("show_profile_other");
+            settings.view_2d.show_profile_other = parse_bool(value, settings.view_2d.show_profile_other);
+        } else if (key == "show_speedlimits" || key == "show_speedlimit") {
+            view_2d_keys_seen.insert("show_speedlimits");
+            settings.view_2d.show_speedlimits = parse_bool(value, settings.view_2d.show_speedlimits);
+        } else if (key == "show_profile_graph" || key == "show_gradient_graph") {
+            view_2d_keys_seen.insert("show_profile_graph");
+            settings.view_2d.show_profile_graph = parse_bool(value, settings.view_2d.show_profile_graph);
+        } else if (key == "show_radius_graph" || key == "show_curve_graph") {
+            view_2d_keys_seen.insert("show_radius_graph");
+            settings.view_2d.show_radius_graph = parse_bool(value, settings.view_2d.show_radius_graph);
+        } else if (key == "show_background_image" || key == "show_bgimage" || key == "bg_show") {
+            view_2d_keys_seen.insert("show_background_image");
+            settings.view_2d.show_background_image = parse_bool(value, settings.view_2d.show_background_image);
+        } else if (key == "mode" || key == "view_2d_mode") {
+            view_2d_keys_seen.insert("mode");
+            settings.view_2d.mode = view_2d_mode_from_string(value, settings.view_2d.mode);
+        } else if (key == "grid_mode" || key == "view_2d_grid_mode") {
+            view_2d_keys_seen.insert("grid_mode");
+            settings.view_2d.grid_mode = grid_mode_from_string(value, settings.view_2d.grid_mode);
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
     settings.ui_component_size = clamp_ui_component_size(settings.ui_component_size);
     settings.station_marker_size = clamp_station_marker_size(settings.station_marker_size);
     settings.theme_color = clamp_theme_color(settings.theme_color);
+    settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
+    settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
+    if (view_2d_keys_seen.size() < 13) save_user_settings(settings);
     return settings;
 }
 
@@ -974,6 +1066,9 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     apply_window_visibility_settings(settings_.window_visibility);
     last_saved_window_visibility_ = current_window_visibility();
     settings_.window_visibility = last_saved_window_visibility_;
+    apply_view_2d_settings(settings_.view_2d);
+    last_saved_view_2d_settings_ = current_view_2d_settings();
+    settings_.view_2d = last_saved_view_2d_settings_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -1588,7 +1683,7 @@ bool App::apply_background_history(const BackgroundHistory& background) {
     bg_height_ = background.height;
     bg_rotation_deg_ = background.rotation_deg;
     bg_brightness_ = std::clamp(background.brightness, 1.0, 200.0);
-    bg_show_ = true;
+    bg_show_ = settings_.view_2d.show_background_image;
     if (!load_background_image(background.image_path, false)) {
         bg_show_ = false;
         sync_pending_background_values();
@@ -1766,12 +1861,65 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_model_preview_window_ = visibility.show_model_preview_window;
 }
 
-void App::save_window_visibility_if_changed() {
+View2DSettings App::current_view_2d_settings() const {
+    View2DSettings view;
+    view.show_stations = show_stations_;
+    view.show_station_names = show_station_names_;
+    view.show_station_mileage = show_station_mileage_;
+    view.show_gradient_pos = show_gradient_pos_;
+    view.show_gradient_values = show_gradient_values_;
+    view.show_curve_values = show_curve_values_;
+    view.show_profile_other = show_profile_other_;
+    view.show_speedlimits = show_speedlimits_;
+    view.show_profile_graph = show_profile_graph_;
+    view.show_radius_graph = show_radius_graph_;
+    view.show_background_image = bg_show_;
+    view.mode = mode_ == Mode::Measure ? 1 : 0;
+    view.grid_mode = grid_mode_ == GridMode::Movable ? 1 : (grid_mode_ == GridMode::None ? 2 : 0);
+    return view;
+}
+
+void App::apply_view_2d_settings(const View2DSettings& settings) {
+    show_stations_ = settings.show_stations;
+    show_station_names_ = settings.show_station_names;
+    show_station_mileage_ = settings.show_station_mileage;
+    show_gradient_pos_ = settings.show_gradient_pos;
+    show_gradient_values_ = settings.show_gradient_values;
+    show_curve_values_ = settings.show_curve_values;
+    show_profile_other_ = settings.show_profile_other;
+    show_speedlimits_ = settings.show_speedlimits;
+    show_profile_graph_ = settings.show_profile_graph;
+    show_radius_graph_ = settings.show_radius_graph;
+    bg_show_ = settings.show_background_image;
+    mode_ = normalize_view_2d_mode(settings.mode) == 1 ? Mode::Measure : Mode::Pan;
+    switch (normalize_grid_mode(settings.grid_mode)) {
+        case 1:
+            grid_mode_ = GridMode::Movable;
+            break;
+        case 2:
+            grid_mode_ = GridMode::None;
+            break;
+        default:
+            grid_mode_ = GridMode::Fixed;
+            break;
+    }
+}
+
+void App::save_runtime_settings_if_changed() {
+    bool changed = false;
     WindowVisibilitySettings visibility = current_window_visibility();
-    if (visibility == last_saved_window_visibility_) return;
-    settings_.window_visibility = visibility;
-    last_saved_window_visibility_ = visibility;
-    save_user_settings(settings_);
+    if (visibility != last_saved_window_visibility_) {
+        settings_.window_visibility = visibility;
+        last_saved_window_visibility_ = visibility;
+        changed = true;
+    }
+    View2DSettings view_2d = current_view_2d_settings();
+    if (view_2d != last_saved_view_2d_settings_) {
+        settings_.view_2d = view_2d;
+        last_saved_view_2d_settings_ = view_2d;
+        changed = true;
+    }
+    if (changed) save_user_settings(settings_);
 }
 
 void App::render_menu() {
@@ -1906,6 +2054,8 @@ void App::render_menu() {
             settings_.language = lang_;
             settings_.window_visibility = current_window_visibility();
             last_saved_window_visibility_ = settings_.window_visibility;
+            settings_.view_2d = current_view_2d_settings();
+            last_saved_view_2d_settings_ = settings_.view_2d;
             save_user_settings(settings_);
         };
         if (ImGui::MenuItem("简体中文", nullptr, lang_ == Language::Zh)) set_language(Language::Zh);
@@ -2089,6 +2239,8 @@ void App::render_popups() {
             settings_.theme_color = theme_color_;
             settings_.window_visibility = current_window_visibility();
             last_saved_window_visibility_ = settings_.window_visibility;
+            settings_.view_2d = current_view_2d_settings();
+            last_saved_view_2d_settings_ = settings_.view_2d;
             save_user_settings(settings_);
             apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
             ImGui::CloseCurrentPopup();
@@ -2390,7 +2542,7 @@ void App::render() {
     render_structure_models_window();
     render_repeaters_window();
     render_popups();
-    save_window_visibility_if_changed();
+    save_runtime_settings_if_changed();
 }
 
 ID3D11Device* g_pd3dDevice = nullptr;

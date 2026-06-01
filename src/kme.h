@@ -349,6 +349,42 @@ struct WindowVisibilitySettings {
     }
 };
 
+struct View2DSettings {
+    bool show_stations = true;
+    bool show_station_names = true;
+    bool show_station_mileage = true;
+    bool show_gradient_pos = true;
+    bool show_gradient_values = true;
+    bool show_curve_values = true;
+    bool show_profile_other = false;
+    bool show_speedlimits = true;
+    bool show_profile_graph = true;
+    bool show_radius_graph = true;
+    bool show_background_image = true;
+    int mode = 0;
+    int grid_mode = 0;
+
+    bool operator==(const View2DSettings& other) const {
+        return show_stations == other.show_stations &&
+            show_station_names == other.show_station_names &&
+            show_station_mileage == other.show_station_mileage &&
+            show_gradient_pos == other.show_gradient_pos &&
+            show_gradient_values == other.show_gradient_values &&
+            show_curve_values == other.show_curve_values &&
+            show_profile_other == other.show_profile_other &&
+            show_speedlimits == other.show_speedlimits &&
+            show_profile_graph == other.show_profile_graph &&
+            show_radius_graph == other.show_radius_graph &&
+            show_background_image == other.show_background_image &&
+            mode == other.mode &&
+            grid_mode == other.grid_mode;
+    }
+
+    bool operator!=(const View2DSettings& other) const {
+        return !(*this == other);
+    }
+};
+
 struct UserSettings {
     Language language = Language::Zh;
     float font_size = kDefaultFontSize;
@@ -356,6 +392,7 @@ struct UserSettings {
     float station_marker_size = kDefaultStationMarkerSize;
     ImVec4 theme_color = default_theme_color();
     WindowVisibilitySettings window_visibility;
+    View2DSettings view_2d;
     std::filesystem::path path;
 };
 
@@ -403,6 +440,7 @@ private:
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
     WindowVisibilitySettings last_saved_window_visibility_;
+    View2DSettings last_saved_view_2d_settings_;
     std::filesystem::path history_path_;
     std::vector<RecentMapEntry> recent_maps_;
 
@@ -566,7 +604,9 @@ private:
     void setup_initial_dockspace(ImGuiID dockspace_id);
     WindowVisibilitySettings current_window_visibility() const;
     void apply_window_visibility_settings(const WindowVisibilitySettings& visibility);
-    void save_window_visibility_if_changed();
+    View2DSettings current_view_2d_settings() const;
+    void apply_view_2d_settings(const View2DSettings& settings);
+    void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
     void rebuild_marker_overlay_cache();
