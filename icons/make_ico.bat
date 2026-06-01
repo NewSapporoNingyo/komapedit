@@ -1,0 +1,2 @@
+python createico.py
+pause
