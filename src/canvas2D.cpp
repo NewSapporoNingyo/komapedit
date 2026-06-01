@@ -127,6 +127,167 @@ int table_row_order(const TableRow& row) {
 
 } // namespace
 
+void App::rebuild_marker_overlay_cache() {
+    structure_marker_cache_.clear();
+    repeater_marker_cache_.clear();
+    if (!has_model_ || model_.own.empty()) return;
+
+    std::map<std::string, TrackSource> track_sources;
+    TrackSource own_source{&model_.own, true};
+    for (const char* key : {"", "0", "\\", "own", "main"}) {
+        track_sources[normalize_track_key(key)] = own_source;
+    }
+    for (const auto& track : model_.other_tracks) {
+        track_sources[normalize_track_key(track.key)] = TrackSource{&track.points, false};
+    }
+
+    auto find_track_source = [&](const std::string& key) -> std::optional<TrackSource> {
+        auto it = track_sources.find(normalize_track_key(key));
+        if (it == track_sources.end() || !it->second.points) return std::nullopt;
+        return it->second;
+    };
+
+    auto sample_track = [&](const std::string& key, double distance, double lateral, double forward) -> std::optional<TrackPoint> {
+        auto source = find_track_source(key);
+        if (!source) return std::nullopt;
+        auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+        if (!sampled) return std::nullopt;
+        return offset_track_point(*sampled, lateral, forward);
+    };
+
+    auto make_marker = [](double distance, const TrackPoint& p, const std::string& label) {
+        PlanStructureMarker marker;
+        marker.d = distance;
+        marker.x = p.x;
+        marker.y = p.y;
+        marker.label = label;
+        return marker;
+    };
+
+    structure_marker_cache_.reserve(model_.structures.size() + model_.structures_between.size());
+    for (const auto& row : model_.structures) {
+        double distance = table_cell_number(row, "distance");
+        double lateral = table_cell_number(row, "x");
+        double forward = table_cell_number(row, "z");
+        if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
+            structure_marker_cache_.push_back(make_marker(distance, *p, table_cell(row, "structureKey")));
+        } else {
+            structure_marker_cache_.push_back(std::nullopt);
+        }
+    }
+    for (const auto& row : model_.structures_between) {
+        double distance = table_cell_number(row, "distance");
+        auto p1 = sample_track(table_cell(row, "trackKey1"), distance, 0.0, 0.0);
+        auto p2 = sample_track(table_cell(row, "trackKey2"), distance, 0.0, 0.0);
+        if (!p1 && !p2) {
+            structure_marker_cache_.push_back(std::nullopt);
+            continue;
+        }
+        TrackPoint p = p1 ? *p1 : *p2;
+        if (p1 && p2) {
+            p.x = (p1->x + p2->x) * 0.5;
+            p.y = (p1->y + p2->y) * 0.5;
+            p.z = (p1->z + p2->z) * 0.5;
+            p.theta = angle_lerp(p1->theta, p2->theta, 0.5);
+        }
+        structure_marker_cache_.push_back(make_marker(distance, p, table_cell(row, "structureKey")));
+    }
+
+    auto build_repeater_segment = [&](const std::string& key, double start, double end,
+                                      double lateral, double forward) -> PlanRepeaterSegment {
+        PlanRepeaterSegment segment;
+        if (end < start) std::swap(start, end);
+        auto source = find_track_source(key);
+        if (!source) return segment;
+
+        auto append_at = [&](double distance) {
+            auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+            if (!sampled) return;
+            TrackPoint p = offset_track_point(*sampled, lateral, forward);
+            if (!segment.points.empty() && std::abs(segment.points.back().d - p.d) < 1e-6) {
+                segment.points.back() = p;
+            } else {
+                segment.points.push_back(p);
+            }
+        };
+
+        append_at(start);
+        for (size_t row_index = 0; row_index < source->points->rows; ++row_index) {
+            double distance = source->points->at(row_index, 0);
+            if (distance > start && distance < end) append_at(distance);
+        }
+        append_at(end);
+        return segment;
+    };
+
+    struct RepeaterBeginState {
+        size_t row_index = 0;
+        double distance = 0.0;
+        std::string track_key;
+        double lateral = 0.0;
+        double forward = 0.0;
+    };
+    auto make_repeater_marker = [](double distance, const TrackPoint& p, const std::string& label) {
+        PlanRepeaterMarker marker;
+        marker.d = distance;
+        marker.x = p.x;
+        marker.y = p.y;
+        marker.label = label;
+        return marker;
+    };
+    auto finish_repeater = [&](const RepeaterBeginState& begin, double end_distance, const std::string& label) {
+        if (begin.row_index >= repeater_marker_cache_.size()) return;
+        RepeaterOverlayRow& overlay = repeater_marker_cache_[begin.row_index];
+        if (auto p = sample_track(begin.track_key, end_distance, begin.lateral, begin.forward)) {
+            overlay.end_marker = make_repeater_marker(end_distance, *p, label);
+        }
+        overlay.segment = build_repeater_segment(begin.track_key, begin.distance, end_distance,
+                                                 begin.lateral, begin.forward);
+    };
+
+    std::vector<TableRow> repeater_events = model_.repeaters;
+    std::stable_sort(repeater_events.begin(), repeater_events.end(), [](const TableRow& a, const TableRow& b) {
+        int ao = table_row_order(a);
+        int bo = table_row_order(b);
+        if (ao != bo) return ao < bo;
+        return table_cell_number(a, "distance") < table_cell_number(b, "distance");
+    });
+
+    std::map<std::string, RepeaterBeginState> active_repeaters;
+    for (const auto& row : repeater_events) {
+        std::string key = table_cell(row, "repeaterKey");
+        if (key.empty()) continue;
+        std::string method = table_cell(row, "method");
+        double distance = table_cell_number(row, "distance");
+        if (method == "Begin" || method == "Begin0") {
+            auto open_it = active_repeaters.find(key);
+            if (open_it != active_repeaters.end()) {
+                finish_repeater(open_it->second, distance, key);
+                active_repeaters.erase(open_it);
+            }
+
+            RepeaterBeginState next;
+            next.row_index = repeater_marker_cache_.size();
+            next.distance = distance;
+            next.track_key = table_cell(row, "trackKey");
+            next.lateral = table_cell_number(row, "x");
+            next.forward = table_cell_number(row, "z");
+
+            RepeaterOverlayRow overlay;
+            if (auto p = sample_track(next.track_key, distance, next.lateral, next.forward)) {
+                overlay.begin_marker = make_repeater_marker(distance, *p, key);
+            }
+            repeater_marker_cache_.push_back(std::move(overlay));
+            active_repeaters[key] = std::move(next);
+        } else if (method == "End") {
+            auto open_it = active_repeaters.find(key);
+            if (open_it == active_repeaters.end()) continue;
+            finish_repeater(open_it->second, distance, key);
+            active_repeaters.erase(open_it);
+        }
+    }
+}
+
 size_t App::nearest_own_index(double distance) const {
     if (model_.own.empty()) return 0;
     size_t lo = 0, hi = model_.own.rows;
@@ -307,160 +468,44 @@ PlanData App::build_plan_data() const {
         out.speedlimits.push_back({p.x, p.y, p.theta, s.has_speed, s.speed});
     }
 
-    if (show_structure_positions_ || show_repeater_positions_) {
-        std::map<std::string, TrackSource> track_sources;
-        TrackSource own_source{&model_.own, true};
-        for (const char* key : {"", "0", "\\", "own", "main"}) {
-            track_sources[normalize_track_key(key)] = own_source;
+    auto append_marker_bounds = [&](double x, double y) {
+        extend_bounds(x, y);
+    };
+    for (size_t i = 0; i < structure_marker_cache_.size() && i < structure_row_visible_.size(); ++i) {
+        if (!structure_row_visible_[i] || !structure_marker_cache_[i]) continue;
+        const PlanStructureMarker& source = *structure_marker_cache_[i];
+        if (source.d < dmin_ || source.d > dmax_) continue;
+        TrackPoint p;
+        p.x = source.x;
+        p.y = source.y;
+        p = rotate_point(p);
+        out.structure_markers.push_back({source.d, p.x, p.y, source.label});
+        append_marker_bounds(p.x, p.y);
+    }
+
+    auto append_repeater_marker = [&](const PlanRepeaterMarker& source) {
+        if (source.d < dmin_ || source.d > dmax_) return;
+        TrackPoint p;
+        p.x = source.x;
+        p.y = source.y;
+        p = rotate_point(p);
+        out.repeater_markers.push_back({source.d, p.x, p.y, source.label});
+        append_marker_bounds(p.x, p.y);
+    };
+    for (size_t i = 0; i < repeater_marker_cache_.size() && i < repeater_row_visible_.size(); ++i) {
+        if (!repeater_row_visible_[i]) continue;
+        const RepeaterOverlayRow& source = repeater_marker_cache_[i];
+        if (source.begin_marker) append_repeater_marker(*source.begin_marker);
+        if (source.end_marker) append_repeater_marker(*source.end_marker);
+
+        PlanRepeaterSegment segment;
+        for (const auto& point : source.segment.points) {
+            if (point.d < dmin_ || point.d > dmax_) continue;
+            TrackPoint p = rotate_point(point);
+            segment.points.push_back(p);
+            append_marker_bounds(p.x, p.y);
         }
-        for (const auto& track : model_.other_tracks) {
-            track_sources[normalize_track_key(track.key)] = TrackSource{&track.points, false};
-        }
-
-        auto find_track_source = [&](const std::string& key) -> std::optional<TrackSource> {
-            auto it = track_sources.find(normalize_track_key(key));
-            if (it == track_sources.end() || !it->second.points) return std::nullopt;
-            return it->second;
-        };
-
-        auto sample_track = [&](const std::string& key, double distance, double lateral, double forward) -> std::optional<TrackPoint> {
-            auto source = find_track_source(key);
-            if (!source) return std::nullopt;
-            auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
-            if (!sampled) return std::nullopt;
-            return offset_track_point(*sampled, lateral, forward);
-        };
-
-        auto append_structure_marker = [&](TrackPoint p, const std::string& label) {
-            p = rotate_point(p);
-            out.structure_markers.push_back({p.x, p.y, label});
-            extend_bounds(p.x, p.y);
-        };
-
-        auto append_repeater_marker = [&](TrackPoint p, const std::string& label) {
-            p = rotate_point(p);
-            out.repeater_markers.push_back({p.x, p.y, label});
-            extend_bounds(p.x, p.y);
-        };
-
-        if (show_structure_positions_) {
-            for (const auto& row : model_.structures) {
-                double distance = table_cell_number(row, "distance");
-                if (distance < dmin_ || distance > dmax_) continue;
-                double lateral = table_cell_number(row, "x");
-                double forward = table_cell_number(row, "z");
-                if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
-                    append_structure_marker(*p, table_cell(row, "structureKey"));
-                }
-            }
-
-            for (const auto& row : model_.structures_between) {
-                double distance = table_cell_number(row, "distance");
-                if (distance < dmin_ || distance > dmax_) continue;
-                auto p1 = sample_track(table_cell(row, "trackKey1"), distance, 0.0, 0.0);
-                auto p2 = sample_track(table_cell(row, "trackKey2"), distance, 0.0, 0.0);
-                if (!p1 && !p2) continue;
-                TrackPoint p = p1 ? *p1 : *p2;
-                if (p1 && p2) {
-                    p.x = (p1->x + p2->x) * 0.5;
-                    p.y = (p1->y + p2->y) * 0.5;
-                    p.z = (p1->z + p2->z) * 0.5;
-                    p.theta = angle_lerp(p1->theta, p2->theta, 0.5);
-                }
-                append_structure_marker(p, table_cell(row, "structureKey"));
-            }
-        }
-
-        if (show_repeater_positions_) {
-            auto build_repeater_segment = [&](const std::string& key, double start, double end,
-                                              double lateral, double forward) -> PlanRepeaterSegment {
-                PlanRepeaterSegment segment;
-                if (end < start) std::swap(start, end);
-                double clipped_start = std::max(start, dmin_);
-                double clipped_end = std::min(end, dmax_);
-                if (clipped_end < clipped_start) return segment;
-                auto source = find_track_source(key);
-                if (!source) return segment;
-
-                auto append_at = [&](double distance) {
-                    auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
-                    if (!sampled) return;
-                    TrackPoint p = rotate_point(offset_track_point(*sampled, lateral, forward));
-                    if (!segment.points.empty() && std::abs(segment.points.back().d - p.d) < 1e-6) {
-                        segment.points.back() = p;
-                    } else {
-                        segment.points.push_back(p);
-                    }
-                    extend_bounds(p.x, p.y);
-                };
-
-                append_at(clipped_start);
-                for (size_t row_index = 0; row_index < source->points->rows; ++row_index) {
-                    double distance = source->points->at(row_index, 0);
-                    if (distance > clipped_start && distance < clipped_end) append_at(distance);
-                }
-                append_at(clipped_end);
-                return segment;
-            };
-
-            struct RepeaterBeginState {
-                double distance = 0.0;
-                std::string track_key;
-                double lateral = 0.0;
-                double forward = 0.0;
-            };
-            std::vector<TableRow> repeater_events = model_.repeaters;
-            std::stable_sort(repeater_events.begin(), repeater_events.end(), [](const TableRow& a, const TableRow& b) {
-                int ao = table_row_order(a);
-                int bo = table_row_order(b);
-                if (ao != bo) return ao < bo;
-                return table_cell_number(a, "distance") < table_cell_number(b, "distance");
-            });
-            std::map<std::string, RepeaterBeginState> active_repeaters;
-            for (const auto& row : repeater_events) {
-                std::string key = table_cell(row, "repeaterKey");
-                if (key.empty()) continue;
-                std::string method = table_cell(row, "method");
-                double distance = table_cell_number(row, "distance");
-                if (method == "Begin" || method == "Begin0") {
-                    RepeaterBeginState next;
-                    next.distance = distance;
-                    next.track_key = table_cell(row, "trackKey");
-                    next.lateral = table_cell_number(row, "x");
-                    next.forward = table_cell_number(row, "z");
-                    if (distance >= dmin_ && distance <= dmax_) {
-                        if (auto p = sample_track(next.track_key, distance, next.lateral, next.forward)) {
-                            append_repeater_marker(*p, key);
-                        }
-                    }
-                    auto open_it = active_repeaters.find(key);
-                    if (open_it != active_repeaters.end()) {
-                        PlanRepeaterSegment segment = build_repeater_segment(open_it->second.track_key,
-                            open_it->second.distance, distance, open_it->second.lateral, open_it->second.forward);
-                        if (segment.points.size() >= 2) out.repeater_segments.push_back(std::move(segment));
-                    }
-                    active_repeaters[key] = std::move(next);
-                } else if (method == "End") {
-                    auto open_it = active_repeaters.find(key);
-                    if (open_it != active_repeaters.end()) {
-                        const RepeaterBeginState& begin = open_it->second;
-                        if (distance >= dmin_ && distance <= dmax_) {
-                            if (auto p = sample_track(begin.track_key, distance, begin.lateral, begin.forward)) {
-                                append_repeater_marker(*p, key);
-                            }
-                        }
-                        PlanRepeaterSegment segment = build_repeater_segment(begin.track_key, begin.distance,
-                            distance, begin.lateral, begin.forward);
-                        if (segment.points.size() >= 2) out.repeater_segments.push_back(std::move(segment));
-                        active_repeaters.erase(open_it);
-                    } else if (distance >= dmin_ && distance <= dmax_) {
-                        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-                            append_repeater_marker(*p, key);
-                        }
-                    }
-                }
-            }
-        }
+        if (segment.points.size() >= 2) out.repeater_segments.push_back(std::move(segment));
     }
 
     out.curve_sections = curve_sections(false);
@@ -604,6 +649,32 @@ void App::center_plan_at_distance(double distance) {
     plan_view_.cy = it->y;
     plan_view_.fitted = true;
     keep_plan_view_ = true;
+}
+
+std::optional<ImVec2> App::plan_point_from_model_xy(double x, double y) const {
+    if (!has_model_ || model_.own.empty()) return std::nullopt;
+    double origin_angle = model_.origin_angle;
+    for (size_t row = 0; row < model_.own.rows; ++row) {
+        double distance = model_.own.at(row, 0);
+        if (distance >= dmin_ && distance <= dmax_) {
+            origin_angle = model_.own.at(row, 4);
+            break;
+        }
+    }
+    return rotate_xy(x, y, -origin_angle);
+}
+
+void App::focus_plan_at_model_point(double x, double y) {
+    auto p = plan_point_from_model_xy(x, y);
+    if (!p) return;
+    plan_view_.cx = p->x;
+    plan_view_.cy = p->y;
+    plan_view_.fitted = true;
+    keep_plan_view_ = true;
+    show_plots_window_ = true;
+    focus_plots_next_ = true;
+    plan_focus_arrow_ = *p;
+    plan_focus_arrow_until_ = ImGui::GetTime() + 3.0;
 }
 
 void App::request_plot_focus(double distance, bool include_profile, bool include_radius) {
@@ -854,6 +925,24 @@ static void draw_plan_diamond_marker(ImDrawList* draw, ImVec2 p, ImU32 color) {
     draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(80, 0, 48, 255), ImDrawFlags_Closed, 1.0f);
 }
 
+static void draw_plan_focus_arrow(ImDrawList* draw, ImVec2 target) {
+    const float length = 30.0f;
+    const float head = 11.0f;
+    const float half_height = 7.0f;
+    const float target_gap = 10.0f;
+    ImU32 fill = IM_COL32(255, 32, 32, 255);
+    ImVec2 tip(target.x - target_gap, target.y);
+    ImVec2 tail(tip.x - length, tip.y);
+    ImVec2 neck(tip.x - head, tip.y);
+    draw->AddLine(tail, neck, fill, 3.0f);
+    ImVec2 pts[3] = {
+        tip,
+        ImVec2(tip.x - head, tip.y - half_height),
+        ImVec2(tip.x - head, tip.y + half_height),
+    };
+    draw->AddConvexPolyFilled(pts, IM_ARRAYSIZE(pts), fill);
+}
+
 static void draw_plan_small_text(ImDrawList* draw, ImVec2 p, ImU32 color, const std::string& text) {
     if (text.empty()) return;
     draw->AddText(nullptr, ImGui::GetFontSize() * 0.78f, ImVec2(p.x + 8.0f, p.y - 9.0f), color, text.c_str());
@@ -1043,7 +1132,7 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    if (show_repeater_positions_) {
+    if (!data.repeater_segments.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
         for (const auto& segment : data.repeater_segments) {
             draw_polyline(draw, segment.points, plan_view_, origin, avail, repeater_color, 1.25f);
@@ -1056,7 +1145,7 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    if (show_structure_positions_) {
+    if (!data.structure_markers.empty()) {
         ImU32 structure_color = IM_COL32(255, 216, 48, 255);
         for (const auto& marker : data.structure_markers) {
             ImVec2 p = plan_view_.world_to_screen(marker.x, marker.y, origin, avail);
@@ -1091,6 +1180,15 @@ void App::render_plan_canvas(ImVec2 size) {
         ImVec2 p = plan_view_.world_to_screen(it->x, it->y, origin, avail);
         draw->AddLine(ImVec2(p.x - 12, p.y - 12), ImVec2(p.x + 12, p.y + 12), IM_COL32(255, 51, 51, 255), 2.0f);
         draw->AddLine(ImVec2(p.x - 12, p.y + 12), ImVec2(p.x + 12, p.y - 12), IM_COL32(255, 51, 51, 255), 2.0f);
+    }
+
+    if (plan_focus_arrow_) {
+        if (ImGui::GetTime() <= plan_focus_arrow_until_) {
+            ImVec2 p = plan_view_.world_to_screen(plan_focus_arrow_->x, plan_focus_arrow_->y, origin, avail);
+            if (point_near_canvas(p, origin, avail)) draw_plan_focus_arrow(draw, p);
+        } else {
+            plan_focus_arrow_.reset();
+        }
     }
 
     draw->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(255, 255, 255, 255), tr("canvas.plan").c_str());

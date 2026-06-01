@@ -242,12 +242,14 @@ struct PlanOther {
 };
 
 struct PlanStructureMarker {
+    double d = 0.0;
     double x = 0.0;
     double y = 0.0;
     std::string label;
 };
 
 struct PlanRepeaterMarker {
+    double d = 0.0;
     double x = 0.0;
     double y = 0.0;
     std::string label;
@@ -255,6 +257,12 @@ struct PlanRepeaterMarker {
 
 struct PlanRepeaterSegment {
     std::vector<TrackPoint> points;
+};
+
+struct RepeaterOverlayRow {
+    std::optional<PlanRepeaterMarker> begin_marker;
+    std::optional<PlanRepeaterMarker> end_marker;
+    PlanRepeaterSegment segment;
 };
 
 struct PlanData {
@@ -416,8 +424,6 @@ private:
     bool show_curve_values_ = true;
     bool show_profile_other_ = false;
     bool show_speedlimits_ = true;
-    bool show_structure_positions_ = false;
-    bool show_repeater_positions_ = false;
     bool show_profile_graph_ = true;
     bool show_radius_graph_ = true;
     bool show_othertracks_window_ = true;
@@ -466,6 +472,12 @@ private:
     ImGuiID dock_right_id_ = 0;
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
+    std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
+    std::vector<RepeaterOverlayRow> repeater_marker_cache_;
+    std::vector<unsigned char> structure_row_visible_;
+    std::vector<unsigned char> repeater_row_visible_;
+    std::optional<ImVec2> plan_focus_arrow_;
+    double plan_focus_arrow_until_ = 0.0;
     std::unique_ptr<Canvas3D> model_preview_canvas_;
     ImVec4 model_preview_bg_color_ = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
 
@@ -526,6 +538,11 @@ private:
     void setup_initial_dockspace(ImGuiID dockspace_id);
     void invalidate_table_cache();
     void ensure_table_cache();
+    void rebuild_marker_overlay_cache();
+    void reset_marker_visibility();
+    void sync_marker_visibility_sizes();
+    void locate_structure_row_on_plan(size_t row_index);
+    void locate_repeater_row_on_plan(size_t row_index);
 
     PlanData build_plan_data() const;
     ProfileData build_profile_data() const;
@@ -537,6 +554,8 @@ private:
     void clear_measure();
     void update_measure(double distance);
     void center_plan_at_distance(double distance);
+    std::optional<ImVec2> plan_point_from_model_xy(double x, double y) const;
+    void focus_plan_at_model_point(double x, double y);
     void request_plot_focus(double distance, bool include_profile, bool include_radius);
     void handle_measure_plot_double_click(bool include_profile, bool include_radius);
     void focus_station(double distance);

@@ -1009,6 +1009,8 @@ void App::apply_load_result(LoadResult result) {
     model_ = std::move(result.model);
     invalidate_table_cache();
     has_model_ = true;
+    rebuild_marker_overlay_cache();
+    reset_marker_visibility();
     file_path_ = result.path;
     dmin_ = model_.default_min;
     dmax_ = model_.default_max;
@@ -1059,6 +1061,8 @@ void App::regenerate_geometry() {
         }
         model_ = std::move(updated);
         invalidate_table_cache();
+        rebuild_marker_overlay_cache();
+        sync_marker_visibility_sizes();
         model_.has_cp_arb = true;
         model_.cp_arb[0] = cp_start_;
         model_.cp_arb[1] = cp_end_;
@@ -1756,8 +1760,6 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
         ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
-        ImGui::MenuItem(tr("chk.structure_pos").c_str(), nullptr, &show_structure_positions_);
-        ImGui::MenuItem(tr("chk.repeater_pos").c_str(), nullptr, &show_repeater_positions_);
         ImGui::Separator();
         ImGui::MenuItem(tr("frame.bgimage").c_str(), nullptr, false, false);
         if (ImGui::MenuItem(tr("button.import_bg").c_str())) {

@@ -74,13 +74,48 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
     }
 }
 
+bool render_text_cell_with_context(const std::string& display_text, const std::string& menu_label, bool menu_enabled) {
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
+    ImVec2 item_size(
+        std::max(1.0f, ImGui::GetContentRegionAvail().x),
+        std::max(ImGui::GetTextLineHeight(), text_size.y));
+    ImGui::InvisibleButton("text_cell_context_item", item_size);
+    if (ImGui::IsItemHovered()) {
+        ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y),
+                                                  ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+    }
+    if (!display_text.empty()) {
+        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), display_text.c_str());
+    }
+
+    bool selected = false;
+    if (ImGui::BeginPopupContextItem("text_cell_context", ImGuiPopupFlags_MouseButtonRight)) {
+        ImGui::BeginDisabled(!menu_enabled);
+        selected = ImGui::MenuItem(menu_label.c_str());
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    return selected;
+}
+
 void expand_width_for_text(float& width, const std::string& text) {
     if (text.empty()) return;
     float text_width = ImGui::CalcTextSize(text.c_str()).x + ImGui::GetStyle().CellPadding.x * 2.0f + 12.0f;
     width = std::max(width, text_width);
 }
 
+bool all_flags_set(const std::vector<unsigned char>& flags) {
+    return !flags.empty() && std::all_of(flags.begin(), flags.end(), [](unsigned char value) { return value != 0; });
+}
+
+void set_all_flags(std::vector<unsigned char>& flags, bool value) {
+    std::fill(flags.begin(), flags.end(), value ? 1 : 0);
+}
+
 } // namespace
+
+constexpr float kShowColumnWidth = 56.0f;
 
 static const TableColumnDef kStructureModelColumns[] = {
     {"rowNumber", "#", 40.0f},
@@ -93,6 +128,7 @@ static const char* kStructureColumns[] = {
     "distance", "method", "structureKey", "trackKey", "x", "y", "z", "rx", "ry", "rz",
     "tilt", "span", "trackKey1", "trackKey2", "flag", "filePath"
 };
+constexpr int kStructureDistanceColumn = 0;
 constexpr int kStructureFilePathColumn = IM_ARRAYSIZE(kStructureColumns) - 1;
 
 static const TableColumnDef kRepeaterColumns[] = {
@@ -231,6 +267,32 @@ std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
 
 void App::invalidate_table_cache() {
     table_cache_ = TableUiCache{};
+}
+
+void App::reset_marker_visibility() {
+    structure_row_visible_.assign(structure_marker_cache_.size(), 1);
+    repeater_row_visible_.assign(repeater_marker_cache_.size(), 0);
+}
+
+void App::sync_marker_visibility_sizes() {
+    structure_row_visible_.resize(structure_marker_cache_.size(), 1);
+    repeater_row_visible_.resize(repeater_marker_cache_.size(), 0);
+}
+
+void App::locate_structure_row_on_plan(size_t row_index) {
+    sync_marker_visibility_sizes();
+    if (row_index >= structure_marker_cache_.size() || !structure_marker_cache_[row_index]) return;
+    if (row_index < structure_row_visible_.size()) structure_row_visible_[row_index] = 1;
+    const PlanStructureMarker& marker = *structure_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_repeater_row_on_plan(size_t row_index) {
+    sync_marker_visibility_sizes();
+    if (row_index >= repeater_marker_cache_.size() || !repeater_marker_cache_[row_index].begin_marker) return;
+    if (row_index < repeater_row_visible_.size()) repeater_row_visible_[row_index] = 1;
+    const PlanRepeaterMarker& marker = *repeater_marker_cache_[row_index].begin_marker;
+    focus_plan_at_model_point(marker.x, marker.y);
 }
 
 void App::ensure_table_cache() {
@@ -392,8 +454,16 @@ void App::render_structures_window() {
         ImGui::End();
         return;
     }
+    sync_marker_visibility_sizes();
+    bool all_visible = all_flags_set(structure_row_visible_);
+    ImGui::BeginDisabled(structure_row_visible_.empty());
+    if (ImGui::Checkbox(tr("chk.select_all").c_str(), &all_visible)) {
+        set_all_flags(structure_row_visible_, all_visible);
+    }
+    ImGui::EndDisabled();
     ensure_table_cache();
-    if (ImGui::BeginTable("structures", IM_ARRAYSIZE(kStructureColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+    if (ImGui::BeginTable("structures", IM_ARRAYSIZE(kStructureColumns) + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
         for (int i = 0; i < IM_ARRAYSIZE(kStructureColumns); ++i) {
             ImGui::TableSetupColumn(kStructureColumns[i],
                                     i == kStructureFilePathColumn ? ImGuiTableColumnFlags_WidthFixed : 0,
@@ -407,9 +477,25 @@ void App::render_structures_window() {
                 const CachedTableRow& row = table_cache_.structure_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
                 ImGui::PushID(row_index);
+                ImGui::TableSetColumnIndex(0);
+                bool row_visible = static_cast<size_t>(row_index) < structure_row_visible_.size() &&
+                    structure_row_visible_[static_cast<size_t>(row_index)] != 0;
+                if (ImGui::Checkbox("##show", &row_visible) &&
+                    static_cast<size_t>(row_index) < structure_row_visible_.size()) {
+                    structure_row_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
+                }
                 for (int i = 0; i < IM_ARRAYSIZE(kStructureColumns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
+                    ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == kStructureDistanceColumn) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < structure_marker_cache_.size() &&
+                            structure_marker_cache_[marker_index].has_value();
+                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                            locate_structure_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
                     if (value.empty()) continue;
                     if (i == kStructureFilePathColumn) {
                         render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"));
@@ -509,8 +595,16 @@ void App::render_repeaters_window() {
         ImGui::End();
         return;
     }
+    sync_marker_visibility_sizes();
+    bool all_visible = all_flags_set(repeater_row_visible_);
+    ImGui::BeginDisabled(repeater_row_visible_.empty());
+    if (ImGui::Checkbox(tr("chk.select_all").c_str(), &all_visible)) {
+        set_all_flags(repeater_row_visible_, all_visible);
+    }
+    ImGui::EndDisabled();
     ensure_table_cache();
-    if (ImGui::BeginTable("repeaters", IM_ARRAYSIZE(kRepeaterColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+    if (ImGui::BeginTable("repeaters", IM_ARRAYSIZE(kRepeaterColumns) + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
         for (int i = 0; i < IM_ARRAYSIZE(kRepeaterColumns); ++i) {
             float width = kRepeaterColumns[i].width;
             if (i == kRepeaterDistanceColumn) width = table_cache_.repeater_distance_width;
@@ -526,9 +620,25 @@ void App::render_repeaters_window() {
                 const CachedTableRow& row = table_cache_.repeater_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
                 ImGui::PushID(row_index);
+                ImGui::TableSetColumnIndex(0);
+                bool row_visible = static_cast<size_t>(row_index) < repeater_row_visible_.size() &&
+                    repeater_row_visible_[static_cast<size_t>(row_index)] != 0;
+                if (ImGui::Checkbox("##show", &row_visible) &&
+                    static_cast<size_t>(row_index) < repeater_row_visible_.size()) {
+                    repeater_row_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
+                }
                 for (int i = 0; i < IM_ARRAYSIZE(kRepeaterColumns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
+                    ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == kRepeaterDistanceColumn) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < repeater_marker_cache_.size() &&
+                            repeater_marker_cache_[marker_index].begin_marker.has_value();
+                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                            locate_repeater_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
                     if (value.empty()) continue;
                     if (i == kRepeaterFilePathColumn) {
                         render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"));
