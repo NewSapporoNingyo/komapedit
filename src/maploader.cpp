@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +29,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <set>
 #include <sstream>
@@ -1786,20 +1788,113 @@ std::pair<double, double> rotate_xy(double x, double y, double theta) {
             std::sin(theta) * x + std::cos(theta) * y};
 }
 
-double clothoid_dist(double A, double l, char elem) {
-    if (A == 0.0 || std::isinf(A)) return elem == 'X' ? l : 0.0;
-    double la = l / A;
-    double la2 = la * la;
-    double la4 = la2 * la2;
-    double la8 = la4 * la4;
-    double la12 = la8 * la4;
-    if (elem == 'X') {
-        return l * (1 - la4 / 40 + la8 / 3456 - la12 / 599040);
+std::uint64_t double_cache_bits(double value) {
+    if (value == 0.0) value = 0.0;
+    std::uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value), "unexpected double size");
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+void hash_combine_bits(std::size_t& seed, std::uint64_t value) {
+    seed ^= static_cast<std::size_t>(value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+
+template <typename PhaseFunc>
+std::pair<double, double> integrate_unit_tangent_gauss8(double a, double b, int panels, PhaseFunc&& phase) {
+    static constexpr std::array<double, 4> nodes{
+        0.18343464249564980494,
+        0.52553240991632898582,
+        0.79666647741362673959,
+        0.96028985649753623168
+    };
+    static constexpr std::array<double, 4> weights{
+        0.36268378337836198297,
+        0.31370664587788728734,
+        0.22238103445337447054,
+        0.10122853629037625915
+    };
+
+    if (b <= a) return {0.0, 0.0};
+    panels = std::max(1, panels);
+    const double width = (b - a) / panels;
+    double x = 0.0;
+    double y = 0.0;
+    for (int panel = 0; panel < panels; ++panel) {
+        const double lo = a + width * panel;
+        const double hi = panel + 1 == panels ? b : lo + width;
+        const double mid = (lo + hi) * 0.5;
+        const double half = (hi - lo) * 0.5;
+        double panel_x = 0.0;
+        double panel_y = 0.0;
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            const double delta = half * nodes[i];
+            const double p0 = phase(mid - delta);
+            const double p1 = phase(mid + delta);
+            panel_x += weights[i] * (std::cos(p0) + std::cos(p1));
+            panel_y += weights[i] * (std::sin(p0) + std::sin(p1));
+        }
+        x += half * panel_x;
+        y += half * panel_y;
     }
-    double la6 = la4 * la2;
-    double la10 = la8 * la2;
-    double la14 = la12 * la2;
-    return l * (la2 / 6 - la6 / 336 + la10 / 42240 - la14 / 9676800);
+    return {x, y};
+}
+
+std::pair<double, double> fresnel_cs_series(double x) {
+    const double x2 = x * x;
+    const double x4 = x2 * x2;
+    const double q = (kPi * kPi / 4.0) * x4;
+
+    double c_term = x;
+    double c = c_term;
+    for (int n = 1; n < 80; ++n) {
+        c_term *= -q * (4.0 * n - 3.0) /
+                  ((2.0 * n - 1.0) * (2.0 * n) * (4.0 * n + 1.0));
+        c += c_term;
+        if (std::fabs(c_term) <= std::fabs(c) * 1e-16) break;
+    }
+
+    double s_term = (kPi / 2.0) * x * x2 / 3.0;
+    double s = s_term;
+    for (int n = 1; n < 80; ++n) {
+        s_term *= -q * (4.0 * n - 1.0) /
+                  ((2.0 * n) * (2.0 * n + 1.0) * (4.0 * n + 3.0));
+        s += s_term;
+        if (std::fabs(s_term) <= std::fabs(s) * 1e-16) break;
+    }
+    return {c, s};
+}
+
+std::pair<double, double> fresnel_cs_asymptotic(double x) {
+    const double phi = kPi * x * x * 0.5;
+    const double px2 = kPi * x * x;
+    const double px2_2 = px2 * px2;
+    const double px2_4 = px2_2 * px2_2;
+    const double px2_6 = px2_4 * px2_2;
+    const double f = (1.0 / (kPi * x)) *
+        (1.0 - 3.0 / px2_2 + 105.0 / px2_4 - 10395.0 / px2_6);
+    const double g = (1.0 / (kPi * kPi * x * x * x)) *
+        (1.0 - 15.0 / px2_2 + 945.0 / px2_4 - 135135.0 / px2_6);
+    return {0.5 + f * std::sin(phi) - g * std::cos(phi),
+            0.5 - f * std::cos(phi) - g * std::sin(phi)};
+}
+
+std::pair<double, double> fresnel_cs(double x) {
+    if (x == 0.0) return {0.0, 0.0};
+    const double sign = x < 0.0 ? -1.0 : 1.0;
+    const double ax = std::fabs(x);
+    std::pair<double, double> out;
+    if (ax <= 1.6) {
+        out = fresnel_cs_series(ax);
+    } else if (ax >= 8.0) {
+        out = fresnel_cs_asymptotic(ax);
+    } else {
+        const int panels = std::max(1, static_cast<int>(std::ceil(ax * ax * 2.0)));
+        out = integrate_unit_tangent_gauss8(0.0, ax, panels, [](double t) {
+            return kPi * t * t * 0.5;
+        });
+    }
+    return {sign * out.first, sign * out.second};
 }
 
 struct CurveResult {
@@ -1809,16 +1904,95 @@ struct CurveResult {
     double radius = 0.0;
 };
 
-CurveResult circular_curve(double R, double theta, double l_intermediate) {
+struct CircularCurveKey {
+    std::uint64_t radius = 0;
+    std::uint64_t length = 0;
+
+    bool operator==(const CircularCurveKey& other) const {
+        return radius == other.radius && length == other.length;
+    }
+};
+
+struct CircularCurveKeyHash {
+    std::size_t operator()(const CircularCurveKey& key) const {
+        std::size_t seed = 0;
+        hash_combine_bits(seed, key.radius);
+        hash_combine_bits(seed, key.length);
+        return seed;
+    }
+};
+
+struct TransitionCurveKey {
+    bool half_sine = false;
+    std::uint64_t length = 0;
+    std::uint64_t radius0 = 0;
+    std::uint64_t radius1 = 0;
+    std::uint64_t position = 0;
+
+    bool operator==(const TransitionCurveKey& other) const {
+        return half_sine == other.half_sine &&
+               length == other.length &&
+               radius0 == other.radius0 &&
+               radius1 == other.radius1 &&
+               position == other.position;
+    }
+};
+
+struct TransitionCurveKeyHash {
+    std::size_t operator()(const TransitionCurveKey& key) const {
+        std::size_t seed = key.half_sine ? 0x9e3779b97f4a7c15ULL : 0;
+        hash_combine_bits(seed, key.length);
+        hash_combine_bits(seed, key.radius0);
+        hash_combine_bits(seed, key.radius1);
+        hash_combine_bits(seed, key.position);
+        return seed;
+    }
+};
+
+constexpr size_t kMaxGeometryCacheEntries = 262144;
+std::mutex g_geometry_cache_mutex;
+std::unordered_map<CircularCurveKey, CurveResult, CircularCurveKeyHash> g_circular_curve_cache;
+std::unordered_map<TransitionCurveKey, CurveResult, TransitionCurveKeyHash> g_transition_curve_cache;
+
+double radius_from_curvature(double curvature) {
+    if (curvature == 0.0) return kInf;
+    double radius = 1.0 / curvature;
+    return std::fabs(radius) > 1e6 ? kInf : radius;
+}
+
+CurveResult circular_curve_local_uncached(double R, double l_intermediate) {
     if (R == 0.0 || std::isinf(R)) {
-        auto [x, y] = rotate_xy(l_intermediate, 0.0, theta);
-        return {x, y, 0.0, 0.0};
+        return {l_intermediate, 0.0, 0.0, 0.0};
     }
     double tau = l_intermediate / R;
     double x0 = std::fabs(R) * std::sin(l_intermediate / std::fabs(R));
     double y0 = R * (1 - std::cos(l_intermediate / std::fabs(R)));
-    auto [x, y] = rotate_xy(x0, y0, theta);
-    return {x, y, tau, R};
+    return {x0, y0, tau, R};
+}
+
+CurveResult circular_curve_local(double R, double l_intermediate) {
+    CircularCurveKey key{double_cache_bits(R), double_cache_bits(l_intermediate)};
+    {
+        std::lock_guard<std::mutex> lock(g_geometry_cache_mutex);
+        auto it = g_circular_curve_cache.find(key);
+        if (it != g_circular_curve_cache.end()) return it->second;
+    }
+
+    CurveResult result = circular_curve_local_uncached(R, l_intermediate);
+    {
+        std::lock_guard<std::mutex> lock(g_geometry_cache_mutex);
+        if (g_circular_curve_cache.size() >= kMaxGeometryCacheEntries) {
+            g_circular_curve_cache.clear();
+        }
+        g_circular_curve_cache.emplace(key, result);
+    }
+    return result;
+}
+
+CurveResult circular_curve(double R, double theta, double l_intermediate) {
+    CurveResult local = circular_curve_local(R, l_intermediate);
+    auto [x, y] = rotate_xy(local.x, local.y, theta);
+    return {x, y, local.tau, local.radius};
 }
 
 double inv_radius(double r) {
@@ -1833,36 +2007,90 @@ struct HalfSinResult {
 };
 
 HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_intermediate, double dL = 1.0) {
-    auto K = [](double x, double R1, double R2, double L0) {
-        return (inv_radius(R2) - inv_radius(R1)) / 2.0 *
-               (std::sin(kPi / L0 * x - kPi / 2.0) + 1.0) + inv_radius(R1);
-    };
+    (void)dL;
     if (l_intermediate <= 0.0) {
         return {0.0, 0.0, 0.0, r1 == 0.0 ? kInf : r1};
     }
     if (L == 0.0) return {0.0, 0.0, 0.0, r2};
-    if (l_intermediate / 5.0 <= dL) dL = l_intermediate / 5.0;
-    int n = static_cast<int>(l_intermediate / dL) + 1;
-    if (n < 2) n = 2;
-    double tau = 0.0;
-    double X = 0.0;
-    double Y = 0.0;
-    double prev_x = 0.0;
-    double prev_k = K(0.0, r1, r2, L);
-    for (int i = 1; i < n; ++i) {
-        double x = l_intermediate * i / (n - 1);
-        double dx = x - prev_x;
-        double k = K(x, r1, r2, L);
-        double next_tau = tau + (prev_k + k) * dx / 2.0;
-        X += (std::cos(tau) + std::cos(next_tau)) * dx / 2.0;
-        Y += (std::sin(tau) + std::sin(next_tau)) * dx / 2.0;
-        tau = next_tau;
-        prev_x = x;
-        prev_k = k;
-    }
-    double k = K(l_intermediate, r1, r2, L);
-    double r = k != 0.0 ? 1.0 / k : kInf;
+
+    const double k0 = inv_radius(r1);
+    const double k1 = inv_radius(r2);
+    const double dk = k1 - k0;
+    auto tau_at = [=](double x) {
+        return k0 * x + 0.5 * dk * (x - L / kPi * std::sin(kPi * x / L));
+    };
+    const double tau = tau_at(l_intermediate);
+    const int panels = std::max(1, static_cast<int>(std::ceil(std::max(l_intermediate / 250.0,
+                                                                         std::fabs(tau) / 0.25))));
+    auto [X, Y] = integrate_unit_tangent_gauss8(0.0, l_intermediate, panels, tau_at);
+    const double k = k0 + 0.5 * dk * (1.0 - std::cos(kPi * l_intermediate / L));
+    double r = radius_from_curvature(k);
     return {X, Y, tau, r};
+}
+
+CurveResult linear_transition_curve_local(double L, double r1, double r2, double l_intermediate) {
+    if (l_intermediate <= 0.0) return {0.0, 0.0, 0.0, std::fabs(r1) < 1e6 ? r1 : 0.0};
+    if (L == 0.0) return {0.0, 0.0, 0.0, std::fabs(r2) < 1e6 ? r2 : 0.0};
+
+    const double k0 = inv_radius(r1);
+    const double k1 = inv_radius(r2);
+    const double a = (k1 - k0) / L;
+    const double k_at_l = k0 + a * l_intermediate;
+    const double rl = radius_from_curvature(k_at_l);
+
+    if (std::fabs(a) * std::max(1.0, L * L) < 1e-12) {
+        CurveResult result = circular_curve_local(k0 != 0.0 ? 1.0 / k0 : kInf, l_intermediate);
+        result.radius = rl;
+        return result;
+    }
+
+    const double root = std::sqrt(std::fabs(a) / kPi);
+    const double offset = k0 / a;
+    const double u0 = root * offset;
+    const double u1 = root * (l_intermediate + offset);
+    auto [c0, s0] = fresnel_cs(u0);
+    auto [c1, s1] = fresnel_cs(u1);
+    double dc = c1 - c0;
+    double ds = s1 - s0;
+    if (a < 0.0) ds = -ds;
+
+    const double phase = -k0 * k0 / (2.0 * a);
+    const double scale = std::sqrt(kPi / std::fabs(a));
+    const double x = scale * (std::cos(phase) * dc - std::sin(phase) * ds);
+    const double y = scale * (std::sin(phase) * dc + std::cos(phase) * ds);
+    const double turn = k0 * l_intermediate + 0.5 * a * l_intermediate * l_intermediate;
+    return {x, y, turn, rl};
+}
+
+CurveResult transition_curve_local(double L, double r1, double r2,
+                                   bool half_sine, double l_intermediate) {
+    TransitionCurveKey key{half_sine,
+                           double_cache_bits(L),
+                           double_cache_bits(r1),
+                           double_cache_bits(r2),
+                           double_cache_bits(l_intermediate)};
+    {
+        std::lock_guard<std::mutex> lock(g_geometry_cache_mutex);
+        auto it = g_transition_curve_cache.find(key);
+        if (it != g_transition_curve_cache.end()) return it->second;
+    }
+
+    CurveResult result;
+    if (half_sine) {
+        HalfSinResult half = halfsin_intermediate(L, r1, r2, l_intermediate);
+        result = {half.x, half.y, half.tau, half.radius};
+    } else {
+        result = linear_transition_curve_local(L, r1, r2, l_intermediate);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_geometry_cache_mutex);
+        if (g_transition_curve_cache.size() >= kMaxGeometryCacheEntries) {
+            g_transition_curve_cache.clear();
+        }
+        g_transition_curve_cache.emplace(key, result);
+    }
+    return result;
 }
 
 CurveResult transition_curve(double L, double r1, double r2, double theta,
@@ -1871,61 +2099,10 @@ CurveResult transition_curve(double L, double r1, double r2, double theta,
     r2 = r2 == 0.0 ? kInf : r2;
     r1 = std::fabs(r1) > 1e6 ? kInf : r1;
     r2 = std::fabs(r2) > 1e6 ? kInf : r2;
-    double tau1 = 0.0;
-    double turn = 0.0;
-    double rl = 0.0;
-    double x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0;
 
-    if (func == "sin") {
-        HalfSinResult out0 = halfsin_intermediate(L, r1, r2, 0.0);
-        HalfSinResult out1 = halfsin_intermediate(L, r1, r2, l_intermediate);
-        turn = out1.tau;
-        rl = out1.radius;
-        x0 = out0.x; y0 = out0.y; x1 = out1.x; y1 = out1.y;
-    } else {
-        double ratio = 0.0;
-        if (std::isinf(r1) && !std::isinf(r2)) ratio = 0.0;
-        else if (!std::isinf(r1) && std::isinf(r2)) ratio = std::copysign(kInf, r2 / r1);
-        else if (std::isinf(r1) && std::isinf(r2)) ratio = 1.0;
-        else ratio = r2 / r1;
-        double denom = 1.0 - ratio;
-        double L0 = denom == 0.0 ? 0.0 : L * (1.0 - (1.0 / denom));
-        double denom_r = inv_radius(r1) + (inv_radius(r2) - inv_radius(r1)) / L * l_intermediate;
-        rl = denom_r != 0.0 ? 1.0 / denom_r : kInf;
-        double A = !std::isinf(r1) ? std::sqrt(std::fabs(L0) * std::fabs(r1))
-                                   : std::sqrt(std::fabs(L - L0) * std::fabs(r2));
-        if (A == 0.0 || std::isnan(A)) {
-            auto [x, y] = rotate_xy(l_intermediate, 0.0, theta);
-            return {x, y, 0.0, 0.0};
-        }
-        if (inv_radius(r1) < inv_radius(r2)) {
-            double ar = A / r1;
-            tau1 = ar * ar / 2.0;
-            double d0 = A * A / r1;
-            double d1 = l_intermediate + A * A / r1;
-            double rel = l_intermediate - L0;
-            turn = (rel * rel - L0 * L0) / (2 * A * A);
-            x0 = clothoid_dist(A, d0, 'X');
-            y0 = clothoid_dist(A, d0, 'Y');
-            x1 = clothoid_dist(A, d1, 'X');
-            y1 = clothoid_dist(A, d1, 'Y');
-        } else {
-            double ar = A / r1;
-            tau1 = -(ar * ar) / 2.0;
-            double d0 = -A * A / r1;
-            double d1 = l_intermediate + (-A * A / r1);
-            double rel = l_intermediate - L0;
-            turn = -(rel * rel - L0 * L0) / (2 * A * A);
-            x0 = clothoid_dist(A, d0, 'X');
-            y0 = -clothoid_dist(A, d0, 'Y');
-            x1 = clothoid_dist(A, d1, 'X');
-            y1 = -clothoid_dist(A, d1, 'Y');
-        }
-    }
-
-    auto [rx, ry] = rotate_xy(x1 - x0, y1 - y0, -tau1);
-    auto [fx, fy] = rotate_xy(rx, ry, theta);
-    return {fx, fy, turn, std::fabs(rl) < 1e6 ? rl : 0.0};
+    CurveResult local = transition_curve_local(L, r1, r2, func == "sin", l_intermediate);
+    auto [x, y] = rotate_xy(local.x, local.y, theta);
+    return {x, y, local.tau, std::fabs(local.radius) < 1e6 ? local.radius : 0.0};
 }
 
 std::pair<double, double> gradient_transition(double L, double gr1, double gr2, double l_intermediate) {

@@ -32,7 +32,9 @@
 #include <cmath>
 #include <cctype>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -2653,7 +2655,202 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
+std::vector<std::string> command_line_args_utf8() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::vector<std::string> args;
+    if (!argv) return args;
+    args.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        args.push_back(wide_to_utf8(argv[i]));
+    }
+    LocalFree(argv);
+    return args;
+}
+
+struct HeadlessLoadOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int repeat = 1;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
+HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
+    HeadlessLoadOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--headless-load-map" || arg == "--headless-load") {
+            options.requested = true;
+            if (i + 1 >= args.size()) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
+        } else if (arg == "--repeat") {
+            if (i + 1 >= args.size()) {
+                options.error = "--repeat requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            long parsed = std::strtol(args[++i].c_str(), &end, 10);
+            if (!end || *end != '\0' || parsed <= 0 || parsed > 10000) {
+                options.error = "--repeat must be between 1 and 10000";
+                return options;
+            }
+            options.repeat = static_cast<int>(parsed);
+        } else if (arg == "--unit-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--unit-distance requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--unit-distance must be a positive number";
+                return options;
+            }
+            options.unit_distance = parsed;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--headless-load-map requires a map path";
+    }
+    return options;
+}
+
+std::uint64_t hash_double_bits(double value) {
+    if (value == 0.0) value = 0.0;
+    std::uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value), "unexpected double size");
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+struct HeadlessBufferSummary {
+    size_t rows = 0;
+    size_t cols = 0;
+    bool finite = true;
+    std::uint64_t hash = 1469598103934665603ULL;
+};
+
+HeadlessBufferSummary summarize_headless_buffer(KvDoubleBuffer buffer) {
+    HeadlessBufferSummary summary;
+    summary.rows = buffer.rows;
+    summary.cols = buffer.cols;
+    if (!buffer.data || buffer.rows == 0 || buffer.cols == 0) return summary;
+    const size_t count = buffer.rows * buffer.cols;
+    for (size_t i = 0; i < count; ++i) {
+        const double value = buffer.data[i];
+        summary.finite = summary.finite && std::isfinite(value);
+        std::uint64_t bits = hash_double_bits(value);
+        for (int byte = 0; byte < 8; ++byte) {
+            summary.hash ^= static_cast<unsigned char>((bits >> (byte * 8)) & 0xff);
+            summary.hash *= 1099511628211ULL;
+        }
+    }
+    return summary;
+}
+
+std::string hex_u64(std::uint64_t value) {
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << value;
+    return out.str();
+}
+
+void print_headless_buffer_summary(std::ostream& out, const char* label, const HeadlessBufferSummary& summary) {
+    out << " " << label << "=" << summary.rows << "x" << summary.cols
+        << ":" << hex_u64(summary.hash)
+        << (summary.finite ? "" : ":nonfinite");
+}
+
+int run_headless_load_map(const HeadlessLoadOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit headless-load-map path=\"" << options.path
+         << "\" repeat=" << options.repeat
+         << " unit_distance=" << format_double(options.unit_distance, 3) << "\n";
+
+    for (int run = 1; run <= options.repeat; ++run) {
+        auto started_at = std::chrono::steady_clock::now();
+        void* handle = kv_load_map(options.path.c_str(), options.unit_distance);
+        auto loaded_at = std::chrono::steady_clock::now();
+        if (!handle) {
+            const char* err = kv_get_last_error();
+            std::cerr << "headless run " << run << " failed: "
+                      << (err ? err : "maploader failed") << "\n";
+            return 2;
+        }
+
+        const char* json = kv_get_ir_json(handle);
+        const size_t json_bytes = json ? std::strlen(json) : 0;
+        if (json) kv_free_string(json);
+        auto json_at = std::chrono::steady_clock::now();
+
+        HeadlessBufferSummary own = summarize_headless_buffer(kv_get_owntrack_buffer(handle));
+        HeadlessBufferSummary curve = summarize_headless_buffer(kv_get_curveradius_buffer(handle));
+        HeadlessBufferSummary structures = summarize_headless_buffer(kv_get_structure_puts(handle));
+        const size_t other_count = kv_get_othertrack_count(handle);
+        HeadlessBufferSummary other_total;
+        other_total.rows = 0;
+        other_total.cols = 8;
+        for (size_t i = 0; i < other_count; ++i) {
+            const char* key = kv_get_othertrack_key(handle, i);
+            HeadlessBufferSummary item = summarize_headless_buffer(kv_get_othertrack_buffer(handle, key));
+            other_total.rows += item.rows;
+            other_total.finite = other_total.finite && item.finite;
+            other_total.hash ^= item.hash + 0x9e3779b97f4a7c15ULL + (other_total.hash << 6) + (other_total.hash >> 2);
+        }
+        kv_free(handle);
+        auto finished_at = std::chrono::steady_clock::now();
+
+        const double load_seconds = std::chrono::duration<double>(loaded_at - started_at).count();
+        const double json_seconds = std::chrono::duration<double>(json_at - loaded_at).count();
+        const double total_seconds = std::chrono::duration<double>(finished_at - started_at).count();
+        *out << "headless run " << run
+             << " load=" << std::fixed << std::setprecision(3) << load_seconds << "s"
+             << " json=" << json_seconds << "s"
+             << " total=" << total_seconds << "s"
+             << " json_bytes=" << json_bytes
+             << " othertracks=" << other_count;
+        print_headless_buffer_summary(*out, "own", own);
+        print_headless_buffer_summary(*out, "curve", curve);
+        print_headless_buffer_summary(*out, "structures", structures);
+        print_headless_buffer_summary(*out, "other", other_total);
+        *out << "\n";
+    }
+    return 0;
+}
+
 int main(int, char**) {
+    HeadlessLoadOptions headless = parse_headless_load_options(command_line_args_utf8());
+    if (headless.requested) {
+        if (!headless.error.empty()) {
+            std::cerr << headless.error << "\n"
+                      << "usage: komapedit.exe --headless-load-map <map-path> "
+                      << "[--repeat N] [--unit-distance M] [--headless-output FILE]\n";
+            return 1;
+        }
+        return run_headless_load_map(headless);
+    }
+
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     UserSettings settings = load_user_settings();
     ImGui_ImplWin32_EnableDpiAwareness();
