@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -153,6 +154,7 @@ struct MapModel {
     double cp_default_min = 0.0;
     double cp_default_max = 0.0;
     double cp_arb[3] = {0.0, 0.0, 25.0};
+    double buffer_copy_seconds = 0.0;
     bool has_cp_arb = false;
 };
 
@@ -418,6 +420,7 @@ public:
     ~App();
 
     void render();
+    void after_frame_presented();
     void add_log(std::string text);
 
 private:
@@ -466,6 +469,7 @@ private:
         MapModel model;
         std::string path;
         std::string error;
+        std::chrono::steady_clock::time_point started_at;
         double elapsed_seconds = 0.0;
     };
     std::mutex result_mutex_;
@@ -479,6 +483,8 @@ private:
     double cp_end_ = 0.0;
     double cp_interval_ = 25.0;
     double unit_distance_ = 25.0;
+    std::optional<std::chrono::steady_clock::time_point> pending_load_started_at_;
+    bool plan_canvas_rendered_this_frame_ = false;
 
     bool show_stations_ = true;
     bool show_station_names_ = true;

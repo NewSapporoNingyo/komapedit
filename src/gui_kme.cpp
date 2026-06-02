@@ -1126,6 +1126,7 @@ void App::poll_loader() {
 void App::begin_load(std::string path, bool preserve_settings, bool record_history,
                      std::optional<BackgroundHistory> background_to_restore) {
     if (path.empty() || loading_) return;
+    auto load_started_at = std::chrono::steady_clock::now();
 
     std::map<std::string, OtherTrack> old_other;
     if (preserve_settings) {
@@ -1140,6 +1141,8 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
         error_count_ = warn_count_ = 0;
     }
     loading_ = true;
+    pending_load_started_at_.reset();
+    plan_canvas_rendered_this_frame_ = false;
     add_log(std::string("Start loading file: ") + path);
 
     bool has_cp = preserve_settings && has_model_ && model_.has_cp_arb;
@@ -1148,8 +1151,9 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
 
     loader_ = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
-                           record_history, background_to_restore]() mutable {
+                           record_history, background_to_restore, load_started_at]() mutable {
         LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2);
+        result.started_at = load_started_at;
         result.preserve_settings = preserve_settings;
         result.record_history = record_history;
         result.background_to_restore = background_to_restore;
@@ -1175,6 +1179,8 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
 
 void App::apply_load_result(LoadResult result) {
     if (!result.ok) {
+        pending_load_started_at_.reset();
+        plan_canvas_rendered_this_frame_ = false;
         add_log("Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
@@ -1202,9 +1208,9 @@ void App::apply_load_result(LoadResult result) {
     reset_radius_axes_next_ = true;
     profile_x_span_ = 0.0;
     radius_x_span_ = 0.0;
-    std::ostringstream elapsed;
-    elapsed << std::fixed << std::setprecision(2) << result.elapsed_seconds;
-    add_log("Map loaded in " + elapsed.str() + "s");
+    std::ostringstream buffer_copy_elapsed;
+    buffer_copy_elapsed << std::fixed << std::setprecision(3) << model_.buffer_copy_seconds;
+    add_log("Load timing: buffer copy=" + buffer_copy_elapsed.str() + "s");
     add_log("Map loaded: " + result.path);
     if (result.background_to_restore) {
         apply_background_history(*result.background_to_restore);
@@ -1212,6 +1218,21 @@ void App::apply_load_result(LoadResult result) {
         clear_background_image();
     }
     if (result.record_history) touch_recent_map(result.path);
+    pending_load_started_at_ = result.started_at;
+    plan_canvas_rendered_this_frame_ = false;
+}
+
+void App::after_frame_presented() {
+    if (!pending_load_started_at_ || !plan_canvas_rendered_this_frame_) return;
+
+    double elapsed_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - *pending_load_started_at_).count();
+    pending_load_started_at_.reset();
+    plan_canvas_rendered_this_frame_ = false;
+
+    std::ostringstream elapsed;
+    elapsed << std::fixed << std::setprecision(2) << elapsed_seconds;
+    add_log("Map loaded in " + elapsed.str() + "s");
 }
 
 void App::regenerate_geometry() {
@@ -1305,8 +1326,15 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
 
     MapModel model;
     model.path = path;
-    model.own = copy_buffer(kv_get_owntrack_buffer(handle));
-    model.curve = copy_buffer(kv_get_curveradius_buffer(handle));
+    double buffer_copy_seconds = 0.0;
+    auto copy_buffer_timed = [&buffer_copy_seconds](KvDoubleBuffer buffer) {
+        auto started_at = std::chrono::steady_clock::now();
+        Matrix matrix = copy_buffer(buffer);
+        buffer_copy_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
+        return matrix;
+    };
+    model.own = copy_buffer_timed(kv_get_owntrack_buffer(handle));
+    model.curve = copy_buffer_timed(kv_get_curveradius_buffer(handle));
 
     const auto& cps = root.at("controlpoints");
     if (cps.is_array()) {
@@ -1357,7 +1385,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
             }
             Matrix points;
             KvDoubleBuffer buf = kv_get_othertrack_buffer(handle, key.c_str());
-            points = copy_buffer(buf);
+            points = copy_buffer_timed(buf);
             t.points = std::move(points);
             if (!t.points.empty() && (t.range_min == t.range_max)) {
                 t.range_min = t.points.at(0, 0);
@@ -1518,6 +1546,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
         model.default_min = model.own.at(0, 0);
         model.default_max = model.own.at(model.own.rows - 1, 0);
     }
+    model.buffer_copy_seconds = buffer_copy_seconds;
     return model;
 }
 
@@ -2528,6 +2557,7 @@ void App::render_model_preview_window() {
 
 void App::render() {
     poll_loader();
+    plan_canvas_rendered_this_frame_ = false;
     handle_shortcuts();
     render_menu();
     render_toolbar();
@@ -2752,6 +2782,7 @@ int main(int, char**) {
 
         HRESULT hr = g_pSwapChain->Present(1, 0);
         g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
+        if (SUCCEEDED(hr) && !g_SwapChainOccluded) app.after_frame_presented();
         if (warmup_frames > 0) {
             --warmup_frames;
             needs_render = true;

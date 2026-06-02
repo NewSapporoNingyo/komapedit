@@ -818,29 +818,62 @@ static ImU32 color_u32(const ImVec4& color) {
     return ImGui::ColorConvertFloat4ToU32(color);
 }
 
-static void draw_polyline(ImDrawList* draw, const std::vector<TrackPoint>& points, const View2D& view,
-                          ImVec2 origin, ImVec2 size, ImU32 color, float thickness) {
-    if (points.size() < 2) return;
-    std::vector<ImVec2> screen;
-    screen.reserve(points.size());
+constexpr size_t kPolylineChunkPointLimit = 12000;
+
+static bool finite_screen_point(ImVec2 p) {
+    return std::isfinite(p.x) && std::isfinite(p.y);
+}
+
+static void draw_screen_polyline_chunk(ImDrawList* draw, const std::vector<ImVec2>& screen,
+                                       ImVec2 origin, ImVec2 size, ImU32 color, float thickness) {
+    if (screen.size() < 2) return;
+
     float min_x = std::numeric_limits<float>::max();
     float min_y = std::numeric_limits<float>::max();
     float max_x = -std::numeric_limits<float>::max();
     float max_y = -std::numeric_limits<float>::max();
-    for (const auto& p : points) {
-        ImVec2 q = view.world_to_screen(p.x, p.y, origin, size);
-        screen.push_back(q);
+    for (const auto& q : screen) {
         min_x = std::min(min_x, q.x);
         min_y = std::min(min_y, q.y);
         max_x = std::max(max_x, q.x);
         max_y = std::max(max_y, q.y);
     }
+
     const float margin = 32.0f;
     if (max_x < origin.x - margin || min_x > origin.x + size.x + margin ||
         max_y < origin.y - margin || min_y > origin.y + size.y + margin) {
         return;
     }
-    draw->AddPolyline(screen.data(), static_cast<int>(screen.size()), color, ImDrawFlags_None, thickness);
+
+    draw->AddPolyline(screen.data(), static_cast<int>(screen.size()), color, thickness, ImDrawFlags_None);
+}
+
+static void draw_polyline(ImDrawList* draw, const std::vector<TrackPoint>& points, const View2D& view,
+                          ImVec2 origin, ImVec2 size, ImU32 color, float thickness) {
+    if (points.size() < 2) return;
+
+    std::vector<ImVec2> screen;
+    screen.reserve(std::min(points.size(), kPolylineChunkPointLimit));
+    auto flush = [&]() {
+        draw_screen_polyline_chunk(draw, screen, origin, size, color, thickness);
+        screen.clear();
+    };
+
+    for (const auto& p : points) {
+        ImVec2 q = view.world_to_screen(p.x, p.y, origin, size);
+        if (!finite_screen_point(q)) {
+            flush();
+            continue;
+        }
+
+        screen.push_back(q);
+        if (screen.size() >= kPolylineChunkPointLimit) {
+            ImVec2 last = screen.back();
+            flush();
+            screen.push_back(last);
+        }
+    }
+    flush();
 }
 
 static double grid_step(double span) {
@@ -1193,6 +1226,7 @@ void App::render_plan_canvas(ImVec2 size) {
 
     draw->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(255, 255, 255, 255), tr("canvas.plan").c_str());
     draw_scalebar(draw, plan_view_, origin, avail);
+    if (!data.own.empty()) plan_canvas_rendered_this_frame_ = true;
     draw->PopClipRect();
     ImGui::EndChild();
 }

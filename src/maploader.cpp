@@ -14,12 +14,14 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -47,10 +49,56 @@ constexpr unsigned int CP_UTF8 = 65001;
 
 namespace {
 
+using SteadyClock = std::chrono::steady_clock;
+
 constexpr double kInf = std::numeric_limits<double>::infinity();
 constexpr double kPi = 3.141592653589793238462643383279502884;
 KvLogCallback g_log_callback = nullptr;
 thread_local std::string g_last_error;
+
+struct LoadTiming {
+    double read_decode_seconds = 0.0;
+    double parse_seconds = 0.0;
+    double relocate_seconds = 0.0;
+    double owntrack_seconds = 0.0;
+    double json_seconds = 0.0;
+    std::vector<std::pair<std::string, double>> othertrack_seconds;
+};
+
+thread_local LoadTiming* g_active_timing = nullptr;
+
+double elapsed_seconds_since(SteadyClock::time_point started_at) {
+    return std::chrono::duration<double>(SteadyClock::now() - started_at).count();
+}
+
+class ScopedTimer {
+public:
+    explicit ScopedTimer(double* target)
+        : target_(target), started_at_(SteadyClock::now()) {}
+
+    ~ScopedTimer() {
+        if (target_) *target_ += elapsed_seconds_since(started_at_);
+    }
+
+private:
+    double* target_ = nullptr;
+    SteadyClock::time_point started_at_;
+};
+
+class ActiveTimingScope {
+public:
+    explicit ActiveTimingScope(LoadTiming& timing)
+        : previous_(g_active_timing) {
+        g_active_timing = &timing;
+    }
+
+    ~ActiveTimingScope() {
+        g_active_timing = previous_;
+    }
+
+private:
+    LoadTiming* previous_ = nullptr;
+};
 
 void emit_log(const std::string& line) {
     if (g_log_callback) {
@@ -379,6 +427,7 @@ struct LoadedText {
 LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
                             double min_version) {
+    ScopedTimer timer(g_active_timing ? &g_active_timing->read_decode_seconds : nullptr);
     std::string bytes = read_binary_file(path);
     std::string text;
     std::string encoding;
@@ -636,6 +685,10 @@ struct MapContext {
     double distance = 0.0;
     int parse_order = 0;
     std::unordered_map<std::string, Value> variables;
+    std::set<std::string> external_variable_reads;
+    std::set<std::string> variable_writes;
+    bool depends_on_initial_distance = false;
+    bool has_distance_assignment = false;
     std::vector<double> controlpoints;
     std::vector<OwnTrackEvent> own_track;
     std::map<double, std::string> station_position;
@@ -660,22 +713,77 @@ struct MapContext {
     std::array<double, 2> cp_defaultrange{0.0, 0.0};
     bool has_cp_arbdistribution = false;
     std::string ir_json_cache;
+    LoadTiming timing;
+    bool load_timing_logged = false;
 
     int next_parse_order() {
         return ++parse_order;
     }
 };
 
+bool value_equal(const Value& a, const Value& b) {
+    if (a.kind != b.kind) return false;
+    if (a.kind == ValueKind::Number) {
+        if (std::isnan(a.number) && std::isnan(b.number)) return true;
+        return a.number == b.number;
+    }
+    return a.text == b.text;
+}
+
+bool variable_value_matches(const std::unordered_map<std::string, Value>& current,
+                            const std::unordered_map<std::string, Value>& seed,
+                            const std::string& key) {
+    auto current_it = current.find(key);
+    auto seed_it = seed.find(key);
+    if (current_it == current.end() || seed_it == seed.end()) {
+        return current_it == current.end() && seed_it == seed.end();
+    }
+    return value_equal(current_it->second, seed_it->second);
+}
+
+void note_distance_use(MapContext& ctx) {
+    if (!ctx.has_distance_assignment) ctx.depends_on_initial_distance = true;
+}
+
+void note_variable_read(MapContext& ctx, const std::string& key) {
+    if (ctx.variable_writes.find(key) == ctx.variable_writes.end()) {
+        ctx.external_variable_reads.insert(key);
+    }
+}
+
+void note_variable_write(MapContext& ctx, const std::string& key) {
+    ctx.variable_writes.insert(key);
+}
+
+std::string format_seconds(double seconds) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(3) << seconds << "s";
+    return out.str();
+}
+
+void log_load_timing(const MapContext& ctx) {
+    log_info("load timing: read/decode=" + format_seconds(ctx.timing.read_decode_seconds) +
+             ", parse=" + format_seconds(ctx.timing.parse_seconds) +
+             ", relocate=" + format_seconds(ctx.timing.relocate_seconds) +
+             ", owntrack=" + format_seconds(ctx.timing.owntrack_seconds) +
+             ", JSON=" + format_seconds(ctx.timing.json_seconds));
+    for (const auto& item : ctx.timing.othertrack_seconds) {
+        log_info("load timing: othertrack[" + item.first + "]=" + format_seconds(item.second));
+    }
+}
+
 void add_controlpoint(MapContext& ctx, double value) {
     ctx.controlpoints.push_back(value);
 }
 
 void set_distance(MapContext& ctx, double value) {
+    ctx.has_distance_assignment = true;
     ctx.distance = value;
     add_controlpoint(ctx, value);
 }
 
 void put_own(MapContext& ctx, const std::string& key, const Value& value, const std::string& flag = "") {
+    note_distance_use(ctx);
     Value stored = value.is_null() ? Value::cont() : value;
     ctx.own_track.push_back({ctx.distance, key, stored, flag});
 }
@@ -689,6 +797,7 @@ void ensure_othertrack(MapContext& ctx, const std::string& key) {
 
 void put_other(MapContext& ctx, const Value& track_key, const std::string& element_key,
                const Value& value, const std::string& flag = "") {
+    note_distance_use(ctx);
     std::string key = key_text(track_key);
     ensure_othertrack(ctx, key);
     Value stored = value.is_null() ? Value::cont() : value;
@@ -717,13 +826,27 @@ public:
             if (eof()) break;
             parse_statement();
         }
+        flush_pending_includes();
     }
 
 private:
+    struct IncludeResult {
+        MapContext context;
+        std::string error;
+    };
+
+    struct PendingInclude {
+        std::filesystem::path path;
+        double seed_distance = 0.0;
+        std::unordered_map<std::string, Value> seed_variables;
+        std::future<IncludeResult> future;
+    };
+
     MapContext& ctx_;
     std::string src_;
     std::filesystem::path file_path_;
     size_t pos_ = 0;
+    std::vector<PendingInclude> pending_includes_;
 
     bool eof() const { return pos_ >= src_.size(); }
     char peek() const { return eof() ? '\0' : src_[pos_]; }
@@ -860,12 +983,14 @@ private:
         if (accept(';')) return;
 
         if (peek() == '$' && next_is_variable_assignment()) {
+            flush_pending_includes();
             ++pos_;
             std::string name = ascii_lower(parse_variable_name());
             expect('=');
             Value value = parse_expression();
             expect(';');
             ctx_.variables[name] = value;
+            note_variable_write(ctx_, name);
             return;
         }
 
@@ -875,37 +1000,171 @@ private:
             std::string first_l = ascii_lower(first);
             pos_ = save;
             if (first_l == "include" && !current_starts_map_element()) {
+                if (!include_path_is_simple_string(save)) flush_pending_includes();
                 parse_label();
                 Value path = parse_expression();
                 expect(';');
-                include_file(as_text(path));
+                queue_include(as_text(path));
                 return;
             }
             if (current_starts_map_element()) {
+                flush_pending_includes();
                 parse_map_element();
                 expect(';');
                 return;
             }
         }
 
+        flush_pending_includes();
         Value distance = parse_expression();
         expect(';');
         set_distance(ctx_, as_number(distance));
     }
 
-    void include_file(const std::string& path_text) {
+    bool include_path_is_simple_string(size_t include_pos) const {
+        size_t p = include_pos;
+        skip_label_at(p);
+        skip_at(p);
+        if (p >= src_.size() || src_[p] != '\'') return false;
+        ++p;
+        while (p < src_.size() && src_[p] != '\'') ++p;
+        if (p < src_.size()) ++p;
+        skip_at(p);
+        return p < src_.size() && src_[p] == ';';
+    }
+
+    MapContext make_child_seed(const std::filesystem::path& child) const {
+        MapContext seed;
+        seed.rootpath = ctx_.rootpath;
+        seed.rootpath_utf8 = ctx_.rootpath_utf8;
+        seed.current_file_path = path_to_utf8(std::filesystem::absolute(child));
+        seed.distance = ctx_.distance;
+        seed.variables = ctx_.variables;
+        return seed;
+    }
+
+    static IncludeResult parse_include_context(MapContext seed, std::filesystem::path child) {
+        IncludeResult result;
+        result.context = std::move(seed);
+        try {
+            ActiveTimingScope active(result.context.timing);
+            LoadedText loaded = load_header_text(child, "BveTs Map ", 2.0);
+            result.context.current_file_path = path_to_utf8(std::filesystem::absolute(child));
+            Parser nested(result.context, loaded.body, child);
+            nested.parse();
+        } catch (const std::exception& e) {
+            result.error = e.what();
+        }
+        return result;
+    }
+
+    void queue_include(const std::string& path_text) {
         std::filesystem::path child = join_path(ctx_.rootpath, path_text);
         log_info("including " + path_to_utf8(child));
-        try {
-            LoadedText loaded = load_header_text(child, "BveTs Map ", 2.0);
-            std::string previous = ctx_.current_file_path;
-            ctx_.current_file_path = path_to_utf8(std::filesystem::absolute(child));
-            Parser nested(ctx_, loaded.body, child);
-            nested.parse();
-            ctx_.current_file_path = previous;
-        } catch (const std::exception& e) {
-            log_warn(e.what());
+        MapContext seed = make_child_seed(child);
+        PendingInclude pending;
+        pending.path = child;
+        pending.seed_distance = seed.distance;
+        pending.seed_variables = seed.variables;
+        pending.future = std::async(std::launch::async,
+                                    [seed = std::move(seed), child]() mutable {
+                                        return parse_include_context(std::move(seed), child);
+                                    });
+        pending_includes_.push_back(std::move(pending));
+    }
+
+    bool include_result_is_stale(const PendingInclude& pending, const MapContext& parsed) const {
+        if (parsed.depends_on_initial_distance && ctx_.distance != pending.seed_distance) {
+            return true;
         }
+        for (const std::string& key : parsed.external_variable_reads) {
+            if (!variable_value_matches(ctx_.variables, pending.seed_variables, key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void merge_include_context(MapContext& child) {
+        ctx_.timing.read_decode_seconds += child.timing.read_decode_seconds;
+        if (child.depends_on_initial_distance && !ctx_.has_distance_assignment) {
+            ctx_.depends_on_initial_distance = true;
+        }
+        for (const std::string& key : child.external_variable_reads) {
+            if (ctx_.variable_writes.find(key) == ctx_.variable_writes.end()) {
+                ctx_.external_variable_reads.insert(key);
+            }
+        }
+        ctx_.variable_writes.insert(child.variable_writes.begin(), child.variable_writes.end());
+
+        int order_base = ctx_.parse_order;
+        auto offset_order = [order_base](int& order) {
+            if (order > 0) order += order_base;
+        };
+        for (auto& row : child.station_puts) offset_order(row.order);
+        for (auto& row : child.structure_loads) offset_order(row.order);
+        for (auto& row : child.structure_puts) offset_order(row.order);
+        for (auto& row : child.structure_betweens) offset_order(row.order);
+        for (auto& row : child.repeaters) offset_order(row.order);
+        ctx_.parse_order += child.parse_order;
+
+        if (child.has_distance_assignment) {
+            ctx_.distance = child.distance;
+            ctx_.has_distance_assignment = true;
+        }
+        for (const std::string& key : child.variable_writes) {
+            auto it = child.variables.find(key);
+            if (it != child.variables.end()) {
+                ctx_.variables[key] = std::move(it->second);
+            }
+        }
+
+        ctx_.controlpoints.insert(ctx_.controlpoints.end(), child.controlpoints.begin(), child.controlpoints.end());
+        for (auto& row : child.own_track) ctx_.own_track.push_back(std::move(row));
+        for (auto& kv : child.station_position) ctx_.station_position[kv.first] = std::move(kv.second);
+        for (auto& kv : child.station_key) ctx_.station_key[kv.first] = std::move(kv.second);
+        for (auto& kv : child.station_list) ctx_.station_list[kv.first] = std::move(kv.second);
+        for (auto& row : child.station_puts) ctx_.station_puts.push_back(std::move(row));
+        for (const std::string& key : child.othertrack_order) {
+            ensure_othertrack(ctx_, key);
+            auto& dest = ctx_.othertrack[key];
+            auto& src = child.othertrack[key];
+            for (auto& row : src) dest.push_back(std::move(row));
+        }
+        for (auto& row : child.structure_loads) ctx_.structure_loads.push_back(std::move(row));
+        for (auto& row : child.structure_models) ctx_.structure_models.push_back(std::move(row));
+        for (auto& row : child.structure_puts) ctx_.structure_puts.push_back(std::move(row));
+        for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
+        for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
+        for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
+    }
+
+    void flush_pending_includes() {
+        if (pending_includes_.empty()) return;
+
+        for (auto& pending : pending_includes_) {
+            IncludeResult result;
+            try {
+                result = pending.future.get();
+            } catch (const std::exception& e) {
+                result.error = e.what();
+            }
+            if (!result.error.empty()) {
+                result = parse_include_context(make_child_seed(pending.path), pending.path);
+                if (!result.error.empty()) {
+                    log_warn(result.error);
+                    continue;
+                }
+            } else if (include_result_is_stale(pending, result.context)) {
+                result = parse_include_context(make_child_seed(pending.path), pending.path);
+                if (!result.error.empty()) {
+                    log_warn(result.error);
+                    continue;
+                }
+            }
+            merge_include_context(result.context);
+        }
+        pending_includes_.clear();
     }
 
     void parse_map_element() {
@@ -1007,6 +1266,7 @@ private:
         if (peek() == '$') {
             ++pos_;
             std::string name = ascii_lower(parse_variable_name());
+            note_variable_read(ctx_, name);
             auto it = ctx_.variables.find(name);
             if (it == ctx_.variables.end()) throw std::runtime_error("Undefined variable: " + name);
             return it->second;
@@ -1032,7 +1292,10 @@ private:
                 return call_function(lower, args);
             }
             if (lower == "null") return Value::null();
-            if (lower == "distance") return Value::num(ctx_.distance);
+            if (lower == "distance") {
+                note_distance_use(ctx_);
+                return Value::num(ctx_.distance);
+            }
             throw std::runtime_error("Unknown predefined variable: " + label);
         }
         throw std::runtime_error("Expected expression at byte " + std::to_string(pos_));
@@ -1193,6 +1456,7 @@ private:
 
     void dispatch_station(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "put" && !a.empty()) {
+            note_distance_use(ctx_);
             std::string key = key_text(a.at(0));
             ctx_.station_position[ctx_.distance] = key;
             StationPut row;
@@ -1307,12 +1571,18 @@ private:
     }
 
     void dispatch_speedlimit(const std::string& fn, const std::vector<Value>& a) {
-        if (fn == "begin") ctx_.speedlimits.push_back({ctx_.distance, a.empty() ? Value::num(0.0) : a[0]});
-        else if (fn == "end") ctx_.speedlimits.push_back({ctx_.distance, Value::null()});
+        if (fn == "begin") {
+            note_distance_use(ctx_);
+            ctx_.speedlimits.push_back({ctx_.distance, a.empty() ? Value::num(0.0) : a[0]});
+        } else if (fn == "end") {
+            note_distance_use(ctx_);
+            ctx_.speedlimits.push_back({ctx_.distance, Value::null()});
+        }
     }
 
     void dispatch_structure(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "load") {
+            note_distance_use(ctx_);
             StructureLoad row;
             row.distance = ctx_.distance;
             row.method = "Load";
@@ -1331,6 +1601,7 @@ private:
                 }
             }
         } else if (fn == "put" && a.size() >= 10) {
+            note_distance_use(ctx_);
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "Put";
@@ -1343,6 +1614,7 @@ private:
             row.order = ctx_.next_parse_order();
             ctx_.structure_puts.push_back(row);
         } else if (fn == "put0" && a.size() >= 4) {
+            note_distance_use(ctx_);
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "Put0";
@@ -1353,6 +1625,7 @@ private:
             row.order = ctx_.next_parse_order();
             ctx_.structure_puts.push_back(row);
         } else if (fn == "putbetween" && a.size() >= 3) {
+            note_distance_use(ctx_);
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "PutBetween";
@@ -1368,6 +1641,7 @@ private:
 
     void dispatch_repeater(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "begin" && a.size() >= 11) {
+            note_distance_use(ctx_);
             RepeaterEvent row;
             row.distance = ctx_.distance;
             row.method = "Begin";
@@ -1380,6 +1654,7 @@ private:
             row.order = ctx_.next_parse_order();
             ctx_.repeaters.push_back(row);
         } else if (fn == "begin0" && a.size() >= 5) {
+            note_distance_use(ctx_);
             RepeaterEvent row;
             row.distance = ctx_.distance;
             row.method = "Begin0";
@@ -1390,6 +1665,7 @@ private:
             row.order = ctx_.next_parse_order();
             ctx_.repeaters.push_back(row);
         } else if (fn == "end" && !a.empty()) {
+            note_distance_use(ctx_);
             RepeaterEvent row;
             row.distance = ctx_.distance;
             row.method = "End";
@@ -1960,9 +2236,17 @@ double relative_position(double L, double radius, double ya, double yb, double l
     return (yb - ya) / L * l_intermediate + ya;
 }
 
-void generate_othertrack(MapContext& ctx, const std::string& trackkey) {
+struct OtherTrackBuildResult {
+    std::string key;
+    Matrix buffer;
+    double seconds = 0.0;
+    bool has_buffer = false;
+};
+
+Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackkey, bool& has_buffer) {
     const auto& data = ctx.othertrack.at(trackkey);
-    if (data.empty() || ctx.owntrack_buffer.rows == 0) return;
+    has_buffer = false;
+    if (data.empty() || ctx.owntrack_buffer.rows == 0) return {};
 
     std::map<std::string, TrackPointer> ptrs;
     for (const std::string& key : {"x.position", "x.radius", "y.position", "y.radius",
@@ -2072,7 +2356,8 @@ void generate_othertrack(MapContext& ctx, const std::string& trackkey) {
         result.push({dist, out_x, out_y, out_z, pos.func_last == "sin" ? 0.0 : 1.0,
                      cant, pos.last["center"], pos.last["gauge"]});
     }
-    ctx.othertrack_buffers[trackkey] = std::move(result);
+    has_buffer = true;
+    return result;
 }
 
 void relocate(MapContext& ctx) {
@@ -2113,10 +2398,33 @@ void generate_geometry(MapContext& ctx, double unitdist,
                        bool has_arb, double arb_start, double arb_end, double arb_step) {
     log_info("calculating track geometry");
     ctx.othertrack_buffers.clear();
-    generate_owntrack(ctx, unitdist, has_arb, arb_start, arb_end, arb_step);
+    ctx.timing.owntrack_seconds = 0.0;
+    ctx.timing.othertrack_seconds.clear();
+    ctx.timing.json_seconds = 0.0;
+    ctx.load_timing_logged = false;
+    {
+        ScopedTimer timer(&ctx.timing.owntrack_seconds);
+        generate_owntrack(ctx, unitdist, has_arb, arb_start, arb_end, arb_step);
+    }
     generate_curveradius(ctx);
+    std::vector<std::future<OtherTrackBuildResult>> futures;
+    futures.reserve(ctx.othertrack_order.size());
     for (const auto& key : ctx.othertrack_order) {
-        generate_othertrack(ctx, key);
+        futures.push_back(std::async(std::launch::async, [&ctx, key]() {
+            auto started_at = SteadyClock::now();
+            OtherTrackBuildResult out;
+            out.key = key;
+            out.buffer = build_othertrack_buffer(ctx, key, out.has_buffer);
+            out.seconds = elapsed_seconds_since(started_at);
+            return out;
+        }));
+    }
+    for (auto& future : futures) {
+        OtherTrackBuildResult result = future.get();
+        ctx.timing.othertrack_seconds.push_back({result.key, result.seconds});
+        if (result.has_buffer) {
+            ctx.othertrack_buffers[result.key] = std::move(result.buffer);
+        }
     }
     build_structure_put_buffer(ctx);
     ctx.ir_json_cache.clear();
@@ -2345,6 +2653,7 @@ KV_API void* kv_load_map(const char* path, double unit_distance) {
     try {
         if (!path) throw std::runtime_error("path is null");
         auto ctx = std::make_unique<MapContext>();
+        ActiveTimingScope active(ctx->timing);
         std::filesystem::path map_path = path_from_utf8(path);
         log_info("loading map " + path_to_utf8(map_path));
         LoadedText loaded = load_header_text(map_path, "BveTs Map ", 2.0);
@@ -2353,11 +2662,17 @@ KV_API void* kv_load_map(const char* path, double unit_distance) {
         ctx->current_file_path = path_to_utf8(std::filesystem::absolute(map_path));
 
         log_info("parsing syntax tree");
-        Parser parser(*ctx, loaded.body, map_path);
-        parser.parse();
+        {
+            ScopedTimer timer(&ctx->timing.parse_seconds);
+            Parser parser(*ctx, loaded.body, map_path);
+            parser.parse();
+        }
 
         log_info("sorting parsed IR");
-        relocate(*ctx);
+        {
+            ScopedTimer timer(&ctx->timing.relocate_seconds);
+            relocate(*ctx);
+        }
         generate_geometry(*ctx, unit_distance, false, 0.0, 0.0, 0.0);
         log_info(path_to_utf8(map_path.filename()) + " loaded");
         return ctx.release();
@@ -2426,7 +2741,14 @@ KV_API const char* kv_get_ir_json(void* handle) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
-        if (ctx->ir_json_cache.empty()) ctx->ir_json_cache = build_ir_json(*ctx);
+        if (ctx->ir_json_cache.empty()) {
+            ScopedTimer timer(&ctx->timing.json_seconds);
+            ctx->ir_json_cache = build_ir_json(*ctx);
+        }
+        if (!ctx->load_timing_logged) {
+            log_load_timing(*ctx);
+            ctx->load_timing_logged = true;
+        }
         return copy_c_string(ctx->ir_json_cache);
     } catch (const std::exception& e) {
         g_last_error = e.what();
