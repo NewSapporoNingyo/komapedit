@@ -24,6 +24,7 @@
 #include <future>
 #include <iomanip>
 #include <iostream>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
@@ -232,6 +233,11 @@ std::string json_number(double value) {
     }
     if (std::isinf(value)) {
         return value > 0 ? "1e999" : "-1e999";
+    }
+    std::array<char, 64> buffer{};
+    int written = std::snprintf(buffer.data(), buffer.size(), "%.17g", value);
+    if (written > 0 && static_cast<size_t>(written) < buffer.size()) {
+        return std::string(buffer.data(), static_cast<size_t>(written));
     }
     std::ostringstream out;
     out << std::setprecision(17) << value;
@@ -671,7 +677,17 @@ struct Matrix {
         cols = c;
     }
 
+    void reserve_rows(size_t row_count) {
+        if (cols != 0) data.reserve(row_count * cols);
+    }
+
     void push(const std::vector<double>& row) {
+        if (cols == 0) cols = row.size();
+        data.insert(data.end(), row.begin(), row.end());
+        ++rows;
+    }
+
+    void push(std::initializer_list<double> row) {
         if (cols == 0) cols = row.size();
         data.insert(data.end(), row.begin(), row.end());
         ++rows;
@@ -1773,10 +1789,17 @@ std::pair<double, double> rotate_xy(double x, double y, double theta) {
 double clothoid_dist(double A, double l, char elem) {
     if (A == 0.0 || std::isinf(A)) return elem == 'X' ? l : 0.0;
     double la = l / A;
+    double la2 = la * la;
+    double la4 = la2 * la2;
+    double la8 = la4 * la4;
+    double la12 = la8 * la4;
     if (elem == 'X') {
-        return l * (1 - std::pow(la, 4) / 40 + std::pow(la, 8) / 3456 - std::pow(la, 12) / 599040);
+        return l * (1 - la4 / 40 + la8 / 3456 - la12 / 599040);
     }
-    return l * (std::pow(la, 2) / 6 - std::pow(la, 6) / 336 + std::pow(la, 10) / 42240 - std::pow(la, 14) / 9676800);
+    double la6 = la4 * la2;
+    double la10 = la8 * la2;
+    double la14 = la12 * la2;
+    return l * (la2 / 6 - la6 / 336 + la10 / 42240 - la14 / 9676800);
 }
 
 struct CurveResult {
@@ -1821,20 +1844,25 @@ HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_inte
     if (l_intermediate / 5.0 <= dL) dL = l_intermediate / 5.0;
     int n = static_cast<int>(l_intermediate / dL) + 1;
     if (n < 2) n = 2;
-    std::vector<double> xs(n);
-    std::vector<double> tau(n, 0.0);
-    std::vector<double> X(n, 0.0);
-    std::vector<double> Y(n, 0.0);
-    for (int i = 0; i < n; ++i) xs[i] = l_intermediate * i / (n - 1);
+    double tau = 0.0;
+    double X = 0.0;
+    double Y = 0.0;
+    double prev_x = 0.0;
+    double prev_k = K(0.0, r1, r2, L);
     for (int i = 1; i < n; ++i) {
-        double dx = xs[i] - xs[i - 1];
-        tau[i] = tau[i - 1] + (K(xs[i - 1], r1, r2, L) + K(xs[i], r1, r2, L)) * dx / 2.0;
-        X[i] = X[i - 1] + (std::cos(tau[i - 1]) + std::cos(tau[i])) * dx / 2.0;
-        Y[i] = Y[i - 1] + (std::sin(tau[i - 1]) + std::sin(tau[i])) * dx / 2.0;
+        double x = l_intermediate * i / (n - 1);
+        double dx = x - prev_x;
+        double k = K(x, r1, r2, L);
+        double next_tau = tau + (prev_k + k) * dx / 2.0;
+        X += (std::cos(tau) + std::cos(next_tau)) * dx / 2.0;
+        Y += (std::sin(tau) + std::sin(next_tau)) * dx / 2.0;
+        tau = next_tau;
+        prev_x = x;
+        prev_k = k;
     }
     double k = K(l_intermediate, r1, r2, L);
     double r = k != 0.0 ? 1.0 / k : kInf;
-    return {X.back(), Y.back(), tau.back(), r};
+    return {X, Y, tau, r};
 }
 
 CurveResult transition_curve(double L, double r1, double r2, double theta,
@@ -1871,19 +1899,23 @@ CurveResult transition_curve(double L, double r1, double r2, double theta,
             return {x, y, 0.0, 0.0};
         }
         if (inv_radius(r1) < inv_radius(r2)) {
-            tau1 = std::pow(A / r1, 2) / 2.0;
+            double ar = A / r1;
+            tau1 = ar * ar / 2.0;
             double d0 = A * A / r1;
             double d1 = l_intermediate + A * A / r1;
-            turn = (std::pow(l_intermediate - L0, 2) - std::pow(L0, 2)) / (2 * A * A);
+            double rel = l_intermediate - L0;
+            turn = (rel * rel - L0 * L0) / (2 * A * A);
             x0 = clothoid_dist(A, d0, 'X');
             y0 = clothoid_dist(A, d0, 'Y');
             x1 = clothoid_dist(A, d1, 'X');
             y1 = clothoid_dist(A, d1, 'Y');
         } else {
-            tau1 = -std::pow(A / r1, 2) / 2.0;
+            double ar = A / r1;
+            tau1 = -(ar * ar) / 2.0;
             double d0 = -A * A / r1;
             double d1 = l_intermediate + (-A * A / r1);
-            turn = -(std::pow(l_intermediate - L0, 2) - std::pow(L0, 2)) / (2 * A * A);
+            double rel = l_intermediate - L0;
+            turn = -(rel * rel - L0 * L0) / (2 * A * A);
             x0 = clothoid_dist(A, d0, 'X');
             y0 = -clothoid_dist(A, d0, 'Y');
             x1 = clothoid_dist(A, d1, 'X');
@@ -2047,6 +2079,7 @@ void generate_owntrack(MapContext& ctx, double unitdist,
 
     CantProcessor cant_gen(std::move(cant_p), ctx.own_track, lp.cant);
     ctx.owntrack_buffer.clear(11);
+    ctx.owntrack_buffer.reserve_rows(list_cp.size());
 
     for (double dist : list_cp) {
         while (interpolate_p.on_nextpoint(dist)) {
@@ -2197,6 +2230,7 @@ void generate_owntrack(MapContext& ctx, double unitdist,
 
 void generate_curveradius(MapContext& ctx) {
     ctx.curveradius_buffer.clear(2);
+    ctx.curveradius_buffer.reserve_rows(ctx.own_track.size() * 2 + 2);
     if (ctx.owntrack_buffer.rows == 0) return;
     double min_cp = ctx.owntrack_buffer.data[0];
     double max_cp = ctx.owntrack_buffer.data[(ctx.owntrack_buffer.rows - 1) * ctx.owntrack_buffer.cols];
@@ -2248,113 +2282,129 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackke
     has_buffer = false;
     if (data.empty() || ctx.owntrack_buffer.rows == 0) return {};
 
-    std::map<std::string, TrackPointer> ptrs;
-    for (const std::string& key : {"x.position", "x.radius", "y.position", "y.radius",
-                                   "interpolate_func", "cant", "center", "gauge"}) {
-        ptrs.emplace(key, TrackPointer(data, key));
+    TrackPointer x_position_p(data, "x.position");
+    TrackPointer x_radius_p(data, "x.radius");
+    TrackPointer y_position_p(data, "y.position");
+    TrackPointer y_radius_p(data, "y.radius");
+    TrackPointer func_p(data, "interpolate_func");
+    TrackPointer center_p(data, "center");
+    TrackPointer gauge_p(data, "gauge");
+    TrackPointer cant_p(data, "cant");
+
+    double x_position_last = 0.0, x_position_next = 0.0;
+    double x_radius_last = 0.0, x_radius_next = 0.0;
+    double y_position_last = 0.0, y_position_next = 0.0;
+    double y_radius_last = 0.0, y_radius_next = 0.0;
+    double center_last = 0.0, center_next = 0.0;
+    double gauge_last = 0.0, gauge_next = 0.0;
+    double cant_initial = 0.0;
+    std::string func_last = "line";
+    std::string func_next = "line";
+
+    auto init_numeric = [](TrackPointer& p, double& last, double& next) {
+        if (p.next() < 0) return;
+        const auto& e = p.event(p.next());
+        double v = e.value.is_continue() ? 0.0 : as_number(e.value);
+        last = v;
+        next = v;
+    };
+    init_numeric(x_position_p, x_position_last, x_position_next);
+    init_numeric(x_radius_p, x_radius_last, x_radius_next);
+    init_numeric(y_position_p, y_position_last, y_position_next);
+    init_numeric(y_radius_p, y_radius_last, y_radius_next);
+    init_numeric(center_p, center_last, center_next);
+    init_numeric(gauge_p, gauge_last, gauge_next);
+    if (cant_p.next() >= 0) {
+        const auto& e = cant_p.event(cant_p.next());
+        cant_initial = e.value.is_continue() ? 0.0 : as_number(e.value);
+    }
+    if (func_p.next() >= 0) {
+        const auto& e = func_p.event(func_p.next());
+        func_last = func_next = e.value.is_continue() ? "line" : as_text(e.value);
     }
 
-    struct PosSet {
-        std::map<std::string, double> last;
-        std::map<std::string, double> next;
-        std::string func_last = "line";
-        std::string func_next = "line";
-    } pos;
-    for (const std::string& key : {"x.position", "x.radius", "x.distance", "y.position",
-                                   "y.radius", "y.distance", "cant", "center", "gauge"}) {
-        pos.last[key] = 0.0;
-        pos.next[key] = 0.0;
-    }
-    for (auto& kv : ptrs) {
-        if (kv.second.next() >= 0) {
-            const auto& e = kv.second.event(kv.second.next());
-            if (kv.first == "interpolate_func") {
-                pos.func_last = pos.func_next = e.value.is_continue() ? "line" : as_text(e.value);
-            } else {
-                double v = e.value.is_continue() ? 0.0 : as_number(e.value);
-                pos.last[kv.first] = v;
-                pos.next[kv.first] = v;
-            }
-        }
-    }
-
-    CantProcessor cant_gen(TrackPointer(data, "cant"), data, pos.last["cant"]);
+    CantProcessor cant_gen(std::move(cant_p), data, cant_initial);
     Matrix result;
     result.clear(8);
+    result.reserve_rows(ctx.owntrack_buffer.rows);
 
     double min_dist = data.front().distance;
     for (const auto& e : data) min_dist = std::min(min_dist, e.distance);
+
+    auto advance_over = [](TrackPointer& p, double& last, double& next, double dist) {
+        while (p.over_nextpoint(dist)) {
+            p.seeknext();
+            last = next;
+            if (p.next() >= 0) {
+                const auto& e = p.event(p.next());
+                next = e.value.is_continue() ? last : as_number(e.value);
+            }
+        }
+    };
+    auto advance_on = [](TrackPointer& p, double& last, double& next, double dist) {
+        while (p.on_nextpoint(dist)) {
+            p.seeknext();
+            last = next;
+            if (p.next() >= 0) {
+                const auto& e = p.event(p.next());
+                next = e.value.is_continue() ? last : as_number(e.value);
+            }
+        }
+    };
 
     for (size_t r = 0; r < ctx.owntrack_buffer.rows; ++r) {
         const double* element = &ctx.owntrack_buffer.data[r * ctx.owntrack_buffer.cols];
         double dist = element[0];
         if (min_dist > dist) continue;
 
-        for (const std::string& key : {"x.position", "x.radius", "y.position", "y.radius"}) {
-            auto& p = ptrs.at(key);
-            while (p.over_nextpoint(dist)) {
-                p.seeknext();
-                pos.last[key] = pos.next[key];
-                if (p.next() >= 0) {
-                    const auto& e = p.event(p.next());
-                    pos.next[key] = e.value.is_continue() ? pos.last[key] : as_number(e.value);
-                }
-            }
-        }
+        advance_over(x_position_p, x_position_last, x_position_next, dist);
+        advance_over(x_radius_p, x_radius_last, x_radius_next, dist);
+        advance_over(y_position_p, y_position_last, y_position_next, dist);
+        advance_over(y_radius_p, y_radius_last, y_radius_next, dist);
 
-        for (const std::string& key : {"interpolate_func", "center", "gauge"}) {
-            auto& p = ptrs.at(key);
-            while (p.on_nextpoint(dist)) {
-                p.seeknext();
-                if (key == "interpolate_func") {
-                    pos.func_last = pos.func_next;
-                    if (p.next() >= 0) {
-                        const auto& e = p.event(p.next());
-                        pos.func_next = e.value.is_continue() ? pos.func_last : as_text(e.value);
-                    }
-                } else {
-                    pos.last[key] = pos.next[key];
-                    if (p.next() >= 0) {
-                        const auto& e = p.event(p.next());
-                        pos.next[key] = e.value.is_continue() ? pos.last[key] : as_number(e.value);
-                    }
-                }
+        while (func_p.on_nextpoint(dist)) {
+            func_p.seeknext();
+            func_last = func_next;
+            if (func_p.next() >= 0) {
+                const auto& e = func_p.event(func_p.next());
+                func_next = e.value.is_continue() ? func_last : as_text(e.value);
             }
         }
+        advance_on(center_p, center_last, center_next, dist);
+        advance_on(gauge_p, gauge_last, gauge_next, dist);
 
         double out_x = 0.0, out_y = 0.0;
-        auto& xptr = ptrs.at("x.position");
-        if (xptr.last() >= 0 && xptr.next() >= 0) {
-            pos.last["x.distance"] = xptr.event(xptr.last()).distance;
-            pos.next["x.distance"] = xptr.event(xptr.next()).distance;
-            double rel = relative_position(pos.next["x.distance"] - pos.last["x.distance"],
-                                           pos.last["x.radius"], pos.last["x.position"],
-                                           pos.next["x.position"], dist - pos.last["x.distance"]);
-            auto [rx, ry] = rotate_xy(0.0, rel, element[4]);
-            out_x = rx + element[1];
-            out_y = ry + element[2];
+        double sin_theta = std::sin(element[4]);
+        double cos_theta = std::cos(element[4]);
+        if (x_position_p.last() >= 0 && x_position_p.next() >= 0) {
+            double x_distance_last = x_position_p.event(x_position_p.last()).distance;
+            double x_distance_next = x_position_p.event(x_position_p.next()).distance;
+            double rel = relative_position(x_distance_next - x_distance_last,
+                                           x_radius_last, x_position_last,
+                                           x_position_next, dist - x_distance_last);
+            out_x = element[1] - sin_theta * rel;
+            out_y = element[2] + cos_theta * rel;
         } else {
-            double rel = pos.last["x.position"];
-            out_x = -std::sin(element[4]) * rel + element[1];
-            out_y = std::cos(element[4]) * rel + element[2];
+            double rel = x_position_last;
+            out_x = element[1] - sin_theta * rel;
+            out_y = element[2] + cos_theta * rel;
         }
 
         double out_z = 0.0;
-        auto& yptr = ptrs.at("y.position");
-        if (yptr.last() >= 0 && yptr.next() >= 0) {
-            pos.last["y.distance"] = yptr.event(yptr.last()).distance;
-            pos.next["y.distance"] = yptr.event(yptr.next()).distance;
-            double rel = relative_position(pos.next["y.distance"] - pos.last["y.distance"],
-                                           pos.last["y.radius"], pos.last["y.position"],
-                                           pos.next["y.position"], dist - pos.last["y.distance"]);
+        if (y_position_p.last() >= 0 && y_position_p.next() >= 0) {
+            double y_distance_last = y_position_p.event(y_position_p.last()).distance;
+            double y_distance_next = y_position_p.event(y_position_p.next()).distance;
+            double rel = relative_position(y_distance_next - y_distance_last,
+                                           y_radius_last, y_position_last,
+                                           y_position_next, dist - y_distance_last);
             out_z = rel + element[3];
         } else {
-            out_z = pos.last["y.position"] + element[3];
+            out_z = y_position_last + element[3];
         }
 
-        double cant = cant_gen.process(dist, pos.func_last);
-        result.push({dist, out_x, out_y, out_z, pos.func_last == "sin" ? 0.0 : 1.0,
-                     cant, pos.last["center"], pos.last["gauge"]});
+        double cant = cant_gen.process(dist, func_last);
+        result.push({dist, out_x, out_y, out_z, func_last == "sin" ? 0.0 : 1.0,
+                     cant, center_last, gauge_last});
     }
     has_buffer = true;
     return result;
@@ -2387,6 +2437,7 @@ void relocate(MapContext& ctx) {
 
 void build_structure_put_buffer(MapContext& ctx) {
     ctx.structure_put_buffer.clear(10);
+    ctx.structure_put_buffer.reserve_rows(ctx.structure_puts.size());
     for (const auto& row : ctx.structure_puts) {
         ctx.structure_put_buffer.push({row.distance, row.x, row.y, row.z,
                                        row.rx, row.ry, row.rz, row.tilt,

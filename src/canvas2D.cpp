@@ -125,6 +125,28 @@ int table_row_order(const TableRow& row) {
     return static_cast<int>(std::round(table_cell_number(row, "order")));
 }
 
+size_t matrix_lower_bound_distance(const Matrix& points, double distance) {
+    size_t lo = 0;
+    size_t hi = points.rows;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (points.at(mid, 0) < distance) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+size_t matrix_upper_bound_distance(const Matrix& points, double distance) {
+    size_t lo = 0;
+    size_t hi = points.rows;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (points.at(mid, 0) <= distance) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
 } // namespace
 
 void App::rebuild_marker_overlay_cache() {
@@ -383,13 +405,15 @@ static ImVec2 rotate_xy(double x, double y, double angle) {
     return ImVec2(static_cast<float>(c * x - s * y), static_cast<float>(s * x + c * y));
 }
 
-PlanData App::build_plan_data() const {
+PlanData App::build_plan_data(bool include_other_tracks) const {
     PlanData out;
     if (!has_model_ || model_.own.empty()) return out;
 
-    for (size_t r = 0; r < model_.own.rows; ++r) {
+    size_t own_first = matrix_lower_bound_distance(model_.own, dmin_);
+    size_t own_last = matrix_upper_bound_distance(model_.own, dmax_);
+    out.own.reserve(own_last > own_first ? own_last - own_first : 0);
+    for (size_t r = own_first; r < own_last; ++r) {
         double d = model_.own.at(r, 0);
-        if (d < dmin_ || d > dmax_) continue;
         TrackPoint p;
         p.d = d;
         p.x = model_.own.at(r, 1);
@@ -427,28 +451,31 @@ PlanData App::build_plan_data() const {
     out.xmax = -1.0;
     for (const auto& p : out.own) extend_bounds(p.x, p.y);
 
-    for (const auto& t : model_.other_tracks) {
-        if (!t.visible || t.points.empty()) continue;
-        PlanOther po;
-        po.key = t.key;
-        po.color = t.color;
-        double rmin = std::max(dmin_, t.range_min);
-        double rmax = std::min(dmax_, t.range_max);
-        for (size_t r = 0; r < t.points.rows; ++r) {
-            double d = t.points.at(r, 0);
-            if (d < rmin || d > rmax) continue;
-            TrackPoint p;
-            p.d = d;
-            p.x = t.points.at(r, 1);
-            p.y = t.points.at(r, 2);
-            p.z = t.points.at(r, 3);
-            ImVec2 q = rotate_xy(p.x, p.y, angle);
-            p.x = q.x;
-            p.y = q.y;
-            po.points.push_back(p);
-            extend_bounds(p.x, p.y);
+    if (include_other_tracks) {
+        for (const auto& t : model_.other_tracks) {
+            if (!t.visible || t.points.empty()) continue;
+            PlanOther po;
+            po.key = t.key;
+            po.color = t.color;
+            double rmin = std::max(dmin_, t.range_min);
+            double rmax = std::min(dmax_, t.range_max);
+            size_t first = matrix_lower_bound_distance(t.points, rmin);
+            size_t last = matrix_upper_bound_distance(t.points, rmax);
+            po.points.reserve(last > first ? last - first : 0);
+            for (size_t r = first; r < last; ++r) {
+                TrackPoint p;
+                p.d = t.points.at(r, 0);
+                p.x = t.points.at(r, 1);
+                p.y = t.points.at(r, 2);
+                p.z = t.points.at(r, 3);
+                ImVec2 q = rotate_xy(p.x, p.y, angle);
+                p.x = q.x;
+                p.y = q.y;
+                po.points.push_back(p);
+                extend_bounds(p.x, p.y);
+            }
+            if (!po.points.empty()) out.other.push_back(std::move(po));
         }
-        if (!po.points.empty()) out.other.push_back(std::move(po));
     }
 
     for (const auto& s : model_.stations) {
@@ -508,8 +535,10 @@ PlanData App::build_plan_data() const {
         if (segment.points.size() >= 2) out.repeater_segments.push_back(std::move(segment));
     }
 
-    out.curve_sections = curve_sections(false);
-    out.transition_sections = curve_sections(true);
+    if (show_curve_values_) {
+        out.curve_sections = curve_sections(false);
+        out.transition_sections = curve_sections(true);
+    }
 
     double pad = std::max({out.xmax - out.xmin, out.ymax - out.ymin, 1.0}) * 0.05;
     out.xmin -= pad; out.xmax += pad; out.ymin -= pad; out.ymax += pad;
@@ -637,7 +666,7 @@ void App::update_measure(double distance) {
 }
 
 void App::center_plan_at_distance(double distance) {
-    PlanData pd = build_plan_data();
+    PlanData pd = build_plan_data(false);
     if (pd.own.empty()) return;
     auto it = std::lower_bound(pd.own.begin(), pd.own.end(), distance, [](const TrackPoint& p, double d) { return p.d < d; });
     if (it == pd.own.end()) {
@@ -698,7 +727,7 @@ void App::handle_measure_plot_double_click(bool include_profile, bool include_ra
 }
 
 void App::focus_station(double distance) {
-    PlanData pd = build_plan_data();
+    PlanData pd = build_plan_data(false);
     for (const auto& s : pd.stations) {
         if (std::abs(s.station.distance - distance) < 1e-6) {
             plan_view_.cx = s.x;
@@ -748,7 +777,7 @@ void App::apply_background_alignment() {
     if (bg_image_.path.empty() || bg_width_ <= 0.0 || bg_height_ <= 0.0) return;
     align_station1_ = std::clamp(align_station1_, 0, static_cast<int>(model_.stations.size()) - 1);
     align_station2_ = std::clamp(align_station2_, 0, static_cast<int>(model_.stations.size()) - 1);
-    PlanData pd = build_plan_data();
+    PlanData pd = build_plan_data(false);
     auto find_station = [&](const std::string& key) -> std::optional<ImVec2> {
         for (const auto& s : pd.stations) {
             if (s.station.key == key) return ImVec2(static_cast<float>(s.x), static_cast<float>(s.y));
@@ -818,62 +847,178 @@ static ImU32 color_u32(const ImVec4& color) {
     return ImGui::ColorConvertFloat4ToU32(color);
 }
 
-constexpr size_t kPolylineChunkPointLimit = 12000;
+constexpr size_t kPolylineChunkPointLimit = 4096;
+constexpr float kPolylineMinPixelStepSq = 0.64f;
 
 static bool finite_screen_point(ImVec2 p) {
     return std::isfinite(p.x) && std::isfinite(p.y);
 }
 
-static void draw_screen_polyline_chunk(ImDrawList* draw, const std::vector<ImVec2>& screen,
-                                       ImVec2 origin, ImVec2 size, ImU32 color, float thickness) {
-    if (screen.size() < 2) return;
+struct PlanScreenTransform {
+    double model_c = 1.0;
+    double model_s = 0.0;
+    double view_c = 1.0;
+    double view_s = 0.0;
+    double cx = 0.0;
+    double cy = 0.0;
+    double scale = 1.0;
+    float screen_cx = 0.0f;
+    float screen_cy = 0.0f;
 
-    float min_x = std::numeric_limits<float>::max();
-    float min_y = std::numeric_limits<float>::max();
-    float max_x = -std::numeric_limits<float>::max();
-    float max_y = -std::numeric_limits<float>::max();
-    for (const auto& q : screen) {
-        min_x = std::min(min_x, q.x);
-        min_y = std::min(min_y, q.y);
-        max_x = std::max(max_x, q.x);
-        max_y = std::max(max_y, q.y);
+    ImVec2 plan_to_screen(double x, double y) const {
+        double dx = x - cx;
+        double dy = y - cy;
+        double rx = view_c * dx - view_s * dy;
+        double ry = view_s * dx + view_c * dy;
+        return ImVec2(screen_cx + static_cast<float>(rx * scale),
+                      screen_cy + static_cast<float>(ry * scale));
     }
 
-    const float margin = 32.0f;
-    if (max_x < origin.x - margin || min_x > origin.x + size.x + margin ||
-        max_y < origin.y - margin || min_y > origin.y + size.y + margin) {
-        return;
+    ImVec2 model_to_screen(double x, double y) const {
+        double px = model_c * x - model_s * y;
+        double py = model_s * x + model_c * y;
+        return plan_to_screen(px, py);
     }
+};
 
-    draw->AddPolyline(screen.data(), static_cast<int>(screen.size()), color, thickness, ImDrawFlags_None);
+static PlanScreenTransform make_plan_transform(const View2D& view, double model_angle,
+                                               ImVec2 origin, ImVec2 size) {
+    PlanScreenTransform transform;
+    transform.model_c = std::cos(model_angle);
+    transform.model_s = std::sin(model_angle);
+    transform.view_c = std::cos(view.rotation);
+    transform.view_s = std::sin(view.rotation);
+    transform.cx = view.cx;
+    transform.cy = view.cy;
+    transform.scale = view.scale;
+    transform.screen_cx = origin.x + size.x * 0.5f;
+    transform.screen_cy = origin.y + size.y * 0.5f;
+    return transform;
 }
 
-static void draw_polyline(ImDrawList* draw, const std::vector<TrackPoint>& points, const View2D& view,
-                          ImVec2 origin, ImVec2 size, ImU32 color, float thickness) {
-    if (points.size() < 2) return;
+class ScreenPolylineBuilder {
+public:
+    ScreenPolylineBuilder(ImDrawList* draw, ImVec2 origin, ImVec2 size, ImU32 color, float thickness)
+        : draw_(draw), origin_(origin), size_(size), color_(color), thickness_(thickness) {
+        points_.reserve(kPolylineChunkPointLimit);
+        reset_bounds();
+    }
 
-    std::vector<ImVec2> screen;
-    screen.reserve(std::min(points.size(), kPolylineChunkPointLimit));
-    auto flush = [&]() {
-        draw_screen_polyline_chunk(draw, screen, origin, size, color, thickness);
-        screen.clear();
-    };
-
-    for (const auto& p : points) {
-        ImVec2 q = view.world_to_screen(p.x, p.y, origin, size);
-        if (!finite_screen_point(q)) {
-            flush();
-            continue;
+    void append(ImVec2 p) {
+        if (!finite_screen_point(p)) {
+            flush(false);
+            has_last_ = false;
+            has_pending_ = false;
+            return;
         }
 
-        screen.push_back(q);
-        if (screen.size() >= kPolylineChunkPointLimit) {
-            ImVec2 last = screen.back();
-            flush();
-            screen.push_back(last);
+        if (!has_last_) {
+            push_raw(p);
+            last_ = p;
+            has_last_ = true;
+            return;
+        }
+
+        float dx = p.x - last_.x;
+        float dy = p.y - last_.y;
+        if (dx * dx + dy * dy >= kPolylineMinPixelStepSq) {
+            push_raw(p);
+            last_ = p;
+            has_pending_ = false;
+            if (points_.size() >= kPolylineChunkPointLimit) flush(true);
+        } else {
+            pending_ = p;
+            has_pending_ = true;
         }
     }
-    flush();
+
+    void finish() {
+        if (has_pending_) {
+            push_raw(pending_);
+            has_pending_ = false;
+        }
+        flush(false);
+    }
+
+private:
+    void push_raw(ImVec2 p) {
+        points_.push_back(p);
+        min_x_ = std::min(min_x_, p.x);
+        min_y_ = std::min(min_y_, p.y);
+        max_x_ = std::max(max_x_, p.x);
+        max_y_ = std::max(max_y_, p.y);
+    }
+
+    void reset_bounds() {
+        min_x_ = std::numeric_limits<float>::max();
+        min_y_ = std::numeric_limits<float>::max();
+        max_x_ = -std::numeric_limits<float>::max();
+        max_y_ = -std::numeric_limits<float>::max();
+    }
+
+    bool overlaps_canvas() const {
+        const float margin = 32.0f;
+        return !(max_x_ < origin_.x - margin || min_x_ > origin_.x + size_.x + margin ||
+                 max_y_ < origin_.y - margin || min_y_ > origin_.y + size_.y + margin);
+    }
+
+    void flush(bool keep_tail) {
+        if (points_.size() >= 2 && overlaps_canvas()) {
+            draw_->AddPolyline(points_.data(), static_cast<int>(points_.size()), color_, thickness_, ImDrawFlags_None);
+        }
+        ImVec2 tail = points_.empty() ? ImVec2(0.0f, 0.0f) : points_.back();
+        points_.clear();
+        reset_bounds();
+        if (keep_tail) push_raw(tail);
+    }
+
+    ImDrawList* draw_ = nullptr;
+    ImVec2 origin_;
+    ImVec2 size_;
+    ImU32 color_ = 0;
+    float thickness_ = 1.0f;
+    std::vector<ImVec2> points_;
+    ImVec2 last_ = ImVec2(0.0f, 0.0f);
+    ImVec2 pending_ = ImVec2(0.0f, 0.0f);
+    bool has_last_ = false;
+    bool has_pending_ = false;
+    float min_x_ = 0.0f;
+    float min_y_ = 0.0f;
+    float max_x_ = 0.0f;
+    float max_y_ = 0.0f;
+};
+
+static void draw_polyline_range(ImDrawList* draw, const std::vector<TrackPoint>& points,
+                                size_t first, size_t last, const PlanScreenTransform& transform,
+                                ImVec2 origin, ImVec2 size, ImU32 color, float thickness) {
+    if (last <= first + 1 || first >= points.size()) return;
+    last = std::min(last, points.size());
+    ScreenPolylineBuilder builder(draw, origin, size, color, thickness);
+    for (size_t i = first; i < last; ++i) {
+        builder.append(transform.plan_to_screen(points[i].x, points[i].y));
+    }
+    builder.finish();
+}
+
+static void draw_polyline(ImDrawList* draw, const std::vector<TrackPoint>& points,
+                          const PlanScreenTransform& transform, ImVec2 origin, ImVec2 size,
+                          ImU32 color, float thickness) {
+    draw_polyline_range(draw, points, 0, points.size(), transform, origin, size, color, thickness);
+}
+
+static void draw_matrix_plan_polyline(ImDrawList* draw, const Matrix& points, double rmin, double rmax,
+                                      const PlanScreenTransform& transform, ImVec2 origin, ImVec2 size,
+                                      ImU32 color, float thickness) {
+    if (points.rows < 2 || points.cols < 3 || rmax < rmin) return;
+    size_t first = matrix_lower_bound_distance(points, rmin);
+    size_t last = matrix_upper_bound_distance(points, rmax);
+    if (last <= first + 1) return;
+
+    ScreenPolylineBuilder builder(draw, origin, size, color, thickness);
+    for (size_t row = first; row < last; ++row) {
+        builder.append(transform.model_to_screen(points.at(row, 1), points.at(row, 2)));
+    }
+    builder.finish();
 }
 
 static double grid_step(double span) {
@@ -987,7 +1132,7 @@ static bool point_near_canvas(ImVec2 p, ImVec2 origin, ImVec2 size, float margin
 }
 
 void App::render_plan_canvas(ImVec2 size) {
-    PlanData data = build_plan_data();
+    PlanData data = build_plan_data(false);
     ImGui::BeginChild("PlanCanvasChild", size, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImVec2 origin = ImGui::GetCursorScreenPos();
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -1004,17 +1149,20 @@ void App::render_plan_canvas(ImVec2 size) {
     draw->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), true);
 
     if (!data.own.empty() && (!plan_view_.fitted || !keep_plan_view_)) {
-        plan_view_.fit(data.xmin, data.ymin, data.xmax, data.ymax, avail);
+        PlanData fit_data = build_plan_data(true);
+        const PlanData& bounds = fit_data.own.empty() ? data : fit_data;
+        plan_view_.fit(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax, avail);
         keep_plan_view_ = true;
     }
 
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 mouse = io.MousePos;
     auto nearest_measure_distance = [&]() -> std::optional<double> {
+        PlanScreenTransform measure_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
         double best = std::numeric_limits<double>::max();
         const TrackPoint* best_p = nullptr;
         for (const auto& p : data.own) {
-            ImVec2 sp = plan_view_.world_to_screen(p.x, p.y, origin, avail);
+            ImVec2 sp = measure_transform.plan_to_screen(p.x, p.y);
             double dist = std::hypot(sp.x - mouse.x, sp.y - mouse.y);
             if (dist < best) {
                 best = dist;
@@ -1085,9 +1233,13 @@ void App::render_plan_canvas(ImVec2 size) {
                 request_plot_focus(*clicked_distance, true, true);
             }
         } else if (!data.own.empty()) {
-            plan_view_.fit(data.xmin, data.ymin, data.xmax, data.ymax, avail);
+            PlanData fit_data = build_plan_data(true);
+            const PlanData& bounds = fit_data.own.empty() ? data : fit_data;
+            plan_view_.fit(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax, avail);
         }
     }
+
+    PlanScreenTransform transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
 
     if (grid_mode_ == GridMode::Fixed) {
         for (float x = origin.x; x <= origin.x + avail.x; x += 80.0f) draw->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + avail.y), IM_COL32(48, 52, 58, 255));
@@ -1129,20 +1281,30 @@ void App::render_plan_canvas(ImVec2 size) {
     draw_background(draw, plan_view_, origin, avail);
 
     auto draw_section = [&](const Section& sec, ImU32 color, float width) {
-        std::vector<TrackPoint> pts;
-        for (const auto& p : data.own) if (p.d >= sec.start && p.d <= sec.end) pts.push_back(p);
-        draw_polyline(draw, pts, plan_view_, origin, avail, color, width);
+        auto first = std::lower_bound(data.own.begin(), data.own.end(), sec.start,
+                                      [](const TrackPoint& p, double d) { return p.d < d; });
+        auto last = std::upper_bound(data.own.begin(), data.own.end(), sec.end,
+                                     [](double d, const TrackPoint& p) { return d < p.d; });
+        draw_polyline_range(draw, data.own,
+                            static_cast<size_t>(first - data.own.begin()),
+                            static_cast<size_t>(last - data.own.begin()),
+                            transform, origin, avail, color, width);
     };
     if (show_curve_values_) {
         for (const auto& s : data.curve_sections) draw_section(s, IM_COL32(130, 130, 130, 220), 10.0f);
         for (const auto& s : data.transition_sections) draw_section(s, IM_COL32(84, 84, 84, 220), 8.0f);
     }
-    draw_polyline(draw, data.own, plan_view_, origin, avail, IM_COL32(245, 245, 245, 255), 2.0f);
-    for (const auto& t : data.other) draw_polyline(draw, t.points, plan_view_, origin, avail, color_u32(t.color), 1.5f);
+    draw_polyline(draw, data.own, transform, origin, avail, IM_COL32(245, 245, 245, 255), 2.0f);
+    for (const auto& t : model_.other_tracks) {
+        if (!t.visible || t.points.empty()) continue;
+        double rmin = std::max(dmin_, t.range_min);
+        double rmax = std::min(dmax_, t.range_max);
+        draw_matrix_plan_polyline(draw, t.points, rmin, rmax, transform, origin, avail, color_u32(t.color), 1.5f);
+    }
 
     if (show_stations_) {
         for (const auto& st : data.stations) {
-            ImVec2 p = plan_view_.world_to_screen(st.x, st.y, origin, avail);
+            ImVec2 p = transform.plan_to_screen(st.x, st.y);
             draw->AddCircleFilled(p, station_marker_size_, IM_COL32(255, 255, 255, 255));
             if (show_station_names_) draw->AddText(ImVec2(p.x + 8, p.y - 16), IM_COL32(255, 255, 255, 255), st.station.name.c_str());
             if (show_station_mileage_) draw->AddText(ImVec2(p.x + 8, p.y + 4), IM_COL32(255, 216, 77, 255), (format_double(st.station.mileage, 0) + "m").c_str());
@@ -1151,10 +1313,10 @@ void App::render_plan_canvas(ImVec2 size) {
 
     if (show_speedlimits_) {
         for (const auto& sp : data.speedlimits) {
-            ImVec2 p = plan_view_.world_to_screen(sp.x, sp.y, origin, avail);
+            ImVec2 p = transform.plan_to_screen(sp.x, sp.y);
             double wx = sp.x - std::sin(sp.theta);
             double wy = sp.y + std::cos(sp.theta);
-            ImVec2 q = plan_view_.world_to_screen(wx, wy, origin, avail);
+            ImVec2 q = transform.plan_to_screen(wx, wy);
             ImVec2 d(q.x - p.x, q.y - p.y);
             float len = std::max(1.0f, std::sqrt(d.x * d.x + d.y * d.y));
             d.x = d.x / len * 8.0f;
@@ -1168,10 +1330,10 @@ void App::render_plan_canvas(ImVec2 size) {
     if (!data.repeater_segments.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
         for (const auto& segment : data.repeater_segments) {
-            draw_polyline(draw, segment.points, plan_view_, origin, avail, repeater_color, 1.25f);
+            draw_polyline(draw, segment.points, transform, origin, avail, repeater_color, 1.25f);
         }
         for (const auto& marker : data.repeater_markers) {
-            ImVec2 p = plan_view_.world_to_screen(marker.x, marker.y, origin, avail);
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
             draw_plan_diamond_marker(draw, p, repeater_color);
             draw_plan_small_text(draw, p, repeater_color, marker.label);
@@ -1181,7 +1343,7 @@ void App::render_plan_canvas(ImVec2 size) {
     if (!data.structure_markers.empty()) {
         ImU32 structure_color = IM_COL32(255, 216, 48, 255);
         for (const auto& marker : data.structure_markers) {
-            ImVec2 p = plan_view_.world_to_screen(marker.x, marker.y, origin, avail);
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
             draw_plan_triangle_marker(draw, p, structure_color);
             draw_plan_small_text(draw, p, structure_color, marker.label);
@@ -1193,7 +1355,7 @@ void App::render_plan_canvas(ImVec2 size) {
             double mid = (sec.start + sec.end) * 0.5;
             auto it = std::lower_bound(data.own.begin(), data.own.end(), mid, [](const TrackPoint& p, double d) { return p.d < d; });
             if (it != data.own.end()) {
-                ImVec2 p = plan_view_.world_to_screen(it->x, it->y, origin, avail);
+                ImVec2 p = transform.plan_to_screen(it->x, it->y);
                 draw->AddText(ImVec2(p.x + 8, p.y - 16), IM_COL32(136, 255, 136, 255), format_double(sec.value, 0).c_str());
             }
         }
@@ -1210,14 +1372,14 @@ void App::render_plan_canvas(ImVec2 size) {
         } else if (it != data.own.begin() && std::abs((it - 1)->d - *measure_distance_) < std::abs(it->d - *measure_distance_)) {
             --it;
         }
-        ImVec2 p = plan_view_.world_to_screen(it->x, it->y, origin, avail);
+        ImVec2 p = transform.plan_to_screen(it->x, it->y);
         draw->AddLine(ImVec2(p.x - 12, p.y - 12), ImVec2(p.x + 12, p.y + 12), IM_COL32(255, 51, 51, 255), 2.0f);
         draw->AddLine(ImVec2(p.x - 12, p.y + 12), ImVec2(p.x + 12, p.y - 12), IM_COL32(255, 51, 51, 255), 2.0f);
     }
 
     if (plan_focus_arrow_) {
         if (ImGui::GetTime() <= plan_focus_arrow_until_) {
-            ImVec2 p = plan_view_.world_to_screen(plan_focus_arrow_->x, plan_focus_arrow_->y, origin, avail);
+            ImVec2 p = transform.plan_to_screen(plan_focus_arrow_->x, plan_focus_arrow_->y);
             if (point_near_canvas(p, origin, avail)) draw_plan_focus_arrow(draw, p);
         } else {
             plan_focus_arrow_.reset();

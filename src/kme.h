@@ -621,7 +621,7 @@ private:
     void locate_structure_row_on_plan(size_t row_index);
     void locate_repeater_row_on_plan(size_t row_index);
 
-    PlanData build_plan_data() const;
+    PlanData build_plan_data(bool include_other_tracks = true) const;
     ProfileData build_profile_data() const;
     std::vector<Section> curve_sections(bool transition) const;
     size_t nearest_own_index(double distance) const;
