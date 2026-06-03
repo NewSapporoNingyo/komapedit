@@ -99,6 +99,59 @@ bool render_text_cell_with_context(const std::string& display_text, const std::s
     return selected;
 }
 
+std::string trim_ascii_copy(const std::string& text) {
+    size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    size_t last = text.find_last_not_of(" \t\r\n");
+    return text.substr(first, last - first + 1);
+}
+
+std::vector<std::string> split_structure_key_list(const std::string& text) {
+    std::vector<std::string> keys;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t comma = text.find(',', start);
+        size_t end = comma == std::string::npos ? text.size() : comma;
+        std::string key = trim_ascii_copy(text.substr(start, end - start));
+        if (!key.empty()) keys.push_back(std::move(key));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return keys;
+}
+
+std::string render_text_cell_with_submenu(const std::string& display_text, const std::string& menu_label,
+                                          const std::vector<std::string>& menu_items) {
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
+    ImVec2 item_size(
+        std::max(1.0f, ImGui::GetContentRegionAvail().x),
+        std::max(ImGui::GetTextLineHeight(), text_size.y));
+    ImGui::InvisibleButton("text_cell_submenu_context_item", item_size);
+    if (ImGui::IsItemHovered()) {
+        ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y),
+                                                  ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+    }
+    if (!display_text.empty()) {
+        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), display_text.c_str());
+    }
+
+    std::string selected;
+    if (ImGui::BeginPopupContextItem("text_cell_submenu_context", ImGuiPopupFlags_MouseButtonRight)) {
+        if (ImGui::BeginMenu(menu_label.c_str(), !menu_items.empty())) {
+            for (size_t i = 0; i < menu_items.size(); ++i) {
+                const std::string& item = menu_items[i];
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::MenuItem(item.c_str())) selected = item;
+                ImGui::PopID();
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndPopup();
+    }
+    return selected;
+}
+
 char ascii_fold(char c) {
     return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
 }
@@ -187,6 +240,7 @@ static const char* kStructureColumns[] = {
     "tilt", "span", "trackKey1", "trackKey2", "flag", "filePath"
 };
 constexpr int kStructureDistanceColumn = 0;
+constexpr int kStructureKeyColumn = 2;
 constexpr int kStructureFilePathColumn = IM_ARRAYSIZE(kStructureColumns) - 1;
 
 static const TableColumnDef kRepeaterColumns[] = {
@@ -209,6 +263,7 @@ static const TableColumnDef kRepeaterColumns[] = {
 };
 constexpr int kRepeaterDistanceColumn = 1;
 constexpr int kRepeaterIntervalColumn = 13;
+constexpr int kRepeaterStructureKeysColumn = 14;
 constexpr int kRepeaterFilePathColumn = IM_ARRAYSIZE(kRepeaterColumns) - 1;
 
 static const TableColumnDef kStationListColumns[] = {
@@ -471,6 +526,16 @@ void App::run_structure_model_find() {
     }
 }
 
+void App::find_structure_model_for_structure_key(const std::string& structure_key) {
+    if (blank_ascii(structure_key)) return;
+    const size_t capacity = IM_ARRAYSIZE(structure_model_find_query_);
+    const size_t copy_size = std::min(capacity - 1, structure_key.size());
+    std::copy_n(structure_key.data(), copy_size, structure_model_find_query_);
+    structure_model_find_query_[copy_size] = '\0';
+    show_structure_models_window_ = true;
+    run_structure_model_find();
+}
+
 void App::step_structure_model_find(int delta) {
     if (structure_model_find_matches_.empty()) return;
     if (structure_model_find_current_ < 0) {
@@ -621,7 +686,13 @@ void App::render_structures_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kStructureFilePathColumn) {
+                    if (i == kStructureKeyColumn) {
+                        ImGui::PushID("structure_key");
+                        if (render_text_cell_with_context(value, tr("menu.find_in_structure_models"), !blank_ascii(value))) {
+                            find_structure_model_for_structure_key(value);
+                        }
+                        ImGui::PopID();
+                    } else if (i == kStructureFilePathColumn) {
                         render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"));
                     } else {
                         ImGui::TextUnformatted(value.c_str());
@@ -806,7 +877,14 @@ void App::render_repeaters_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kRepeaterFilePathColumn) {
+                    if (i == kRepeaterStructureKeysColumn) {
+                        ImGui::PushID("structure_keys");
+                        std::vector<std::string> structure_keys = split_structure_key_list(value);
+                        std::string selected_key = render_text_cell_with_submenu(
+                            value, tr("menu.find_in_structure_models"), structure_keys);
+                        if (!selected_key.empty()) find_structure_model_for_structure_key(selected_key);
+                        ImGui::PopID();
+                    } else if (i == kRepeaterFilePathColumn) {
                         render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"));
                     } else {
                         ImGui::TextUnformatted(value.c_str());

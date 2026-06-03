@@ -624,6 +624,7 @@ private:
     void ensure_table_cache();
     void reset_structure_model_find_results();
     void run_structure_model_find();
+    void find_structure_model_for_structure_key(const std::string& structure_key);
     void step_structure_model_find(int delta);
     std::string structure_model_find_status_text() const;
     void rebuild_marker_overlay_cache();
