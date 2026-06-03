@@ -99,6 +99,58 @@ bool render_text_cell_with_context(const std::string& display_text, const std::s
     return selected;
 }
 
+char ascii_fold(char c) {
+    return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
+}
+
+bool contains_ascii_case_insensitive(const std::string& text, const std::string& query) {
+    if (query.empty() || query.size() > text.size()) return false;
+    const size_t last_start = text.size() - query.size();
+    for (size_t start = 0; start <= last_start; ++start) {
+        bool match = true;
+        for (size_t i = 0; i < query.size(); ++i) {
+            if (ascii_fold(text[start + i]) != ascii_fold(query[i])) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
+void replace_all(std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) return;
+    size_t pos = 0;
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+        text.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+}
+
+std::string format_find_match_status(std::string format, size_t current, size_t total) {
+    replace_all(format, "{current}", std::to_string(current));
+    replace_all(format, "{total}", std::to_string(total));
+    return format;
+}
+
+void render_status_line(const std::string& text) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float height = ImGui::GetFrameHeight();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ImVec2 size(std::max(1.0f, ImGui::GetContentRegionAvail().x), height);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ImGui::GetColorU32(ImGuiCol_WindowBg), style.FrameRounding);
+    if (!text.empty()) {
+        const ImVec2 text_pos(pos.x + style.FramePadding.x,
+                              pos.y + std::max(0.0f, (height - ImGui::GetTextLineHeight()) * 0.5f));
+        ImGui::PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+        draw->AddText(text_pos, ImGui::GetColorU32(ImGuiCol_Text), text.c_str());
+        ImGui::PopClipRect();
+    }
+    ImGui::Dummy(size);
+}
+
 void expand_width_for_text(float& width, const std::string& text) {
     if (text.empty()) return;
     float text_width = ImGui::CalcTextSize(text.c_str()).x + ImGui::GetStyle().CellPadding.x * 2.0f + 12.0f;
@@ -120,12 +172,14 @@ void setup_fixed_table_header() {
 } // namespace
 
 constexpr float kShowColumnWidth = 56.0f;
+constexpr ImU32 kFindMatchRowColor = IM_COL32(104, 184, 255, 96);
 
 static const TableColumnDef kStructureModelColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"structureKey", "structureKey", 120.0f},
     {"filePath", "filePath", 200.0f},
 };
+constexpr int kStructureModelKeyColumn = 1;
 constexpr int kStructureModelFilePathColumn = IM_ARRAYSIZE(kStructureModelColumns) - 1;
 
 static const char* kStructureColumns[] = {
@@ -271,6 +325,7 @@ std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
 
 void App::invalidate_table_cache() {
     table_cache_ = TableUiCache{};
+    reset_structure_model_find_results();
 }
 
 void App::reset_marker_visibility() {
@@ -374,6 +429,68 @@ void App::ensure_table_cache() {
     }
 
     table_cache_ = std::move(cache);
+}
+
+void App::reset_structure_model_find_results() {
+    structure_model_find_committed_.clear();
+    structure_model_find_matches_.clear();
+    structure_model_find_row_matches_.clear();
+    structure_model_find_current_ = -1;
+    structure_model_find_scroll_row_ = -1;
+    structure_model_find_has_run_ = false;
+}
+
+void App::run_structure_model_find() {
+    ensure_table_cache();
+    structure_model_find_committed_ = structure_model_find_query_;
+    structure_model_find_matches_.clear();
+    structure_model_find_row_matches_.assign(table_cache_.structure_model_rows.size(), 0);
+    structure_model_find_current_ = -1;
+    structure_model_find_scroll_row_ = -1;
+    structure_model_find_has_run_ = true;
+
+    if (blank_ascii(structure_model_find_committed_)) return;
+
+    for (size_t row_index = 0; row_index < table_cache_.structure_model_rows.size(); ++row_index) {
+        const CachedTableRow& row = table_cache_.structure_model_rows[row_index];
+        const bool matches_key = row.cells.size() > static_cast<size_t>(kStructureModelKeyColumn) &&
+            contains_ascii_case_insensitive(row.cells[static_cast<size_t>(kStructureModelKeyColumn)],
+                                            structure_model_find_committed_);
+        const bool matches_file_name = row.cells.size() > static_cast<size_t>(kStructureModelFilePathColumn) &&
+            contains_ascii_case_insensitive(row.cells[static_cast<size_t>(kStructureModelFilePathColumn)],
+                                            structure_model_find_committed_);
+        if (matches_key || matches_file_name) {
+            structure_model_find_row_matches_[row_index] = 1;
+            structure_model_find_matches_.push_back(row_index);
+        }
+    }
+
+    if (!structure_model_find_matches_.empty()) {
+        structure_model_find_current_ = 0;
+        structure_model_find_scroll_row_ = static_cast<int>(structure_model_find_matches_.front());
+    }
+}
+
+void App::step_structure_model_find(int delta) {
+    if (structure_model_find_matches_.empty()) return;
+    if (structure_model_find_current_ < 0) {
+        structure_model_find_current_ = 0;
+    } else {
+        const int count = static_cast<int>(structure_model_find_matches_.size());
+        structure_model_find_current_ = (structure_model_find_current_ + delta + count) % count;
+    }
+    structure_model_find_scroll_row_ =
+        static_cast<int>(structure_model_find_matches_[static_cast<size_t>(structure_model_find_current_)]);
+}
+
+std::string App::structure_model_find_status_text() const {
+    if (!structure_model_find_has_run_) return {};
+    if (structure_model_find_matches_.empty() || structure_model_find_current_ < 0) {
+        return tr("status.find.no_match");
+    }
+    return format_find_match_status(tr("status.find.match"),
+                                    static_cast<size_t>(structure_model_find_current_) + 1,
+                                    structure_model_find_matches_.size());
 }
 
 void App::render_othertracks_window() {
@@ -527,6 +644,33 @@ void App::render_structure_models_window() {
         return;
     }
     ensure_table_cache();
+    const bool stale_find_results = structure_model_find_has_run_ &&
+        structure_model_find_committed_ != structure_model_find_query_;
+    if (stale_find_results) reset_structure_model_find_results();
+
+    if (ImGui::Button(tr("button.find").c_str())) run_structure_model_find();
+    ImGui::SameLine();
+    const float arrow_button_width = ImGui::GetFrameHeight();
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
+        arrow_button_width * 2.0f - spacing * 2.0f);
+    ImGui::SetNextItemWidth(input_width);
+    if (ImGui::InputText("##structure_model_find_text", structure_model_find_query_,
+                         IM_ARRAYSIZE(structure_model_find_query_), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        run_structure_model_find();
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(structure_model_find_matches_.empty());
+    if (ImGui::Button("↑##structure_model_find_prev", ImVec2(arrow_button_width, 0.0f))) {
+        step_structure_model_find(-1);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("↓##structure_model_find_next", ImVec2(arrow_button_width, 0.0f))) {
+        step_structure_model_find(1);
+    }
+    ImGui::EndDisabled();
+    render_status_line(structure_model_find_status_text());
+
     if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(kStructureModelColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
         for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
@@ -538,22 +682,35 @@ void App::render_structure_models_window() {
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(table_cache_.structure_model_rows.size()));
+        const int row_count = static_cast<int>(table_cache_.structure_model_rows.size());
+        const int scroll_target_row = structure_model_find_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
         const ImVec4 preview_text_color = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.structure_model_rows[static_cast<size_t>(row_index)];
+                const bool is_find_match =
+                    static_cast<size_t>(row_index) < structure_model_find_row_matches_.size() &&
+                    structure_model_find_row_matches_[static_cast<size_t>(row_index)] != 0;
                 const bool is_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model() &&
                     row.open_path == model_preview_canvas_->model_path();
                 const ImU32 row_text_color = is_preview_model
                     ? ImGui::GetColorU32(preview_text_color)
                     : ImGui::GetColorU32(ImGuiCol_Text);
                 ImGui::TableNextRow();
+                if (is_find_match) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.0f);
+                    structure_model_find_scroll_row_ = -1;
+                }
                 ImGui::PushID(row_index);
                 for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == 1) {
+                    if (i == kStructureModelKeyColumn) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         ImVec2 text_size = ImGui::CalcTextSize(value.c_str());
                         ImVec2 item_size(

@@ -544,6 +544,13 @@ private:
     ImGuiID dock_right_id_ = 0;
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
+    char structure_model_find_query_[256] = {};
+    std::string structure_model_find_committed_;
+    std::vector<size_t> structure_model_find_matches_;
+    std::vector<unsigned char> structure_model_find_row_matches_;
+    int structure_model_find_current_ = -1;
+    int structure_model_find_scroll_row_ = -1;
+    bool structure_model_find_has_run_ = false;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
@@ -615,6 +622,10 @@ private:
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
+    void reset_structure_model_find_results();
+    void run_structure_model_find();
+    void step_structure_model_find(int delta);
+    std::string structure_model_find_status_text() const;
     void rebuild_marker_overlay_cache();
     void reset_marker_visibility();
     void sync_marker_visibility_sizes();
