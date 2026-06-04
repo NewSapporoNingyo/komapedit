@@ -17,11 +17,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <optional>
+#include <ostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -147,6 +150,92 @@ size_t matrix_upper_bound_distance(const Matrix& points, double distance) {
     return lo;
 }
 
+constexpr size_t kRepeaterSegmentChunkPointLimit = 192;
+
+void include_repeater_chunk_bounds(PlanRepeaterSegment::Chunk& chunk, const TrackPoint& p) {
+    if (!chunk.bounds_valid) {
+        chunk.d_min = chunk.d_max = p.d;
+        chunk.x_min = chunk.x_max = p.x;
+        chunk.y_min = chunk.y_max = p.y;
+        chunk.bounds_valid = true;
+        return;
+    }
+    chunk.d_min = std::min(chunk.d_min, p.d);
+    chunk.d_max = std::max(chunk.d_max, p.d);
+    chunk.x_min = std::min(chunk.x_min, p.x);
+    chunk.x_max = std::max(chunk.x_max, p.x);
+    chunk.y_min = std::min(chunk.y_min, p.y);
+    chunk.y_max = std::max(chunk.y_max, p.y);
+}
+
+void include_repeater_segment_bounds(PlanRepeaterSegment& segment, const TrackPoint& p) {
+    if (!segment.bounds_valid) {
+        segment.d_min = segment.d_max = p.d;
+        segment.x_min = segment.x_max = p.x;
+        segment.y_min = segment.y_max = p.y;
+        segment.bounds_valid = true;
+        return;
+    }
+    segment.d_min = std::min(segment.d_min, p.d);
+    segment.d_max = std::max(segment.d_max, p.d);
+    segment.x_min = std::min(segment.x_min, p.x);
+    segment.x_max = std::max(segment.x_max, p.x);
+    segment.y_min = std::min(segment.y_min, p.y);
+    segment.y_max = std::max(segment.y_max, p.y);
+}
+
+void append_repeater_segment_point(PlanRepeaterSegment& segment, const TrackPoint& p) {
+    if (!segment.chunks.empty()) {
+        PlanRepeaterSegment::Chunk& tail_chunk = segment.chunks.back();
+        if (!tail_chunk.points.empty() && std::abs(tail_chunk.points.back().d - p.d) < 1e-6) {
+            tail_chunk.points.back() = p;
+            include_repeater_chunk_bounds(tail_chunk, p);
+            include_repeater_segment_bounds(segment, p);
+            return;
+        }
+    }
+
+    if (segment.chunks.empty() ||
+        segment.chunks.back().points.size() >= kRepeaterSegmentChunkPointLimit) {
+        std::optional<TrackPoint> tail;
+        if (!segment.chunks.empty() && !segment.chunks.back().points.empty()) {
+            tail = segment.chunks.back().points.back();
+        }
+        segment.chunks.emplace_back();
+        if (tail) {
+            segment.chunks.back().points.push_back(*tail);
+            include_repeater_chunk_bounds(segment.chunks.back(), *tail);
+        }
+    }
+
+    PlanRepeaterSegment::Chunk& chunk = segment.chunks.back();
+    chunk.points.push_back(p);
+    include_repeater_chunk_bounds(chunk, p);
+    include_repeater_segment_bounds(segment, p);
+}
+
+#ifndef NDEBUG
+void debug_plan_stage(const char* stage) {
+    if (!g_debug_plan_benchmark_log) return;
+    static std::chrono::steady_clock::time_point frame_start;
+    static std::chrono::steady_clock::time_point previous;
+    auto now = std::chrono::steady_clock::now();
+    if (std::string_view(stage) == "start") {
+        frame_start = now;
+        previous = now;
+    }
+    double total_ms = std::chrono::duration<double, std::milli>(now - frame_start).count();
+    double delta_ms = std::chrono::duration<double, std::milli>(now - previous).count();
+    previous = now;
+    *g_debug_plan_benchmark_log << "render_stage=" << stage
+                                << " total_ms=" << std::fixed << std::setprecision(3) << total_ms
+                                << " delta_ms=" << delta_ms << "\n";
+    g_debug_plan_benchmark_log->flush();
+}
+#else
+void debug_plan_stage(const char*) {}
+#endif
+
 } // namespace
 
 void App::rebuild_marker_overlay_cache() {
@@ -229,17 +318,15 @@ void App::rebuild_marker_overlay_cache() {
             auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
             if (!sampled) return;
             TrackPoint p = offset_track_point(*sampled, lateral, forward);
-            if (!segment.points.empty() && std::abs(segment.points.back().d - p.d) < 1e-6) {
-                segment.points.back() = p;
-            } else {
-                segment.points.push_back(p);
-            }
+            append_repeater_segment_point(segment, p);
         };
 
         append_at(start);
-        for (size_t row_index = 0; row_index < source->points->rows; ++row_index) {
+        size_t first = matrix_upper_bound_distance(*source->points, start);
+        size_t last = matrix_lower_bound_distance(*source->points, end);
+        for (size_t row_index = first; row_index < last; ++row_index) {
             double distance = source->points->at(row_index, 0);
-            if (distance > start && distance < end) append_at(distance);
+            append_at(distance);
         }
         append_at(end);
         return segment;
@@ -416,8 +503,15 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     size_t own_first = matrix_lower_bound_distance(model_.own, dmin_);
     size_t own_last = matrix_upper_bound_distance(model_.own, dmax_);
     out.own.reserve(own_last > own_first ? own_last - own_first : 0);
+    double own_min_d_step = 0.0;
+    if (mode_ == Mode::Pan && plan_view_.fitted && plan_view_.scale > 0.0) {
+        own_min_d_step = std::max(0.0, 0.45 / std::max(std::abs(plan_view_.scale), 1e-9));
+    }
+    double last_own_d = -std::numeric_limits<double>::infinity();
     for (size_t r = own_first; r < own_last; ++r) {
         double d = model_.own.at(r, 0);
+        bool endpoint = r == own_first || r + 1 == own_last;
+        if (!endpoint && d - last_own_d < own_min_d_step) continue;
         TrackPoint p;
         p.d = d;
         p.x = model_.own.at(r, 1);
@@ -427,6 +521,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         p.radius = model_.own.at(r, 5);
         p.gradient = model_.own.at(r, 6);
         out.own.push_back(p);
+        last_own_d = d;
     }
     if (out.own.empty()) return out;
     out.origin_angle = out.own.front().theta;
@@ -458,27 +553,19 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     if (include_other_tracks) {
         for (const auto& t : model_.other_tracks) {
             if (!t.visible || t.points.empty()) continue;
-            PlanOther po;
-            po.key = t.key;
-            po.color = t.color;
             double rmin = std::max(dmin_, t.range_min);
             double rmax = std::min(dmax_, t.range_max);
             size_t first = matrix_lower_bound_distance(t.points, rmin);
             size_t last = matrix_upper_bound_distance(t.points, rmax);
-            po.points.reserve(last > first ? last - first : 0);
-            for (size_t r = first; r < last; ++r) {
-                TrackPoint p;
-                p.d = t.points.at(r, 0);
-                p.x = t.points.at(r, 1);
-                p.y = t.points.at(r, 2);
-                p.z = t.points.at(r, 3);
-                ImVec2 q = rotate_xy(p.x, p.y, angle);
-                p.x = q.x;
-                p.y = q.y;
-                po.points.push_back(p);
-                extend_bounds(p.x, p.y);
-            }
-            if (!po.points.empty()) out.other.push_back(std::move(po));
+            if (last <= first) continue;
+            size_t count = last - first;
+            size_t step = std::max<size_t>(1, count / 4096);
+            auto append_other_bounds = [&](size_t row) {
+                ImVec2 q = rotate_xy(t.points.at(row, 1), t.points.at(row, 2), angle);
+                extend_bounds(q.x, q.y);
+            };
+            for (size_t r = first; r < last; r += step) append_other_bounds(r);
+            append_other_bounds(last - 1);
         }
     }
 
@@ -502,6 +589,15 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     auto append_marker_bounds = [&](double x, double y) {
         extend_bounds(x, y);
     };
+    size_t visible_repeater_count = static_cast<size_t>(std::count_if(
+        repeater_row_visible_.begin(), repeater_row_visible_.end(),
+        [](unsigned char visible) { return visible != 0; }));
+    bool skip_dense_repeater_markers = !include_other_tracks && plan_view_.fitted &&
+        visible_repeater_count > 1200 && plan_view_.scale < 0.025;
+    out.structure_markers.reserve(std::min(structure_marker_cache_.size(), structure_row_visible_.size()));
+    if (!skip_dense_repeater_markers) {
+        out.repeater_markers.reserve(std::min(repeater_marker_cache_.size(), repeater_row_visible_.size()) * 2);
+    }
     for (size_t i = 0; i < structure_marker_cache_.size() && i < structure_row_visible_.size(); ++i) {
         if (!structure_row_visible_[i] || !structure_marker_cache_[i]) continue;
         const PlanStructureMarker& source = *structure_marker_cache_[i];
@@ -534,17 +630,22 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     for (size_t i = 0; i < repeater_marker_cache_.size() && i < repeater_row_visible_.size(); ++i) {
         if (!repeater_row_visible_[i]) continue;
         const RepeaterOverlayRow& source = repeater_marker_cache_[i];
-        if (source.begin_marker) append_repeater_marker(*source.begin_marker, i);
-        if (source.end_marker) append_repeater_marker(*source.end_marker, i);
-
-        PlanRepeaterSegment segment;
-        for (const auto& point : source.segment.points) {
-            if (point.d < dmin_ || point.d > dmax_) continue;
-            TrackPoint p = rotate_point(point);
-            segment.points.push_back(p);
-            append_marker_bounds(p.x, p.y);
+        if (!skip_dense_repeater_markers) {
+            if (source.begin_marker) append_repeater_marker(*source.begin_marker, i);
+            if (source.end_marker) append_repeater_marker(*source.end_marker, i);
         }
-        if (segment.points.size() >= 2) out.repeater_segments.push_back(std::move(segment));
+        if (include_other_tracks && source.segment.bounds_valid) {
+            for (const PlanRepeaterSegment::Chunk& chunk : source.segment.chunks) {
+                if (!chunk.bounds_valid || chunk.d_max < dmin_ || chunk.d_min > dmax_) continue;
+                ImVec2 corners[] = {
+                    rotate_xy(chunk.x_min, chunk.y_min, angle),
+                    rotate_xy(chunk.x_max, chunk.y_min, angle),
+                    rotate_xy(chunk.x_max, chunk.y_max, angle),
+                    rotate_xy(chunk.x_min, chunk.y_max, angle),
+                };
+                for (ImVec2 p : corners) append_marker_bounds(p.x, p.y);
+            }
+        }
     }
 
     if (show_curve_values_) {
@@ -952,6 +1053,12 @@ public:
         flush(false);
     }
 
+    void break_line() {
+        flush(false);
+        has_last_ = false;
+        has_pending_ = false;
+    }
+
 private:
     void push_raw(ImVec2 p) {
         points_.push_back(p);
@@ -1006,8 +1113,13 @@ static void draw_polyline_range(ImDrawList* draw, const std::vector<TrackPoint>&
     if (last <= first + 1 || first >= points.size()) return;
     last = std::min(last, points.size());
     ScreenPolylineBuilder builder(draw, origin, size, color, thickness);
+    double min_d_step = std::max(0.0, 0.45 / std::max(std::abs(transform.scale), 1e-9));
+    double last_appended_d = -std::numeric_limits<double>::infinity();
     for (size_t i = first; i < last; ++i) {
+        bool endpoint = i == first || i + 1 == last;
+        if (!endpoint && points[i].d - last_appended_d < min_d_step) continue;
         builder.append(transform.plan_to_screen(points[i].x, points[i].y));
+        last_appended_d = points[i].d;
     }
     builder.finish();
 }
@@ -1027,10 +1139,151 @@ static void draw_matrix_plan_polyline(ImDrawList* draw, const Matrix& points, do
     if (last <= first + 1) return;
 
     ScreenPolylineBuilder builder(draw, origin, size, color, thickness);
+    double min_d_step = std::max(0.0, 0.45 / std::max(std::abs(transform.scale), 1e-9));
+    double last_appended_d = -std::numeric_limits<double>::infinity();
     for (size_t row = first; row < last; ++row) {
+        double d = points.at(row, 0);
+        bool endpoint = row == first || row + 1 == last;
+        if (!endpoint && d - last_appended_d < min_d_step) continue;
         builder.append(transform.model_to_screen(points.at(row, 1), points.at(row, 2)));
+        last_appended_d = d;
     }
     builder.finish();
+}
+
+static bool distance_ranges_overlap(double a_min, double a_max, double b_min, double b_max) {
+    return a_max >= b_min && a_min <= b_max;
+}
+
+static bool screen_bounds_overlap_canvas(const PlanScreenTransform& transform,
+                                         double x_min, double y_min, double x_max, double y_max,
+                                         ImVec2 origin, ImVec2 size, float margin) {
+    ImVec2 corners[] = {
+        transform.model_to_screen(x_min, y_min),
+        transform.model_to_screen(x_max, y_min),
+        transform.model_to_screen(x_max, y_max),
+        transform.model_to_screen(x_min, y_max),
+    };
+    if (!finite_screen_point(corners[0])) return true;
+    float min_x = corners[0].x;
+    float max_x = corners[0].x;
+    float min_y = corners[0].y;
+    float max_y = corners[0].y;
+    for (int i = 1; i < IM_ARRAYSIZE(corners); ++i) {
+        if (!finite_screen_point(corners[i])) return true;
+        min_x = std::min(min_x, corners[i].x);
+        max_x = std::max(max_x, corners[i].x);
+        min_y = std::min(min_y, corners[i].y);
+        max_y = std::max(max_y, corners[i].y);
+    }
+    return !(max_x < origin.x - margin || min_x > origin.x + size.x + margin ||
+             max_y < origin.y - margin || min_y > origin.y + size.y + margin);
+}
+
+static void draw_repeater_segment_chunks(ImDrawList* draw,
+                                         const std::vector<RepeaterOverlayRow>& rows,
+                                         const std::vector<unsigned char>& visible,
+                                         double dmin, double dmax,
+                                         const PlanScreenTransform& transform,
+                                         ImVec2 origin, ImVec2 size,
+                                         ImU32 color, float thickness) {
+    const size_t row_count = std::min(rows.size(), visible.size());
+    if (row_count == 0) return;
+    size_t visible_row_count = 0;
+    for (size_t row = 0; row < row_count; ++row) {
+        if (visible[row]) ++visible_row_count;
+    }
+    if (visible_row_count == 0) return;
+
+    constexpr float coarse_margin = 96.0f;
+    bool dense_overlay = visible_row_count > 1200 && transform.scale < 0.05;
+    double detail_pixel_step = 0.45;
+    if (visible_row_count > 1200 && transform.scale < 0.025) {
+        detail_pixel_step = 32.0;
+    } else if (dense_overlay) {
+        detail_pixel_step = 4.0;
+    }
+    ImDrawListFlags old_flags = draw->Flags;
+    if (dense_overlay) draw->Flags &= ~ImDrawListFlags_AntiAliasedLines;
+    ScreenPolylineBuilder builder(draw, origin, size, color, thickness);
+    double min_d_step = std::max(0.0, detail_pixel_step / std::max(std::abs(transform.scale), 1e-9));
+    for (size_t row = 0; row < row_count; ++row) {
+        if (!visible[row]) continue;
+        const PlanRepeaterSegment& segment = rows[row].segment;
+        if (!segment.bounds_valid || !distance_ranges_overlap(segment.d_min, segment.d_max, dmin, dmax)) continue;
+        if (!screen_bounds_overlap_canvas(transform, segment.x_min, segment.y_min, segment.x_max, segment.y_max,
+                                          origin, size, coarse_margin)) {
+            continue;
+        }
+
+        bool segment_open = false;
+        double last_appended_d = -std::numeric_limits<double>::infinity();
+        for (const PlanRepeaterSegment::Chunk& chunk : segment.chunks) {
+            bool chunk_visible = chunk.bounds_valid &&
+                distance_ranges_overlap(chunk.d_min, chunk.d_max, dmin, dmax) &&
+                screen_bounds_overlap_canvas(transform, chunk.x_min, chunk.y_min, chunk.x_max, chunk.y_max,
+                                             origin, size, coarse_margin);
+            if (!chunk_visible) {
+                if (segment_open) {
+                    builder.break_line();
+                    segment_open = false;
+                }
+                continue;
+            }
+
+            bool contains_segment_end = std::abs(chunk.d_max - segment.d_max) < 1e-6;
+            if (dense_overlay && std::isfinite(last_appended_d) && !contains_segment_end &&
+                chunk.d_max - last_appended_d < min_d_step) {
+                continue;
+            }
+
+            bool appended = false;
+            for (size_t point_index = 0; point_index < chunk.points.size();) {
+                const TrackPoint& point = chunk.points[point_index];
+                if (point.d < dmin) {
+                    ++point_index;
+                    continue;
+                }
+                if (point.d > dmax) break;
+                bool endpoint = dense_overlay
+                    ? (std::abs(point.d - segment.d_min) < 1e-6 || std::abs(point.d - segment.d_max) < 1e-6)
+                    : (point_index == 0 || point_index + 1 == chunk.points.size());
+                if (!endpoint && point.d - last_appended_d < min_d_step) {
+                    if (dense_overlay && std::isfinite(last_appended_d)) {
+                        double target_d = last_appended_d + min_d_step;
+                        auto next_it = std::lower_bound(chunk.points.begin() + static_cast<std::ptrdiff_t>(point_index + 1),
+                                                        chunk.points.end(), target_d,
+                                                        [](const TrackPoint& candidate, double target) {
+                                                            return candidate.d < target;
+                                                        });
+                        if (next_it == chunk.points.end() &&
+                            std::abs(chunk.d_max - segment.d_max) < 1e-6 &&
+                            !chunk.points.empty()) {
+                            point_index = chunk.points.size() - 1;
+                        } else {
+                            point_index = static_cast<size_t>(next_it - chunk.points.begin());
+                        }
+                        continue;
+                    }
+                    ++point_index;
+                    continue;
+                }
+                builder.append(transform.model_to_screen(point.x, point.y));
+                last_appended_d = point.d;
+                appended = true;
+                ++point_index;
+            }
+            if (appended) {
+                segment_open = true;
+            } else if (segment_open) {
+                builder.break_line();
+                segment_open = false;
+            }
+        }
+        if (segment_open) builder.break_line();
+    }
+    builder.finish();
+    draw->Flags = old_flags;
 }
 
 static double grid_step(double span) {
@@ -1144,7 +1397,9 @@ static bool point_near_canvas(ImVec2 p, ImVec2 origin, ImVec2 size, float margin
 }
 
 void App::render_plan_canvas(ImVec2 size) {
+    debug_plan_stage("start");
     PlanData data = build_plan_data(false);
+    debug_plan_stage("build_plan_data");
     ImGui::BeginChild("PlanCanvasChild", size, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImVec2 origin = ImGui::GetCursorScreenPos();
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -1166,6 +1421,7 @@ void App::render_plan_canvas(ImVec2 size) {
         plan_view_.fit(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax, avail);
         keep_plan_view_ = true;
     }
+    debug_plan_stage("fit");
 
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 mouse = io.MousePos;
@@ -1202,6 +1458,10 @@ void App::render_plan_canvas(ImVec2 size) {
         size_t row_index = 0;
         double dist_sq = 0.0;
     };
+    size_t selected_repeater_count = static_cast<size_t>(std::count_if(
+        repeater_row_visible_.begin(), repeater_row_visible_.end(),
+        [](unsigned char visible) { return visible != 0; }));
+    bool dense_repeater_marker_lod = selected_repeater_count > 1200 && plan_view_.scale < 0.025;
     auto nearest_structure_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
         if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
         constexpr double hover_radius_sq = 12.0 * 12.0;
@@ -1221,7 +1481,7 @@ void App::render_plan_canvas(ImVec2 size) {
         return best_hit;
     };
     auto nearest_repeater_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        if (!hovered || mode_ != Mode::Pan || picking_background_station || dense_repeater_marker_lod) return std::nullopt;
         constexpr double hover_radius_sq = 12.0 * 12.0;
         double best = hover_radius_sq;
         std::optional<MarkerHit> best_hit;
@@ -1241,6 +1501,7 @@ void App::render_plan_canvas(ImVec2 size) {
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
     std::optional<MarkerHit> hovered_structure_hit = nearest_structure_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
+    debug_plan_stage("hit_test");
     std::optional<size_t> hovered_structure_row = hovered_structure_hit
         ? std::optional<size_t>(hovered_structure_hit->row_index)
         : std::nullopt;
@@ -1349,6 +1610,7 @@ void App::render_plan_canvas(ImVec2 size) {
     }
 
     draw_background(draw, plan_view_, origin, avail);
+    debug_plan_stage("background_grid");
 
     auto draw_section = [&](const Section& sec, ImU32 color, float width) {
         auto first = std::lower_bound(data.own.begin(), data.own.end(), sec.start,
@@ -1371,6 +1633,7 @@ void App::render_plan_canvas(ImVec2 size) {
         double rmax = std::min(dmax_, t.range_max);
         draw_matrix_plan_polyline(draw, t.points, rmin, rmax, transform, origin, avail, color_u32(t.color), 1.5f);
     }
+    debug_plan_stage("tracks");
 
     if (show_stations_) {
         for (const auto& st : data.stations) {
@@ -1397,22 +1660,26 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    if (!data.repeater_segments.empty() || !data.repeater_markers.empty()) {
+    if (!repeater_marker_cache_.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
-        for (const auto& segment : data.repeater_segments) {
-            draw_polyline(draw, segment.points, transform, origin, avail, repeater_color, 1.25f);
+        draw_repeater_segment_chunks(draw, repeater_marker_cache_, repeater_row_visible_,
+                                     dmin_, dmax_, transform, origin, avail, repeater_color, 1.25f);
+        debug_plan_stage("repeater_segments");
+        if (!dense_repeater_marker_lod) {
+            bool draw_repeater_labels = plan_view_.scale >= 0.025 || data.repeater_markers.size() <= 600;
+            for (const auto& marker : data.repeater_markers) {
+                ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+                if (!point_near_canvas(p, origin, avail)) continue;
+                double dx = static_cast<double>(p.x - mouse.x);
+                double dy = static_cast<double>(p.y - mouse.y);
+                bool marker_hovered = hovered_repeater_row && *hovered_repeater_row == marker.row_index &&
+                    dx * dx + dy * dy <= 12.0 * 12.0;
+                float marker_scale = marker_hovered ? 1.28f : 1.0f;
+                draw_plan_diamond_marker(draw, p, repeater_color, marker_scale);
+                if (draw_repeater_labels || marker_hovered) draw_plan_small_text(draw, p, repeater_color, marker.label);
+            }
         }
-        for (const auto& marker : data.repeater_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_repeater_row && *hovered_repeater_row == marker.row_index &&
-                dx * dx + dy * dy <= 12.0 * 12.0;
-            float marker_scale = marker_hovered ? 1.28f : 1.0f;
-            draw_plan_diamond_marker(draw, p, repeater_color, marker_scale);
-            draw_plan_small_text(draw, p, repeater_color, marker.label);
-        }
+        debug_plan_stage("repeater_markers");
     }
 
     if (!data.structure_markers.empty()) {
@@ -1425,6 +1692,7 @@ void App::render_plan_canvas(ImVec2 size) {
             draw_plan_small_text(draw, p, structure_color, marker.label);
         }
     }
+    debug_plan_stage("structure_markers");
 
     if (show_curve_values_) {
         for (const auto& sec : data.curve_sections) {
@@ -1466,6 +1734,7 @@ void App::render_plan_canvas(ImVec2 size) {
     draw_scalebar(draw, plan_view_, origin, avail);
     if (!data.own.empty()) plan_canvas_rendered_this_frame_ = true;
     draw->PopClipRect();
+    debug_plan_stage("overlays_done");
     if (ImGui::BeginPopup("plan_structure_marker_context")) {
         bool can_locate = plan_structure_popup_row_ >= 0 &&
             static_cast<size_t>(plan_structure_popup_row_) < structure_marker_cache_.size();
@@ -1487,6 +1756,7 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::EndPopup();
     }
     ImGui::EndChild();
+    debug_plan_stage("end");
 }
 
 static void plot_line_vec(const char* label, const std::vector<double>& x, const std::vector<double>& y, ImVec4 color, float weight = 1.5f) {

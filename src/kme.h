@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
+#include <iosfwd>
 #include <memory>
 #include <map>
 #include <mutex>
@@ -28,6 +29,10 @@
 struct ID3D11Device;
 struct ID3D11ShaderResourceView;
 class Canvas3D;
+
+#ifndef NDEBUG
+extern std::ostream* g_debug_plan_benchmark_log;
+#endif
 
 inline constexpr float kDefaultFontSize = 18.0f;
 inline constexpr float kMinFontSize = 6.0f;
@@ -260,7 +265,25 @@ struct PlanRepeaterMarker {
 };
 
 struct PlanRepeaterSegment {
-    std::vector<TrackPoint> points;
+    struct Chunk {
+        std::vector<TrackPoint> points;
+        double d_min = 0.0;
+        double d_max = 0.0;
+        double x_min = 0.0;
+        double y_min = 0.0;
+        double x_max = 0.0;
+        double y_max = 0.0;
+        bool bounds_valid = false;
+    };
+
+    std::vector<Chunk> chunks;
+    double d_min = 0.0;
+    double d_max = 0.0;
+    double x_min = 0.0;
+    double y_min = 0.0;
+    double x_max = 0.0;
+    double y_max = 0.0;
+    bool bounds_valid = false;
 };
 
 struct RepeaterOverlayRow {
@@ -276,7 +299,6 @@ struct PlanData {
     std::vector<PlanSpeed> speedlimits;
     std::vector<PlanStructureMarker> structure_markers;
     std::vector<PlanRepeaterMarker> repeater_markers;
-    std::vector<PlanRepeaterSegment> repeater_segments;
     std::vector<Section> curve_sections;
     std::vector<Section> transition_sections;
     double origin_angle = 0.0;
@@ -424,6 +446,12 @@ public:
     void render();
     void after_frame_presented();
     void add_log(std::string text);
+#ifndef NDEBUG
+    static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
+                                                 double unit_distance, double pan_pixels,
+                                                 double max_frame_ms, const std::string& output_path,
+                                                 bool profile_stages);
+#endif
 
 private:
     ID3D11Device* device_ = nullptr;

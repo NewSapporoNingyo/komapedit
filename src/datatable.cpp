@@ -258,7 +258,7 @@ bool render_find_panel_toggle(const char* id, const std::string& label, bool exp
     const float height = ImGui::GetFrameHeight();
     const float triangle_size = std::max(4.0f, height * 0.22f);
     const ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
-    const float width = std::max(height * 3.0f,
+    const float width = std::max(height * 4.0f,
                                  text_size.x + triangle_size * 2.0f + style.FramePadding.x * 3.0f);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const ImVec2 size(width, height);
