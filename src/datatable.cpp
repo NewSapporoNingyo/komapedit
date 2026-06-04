@@ -240,7 +240,7 @@ void set_all_flags(std::vector<unsigned char>& flags, bool value) {
     std::fill(flags.begin(), flags.end(), value ? 1 : 0);
 }
 
-ImU32 structure_list_highlight_color(ImVec4 theme_color) {
+ImU32 table_row_highlight_color(ImVec4 theme_color) {
     ImVec4 color = clamp_theme_color(theme_color);
     color.x *= 0.68f;
     color.y *= 0.68f;
@@ -462,7 +462,10 @@ void App::invalidate_table_cache() {
     reset_structure_model_find_results();
     structure_list_scroll_row_ = -1;
     structure_list_highlight_row_ = -1;
+    repeater_list_scroll_row_ = -1;
+    repeater_list_highlight_row_ = -1;
     plan_structure_popup_row_ = -1;
+    plan_repeater_popup_row_ = -1;
 }
 
 void App::reset_marker_visibility() {
@@ -498,6 +501,15 @@ void App::locate_repeater_row_on_plan(size_t row_index) {
     if (row_index < repeater_row_visible_.size()) repeater_row_visible_[row_index] = 1;
     const PlanRepeaterMarker& marker = *repeater_marker_cache_[row_index].begin_marker;
     focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_repeater_row_in_list(size_t row_index) {
+    sync_marker_visibility_sizes();
+    if (row_index >= repeater_marker_cache_.size()) return;
+    show_repeaters_window_ = true;
+    focus_repeaters_next_ = true;
+    repeater_list_scroll_row_ = static_cast<int>(row_index);
+    repeater_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::ensure_table_cache() {
@@ -864,7 +876,7 @@ void App::render_structures_window() {
         if (scroll_target_row >= 0 && scroll_target_row < row_count) {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
-        const ImU32 highlight_color = structure_list_highlight_color(theme_color_);
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.structure_rows[static_cast<size_t>(row_index)];
@@ -1075,8 +1087,10 @@ void App::render_structure_models_window() {
 void App::render_repeaters_window() {
     if (!show_repeaters_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_repeaters_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.repeaters") + "###Repeaters";
     if (!ImGui::Begin(title.c_str(), &show_repeaters_window_)) {
+        focus_repeaters_next_ = false;
         ImGui::End();
         return;
     }
@@ -1100,11 +1114,26 @@ void App::render_repeaters_window() {
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(table_cache_.repeater_rows.size()));
+        const int row_count = static_cast<int>(table_cache_.repeater_rows.size());
+        if (repeater_list_scroll_row_ >= row_count) repeater_list_scroll_row_ = -1;
+        if (repeater_list_highlight_row_ >= row_count) repeater_list_highlight_row_ = -1;
+        const int scroll_target_row = repeater_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.repeater_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
+                if (row_index == repeater_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    repeater_list_scroll_row_ = -1;
+                }
                 ImGui::PushID(row_index);
                 ImGui::TableSetColumnIndex(0);
                 bool row_visible = static_cast<size_t>(row_index) < repeater_row_visible_.size() &&
@@ -1144,5 +1173,6 @@ void App::render_repeaters_window() {
         }
         ImGui::EndTable();
     }
+    focus_repeaters_next_ = false;
     ImGui::End();
 }

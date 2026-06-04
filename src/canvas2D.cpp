@@ -252,19 +252,20 @@ void App::rebuild_marker_overlay_cache() {
         double lateral = 0.0;
         double forward = 0.0;
     };
-    auto make_repeater_marker = [](double distance, const TrackPoint& p, const std::string& label) {
+    auto make_repeater_marker = [](double distance, const TrackPoint& p, const std::string& label, size_t row_index) {
         PlanRepeaterMarker marker;
         marker.d = distance;
         marker.x = p.x;
         marker.y = p.y;
         marker.label = label;
+        marker.row_index = row_index;
         return marker;
     };
     auto finish_repeater = [&](const RepeaterBeginState& begin, double end_distance, const std::string& label) {
         if (begin.row_index >= repeater_marker_cache_.size()) return;
         RepeaterOverlayRow& overlay = repeater_marker_cache_[begin.row_index];
         if (auto p = sample_track(begin.track_key, end_distance, begin.lateral, begin.forward)) {
-            overlay.end_marker = make_repeater_marker(end_distance, *p, label);
+            overlay.end_marker = make_repeater_marker(end_distance, *p, label, begin.row_index);
         }
         overlay.segment = build_repeater_segment(begin.track_key, begin.distance, end_distance,
                                                  begin.lateral, begin.forward);
@@ -300,7 +301,7 @@ void App::rebuild_marker_overlay_cache() {
 
             RepeaterOverlayRow overlay;
             if (auto p = sample_track(next.track_key, distance, next.lateral, next.forward)) {
-                overlay.begin_marker = make_repeater_marker(distance, *p, key);
+                overlay.begin_marker = make_repeater_marker(distance, *p, key, next.row_index);
             }
             repeater_marker_cache_.push_back(std::move(overlay));
             active_repeaters[key] = std::move(next);
@@ -517,20 +518,24 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         append_marker_bounds(p.x, p.y);
     }
 
-    auto append_repeater_marker = [&](const PlanRepeaterMarker& source) {
+    auto append_repeater_marker = [&](const PlanRepeaterMarker& source, size_t row_index) {
         if (source.d < dmin_ || source.d > dmax_) return;
         TrackPoint p;
         p.x = source.x;
         p.y = source.y;
         p = rotate_point(p);
-        out.repeater_markers.push_back({source.d, p.x, p.y, source.label});
+        PlanRepeaterMarker marker = source;
+        marker.x = p.x;
+        marker.y = p.y;
+        marker.row_index = row_index;
+        out.repeater_markers.push_back(std::move(marker));
         append_marker_bounds(p.x, p.y);
     };
     for (size_t i = 0; i < repeater_marker_cache_.size() && i < repeater_row_visible_.size(); ++i) {
         if (!repeater_row_visible_[i]) continue;
         const RepeaterOverlayRow& source = repeater_marker_cache_[i];
-        if (source.begin_marker) append_repeater_marker(*source.begin_marker);
-        if (source.end_marker) append_repeater_marker(*source.end_marker);
+        if (source.begin_marker) append_repeater_marker(*source.begin_marker, i);
+        if (source.end_marker) append_repeater_marker(*source.end_marker, i);
 
         PlanRepeaterSegment segment;
         for (const auto& point : source.segment.points) {
@@ -1098,8 +1103,8 @@ static void draw_plan_triangle_marker(ImDrawList* draw, ImVec2 p, ImU32 color, f
     draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(64, 48, 0, 255), ImDrawFlags_Closed, 1.0f);
 }
 
-static void draw_plan_diamond_marker(ImDrawList* draw, ImVec2 p, ImU32 color) {
-    const float r = 5.5f;
+static void draw_plan_diamond_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float r = 5.5f * scale;
     ImVec2 pts[4] = {
         ImVec2(p.x, p.y - r),
         ImVec2(p.x + r, p.y),
@@ -1193,11 +1198,15 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    auto nearest_structure_marker_row = [&](const PlanScreenTransform& hit_transform) -> std::optional<size_t> {
+    struct MarkerHit {
+        size_t row_index = 0;
+        double dist_sq = 0.0;
+    };
+    auto nearest_structure_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
         if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
         constexpr double hover_radius_sq = 12.0 * 12.0;
         double best = hover_radius_sq;
-        std::optional<size_t> best_row;
+        std::optional<MarkerHit> best_hit;
         for (const auto& marker : data.structure_markers) {
             ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
@@ -1206,16 +1215,46 @@ void App::render_plan_canvas(ImVec2 size) {
             double dist_sq = dx * dx + dy * dy;
             if (dist_sq <= best) {
                 best = dist_sq;
-                best_row = marker.row_index;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
             }
         }
-        return best_row;
+        return best_hit;
+    };
+    auto nearest_repeater_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.repeater_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
     };
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
-    std::optional<size_t> hovered_structure_row = nearest_structure_marker_row(hit_transform);
-    if (hovered_structure_row && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-        plan_structure_popup_row_ = static_cast<int>(*hovered_structure_row);
-        ImGui::OpenPopup("plan_structure_marker_context");
+    std::optional<MarkerHit> hovered_structure_hit = nearest_structure_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
+    std::optional<size_t> hovered_structure_row = hovered_structure_hit
+        ? std::optional<size_t>(hovered_structure_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_repeater_row = hovered_repeater_hit
+        ? std::optional<size_t>(hovered_repeater_hit->row_index)
+        : std::nullopt;
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        if (hovered_repeater_hit && (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+            plan_repeater_popup_row_ = static_cast<int>(hovered_repeater_hit->row_index);
+            ImGui::OpenPopup("plan_repeater_marker_context");
+        } else if (hovered_structure_hit) {
+            plan_structure_popup_row_ = static_cast<int>(hovered_structure_hit->row_index);
+            ImGui::OpenPopup("plan_structure_marker_context");
+        }
     }
 
     bool rotate_plan = hovered && io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -1366,7 +1405,12 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& marker : data.repeater_markers) {
             ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
-            draw_plan_diamond_marker(draw, p, repeater_color);
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_repeater_row && *hovered_repeater_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            float marker_scale = marker_hovered ? 1.28f : 1.0f;
+            draw_plan_diamond_marker(draw, p, repeater_color, marker_scale);
             draw_plan_small_text(draw, p, repeater_color, marker.label);
         }
     }
@@ -1428,6 +1472,16 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_structure_list").c_str()) && can_locate) {
             locate_structure_row_in_list(static_cast<size_t>(plan_structure_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_repeater_marker_context")) {
+        bool can_locate = plan_repeater_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_repeater_popup_row_) < repeater_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_repeater_list").c_str()) && can_locate) {
+            locate_repeater_row_in_list(static_cast<size_t>(plan_repeater_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();
