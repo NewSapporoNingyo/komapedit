@@ -2659,6 +2659,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
+#ifndef NDEBUG
 std::vector<std::string> command_line_args_utf8() {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -2681,7 +2682,6 @@ struct HeadlessLoadOptions {
     std::string error;
 };
 
-#ifndef NDEBUG
 struct HeadlessPlanBenchmarkOptions {
     bool requested = false;
     std::string path;
@@ -2693,11 +2693,6 @@ struct HeadlessPlanBenchmarkOptions {
     bool profile_stages = false;
     std::string error;
 };
-#endif
-
-bool has_debug_headless_plan_benchmark_arg(const std::vector<std::string>& args) {
-    return std::find(args.begin(), args.end(), "--debug-headless-plan-bench") != args.end();
-}
 
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
@@ -2748,7 +2743,6 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
     return options;
 }
 
-#ifndef NDEBUG
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args) {
     HeadlessPlanBenchmarkOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
@@ -2823,7 +2817,6 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
     }
     return options;
 }
-#endif
 
 std::uint64_t hash_double_bits(double value) {
     if (value == 0.0) value = 0.0;
@@ -2938,7 +2931,6 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
     return 0;
 }
 
-#ifndef NDEBUG
 int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                            double unit_distance, double pan_pixels,
                                            double max_frame_ms, const std::string& output_path,
@@ -3115,8 +3107,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
 #endif
 
 int main(int, char**) {
-    std::vector<std::string> args = command_line_args_utf8();
 #ifndef NDEBUG
+    std::vector<std::string> args = command_line_args_utf8();
     HeadlessPlanBenchmarkOptions plan_bench = parse_headless_plan_benchmark_options(args);
     if (plan_bench.requested) {
         if (!plan_bench.error.empty()) {
@@ -3131,12 +3123,6 @@ int main(int, char**) {
                                                       plan_bench.max_frame_ms, plan_bench.output_path,
                                                       plan_bench.profile_stages);
     }
-#else
-    if (has_debug_headless_plan_benchmark_arg(args)) {
-        std::cerr << "--debug-headless-plan-bench is only available in Debug builds\n";
-        return 1;
-    }
-#endif
 
     HeadlessLoadOptions headless = parse_headless_load_options(args);
     if (headless.requested) {
@@ -3148,6 +3134,7 @@ int main(int, char**) {
         }
         return run_headless_load_map(headless);
     }
+#endif
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     UserSettings settings = load_user_settings();
