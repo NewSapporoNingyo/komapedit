@@ -244,6 +244,53 @@ void setup_fixed_table_header() {
     ImGui::TableSetupScrollFreeze(0, 1);
 }
 
+bool render_find_panel_toggle(const char* id, const std::string& label, bool expanded) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float height = ImGui::GetFrameHeight();
+    const float triangle_size = std::max(4.0f, height * 0.22f);
+    const ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
+    const float width = std::max(height * 3.0f,
+                                 text_size.x + triangle_size * 2.0f + style.FramePadding.x * 3.0f);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ImVec2 size(width, height);
+    ImGui::InvisibleButton(id, size);
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (ImGui::IsItemHovered()) {
+        draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                            ImGui::GetColorU32(ImGuiCol_HeaderHovered), style.FrameRounding);
+    }
+
+    const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_Text);
+    const ImVec2 text_pos(pos.x + style.FramePadding.x,
+                          pos.y + (size.y - text_size.y) * 0.5f);
+    draw->AddText(text_pos, text_color, label.c_str());
+
+    const ImVec2 center(pos.x + size.x - style.FramePadding.x - triangle_size,
+                        pos.y + size.y * 0.5f);
+    if (expanded) {
+        draw->AddTriangleFilled(
+            ImVec2(center.x - triangle_size, center.y - triangle_size * 0.5f),
+            ImVec2(center.x + triangle_size, center.y - triangle_size * 0.5f),
+            ImVec2(center.x, center.y + triangle_size),
+            text_color);
+    } else {
+        draw->AddTriangleFilled(
+            ImVec2(center.x - triangle_size * 0.5f, center.y - triangle_size),
+            ImVec2(center.x - triangle_size * 0.5f, center.y + triangle_size),
+            ImVec2(center.x + triangle_size, center.y),
+            text_color);
+    }
+
+    return ImGui::IsItemClicked();
+}
+
+void render_find_panel_border(ImVec2 min, ImVec2 max) {
+    if (max.x <= min.x || max.y <= min.y) return;
+    ImGui::GetWindowDrawList()->AddRect(min, max, IM_COL32(255, 255, 255, 255),
+                                        ImGui::GetStyle().FrameRounding, 0, 1.0f);
+}
+
 } // namespace
 
 constexpr float kShowColumnWidth = 56.0f;
@@ -641,6 +688,7 @@ void App::find_structure_model_for_structure_key(const std::string& structure_ke
     structure_model_find_query_[copy_size] = '\0';
     structure_model_find_exact_ = true;
     show_structure_models_window_ = true;
+    structure_model_find_panel_expanded_ = true;
     run_structure_model_find();
 }
 
@@ -834,40 +882,58 @@ void App::render_structure_models_window() {
         structure_model_find_committed_ != structure_model_find_query_;
     if (stale_find_results) reset_structure_model_find_results();
 
-    if (ImGui::Button(tr("button.find").c_str())) run_structure_model_find();
-    ImGui::SameLine();
-    const float arrow_button_width = ImGui::GetFrameHeight();
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
-        arrow_button_width * 2.0f - spacing * 2.0f);
-    ImGui::SetNextItemWidth(input_width);
-    if (ImGui::InputText("##structure_model_find_text", structure_model_find_query_,
-                         IM_ARRAYSIZE(structure_model_find_query_), ImGuiInputTextFlags_EnterReturnsTrue)) {
-        run_structure_model_find();
+    ImGui::BeginGroup();
+    if (render_find_panel_toggle("##structure_model_find_panel_toggle",
+                                 tr("button.find"),
+                                 structure_model_find_panel_expanded_)) {
+        structure_model_find_panel_expanded_ = !structure_model_find_panel_expanded_;
     }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(structure_model_find_matches_.empty());
-    if (ImGui::Button("↑##structure_model_find_prev", ImVec2(arrow_button_width, 0.0f))) {
-        step_structure_model_find(-1);
+    if (structure_model_find_panel_expanded_) {
+        const float indent = ImGui::GetStyle().FramePadding.x;
+        const float right_padding = ImGui::GetStyle().FramePadding.x;
+        ImGui::Spacing();
+        ImGui::Indent(indent);
+        if (ImGui::Button(tr("button.find").c_str())) run_structure_model_find();
+        ImGui::SameLine();
+        const float arrow_button_width = ImGui::GetFrameHeight();
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
+            arrow_button_width * 2.0f - spacing * 2.0f - right_padding);
+        ImGui::SetNextItemWidth(input_width);
+        if (ImGui::InputText("##structure_model_find_text", structure_model_find_query_,
+                             IM_ARRAYSIZE(structure_model_find_query_), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            run_structure_model_find();
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(structure_model_find_matches_.empty());
+        if (ImGui::Button("↑##structure_model_find_prev", ImVec2(arrow_button_width, 0.0f))) {
+            step_structure_model_find(-1);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("↓##structure_model_find_next", ImVec2(arrow_button_width, 0.0f))) {
+            step_structure_model_find(1);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::RadioButton(tr("find.partial_match").c_str(), !structure_model_find_exact_)) {
+            structure_model_find_exact_ = false;
+            if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(tr("find.exact_match").c_str(), structure_model_find_exact_)) {
+            structure_model_find_exact_ = true;
+            if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
+        }
+        if (ImGui::Button(tr("button.find_unused_structure_models").c_str())) {
+            run_unused_structure_model_search();
+        }
+        render_status_line(structure_model_find_status_text());
+        ImGui::Unindent(indent);
     }
-    ImGui::SameLine();
-    if (ImGui::Button("↓##structure_model_find_next", ImVec2(arrow_button_width, 0.0f))) {
-        step_structure_model_find(1);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::RadioButton(tr("find.partial_match").c_str(), !structure_model_find_exact_)) {
-        structure_model_find_exact_ = false;
-        if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton(tr("find.exact_match").c_str(), structure_model_find_exact_)) {
-        structure_model_find_exact_ = true;
-        if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
-    }
-    if (ImGui::Button(tr("button.find_unused_structure_models").c_str())) {
-        run_unused_structure_model_search();
-    }
-    render_status_line(structure_model_find_status_text());
+    ImGui::EndGroup();
+    ImVec2 find_panel_max = ImGui::GetItemRectMax();
+    if (structure_model_find_panel_expanded_) find_panel_max.x += ImGui::GetStyle().FramePadding.x;
+    render_find_panel_border(ImGui::GetItemRectMin(), find_panel_max);
+    ImGui::Spacing();
 
     if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(kStructureModelColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");

@@ -555,6 +555,7 @@ private:
     int structure_model_find_scroll_row_ = -1;
     bool structure_model_find_has_run_ = false;
     bool structure_model_find_exact_ = false;
+    bool structure_model_find_panel_expanded_ = true;
     bool structure_model_unused_has_run_ = false;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
