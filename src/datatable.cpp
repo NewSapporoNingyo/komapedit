@@ -21,6 +21,8 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -180,6 +182,12 @@ bool equals_ascii_case_insensitive(const std::string& text, const std::string& q
     return true;
 }
 
+std::string ascii_case_key(const std::string& text) {
+    std::string out = text;
+    for (char& ch : out) ch = ascii_fold(ch);
+    return out;
+}
+
 bool matches_find_query(const std::string& text, const std::string& query, bool exact_match) {
     return exact_match
         ? equals_ascii_case_insensitive(text, query)
@@ -240,6 +248,7 @@ void setup_fixed_table_header() {
 
 constexpr float kShowColumnWidth = 56.0f;
 constexpr ImU32 kFindMatchRowColor = IM_COL32(104, 184, 255, 96);
+constexpr ImU32 kUnusedStructureModelRowColor = IM_COL32(72, 196, 112, 120);
 
 static const TableColumnDef kStructureModelColumns[] = {
     {"rowNumber", "#", 40.0f},
@@ -504,9 +513,13 @@ void App::reset_structure_model_find_results() {
     structure_model_find_committed_.clear();
     structure_model_find_matches_.clear();
     structure_model_find_row_matches_.clear();
+    structure_model_unused_row_matches_.clear();
+    structure_model_unused_count_ = 0;
+    structure_model_unused_total_ = 0;
     structure_model_find_current_ = -1;
     structure_model_find_scroll_row_ = -1;
     structure_model_find_has_run_ = false;
+    structure_model_unused_has_run_ = false;
 }
 
 void App::run_structure_model_find() {
@@ -514,9 +527,13 @@ void App::run_structure_model_find() {
     structure_model_find_committed_ = structure_model_find_query_;
     structure_model_find_matches_.clear();
     structure_model_find_row_matches_.assign(table_cache_.structure_model_rows.size(), 0);
+    structure_model_unused_row_matches_.clear();
+    structure_model_unused_count_ = 0;
+    structure_model_unused_total_ = 0;
     structure_model_find_current_ = -1;
     structure_model_find_scroll_row_ = -1;
     structure_model_find_has_run_ = true;
+    structure_model_unused_has_run_ = false;
 
     if (blank_ascii(structure_model_find_committed_)) return;
 
@@ -539,6 +556,80 @@ void App::run_structure_model_find() {
     if (!structure_model_find_matches_.empty()) {
         structure_model_find_current_ = 0;
         structure_model_find_scroll_row_ = static_cast<int>(structure_model_find_matches_.front());
+    }
+}
+
+void App::run_unused_structure_model_search() {
+    ensure_table_cache();
+    add_log("[INFO]datatable.cpp: Searching unused models...");
+
+    structure_model_find_exact_ = true;
+    structure_model_find_committed_.clear();
+    structure_model_find_matches_.clear();
+    structure_model_find_row_matches_.clear();
+    structure_model_find_current_ = -1;
+    structure_model_find_scroll_row_ = -1;
+    structure_model_find_has_run_ = false;
+
+    const size_t model_count = table_cache_.structure_model_rows.size();
+    structure_model_unused_row_matches_.assign(model_count, 0);
+    structure_model_unused_count_ = 0;
+    structure_model_unused_total_ = model_count;
+    structure_model_unused_has_run_ = true;
+
+    std::unordered_map<std::string, std::vector<size_t>> model_rows_by_key;
+    model_rows_by_key.reserve(model_count * 2 + 1);
+    for (size_t row_index = 0; row_index < model_count; ++row_index) {
+        const CachedTableRow& row = table_cache_.structure_model_rows[row_index];
+        if (row.cells.size() <= static_cast<size_t>(kStructureModelKeyColumn)) continue;
+        const std::string& key = row.cells[static_cast<size_t>(kStructureModelKeyColumn)];
+        if (blank_ascii(key)) continue;
+        model_rows_by_key[ascii_case_key(key)].push_back(row_index);
+    }
+
+    std::vector<unsigned char> used_model_rows(model_count, 0);
+    std::unordered_set<std::string> warned_undefined_keys;
+    auto note_structure_key = [&](const std::string& raw_key) {
+        std::string key = trim_ascii_copy(raw_key);
+        if (key.empty()) return;
+        std::string folded_key = ascii_case_key(key);
+        auto match = model_rows_by_key.find(folded_key);
+        if (match == model_rows_by_key.end()) {
+            if (warned_undefined_keys.insert(folded_key).second) {
+                add_log("[WARN]datatable.cpp: Found undefined structureKey:\"" + key + "\"");
+            }
+            return;
+        }
+        for (size_t row_index : match->second) used_model_rows[row_index] = 1;
+    };
+
+    for (const CachedTableRow& row : table_cache_.structure_rows) {
+        if (row.cells.size() > static_cast<size_t>(kStructureKeyColumn)) {
+            note_structure_key(row.cells[static_cast<size_t>(kStructureKeyColumn)]);
+        }
+    }
+    for (const CachedTableRow& row : table_cache_.repeater_rows) {
+        if (row.cells.size() <= static_cast<size_t>(kRepeaterStructureKeysColumn)) continue;
+        for (const std::string& key : split_structure_key_list(row.cells[static_cast<size_t>(kRepeaterStructureKeysColumn)])) {
+            note_structure_key(key);
+        }
+    }
+
+    for (size_t row_index = 0; row_index < model_count; ++row_index) {
+        if (used_model_rows[row_index]) continue;
+        structure_model_unused_row_matches_[row_index] = 1;
+        if (structure_model_find_scroll_row_ < 0) {
+            structure_model_find_scroll_row_ = static_cast<int>(row_index);
+        }
+        ++structure_model_unused_count_;
+    }
+
+    if (structure_model_unused_count_ == 0) {
+        add_log("[INFO]datatable.cpp: No unused models found");
+    } else {
+        add_log("[INFO]datatable.cpp: Found unused models (" +
+                std::to_string(structure_model_unused_count_) + "/" +
+                std::to_string(structure_model_unused_total_) + ")");
     }
 }
 
@@ -566,6 +657,13 @@ void App::step_structure_model_find(int delta) {
 }
 
 std::string App::structure_model_find_status_text() const {
+    if (structure_model_unused_has_run_) {
+        if (structure_model_unused_count_ == 0) return tr("status.unused_structure_models.no_match");
+        std::string text = tr("status.unused_structure_models.match");
+        replace_all(text, "{unused}", std::to_string(structure_model_unused_count_));
+        replace_all(text, "{total}", std::to_string(structure_model_unused_total_));
+        return text;
+    }
     if (!structure_model_find_has_run_) return {};
     if (structure_model_find_matches_.empty() || structure_model_find_current_ < 0) {
         return tr("status.find.no_match");
@@ -766,6 +864,9 @@ void App::render_structure_models_window() {
         structure_model_find_exact_ = true;
         if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
     }
+    if (ImGui::Button(tr("button.find_unused_structure_models").c_str())) {
+        run_unused_structure_model_search();
+    }
     render_status_line(structure_model_find_status_text());
 
     if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(kStructureModelColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
@@ -792,13 +893,20 @@ void App::render_structure_models_window() {
                 const bool is_find_match =
                     static_cast<size_t>(row_index) < structure_model_find_row_matches_.size() &&
                     structure_model_find_row_matches_[static_cast<size_t>(row_index)] != 0;
+                const bool is_unused_model =
+                    static_cast<size_t>(row_index) < structure_model_unused_row_matches_.size() &&
+                    structure_model_unused_row_matches_[static_cast<size_t>(row_index)] != 0;
                 const bool is_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model() &&
                     row.open_path == model_preview_canvas_->model_path();
                 const ImU32 row_text_color = is_preview_model
                     ? ImGui::GetColorU32(preview_text_color)
                     : ImGui::GetColorU32(ImGuiCol_Text);
                 ImGui::TableNextRow();
-                if (is_find_match) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                if (is_unused_model) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kUnusedStructureModelRowColor);
+                } else if (is_find_match) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                }
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.0f);
                     structure_model_find_scroll_row_ = -1;

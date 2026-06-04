@@ -27,7 +27,7 @@ struct Translation {
             {"button.open", "Open"}, {"button.reload", "Reload"}, {"button.export_csv", "Export CSV"},
             {"button.structure_list", "Map Structure List"}, {"button.repeater_list", "Repeater List"},
             {"button.apply", "Apply"}, {"button.reset", "Reset"}, {"button.ok", "OK"}, {"button.cancel", "Cancel"}, {"button.clear", "Clear"},
-            {"button.model_list", "Model List"}, {"button.background_color", "Background Color"}, {"button.find", "Find"},
+            {"button.model_list", "Model List"}, {"button.background_color", "Background Color"}, {"button.find", "Find"}, {"button.find_unused_structure_models", "Search unused structure models"},
             {"button.import_bg", "Import"}, {"button.adjust_bg", "Adjust"}, {"button.align_to_station", "Align to Station"},
             {"frame.controls", "Controls"}, {"frame.console", "Console"}, {"frame.plots", "2D View"}, {"frame.othertracks", "Other Tracks"}, {"frame.station_list", "Station List"},
             {"frame.structures", "Map Structure List"}, {"frame.structure_models", "Structure Model List"}, {"frame.repeaters", "Repeater List"}, {"frame.aux_info", "Auxiliary Info"}, {"frame.model_preview", "3D Model Preview"},
@@ -52,7 +52,7 @@ struct Translation {
             {"label.font_size_current", "Text size:"}, {"label.ui_component_size_current", "Component size:"}, {"label.ui_theme_color_current", "Theme color:"}, {"label.font_size_preview", "Preview text"},
             {"label.quick_colors", "Quick colors"}, {"color.white", "White"}, {"color.black", "Black"}, {"color.gray", "Gray"}, {"color.blue", "Blue"}, {"color.green", "Green"},
             {"status.no_map", "No map loaded"}, {"status.loading", "Loading..."}, {"status.ready", "Ready"},
-            {"status.find.no_match", "No matching text found"}, {"status.find.match", "Found ({current}/{total})"},
+            {"status.find.no_match", "No matching text found"}, {"status.find.match", "Found ({current}/{total})"}, {"status.unused_structure_models.match", "Found unused models ({unused}/{total})"}, {"status.unused_structure_models.no_match", "No unused models found"},
             {"dialog.ui_settings", "UI Settings"}, {"dialog.bgimage_adjust", "Adjust Background Image"}, {"dialog.align_to_station", "Align Background to Stations"}, {"button.pick_on_bg", "Pick station on Plan"}, {"button.pick_on_bg_ok", "Picked"},
             {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
@@ -66,7 +66,7 @@ struct Translation {
             {"button.open", "打开"}, {"button.reload", "重新加载"}, {"button.export_csv", "导出 CSV"},
             {"button.structure_list", "地图布景列表"}, {"button.repeater_list", "连续布景列表"},
             {"button.apply", "应用"}, {"button.reset", "重置"}, {"button.ok", "确定"}, {"button.cancel", "取消"}, {"button.clear", "清除"},
-            {"button.model_list", "模型列表"}, {"button.background_color", "背景颜色"}, {"button.find", "查找"},
+            {"button.model_list", "模型列表"}, {"button.background_color", "背景颜色"}, {"button.find", "查找"}, {"button.find_unused_structure_models", "查找未使用布景模型"},
             {"button.import_bg", "导入"}, {"button.adjust_bg", "调整"}, {"button.align_to_station", "按车站对齐"},
             {"frame.controls", "控制"}, {"frame.console", "控制台"}, {"frame.plots", "2D视图"}, {"frame.othertracks", "其他轨道"}, {"frame.station_list", "车站列表"},
             {"frame.structures", "地图布景列表"}, {"frame.structure_models", "布景模型列表"}, {"frame.repeaters", "连续布景列表"}, {"frame.aux_info", "辅助信息"}, {"frame.model_preview", "3D-模型预览"},
@@ -91,7 +91,7 @@ struct Translation {
             {"label.font_size_current", "文字大小："}, {"label.ui_component_size_current", "组件大小："}, {"label.ui_theme_color_current", "主题色："}, {"label.font_size_preview", "预览文字"},
             {"label.quick_colors", "快捷颜色"}, {"color.white", "纯白"}, {"color.black", "纯黑"}, {"color.gray", "灰色"}, {"color.blue", "纯蓝色"}, {"color.green", "纯绿色"},
             {"status.no_map", "未加载地图"}, {"status.loading", "加载中..."}, {"status.ready", "就绪"},
-            {"status.find.no_match", "未找到匹配的字符"}, {"status.find.match", "查找到（{current}/{total}）"},
+            {"status.find.no_match", "未找到匹配的字符"}, {"status.find.match", "查找到（{current}/{total}）"}, {"status.unused_structure_models.match", "找到未使用模型（{unused}/{total}）"}, {"status.unused_structure_models.no_match", "没有找到未使用模型"},
             {"dialog.ui_settings", "用户界面设置"}, {"dialog.bgimage_adjust", "调整背景图"}, {"dialog.align_to_station", "按车站对齐背景图"}, {"button.pick_on_bg", "在平面图选点"}, {"button.pick_on_bg_ok", "已选点"},
             {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
@@ -105,7 +105,7 @@ struct Translation {
             {"button.open", "開く"}, {"button.reload", "再読込"}, {"button.export_csv", "CSV 出力"},
             {"button.structure_list", "マップストラクチャー一覧"}, {"button.repeater_list", "連続ストラクチャー一覧"},
             {"button.apply", "適用"}, {"button.reset", "リセット"}, {"button.ok", "OK"}, {"button.cancel", "キャンセル"}, {"button.clear", "クリア"},
-            {"button.model_list", "モデル一覧"}, {"button.background_color", "背景色"}, {"button.find", "検索"},
+            {"button.model_list", "モデル一覧"}, {"button.background_color", "背景色"}, {"button.find", "検索"}, {"button.find_unused_structure_models", "未使用ストラクチャーモデルを検索"},
             {"button.import_bg", "インポート"}, {"button.adjust_bg", "調整"}, {"button.align_to_station", "駅に合わせる"},
             {"frame.controls", "コントロール"}, {"frame.console", "コンソール"}, {"frame.plots", "2Dビュー"}, {"frame.othertracks", "他軌道"}, {"frame.station_list", "駅一覧"},
             {"frame.structures", "ストラクチャー一覧"}, {"frame.structure_models", "ストラクチャーモデル一覧"}, {"frame.repeaters", "連続ストラクチャー一覧"}, {"frame.aux_info", "補助情報"}, {"frame.model_preview", "3Dモデルプレビュー"},
@@ -130,7 +130,7 @@ struct Translation {
             {"label.font_size_current", "文字サイズ："}, {"label.ui_component_size_current", "部品サイズ："}, {"label.ui_theme_color_current", "テーマカラー："}, {"label.font_size_preview", "プレビューテキスト"},
             {"label.quick_colors", "クイック色"}, {"color.white", "白"}, {"color.black", "黒"}, {"color.gray", "グレー"}, {"color.blue", "青"}, {"color.green", "緑"},
             {"status.no_map", "地図が読み込まれていません"}, {"status.loading", "読込中..."}, {"status.ready", "準備完了"},
-            {"status.find.no_match", "一致する文字が見つかりません"}, {"status.find.match", "検索結果（{current}/{total}）"},
+            {"status.find.no_match", "一致する文字が見つかりません"}, {"status.find.match", "検索結果（{current}/{total}）"}, {"status.unused_structure_models.match", "未使用モデルを検出（{unused}/{total}）"}, {"status.unused_structure_models.no_match", "未使用モデルは見つかりません"},
             {"dialog.ui_settings", "UI設定"}, {"dialog.bgimage_adjust", "背景画像の調整"}, {"dialog.align_to_station", "背景画像を駅に合わせる"}, {"button.pick_on_bg", "平面図で駅を選択"}, {"button.pick_on_bg_ok", "選択済み"},
             {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\nkobushi-trackviewer に基づく\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };

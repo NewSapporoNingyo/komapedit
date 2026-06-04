@@ -548,10 +548,14 @@ private:
     std::string structure_model_find_committed_;
     std::vector<size_t> structure_model_find_matches_;
     std::vector<unsigned char> structure_model_find_row_matches_;
+    std::vector<unsigned char> structure_model_unused_row_matches_;
+    size_t structure_model_unused_count_ = 0;
+    size_t structure_model_unused_total_ = 0;
     int structure_model_find_current_ = -1;
     int structure_model_find_scroll_row_ = -1;
     bool structure_model_find_has_run_ = false;
     bool structure_model_find_exact_ = false;
+    bool structure_model_unused_has_run_ = false;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
@@ -625,6 +629,7 @@ private:
     void ensure_table_cache();
     void reset_structure_model_find_results();
     void run_structure_model_find();
+    void run_unused_structure_model_search();
     void find_structure_model_for_structure_key(const std::string& structure_key);
     void step_structure_model_find(int delta);
     std::string structure_model_find_status_text() const;
