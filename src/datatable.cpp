@@ -240,6 +240,15 @@ void set_all_flags(std::vector<unsigned char>& flags, bool value) {
     std::fill(flags.begin(), flags.end(), value ? 1 : 0);
 }
 
+ImU32 structure_list_highlight_color(ImVec4 theme_color) {
+    ImVec4 color = clamp_theme_color(theme_color);
+    color.x *= 0.68f;
+    color.y *= 0.68f;
+    color.z *= 0.68f;
+    color.w = 0.92f;
+    return ImGui::ColorConvertFloat4ToU32(color);
+}
+
 void setup_fixed_table_header() {
     ImGui::TableSetupScrollFreeze(0, 1);
 }
@@ -451,6 +460,9 @@ std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
 void App::invalidate_table_cache() {
     table_cache_ = TableUiCache{};
     reset_structure_model_find_results();
+    structure_list_scroll_row_ = -1;
+    structure_list_highlight_row_ = -1;
+    plan_structure_popup_row_ = -1;
 }
 
 void App::reset_marker_visibility() {
@@ -469,6 +481,15 @@ void App::locate_structure_row_on_plan(size_t row_index) {
     if (row_index < structure_row_visible_.size()) structure_row_visible_[row_index] = 1;
     const PlanStructureMarker& marker = *structure_marker_cache_[row_index];
     focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_structure_row_in_list(size_t row_index) {
+    sync_marker_visibility_sizes();
+    if (row_index >= structure_marker_cache_.size() || !structure_marker_cache_[row_index]) return;
+    show_structures_window_ = true;
+    focus_structures_next_ = true;
+    structure_list_scroll_row_ = static_cast<int>(row_index);
+    structure_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::locate_repeater_row_on_plan(size_t row_index) {
@@ -728,32 +749,42 @@ void App::render_othertracks_window() {
     if (ImGui::Begin(title.c_str(), &show_othertracks_window_)) {
         if (!has_model_) {
             ImGui::TextDisabled("-");
-        } else if (ImGui::BeginTable("othertracks", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
-            ImGui::TableSetupColumn("Show");
-            ImGui::TableSetupColumn("Key");
-            ImGui::TableSetupColumn("From");
-            ImGui::TableSetupColumn("To");
-            ImGui::TableSetupColumn("Color");
-            setup_fixed_table_header();
-            ImGui::TableHeadersRow();
-            for (auto& t : model_.other_tracks) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::PushID(t.key.c_str());
-                ImGui::Checkbox("##show", &t.visible);
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(t.key.empty() ? "\\" : t.key.c_str());
-                ImGui::TableSetColumnIndex(2);
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputDouble("##min", &t.range_min, 0, 0, "%.1f");
-                ImGui::TableSetColumnIndex(3);
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputDouble("##max", &t.range_max, 0, 0, "%.1f");
-                ImGui::TableSetColumnIndex(4);
-                ImGui::ColorEdit3("##color", &t.color.x, ImGuiColorEditFlags_NoInputs);
-                ImGui::PopID();
+        } else {
+            bool all_visible = !model_.other_tracks.empty() &&
+                std::all_of(model_.other_tracks.begin(), model_.other_tracks.end(),
+                            [](const OtherTrack& t) { return t.visible; });
+            ImGui::BeginDisabled(model_.other_tracks.empty());
+            if (ImGui::Checkbox(tr("chk.select_all").c_str(), &all_visible)) {
+                for (auto& t : model_.other_tracks) t.visible = all_visible;
             }
-            ImGui::EndTable();
+            ImGui::EndDisabled();
+            if (ImGui::BeginTable("othertracks", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupColumn("Show");
+                ImGui::TableSetupColumn("Key");
+                ImGui::TableSetupColumn("From");
+                ImGui::TableSetupColumn("To");
+                ImGui::TableSetupColumn("Color");
+                setup_fixed_table_header();
+                ImGui::TableHeadersRow();
+                for (auto& t : model_.other_tracks) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushID(t.key.c_str());
+                    ImGui::Checkbox("##show", &t.visible);
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(t.key.empty() ? "\\" : t.key.c_str());
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputDouble("##min", &t.range_min, 0, 0, "%.1f");
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputDouble("##max", &t.range_max, 0, 0, "%.1f");
+                    ImGui::TableSetColumnIndex(4);
+                    ImGui::ColorEdit3("##color", &t.color.x, ImGuiColorEditFlags_NoInputs);
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
         }
     }
     ImGui::End();
@@ -800,8 +831,10 @@ void App::render_station_list_window() {
 void App::render_structures_window() {
     if (!show_structures_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_structures_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.structures") + "###Structures";
     if (!ImGui::Begin(title.c_str(), &show_structures_window_)) {
+        focus_structures_next_ = false;
         ImGui::End();
         return;
     }
@@ -823,11 +856,26 @@ void App::render_structures_window() {
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(table_cache_.structure_rows.size()));
+        const int row_count = static_cast<int>(table_cache_.structure_rows.size());
+        if (structure_list_scroll_row_ >= row_count) structure_list_scroll_row_ = -1;
+        if (structure_list_highlight_row_ >= row_count) structure_list_highlight_row_ = -1;
+        const int scroll_target_row = structure_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = structure_list_highlight_color(theme_color_);
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.structure_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
+                if (row_index == structure_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    structure_list_scroll_row_ = -1;
+                }
                 ImGui::PushID(row_index);
                 ImGui::TableSetColumnIndex(0);
                 bool row_visible = static_cast<size_t>(row_index) < structure_row_visible_.size() &&
@@ -866,6 +914,7 @@ void App::render_structures_window() {
         }
         ImGui::EndTable();
     }
+    focus_structures_next_ = false;
     ImGui::End();
 }
 

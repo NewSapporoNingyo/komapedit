@@ -177,12 +177,13 @@ void App::rebuild_marker_overlay_cache() {
         return offset_track_point(*sampled, lateral, forward);
     };
 
-    auto make_marker = [](double distance, const TrackPoint& p, const std::string& label) {
+    auto make_marker = [](double distance, const TrackPoint& p, const std::string& label, size_t row_index) {
         PlanStructureMarker marker;
         marker.d = distance;
         marker.x = p.x;
         marker.y = p.y;
         marker.label = label;
+        marker.row_index = row_index;
         return marker;
     };
 
@@ -192,7 +193,8 @@ void App::rebuild_marker_overlay_cache() {
         double lateral = table_cell_number(row, "x");
         double forward = table_cell_number(row, "z");
         if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
-            structure_marker_cache_.push_back(make_marker(distance, *p, table_cell(row, "structureKey")));
+            structure_marker_cache_.push_back(make_marker(distance, *p, table_cell(row, "structureKey"),
+                                                          structure_marker_cache_.size()));
         } else {
             structure_marker_cache_.push_back(std::nullopt);
         }
@@ -212,7 +214,8 @@ void App::rebuild_marker_overlay_cache() {
             p.z = (p1->z + p2->z) * 0.5;
             p.theta = angle_lerp(p1->theta, p2->theta, 0.5);
         }
-        structure_marker_cache_.push_back(make_marker(distance, p, table_cell(row, "structureKey")));
+        structure_marker_cache_.push_back(make_marker(distance, p, table_cell(row, "structureKey"),
+                                                      structure_marker_cache_.size()));
     }
 
     auto build_repeater_segment = [&](const std::string& key, double start, double end,
@@ -506,7 +509,11 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         p.x = source.x;
         p.y = source.y;
         p = rotate_point(p);
-        out.structure_markers.push_back({source.d, p.x, p.y, source.label});
+        PlanStructureMarker marker = source;
+        marker.x = p.x;
+        marker.y = p.y;
+        marker.row_index = i;
+        out.structure_markers.push_back(std::move(marker));
         append_marker_bounds(p.x, p.y);
     }
 
@@ -1080,8 +1087,8 @@ static void draw_scalebar(ImDrawList* draw, const View2D& view, ImVec2 origin, I
                   color, label.c_str());
 }
 
-static void draw_plan_triangle_marker(ImDrawList* draw, ImVec2 p, ImU32 color) {
-    const float r = 6.0f;
+static void draw_plan_triangle_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float r = 6.0f * scale;
     ImVec2 pts[3] = {
         ImVec2(p.x, p.y - r),
         ImVec2(p.x - r * 0.9f, p.y + r * 0.72f),
@@ -1186,8 +1193,32 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    bool rotate_plan = hovered && (ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-                                   (io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left)));
+    auto nearest_structure_marker_row = [&](const PlanScreenTransform& hit_transform) -> std::optional<size_t> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<size_t> best_row;
+        for (const auto& marker : data.structure_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_row = marker.row_index;
+            }
+        }
+        return best_row;
+    };
+    PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
+    std::optional<size_t> hovered_structure_row = nearest_structure_marker_row(hit_transform);
+    if (hovered_structure_row && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        plan_structure_popup_row_ = static_cast<int>(*hovered_structure_row);
+        ImGui::OpenPopup("plan_structure_marker_context");
+    }
+
+    bool rotate_plan = hovered && io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
     if (hovered && mode_ == Mode::Pan && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan) {
         if (!plan_view_.dragging) {
             plan_view_.dragging = true;
@@ -1345,7 +1376,8 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& marker : data.structure_markers) {
             ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
-            draw_plan_triangle_marker(draw, p, structure_color);
+            float marker_scale = hovered_structure_row && *hovered_structure_row == marker.row_index ? 1.28f : 1.0f;
+            draw_plan_triangle_marker(draw, p, structure_color, marker_scale);
             draw_plan_small_text(draw, p, structure_color, marker.label);
         }
     }
@@ -1390,6 +1422,16 @@ void App::render_plan_canvas(ImVec2 size) {
     draw_scalebar(draw, plan_view_, origin, avail);
     if (!data.own.empty()) plan_canvas_rendered_this_frame_ = true;
     draw->PopClipRect();
+    if (ImGui::BeginPopup("plan_structure_marker_context")) {
+        bool can_locate = plan_structure_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_structure_popup_row_) < structure_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_structure_list").c_str()) && can_locate) {
+            locate_structure_row_in_list(static_cast<size_t>(plan_structure_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
     ImGui::EndChild();
 }
 

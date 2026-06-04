@@ -248,6 +248,7 @@ struct PlanStructureMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    size_t row_index = 0;
 };
 
 struct PlanRepeaterMarker {
@@ -531,6 +532,7 @@ private:
     bool show_repeaters_window_ = false;
     bool show_plots_window_ = true;
     bool show_model_preview_window_ = true;
+    bool focus_structures_next_ = false;
     bool focus_model_preview_next_ = false;
     bool focus_plots_next_ = true;
     bool show_range_popup_ = false;
@@ -561,6 +563,9 @@ private:
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
+    int structure_list_scroll_row_ = -1;
+    int structure_list_highlight_row_ = -1;
+    int plan_structure_popup_row_ = -1;
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;
     std::unique_ptr<Canvas3D> model_preview_canvas_;
@@ -638,6 +643,7 @@ private:
     void reset_marker_visibility();
     void sync_marker_visibility_sizes();
     void locate_structure_row_on_plan(size_t row_index);
+    void locate_structure_row_in_list(size_t row_index);
     void locate_repeater_row_on_plan(size_t row_index);
 
     PlanData build_plan_data(bool include_other_tracks = true) const;
