@@ -1417,8 +1417,8 @@ static void mask_plot_axis_tick_edges(ImVec2 frame_min, ImVec2 frame_max, ImVec2
 
     ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    float bleed = ImGui::GetFontSize() * 1.6f;
-    ImVec2 outer_min(frame_min.x - bleed, frame_min.y - bleed);
+    float bleed = ImGui::GetFontSize() * 1.4f;
+    ImVec2 outer_min(frame_min.x - bleed, frame_min.y - bleed * 0.5);
     ImVec2 outer_max(frame_max.x + bleed, frame_max.y + bleed);
     auto fill = [&](ImVec2 min, ImVec2 max) {
         if (max.x > min.x && max.y > min.y) draw->AddRectFilled(min, max, bg);
