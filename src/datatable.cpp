@@ -172,6 +172,20 @@ bool contains_ascii_case_insensitive(const std::string& text, const std::string&
     return false;
 }
 
+bool equals_ascii_case_insensitive(const std::string& text, const std::string& query) {
+    if (query.empty() || text.size() != query.size()) return false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (ascii_fold(text[i]) != ascii_fold(query[i])) return false;
+    }
+    return true;
+}
+
+bool matches_find_query(const std::string& text, const std::string& query, bool exact_match) {
+    return exact_match
+        ? equals_ascii_case_insensitive(text, query)
+        : contains_ascii_case_insensitive(text, query);
+}
+
 void replace_all(std::string& text, const std::string& from, const std::string& to) {
     if (from.empty()) return;
     size_t pos = 0;
@@ -509,11 +523,13 @@ void App::run_structure_model_find() {
     for (size_t row_index = 0; row_index < table_cache_.structure_model_rows.size(); ++row_index) {
         const CachedTableRow& row = table_cache_.structure_model_rows[row_index];
         const bool matches_key = row.cells.size() > static_cast<size_t>(kStructureModelKeyColumn) &&
-            contains_ascii_case_insensitive(row.cells[static_cast<size_t>(kStructureModelKeyColumn)],
-                                            structure_model_find_committed_);
+            matches_find_query(row.cells[static_cast<size_t>(kStructureModelKeyColumn)],
+                               structure_model_find_committed_,
+                               structure_model_find_exact_);
         const bool matches_file_name = row.cells.size() > static_cast<size_t>(kStructureModelFilePathColumn) &&
-            contains_ascii_case_insensitive(row.cells[static_cast<size_t>(kStructureModelFilePathColumn)],
-                                            structure_model_find_committed_);
+            matches_find_query(row.cells[static_cast<size_t>(kStructureModelFilePathColumn)],
+                               structure_model_find_committed_,
+                               structure_model_find_exact_);
         if (matches_key || matches_file_name) {
             structure_model_find_row_matches_[row_index] = 1;
             structure_model_find_matches_.push_back(row_index);
@@ -532,6 +548,7 @@ void App::find_structure_model_for_structure_key(const std::string& structure_ke
     const size_t copy_size = std::min(capacity - 1, structure_key.size());
     std::copy_n(structure_key.data(), copy_size, structure_model_find_query_);
     structure_model_find_query_[copy_size] = '\0';
+    structure_model_find_exact_ = true;
     show_structure_models_window_ = true;
     run_structure_model_find();
 }
@@ -740,6 +757,15 @@ void App::render_structure_models_window() {
         step_structure_model_find(1);
     }
     ImGui::EndDisabled();
+    if (ImGui::RadioButton(tr("find.partial_match").c_str(), !structure_model_find_exact_)) {
+        structure_model_find_exact_ = false;
+        if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(tr("find.exact_match").c_str(), structure_model_find_exact_)) {
+        structure_model_find_exact_ = true;
+        if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
+    }
     render_status_line(structure_model_find_status_text());
 
     if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(kStructureModelColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
