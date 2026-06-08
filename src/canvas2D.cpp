@@ -243,6 +243,7 @@ void App::rebuild_marker_overlay_cache() {
     repeater_marker_cache_.clear();
     irregularity_marker_cache_.clear();
     adhesion_marker_cache_.clear();
+    cab_illuminance_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
 
     std::map<std::string, TrackSource> track_sources;
@@ -338,6 +339,22 @@ void App::rebuild_marker_overlay_cache() {
             adhesion_marker_cache_.push_back(std::move(marker));
         } else {
             adhesion_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    cab_illuminance_marker_cache_.reserve(model_.cab_illuminance.size());
+    for (const auto& row : model_.cab_illuminance) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanCabIlluminanceMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = "#" + std::to_string(cab_illuminance_marker_cache_.size() + 1);
+            marker.row_index = cab_illuminance_marker_cache_.size();
+            cab_illuminance_marker_cache_.push_back(std::move(marker));
+        } else {
+            cab_illuminance_marker_cache_.push_back(std::nullopt);
         }
     }
 
@@ -682,6 +699,25 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.y = p.y;
             marker.row_index = i;
             out.adhesion_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    if (show_cab_illuminance_markers_) {
+        out.cab_illuminance_markers.reserve(cab_illuminance_marker_cache_.size());
+        for (size_t i = 0; i < cab_illuminance_marker_cache_.size(); ++i) {
+            if (!cab_illuminance_marker_cache_[i]) continue;
+            const PlanCabIlluminanceMarker& source = *cab_illuminance_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanCabIlluminanceMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.cab_illuminance_markers.push_back(std::move(marker));
             append_marker_bounds(p.x, p.y);
         }
     }
@@ -1479,6 +1515,22 @@ static void draw_plan_adhesion_marker(ImDrawList* draw, ImVec2 p, ImU32 color, f
     draw->AddConvexPolyFilled(pts, IM_ARRAYSIZE(pts), color);
 }
 
+static void draw_plan_sun_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float inner = 3.4f * scale;
+    const float ray_inner = 5.3f * scale;
+    const float ray_outer = 8.0f * scale;
+    const ImU32 outline = IM_COL32(96, 68, 0, 255);
+    for (int i = 0; i < 8; ++i) {
+        float angle = static_cast<float>(i) * 3.14159265358979323846f / 4.0f;
+        ImVec2 a(p.x + std::cos(angle) * ray_inner, p.y + std::sin(angle) * ray_inner);
+        ImVec2 b(p.x + std::cos(angle) * ray_outer, p.y + std::sin(angle) * ray_outer);
+        draw->AddLine(a, b, outline, 2.8f * scale);
+        draw->AddLine(a, b, color, 1.6f * scale);
+    }
+    draw->AddCircleFilled(p, inner, color, 16);
+    draw->AddCircle(p, inner, outline, 16, 1.0f * scale);
+}
+
 static void draw_plan_focus_arrow(ImDrawList* draw, ImVec2 target) {
     const float length = 30.0f;
     const float head = 11.0f;
@@ -1645,11 +1697,30 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_cab_illuminance_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.cab_illuminance_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
     std::optional<MarkerHit> hovered_structure_hit = nearest_structure_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_adhesion_hit = nearest_adhesion_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_cab_illuminance_hit = nearest_cab_illuminance_marker_hit(hit_transform);
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_structure_row = hovered_structure_hit
         ? std::optional<size_t>(hovered_structure_hit->row_index)
@@ -1663,6 +1734,9 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<size_t> hovered_adhesion_row = hovered_adhesion_hit
         ? std::optional<size_t>(hovered_adhesion_hit->row_index)
         : std::nullopt;
+    std::optional<size_t> hovered_cab_illuminance_row = hovered_cab_illuminance_hit
+        ? std::optional<size_t>(hovered_cab_illuminance_hit->row_index)
+        : std::nullopt;
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
             return hit && (!other || hit->dist_sq <= other->dist_sq);
@@ -1670,20 +1744,27 @@ void App::render_plan_canvas(ImVec2 size) {
         if (hovered_adhesion_hit &&
             closer_or_equal(hovered_adhesion_hit, hovered_irregularity_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_repeater_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_structure_hit)) {
+            closer_or_equal(hovered_adhesion_hit, hovered_structure_hit) &&
+            closer_or_equal(hovered_adhesion_hit, hovered_cab_illuminance_hit)) {
             plan_adhesion_popup_row_ = static_cast<int>(hovered_adhesion_hit->row_index);
             ImGui::OpenPopup("plan_adhesion_marker_context");
         } else if (hovered_irregularity_hit &&
             closer_or_equal(hovered_irregularity_hit, hovered_adhesion_hit) &&
+            closer_or_equal(hovered_irregularity_hit, hovered_cab_illuminance_hit) &&
             (!hovered_repeater_hit || hovered_irregularity_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
             (!hovered_structure_hit || hovered_irregularity_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_irregularity_popup_row_ = static_cast<int>(hovered_irregularity_hit->row_index);
             ImGui::OpenPopup("plan_irregularity_marker_context");
         } else if (hovered_repeater_hit &&
                    closer_or_equal(hovered_repeater_hit, hovered_adhesion_hit) &&
+                   closer_or_equal(hovered_repeater_hit, hovered_cab_illuminance_hit) &&
                    (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_repeater_popup_row_ = static_cast<int>(hovered_repeater_hit->row_index);
             ImGui::OpenPopup("plan_repeater_marker_context");
+        } else if (hovered_cab_illuminance_hit &&
+                   (!hovered_structure_hit || hovered_cab_illuminance_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+            plan_cab_illuminance_popup_row_ = static_cast<int>(hovered_cab_illuminance_hit->row_index);
+            ImGui::OpenPopup("plan_cab_illuminance_marker_context");
         } else if (hovered_structure_hit) {
             plan_structure_popup_row_ = static_cast<int>(hovered_structure_hit->row_index);
             ImGui::OpenPopup("plan_structure_marker_context");
@@ -1862,6 +1943,21 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("adhesion_markers");
 
+    if (!data.cab_illuminance_markers.empty()) {
+        ImU32 cab_color = IM_COL32(255, 226, 64, 255);
+        for (const auto& marker : data.cab_illuminance_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_cab_illuminance_row && *hovered_cab_illuminance_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_sun_marker(draw, p, cab_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, cab_color, marker.label);
+        }
+    }
+    debug_plan_stage("cab_illuminance_markers");
+
     if (!repeater_marker_cache_.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
         draw_repeater_segment_chunks(draw, repeater_marker_cache_, repeater_row_visible_,
@@ -1973,6 +2069,16 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_adhesion_list").c_str()) && can_locate) {
             locate_adhesion_row_in_list(static_cast<size_t>(plan_adhesion_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_cab_illuminance_marker_context")) {
+        bool can_locate = plan_cab_illuminance_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_cab_illuminance_popup_row_) < cab_illuminance_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_cab_illuminance_list").c_str()) && can_locate) {
+            locate_cab_illuminance_row_in_list(static_cast<size_t>(plan_cab_illuminance_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();

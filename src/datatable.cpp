@@ -370,6 +370,15 @@ static const TableColumnDef kAdhesionColumns[] = {
 constexpr int kAdhesionDistanceColumn = 1;
 constexpr int kAdhesionFilePathColumn = IM_ARRAYSIZE(kAdhesionColumns) - 1;
 
+static const TableColumnDef kCabIlluminanceColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"value", "value", 70.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kCabIlluminanceDistanceColumn = 1;
+constexpr int kCabIlluminanceFilePathColumn = IM_ARRAYSIZE(kCabIlluminanceColumns) - 1;
+
 static const TableColumnDef kStationListColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"dist", "dist", 70.0f},
@@ -493,10 +502,13 @@ void App::invalidate_table_cache() {
     irregularity_list_highlight_row_ = -1;
     adhesion_list_scroll_row_ = -1;
     adhesion_list_highlight_row_ = -1;
+    cab_illuminance_list_scroll_row_ = -1;
+    cab_illuminance_list_highlight_row_ = -1;
     plan_structure_popup_row_ = -1;
     plan_repeater_popup_row_ = -1;
     plan_irregularity_popup_row_ = -1;
     plan_adhesion_popup_row_ = -1;
+    plan_cab_illuminance_popup_row_ = -1;
 }
 
 void App::reset_marker_visibility() {
@@ -571,6 +583,21 @@ void App::locate_adhesion_row_in_list(size_t row_index) {
     focus_adhesions_next_ = true;
     adhesion_list_scroll_row_ = static_cast<int>(row_index);
     adhesion_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_cab_illuminance_row_on_plan(size_t row_index) {
+    if (row_index >= cab_illuminance_marker_cache_.size() || !cab_illuminance_marker_cache_[row_index]) return;
+    show_cab_illuminance_markers_ = true;
+    const PlanCabIlluminanceMarker& marker = *cab_illuminance_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_cab_illuminance_row_in_list(size_t row_index) {
+    if (row_index >= cab_illuminance_marker_cache_.size() || !cab_illuminance_marker_cache_[row_index]) return;
+    show_cab_illuminance_window_ = true;
+    focus_cab_illuminance_next_ = true;
+    cab_illuminance_list_scroll_row_ = static_cast<int>(row_index);
+    cab_illuminance_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::ensure_table_cache() {
@@ -687,6 +714,27 @@ void App::ensure_table_cache() {
         cached.cells[0] = std::to_string(row_index + 1);
         expand_width_for_text(cache.adhesion_distance_width, cached.cells[kAdhesionDistanceColumn]);
         cache.adhesion_rows.push_back(std::move(cached));
+    }
+
+    cache.cab_illuminance_distance_width = 0.0f;
+    expand_width_for_text(cache.cab_illuminance_distance_width, kCabIlluminanceColumns[kCabIlluminanceDistanceColumn].header);
+    cache.cab_illuminance_rows.reserve(model_.cab_illuminance.size());
+    for (size_t row_index = 0; row_index < model_.cab_illuminance.size(); ++row_index) {
+        const TableRow& row = model_.cab_illuminance[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kCabIlluminanceColumns));
+        cached.open_path = table_cell(row, "filePath");
+        for (int i = 0; i < IM_ARRAYSIZE(kCabIlluminanceColumns); ++i) {
+            if (i == kCabIlluminanceFilePathColumn) {
+                cached.cells[i] = display_name_from_path(cached.open_path);
+                expand_width_for_text(cache.cab_illuminance_file_path_width, cached.cells[i]);
+            } else {
+                cached.cells[i] = table_cell(row, kCabIlluminanceColumns[i].key);
+            }
+        }
+        cached.cells[0] = std::to_string(row_index + 1);
+        expand_width_for_text(cache.cab_illuminance_distance_width, cached.cells[kCabIlluminanceDistanceColumn]);
+        cache.cab_illuminance_rows.push_back(std::move(cached));
     }
 
     table_cache_ = std::move(cache);
@@ -1445,5 +1493,89 @@ void App::render_adhesions_window() {
         ImGui::EndTable();
     }
     focus_adhesions_next_ = false;
+    ImGui::End();
+}
+
+void App::render_cab_illuminance_window() {
+    if (!show_cab_illuminance_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_cab_illuminance_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.cab_illuminance") + "###CabIlluminance";
+    if (!ImGui::Begin(title.c_str(), &show_cab_illuminance_window_)) {
+        focus_cab_illuminance_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_cab_illuminance_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("cab_illuminance", IM_ARRAYSIZE(kCabIlluminanceColumns),
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        std::string file_name_header = tr("column.file_name");
+        for (int i = 0; i < IM_ARRAYSIZE(kCabIlluminanceColumns); ++i) {
+            float width = kCabIlluminanceColumns[i].width;
+            if (i == kCabIlluminanceDistanceColumn) width = table_cache_.cab_illuminance_distance_width;
+            if (i == kCabIlluminanceFilePathColumn) width = table_cache_.cab_illuminance_file_path_width;
+            const char* header = i == kCabIlluminanceFilePathColumn
+                ? file_name_header.c_str()
+                : kCabIlluminanceColumns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(table_cache_.cab_illuminance_rows.size());
+        if (cab_illuminance_list_scroll_row_ >= row_count) cab_illuminance_list_scroll_row_ = -1;
+        if (cab_illuminance_list_highlight_row_ >= row_count) cab_illuminance_list_highlight_row_ = -1;
+        const int scroll_target_row = cab_illuminance_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.cab_illuminance_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                if (row_index == cab_illuminance_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    cab_illuminance_list_scroll_row_ = -1;
+                }
+                ImGui::PushID(row_index);
+                for (int i = 0; i < IM_ARRAYSIZE(kCabIlluminanceColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == kCabIlluminanceDistanceColumn) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < cab_illuminance_marker_cache_.size() &&
+                            cab_illuminance_marker_cache_[marker_index].has_value();
+                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                            locate_cab_illuminance_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
+                    if (value.empty()) continue;
+                    if (i == kCabIlluminanceFilePathColumn) {
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.open_path);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    focus_cab_illuminance_next_ = false;
     ImGui::End();
 }

@@ -675,6 +675,13 @@ struct AdhesionChange {
     int order = 0;
 };
 
+struct CabIlluminanceChange {
+    double distance = 0.0;
+    Value value;
+    std::string file_path;
+    int order = 0;
+};
+
 struct SpeedLimitEvent {
     double distance = 0.0;
     Value speed;
@@ -744,6 +751,7 @@ struct MapContext {
     std::vector<RepeaterEvent> repeaters;
     std::vector<IrregularityChange> irregularities;
     std::vector<AdhesionChange> adhesions;
+    std::vector<CabIlluminanceChange> cab_illuminance;
     std::vector<SpeedLimitEvent> speedlimits;
     Matrix owntrack_buffer;
     Matrix curveradius_buffer;
@@ -1149,6 +1157,7 @@ private:
         for (auto& row : child.repeaters) offset_order(row.order);
         for (auto& row : child.irregularities) offset_order(row.order);
         for (auto& row : child.adhesions) offset_order(row.order);
+        for (auto& row : child.cab_illuminance) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
         if (child.has_distance_assignment) {
@@ -1181,6 +1190,7 @@ private:
         for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
         for (auto& row : child.irregularities) ctx_.irregularities.push_back(std::move(row));
         for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
+        for (auto& row : child.cab_illuminance) ctx_.cab_illuminance.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
     }
 
@@ -1464,6 +1474,8 @@ private:
             dispatch_irregularity(fn, function.args);
         } else if (first == "adhesion") {
             dispatch_adhesion(fn, function.args);
+        } else if (first == "cabilluminance") {
+            dispatch_cab_illuminance(fn, function.args);
         }
     }
 
@@ -1755,6 +1767,17 @@ private:
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
         ctx_.adhesions.push_back(std::move(row));
+    }
+
+    void dispatch_cab_illuminance(const std::string& fn, const std::vector<Value>& a) {
+        if ((fn != "interpolate" && fn != "set") || a.empty()) return;
+        note_distance_use(ctx_);
+        CabIlluminanceChange row;
+        row.distance = ctx_.distance;
+        row.value = a[0];
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.cab_illuminance.push_back(std::move(row));
     }
 };
 
@@ -2672,6 +2695,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.repeaters.begin(), ctx.repeaters.end(), by_distance);
     std::stable_sort(ctx.irregularities.begin(), ctx.irregularities.end(), by_distance);
     std::stable_sort(ctx.adhesions.begin(), ctx.adhesions.end(), by_distance);
+    std::stable_sort(ctx.cab_illuminance.begin(), ctx.cab_illuminance.end(), by_distance);
     std::stable_sort(ctx.speedlimits.begin(), ctx.speedlimits.end(), by_distance);
     std::stable_sort(ctx.station_puts.begin(), ctx.station_puts.end(), by_distance);
 }
@@ -2773,6 +2797,13 @@ void append_adhesion_json(std::ostringstream& out, const AdhesionChange& row) {
         << ",\"a\":" << json_value(row.a)
         << ",\"b\":" << json_value(row.b)
         << ",\"c\":" << json_value(row.c)
+        << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_cab_illuminance_json(std::ostringstream& out, const CabIlluminanceChange& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"value\":" << json_value(row.value)
         << ",\"filePath\":\"" << json_escape(row.file_path)
         << "\",\"order\":" << row.order << "}";
 }
@@ -2941,6 +2972,13 @@ std::string build_ir_json(MapContext& ctx) {
     for (size_t i = 0; i < ctx.adhesions.size(); ++i) {
         if (i) out << ",";
         append_adhesion_json(out, ctx.adhesions[i]);
+    }
+    out << "]";
+
+    out << ",\"cabIlluminance\":[";
+    for (size_t i = 0; i < ctx.cab_illuminance.size(); ++i) {
+        if (i) out << ",";
+        append_cab_illuminance_json(out, ctx.cab_illuminance[i]);
     }
     out << "]";
 
