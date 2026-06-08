@@ -243,6 +243,7 @@ void App::rebuild_marker_overlay_cache() {
     repeater_marker_cache_.clear();
     irregularity_marker_cache_.clear();
     rolling_noise_marker_cache_.clear();
+    joint_noise_marker_cache_.clear();
     background_marker_cache_.clear();
     adhesion_marker_cache_.clear();
     cab_illuminance_marker_cache_.clear();
@@ -342,6 +343,22 @@ void App::rebuild_marker_overlay_cache() {
             rolling_noise_marker_cache_.push_back(std::move(marker));
         } else {
             rolling_noise_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    joint_noise_marker_cache_.reserve(model_.joint_noises.size());
+    for (const auto& row : model_.joint_noises) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanJointNoiseMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = "#" + std::to_string(joint_noise_marker_cache_.size() + 1);
+            marker.row_index = joint_noise_marker_cache_.size();
+            joint_noise_marker_cache_.push_back(std::move(marker));
+        } else {
+            joint_noise_marker_cache_.push_back(std::nullopt);
         }
     }
 
@@ -751,6 +768,25 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.y = p.y;
             marker.row_index = i;
             out.rolling_noise_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    if (show_joint_noise_markers_) {
+        out.joint_noise_markers.reserve(joint_noise_marker_cache_.size());
+        for (size_t i = 0; i < joint_noise_marker_cache_.size(); ++i) {
+            if (!joint_noise_marker_cache_[i]) continue;
+            const PlanJointNoiseMarker& source = *joint_noise_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanJointNoiseMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.joint_noise_markers.push_back(std::move(marker));
             append_marker_bounds(p.x, p.y);
         }
     }
@@ -1615,6 +1651,23 @@ static void draw_plan_axle_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float
     draw->AddLine(ImVec2(right.x, right.y - half_height), ImVec2(right.x, right.y + half_height), color, line_weight);
 }
 
+static void draw_plan_joint_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float left = 6.0f * scale;
+    const float right = 6.5f * scale;
+    const float up = 6.5f * scale;
+    const float down = 5.0f * scale;
+    const float outline_weight = 4.0f * scale;
+    const float line_weight = 2.1f * scale;
+    const ImU32 outline = IM_COL32(18, 54, 72, 255);
+    ImVec2 vertex(p.x - left, p.y + down);
+    ImVec2 upper(p.x + right, p.y - up);
+    ImVec2 lower(p.x + right, p.y + down);
+    draw->AddLine(upper, vertex, outline, outline_weight);
+    draw->AddLine(vertex, lower, outline, outline_weight);
+    draw->AddLine(upper, vertex, color, line_weight);
+    draw->AddLine(vertex, lower, color, line_weight);
+}
+
 static void draw_plan_square_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
     const float r = 5.0f * scale;
     ImVec2 min(p.x - r, p.y - r);
@@ -1846,6 +1899,24 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_joint_noise_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.joint_noise_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     auto nearest_background_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
         if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
         constexpr double hover_radius_sq = 12.0 * 12.0;
@@ -1923,6 +1994,7 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_rolling_noise_hit = nearest_rolling_noise_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_joint_noise_hit = nearest_joint_noise_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_background_hit = nearest_background_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_adhesion_hit = nearest_adhesion_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_cab_illuminance_hit = nearest_cab_illuminance_marker_hit(hit_transform);
@@ -1939,6 +2011,9 @@ void App::render_plan_canvas(ImVec2 size) {
         : std::nullopt;
     std::optional<size_t> hovered_rolling_noise_row = hovered_rolling_noise_hit
         ? std::optional<size_t>(hovered_rolling_noise_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_joint_noise_row = hovered_joint_noise_hit
+        ? std::optional<size_t>(hovered_joint_noise_hit->row_index)
         : std::nullopt;
     std::optional<size_t> hovered_background_row = hovered_background_hit
         ? std::optional<size_t>(hovered_background_hit->row_index)
@@ -1963,6 +2038,7 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_adhesion_hit, hovered_structure_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_adhesion_hit, hovered_joint_noise_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_fog_hit)) {
             plan_adhesion_popup_row_ = static_cast<int>(hovered_adhesion_hit->row_index);
             ImGui::OpenPopup("plan_adhesion_marker_context");
@@ -1972,6 +2048,7 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_irregularity_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_fog_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_irregularity_hit, hovered_joint_noise_hit) &&
             (!hovered_repeater_hit || hovered_irregularity_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
             (!hovered_structure_hit || hovered_irregularity_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_irregularity_popup_row_ = static_cast<int>(hovered_irregularity_hit->row_index);
@@ -1982,16 +2059,29 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_rolling_noise_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_fog_hit) &&
+                   closer_or_equal(hovered_rolling_noise_hit, hovered_joint_noise_hit) &&
                    (!hovered_repeater_hit || hovered_rolling_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_rolling_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_rolling_noise_popup_row_ = static_cast<int>(hovered_rolling_noise_hit->row_index);
             ImGui::OpenPopup("plan_rolling_noise_marker_context");
+        } else if (hovered_joint_noise_hit &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_adhesion_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_irregularity_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_background_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_cab_illuminance_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_fog_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_rolling_noise_hit) &&
+                   (!hovered_repeater_hit || hovered_joint_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
+                   (!hovered_structure_hit || hovered_joint_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+            plan_joint_noise_popup_row_ = static_cast<int>(hovered_joint_noise_hit->row_index);
+            ImGui::OpenPopup("plan_joint_noise_marker_context");
         } else if (hovered_background_hit &&
                    closer_or_equal(hovered_background_hit, hovered_adhesion_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_irregularity_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_background_hit, hovered_joint_noise_hit) &&
                    (!hovered_repeater_hit || hovered_background_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_background_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_background_popup_row_ = static_cast<int>(hovered_background_hit->row_index);
@@ -2002,6 +2092,7 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_repeater_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_repeater_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_repeater_popup_row_ = static_cast<int>(hovered_repeater_hit->row_index);
             ImGui::OpenPopup("plan_repeater_marker_context");
@@ -2009,12 +2100,14 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_cab_illuminance_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_cab_illuminance_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_cab_illuminance_popup_row_ = static_cast<int>(hovered_cab_illuminance_hit->row_index);
             ImGui::OpenPopup("plan_cab_illuminance_marker_context");
         } else if (hovered_fog_hit &&
                    closer_or_equal(hovered_fog_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_fog_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_fog_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_fog_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_fog_popup_row_ = static_cast<int>(hovered_fog_hit->row_index);
             ImGui::OpenPopup("plan_fog_marker_context");
@@ -2196,6 +2289,21 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("rolling_noise_markers");
 
+    if (!data.joint_noise_markers.empty()) {
+        ImU32 joint_noise_color = IM_COL32(158, 224, 255, 255);
+        for (const auto& marker : data.joint_noise_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_joint_noise_row && *hovered_joint_noise_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_joint_noise_marker(draw, p, joint_noise_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, joint_noise_color, marker.label);
+        }
+    }
+    debug_plan_stage("joint_noise_markers");
+
     if (!data.background_markers.empty()) {
         ImU32 background_color = IM_COL32(255, 230, 72, 255);
         for (const auto& marker : data.background_markers) {
@@ -2366,6 +2474,16 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_rolling_noise_list").c_str()) && can_locate) {
             locate_rolling_noise_row_in_list(static_cast<size_t>(plan_rolling_noise_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_joint_noise_marker_context")) {
+        bool can_locate = plan_joint_noise_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_joint_noise_popup_row_) < joint_noise_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_joint_noise_list").c_str()) && can_locate) {
+            locate_joint_noise_row_in_list(static_cast<size_t>(plan_joint_noise_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();

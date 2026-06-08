@@ -643,6 +643,13 @@ struct RollingNoiseChange {
     int order = 0;
 };
 
+struct JointNoisePlay {
+    double distance = 0.0;
+    Value index;
+    std::string file_path;
+    int order = 0;
+};
+
 struct StructurePut {
     double distance = 0.0;
     std::string method;
@@ -793,6 +800,7 @@ struct MapContext {
     std::vector<StructureModel> structure_models;
     std::vector<SoundListEntry> sound_list;
     std::vector<RollingNoiseChange> rolling_noises;
+    std::vector<JointNoisePlay> joint_noises;
     std::vector<StructurePut> structure_puts;
     std::vector<StructurePut> structure_betweens;
     std::vector<RepeaterEvent> repeaters;
@@ -1205,6 +1213,7 @@ private:
         for (auto& row : child.structure_betweens) offset_order(row.order);
         for (auto& row : child.repeaters) offset_order(row.order);
         for (auto& row : child.rolling_noises) offset_order(row.order);
+        for (auto& row : child.joint_noises) offset_order(row.order);
         for (auto& row : child.irregularities) offset_order(row.order);
         for (auto& row : child.backgrounds) offset_order(row.order);
         for (auto& row : child.adhesions) offset_order(row.order);
@@ -1239,6 +1248,7 @@ private:
         for (auto& row : child.structure_models) ctx_.structure_models.push_back(std::move(row));
         for (auto& row : child.sound_list) ctx_.sound_list.push_back(std::move(row));
         for (auto& row : child.rolling_noises) ctx_.rolling_noises.push_back(std::move(row));
+        for (auto& row : child.joint_noises) ctx_.joint_noises.push_back(std::move(row));
         for (auto& row : child.structure_puts) ctx_.structure_puts.push_back(std::move(row));
         for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
         for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
@@ -1526,6 +1536,8 @@ private:
             dispatch_sound(fn, function.args);
         } else if (first == "rollingnoise") {
             dispatch_rolling_noise(fn, function.args);
+        } else if (first == "jointnoise") {
+            dispatch_joint_noise(fn, function.args);
         } else if (first == "repeater") {
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
@@ -1812,6 +1824,17 @@ private:
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
         ctx_.rolling_noises.push_back(std::move(row));
+    }
+
+    void dispatch_joint_noise(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "play" || a.empty()) return;
+        note_distance_use(ctx_);
+        JointNoisePlay row;
+        row.distance = ctx_.distance;
+        row.index = a[0];
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.joint_noises.push_back(std::move(row));
     }
 
     void dispatch_repeater(const std::string& fn, const std::vector<Value>& a) {
@@ -2833,6 +2856,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.structure_betweens.begin(), ctx.structure_betweens.end(), by_distance);
     std::stable_sort(ctx.repeaters.begin(), ctx.repeaters.end(), by_distance);
     std::stable_sort(ctx.rolling_noises.begin(), ctx.rolling_noises.end(), by_distance);
+    std::stable_sort(ctx.joint_noises.begin(), ctx.joint_noises.end(), by_distance);
     std::stable_sort(ctx.irregularities.begin(), ctx.irregularities.end(), by_distance);
     std::stable_sort(ctx.backgrounds.begin(), ctx.backgrounds.end(), by_distance);
     std::stable_sort(ctx.adhesions.begin(), ctx.adhesions.end(), by_distance);
@@ -3098,6 +3122,17 @@ std::string build_ir_json(MapContext& ctx) {
     for (size_t i = 0; i < ctx.rolling_noises.size(); ++i) {
         if (i) out << ",";
         const auto& row = ctx.rolling_noises[i];
+        out << "{\"distance\":" << json_number(row.distance)
+            << ",\"index\":" << json_value(row.index)
+            << ",\"filePath\":\"" << json_escape(row.file_path)
+            << "\",\"order\":" << row.order << "}";
+    }
+    out << "]";
+
+    out << ",\"jointNoise\":[";
+    for (size_t i = 0; i < ctx.joint_noises.size(); ++i) {
+        if (i) out << ",";
+        const auto& row = ctx.joint_noises[i];
         out << "{\"distance\":" << json_number(row.distance)
             << ",\"index\":" << json_value(row.index)
             << ",\"filePath\":\"" << json_escape(row.file_path)
