@@ -117,6 +117,7 @@ struct TableColumnDef {
 struct CachedTableRow {
     std::vector<std::string> cells;
     std::string open_path;
+    std::string tooltip_text;
 };
 
 struct TableUiCache {

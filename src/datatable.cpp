@@ -446,6 +446,13 @@ std::string format_repeater_file_path(const std::string& begin_path, const std::
     return begin_path.empty() ? end_name : begin_name;
 }
 
+std::string format_repeater_file_path_tooltip(const std::string& begin_path, const std::string& end_path = {}) {
+    if (!end_path.empty() && !begin_path.empty() && end_path != begin_path) {
+        return "Begin:" + begin_path + ", End:" + end_path;
+    }
+    return begin_path.empty() ? end_path : begin_path;
+}
+
 std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
     std::vector<TableRow> ordered_rows = data;
     std::stable_sort(ordered_rows.begin(), ordered_rows.end(), [](const TableRow& a, const TableRow& b) {
@@ -467,6 +474,7 @@ std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
                 previous.cells["distance"] = format_changed_distance(table_cell(previous, "_beginDistance"), display_index);
                 previous.cells["filePath"] = format_repeater_file_path(table_cell(previous, "_beginFilePath"));
                 previous.cells["_openFilePath"] = table_cell(previous, "_beginFilePath");
+                previous.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(table_cell(previous, "_beginFilePath"));
                 open_rows.erase(open_it);
             }
 
@@ -479,6 +487,7 @@ std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
             new_row.cells["_openFilePath"] = begin_file_path;
             new_row.cells["distance"] = format_distance_range(begin_distance, "NO END");
             new_row.cells["filePath"] = format_repeater_file_path(begin_file_path);
+            new_row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path);
             open_rows[key] = merged_rows.size();
             merged_rows.push_back(std::move(new_row));
             ++display_index;
@@ -491,6 +500,7 @@ std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
                 begin_row.cells["distance"] = format_distance_range(table_cell(begin_row, "_beginDistance"), table_cell(row, "distance"));
                 begin_row.cells["filePath"] = format_repeater_file_path(begin_file_path, end_file_path);
                 begin_row.cells["_openFilePath"] = begin_file_path.empty() ? end_file_path : begin_file_path;
+                begin_row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path, end_file_path);
                 open_rows.erase(open_it);
             }
         }
@@ -676,6 +686,7 @@ void App::ensure_table_cache() {
                 const std::string& value = table_cell(row, kStructureColumns[i]);
                 if (i == kStructureFilePathColumn) {
                     cached.open_path = value;
+                    cached.tooltip_text = value;
                     cached.cells[i] = display_name_from_path(value);
                     expand_width_for_text(cache.structure_file_path_width, cached.cells[i]);
                 } else {
@@ -696,6 +707,8 @@ void App::ensure_table_cache() {
         CachedTableRow cached;
         cached.cells.resize(IM_ARRAYSIZE(kRepeaterColumns));
         cached.open_path = table_cell(row, "_openFilePath");
+        cached.tooltip_text = table_cell(row, "_filePathTooltip");
+        if (cached.tooltip_text.empty()) cached.tooltip_text = cached.open_path;
         for (int i = 0; i < IM_ARRAYSIZE(kRepeaterColumns); ++i) {
             cached.cells[i] = table_cell(row, kRepeaterColumns[i].key);
         }
@@ -1118,7 +1131,8 @@ void App::render_structures_window() {
                         }
                         ImGui::PopID();
                     } else if (i == kStructureFilePathColumn) {
-                        render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"));
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.tooltip_text);
                     } else {
                         ImGui::TextUnformatted(value.c_str());
                     }
@@ -1365,7 +1379,8 @@ void App::render_repeaters_window() {
                         if (!selected_key.empty()) find_structure_model_for_structure_key(selected_key);
                         ImGui::PopID();
                     } else if (i == kRepeaterFilePathColumn) {
-                        render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"));
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.tooltip_text);
                     } else {
                         ImGui::TextUnformatted(value.c_str());
                     }
