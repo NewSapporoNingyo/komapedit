@@ -242,6 +242,7 @@ void App::rebuild_marker_overlay_cache() {
     structure_marker_cache_.clear();
     repeater_marker_cache_.clear();
     irregularity_marker_cache_.clear();
+    adhesion_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
 
     std::map<std::string, TrackSource> track_sources;
@@ -321,6 +322,22 @@ void App::rebuild_marker_overlay_cache() {
             irregularity_marker_cache_.push_back(std::move(marker));
         } else {
             irregularity_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    adhesion_marker_cache_.reserve(model_.adhesions.size());
+    for (const auto& row : model_.adhesions) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanAdhesionMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = "#" + std::to_string(adhesion_marker_cache_.size() + 1);
+            marker.row_index = adhesion_marker_cache_.size();
+            adhesion_marker_cache_.push_back(std::move(marker));
+        } else {
+            adhesion_marker_cache_.push_back(std::nullopt);
         }
     }
 
@@ -646,6 +663,25 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.y = p.y;
             marker.row_index = i;
             out.irregularity_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    if (show_adhesion_markers_) {
+        out.adhesion_markers.reserve(adhesion_marker_cache_.size());
+        for (size_t i = 0; i < adhesion_marker_cache_.size(); ++i) {
+            if (!adhesion_marker_cache_[i]) continue;
+            const PlanAdhesionMarker& source = *adhesion_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanAdhesionMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.adhesion_markers.push_back(std::move(marker));
             append_marker_bounds(p.x, p.y);
         }
     }
@@ -1418,6 +1454,31 @@ static void draw_plan_wave_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float
     draw->AddPolyline(pts, IM_ARRAYSIZE(pts), color, ImDrawFlags_None, 1.6f * scale);
 }
 
+static void draw_plan_adhesion_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float circle_r = 3.2f * scale;
+    const float arc_r = 7.2f * scale;
+    const float start_angle = -2.45f;
+    const float end_angle = 0.82f;
+    draw->AddCircleFilled(p, circle_r, color, 16);
+    draw->AddCircle(p, circle_r, IM_COL32(62, 28, 96, 255), 16, 1.0f * scale);
+    draw->PathArcTo(p, arc_r, start_angle, end_angle, 18);
+    draw->PathStroke(color, ImDrawFlags_None, 1.8f * scale);
+
+    ImVec2 tip(p.x + std::cos(end_angle) * arc_r, p.y + std::sin(end_angle) * arc_r);
+    ImVec2 tangent(-std::sin(end_angle), std::cos(end_angle));
+    ImVec2 normal(-tangent.y, tangent.x);
+    const float head_len = 4.0f * scale;
+    const float head_half = 2.5f * scale;
+    ImVec2 pts[3] = {
+        tip,
+        ImVec2(tip.x - tangent.x * head_len + normal.x * head_half,
+               tip.y - tangent.y * head_len + normal.y * head_half),
+        ImVec2(tip.x - tangent.x * head_len - normal.x * head_half,
+               tip.y - tangent.y * head_len - normal.y * head_half),
+    };
+    draw->AddConvexPolyFilled(pts, IM_ARRAYSIZE(pts), color);
+}
+
 static void draw_plan_focus_arrow(ImDrawList* draw, ImVec2 target) {
     const float length = 30.0f;
     const float head = 11.0f;
@@ -1566,10 +1627,29 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_adhesion_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.adhesion_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
     std::optional<MarkerHit> hovered_structure_hit = nearest_structure_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_adhesion_hit = nearest_adhesion_marker_hit(hit_transform);
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_structure_row = hovered_structure_hit
         ? std::optional<size_t>(hovered_structure_hit->row_index)
@@ -1580,13 +1660,28 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<size_t> hovered_irregularity_row = hovered_irregularity_hit
         ? std::optional<size_t>(hovered_irregularity_hit->row_index)
         : std::nullopt;
+    std::optional<size_t> hovered_adhesion_row = hovered_adhesion_hit
+        ? std::optional<size_t>(hovered_adhesion_hit->row_index)
+        : std::nullopt;
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-        if (hovered_irregularity_hit &&
+        auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
+            return hit && (!other || hit->dist_sq <= other->dist_sq);
+        };
+        if (hovered_adhesion_hit &&
+            closer_or_equal(hovered_adhesion_hit, hovered_irregularity_hit) &&
+            closer_or_equal(hovered_adhesion_hit, hovered_repeater_hit) &&
+            closer_or_equal(hovered_adhesion_hit, hovered_structure_hit)) {
+            plan_adhesion_popup_row_ = static_cast<int>(hovered_adhesion_hit->row_index);
+            ImGui::OpenPopup("plan_adhesion_marker_context");
+        } else if (hovered_irregularity_hit &&
+            closer_or_equal(hovered_irregularity_hit, hovered_adhesion_hit) &&
             (!hovered_repeater_hit || hovered_irregularity_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
             (!hovered_structure_hit || hovered_irregularity_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_irregularity_popup_row_ = static_cast<int>(hovered_irregularity_hit->row_index);
             ImGui::OpenPopup("plan_irregularity_marker_context");
-        } else if (hovered_repeater_hit && (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+        } else if (hovered_repeater_hit &&
+                   closer_or_equal(hovered_repeater_hit, hovered_adhesion_hit) &&
+                   (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_repeater_popup_row_ = static_cast<int>(hovered_repeater_hit->row_index);
             ImGui::OpenPopup("plan_repeater_marker_context");
         } else if (hovered_structure_hit) {
@@ -1752,6 +1847,21 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("irregularity_markers");
 
+    if (!data.adhesion_markers.empty()) {
+        ImU32 adhesion_color = IM_COL32(178, 102, 255, 255);
+        for (const auto& marker : data.adhesion_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_adhesion_row && *hovered_adhesion_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_adhesion_marker(draw, p, adhesion_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, adhesion_color, marker.label);
+        }
+    }
+    debug_plan_stage("adhesion_markers");
+
     if (!repeater_marker_cache_.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
         draw_repeater_segment_chunks(draw, repeater_marker_cache_, repeater_row_visible_,
@@ -1853,6 +1963,16 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_irregularity_list").c_str()) && can_locate) {
             locate_irregularity_row_in_list(static_cast<size_t>(plan_irregularity_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_adhesion_marker_context")) {
+        bool can_locate = plan_adhesion_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_adhesion_popup_row_) < adhesion_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_adhesion_list").c_str()) && can_locate) {
+            locate_adhesion_row_in_list(static_cast<size_t>(plan_adhesion_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();

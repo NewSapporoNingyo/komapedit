@@ -661,6 +661,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_structure_models_window=" << bool_to_string(settings.window_visibility.show_structure_models_window) << "\n";
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
+    out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
     out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
     out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
     out << "\n[View2D]\n";
@@ -673,6 +674,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
     out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
     out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
+    out << "show_adhesion_markers=" << bool_to_string(settings.view_2d.show_adhesion_markers) << "\n";
     out << "show_profile_graph=" << bool_to_string(settings.view_2d.show_profile_graph) << "\n";
     out << "show_radius_graph=" << bool_to_string(settings.view_2d.show_radius_graph) << "\n";
     out << "show_background_image=" << bool_to_string(settings.view_2d.show_background_image) << "\n";
@@ -748,6 +750,8 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
         } else if (key == "show_irregularities_window") {
             settings.window_visibility.show_irregularities_window = parse_bool(value, settings.window_visibility.show_irregularities_window);
+        } else if (key == "show_adhesions_window" || key == "show_adhesion_window") {
+            settings.window_visibility.show_adhesions_window = parse_bool(value, settings.window_visibility.show_adhesions_window);
         } else if (key == "show_plots_window") {
             settings.window_visibility.show_plots_window = parse_bool(value, settings.window_visibility.show_plots_window);
         } else if (key == "show_model_preview_window") {
@@ -779,6 +783,9 @@ UserSettings load_user_settings() {
         } else if (key == "show_irregularity_markers" || key == "show_irregularities" || key == "show_irregularity_points") {
             view_2d_keys_seen.insert("show_irregularity_markers");
             settings.view_2d.show_irregularity_markers = parse_bool(value, settings.view_2d.show_irregularity_markers);
+        } else if (key == "show_adhesion_markers" || key == "show_adhesions" || key == "show_adhesion_points") {
+            view_2d_keys_seen.insert("show_adhesion_markers");
+            settings.view_2d.show_adhesion_markers = parse_bool(value, settings.view_2d.show_adhesion_markers);
         } else if (key == "show_profile_graph" || key == "show_gradient_graph") {
             view_2d_keys_seen.insert("show_profile_graph");
             settings.view_2d.show_profile_graph = parse_bool(value, settings.view_2d.show_profile_graph);
@@ -802,7 +809,7 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 14) save_user_settings(settings);
+    if (view_2d_keys_seen.size() < 15) save_user_settings(settings);
     return settings;
 }
 
@@ -1483,6 +1490,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     model.structures_between = make_table_rows(structure.at("between_data"));
     model.repeaters = make_table_rows(root.at("repeater"));
     model.irregularities = make_table_rows(root.at("irregularity"));
+    model.adhesions = make_table_rows(root.at("adhesion"));
 
     std::map<std::string, TableRow> station_rows_by_key;
     const auto& station_list = station.at("list");
@@ -1873,6 +1881,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("StructureModels", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
+    ImGui::DockBuilderDockWindow("Adhesions", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
@@ -1891,6 +1900,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_structure_models_window = show_structure_models_window_;
     visibility.show_repeaters_window = show_repeaters_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
+    visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_plots_window = show_plots_window_;
     visibility.show_model_preview_window = show_model_preview_window_;
     return visibility;
@@ -1903,6 +1913,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_structure_models_window_ = visibility.show_structure_models_window;
     show_repeaters_window_ = visibility.show_repeaters_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
+    show_adhesions_window_ = visibility.show_adhesions_window;
     show_plots_window_ = visibility.show_plots_window;
     show_model_preview_window_ = visibility.show_model_preview_window;
 }
@@ -1918,6 +1929,7 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_profile_other = show_profile_other_;
     view.show_speedlimits = show_speedlimits_;
     view.show_irregularity_markers = show_irregularity_markers_;
+    view.show_adhesion_markers = show_adhesion_markers_;
     view.show_profile_graph = show_profile_graph_;
     view.show_radius_graph = show_radius_graph_;
     view.show_background_image = bg_show_;
@@ -1936,6 +1948,7 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_profile_other_ = settings.show_profile_other;
     show_speedlimits_ = settings.show_speedlimits;
     show_irregularity_markers_ = settings.show_irregularity_markers;
+    show_adhesion_markers_ = settings.show_adhesion_markers;
     show_profile_graph_ = settings.show_profile_graph;
     show_radius_graph_ = settings.show_radius_graph;
     bg_show_ = settings.show_background_image;
@@ -2050,6 +2063,9 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("frame.irregularities").c_str(), nullptr, false, !show_irregularities_window_)) {
             show_irregularities_window_ = true;
         }
+        if (ImGui::MenuItem(tr("frame.adhesions").c_str(), nullptr, false, !show_adhesions_window_)) {
+            show_adhesions_window_ = true;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
@@ -2071,6 +2087,7 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
+        ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
         ImGui::Separator();
         ImGui::MenuItem(tr("frame.bgimage").c_str(), nullptr, false, false);
         if (ImGui::MenuItem(tr("button.import_bg").c_str())) {
@@ -2595,6 +2612,7 @@ void App::render() {
     render_structure_models_window();
     render_repeaters_window();
     render_irregularities_window();
+    render_adhesions_window();
     render_popups();
     save_runtime_settings_if_changed();
 }

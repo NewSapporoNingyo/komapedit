@@ -666,6 +666,15 @@ struct IrregularityChange {
     int order = 0;
 };
 
+struct AdhesionChange {
+    double distance = 0.0;
+    Value a;
+    Value b;
+    Value c;
+    std::string file_path;
+    int order = 0;
+};
+
 struct SpeedLimitEvent {
     double distance = 0.0;
     Value speed;
@@ -734,6 +743,7 @@ struct MapContext {
     std::vector<StructurePut> structure_betweens;
     std::vector<RepeaterEvent> repeaters;
     std::vector<IrregularityChange> irregularities;
+    std::vector<AdhesionChange> adhesions;
     std::vector<SpeedLimitEvent> speedlimits;
     Matrix owntrack_buffer;
     Matrix curveradius_buffer;
@@ -1138,6 +1148,7 @@ private:
         for (auto& row : child.structure_betweens) offset_order(row.order);
         for (auto& row : child.repeaters) offset_order(row.order);
         for (auto& row : child.irregularities) offset_order(row.order);
+        for (auto& row : child.adhesions) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
         if (child.has_distance_assignment) {
@@ -1169,6 +1180,7 @@ private:
         for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
         for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
         for (auto& row : child.irregularities) ctx_.irregularities.push_back(std::move(row));
+        for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
     }
 
@@ -1450,6 +1462,8 @@ private:
             dispatch_repeater(fn, args);
         } else if (first == "irregularity") {
             dispatch_irregularity(fn, function.args);
+        } else if (first == "adhesion") {
+            dispatch_adhesion(fn, function.args);
         }
     }
 
@@ -1726,6 +1740,21 @@ private:
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
         ctx_.irregularities.push_back(row);
+    }
+
+    void dispatch_adhesion(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "change" || a.empty()) return;
+        note_distance_use(ctx_);
+        AdhesionChange row;
+        row.distance = ctx_.distance;
+        row.a = a[0];
+        if (a.size() >= 3) {
+            row.b = a[1];
+            row.c = a[2];
+        }
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.adhesions.push_back(std::move(row));
     }
 };
 
@@ -2642,6 +2671,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.structure_betweens.begin(), ctx.structure_betweens.end(), by_distance);
     std::stable_sort(ctx.repeaters.begin(), ctx.repeaters.end(), by_distance);
     std::stable_sort(ctx.irregularities.begin(), ctx.irregularities.end(), by_distance);
+    std::stable_sort(ctx.adhesions.begin(), ctx.adhesions.end(), by_distance);
     std::stable_sort(ctx.speedlimits.begin(), ctx.speedlimits.end(), by_distance);
     std::stable_sort(ctx.station_puts.begin(), ctx.station_puts.end(), by_distance);
 }
@@ -2736,6 +2766,15 @@ void append_station_put_json(std::ostringstream& out, const StationPut& row) {
         << ",\"margin1\":" << json_value(row.margin1)
         << ",\"margin2\":" << json_value(row.margin2)
         << ",\"order\":" << row.order << "}";
+}
+
+void append_adhesion_json(std::ostringstream& out, const AdhesionChange& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"a\":" << json_value(row.a)
+        << ",\"b\":" << json_value(row.b)
+        << ",\"c\":" << json_value(row.c)
+        << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
 }
 
 std::string build_ir_json(MapContext& ctx) {
@@ -2895,6 +2934,13 @@ std::string build_ir_json(MapContext& ctx) {
             << ",\"lr\":" << json_number(row.lr)
             << ",\"filePath\":\"" << json_escape(row.file_path)
             << "\",\"order\":" << row.order << "}";
+    }
+    out << "]";
+
+    out << ",\"adhesion\":[";
+    for (size_t i = 0; i < ctx.adhesions.size(); ++i) {
+        if (i) out << ",";
+        append_adhesion_json(out, ctx.adhesions[i]);
     }
     out << "]";
 

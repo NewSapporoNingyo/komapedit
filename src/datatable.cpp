@@ -359,6 +359,17 @@ static const TableColumnDef kIrregularityColumns[] = {
 constexpr int kIrregularityDistanceColumn = 1;
 constexpr int kIrregularityFilePathColumn = IM_ARRAYSIZE(kIrregularityColumns) - 1;
 
+static const TableColumnDef kAdhesionColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"a", "a", 70.0f},
+    {"b", "b", 70.0f},
+    {"c", "c", 70.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kAdhesionDistanceColumn = 1;
+constexpr int kAdhesionFilePathColumn = IM_ARRAYSIZE(kAdhesionColumns) - 1;
+
 static const TableColumnDef kStationListColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"dist", "dist", 70.0f},
@@ -480,9 +491,12 @@ void App::invalidate_table_cache() {
     repeater_list_highlight_row_ = -1;
     irregularity_list_scroll_row_ = -1;
     irregularity_list_highlight_row_ = -1;
+    adhesion_list_scroll_row_ = -1;
+    adhesion_list_highlight_row_ = -1;
     plan_structure_popup_row_ = -1;
     plan_repeater_popup_row_ = -1;
     plan_irregularity_popup_row_ = -1;
+    plan_adhesion_popup_row_ = -1;
 }
 
 void App::reset_marker_visibility() {
@@ -542,6 +556,21 @@ void App::locate_irregularity_row_in_list(size_t row_index) {
     focus_irregularities_next_ = true;
     irregularity_list_scroll_row_ = static_cast<int>(row_index);
     irregularity_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_adhesion_row_on_plan(size_t row_index) {
+    if (row_index >= adhesion_marker_cache_.size() || !adhesion_marker_cache_[row_index]) return;
+    show_adhesion_markers_ = true;
+    const PlanAdhesionMarker& marker = *adhesion_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_adhesion_row_in_list(size_t row_index) {
+    if (row_index >= adhesion_marker_cache_.size() || !adhesion_marker_cache_[row_index]) return;
+    show_adhesions_window_ = true;
+    focus_adhesions_next_ = true;
+    adhesion_list_scroll_row_ = static_cast<int>(row_index);
+    adhesion_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::ensure_table_cache() {
@@ -637,6 +666,27 @@ void App::ensure_table_cache() {
         cached.cells[0] = std::to_string(row_index + 1);
         expand_width_for_text(cache.irregularity_distance_width, cached.cells[kIrregularityDistanceColumn]);
         cache.irregularity_rows.push_back(std::move(cached));
+    }
+
+    cache.adhesion_distance_width = 0.0f;
+    expand_width_for_text(cache.adhesion_distance_width, kAdhesionColumns[kAdhesionDistanceColumn].header);
+    cache.adhesion_rows.reserve(model_.adhesions.size());
+    for (size_t row_index = 0; row_index < model_.adhesions.size(); ++row_index) {
+        const TableRow& row = model_.adhesions[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kAdhesionColumns));
+        cached.open_path = table_cell(row, "filePath");
+        for (int i = 0; i < IM_ARRAYSIZE(kAdhesionColumns); ++i) {
+            if (i == kAdhesionFilePathColumn) {
+                cached.cells[i] = display_name_from_path(cached.open_path);
+                expand_width_for_text(cache.adhesion_file_path_width, cached.cells[i]);
+            } else {
+                cached.cells[i] = table_cell(row, kAdhesionColumns[i].key);
+            }
+        }
+        cached.cells[0] = std::to_string(row_index + 1);
+        expand_width_for_text(cache.adhesion_distance_width, cached.cells[kAdhesionDistanceColumn]);
+        cache.adhesion_rows.push_back(std::move(cached));
     }
 
     table_cache_ = std::move(cache);
@@ -1311,5 +1361,89 @@ void App::render_irregularities_window() {
         ImGui::EndTable();
     }
     focus_irregularities_next_ = false;
+    ImGui::End();
+}
+
+void App::render_adhesions_window() {
+    if (!show_adhesions_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_adhesions_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.adhesions") + "###Adhesions";
+    if (!ImGui::Begin(title.c_str(), &show_adhesions_window_)) {
+        focus_adhesions_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_adhesions_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("adhesions", IM_ARRAYSIZE(kAdhesionColumns),
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        std::string file_name_header = tr("column.file_name");
+        for (int i = 0; i < IM_ARRAYSIZE(kAdhesionColumns); ++i) {
+            float width = kAdhesionColumns[i].width;
+            if (i == kAdhesionDistanceColumn) width = table_cache_.adhesion_distance_width;
+            if (i == kAdhesionFilePathColumn) width = table_cache_.adhesion_file_path_width;
+            const char* header = i == kAdhesionFilePathColumn
+                ? file_name_header.c_str()
+                : kAdhesionColumns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(table_cache_.adhesion_rows.size());
+        if (adhesion_list_scroll_row_ >= row_count) adhesion_list_scroll_row_ = -1;
+        if (adhesion_list_highlight_row_ >= row_count) adhesion_list_highlight_row_ = -1;
+        const int scroll_target_row = adhesion_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.adhesion_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                if (row_index == adhesion_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    adhesion_list_scroll_row_ = -1;
+                }
+                ImGui::PushID(row_index);
+                for (int i = 0; i < IM_ARRAYSIZE(kAdhesionColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == kAdhesionDistanceColumn) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < adhesion_marker_cache_.size() &&
+                            adhesion_marker_cache_[marker_index].has_value();
+                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                            locate_adhesion_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
+                    if (value.empty()) continue;
+                    if (i == kAdhesionFilePathColumn) {
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.open_path);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    focus_adhesions_next_ = false;
     ImGui::End();
 }
