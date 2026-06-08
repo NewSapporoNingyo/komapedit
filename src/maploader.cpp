@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -587,6 +588,20 @@ std::vector<std::string> parse_comma_separated_fields(const std::string& line, b
     return fields;
 }
 
+int parse_sound_buffer_count(const std::string& text) {
+    std::string trimmed = trim_field_copy(text);
+    if (trimmed.empty()) return 1;
+
+    char* end = nullptr;
+    errno = 0;
+    long value = std::strtol(trimmed.c_str(), &end, 10);
+    while (end && *end && std::isspace(static_cast<unsigned char>(*end))) ++end;
+    if (end == trimmed.c_str() || errno == ERANGE || (end && *end != '\0') || value < 1) {
+        return 1;
+    }
+    return static_cast<int>(std::min<long>(value, std::numeric_limits<int>::max()));
+}
+
 struct OwnTrackEvent {
     double distance = 0.0;
     std::string key;
@@ -613,6 +628,12 @@ struct StructureLoad {
 struct StructureModel {
     std::string structure_key;
     std::string file_path;
+};
+
+struct SoundListEntry {
+    std::string sound_key;
+    std::string file_path;
+    int buffer_count = 1;
 };
 
 struct StructurePut {
@@ -763,6 +784,7 @@ struct MapContext {
     std::map<std::string, std::pair<double, double>> othertrack_range;
     std::vector<StructureLoad> structure_loads;
     std::vector<StructureModel> structure_models;
+    std::vector<SoundListEntry> sound_list;
     std::vector<StructurePut> structure_puts;
     std::vector<StructurePut> structure_betweens;
     std::vector<RepeaterEvent> repeaters;
@@ -1206,6 +1228,7 @@ private:
         }
         for (auto& row : child.structure_loads) ctx_.structure_loads.push_back(std::move(row));
         for (auto& row : child.structure_models) ctx_.structure_models.push_back(std::move(row));
+        for (auto& row : child.sound_list) ctx_.sound_list.push_back(std::move(row));
         for (auto& row : child.structure_puts) ctx_.structure_puts.push_back(std::move(row));
         for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
         for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
@@ -1489,6 +1512,8 @@ private:
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
             dispatch_structure(fn, args);
+        } else if (first == "sound" || first == "sound3d") {
+            dispatch_sound(fn, function.args);
         } else if (first == "repeater") {
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
@@ -1597,6 +1622,32 @@ private:
                 row.file_path = path_to_utf8(model_path.lexically_normal());
             }
             ctx_.structure_models.push_back(std::move(row));
+        }
+    }
+
+    void parse_sound_list(const std::string& body, const std::filesystem::path& root) {
+        std::istringstream input(body);
+        std::string line;
+        while (std::getline(input, line)) {
+            std::string trimmed = trim_field_copy(line);
+            if (trimmed.empty() || trimmed[0] == '#') continue;
+
+            std::vector<std::string> fields = parse_comma_separated_fields(line, true);
+            if (fields.empty() || fields[0].empty()) continue;
+
+            SoundListEntry row;
+            row.sound_key = fields[0];
+            if (fields.size() > 1 && !fields[1].empty()) {
+                std::filesystem::path sound_path = join_path(root, fields[1]);
+                std::error_code ec;
+                std::filesystem::path abs = std::filesystem::absolute(sound_path, ec);
+                if (!ec) sound_path = abs;
+                row.file_path = path_to_utf8(sound_path.lexically_normal());
+            }
+            if (fields.size() > 2) {
+                row.buffer_count = parse_sound_buffer_count(fields[2]);
+            }
+            ctx_.sound_list.push_back(std::move(row));
         }
     }
 
@@ -1724,6 +1775,19 @@ private:
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             ctx_.structure_betweens.push_back(row);
+        }
+    }
+
+    void dispatch_sound(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "load" || a.empty()) return;
+        std::string list_path_text = as_text(a.at(0));
+        if (list_path_text.empty()) return;
+        try {
+            std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
+            LoadedText loaded = load_header_text(path, "BveTs Sound List ", 2.0);
+            parse_sound_list(loaded.body, loaded.root);
+        } catch (const std::exception& e) {
+            log_warn(e.what());
         }
     }
 
@@ -2995,6 +3059,16 @@ std::string build_ir_json(MapContext& ctx) {
             << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"}";
     }
     out << "]}";
+
+    out << ",\"soundList\":[";
+    for (size_t i = 0; i < ctx.sound_list.size(); ++i) {
+        if (i) out << ",";
+        const auto& row = ctx.sound_list[i];
+        out << "{\"soundKey\":\"" << json_escape(row.sound_key)
+            << "\",\"filePath\":\"" << json_escape(row.file_path)
+            << "\",\"bufferCount\":" << row.buffer_count << "}";
+    }
+    out << "]";
 
     out << ",\"repeater\":[";
     for (size_t i = 0; i < ctx.repeaters.size(); ++i) {
