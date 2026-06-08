@@ -666,6 +666,13 @@ struct IrregularityChange {
     int order = 0;
 };
 
+struct BackgroundChange {
+    double distance = 0.0;
+    Value structure_key;
+    std::string file_path;
+    int order = 0;
+};
+
 struct AdhesionChange {
     double distance = 0.0;
     Value a;
@@ -760,6 +767,7 @@ struct MapContext {
     std::vector<StructurePut> structure_betweens;
     std::vector<RepeaterEvent> repeaters;
     std::vector<IrregularityChange> irregularities;
+    std::vector<BackgroundChange> backgrounds;
     std::vector<AdhesionChange> adhesions;
     std::vector<CabIlluminanceChange> cab_illuminance;
     std::vector<FogChange> fogs;
@@ -1167,6 +1175,7 @@ private:
         for (auto& row : child.structure_betweens) offset_order(row.order);
         for (auto& row : child.repeaters) offset_order(row.order);
         for (auto& row : child.irregularities) offset_order(row.order);
+        for (auto& row : child.backgrounds) offset_order(row.order);
         for (auto& row : child.adhesions) offset_order(row.order);
         for (auto& row : child.cab_illuminance) offset_order(row.order);
         for (auto& row : child.fogs) offset_order(row.order);
@@ -1201,6 +1210,7 @@ private:
         for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
         for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
         for (auto& row : child.irregularities) ctx_.irregularities.push_back(std::move(row));
+        for (auto& row : child.backgrounds) ctx_.backgrounds.push_back(std::move(row));
         for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
         for (auto& row : child.cab_illuminance) ctx_.cab_illuminance.push_back(std::move(row));
         for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
@@ -1485,6 +1495,8 @@ private:
             dispatch_repeater(fn, args);
         } else if (first == "irregularity") {
             dispatch_irregularity(fn, function.args);
+        } else if (first == "background") {
+            dispatch_background(fn, function.args);
         } else if (first == "adhesion") {
             dispatch_adhesion(fn, function.args);
         } else if (first == "cabilluminance") {
@@ -1767,6 +1779,17 @@ private:
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
         ctx_.irregularities.push_back(row);
+    }
+
+    void dispatch_background(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "change" || a.empty() || a[0].is_null()) return;
+        note_distance_use(ctx_);
+        BackgroundChange row;
+        row.distance = ctx_.distance;
+        row.structure_key = a[0];
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.backgrounds.push_back(std::move(row));
     }
 
     void dispatch_adhesion(const std::string& fn, const std::vector<Value>& a) {
@@ -2723,6 +2746,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.structure_betweens.begin(), ctx.structure_betweens.end(), by_distance);
     std::stable_sort(ctx.repeaters.begin(), ctx.repeaters.end(), by_distance);
     std::stable_sort(ctx.irregularities.begin(), ctx.irregularities.end(), by_distance);
+    std::stable_sort(ctx.backgrounds.begin(), ctx.backgrounds.end(), by_distance);
     std::stable_sort(ctx.adhesions.begin(), ctx.adhesions.end(), by_distance);
     std::stable_sort(ctx.cab_illuminance.begin(), ctx.cab_illuminance.end(), by_distance);
     std::stable_sort(ctx.fogs.begin(), ctx.fogs.end(), by_distance);
@@ -2827,6 +2851,13 @@ void append_adhesion_json(std::ostringstream& out, const AdhesionChange& row) {
         << ",\"a\":" << json_value(row.a)
         << ",\"b\":" << json_value(row.b)
         << ",\"c\":" << json_value(row.c)
+        << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_background_json(std::ostringstream& out, const BackgroundChange& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"structureKey\":" << json_value(row.structure_key)
         << ",\"filePath\":\"" << json_escape(row.file_path)
         << "\",\"order\":" << row.order << "}";
 }
@@ -3005,6 +3036,13 @@ std::string build_ir_json(MapContext& ctx) {
             << ",\"lr\":" << json_number(row.lr)
             << ",\"filePath\":\"" << json_escape(row.file_path)
             << "\",\"order\":" << row.order << "}";
+    }
+    out << "]";
+
+    out << ",\"background\":[";
+    for (size_t i = 0; i < ctx.backgrounds.size(); ++i) {
+        if (i) out << ",";
+        append_background_json(out, ctx.backgrounds[i]);
     }
     out << "]";
 

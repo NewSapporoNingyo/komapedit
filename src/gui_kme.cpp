@@ -661,6 +661,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_structure_models_window=" << bool_to_string(settings.window_visibility.show_structure_models_window) << "\n";
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
+    out << "show_backgrounds_window=" << bool_to_string(settings.window_visibility.show_backgrounds_window) << "\n";
     out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
     out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
     out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
@@ -676,6 +677,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
     out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
     out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
+    out << "show_background_markers=" << bool_to_string(settings.view_2d.show_background_markers) << "\n";
     out << "show_adhesion_markers=" << bool_to_string(settings.view_2d.show_adhesion_markers) << "\n";
     out << "show_cab_illuminance_markers=" << bool_to_string(settings.view_2d.show_cab_illuminance_markers) << "\n";
     out << "show_fog_markers=" << bool_to_string(settings.view_2d.show_fog_markers) << "\n";
@@ -754,6 +756,8 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
         } else if (key == "show_irregularities_window") {
             settings.window_visibility.show_irregularities_window = parse_bool(value, settings.window_visibility.show_irregularities_window);
+        } else if (key == "show_backgrounds_window" || key == "show_background_window") {
+            settings.window_visibility.show_backgrounds_window = parse_bool(value, settings.window_visibility.show_backgrounds_window);
         } else if (key == "show_adhesions_window" || key == "show_adhesion_window") {
             settings.window_visibility.show_adhesions_window = parse_bool(value, settings.window_visibility.show_adhesions_window);
         } else if (key == "show_cab_illuminance_window" || key == "show_cabilluminance_window") {
@@ -791,6 +795,9 @@ UserSettings load_user_settings() {
         } else if (key == "show_irregularity_markers" || key == "show_irregularities" || key == "show_irregularity_points") {
             view_2d_keys_seen.insert("show_irregularity_markers");
             settings.view_2d.show_irregularity_markers = parse_bool(value, settings.view_2d.show_irregularity_markers);
+        } else if (key == "show_background_markers" || key == "show_backgrounds" || key == "show_background_points") {
+            view_2d_keys_seen.insert("show_background_markers");
+            settings.view_2d.show_background_markers = parse_bool(value, settings.view_2d.show_background_markers);
         } else if (key == "show_adhesion_markers" || key == "show_adhesions" || key == "show_adhesion_points") {
             view_2d_keys_seen.insert("show_adhesion_markers");
             settings.view_2d.show_adhesion_markers = parse_bool(value, settings.view_2d.show_adhesion_markers);
@@ -823,7 +830,7 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 17) save_user_settings(settings);
+    if (view_2d_keys_seen.size() < 18) save_user_settings(settings);
     return settings;
 }
 
@@ -1504,6 +1511,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     model.structures_between = make_table_rows(structure.at("between_data"));
     model.repeaters = make_table_rows(root.at("repeater"));
     model.irregularities = make_table_rows(root.at("irregularity"));
+    model.backgrounds = make_table_rows(root.at("background"));
     model.adhesions = make_table_rows(root.at("adhesion"));
     model.cab_illuminance = make_table_rows(root.at("cabIlluminance"));
     model.fogs = make_table_rows(root.at("fog"));
@@ -1897,6 +1905,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("StructureModels", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
+    ImGui::DockBuilderDockWindow("Backgrounds", dock_right);
     ImGui::DockBuilderDockWindow("Adhesions", dock_right);
     ImGui::DockBuilderDockWindow("CabIlluminance", dock_right);
     ImGui::DockBuilderDockWindow("Fogs", dock_right);
@@ -1918,6 +1927,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_structure_models_window = show_structure_models_window_;
     visibility.show_repeaters_window = show_repeaters_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
+    visibility.show_backgrounds_window = show_backgrounds_window_;
     visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
     visibility.show_fogs_window = show_fogs_window_;
@@ -1933,6 +1943,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_structure_models_window_ = visibility.show_structure_models_window;
     show_repeaters_window_ = visibility.show_repeaters_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
+    show_backgrounds_window_ = visibility.show_backgrounds_window;
     show_adhesions_window_ = visibility.show_adhesions_window;
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
     show_fogs_window_ = visibility.show_fogs_window;
@@ -1951,6 +1962,7 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_profile_other = show_profile_other_;
     view.show_speedlimits = show_speedlimits_;
     view.show_irregularity_markers = show_irregularity_markers_;
+    view.show_background_markers = show_background_markers_;
     view.show_adhesion_markers = show_adhesion_markers_;
     view.show_cab_illuminance_markers = show_cab_illuminance_markers_;
     view.show_fog_markers = show_fog_markers_;
@@ -1972,6 +1984,7 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_profile_other_ = settings.show_profile_other;
     show_speedlimits_ = settings.show_speedlimits;
     show_irregularity_markers_ = settings.show_irregularity_markers;
+    show_background_markers_ = settings.show_background_markers;
     show_adhesion_markers_ = settings.show_adhesion_markers;
     show_cab_illuminance_markers_ = settings.show_cab_illuminance_markers;
     show_fog_markers_ = settings.show_fog_markers;
@@ -2089,6 +2102,9 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("frame.irregularities").c_str(), nullptr, false, !show_irregularities_window_)) {
             show_irregularities_window_ = true;
         }
+        if (ImGui::MenuItem(tr("frame.backgrounds").c_str(), nullptr, false, !show_backgrounds_window_)) {
+            show_backgrounds_window_ = true;
+        }
         if (ImGui::MenuItem(tr("frame.adhesions").c_str(), nullptr, false, !show_adhesions_window_)) {
             show_adhesions_window_ = true;
         }
@@ -2119,6 +2135,7 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
+        ImGui::MenuItem(tr("chk.background_markers").c_str(), nullptr, &show_background_markers_);
         ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
         ImGui::MenuItem(tr("chk.cab_illuminance_markers").c_str(), nullptr, &show_cab_illuminance_markers_);
         ImGui::MenuItem(tr("chk.fog_markers").c_str(), nullptr, &show_fog_markers_);
@@ -2649,6 +2666,7 @@ void App::render() {
     render_structure_models_window();
     render_repeaters_window();
     render_irregularities_window();
+    render_backgrounds_window();
     render_adhesions_window();
     render_cab_illuminance_window();
     render_fogs_window();
@@ -3087,6 +3105,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         *out << "loaded own_rows=" << app.model_.own.rows
              << " visible_othertracks=" << visible_other_count
              << " visible_other_rows=" << visible_other_rows
+             << " backgrounds=" << app.model_.backgrounds.size()
+             << " background_markers=" << app.background_marker_cache_.size()
              << " repeaters=" << app.repeater_marker_cache_.size()
              << " selected_repeaters=" << app.repeater_row_visible_.size()
              << " repeater_chunks=" << chunk_count

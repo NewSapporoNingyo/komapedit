@@ -19,6 +19,9 @@ struct Translation {
     Translation() {
         en = {
             {"app.title", "komapedit"},
+            {"frame.backgrounds", "Background Change Point List"},
+            {"chk.background_markers", "Background Change Points"},
+            {"menu.locate_in_background_list", "Locate in Background Change Point List"},
             {"menu.file", "File"}, {"menu.options", "Options"}, {"menu.map_info", "Map Info"}, {"menu.view_2d", "2D View"}, {"menu.lang", "Language"}, {"menu.help", "Help"},
             {"menu.open", "Open..."}, {"menu.recent_maps", "Recent Maps"}, {"menu.none", "None"}, {"menu.clear_recent_maps", "Clear List"}, {"menu.reload", "Reload"}, {"menu.export_csv", "Export CSV..."}, {"menu.exit", "Exit"},
             {"menu.controlpoints", "Control Points..."}, {"menu.plotlimit", "Plot Range..."}, {"menu.ui_settings", "UI Settings..."}, {"menu.font_size", "UI Settings..."}, {"menu.about", "About"},
@@ -58,6 +61,9 @@ struct Translation {
         };
         zh = {
             {"app.title", "komapedit"},
+            {"frame.backgrounds", "背景变化点列表"},
+            {"chk.background_markers", "背景变化点"},
+            {"menu.locate_in_background_list", "定位至背景变化点列表"},
             {"menu.file", "文件"}, {"menu.options", "选项"}, {"menu.map_info", "地图信息"}, {"menu.view_2d", "2D视图"}, {"menu.lang", "语言"}, {"menu.help", "帮助"},
             {"menu.open", "打开..."}, {"menu.recent_maps", "最近打开的地图"}, {"menu.none", "无"}, {"menu.clear_recent_maps", "清除列表"}, {"menu.reload", "重新加载"}, {"menu.export_csv", "导出 CSV..."}, {"menu.exit", "退出"},
             {"menu.controlpoints", "控制点间隔..."}, {"menu.plotlimit", "绘图范围..."}, {"menu.ui_settings", "用户界面设置..."}, {"menu.font_size", "用户界面设置..."}, {"menu.about", "关于"},
@@ -97,6 +103,9 @@ struct Translation {
         };
         ja = {
             {"app.title", "komapedit"},
+            {"frame.backgrounds", "背景変化点リスト"},
+            {"chk.background_markers", "背景変化点"},
+            {"menu.locate_in_background_list", "背景変化点リストへ移動"},
             {"menu.file", "ファイル"}, {"menu.options", "オプション"}, {"menu.map_info", "マップ情報"}, {"menu.view_2d", "2Dプロット"}, {"menu.lang", "言語"}, {"menu.help", "ヘルプ"},
             {"menu.open", "開く..."}, {"menu.recent_maps", "最近開いたマップ"}, {"menu.none", "なし"}, {"menu.clear_recent_maps", "リストをクリア"}, {"menu.reload", "再読込"}, {"menu.export_csv", "CSV 出力..."}, {"menu.exit", "終了"},
             {"menu.controlpoints", "制御点間隔..."}, {"menu.plotlimit", "描画範囲..."}, {"menu.ui_settings", "UI設定..."}, {"menu.font_size", "UI設定..."}, {"menu.about", "このアプリについて"},
