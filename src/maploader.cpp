@@ -682,6 +682,16 @@ struct CabIlluminanceChange {
     int order = 0;
 };
 
+struct FogChange {
+    double distance = 0.0;
+    Value density;
+    Value red;
+    Value green;
+    Value blue;
+    std::string file_path;
+    int order = 0;
+};
+
 struct SpeedLimitEvent {
     double distance = 0.0;
     Value speed;
@@ -752,6 +762,7 @@ struct MapContext {
     std::vector<IrregularityChange> irregularities;
     std::vector<AdhesionChange> adhesions;
     std::vector<CabIlluminanceChange> cab_illuminance;
+    std::vector<FogChange> fogs;
     std::vector<SpeedLimitEvent> speedlimits;
     Matrix owntrack_buffer;
     Matrix curveradius_buffer;
@@ -1158,6 +1169,7 @@ private:
         for (auto& row : child.irregularities) offset_order(row.order);
         for (auto& row : child.adhesions) offset_order(row.order);
         for (auto& row : child.cab_illuminance) offset_order(row.order);
+        for (auto& row : child.fogs) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
         if (child.has_distance_assignment) {
@@ -1191,6 +1203,7 @@ private:
         for (auto& row : child.irregularities) ctx_.irregularities.push_back(std::move(row));
         for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
         for (auto& row : child.cab_illuminance) ctx_.cab_illuminance.push_back(std::move(row));
+        for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
     }
 
@@ -1476,6 +1489,8 @@ private:
             dispatch_adhesion(fn, function.args);
         } else if (first == "cabilluminance") {
             dispatch_cab_illuminance(fn, function.args);
+        } else if (first == "fog") {
+            dispatch_fog(fn, function.args);
         }
     }
 
@@ -1778,6 +1793,20 @@ private:
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
         ctx_.cab_illuminance.push_back(std::move(row));
+    }
+
+    void dispatch_fog(const std::string& fn, const std::vector<Value>& a) {
+        if ((fn != "interpolate" && fn != "set") || a.empty()) return;
+        note_distance_use(ctx_);
+        FogChange row;
+        row.distance = ctx_.distance;
+        row.density = a[0];
+        if (a.size() > 1) row.red = a[1];
+        if (a.size() > 2) row.green = a[2];
+        if (a.size() > 3) row.blue = a[3];
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.fogs.push_back(std::move(row));
     }
 };
 
@@ -2696,6 +2725,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.irregularities.begin(), ctx.irregularities.end(), by_distance);
     std::stable_sort(ctx.adhesions.begin(), ctx.adhesions.end(), by_distance);
     std::stable_sort(ctx.cab_illuminance.begin(), ctx.cab_illuminance.end(), by_distance);
+    std::stable_sort(ctx.fogs.begin(), ctx.fogs.end(), by_distance);
     std::stable_sort(ctx.speedlimits.begin(), ctx.speedlimits.end(), by_distance);
     std::stable_sort(ctx.station_puts.begin(), ctx.station_puts.end(), by_distance);
 }
@@ -2804,6 +2834,16 @@ void append_adhesion_json(std::ostringstream& out, const AdhesionChange& row) {
 void append_cab_illuminance_json(std::ostringstream& out, const CabIlluminanceChange& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"value\":" << json_value(row.value)
+        << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_fog_json(std::ostringstream& out, const FogChange& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"density\":" << json_value(row.density)
+        << ",\"red\":" << json_value(row.red)
+        << ",\"green\":" << json_value(row.green)
+        << ",\"blue\":" << json_value(row.blue)
         << ",\"filePath\":\"" << json_escape(row.file_path)
         << "\",\"order\":" << row.order << "}";
 }
@@ -2979,6 +3019,13 @@ std::string build_ir_json(MapContext& ctx) {
     for (size_t i = 0; i < ctx.cab_illuminance.size(); ++i) {
         if (i) out << ",";
         append_cab_illuminance_json(out, ctx.cab_illuminance[i]);
+    }
+    out << "]";
+
+    out << ",\"fog\":[";
+    for (size_t i = 0; i < ctx.fogs.size(); ++i) {
+        if (i) out << ",";
+        append_fog_json(out, ctx.fogs[i]);
     }
     out << "]";
 

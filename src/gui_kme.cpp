@@ -663,6 +663,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
     out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
     out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
+    out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
     out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
     out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
     out << "\n[View2D]\n";
@@ -677,6 +678,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
     out << "show_adhesion_markers=" << bool_to_string(settings.view_2d.show_adhesion_markers) << "\n";
     out << "show_cab_illuminance_markers=" << bool_to_string(settings.view_2d.show_cab_illuminance_markers) << "\n";
+    out << "show_fog_markers=" << bool_to_string(settings.view_2d.show_fog_markers) << "\n";
     out << "show_profile_graph=" << bool_to_string(settings.view_2d.show_profile_graph) << "\n";
     out << "show_radius_graph=" << bool_to_string(settings.view_2d.show_radius_graph) << "\n";
     out << "show_background_image=" << bool_to_string(settings.view_2d.show_background_image) << "\n";
@@ -756,6 +758,8 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_adhesions_window = parse_bool(value, settings.window_visibility.show_adhesions_window);
         } else if (key == "show_cab_illuminance_window" || key == "show_cabilluminance_window") {
             settings.window_visibility.show_cab_illuminance_window = parse_bool(value, settings.window_visibility.show_cab_illuminance_window);
+        } else if (key == "show_fogs_window" || key == "show_fog_window") {
+            settings.window_visibility.show_fogs_window = parse_bool(value, settings.window_visibility.show_fogs_window);
         } else if (key == "show_plots_window") {
             settings.window_visibility.show_plots_window = parse_bool(value, settings.window_visibility.show_plots_window);
         } else if (key == "show_model_preview_window") {
@@ -793,6 +797,9 @@ UserSettings load_user_settings() {
         } else if (key == "show_cab_illuminance_markers" || key == "show_cabilluminance_markers" || key == "show_cab_illuminance_points") {
             view_2d_keys_seen.insert("show_cab_illuminance_markers");
             settings.view_2d.show_cab_illuminance_markers = parse_bool(value, settings.view_2d.show_cab_illuminance_markers);
+        } else if (key == "show_fog_markers" || key == "show_fogs" || key == "show_fog_points") {
+            view_2d_keys_seen.insert("show_fog_markers");
+            settings.view_2d.show_fog_markers = parse_bool(value, settings.view_2d.show_fog_markers);
         } else if (key == "show_profile_graph" || key == "show_gradient_graph") {
             view_2d_keys_seen.insert("show_profile_graph");
             settings.view_2d.show_profile_graph = parse_bool(value, settings.view_2d.show_profile_graph);
@@ -816,7 +823,7 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 16) save_user_settings(settings);
+    if (view_2d_keys_seen.size() < 17) save_user_settings(settings);
     return settings;
 }
 
@@ -1499,6 +1506,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     model.irregularities = make_table_rows(root.at("irregularity"));
     model.adhesions = make_table_rows(root.at("adhesion"));
     model.cab_illuminance = make_table_rows(root.at("cabIlluminance"));
+    model.fogs = make_table_rows(root.at("fog"));
 
     std::map<std::string, TableRow> station_rows_by_key;
     const auto& station_list = station.at("list");
@@ -1891,6 +1899,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
     ImGui::DockBuilderDockWindow("Adhesions", dock_right);
     ImGui::DockBuilderDockWindow("CabIlluminance", dock_right);
+    ImGui::DockBuilderDockWindow("Fogs", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
@@ -1911,6 +1920,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_irregularities_window = show_irregularities_window_;
     visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
+    visibility.show_fogs_window = show_fogs_window_;
     visibility.show_plots_window = show_plots_window_;
     visibility.show_model_preview_window = show_model_preview_window_;
     return visibility;
@@ -1925,6 +1935,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_irregularities_window_ = visibility.show_irregularities_window;
     show_adhesions_window_ = visibility.show_adhesions_window;
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
+    show_fogs_window_ = visibility.show_fogs_window;
     show_plots_window_ = visibility.show_plots_window;
     show_model_preview_window_ = visibility.show_model_preview_window;
 }
@@ -1942,6 +1953,7 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_irregularity_markers = show_irregularity_markers_;
     view.show_adhesion_markers = show_adhesion_markers_;
     view.show_cab_illuminance_markers = show_cab_illuminance_markers_;
+    view.show_fog_markers = show_fog_markers_;
     view.show_profile_graph = show_profile_graph_;
     view.show_radius_graph = show_radius_graph_;
     view.show_background_image = bg_show_;
@@ -1962,6 +1974,7 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_irregularity_markers_ = settings.show_irregularity_markers;
     show_adhesion_markers_ = settings.show_adhesion_markers;
     show_cab_illuminance_markers_ = settings.show_cab_illuminance_markers;
+    show_fog_markers_ = settings.show_fog_markers;
     show_profile_graph_ = settings.show_profile_graph;
     show_radius_graph_ = settings.show_radius_graph;
     bg_show_ = settings.show_background_image;
@@ -2082,6 +2095,9 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("frame.cab_illuminance").c_str(), nullptr, false, !show_cab_illuminance_window_)) {
             show_cab_illuminance_window_ = true;
         }
+        if (ImGui::MenuItem(tr("frame.fogs").c_str(), nullptr, false, !show_fogs_window_)) {
+            show_fogs_window_ = true;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
@@ -2105,6 +2121,7 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
         ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
         ImGui::MenuItem(tr("chk.cab_illuminance_markers").c_str(), nullptr, &show_cab_illuminance_markers_);
+        ImGui::MenuItem(tr("chk.fog_markers").c_str(), nullptr, &show_fog_markers_);
         ImGui::Separator();
         ImGui::MenuItem(tr("frame.bgimage").c_str(), nullptr, false, false);
         if (ImGui::MenuItem(tr("button.import_bg").c_str())) {
@@ -2634,6 +2651,7 @@ void App::render() {
     render_irregularities_window();
     render_adhesions_window();
     render_cab_illuminance_window();
+    render_fogs_window();
     render_popups();
     save_runtime_settings_if_changed();
 }
