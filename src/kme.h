@@ -136,10 +136,13 @@ struct TableUiCache {
     std::vector<CachedTableRow> cab_illuminance_rows;
     std::vector<CachedTableRow> fog_rows;
     std::vector<CachedTableRow> sound_list_rows;
+    std::vector<CachedTableRow> sound_3d_list_rows;
     float structure_file_path_width = 200.0f;
     float structure_model_file_path_width = 200.0f;
     float sound_list_file_path_width = 200.0f;
     float sound_list_buffer_count_width = 80.0f;
+    float sound_3d_list_file_path_width = 200.0f;
+    float sound_3d_list_buffer_count_width = 80.0f;
     float repeater_distance_width = 110.0f;
     float repeater_interval_width = 70.0f;
     float repeater_file_path_width = 200.0f;
@@ -453,6 +456,7 @@ struct WindowVisibilitySettings {
     bool show_structures_window = false;
     bool show_structure_models_window = false;
     bool show_sound_list_window = false;
+    bool show_sound_3d_list_window = false;
     bool show_repeaters_window = false;
     bool show_irregularities_window = false;
     bool show_rolling_noises_window = false;
@@ -470,6 +474,7 @@ struct WindowVisibilitySettings {
             show_structures_window == other.show_structures_window &&
             show_structure_models_window == other.show_structure_models_window &&
             show_sound_list_window == other.show_sound_list_window &&
+            show_sound_3d_list_window == other.show_sound_3d_list_window &&
             show_repeaters_window == other.show_repeaters_window &&
             show_irregularities_window == other.show_irregularities_window &&
             show_rolling_noises_window == other.show_rolling_noises_window &&
@@ -692,6 +697,7 @@ private:
     bool show_structures_window_ = false;
     bool show_structure_models_window_ = false;
     bool show_sound_list_window_ = false;
+    bool show_sound_3d_list_window_ = false;
     bool show_repeaters_window_ = false;
     bool show_irregularities_window_ = false;
     bool show_rolling_noises_window_ = false;
@@ -829,6 +835,7 @@ private:
     void render_structures_window();
     void render_structure_models_window();
     void render_sound_list_window();
+    void render_sound_3d_list_window();
     void render_repeaters_window();
     void render_irregularities_window();
     void render_rolling_noises_window();

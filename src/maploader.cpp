@@ -634,6 +634,7 @@ struct SoundListEntry {
     std::string sound_key;
     std::string file_path;
     int buffer_count = 1;
+    bool is_3d = false;
 };
 
 struct RollingNoiseChange {
@@ -1533,7 +1534,7 @@ private:
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
             dispatch_structure(fn, args);
         } else if (first == "sound" || first == "sound3d") {
-            dispatch_sound(fn, function.args);
+            dispatch_sound(fn, function.args, first == "sound3d");
         } else if (first == "rollingnoise") {
             dispatch_rolling_noise(fn, function.args);
         } else if (first == "jointnoise") {
@@ -1649,7 +1650,7 @@ private:
         }
     }
 
-    void parse_sound_list(const std::string& body, const std::filesystem::path& root) {
+    void parse_sound_list(const std::string& body, const std::filesystem::path& root, bool is_3d) {
         std::istringstream input(body);
         std::string line;
         while (std::getline(input, line)) {
@@ -1661,6 +1662,7 @@ private:
 
             SoundListEntry row;
             row.sound_key = fields[0];
+            row.is_3d = is_3d;
             if (fields.size() > 1 && !fields[1].empty()) {
                 std::filesystem::path sound_path = join_path(root, fields[1]);
                 std::error_code ec;
@@ -1802,14 +1804,14 @@ private:
         }
     }
 
-    void dispatch_sound(const std::string& fn, const std::vector<Value>& a) {
+    void dispatch_sound(const std::string& fn, const std::vector<Value>& a, bool is_3d) {
         if (fn != "load" || a.empty()) return;
         std::string list_path_text = as_text(a.at(0));
         if (list_path_text.empty()) return;
         try {
             std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
             LoadedText loaded = load_header_text(path, "BveTs Sound List ", 2.0);
-            parse_sound_list(loaded.body, loaded.root);
+            parse_sound_list(loaded.body, loaded.root, is_3d);
         } catch (const std::exception& e) {
             log_warn(e.what());
         }
@@ -3114,7 +3116,8 @@ std::string build_ir_json(MapContext& ctx) {
         const auto& row = ctx.sound_list[i];
         out << "{\"soundKey\":\"" << json_escape(row.sound_key)
             << "\",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"bufferCount\":" << row.buffer_count << "}";
+            << "\",\"bufferCount\":" << row.buffer_count
+            << ",\"is3D\":" << (row.is_3d ? "true" : "false") << "}";
     }
     out << "]";
 

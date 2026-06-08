@@ -660,6 +660,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_structures_window=" << bool_to_string(settings.window_visibility.show_structures_window) << "\n";
     out << "show_structure_models_window=" << bool_to_string(settings.window_visibility.show_structure_models_window) << "\n";
     out << "show_sound_list_window=" << bool_to_string(settings.window_visibility.show_sound_list_window) << "\n";
+    out << "show_sound_3d_list_window=" << bool_to_string(settings.window_visibility.show_sound_3d_list_window) << "\n";
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
     out << "show_rolling_noises_window=" << bool_to_string(settings.window_visibility.show_rolling_noises_window) << "\n";
@@ -759,6 +760,8 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_structure_models_window = parse_bool(value, settings.window_visibility.show_structure_models_window);
         } else if (key == "show_sound_list_window" || key == "show_soundlist_window") {
             settings.window_visibility.show_sound_list_window = parse_bool(value, settings.window_visibility.show_sound_list_window);
+        } else if (key == "show_sound_3d_list_window" || key == "show_sound3d_list_window") {
+            settings.window_visibility.show_sound_3d_list_window = parse_bool(value, settings.window_visibility.show_sound_3d_list_window);
         } else if (key == "show_repeaters_window") {
             settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
         } else if (key == "show_irregularities_window") {
@@ -1924,6 +1927,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Structures", dock_right);
     ImGui::DockBuilderDockWindow("StructureModels", dock_right);
     ImGui::DockBuilderDockWindow("SoundList", dock_right);
+    ImGui::DockBuilderDockWindow("Sound3DList", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
     ImGui::DockBuilderDockWindow("RollingNoises", dock_right);
@@ -1949,6 +1953,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_structures_window = show_structures_window_;
     visibility.show_structure_models_window = show_structure_models_window_;
     visibility.show_sound_list_window = show_sound_list_window_;
+    visibility.show_sound_3d_list_window = show_sound_3d_list_window_;
     visibility.show_repeaters_window = show_repeaters_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
     visibility.show_rolling_noises_window = show_rolling_noises_window_;
@@ -1968,6 +1973,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_structures_window_ = visibility.show_structures_window;
     show_structure_models_window_ = visibility.show_structure_models_window;
     show_sound_list_window_ = visibility.show_sound_list_window;
+    show_sound_3d_list_window_ = visibility.show_sound_3d_list_window;
     show_repeaters_window_ = visibility.show_repeaters_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
     show_rolling_noises_window_ = visibility.show_rolling_noises_window;
@@ -2131,6 +2137,9 @@ void App::render_menu() {
         }
         if (ImGui::MenuItem(tr("frame.sound_list").c_str(), nullptr, false, !show_sound_list_window_)) {
             show_sound_list_window_ = true;
+        }
+        if (ImGui::MenuItem(tr("frame.sound_3d_list").c_str(), nullptr, false, !show_sound_3d_list_window_)) {
+            show_sound_3d_list_window_ = true;
         }
         if (ImGui::MenuItem(tr("button.repeater_list").c_str(), nullptr, false, !show_repeaters_window_)) {
             show_repeaters_window_ = true;
@@ -2709,6 +2718,7 @@ void App::render() {
     render_structures_window();
     render_structure_models_window();
     render_sound_list_window();
+    render_sound_3d_list_window();
     render_repeaters_window();
     render_irregularities_window();
     render_rolling_noises_window();
