@@ -2136,6 +2136,9 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("menu.online_docs").c_str())) {
             ShellExecuteW(nullptr, L"open", L"https://github.com/NewSapporoNingyo/komapedit", nullptr, nullptr, SW_SHOWNORMAL);
         }
+        if (ImGui::MenuItem(tr("menu.report_bugs").c_str())) {
+            ShellExecuteW(nullptr, L"open", L"https://github.com/NewSapporoNingyo/komapedit/issues/new", nullptr, nullptr, SW_SHOWNORMAL);
+        }
         if (ImGui::MenuItem(tr("menu.about").c_str())) show_about_popup_ = true;
         ImGui::EndMenu();
     }
