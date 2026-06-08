@@ -662,6 +662,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_sound_list_window=" << bool_to_string(settings.window_visibility.show_sound_list_window) << "\n";
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
+    out << "show_rolling_noises_window=" << bool_to_string(settings.window_visibility.show_rolling_noises_window) << "\n";
     out << "show_backgrounds_window=" << bool_to_string(settings.window_visibility.show_backgrounds_window) << "\n";
     out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
     out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
@@ -678,6 +679,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
     out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
     out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
+    out << "show_rolling_noise_markers=" << bool_to_string(settings.view_2d.show_rolling_noise_markers) << "\n";
     out << "show_background_markers=" << bool_to_string(settings.view_2d.show_background_markers) << "\n";
     out << "show_adhesion_markers=" << bool_to_string(settings.view_2d.show_adhesion_markers) << "\n";
     out << "show_cab_illuminance_markers=" << bool_to_string(settings.view_2d.show_cab_illuminance_markers) << "\n";
@@ -759,6 +761,8 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
         } else if (key == "show_irregularities_window") {
             settings.window_visibility.show_irregularities_window = parse_bool(value, settings.window_visibility.show_irregularities_window);
+        } else if (key == "show_rolling_noises_window" || key == "show_rolling_noise_window") {
+            settings.window_visibility.show_rolling_noises_window = parse_bool(value, settings.window_visibility.show_rolling_noises_window);
         } else if (key == "show_backgrounds_window" || key == "show_background_window") {
             settings.window_visibility.show_backgrounds_window = parse_bool(value, settings.window_visibility.show_backgrounds_window);
         } else if (key == "show_adhesions_window" || key == "show_adhesion_window") {
@@ -798,6 +802,9 @@ UserSettings load_user_settings() {
         } else if (key == "show_irregularity_markers" || key == "show_irregularities" || key == "show_irregularity_points") {
             view_2d_keys_seen.insert("show_irregularity_markers");
             settings.view_2d.show_irregularity_markers = parse_bool(value, settings.view_2d.show_irregularity_markers);
+        } else if (key == "show_rolling_noise_markers" || key == "show_rolling_noises" || key == "show_rolling_noise_points") {
+            view_2d_keys_seen.insert("show_rolling_noise_markers");
+            settings.view_2d.show_rolling_noise_markers = parse_bool(value, settings.view_2d.show_rolling_noise_markers);
         } else if (key == "show_background_markers" || key == "show_backgrounds" || key == "show_background_points") {
             view_2d_keys_seen.insert("show_background_markers");
             settings.view_2d.show_background_markers = parse_bool(value, settings.view_2d.show_background_markers);
@@ -833,7 +840,7 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 18) save_user_settings(settings);
+    if (view_2d_keys_seen.size() < 19) save_user_settings(settings);
     return settings;
 }
 
@@ -1515,6 +1522,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     model.structures_between = make_table_rows(structure.at("between_data"));
     model.repeaters = make_table_rows(root.at("repeater"));
     model.irregularities = make_table_rows(root.at("irregularity"));
+    model.rolling_noises = make_table_rows(root.at("rollingNoise"));
     model.backgrounds = make_table_rows(root.at("background"));
     model.adhesions = make_table_rows(root.at("adhesion"));
     model.cab_illuminance = make_table_rows(root.at("cabIlluminance"));
@@ -1910,6 +1918,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("SoundList", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
+    ImGui::DockBuilderDockWindow("RollingNoises", dock_right);
     ImGui::DockBuilderDockWindow("Backgrounds", dock_right);
     ImGui::DockBuilderDockWindow("Adhesions", dock_right);
     ImGui::DockBuilderDockWindow("CabIlluminance", dock_right);
@@ -1933,6 +1942,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_sound_list_window = show_sound_list_window_;
     visibility.show_repeaters_window = show_repeaters_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
+    visibility.show_rolling_noises_window = show_rolling_noises_window_;
     visibility.show_backgrounds_window = show_backgrounds_window_;
     visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
@@ -1950,6 +1960,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_sound_list_window_ = visibility.show_sound_list_window;
     show_repeaters_window_ = visibility.show_repeaters_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
+    show_rolling_noises_window_ = visibility.show_rolling_noises_window;
     show_backgrounds_window_ = visibility.show_backgrounds_window;
     show_adhesions_window_ = visibility.show_adhesions_window;
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
@@ -1969,6 +1980,7 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_profile_other = show_profile_other_;
     view.show_speedlimits = show_speedlimits_;
     view.show_irregularity_markers = show_irregularity_markers_;
+    view.show_rolling_noise_markers = show_rolling_noise_markers_;
     view.show_background_markers = show_background_markers_;
     view.show_adhesion_markers = show_adhesion_markers_;
     view.show_cab_illuminance_markers = show_cab_illuminance_markers_;
@@ -1991,6 +2003,7 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_profile_other_ = settings.show_profile_other;
     show_speedlimits_ = settings.show_speedlimits;
     show_irregularity_markers_ = settings.show_irregularity_markers;
+    show_rolling_noise_markers_ = settings.show_rolling_noise_markers;
     show_background_markers_ = settings.show_background_markers;
     show_adhesion_markers_ = settings.show_adhesion_markers;
     show_cab_illuminance_markers_ = settings.show_cab_illuminance_markers;
@@ -2112,6 +2125,9 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("frame.irregularities").c_str(), nullptr, false, !show_irregularities_window_)) {
             show_irregularities_window_ = true;
         }
+        if (ImGui::MenuItem(tr("frame.rolling_noises").c_str(), nullptr, false, !show_rolling_noises_window_)) {
+            show_rolling_noises_window_ = true;
+        }
         if (ImGui::MenuItem(tr("frame.backgrounds").c_str(), nullptr, false, !show_backgrounds_window_)) {
             show_backgrounds_window_ = true;
         }
@@ -2145,6 +2161,7 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
+        ImGui::MenuItem(tr("chk.rolling_noise_markers").c_str(), nullptr, &show_rolling_noise_markers_);
         ImGui::MenuItem(tr("chk.background_markers").c_str(), nullptr, &show_background_markers_);
         ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
         ImGui::MenuItem(tr("chk.cab_illuminance_markers").c_str(), nullptr, &show_cab_illuminance_markers_);
@@ -2677,6 +2694,7 @@ void App::render() {
     render_sound_list_window();
     render_repeaters_window();
     render_irregularities_window();
+    render_rolling_noises_window();
     render_backgrounds_window();
     render_adhesions_window();
     render_cab_illuminance_window();
@@ -3116,6 +3134,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         *out << "loaded own_rows=" << app.model_.own.rows
              << " visible_othertracks=" << visible_other_count
              << " visible_other_rows=" << visible_other_rows
+             << " rolling_noises=" << app.model_.rolling_noises.size()
+             << " rolling_noise_markers=" << app.rolling_noise_marker_cache_.size()
              << " backgrounds=" << app.model_.backgrounds.size()
              << " background_markers=" << app.background_marker_cache_.size()
              << " repeaters=" << app.repeater_marker_cache_.size()

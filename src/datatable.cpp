@@ -368,6 +368,15 @@ static const TableColumnDef kIrregularityColumns[] = {
 constexpr int kIrregularityDistanceColumn = 1;
 constexpr int kIrregularityFilePathColumn = IM_ARRAYSIZE(kIrregularityColumns) - 1;
 
+static const TableColumnDef kRollingNoiseColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"index", "index", 70.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kRollingNoiseDistanceColumn = 1;
+constexpr int kRollingNoiseFilePathColumn = IM_ARRAYSIZE(kRollingNoiseColumns) - 1;
+
 static const TableColumnDef kBackgroundColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
@@ -541,6 +550,8 @@ void App::invalidate_table_cache() {
     repeater_list_highlight_row_ = -1;
     irregularity_list_scroll_row_ = -1;
     irregularity_list_highlight_row_ = -1;
+    rolling_noise_list_scroll_row_ = -1;
+    rolling_noise_list_highlight_row_ = -1;
     background_list_scroll_row_ = -1;
     background_list_highlight_row_ = -1;
     adhesion_list_scroll_row_ = -1;
@@ -552,6 +563,7 @@ void App::invalidate_table_cache() {
     plan_structure_popup_row_ = -1;
     plan_repeater_popup_row_ = -1;
     plan_irregularity_popup_row_ = -1;
+    plan_rolling_noise_popup_row_ = -1;
     plan_background_popup_row_ = -1;
     plan_adhesion_popup_row_ = -1;
     plan_cab_illuminance_popup_row_ = -1;
@@ -615,6 +627,21 @@ void App::locate_irregularity_row_in_list(size_t row_index) {
     focus_irregularities_next_ = true;
     irregularity_list_scroll_row_ = static_cast<int>(row_index);
     irregularity_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_rolling_noise_row_on_plan(size_t row_index) {
+    if (row_index >= rolling_noise_marker_cache_.size() || !rolling_noise_marker_cache_[row_index]) return;
+    show_rolling_noise_markers_ = true;
+    const PlanRollingNoiseMarker& marker = *rolling_noise_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_rolling_noise_row_in_list(size_t row_index) {
+    if (row_index >= rolling_noise_marker_cache_.size() || !rolling_noise_marker_cache_[row_index]) return;
+    show_rolling_noises_window_ = true;
+    focus_rolling_noises_next_ = true;
+    rolling_noise_list_scroll_row_ = static_cast<int>(row_index);
+    rolling_noise_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::locate_background_row_on_plan(size_t row_index) {
@@ -790,6 +817,27 @@ void App::ensure_table_cache() {
         cached.cells[0] = std::to_string(row_index + 1);
         expand_width_for_text(cache.irregularity_distance_width, cached.cells[kIrregularityDistanceColumn]);
         cache.irregularity_rows.push_back(std::move(cached));
+    }
+
+    cache.rolling_noise_distance_width = 0.0f;
+    expand_width_for_text(cache.rolling_noise_distance_width, kRollingNoiseColumns[kRollingNoiseDistanceColumn].header);
+    cache.rolling_noise_rows.reserve(model_.rolling_noises.size());
+    for (size_t row_index = 0; row_index < model_.rolling_noises.size(); ++row_index) {
+        const TableRow& row = model_.rolling_noises[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kRollingNoiseColumns));
+        cached.open_path = table_cell(row, "filePath");
+        for (int i = 0; i < IM_ARRAYSIZE(kRollingNoiseColumns); ++i) {
+            if (i == kRollingNoiseFilePathColumn) {
+                cached.cells[i] = display_name_from_path(cached.open_path);
+                expand_width_for_text(cache.rolling_noise_file_path_width, cached.cells[i]);
+            } else {
+                cached.cells[i] = table_cell(row, kRollingNoiseColumns[i].key);
+            }
+        }
+        cached.cells[0] = std::to_string(row_index + 1);
+        expand_width_for_text(cache.rolling_noise_distance_width, cached.cells[kRollingNoiseDistanceColumn]);
+        cache.rolling_noise_rows.push_back(std::move(cached));
     }
 
     cache.background_distance_width = 0.0f;
@@ -1611,6 +1659,90 @@ void App::render_irregularities_window() {
         ImGui::EndTable();
     }
     focus_irregularities_next_ = false;
+    ImGui::End();
+}
+
+void App::render_rolling_noises_window() {
+    if (!show_rolling_noises_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_rolling_noises_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.rolling_noises") + "###RollingNoises";
+    if (!ImGui::Begin(title.c_str(), &show_rolling_noises_window_)) {
+        focus_rolling_noises_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_rolling_noises_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("rolling_noises", IM_ARRAYSIZE(kRollingNoiseColumns),
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        std::string file_name_header = tr("column.file_name");
+        for (int i = 0; i < IM_ARRAYSIZE(kRollingNoiseColumns); ++i) {
+            float width = kRollingNoiseColumns[i].width;
+            if (i == kRollingNoiseDistanceColumn) width = table_cache_.rolling_noise_distance_width;
+            if (i == kRollingNoiseFilePathColumn) width = table_cache_.rolling_noise_file_path_width;
+            const char* header = i == kRollingNoiseFilePathColumn
+                ? file_name_header.c_str()
+                : kRollingNoiseColumns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(table_cache_.rolling_noise_rows.size());
+        if (rolling_noise_list_scroll_row_ >= row_count) rolling_noise_list_scroll_row_ = -1;
+        if (rolling_noise_list_highlight_row_ >= row_count) rolling_noise_list_highlight_row_ = -1;
+        const int scroll_target_row = rolling_noise_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.rolling_noise_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                if (row_index == rolling_noise_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    rolling_noise_list_scroll_row_ = -1;
+                }
+                ImGui::PushID(row_index);
+                for (int i = 0; i < IM_ARRAYSIZE(kRollingNoiseColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == kRollingNoiseDistanceColumn) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < rolling_noise_marker_cache_.size() &&
+                            rolling_noise_marker_cache_[marker_index].has_value();
+                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                            locate_rolling_noise_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
+                    if (value.empty()) continue;
+                    if (i == kRollingNoiseFilePathColumn) {
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.open_path);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    focus_rolling_noises_next_ = false;
     ImGui::End();
 }
 

@@ -19,6 +19,9 @@ struct Translation {
     Translation() {
         en = {
             {"app.title", "komapedit"},
+            {"frame.rolling_noises", "Rolling Noise Change Point List"},
+            {"chk.rolling_noise_markers", "Rolling Noise Change Points"},
+            {"menu.locate_in_rolling_noise_list", "Locate in Rolling Noise Change Point List"},
             {"frame.backgrounds", "Background Change Point List"},
             {"chk.background_markers", "Background Change Points"},
             {"menu.locate_in_background_list", "Locate in Background Change Point List"},
@@ -61,6 +64,9 @@ struct Translation {
         };
         zh = {
             {"app.title", "komapedit"},
+            {"frame.rolling_noises", "走行音变化点列表"},
+            {"chk.rolling_noise_markers", "走行音变化点"},
+            {"menu.locate_in_rolling_noise_list", "定位至走行音变化点列表"},
             {"frame.backgrounds", "背景变化点列表"},
             {"chk.background_markers", "背景变化点"},
             {"menu.locate_in_background_list", "定位至背景变化点列表"},
@@ -103,6 +109,9 @@ struct Translation {
         };
         ja = {
             {"app.title", "komapedit"},
+            {"frame.rolling_noises", "走行音変化点リスト"},
+            {"chk.rolling_noise_markers", "走行音変化点"},
+            {"menu.locate_in_rolling_noise_list", "走行音変化点リストへ移動"},
             {"frame.backgrounds", "背景変化点リスト"},
             {"chk.background_markers", "背景変化点"},
             {"menu.locate_in_background_list", "背景変化点リストへ移動"},
