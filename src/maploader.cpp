@@ -654,6 +654,18 @@ struct RepeaterEvent {
     int order = 0;
 };
 
+struct IrregularityChange {
+    double distance = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double r = 0.0;
+    double lx = 0.0;
+    double ly = 0.0;
+    double lr = 0.0;
+    std::string file_path;
+    int order = 0;
+};
+
 struct SpeedLimitEvent {
     double distance = 0.0;
     Value speed;
@@ -721,6 +733,7 @@ struct MapContext {
     std::vector<StructurePut> structure_puts;
     std::vector<StructurePut> structure_betweens;
     std::vector<RepeaterEvent> repeaters;
+    std::vector<IrregularityChange> irregularities;
     std::vector<SpeedLimitEvent> speedlimits;
     Matrix owntrack_buffer;
     Matrix curveradius_buffer;
@@ -1124,6 +1137,7 @@ private:
         for (auto& row : child.structure_puts) offset_order(row.order);
         for (auto& row : child.structure_betweens) offset_order(row.order);
         for (auto& row : child.repeaters) offset_order(row.order);
+        for (auto& row : child.irregularities) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
         if (child.has_distance_assignment) {
@@ -1154,6 +1168,7 @@ private:
         for (auto& row : child.structure_puts) ctx_.structure_puts.push_back(std::move(row));
         for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
         for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
+        for (auto& row : child.irregularities) ctx_.irregularities.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
     }
 
@@ -1433,6 +1448,8 @@ private:
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
             dispatch_repeater(fn, args);
+        } else if (first == "irregularity") {
+            dispatch_irregularity(fn, function.args);
         }
     }
 
@@ -1693,6 +1710,22 @@ private:
             row.order = ctx_.next_parse_order();
             ctx_.repeaters.push_back(row);
         }
+    }
+
+    void dispatch_irregularity(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "change" || a.size() < 6) return;
+        note_distance_use(ctx_);
+        IrregularityChange row;
+        row.distance = ctx_.distance;
+        row.x = as_number(a[0]);
+        row.y = as_number(a[1]);
+        row.r = as_number(a[2]);
+        row.lx = as_number(a[3]);
+        row.ly = as_number(a[4]);
+        row.lr = as_number(a[5]);
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.irregularities.push_back(row);
     }
 };
 
@@ -2608,6 +2641,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.structure_puts.begin(), ctx.structure_puts.end(), by_distance);
     std::stable_sort(ctx.structure_betweens.begin(), ctx.structure_betweens.end(), by_distance);
     std::stable_sort(ctx.repeaters.begin(), ctx.repeaters.end(), by_distance);
+    std::stable_sort(ctx.irregularities.begin(), ctx.irregularities.end(), by_distance);
     std::stable_sort(ctx.speedlimits.begin(), ctx.speedlimits.end(), by_distance);
     std::stable_sort(ctx.station_puts.begin(), ctx.station_puts.end(), by_distance);
 }
@@ -2844,6 +2878,22 @@ std::string build_ir_json(MapContext& ctx) {
             out << json_value(row.structure_keys[j]);
         }
         out << "],\"filePath\":\"" << json_escape(row.file_path)
+            << "\",\"order\":" << row.order << "}";
+    }
+    out << "]";
+
+    out << ",\"irregularity\":[";
+    for (size_t i = 0; i < ctx.irregularities.size(); ++i) {
+        if (i) out << ",";
+        const auto& row = ctx.irregularities[i];
+        out << "{\"distance\":" << json_number(row.distance)
+            << ",\"x\":" << json_number(row.x)
+            << ",\"y\":" << json_number(row.y)
+            << ",\"r\":" << json_number(row.r)
+            << ",\"lx\":" << json_number(row.lx)
+            << ",\"ly\":" << json_number(row.ly)
+            << ",\"lr\":" << json_number(row.lr)
+            << ",\"filePath\":\"" << json_escape(row.file_path)
             << "\",\"order\":" << row.order << "}";
     }
     out << "]";

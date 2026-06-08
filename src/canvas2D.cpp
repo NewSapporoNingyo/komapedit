@@ -241,6 +241,7 @@ void debug_plan_stage(const char*) {}
 void App::rebuild_marker_overlay_cache() {
     structure_marker_cache_.clear();
     repeater_marker_cache_.clear();
+    irregularity_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
 
     std::map<std::string, TrackSource> track_sources;
@@ -305,6 +306,22 @@ void App::rebuild_marker_overlay_cache() {
         }
         structure_marker_cache_.push_back(make_marker(distance, p, table_cell(row, "structureKey"),
                                                       structure_marker_cache_.size()));
+    }
+
+    irregularity_marker_cache_.reserve(model_.irregularities.size());
+    for (const auto& row : model_.irregularities) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanIrregularityMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = "#" + std::to_string(irregularity_marker_cache_.size() + 1);
+            marker.row_index = irregularity_marker_cache_.size();
+            irregularity_marker_cache_.push_back(std::move(marker));
+        } else {
+            irregularity_marker_cache_.push_back(std::nullopt);
+        }
     }
 
     auto build_repeater_segment = [&](const std::string& key, double start, double end,
@@ -612,6 +629,25 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         marker.row_index = i;
         out.structure_markers.push_back(std::move(marker));
         append_marker_bounds(p.x, p.y);
+    }
+
+    if (show_irregularity_markers_) {
+        out.irregularity_markers.reserve(irregularity_marker_cache_.size());
+        for (size_t i = 0; i < irregularity_marker_cache_.size(); ++i) {
+            if (!irregularity_marker_cache_[i]) continue;
+            const PlanIrregularityMarker& source = *irregularity_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanIrregularityMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.irregularity_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
     }
 
     auto append_repeater_marker = [&](const PlanRepeaterMarker& source, size_t row_index) {
@@ -1368,6 +1404,20 @@ static void draw_plan_diamond_marker(ImDrawList* draw, ImVec2 p, ImU32 color, fl
     draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(80, 0, 48, 255), ImDrawFlags_Closed, 1.0f);
 }
 
+static void draw_plan_wave_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float half_width = 7.0f * scale;
+    const float amplitude = 3.0f * scale;
+    ImVec2 pts[9];
+    for (int i = 0; i < IM_ARRAYSIZE(pts); ++i) {
+        float t = static_cast<float>(i) / static_cast<float>(IM_ARRAYSIZE(pts) - 1);
+        float x = p.x - half_width + half_width * 2.0f * t;
+        float y = p.y + std::sin(t * 3.14159265358979323846f * 4.0f) * amplitude;
+        pts[i] = ImVec2(x, y);
+    }
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(72, 48, 112, 255), ImDrawFlags_None, 3.0f * scale);
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), color, ImDrawFlags_None, 1.6f * scale);
+}
+
 static void draw_plan_focus_arrow(ImDrawList* draw, ImVec2 target) {
     const float length = 30.0f;
     const float head = 11.0f;
@@ -1498,9 +1548,28 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_irregularity_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.irregularity_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
     std::optional<MarkerHit> hovered_structure_hit = nearest_structure_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_structure_row = hovered_structure_hit
         ? std::optional<size_t>(hovered_structure_hit->row_index)
@@ -1508,8 +1577,16 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<size_t> hovered_repeater_row = hovered_repeater_hit
         ? std::optional<size_t>(hovered_repeater_hit->row_index)
         : std::nullopt;
+    std::optional<size_t> hovered_irregularity_row = hovered_irregularity_hit
+        ? std::optional<size_t>(hovered_irregularity_hit->row_index)
+        : std::nullopt;
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-        if (hovered_repeater_hit && (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+        if (hovered_irregularity_hit &&
+            (!hovered_repeater_hit || hovered_irregularity_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
+            (!hovered_structure_hit || hovered_irregularity_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+            plan_irregularity_popup_row_ = static_cast<int>(hovered_irregularity_hit->row_index);
+            ImGui::OpenPopup("plan_irregularity_marker_context");
+        } else if (hovered_repeater_hit && (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_repeater_popup_row_ = static_cast<int>(hovered_repeater_hit->row_index);
             ImGui::OpenPopup("plan_repeater_marker_context");
         } else if (hovered_structure_hit) {
@@ -1660,6 +1737,21 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
+    if (!data.irregularity_markers.empty()) {
+        ImU32 irregularity_color = IM_COL32(204, 170, 255, 255);
+        for (const auto& marker : data.irregularity_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_irregularity_row && *hovered_irregularity_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_wave_marker(draw, p, irregularity_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, irregularity_color, marker.label);
+        }
+    }
+    debug_plan_stage("irregularity_markers");
+
     if (!repeater_marker_cache_.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
         draw_repeater_segment_chunks(draw, repeater_marker_cache_, repeater_row_visible_,
@@ -1751,6 +1843,16 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_repeater_list").c_str()) && can_locate) {
             locate_repeater_row_in_list(static_cast<size_t>(plan_repeater_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_irregularity_marker_context")) {
+        bool can_locate = plan_irregularity_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_irregularity_popup_row_) < irregularity_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_irregularity_list").c_str()) && can_locate) {
+            locate_irregularity_row_in_list(static_cast<size_t>(plan_irregularity_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();

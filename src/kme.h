@@ -127,11 +127,14 @@ struct TableUiCache {
     std::vector<CachedTableRow> structure_rows;
     std::vector<CachedTableRow> structure_model_rows;
     std::vector<CachedTableRow> repeater_rows;
+    std::vector<CachedTableRow> irregularity_rows;
     float structure_file_path_width = 200.0f;
     float structure_model_file_path_width = 200.0f;
     float repeater_distance_width = 110.0f;
     float repeater_interval_width = 70.0f;
     float repeater_file_path_width = 200.0f;
+    float irregularity_distance_width = 110.0f;
+    float irregularity_file_path_width = 200.0f;
 };
 
 const std::string& table_cell(const TableRow& row, const std::string& key);
@@ -151,6 +154,7 @@ struct MapModel {
     std::vector<TableRow> structure_models;
     std::vector<TableRow> structures_between;
     std::vector<TableRow> repeaters;
+    std::vector<TableRow> irregularities;
     double distance_origin = 0.0;
     double height_origin = 0.0;
     double origin_angle = 0.0;
@@ -264,6 +268,14 @@ struct PlanRepeaterMarker {
     size_t row_index = 0;
 };
 
+struct PlanIrregularityMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    size_t row_index = 0;
+};
+
 struct PlanRepeaterSegment {
     struct Chunk {
         std::vector<TrackPoint> points;
@@ -299,6 +311,7 @@ struct PlanData {
     std::vector<PlanSpeed> speedlimits;
     std::vector<PlanStructureMarker> structure_markers;
     std::vector<PlanRepeaterMarker> repeater_markers;
+    std::vector<PlanIrregularityMarker> irregularity_markers;
     std::vector<Section> curve_sections;
     std::vector<Section> transition_sections;
     double origin_angle = 0.0;
@@ -357,6 +370,7 @@ struct WindowVisibilitySettings {
     bool show_structures_window = false;
     bool show_structure_models_window = false;
     bool show_repeaters_window = false;
+    bool show_irregularities_window = false;
     bool show_plots_window = true;
     bool show_model_preview_window = true;
 
@@ -366,6 +380,7 @@ struct WindowVisibilitySettings {
             show_structures_window == other.show_structures_window &&
             show_structure_models_window == other.show_structure_models_window &&
             show_repeaters_window == other.show_repeaters_window &&
+            show_irregularities_window == other.show_irregularities_window &&
             show_plots_window == other.show_plots_window &&
             show_model_preview_window == other.show_model_preview_window;
     }
@@ -384,6 +399,7 @@ struct View2DSettings {
     bool show_curve_values = true;
     bool show_profile_other = false;
     bool show_speedlimits = true;
+    bool show_irregularity_markers = true;
     bool show_profile_graph = true;
     bool show_radius_graph = true;
     bool show_background_image = true;
@@ -399,6 +415,7 @@ struct View2DSettings {
             show_curve_values == other.show_curve_values &&
             show_profile_other == other.show_profile_other &&
             show_speedlimits == other.show_speedlimits &&
+            show_irregularity_markers == other.show_irregularity_markers &&
             show_profile_graph == other.show_profile_graph &&
             show_radius_graph == other.show_radius_graph &&
             show_background_image == other.show_background_image &&
@@ -524,6 +541,7 @@ private:
     bool show_curve_values_ = true;
     bool show_profile_other_ = false;
     bool show_speedlimits_ = true;
+    bool show_irregularity_markers_ = true;
     bool show_profile_graph_ = true;
     bool show_radius_graph_ = true;
     bool show_othertracks_window_ = true;
@@ -559,10 +577,12 @@ private:
     bool show_structures_window_ = false;
     bool show_structure_models_window_ = false;
     bool show_repeaters_window_ = false;
+    bool show_irregularities_window_ = false;
     bool show_plots_window_ = true;
     bool show_model_preview_window_ = true;
     bool focus_structures_next_ = false;
     bool focus_repeaters_next_ = false;
+    bool focus_irregularities_next_ = false;
     bool focus_model_preview_next_ = false;
     bool focus_plots_next_ = true;
     bool show_range_popup_ = false;
@@ -591,14 +611,18 @@ private:
     bool structure_model_unused_has_run_ = false;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
+    std::vector<std::optional<PlanIrregularityMarker>> irregularity_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
     int structure_list_scroll_row_ = -1;
     int structure_list_highlight_row_ = -1;
     int repeater_list_scroll_row_ = -1;
     int repeater_list_highlight_row_ = -1;
+    int irregularity_list_scroll_row_ = -1;
+    int irregularity_list_highlight_row_ = -1;
     int plan_structure_popup_row_ = -1;
     int plan_repeater_popup_row_ = -1;
+    int plan_irregularity_popup_row_ = -1;
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;
     std::unique_ptr<Canvas3D> model_preview_canvas_;
@@ -653,6 +677,7 @@ private:
     void render_structures_window();
     void render_structure_models_window();
     void render_repeaters_window();
+    void render_irregularities_window();
     void render_model_preview_window();
     void preview_structure_model(const std::string& path);
     void reload_model_preview();
@@ -679,6 +704,8 @@ private:
     void locate_structure_row_in_list(size_t row_index);
     void locate_repeater_row_on_plan(size_t row_index);
     void locate_repeater_row_in_list(size_t row_index);
+    void locate_irregularity_row_on_plan(size_t row_index);
+    void locate_irregularity_row_in_list(size_t row_index);
 
     PlanData build_plan_data(bool include_other_tracks = true) const;
     ProfileData build_profile_data() const;
