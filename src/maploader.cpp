@@ -637,6 +637,58 @@ struct SoundListEntry {
     bool is_3d = false;
 };
 
+struct SectionBegin {
+    double distance = 0.0;
+    std::vector<Value> signal_indices;
+    std::string file_path;
+    int order = 0;
+};
+
+struct SectionSpeedLimit {
+    double distance = 0.0;
+    std::vector<Value> speeds;
+    std::string file_path;
+    int order = 0;
+};
+
+struct SignalAspect {
+    std::string signal_aspect_key;
+    std::vector<std::string> structure_keys;
+};
+
+struct SignalPut {
+    double distance = 0.0;
+    Value signal_aspect_key;
+    Value section;
+    Value track_key;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double rx = 0.0;
+    double ry = 0.0;
+    double rz = 0.0;
+    double tilt = 0.0;
+    double span = 0.0;
+    std::string file_path;
+    int order = 0;
+};
+
+struct BeaconPut {
+    double distance = 0.0;
+    Value type;
+    Value section;
+    Value send_data;
+    std::string file_path;
+    int order = 0;
+};
+
+struct PreTrainPass {
+    double distance = 0.0;
+    Value pass_time;
+    std::string file_path;
+    int order = 0;
+};
+
 struct RollingNoiseChange {
     double distance = 0.0;
     Value index;
@@ -805,6 +857,12 @@ struct MapContext {
     std::vector<StructurePut> structure_puts;
     std::vector<StructurePut> structure_betweens;
     std::vector<RepeaterEvent> repeaters;
+    std::vector<SectionBegin> section_begins;
+    std::vector<SectionSpeedLimit> section_speed_limits;
+    std::vector<SignalAspect> signal_aspects;
+    std::vector<SignalPut> signal_puts;
+    std::vector<BeaconPut> beacons;
+    std::vector<PreTrainPass> pretrains;
     std::vector<IrregularityChange> irregularities;
     std::vector<BackgroundChange> backgrounds;
     std::vector<AdhesionChange> adhesions;
@@ -1213,6 +1271,11 @@ private:
         for (auto& row : child.structure_puts) offset_order(row.order);
         for (auto& row : child.structure_betweens) offset_order(row.order);
         for (auto& row : child.repeaters) offset_order(row.order);
+        for (auto& row : child.section_begins) offset_order(row.order);
+        for (auto& row : child.section_speed_limits) offset_order(row.order);
+        for (auto& row : child.signal_puts) offset_order(row.order);
+        for (auto& row : child.beacons) offset_order(row.order);
+        for (auto& row : child.pretrains) offset_order(row.order);
         for (auto& row : child.rolling_noises) offset_order(row.order);
         for (auto& row : child.joint_noises) offset_order(row.order);
         for (auto& row : child.irregularities) offset_order(row.order);
@@ -1253,6 +1316,12 @@ private:
         for (auto& row : child.structure_puts) ctx_.structure_puts.push_back(std::move(row));
         for (auto& row : child.structure_betweens) ctx_.structure_betweens.push_back(std::move(row));
         for (auto& row : child.repeaters) ctx_.repeaters.push_back(std::move(row));
+        for (auto& row : child.section_begins) ctx_.section_begins.push_back(std::move(row));
+        for (auto& row : child.section_speed_limits) ctx_.section_speed_limits.push_back(std::move(row));
+        for (auto& row : child.signal_aspects) ctx_.signal_aspects.push_back(std::move(row));
+        for (auto& row : child.signal_puts) ctx_.signal_puts.push_back(std::move(row));
+        for (auto& row : child.beacons) ctx_.beacons.push_back(std::move(row));
+        for (auto& row : child.pretrains) ctx_.pretrains.push_back(std::move(row));
         for (auto& row : child.irregularities) ctx_.irregularities.push_back(std::move(row));
         for (auto& row : child.backgrounds) ctx_.backgrounds.push_back(std::move(row));
         for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
@@ -1529,10 +1598,20 @@ private:
             dispatch_track(objects.front().key, labels, fn, function.args);
         } else if (first == "speedlimit") {
             dispatch_speedlimit(fn, function.args);
+        } else if (first == "section") {
+            dispatch_section(fn, function.args);
+        } else if (first == "signal") {
+            std::vector<Value> args = function.args;
+            if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
+            dispatch_signal(fn, args, objects.front().has_key);
         } else if (first == "structure") {
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
             dispatch_structure(fn, args);
+        } else if (first == "beacon") {
+            dispatch_beacon(fn, function.args);
+        } else if (first == "pretrain") {
+            dispatch_pretrain(fn, function.args);
         } else if (first == "sound" || first == "sound3d") {
             dispatch_sound(fn, function.args, first == "sound3d");
         } else if (first == "rollingnoise") {
@@ -1650,6 +1729,31 @@ private:
         }
     }
 
+    void parse_signal_aspect_list(const std::string& body) {
+        std::istringstream input(body);
+        std::string line;
+        SignalAspect* current_aspect = nullptr;
+        while (std::getline(input, line)) {
+            std::string trimmed = trim_field_copy(line);
+            if (trimmed.empty() || trimmed[0] == '#') continue;
+
+            std::vector<std::string> fields = parse_comma_separated_fields(line, true);
+            if (fields.empty()) continue;
+            const bool starts_glare_row = fields[0].empty();
+            if (starts_glare_row && !current_aspect) continue;
+
+            if (!starts_glare_row) {
+                SignalAspect row;
+                row.signal_aspect_key = fields[0];
+                ctx_.signal_aspects.push_back(std::move(row));
+                current_aspect = &ctx_.signal_aspects.back();
+            }
+            for (size_t i = 1; i < fields.size(); ++i) {
+                current_aspect->structure_keys.push_back(fields[i]);
+            }
+        }
+    }
+
     void parse_sound_list(const std::string& body, const std::filesystem::path& root, bool is_3d) {
         std::istringstream input(body);
         std::string line;
@@ -1743,6 +1847,92 @@ private:
             note_distance_use(ctx_);
             ctx_.speedlimits.push_back({ctx_.distance, Value::null()});
         }
+    }
+
+    void dispatch_section(const std::string& fn, const std::vector<Value>& a) {
+        if (fn == "begin" || fn == "beginnew") {
+            note_distance_use(ctx_);
+            SectionBegin row;
+            row.distance = ctx_.distance;
+            row.signal_indices = a;
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            ctx_.section_begins.push_back(std::move(row));
+        } else if (fn == "setspeedlimit") {
+            note_distance_use(ctx_);
+            SectionSpeedLimit row;
+            row.distance = ctx_.distance;
+            row.speeds = a;
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            ctx_.section_speed_limits.push_back(std::move(row));
+        }
+    }
+
+    void dispatch_signal(const std::string& fn, const std::vector<Value>& a, bool has_signal_key) {
+        if (fn == "load" && !has_signal_key && !a.empty()) {
+            std::string list_path_text = as_text(a.at(0));
+            if (list_path_text.empty()) return;
+            try {
+                std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
+                LoadedText loaded = load_header_text(path, "BveTs Signal Aspects List ", 2.0);
+                parse_signal_aspect_list(loaded.body);
+            } catch (const std::exception& e) {
+                log_warn(e.what());
+            }
+        } else if (fn == "speedlimit" && !has_signal_key) {
+            note_distance_use(ctx_);
+            SectionSpeedLimit row;
+            row.distance = ctx_.distance;
+            row.speeds = a;
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            ctx_.section_speed_limits.push_back(std::move(row));
+        } else if (fn == "put" && has_signal_key && a.size() >= 4) {
+            note_distance_use(ctx_);
+            SignalPut row;
+            row.distance = ctx_.distance;
+            row.signal_aspect_key = a[0];
+            row.section = a[1];
+            row.track_key = a[2];
+            row.x = as_number(a[3]);
+            row.y = a.size() > 4 ? as_number(a[4]) : 0.0;
+            if (a.size() >= 11) {
+                row.z = as_number(a[5]);
+                row.rx = as_number(a[6]);
+                row.ry = as_number(a[7]);
+                row.rz = as_number(a[8]);
+                row.tilt = as_number(a[9]);
+                row.span = as_number(a[10]);
+            }
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            ctx_.signal_puts.push_back(std::move(row));
+        }
+    }
+
+    void dispatch_beacon(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "put" || a.size() < 3) return;
+        note_distance_use(ctx_);
+        BeaconPut row;
+        row.distance = ctx_.distance;
+        row.type = a[0];
+        row.section = a[1];
+        row.send_data = a[2];
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.beacons.push_back(std::move(row));
+    }
+
+    void dispatch_pretrain(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "pass" || a.empty()) return;
+        note_distance_use(ctx_);
+        PreTrainPass row;
+        row.distance = ctx_.distance;
+        row.pass_time = a[0];
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        ctx_.pretrains.push_back(std::move(row));
     }
 
     void dispatch_structure(const std::string& fn, const std::vector<Value>& a) {
@@ -2857,6 +3047,11 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.structure_puts.begin(), ctx.structure_puts.end(), by_distance);
     std::stable_sort(ctx.structure_betweens.begin(), ctx.structure_betweens.end(), by_distance);
     std::stable_sort(ctx.repeaters.begin(), ctx.repeaters.end(), by_distance);
+    std::stable_sort(ctx.section_begins.begin(), ctx.section_begins.end(), by_distance);
+    std::stable_sort(ctx.section_speed_limits.begin(), ctx.section_speed_limits.end(), by_distance);
+    std::stable_sort(ctx.signal_puts.begin(), ctx.signal_puts.end(), by_distance);
+    std::stable_sort(ctx.beacons.begin(), ctx.beacons.end(), by_distance);
+    std::stable_sort(ctx.pretrains.begin(), ctx.pretrains.end(), by_distance);
     std::stable_sort(ctx.rolling_noises.begin(), ctx.rolling_noises.end(), by_distance);
     std::stable_sort(ctx.joint_noises.begin(), ctx.joint_noises.end(), by_distance);
     std::stable_sort(ctx.irregularities.begin(), ctx.irregularities.end(), by_distance);
@@ -2948,6 +3143,64 @@ void append_structure_put_json(std::ostringstream& out, const StructurePut& row,
             << ",\"span\":" << json_number(row.span);
     }
     out << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_value_array_json(std::ostringstream& out, const std::vector<Value>& values) {
+    out << "[";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i) out << ",";
+        out << json_value(values[i]);
+    }
+    out << "]";
+}
+
+void append_section_begin_json(std::ostringstream& out, const SectionBegin& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"signalIndices\":";
+    append_value_array_json(out, row.signal_indices);
+    out << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_section_speed_limit_json(std::ostringstream& out, const SectionSpeedLimit& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"speeds\":";
+    append_value_array_json(out, row.speeds);
+    out << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_signal_put_json(std::ostringstream& out, const SignalPut& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"signalAspectKey\":" << json_value(row.signal_aspect_key)
+        << ",\"section\":" << json_value(row.section)
+        << ",\"trackKey\":" << json_value(row.track_key)
+        << ",\"x\":" << json_number(row.x)
+        << ",\"y\":" << json_number(row.y)
+        << ",\"z\":" << json_number(row.z)
+        << ",\"rx\":" << json_number(row.rx)
+        << ",\"ry\":" << json_number(row.ry)
+        << ",\"rz\":" << json_number(row.rz)
+        << ",\"tilt\":" << json_number(row.tilt)
+        << ",\"span\":" << json_number(row.span)
+        << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_beacon_json(std::ostringstream& out, const BeaconPut& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"type\":" << json_value(row.type)
+        << ",\"section\":" << json_value(row.section)
+        << ",\"sendData\":" << json_value(row.send_data)
+        << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order << "}";
+}
+
+void append_pretrain_json(std::ostringstream& out, const PreTrainPass& row) {
+    out << "{\"distance\":" << json_number(row.distance)
+        << ",\"passTime\":" << json_value(row.pass_time)
+        << ",\"filePath\":\"" << json_escape(row.file_path)
         << "\",\"order\":" << row.order << "}";
 }
 
@@ -3109,6 +3362,51 @@ std::string build_ir_json(MapContext& ctx) {
             << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"}";
     }
     out << "]}";
+
+    out << ",\"section\":{\"begin\":[";
+    for (size_t i = 0; i < ctx.section_begins.size(); ++i) {
+        if (i) out << ",";
+        append_section_begin_json(out, ctx.section_begins[i]);
+    }
+    out << "],\"speedLimit\":[";
+    for (size_t i = 0; i < ctx.section_speed_limits.size(); ++i) {
+        if (i) out << ",";
+        append_section_speed_limit_json(out, ctx.section_speed_limits[i]);
+    }
+    out << "]}";
+
+    out << ",\"signal\":{\"aspects\":[";
+    for (size_t i = 0; i < ctx.signal_aspects.size(); ++i) {
+        if (i) out << ",";
+        const auto& row = ctx.signal_aspects[i];
+        out << "{\"signalAspectKey\":\"" << json_escape(row.signal_aspect_key)
+            << "\",\"structureKeys\":[";
+        for (size_t j = 0; j < row.structure_keys.size(); ++j) {
+            if (j) out << ",";
+            out << "\"" << json_escape(row.structure_keys[j]) << "\"";
+        }
+        out << "]}";
+    }
+    out << "],\"data\":[";
+    for (size_t i = 0; i < ctx.signal_puts.size(); ++i) {
+        if (i) out << ",";
+        append_signal_put_json(out, ctx.signal_puts[i]);
+    }
+    out << "]}";
+
+    out << ",\"beacon\":[";
+    for (size_t i = 0; i < ctx.beacons.size(); ++i) {
+        if (i) out << ",";
+        append_beacon_json(out, ctx.beacons[i]);
+    }
+    out << "]";
+
+    out << ",\"preTrain\":[";
+    for (size_t i = 0; i < ctx.pretrains.size(); ++i) {
+        if (i) out << ",";
+        append_pretrain_json(out, ctx.pretrains[i]);
+    }
+    out << "]";
 
     out << ",\"soundList\":[";
     for (size_t i = 0; i < ctx.sound_list.size(); ++i) {

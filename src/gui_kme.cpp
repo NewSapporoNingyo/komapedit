@@ -662,6 +662,9 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_sound_list_window=" << bool_to_string(settings.window_visibility.show_sound_list_window) << "\n";
     out << "show_sound_3d_list_window=" << bool_to_string(settings.window_visibility.show_sound_3d_list_window) << "\n";
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
+    out << "show_signal_aspects_window=" << bool_to_string(settings.window_visibility.show_signal_aspects_window) << "\n";
+    out << "show_signals_window=" << bool_to_string(settings.window_visibility.show_signals_window) << "\n";
+    out << "show_beacons_window=" << bool_to_string(settings.window_visibility.show_beacons_window) << "\n";
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
     out << "show_rolling_noises_window=" << bool_to_string(settings.window_visibility.show_rolling_noises_window) << "\n";
     out << "show_joint_noises_window=" << bool_to_string(settings.window_visibility.show_joint_noises_window) << "\n";
@@ -681,6 +684,8 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
     out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
     out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
+    out << "show_beacon_markers=" << bool_to_string(settings.view_2d.show_beacon_markers) << "\n";
+    out << "show_pretrain_markers=" << bool_to_string(settings.view_2d.show_pretrain_markers) << "\n";
     out << "show_rolling_noise_markers=" << bool_to_string(settings.view_2d.show_rolling_noise_markers) << "\n";
     out << "show_joint_noise_markers=" << bool_to_string(settings.view_2d.show_joint_noise_markers) << "\n";
     out << "show_background_markers=" << bool_to_string(settings.view_2d.show_background_markers) << "\n";
@@ -764,6 +769,12 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_sound_3d_list_window = parse_bool(value, settings.window_visibility.show_sound_3d_list_window);
         } else if (key == "show_repeaters_window") {
             settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
+        } else if (key == "show_signal_aspects_window" || key == "show_signal_aspect_window") {
+            settings.window_visibility.show_signal_aspects_window = parse_bool(value, settings.window_visibility.show_signal_aspects_window);
+        } else if (key == "show_signals_window" || key == "show_signal_window") {
+            settings.window_visibility.show_signals_window = parse_bool(value, settings.window_visibility.show_signals_window);
+        } else if (key == "show_beacons_window" || key == "show_beacon_window") {
+            settings.window_visibility.show_beacons_window = parse_bool(value, settings.window_visibility.show_beacons_window);
         } else if (key == "show_irregularities_window") {
             settings.window_visibility.show_irregularities_window = parse_bool(value, settings.window_visibility.show_irregularities_window);
         } else if (key == "show_rolling_noises_window" || key == "show_rolling_noise_window") {
@@ -809,6 +820,12 @@ UserSettings load_user_settings() {
         } else if (key == "show_irregularity_markers" || key == "show_irregularities" || key == "show_irregularity_points") {
             view_2d_keys_seen.insert("show_irregularity_markers");
             settings.view_2d.show_irregularity_markers = parse_bool(value, settings.view_2d.show_irregularity_markers);
+        } else if (key == "show_beacon_markers" || key == "show_beacons" || key == "show_beacon_points") {
+            view_2d_keys_seen.insert("show_beacon_markers");
+            settings.view_2d.show_beacon_markers = parse_bool(value, settings.view_2d.show_beacon_markers);
+        } else if (key == "show_pretrain_markers" || key == "show_pretrains" || key == "show_pretrain_points") {
+            view_2d_keys_seen.insert("show_pretrain_markers");
+            settings.view_2d.show_pretrain_markers = parse_bool(value, settings.view_2d.show_pretrain_markers);
         } else if (key == "show_rolling_noise_markers" || key == "show_rolling_noises" || key == "show_rolling_noise_points") {
             view_2d_keys_seen.insert("show_rolling_noise_markers");
             settings.view_2d.show_rolling_noise_markers = parse_bool(value, settings.view_2d.show_rolling_noise_markers);
@@ -1528,6 +1545,29 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     const auto& structure = root.at("structure");
     model.structures = make_table_rows(structure.at("data"));
     model.structure_models = make_table_rows(structure.at("models"));
+    const auto& signal = root.at("signal");
+    const auto& signal_aspects = signal.at("aspects");
+    if (signal_aspects.is_array()) {
+        for (const auto& item : signal_aspects.array) {
+            if (!item.is_object()) continue;
+            TableRow row;
+            row.cells["signalAspectKey"] = item.at("signalAspectKey").scalar_text();
+            const auto& structure_keys = item.at("structureKeys");
+            size_t structure_key_count = 0;
+            if (structure_keys.is_array()) {
+                structure_key_count = structure_keys.array.size();
+                for (size_t i = 0; i < structure_keys.array.size(); ++i) {
+                    row.cells["structureKey" + std::to_string(i + 1)] =
+                        structure_keys.array[i].scalar_text();
+                }
+            }
+            row.cells["_structureKeyCount"] = std::to_string(structure_key_count);
+            model.signal_aspects.push_back(std::move(row));
+        }
+    }
+    model.signals = make_table_rows(signal.at("data"));
+    model.beacons = make_table_rows(root.at("beacon"));
+    model.pretrains = make_table_rows(root.at("preTrain"));
     model.sound_list = make_table_rows(root.at("soundList"));
     model.structures_between = make_table_rows(structure.at("between_data"));
     model.repeaters = make_table_rows(root.at("repeater"));
@@ -1929,6 +1969,9 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("SoundList", dock_right);
     ImGui::DockBuilderDockWindow("Sound3DList", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
+    ImGui::DockBuilderDockWindow("SignalAspects", dock_right);
+    ImGui::DockBuilderDockWindow("Signals", dock_right);
+    ImGui::DockBuilderDockWindow("Beacons", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
     ImGui::DockBuilderDockWindow("RollingNoises", dock_right);
     ImGui::DockBuilderDockWindow("JointNoises", dock_right);
@@ -1955,6 +1998,9 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_sound_list_window = show_sound_list_window_;
     visibility.show_sound_3d_list_window = show_sound_3d_list_window_;
     visibility.show_repeaters_window = show_repeaters_window_;
+    visibility.show_signal_aspects_window = show_signal_aspects_window_;
+    visibility.show_signals_window = show_signals_window_;
+    visibility.show_beacons_window = show_beacons_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
     visibility.show_rolling_noises_window = show_rolling_noises_window_;
     visibility.show_joint_noises_window = show_joint_noises_window_;
@@ -1975,6 +2021,9 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_sound_list_window_ = visibility.show_sound_list_window;
     show_sound_3d_list_window_ = visibility.show_sound_3d_list_window;
     show_repeaters_window_ = visibility.show_repeaters_window;
+    show_signal_aspects_window_ = visibility.show_signal_aspects_window;
+    show_signals_window_ = visibility.show_signals_window;
+    show_beacons_window_ = visibility.show_beacons_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
     show_rolling_noises_window_ = visibility.show_rolling_noises_window;
     show_joint_noises_window_ = visibility.show_joint_noises_window;
@@ -1997,6 +2046,8 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_profile_other = show_profile_other_;
     view.show_speedlimits = show_speedlimits_;
     view.show_irregularity_markers = show_irregularity_markers_;
+    view.show_beacon_markers = show_beacon_markers_;
+    view.show_pretrain_markers = show_pretrain_markers_;
     view.show_rolling_noise_markers = show_rolling_noise_markers_;
     view.show_joint_noise_markers = show_joint_noise_markers_;
     view.show_background_markers = show_background_markers_;
@@ -2021,6 +2072,8 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_profile_other_ = settings.show_profile_other;
     show_speedlimits_ = settings.show_speedlimits;
     show_irregularity_markers_ = settings.show_irregularity_markers;
+    show_beacon_markers_ = settings.show_beacon_markers;
+    show_pretrain_markers_ = settings.show_pretrain_markers;
     show_rolling_noise_markers_ = settings.show_rolling_noise_markers;
     show_joint_noise_markers_ = settings.show_joint_noise_markers;
     show_background_markers_ = settings.show_background_markers;
@@ -2129,6 +2182,15 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("frame.station_list").c_str(), nullptr, false, !show_station_list_window_)) {
             show_station_list_window_ = true;
         }
+        if (ImGui::MenuItem(tr("frame.signal_aspects").c_str(), nullptr, false, !show_signal_aspects_window_)) {
+            show_signal_aspects_window_ = true;
+        }
+        if (ImGui::MenuItem(tr("frame.signals").c_str(), nullptr, false, !show_signals_window_)) {
+            show_signals_window_ = true;
+        }
+        if (ImGui::MenuItem(tr("frame.beacons").c_str(), nullptr, false, !show_beacons_window_)) {
+            show_beacons_window_ = true;
+        }
         if (ImGui::MenuItem(tr("button.structure_list").c_str(), nullptr, false, !show_structures_window_)) {
             show_structures_window_ = true;
         }
@@ -2176,22 +2238,24 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.station_pos").c_str(), nullptr, &show_stations_);
         ImGui::MenuItem(tr("chk.station_name").c_str(), nullptr, &show_station_names_);
         ImGui::MenuItem(tr("chk.station_mileage").c_str(), nullptr, &show_station_mileage_);
+        ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
         ImGui::MenuItem(tr("chk.curve_val").c_str(), nullptr, &show_curve_values_);
         ImGui::MenuItem(tr("chk.speedlimit").c_str(), nullptr, &show_speedlimits_);
-        ImGui::Separator();
-        ImGui::MenuItem(tr("frame.chart_visibility").c_str(), nullptr, false, false);
-        if (ImGui::MenuItem(tr("chk.gradient_graph").c_str(), nullptr, &show_profile_graph_) && show_profile_graph_) reset_profile_axes_next_ = true;
-        if (ImGui::MenuItem(tr("chk.curve_graph").c_str(), nullptr, &show_radius_graph_) && show_radius_graph_) reset_radius_axes_next_ = true;
-        ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
-        ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
-        ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
+        ImGui::MenuItem(tr("chk.beacon_markers").c_str(), nullptr, &show_beacon_markers_);
+        ImGui::MenuItem(tr("chk.pretrain_markers").c_str(), nullptr, &show_pretrain_markers_);
         ImGui::MenuItem(tr("chk.rolling_noise_markers").c_str(), nullptr, &show_rolling_noise_markers_);
         ImGui::MenuItem(tr("chk.joint_noise_markers").c_str(), nullptr, &show_joint_noise_markers_);
         ImGui::MenuItem(tr("chk.background_markers").c_str(), nullptr, &show_background_markers_);
         ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
         ImGui::MenuItem(tr("chk.cab_illuminance_markers").c_str(), nullptr, &show_cab_illuminance_markers_);
         ImGui::MenuItem(tr("chk.fog_markers").c_str(), nullptr, &show_fog_markers_);
+        ImGui::Separator();
+        ImGui::MenuItem(tr("frame.chart_visibility").c_str(), nullptr, false, false);
+        if (ImGui::MenuItem(tr("chk.gradient_graph").c_str(), nullptr, &show_profile_graph_) && show_profile_graph_) reset_profile_axes_next_ = true;
+        if (ImGui::MenuItem(tr("chk.curve_graph").c_str(), nullptr, &show_radius_graph_) && show_radius_graph_) reset_radius_axes_next_ = true;
+        ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
+        ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
         ImGui::Separator();
         ImGui::MenuItem(tr("frame.bgimage").c_str(), nullptr, false, false);
         if (ImGui::MenuItem(tr("button.import_bg").c_str())) {
@@ -2720,6 +2784,9 @@ void App::render() {
     render_sound_list_window();
     render_sound_3d_list_window();
     render_repeaters_window();
+    render_signal_aspects_window();
+    render_signals_window();
+    render_beacons_window();
     render_irregularities_window();
     render_rolling_noises_window();
     render_joint_noises_window();
@@ -3140,6 +3207,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         app.plot_max_ = app.dmax_;
         app.rebuild_marker_overlay_cache();
         app.reset_marker_visibility();
+        std::fill(app.signal_row_visible_.begin(), app.signal_row_visible_.end(), 1);
         std::fill(app.repeater_row_visible_.begin(), app.repeater_row_visible_.end(), 1);
         *out << "stage=overlay-cache-ready\n";
         out->flush();
@@ -3162,6 +3230,13 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         *out << "loaded own_rows=" << app.model_.own.rows
              << " visible_othertracks=" << visible_other_count
              << " visible_other_rows=" << visible_other_rows
+             << " signal_aspects=" << app.model_.signal_aspects.size()
+             << " signals=" << app.model_.signals.size()
+             << " signal_markers=" << app.signal_marker_cache_.size()
+             << " beacons=" << app.model_.beacons.size()
+             << " beacon_markers=" << app.beacon_marker_cache_.size()
+             << " pretrains=" << app.model_.pretrains.size()
+             << " pretrain_markers=" << app.pretrain_marker_cache_.size()
              << " rolling_noises=" << app.model_.rolling_noises.size()
              << " rolling_noise_markers=" << app.rolling_noise_marker_cache_.size()
              << " joint_noises=" << app.model_.joint_noises.size()

@@ -354,6 +354,42 @@ constexpr int kRepeaterIntervalColumn = 13;
 constexpr int kRepeaterStructureKeysColumn = 14;
 constexpr int kRepeaterFilePathColumn = IM_ARRAYSIZE(kRepeaterColumns) - 1;
 
+static const TableColumnDef kSignalAspectFixedColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"signalAspectKey", "signalAspectKey", 150.0f},
+};
+constexpr int kSignalAspectStructureKeyColumnOffset = IM_ARRAYSIZE(kSignalAspectFixedColumns);
+
+static const TableColumnDef kSignalColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"section", "section", 70.0f},
+    {"signalAspectKey", "signalAspectKey", 150.0f},
+    {"trackKey", "trackKey", 90.0f},
+    {"x", "x", 70.0f},
+    {"y", "y", 70.0f},
+    {"z", "z", 70.0f},
+    {"rx", "rx", 70.0f},
+    {"ry", "ry", 70.0f},
+    {"rz", "rz", 70.0f},
+    {"tilt", "tilt", 70.0f},
+    {"span", "span", 70.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kSignalDistanceColumn = 1;
+constexpr int kSignalFilePathColumn = IM_ARRAYSIZE(kSignalColumns) - 1;
+
+static const TableColumnDef kBeaconColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"type", "type", 70.0f},
+    {"section", "section", 70.0f},
+    {"sendData", "sendData", 90.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kBeaconDistanceColumn = 1;
+constexpr int kBeaconFilePathColumn = IM_ARRAYSIZE(kBeaconColumns) - 1;
+
 static const TableColumnDef kIrregularityColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
@@ -603,6 +639,10 @@ void App::invalidate_table_cache() {
     structure_list_highlight_row_ = -1;
     repeater_list_scroll_row_ = -1;
     repeater_list_highlight_row_ = -1;
+    signal_list_scroll_row_ = -1;
+    signal_list_highlight_row_ = -1;
+    beacon_list_scroll_row_ = -1;
+    beacon_list_highlight_row_ = -1;
     irregularity_list_scroll_row_ = -1;
     irregularity_list_highlight_row_ = -1;
     rolling_noise_list_scroll_row_ = -1;
@@ -619,6 +659,8 @@ void App::invalidate_table_cache() {
     fog_list_highlight_row_ = -1;
     plan_structure_popup_row_ = -1;
     plan_repeater_popup_row_ = -1;
+    plan_signal_popup_row_ = -1;
+    plan_beacon_popup_row_ = -1;
     plan_irregularity_popup_row_ = -1;
     plan_rolling_noise_popup_row_ = -1;
     plan_joint_noise_popup_row_ = -1;
@@ -631,11 +673,13 @@ void App::invalidate_table_cache() {
 void App::reset_marker_visibility() {
     structure_row_visible_.assign(structure_marker_cache_.size(), 0);
     repeater_row_visible_.assign(repeater_marker_cache_.size(), 0);
+    signal_row_visible_.assign(signal_marker_cache_.size(), 0);
 }
 
 void App::sync_marker_visibility_sizes() {
     structure_row_visible_.resize(structure_marker_cache_.size(), 0);
     repeater_row_visible_.resize(repeater_marker_cache_.size(), 0);
+    signal_row_visible_.resize(signal_marker_cache_.size(), 0);
 }
 
 void App::locate_structure_row_on_plan(size_t row_index) {
@@ -670,6 +714,38 @@ void App::locate_repeater_row_in_list(size_t row_index) {
     focus_repeaters_next_ = true;
     repeater_list_scroll_row_ = static_cast<int>(row_index);
     repeater_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_signal_row_on_plan(size_t row_index) {
+    sync_marker_visibility_sizes();
+    if (row_index >= signal_marker_cache_.size() || !signal_marker_cache_[row_index]) return;
+    if (row_index < signal_row_visible_.size()) signal_row_visible_[row_index] = 1;
+    const PlanSignalMarker& marker = *signal_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_signal_row_in_list(size_t row_index) {
+    sync_marker_visibility_sizes();
+    if (row_index >= signal_marker_cache_.size() || !signal_marker_cache_[row_index]) return;
+    show_signals_window_ = true;
+    focus_signals_next_ = true;
+    signal_list_scroll_row_ = static_cast<int>(row_index);
+    signal_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_beacon_row_on_plan(size_t row_index) {
+    if (row_index >= beacon_marker_cache_.size() || !beacon_marker_cache_[row_index]) return;
+    show_beacon_markers_ = true;
+    const PlanBeaconMarker& marker = *beacon_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_beacon_row_in_list(size_t row_index) {
+    if (row_index >= beacon_marker_cache_.size() || !beacon_marker_cache_[row_index]) return;
+    show_beacons_window_ = true;
+    focus_beacons_next_ = true;
+    beacon_list_scroll_row_ = static_cast<int>(row_index);
+    beacon_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::locate_irregularity_row_on_plan(size_t row_index) {
@@ -886,6 +962,73 @@ void App::ensure_table_cache() {
         expand_width_for_text(cache.repeater_distance_width, cached.cells[kRepeaterDistanceColumn]);
         expand_width_for_text(cache.repeater_file_path_width, cached.cells[kRepeaterFilePathColumn]);
         cache.repeater_rows.push_back(std::move(cached));
+    }
+
+    cache.signal_aspect_structure_key_columns = 0;
+    for (const TableRow& row : model_.signal_aspects) {
+        size_t structure_key_count = static_cast<size_t>(table_cell_number(row, "_structureKeyCount"));
+        cache.signal_aspect_structure_key_columns =
+            std::max(cache.signal_aspect_structure_key_columns, structure_key_count);
+    }
+    cache.signal_aspect_structure_key_widths.assign(cache.signal_aspect_structure_key_columns, 120.0f);
+    cache.signal_aspect_rows.reserve(model_.signal_aspects.size());
+    for (size_t row_index = 0; row_index < model_.signal_aspects.size(); ++row_index) {
+        const TableRow& row = model_.signal_aspects[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(kSignalAspectStructureKeyColumnOffset + cache.signal_aspect_structure_key_columns);
+        cached.cells[0] = std::to_string(row_index + 1);
+        cached.cells[1] = table_cell(row, "signalAspectKey");
+        for (size_t key_index = 0; key_index < cache.signal_aspect_structure_key_columns; ++key_index) {
+            std::string column_key = "structureKey" + std::to_string(key_index + 1);
+            std::string value = table_cell(row, column_key);
+            cached.cells[kSignalAspectStructureKeyColumnOffset + key_index] = value;
+            expand_width_for_text(cache.signal_aspect_structure_key_widths[key_index], value);
+        }
+        cache.signal_aspect_rows.push_back(std::move(cached));
+    }
+
+    cache.signal_distance_width = 0.0f;
+    expand_width_for_text(cache.signal_distance_width, kSignalColumns[kSignalDistanceColumn].header);
+    cache.signal_rows.reserve(model_.signals.size());
+    for (size_t row_index = 0; row_index < model_.signals.size(); ++row_index) {
+        const TableRow& row = model_.signals[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kSignalColumns));
+        cached.open_path = table_cell(row, "filePath");
+        cached.tooltip_text = cached.open_path;
+        for (int i = 0; i < IM_ARRAYSIZE(kSignalColumns); ++i) {
+            if (i == kSignalFilePathColumn) {
+                cached.cells[i] = display_name_from_path(cached.open_path);
+                expand_width_for_text(cache.signal_file_path_width, cached.cells[i]);
+            } else {
+                cached.cells[i] = table_cell(row, kSignalColumns[i].key);
+            }
+        }
+        cached.cells[0] = std::to_string(row_index + 1);
+        expand_width_for_text(cache.signal_distance_width, cached.cells[kSignalDistanceColumn]);
+        cache.signal_rows.push_back(std::move(cached));
+    }
+
+    cache.beacon_distance_width = 0.0f;
+    expand_width_for_text(cache.beacon_distance_width, kBeaconColumns[kBeaconDistanceColumn].header);
+    cache.beacon_rows.reserve(model_.beacons.size());
+    for (size_t row_index = 0; row_index < model_.beacons.size(); ++row_index) {
+        const TableRow& row = model_.beacons[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kBeaconColumns));
+        cached.open_path = table_cell(row, "filePath");
+        cached.tooltip_text = cached.open_path;
+        for (int i = 0; i < IM_ARRAYSIZE(kBeaconColumns); ++i) {
+            if (i == kBeaconFilePathColumn) {
+                cached.cells[i] = display_name_from_path(cached.open_path);
+                expand_width_for_text(cache.beacon_file_path_width, cached.cells[i]);
+            } else {
+                cached.cells[i] = table_cell(row, kBeaconColumns[i].key);
+            }
+        }
+        cached.cells[0] = std::to_string(row_index + 1);
+        expand_width_for_text(cache.beacon_distance_width, cached.cells[kBeaconDistanceColumn]);
+        cache.beacon_rows.push_back(std::move(cached));
     }
 
     cache.irregularity_distance_width = 0.0f;
@@ -1146,6 +1289,11 @@ void App::run_unused_structure_model_search() {
     for (const CachedTableRow& row : table_cache_.background_rows) {
         if (row.cells.size() > static_cast<size_t>(kBackgroundStructureKeyColumn)) {
             note_structure_key(row.cells[static_cast<size_t>(kBackgroundStructureKeyColumn)]);
+        }
+    }
+    for (const CachedTableRow& row : table_cache_.signal_aspect_rows) {
+        for (size_t i = kSignalAspectStructureKeyColumnOffset; i < row.cells.size(); ++i) {
+            note_structure_key(row.cells[i]);
         }
     }
 
@@ -1676,6 +1824,253 @@ void App::render_repeaters_window() {
         ImGui::EndTable();
     }
     focus_repeaters_next_ = false;
+    ImGui::End();
+}
+
+void App::render_signal_aspects_window() {
+    if (!show_signal_aspects_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_signal_aspects_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.signal_aspects") + "###SignalAspects";
+    if (!ImGui::Begin(title.c_str(), &show_signal_aspects_window_)) {
+        focus_signal_aspects_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_signal_aspects_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    const int column_count = static_cast<int>(kSignalAspectStructureKeyColumnOffset +
+        table_cache_.signal_aspect_structure_key_columns);
+    if (ImGui::BeginTable("signal_aspects", column_count,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        for (int i = 0; i < IM_ARRAYSIZE(kSignalAspectFixedColumns); ++i) {
+            ImGui::TableSetupColumn(kSignalAspectFixedColumns[i].header,
+                                    ImGuiTableColumnFlags_WidthFixed,
+                                    kSignalAspectFixedColumns[i].width);
+        }
+        std::vector<std::string> structure_headers;
+        structure_headers.reserve(table_cache_.signal_aspect_structure_key_columns);
+        for (size_t i = 0; i < table_cache_.signal_aspect_structure_key_columns; ++i) {
+            structure_headers.push_back("structureKey" + std::to_string(i + 1));
+            float width = i < table_cache_.signal_aspect_structure_key_widths.size()
+                ? table_cache_.signal_aspect_structure_key_widths[i]
+                : 120.0f;
+            ImGui::TableSetupColumn(structure_headers.back().c_str(),
+                                    ImGuiTableColumnFlags_WidthFixed, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(table_cache_.signal_aspect_rows.size()));
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.signal_aspect_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                ImGui::PushID(row_index);
+                for (int i = 0; i < column_count; ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i >= kSignalAspectStructureKeyColumnOffset) {
+                        ImGui::PushID(i);
+                        if (render_text_cell_with_context(value, tr("menu.find_in_structure_models"),
+                                                          !blank_ascii(value))) {
+                            find_structure_model_for_structure_key(value);
+                        }
+                        ImGui::PopID();
+                    } else if (!value.empty()) {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    focus_signal_aspects_next_ = false;
+    ImGui::End();
+}
+
+void App::render_signals_window() {
+    if (!show_signals_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_signals_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.signals") + "###Signals";
+    if (!ImGui::Begin(title.c_str(), &show_signals_window_)) {
+        focus_signals_next_ = false;
+        ImGui::End();
+        return;
+    }
+    sync_marker_visibility_sizes();
+    bool all_visible = all_flags_set(signal_row_visible_);
+    ImGui::BeginDisabled(signal_row_visible_.empty());
+    if (ImGui::Checkbox(tr("chk.select_all").c_str(), &all_visible)) {
+        set_all_flags(signal_row_visible_, all_visible);
+    }
+    ImGui::EndDisabled();
+    ensure_table_cache();
+    if (ImGui::BeginTable("signals", IM_ARRAYSIZE(kSignalColumns) + 1,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        std::string file_name_header = tr("column.file_name");
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
+        for (int i = 0; i < IM_ARRAYSIZE(kSignalColumns); ++i) {
+            float width = kSignalColumns[i].width;
+            if (i == kSignalDistanceColumn) width = table_cache_.signal_distance_width;
+            if (i == kSignalFilePathColumn) width = table_cache_.signal_file_path_width;
+            const char* header = i == kSignalFilePathColumn
+                ? file_name_header.c_str()
+                : kSignalColumns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(table_cache_.signal_rows.size());
+        if (signal_list_scroll_row_ >= row_count) signal_list_scroll_row_ = -1;
+        if (signal_list_highlight_row_ >= row_count) signal_list_highlight_row_ = -1;
+        const int scroll_target_row = signal_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.signal_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                if (row_index == signal_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    signal_list_scroll_row_ = -1;
+                }
+                ImGui::PushID(row_index);
+                ImGui::TableSetColumnIndex(0);
+                bool row_visible = static_cast<size_t>(row_index) < signal_row_visible_.size() &&
+                    signal_row_visible_[static_cast<size_t>(row_index)] != 0;
+                if (ImGui::Checkbox("##show", &row_visible) &&
+                    static_cast<size_t>(row_index) < signal_row_visible_.size()) {
+                    signal_row_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
+                }
+                for (int i = 0; i < IM_ARRAYSIZE(kSignalColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i + 1);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == kSignalDistanceColumn) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < signal_marker_cache_.size() &&
+                            signal_marker_cache_[marker_index].has_value();
+                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                            locate_signal_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
+                    if (value.empty()) continue;
+                    if (i == kSignalFilePathColumn) {
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.tooltip_text);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    focus_signals_next_ = false;
+    ImGui::End();
+}
+
+void App::render_beacons_window() {
+    if (!show_beacons_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_beacons_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.beacons") + "###Beacons";
+    if (!ImGui::Begin(title.c_str(), &show_beacons_window_)) {
+        focus_beacons_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_beacons_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("beacons", IM_ARRAYSIZE(kBeaconColumns),
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        std::string file_name_header = tr("column.file_name");
+        for (int i = 0; i < IM_ARRAYSIZE(kBeaconColumns); ++i) {
+            float width = kBeaconColumns[i].width;
+            if (i == kBeaconDistanceColumn) width = table_cache_.beacon_distance_width;
+            if (i == kBeaconFilePathColumn) width = table_cache_.beacon_file_path_width;
+            const char* header = i == kBeaconFilePathColumn
+                ? file_name_header.c_str()
+                : kBeaconColumns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(table_cache_.beacon_rows.size());
+        if (beacon_list_scroll_row_ >= row_count) beacon_list_scroll_row_ = -1;
+        if (beacon_list_highlight_row_ >= row_count) beacon_list_highlight_row_ = -1;
+        const int scroll_target_row = beacon_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.beacon_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                if (row_index == beacon_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    beacon_list_scroll_row_ = -1;
+                }
+                ImGui::PushID(row_index);
+                for (int i = 0; i < IM_ARRAYSIZE(kBeaconColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == kBeaconDistanceColumn) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < beacon_marker_cache_.size() &&
+                            beacon_marker_cache_[marker_index].has_value();
+                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                            locate_beacon_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
+                    if (value.empty()) continue;
+                    if (i == kBeaconFilePathColumn) {
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.tooltip_text);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    focus_beacons_next_ = false;
     ImGui::End();
 }
 

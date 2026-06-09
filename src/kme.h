@@ -128,6 +128,9 @@ struct TableUiCache {
     std::vector<CachedTableRow> structure_rows;
     std::vector<CachedTableRow> structure_model_rows;
     std::vector<CachedTableRow> repeater_rows;
+    std::vector<CachedTableRow> signal_aspect_rows;
+    std::vector<CachedTableRow> signal_rows;
+    std::vector<CachedTableRow> beacon_rows;
     std::vector<CachedTableRow> irregularity_rows;
     std::vector<CachedTableRow> rolling_noise_rows;
     std::vector<CachedTableRow> joint_noise_rows;
@@ -139,6 +142,12 @@ struct TableUiCache {
     std::vector<CachedTableRow> sound_3d_list_rows;
     float structure_file_path_width = 200.0f;
     float structure_model_file_path_width = 200.0f;
+    float signal_distance_width = 110.0f;
+    float signal_file_path_width = 200.0f;
+    float beacon_distance_width = 110.0f;
+    float beacon_file_path_width = 200.0f;
+    size_t signal_aspect_structure_key_columns = 0;
+    std::vector<float> signal_aspect_structure_key_widths;
     float sound_list_file_path_width = 200.0f;
     float sound_list_buffer_count_width = 80.0f;
     float sound_3d_list_file_path_width = 200.0f;
@@ -180,6 +189,10 @@ struct MapModel {
     std::vector<TableRow> sound_list;
     std::vector<TableRow> structures_between;
     std::vector<TableRow> repeaters;
+    std::vector<TableRow> signal_aspects;
+    std::vector<TableRow> signals;
+    std::vector<TableRow> beacons;
+    std::vector<TableRow> pretrains;
     std::vector<TableRow> irregularities;
     std::vector<TableRow> rolling_noises;
     std::vector<TableRow> joint_noises;
@@ -300,6 +313,30 @@ struct PlanRepeaterMarker {
     size_t row_index = 0;
 };
 
+struct PlanSignalMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    size_t row_index = 0;
+};
+
+struct PlanBeaconMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    size_t row_index = 0;
+};
+
+struct PlanPreTrainMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    size_t row_index = 0;
+};
+
 struct PlanIrregularityMarker {
     double d = 0.0;
     double x = 0.0;
@@ -391,6 +428,9 @@ struct PlanData {
     std::vector<PlanSpeed> speedlimits;
     std::vector<PlanStructureMarker> structure_markers;
     std::vector<PlanRepeaterMarker> repeater_markers;
+    std::vector<PlanSignalMarker> signal_markers;
+    std::vector<PlanBeaconMarker> beacon_markers;
+    std::vector<PlanPreTrainMarker> pretrain_markers;
     std::vector<PlanIrregularityMarker> irregularity_markers;
     std::vector<PlanRollingNoiseMarker> rolling_noise_markers;
     std::vector<PlanJointNoiseMarker> joint_noise_markers;
@@ -458,6 +498,9 @@ struct WindowVisibilitySettings {
     bool show_sound_list_window = false;
     bool show_sound_3d_list_window = false;
     bool show_repeaters_window = false;
+    bool show_signal_aspects_window = false;
+    bool show_signals_window = false;
+    bool show_beacons_window = false;
     bool show_irregularities_window = false;
     bool show_rolling_noises_window = false;
     bool show_joint_noises_window = false;
@@ -476,6 +519,9 @@ struct WindowVisibilitySettings {
             show_sound_list_window == other.show_sound_list_window &&
             show_sound_3d_list_window == other.show_sound_3d_list_window &&
             show_repeaters_window == other.show_repeaters_window &&
+            show_signal_aspects_window == other.show_signal_aspects_window &&
+            show_signals_window == other.show_signals_window &&
+            show_beacons_window == other.show_beacons_window &&
             show_irregularities_window == other.show_irregularities_window &&
             show_rolling_noises_window == other.show_rolling_noises_window &&
             show_joint_noises_window == other.show_joint_noises_window &&
@@ -502,6 +548,8 @@ struct View2DSettings {
     bool show_profile_other = false;
     bool show_speedlimits = true;
     bool show_irregularity_markers = true;
+    bool show_beacon_markers = true;
+    bool show_pretrain_markers = true;
     bool show_rolling_noise_markers = true;
     bool show_joint_noise_markers = true;
     bool show_background_markers = true;
@@ -524,6 +572,8 @@ struct View2DSettings {
             show_profile_other == other.show_profile_other &&
             show_speedlimits == other.show_speedlimits &&
             show_irregularity_markers == other.show_irregularity_markers &&
+            show_beacon_markers == other.show_beacon_markers &&
+            show_pretrain_markers == other.show_pretrain_markers &&
             show_rolling_noise_markers == other.show_rolling_noise_markers &&
             show_joint_noise_markers == other.show_joint_noise_markers &&
             show_background_markers == other.show_background_markers &&
@@ -656,6 +706,8 @@ private:
     bool show_profile_other_ = false;
     bool show_speedlimits_ = true;
     bool show_irregularity_markers_ = true;
+    bool show_beacon_markers_ = true;
+    bool show_pretrain_markers_ = true;
     bool show_rolling_noise_markers_ = true;
     bool show_joint_noise_markers_ = true;
     bool show_background_markers_ = true;
@@ -699,6 +751,9 @@ private:
     bool show_sound_list_window_ = false;
     bool show_sound_3d_list_window_ = false;
     bool show_repeaters_window_ = false;
+    bool show_signal_aspects_window_ = false;
+    bool show_signals_window_ = false;
+    bool show_beacons_window_ = false;
     bool show_irregularities_window_ = false;
     bool show_rolling_noises_window_ = false;
     bool show_joint_noises_window_ = false;
@@ -710,6 +765,9 @@ private:
     bool show_model_preview_window_ = true;
     bool focus_structures_next_ = false;
     bool focus_repeaters_next_ = false;
+    bool focus_signal_aspects_next_ = false;
+    bool focus_signals_next_ = false;
+    bool focus_beacons_next_ = false;
     bool focus_irregularities_next_ = false;
     bool focus_rolling_noises_next_ = false;
     bool focus_joint_noises_next_ = false;
@@ -745,6 +803,9 @@ private:
     bool structure_model_unused_has_run_ = false;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
+    std::vector<std::optional<PlanSignalMarker>> signal_marker_cache_;
+    std::vector<std::optional<PlanBeaconMarker>> beacon_marker_cache_;
+    std::vector<std::optional<PlanPreTrainMarker>> pretrain_marker_cache_;
     std::vector<std::optional<PlanIrregularityMarker>> irregularity_marker_cache_;
     std::vector<std::optional<PlanRollingNoiseMarker>> rolling_noise_marker_cache_;
     std::vector<std::optional<PlanJointNoiseMarker>> joint_noise_marker_cache_;
@@ -754,10 +815,15 @@ private:
     std::vector<std::optional<PlanFogMarker>> fog_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
+    std::vector<unsigned char> signal_row_visible_;
     int structure_list_scroll_row_ = -1;
     int structure_list_highlight_row_ = -1;
     int repeater_list_scroll_row_ = -1;
     int repeater_list_highlight_row_ = -1;
+    int signal_list_scroll_row_ = -1;
+    int signal_list_highlight_row_ = -1;
+    int beacon_list_scroll_row_ = -1;
+    int beacon_list_highlight_row_ = -1;
     int irregularity_list_scroll_row_ = -1;
     int irregularity_list_highlight_row_ = -1;
     int rolling_noise_list_scroll_row_ = -1;
@@ -774,6 +840,8 @@ private:
     int fog_list_highlight_row_ = -1;
     int plan_structure_popup_row_ = -1;
     int plan_repeater_popup_row_ = -1;
+    int plan_signal_popup_row_ = -1;
+    int plan_beacon_popup_row_ = -1;
     int plan_irregularity_popup_row_ = -1;
     int plan_rolling_noise_popup_row_ = -1;
     int plan_joint_noise_popup_row_ = -1;
@@ -837,6 +905,9 @@ private:
     void render_sound_list_window();
     void render_sound_3d_list_window();
     void render_repeaters_window();
+    void render_signal_aspects_window();
+    void render_signals_window();
+    void render_beacons_window();
     void render_irregularities_window();
     void render_rolling_noises_window();
     void render_joint_noises_window();
@@ -870,6 +941,10 @@ private:
     void locate_structure_row_in_list(size_t row_index);
     void locate_repeater_row_on_plan(size_t row_index);
     void locate_repeater_row_in_list(size_t row_index);
+    void locate_signal_row_on_plan(size_t row_index);
+    void locate_signal_row_in_list(size_t row_index);
+    void locate_beacon_row_on_plan(size_t row_index);
+    void locate_beacon_row_in_list(size_t row_index);
     void locate_irregularity_row_on_plan(size_t row_index);
     void locate_irregularity_row_in_list(size_t row_index);
     void locate_rolling_noise_row_on_plan(size_t row_index);

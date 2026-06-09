@@ -241,6 +241,9 @@ void debug_plan_stage(const char*) {}
 void App::rebuild_marker_overlay_cache() {
     structure_marker_cache_.clear();
     repeater_marker_cache_.clear();
+    signal_marker_cache_.clear();
+    beacon_marker_cache_.clear();
+    pretrain_marker_cache_.clear();
     irregularity_marker_cache_.clear();
     rolling_noise_marker_cache_.clear();
     joint_noise_marker_cache_.clear();
@@ -312,6 +315,59 @@ void App::rebuild_marker_overlay_cache() {
         }
         structure_marker_cache_.push_back(make_marker(distance, p, table_cell(row, "structureKey"),
                                                       structure_marker_cache_.size()));
+    }
+
+    signal_marker_cache_.reserve(model_.signals.size());
+    for (const auto& row : model_.signals) {
+        double distance = table_cell_number(row, "distance");
+        double lateral = table_cell_number(row, "x");
+        double forward = table_cell_number(row, "z");
+        if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
+            PlanSignalMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = table_cell(row, "signalAspectKey");
+            if (marker.label.empty()) marker.label = "#" + std::to_string(signal_marker_cache_.size() + 1);
+            marker.row_index = signal_marker_cache_.size();
+            signal_marker_cache_.push_back(std::move(marker));
+        } else {
+            signal_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    beacon_marker_cache_.reserve(model_.beacons.size());
+    for (const auto& row : model_.beacons) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanBeaconMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = table_cell(row, "type");
+            if (marker.label.empty()) marker.label = "#" + std::to_string(beacon_marker_cache_.size() + 1);
+            marker.row_index = beacon_marker_cache_.size();
+            beacon_marker_cache_.push_back(std::move(marker));
+        } else {
+            beacon_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    pretrain_marker_cache_.reserve(model_.pretrains.size());
+    for (const auto& row : model_.pretrains) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanPreTrainMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = table_cell(row, "passTime");
+            if (marker.label.empty()) marker.label = "#" + std::to_string(pretrain_marker_cache_.size() + 1);
+            marker.row_index = pretrain_marker_cache_.size();
+            pretrain_marker_cache_.push_back(std::move(marker));
+        } else {
+            pretrain_marker_cache_.push_back(std::nullopt);
+        }
     }
 
     irregularity_marker_cache_.reserve(model_.irregularities.size());
@@ -732,6 +788,61 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         marker.row_index = i;
         out.structure_markers.push_back(std::move(marker));
         append_marker_bounds(p.x, p.y);
+    }
+
+    out.signal_markers.reserve(std::min(signal_marker_cache_.size(), signal_row_visible_.size()));
+    for (size_t i = 0; i < signal_marker_cache_.size() && i < signal_row_visible_.size(); ++i) {
+        if (!signal_row_visible_[i] || !signal_marker_cache_[i]) continue;
+        const PlanSignalMarker& source = *signal_marker_cache_[i];
+        if (source.d < dmin_ || source.d > dmax_) continue;
+        TrackPoint p;
+        p.x = source.x;
+        p.y = source.y;
+        p = rotate_point(p);
+        PlanSignalMarker marker = source;
+        marker.x = p.x;
+        marker.y = p.y;
+        marker.row_index = i;
+        out.signal_markers.push_back(std::move(marker));
+        append_marker_bounds(p.x, p.y);
+    }
+
+    if (show_beacon_markers_) {
+        out.beacon_markers.reserve(beacon_marker_cache_.size());
+        for (size_t i = 0; i < beacon_marker_cache_.size(); ++i) {
+            if (!beacon_marker_cache_[i]) continue;
+            const PlanBeaconMarker& source = *beacon_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanBeaconMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.beacon_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    if (show_pretrain_markers_) {
+        out.pretrain_markers.reserve(pretrain_marker_cache_.size());
+        for (size_t i = 0; i < pretrain_marker_cache_.size(); ++i) {
+            if (!pretrain_marker_cache_[i]) continue;
+            const PlanPreTrainMarker& source = *pretrain_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanPreTrainMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.pretrain_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
     }
 
     if (show_irregularity_markers_) {
@@ -1621,6 +1732,60 @@ static void draw_plan_diamond_marker(ImDrawList* draw, ImVec2 p, ImU32 color, fl
     draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(80, 0, 48, 255), ImDrawFlags_Closed, 1.0f);
 }
 
+static void draw_plan_signal_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float circle_r = 4.6f * scale;
+    const float line_weight = 1.8f * scale;
+    const ImU32 shadow = IM_COL32(8, 42, 30, 230);
+    ImVec2 circle_center(p.x, p.y - 3.2f * scale);
+    draw->AddCircle(circle_center, circle_r, shadow, 20, line_weight + 1.8f * scale);
+    draw->AddCircle(circle_center, circle_r, color, 20, line_weight);
+    draw->AddLine(ImVec2(p.x, p.y + 1.8f * scale), ImVec2(p.x, p.y + 7.2f * scale),
+                  shadow, line_weight + 1.8f * scale);
+    draw->AddLine(ImVec2(p.x - 5.0f * scale, p.y + 7.2f * scale),
+                  ImVec2(p.x + 5.0f * scale, p.y + 7.2f * scale),
+                  shadow, line_weight + 1.8f * scale);
+    draw->AddLine(ImVec2(p.x, p.y + 1.8f * scale), ImVec2(p.x, p.y + 7.2f * scale),
+                  color, line_weight);
+    draw->AddLine(ImVec2(p.x - 5.0f * scale, p.y + 7.2f * scale),
+                  ImVec2(p.x + 5.0f * scale, p.y + 7.2f * scale),
+                  color, line_weight);
+}
+
+static void draw_plan_beacon_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float half_top = 4.5f * scale;
+    const float half_bottom = 7.0f * scale;
+    const float half_height = 5.5f * scale;
+    const float line_weight = 1.8f * scale;
+    const ImU32 shadow = IM_COL32(8, 42, 30, 230);
+    ImVec2 pts[4] = {
+        ImVec2(p.x - half_top, p.y - half_height),
+        ImVec2(p.x + half_top, p.y - half_height),
+        ImVec2(p.x + half_bottom, p.y + half_height),
+        ImVec2(p.x - half_bottom, p.y + half_height),
+    };
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), shadow, ImDrawFlags_Closed, line_weight + 1.8f * scale);
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), color, ImDrawFlags_Closed, line_weight);
+}
+
+static void draw_plan_pretrain_marker(ImDrawList* draw, ImVec2 p, const std::string& label, float scale = 1.0f) {
+    const float half = 7.0f * scale;
+    const ImU32 white = IM_COL32(255, 255, 255, 255);
+    const ImU32 shadow = IM_COL32(0, 0, 0, 220);
+    ImVec2 min(p.x - half, p.y - half);
+    ImVec2 max(p.x + half, p.y + half);
+    draw->AddRect(min, max, shadow, 0.0f, 0, 3.8f * scale);
+    draw->AddRect(min, max, white, 0.0f, 0, 1.8f * scale);
+    ImVec2 text_size = ImGui::CalcTextSize("P");
+    ImVec2 text_pos(p.x - text_size.x * 0.5f, p.y - text_size.y * 0.5f);
+    draw->AddText(ImVec2(text_pos.x + 1.0f, text_pos.y + 1.0f), shadow, "P");
+    draw->AddText(text_pos, white, "P");
+    if (!label.empty()) {
+        ImVec2 label_pos(max.x + 5.0f * scale, p.y - ImGui::GetTextLineHeight() * 0.5f);
+        draw->AddText(ImVec2(label_pos.x + 1.0f, label_pos.y + 1.0f), shadow, label.c_str());
+        draw->AddText(label_pos, white, label.c_str());
+    }
+}
+
 static void draw_plan_wave_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
     const float half_width = 7.0f * scale;
     const float amplitude = 3.0f * scale;
@@ -1863,6 +2028,60 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_signal_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.signal_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
+    auto nearest_beacon_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.beacon_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
+    auto nearest_pretrain_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.pretrain_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     auto nearest_irregularity_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
         if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
         constexpr double hover_radius_sq = 12.0 * 12.0;
@@ -1992,6 +2211,9 @@ void App::render_plan_canvas(ImVec2 size) {
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
     std::optional<MarkerHit> hovered_structure_hit = nearest_structure_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_signal_hit = nearest_signal_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_beacon_hit = nearest_beacon_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_pretrain_hit = nearest_pretrain_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_rolling_noise_hit = nearest_rolling_noise_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_joint_noise_hit = nearest_joint_noise_marker_hit(hit_transform);
@@ -2005,6 +2227,15 @@ void App::render_plan_canvas(ImVec2 size) {
         : std::nullopt;
     std::optional<size_t> hovered_repeater_row = hovered_repeater_hit
         ? std::optional<size_t>(hovered_repeater_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_signal_row = hovered_signal_hit
+        ? std::optional<size_t>(hovered_signal_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_beacon_row = hovered_beacon_hit
+        ? std::optional<size_t>(hovered_beacon_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_pretrain_row = hovered_pretrain_hit
+        ? std::optional<size_t>(hovered_pretrain_hit->row_index)
         : std::nullopt;
     std::optional<size_t> hovered_irregularity_row = hovered_irregularity_hit
         ? std::optional<size_t>(hovered_irregularity_hit->row_index)
@@ -2031,7 +2262,33 @@ void App::render_plan_canvas(ImVec2 size) {
         auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
             return hit && (!other || hit->dist_sq <= other->dist_sq);
         };
-        if (hovered_adhesion_hit &&
+        if (hovered_signal_hit &&
+            closer_or_equal(hovered_signal_hit, hovered_beacon_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_adhesion_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_irregularity_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_background_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_repeater_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_structure_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_cab_illuminance_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_joint_noise_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_fog_hit)) {
+            plan_signal_popup_row_ = static_cast<int>(hovered_signal_hit->row_index);
+            ImGui::OpenPopup("plan_signal_marker_context");
+        } else if (hovered_beacon_hit &&
+            closer_or_equal(hovered_beacon_hit, hovered_signal_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_adhesion_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_irregularity_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_background_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_repeater_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_structure_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_cab_illuminance_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_joint_noise_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_fog_hit)) {
+            plan_beacon_popup_row_ = static_cast<int>(hovered_beacon_hit->row_index);
+            ImGui::OpenPopup("plan_beacon_marker_context");
+        } else if (hovered_adhesion_hit &&
             closer_or_equal(hovered_adhesion_hit, hovered_irregularity_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_background_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_repeater_hit) &&
@@ -2259,6 +2516,49 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
+    if (!data.signal_markers.empty()) {
+        ImU32 signal_color = IM_COL32(148, 242, 178, 255);
+        for (const auto& marker : data.signal_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_signal_row && *hovered_signal_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_signal_marker(draw, p, signal_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, signal_color, marker.label);
+        }
+    }
+    debug_plan_stage("signal_markers");
+
+    if (!data.beacon_markers.empty()) {
+        ImU32 beacon_color = IM_COL32(148, 242, 178, 255);
+        for (const auto& marker : data.beacon_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_beacon_row && *hovered_beacon_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_beacon_marker(draw, p, beacon_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, beacon_color, marker.label);
+        }
+    }
+    debug_plan_stage("beacon_markers");
+
+    if (!data.pretrain_markers.empty()) {
+        for (const auto& marker : data.pretrain_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_pretrain_row && *hovered_pretrain_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_pretrain_marker(draw, p, marker.label, marker_hovered ? 1.22f : 1.0f);
+        }
+    }
+    debug_plan_stage("pretrain_markers");
+
     if (!data.irregularity_markers.empty()) {
         ImU32 irregularity_color = IM_COL32(204, 170, 255, 255);
         for (const auto& marker : data.irregularity_markers) {
@@ -2454,6 +2754,26 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_repeater_list").c_str()) && can_locate) {
             locate_repeater_row_in_list(static_cast<size_t>(plan_repeater_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_signal_marker_context")) {
+        bool can_locate = plan_signal_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_signal_popup_row_) < signal_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_signal_list").c_str()) && can_locate) {
+            locate_signal_row_in_list(static_cast<size_t>(plan_signal_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_beacon_marker_context")) {
+        bool can_locate = plan_beacon_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_beacon_popup_row_) < beacon_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_beacon_list").c_str()) && can_locate) {
+            locate_beacon_row_in_list(static_cast<size_t>(plan_beacon_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();
