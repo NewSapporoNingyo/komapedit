@@ -588,6 +588,12 @@ std::vector<std::string> parse_comma_separated_fields(const std::string& line, b
     return fields;
 }
 
+void trim_trailing_empty_fields(std::vector<std::string>& fields) {
+    while (!fields.empty() && fields.back().empty()) {
+        fields.pop_back();
+    }
+}
+
 int parse_sound_buffer_count(const std::string& text) {
     std::string trimmed = trim_field_copy(text);
     if (trimmed.empty()) return 1;
@@ -1738,6 +1744,7 @@ private:
             if (trimmed.empty() || trimmed[0] == '#') continue;
 
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
+            trim_trailing_empty_fields(fields);
             if (fields.empty()) continue;
             const bool starts_glare_row = fields[0].empty();
             if (starts_glare_row && !current_aspect) continue;

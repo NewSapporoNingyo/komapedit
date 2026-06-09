@@ -359,6 +359,9 @@ static const TableColumnDef kSignalAspectFixedColumns[] = {
     {"signalAspectKey", "signalAspectKey", 150.0f},
 };
 constexpr int kSignalAspectStructureKeyColumnOffset = IM_ARRAYSIZE(kSignalAspectFixedColumns);
+constexpr size_t kMaxSignalAspectTableColumns = 511;
+constexpr size_t kMaxSignalAspectStructureKeyColumns =
+    kMaxSignalAspectTableColumns - static_cast<size_t>(kSignalAspectStructureKeyColumnOffset);
 
 static const TableColumnDef kSignalColumns[] = {
     {"rowNumber", "#", 40.0f},
@@ -970,6 +973,8 @@ void App::ensure_table_cache() {
         cache.signal_aspect_structure_key_columns =
             std::max(cache.signal_aspect_structure_key_columns, structure_key_count);
     }
+    cache.signal_aspect_structure_key_columns =
+        std::min(cache.signal_aspect_structure_key_columns, kMaxSignalAspectStructureKeyColumns);
     cache.signal_aspect_structure_key_widths.assign(cache.signal_aspect_structure_key_columns, 120.0f);
     cache.signal_aspect_rows.reserve(model_.signal_aspects.size());
     for (size_t row_index = 0; row_index < model_.signal_aspects.size(); ++row_index) {
