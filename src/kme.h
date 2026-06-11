@@ -133,6 +133,7 @@ struct TableUiCache {
     std::vector<CachedTableRow> beacon_rows;
     std::vector<CachedTableRow> irregularity_rows;
     std::vector<CachedTableRow> rolling_noise_rows;
+    std::vector<CachedTableRow> flange_noise_rows;
     std::vector<CachedTableRow> joint_noise_rows;
     std::vector<CachedTableRow> background_rows;
     std::vector<CachedTableRow> adhesion_rows;
@@ -159,6 +160,8 @@ struct TableUiCache {
     float irregularity_file_path_width = 200.0f;
     float rolling_noise_distance_width = 110.0f;
     float rolling_noise_file_path_width = 200.0f;
+    float flange_noise_distance_width = 110.0f;
+    float flange_noise_file_path_width = 200.0f;
     float joint_noise_distance_width = 110.0f;
     float joint_noise_file_path_width = 200.0f;
     float background_distance_width = 110.0f;
@@ -195,6 +198,7 @@ struct MapModel {
     std::vector<TableRow> pretrains;
     std::vector<TableRow> irregularities;
     std::vector<TableRow> rolling_noises;
+    std::vector<TableRow> flange_noises;
     std::vector<TableRow> joint_noises;
     std::vector<TableRow> backgrounds;
     std::vector<TableRow> adhesions;
@@ -353,6 +357,14 @@ struct PlanRollingNoiseMarker {
     size_t row_index = 0;
 };
 
+struct PlanFlangeNoiseMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    size_t row_index = 0;
+};
+
 struct PlanJointNoiseMarker {
     double d = 0.0;
     double x = 0.0;
@@ -433,6 +445,7 @@ struct PlanData {
     std::vector<PlanPreTrainMarker> pretrain_markers;
     std::vector<PlanIrregularityMarker> irregularity_markers;
     std::vector<PlanRollingNoiseMarker> rolling_noise_markers;
+    std::vector<PlanFlangeNoiseMarker> flange_noise_markers;
     std::vector<PlanJointNoiseMarker> joint_noise_markers;
     std::vector<PlanBackgroundMarker> background_markers;
     std::vector<PlanAdhesionMarker> adhesion_markers;
@@ -503,6 +516,7 @@ struct WindowVisibilitySettings {
     bool show_beacons_window = false;
     bool show_irregularities_window = false;
     bool show_rolling_noises_window = false;
+    bool show_flange_noises_window = false;
     bool show_joint_noises_window = false;
     bool show_backgrounds_window = false;
     bool show_adhesions_window = false;
@@ -524,6 +538,7 @@ struct WindowVisibilitySettings {
             show_beacons_window == other.show_beacons_window &&
             show_irregularities_window == other.show_irregularities_window &&
             show_rolling_noises_window == other.show_rolling_noises_window &&
+            show_flange_noises_window == other.show_flange_noises_window &&
             show_joint_noises_window == other.show_joint_noises_window &&
             show_backgrounds_window == other.show_backgrounds_window &&
             show_adhesions_window == other.show_adhesions_window &&
@@ -551,6 +566,7 @@ struct View2DSettings {
     bool show_beacon_markers = true;
     bool show_pretrain_markers = true;
     bool show_rolling_noise_markers = true;
+    bool show_flange_noise_markers = true;
     bool show_joint_noise_markers = true;
     bool show_background_markers = true;
     bool show_adhesion_markers = true;
@@ -575,6 +591,7 @@ struct View2DSettings {
             show_beacon_markers == other.show_beacon_markers &&
             show_pretrain_markers == other.show_pretrain_markers &&
             show_rolling_noise_markers == other.show_rolling_noise_markers &&
+            show_flange_noise_markers == other.show_flange_noise_markers &&
             show_joint_noise_markers == other.show_joint_noise_markers &&
             show_background_markers == other.show_background_markers &&
             show_adhesion_markers == other.show_adhesion_markers &&
@@ -709,6 +726,7 @@ private:
     bool show_beacon_markers_ = true;
     bool show_pretrain_markers_ = true;
     bool show_rolling_noise_markers_ = true;
+    bool show_flange_noise_markers_ = true;
     bool show_joint_noise_markers_ = true;
     bool show_background_markers_ = true;
     bool show_adhesion_markers_ = true;
@@ -756,6 +774,7 @@ private:
     bool show_beacons_window_ = false;
     bool show_irregularities_window_ = false;
     bool show_rolling_noises_window_ = false;
+    bool show_flange_noises_window_ = false;
     bool show_joint_noises_window_ = false;
     bool show_backgrounds_window_ = false;
     bool show_adhesions_window_ = false;
@@ -770,6 +789,7 @@ private:
     bool focus_beacons_next_ = false;
     bool focus_irregularities_next_ = false;
     bool focus_rolling_noises_next_ = false;
+    bool focus_flange_noises_next_ = false;
     bool focus_joint_noises_next_ = false;
     bool focus_backgrounds_next_ = false;
     bool focus_adhesions_next_ = false;
@@ -808,6 +828,7 @@ private:
     std::vector<std::optional<PlanPreTrainMarker>> pretrain_marker_cache_;
     std::vector<std::optional<PlanIrregularityMarker>> irregularity_marker_cache_;
     std::vector<std::optional<PlanRollingNoiseMarker>> rolling_noise_marker_cache_;
+    std::vector<std::optional<PlanFlangeNoiseMarker>> flange_noise_marker_cache_;
     std::vector<std::optional<PlanJointNoiseMarker>> joint_noise_marker_cache_;
     std::vector<std::optional<PlanBackgroundMarker>> background_marker_cache_;
     std::vector<std::optional<PlanAdhesionMarker>> adhesion_marker_cache_;
@@ -828,6 +849,8 @@ private:
     int irregularity_list_highlight_row_ = -1;
     int rolling_noise_list_scroll_row_ = -1;
     int rolling_noise_list_highlight_row_ = -1;
+    int flange_noise_list_scroll_row_ = -1;
+    int flange_noise_list_highlight_row_ = -1;
     int joint_noise_list_scroll_row_ = -1;
     int joint_noise_list_highlight_row_ = -1;
     int background_list_scroll_row_ = -1;
@@ -844,6 +867,7 @@ private:
     int plan_beacon_popup_row_ = -1;
     int plan_irregularity_popup_row_ = -1;
     int plan_rolling_noise_popup_row_ = -1;
+    int plan_flange_noise_popup_row_ = -1;
     int plan_joint_noise_popup_row_ = -1;
     int plan_background_popup_row_ = -1;
     int plan_adhesion_popup_row_ = -1;
@@ -910,6 +934,7 @@ private:
     void render_beacons_window();
     void render_irregularities_window();
     void render_rolling_noises_window();
+    void render_flange_noises_window();
     void render_joint_noises_window();
     void render_backgrounds_window();
     void render_adhesions_window();
@@ -949,6 +974,8 @@ private:
     void locate_irregularity_row_in_list(size_t row_index);
     void locate_rolling_noise_row_on_plan(size_t row_index);
     void locate_rolling_noise_row_in_list(size_t row_index);
+    void locate_flange_noise_row_on_plan(size_t row_index);
+    void locate_flange_noise_row_in_list(size_t row_index);
     void locate_joint_noise_row_on_plan(size_t row_index);
     void locate_joint_noise_row_in_list(size_t row_index);
     void locate_background_row_on_plan(size_t row_index);

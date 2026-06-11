@@ -246,6 +246,7 @@ void App::rebuild_marker_overlay_cache() {
     pretrain_marker_cache_.clear();
     irregularity_marker_cache_.clear();
     rolling_noise_marker_cache_.clear();
+    flange_noise_marker_cache_.clear();
     joint_noise_marker_cache_.clear();
     background_marker_cache_.clear();
     adhesion_marker_cache_.clear();
@@ -399,6 +400,22 @@ void App::rebuild_marker_overlay_cache() {
             rolling_noise_marker_cache_.push_back(std::move(marker));
         } else {
             rolling_noise_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    flange_noise_marker_cache_.reserve(model_.flange_noises.size());
+    for (const auto& row : model_.flange_noises) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanFlangeNoiseMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = "#" + std::to_string(flange_noise_marker_cache_.size() + 1);
+            marker.row_index = flange_noise_marker_cache_.size();
+            flange_noise_marker_cache_.push_back(std::move(marker));
+        } else {
+            flange_noise_marker_cache_.push_back(std::nullopt);
         }
     }
 
@@ -879,6 +896,25 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.y = p.y;
             marker.row_index = i;
             out.rolling_noise_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    if (show_flange_noise_markers_) {
+        out.flange_noise_markers.reserve(flange_noise_marker_cache_.size());
+        for (size_t i = 0; i < flange_noise_marker_cache_.size(); ++i) {
+            if (!flange_noise_marker_cache_[i]) continue;
+            const PlanFlangeNoiseMarker& source = *flange_noise_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanFlangeNoiseMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.flange_noise_markers.push_back(std::move(marker));
             append_marker_bounds(p.x, p.y);
         }
     }
@@ -1816,6 +1852,29 @@ static void draw_plan_axle_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float
     draw->AddLine(ImVec2(right.x, right.y - half_height), ImVec2(right.x, right.y + half_height), color, line_weight);
 }
 
+static void draw_plan_flange_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const char* label = "F";
+    ImFont* font = ImGui::GetFont();
+    const float font_size = ImGui::GetFontSize() * 0.92f * scale;
+    const ImVec2 text_size = font->CalcTextSizeA(font_size, std::numeric_limits<float>::max(), 0.0f, label);
+    const ImVec2 text_pos(p.x - text_size.x * 0.5f, p.y - text_size.y * 0.5f);
+    const ImU32 outline = IM_COL32(68, 34, 112, 255);
+    const float outline_px = std::max(1.0f, 1.45f * scale);
+    const ImVec2 outline_offsets[] = {
+        ImVec2(-outline_px, -outline_px), ImVec2(0.0f, -outline_px), ImVec2(outline_px, -outline_px),
+        ImVec2(-outline_px, 0.0f),                                      ImVec2(outline_px, 0.0f),
+        ImVec2(-outline_px, outline_px),  ImVec2(0.0f, outline_px),  ImVec2(outline_px, outline_px),
+    };
+    for (const ImVec2& offset : outline_offsets) {
+        draw->AddText(font, font_size, ImVec2(text_pos.x + offset.x, text_pos.y + offset.y), outline, label);
+    }
+
+    const float bold_px = std::max(0.45f, 0.75f * scale);
+    draw->AddText(font, font_size, ImVec2(text_pos.x - bold_px, text_pos.y), color, label);
+    draw->AddText(font, font_size, text_pos, color, label);
+    draw->AddText(font, font_size, ImVec2(text_pos.x + bold_px, text_pos.y), color, label);
+}
+
 static void draw_plan_joint_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
     const float left = 6.0f * scale;
     const float right = 6.5f * scale;
@@ -2118,6 +2177,24 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_flange_noise_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.flange_noise_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     auto nearest_joint_noise_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
         if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
         constexpr double hover_radius_sq = 12.0 * 12.0;
@@ -2216,6 +2293,7 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<MarkerHit> hovered_pretrain_hit = nearest_pretrain_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_rolling_noise_hit = nearest_rolling_noise_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_flange_noise_hit = nearest_flange_noise_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_joint_noise_hit = nearest_joint_noise_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_background_hit = nearest_background_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_adhesion_hit = nearest_adhesion_marker_hit(hit_transform);
@@ -2242,6 +2320,9 @@ void App::render_plan_canvas(ImVec2 size) {
         : std::nullopt;
     std::optional<size_t> hovered_rolling_noise_row = hovered_rolling_noise_hit
         ? std::optional<size_t>(hovered_rolling_noise_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_flange_noise_row = hovered_flange_noise_hit
+        ? std::optional<size_t>(hovered_flange_noise_hit->row_index)
         : std::nullopt;
     std::optional<size_t> hovered_joint_noise_row = hovered_joint_noise_hit
         ? std::optional<size_t>(hovered_joint_noise_hit->row_index)
@@ -2271,6 +2352,7 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_signal_hit, hovered_structure_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_joint_noise_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_fog_hit)) {
             plan_signal_popup_row_ = static_cast<int>(hovered_signal_hit->row_index);
@@ -2284,6 +2366,7 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_beacon_hit, hovered_structure_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_joint_noise_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_fog_hit)) {
             plan_beacon_popup_row_ = static_cast<int>(hovered_beacon_hit->row_index);
@@ -2295,6 +2378,7 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_adhesion_hit, hovered_structure_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_adhesion_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_joint_noise_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_fog_hit)) {
             plan_adhesion_popup_row_ = static_cast<int>(hovered_adhesion_hit->row_index);
@@ -2305,6 +2389,7 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_irregularity_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_fog_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_irregularity_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_joint_noise_hit) &&
             (!hovered_repeater_hit || hovered_irregularity_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
             (!hovered_structure_hit || hovered_irregularity_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
@@ -2316,11 +2401,24 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_rolling_noise_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_fog_hit) &&
+                   closer_or_equal(hovered_rolling_noise_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_joint_noise_hit) &&
                    (!hovered_repeater_hit || hovered_rolling_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_rolling_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_rolling_noise_popup_row_ = static_cast<int>(hovered_rolling_noise_hit->row_index);
             ImGui::OpenPopup("plan_rolling_noise_marker_context");
+        } else if (hovered_flange_noise_hit &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_adhesion_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_irregularity_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_background_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_cab_illuminance_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_fog_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_joint_noise_hit) &&
+                   (!hovered_repeater_hit || hovered_flange_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
+                   (!hovered_structure_hit || hovered_flange_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+            plan_flange_noise_popup_row_ = static_cast<int>(hovered_flange_noise_hit->row_index);
+            ImGui::OpenPopup("plan_flange_noise_marker_context");
         } else if (hovered_joint_noise_hit &&
                    closer_or_equal(hovered_joint_noise_hit, hovered_adhesion_hit) &&
                    closer_or_equal(hovered_joint_noise_hit, hovered_irregularity_hit) &&
@@ -2328,6 +2426,7 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_joint_noise_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_joint_noise_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_joint_noise_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_flange_noise_hit) &&
                    (!hovered_repeater_hit || hovered_joint_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_joint_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_joint_noise_popup_row_ = static_cast<int>(hovered_joint_noise_hit->row_index);
@@ -2338,6 +2437,7 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_background_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_background_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_joint_noise_hit) &&
                    (!hovered_repeater_hit || hovered_background_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_background_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
@@ -2349,6 +2449,7 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_repeater_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_repeater_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_repeater_popup_row_ = static_cast<int>(hovered_repeater_hit->row_index);
@@ -2357,6 +2458,7 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_cab_illuminance_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_cab_illuminance_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_cab_illuminance_popup_row_ = static_cast<int>(hovered_cab_illuminance_hit->row_index);
@@ -2364,6 +2466,7 @@ void App::render_plan_canvas(ImVec2 size) {
         } else if (hovered_fog_hit &&
                    closer_or_equal(hovered_fog_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_fog_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_fog_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_fog_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_fog_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_fog_popup_row_ = static_cast<int>(hovered_fog_hit->row_index);
@@ -2589,6 +2692,21 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("rolling_noise_markers");
 
+    if (!data.flange_noise_markers.empty()) {
+        ImU32 flange_noise_color = IM_COL32(214, 176, 255, 255);
+        for (const auto& marker : data.flange_noise_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_flange_noise_row && *hovered_flange_noise_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_flange_noise_marker(draw, p, flange_noise_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, flange_noise_color, marker.label);
+        }
+    }
+    debug_plan_stage("flange_noise_markers");
+
     if (!data.joint_noise_markers.empty()) {
         ImU32 joint_noise_color = IM_COL32(158, 224, 255, 255);
         for (const auto& marker : data.joint_noise_markers) {
@@ -2794,6 +2912,16 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_rolling_noise_list").c_str()) && can_locate) {
             locate_rolling_noise_row_in_list(static_cast<size_t>(plan_rolling_noise_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_flange_noise_marker_context")) {
+        bool can_locate = plan_flange_noise_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_flange_noise_popup_row_) < flange_noise_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_flange_noise_list").c_str()) && can_locate) {
+            locate_flange_noise_row_in_list(static_cast<size_t>(plan_flange_noise_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();
