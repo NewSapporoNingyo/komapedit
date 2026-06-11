@@ -52,10 +52,11 @@ At this stage, komapedit is closer to a map viewer and track-geometry visualizer
 - [x] Import a background image and adjust its position, size, rotation, and brightness.
 - [x] Align a background image using two station positions.
 - [ ] Structure and repeater placement markers on the plan view.
-- [ ] Cab-brightness setting position markers.
-- [ ] Fog-effect change position markers.
-- [ ] Signal position markers.
-- [ ] Beacon position markers.
+- [x] Display signal position markers on the plan view.
+- [x] Display beacon position markers on the plan view.
+- [x] Display background change-point markers on the plan view.
+- [x] Display cab-illuminance change-point markers on the plan view.
+- [x] Display fog-effect change-point markers on the plan view.
 ### Map Data Tables
 
 - [x] Load the station list specified by `Station.Load`.
@@ -66,8 +67,9 @@ At this stage, komapedit is closer to a map viewer and track-geometry visualizer
 - [x] Display `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` data, with Begin/End distances merged for readability.
 - [ ] Edit Structure model lists.
 - [ ] Edit station lists and station positions.
-- [ ] Display/Edit signal lists.
-- [ ] Display/Edit Beacon lists.
+- [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
+- [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, and `Fog Change Point List`.
+- [ ] Edit signal and beacon lists.
 ### 3D Canvas
 
 - [x] 3D preview for Structure models.
@@ -78,8 +80,9 @@ At this stage, komapedit is closer to a map viewer and track-geometry visualizer
 
 ### Environmental Effects
 
-- [ ] Load and edit running sounds, switch sounds, station announcement sounds, and 3D sounds.
-- [ ] Edit cab-brightness setting positions.
+- [x] Display `Sound List` and `3D Sound List`.
+- [ ] Edit running sounds, switch sounds, station announcement sounds, and 3D sounds.
+- [ ] Edit cab-illuminance setting positions.
 - [ ] Edit fog effects.
 
 ### User Interface and Utilities
@@ -114,9 +117,14 @@ On startup, the application creates or reads the following files next to the exe
    - Hold `Shift` while using the mouse wheel to rotate, or drag with the right mouse button / `Ctrl + left mouse button`.
    - Double-click the plan view to fit the map to the current viewport.
 4. Use `Station Jump` on the toolbar to jump to a station by mileage.
-5. Use the `2D View` menu to toggle stations, station names, mileage labels, curve display, speed limits, the profile chart, the curve-radius chart, and other-track profile display.
+5. Use the `2D View` menu to toggle stations, station names, mileage labels, curve display, speed limits, the profile chart, the curve-radius chart, and marker layers such as beacon positions, background changes, cab-illuminance changes, and fog changes. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
 6. Switch `Mode` to `Measure`, then move near the track or double-click to view mileage, elevation, gradient, curve radius, and speed limit.
-7. Use the `Map Info` menu to open:
+7. Use the `Map Info` menu to open the data tables for signals, beacons, sounds, backgrounds, cab-illuminance, and fog. Signal, beacon, background, cab-illuminance, and fog rows can be located on the plan; sound rows expose the linked files.
+   - `Signal Aspect List`: view signal aspect definitions.
+   - `Map Signal List`: view signal positions and use the row `Show` checkboxes to toggle markers on the plan.
+   - `Beacon List`: view beacon positions.
+   - `Sound List` and `3D Sound List`: view the loaded sound entries and open the linked files.
+   - `Background Change Point List`, `Cab Illuminance Change Point List`, and `Fog Change Point List`: view the corresponding change-point tables.
    - `Other Tracks`: toggle other-track display and adjust visible range and color.
    - `Station List`: view the station list and `Station.Put` placement data.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map.
@@ -275,7 +283,7 @@ Field reference:
 | center | Track center offset |
 | gauge | Track gauge |
 
-Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, Structures, repeaters, sounds, fog, or 3D scene data.
+Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, Structures, repeaters, signals, beacons, sounds, background change points, cab-illuminance change points, fog, or 3D scene data.
 
 ## License and Third-Party Notices
 
