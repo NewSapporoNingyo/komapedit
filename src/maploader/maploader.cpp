@@ -466,6 +466,22 @@ struct SoundListEntry {
     bool is_3d = false;
 };
 
+struct MapSoundPlay {
+    double distance = 0.0;
+    Value sound_key;
+    std::string file_path;
+    int order = 0;
+};
+
+struct MapSound3DPut {
+    double distance = 0.0;
+    Value sound_key;
+    double x = 0.0;
+    double y = 0.0;
+    std::string file_path;
+    int order = 0;
+};
+
 struct SectionBegin {
     double distance = 0.0;
     std::vector<Value> signal_indices;
@@ -688,6 +704,8 @@ struct MapContext {
     std::vector<StructureLoad> structure_loads;
     std::vector<StructureModel> structure_models;
     std::vector<SoundListEntry> sound_list;
+    std::vector<MapSoundPlay> map_sounds;
+    std::vector<MapSound3DPut> map_sound_3d;
     std::vector<RollingNoiseChange> rolling_noises;
     std::vector<FlangeNoiseChange> flange_noises;
     std::vector<JointNoisePlay> joint_noises;
@@ -1113,6 +1131,8 @@ private:
         for (auto& row : child.signal_puts) offset_order(row.order);
         for (auto& row : child.beacons) offset_order(row.order);
         for (auto& row : child.pretrains) offset_order(row.order);
+        for (auto& row : child.map_sounds) offset_order(row.order);
+        for (auto& row : child.map_sound_3d) offset_order(row.order);
         for (auto& row : child.rolling_noises) offset_order(row.order);
         for (auto& row : child.flange_noises) offset_order(row.order);
         for (auto& row : child.joint_noises) offset_order(row.order);
@@ -1149,6 +1169,8 @@ private:
         for (auto& row : child.structure_loads) ctx_.structure_loads.push_back(std::move(row));
         for (auto& row : child.structure_models) ctx_.structure_models.push_back(std::move(row));
         for (auto& row : child.sound_list) ctx_.sound_list.push_back(std::move(row));
+        for (auto& row : child.map_sounds) ctx_.map_sounds.push_back(std::move(row));
+        for (auto& row : child.map_sound_3d) ctx_.map_sound_3d.push_back(std::move(row));
         for (auto& row : child.rolling_noises) ctx_.rolling_noises.push_back(std::move(row));
         for (auto& row : child.flange_noises) ctx_.flange_noises.push_back(std::move(row));
         for (auto& row : child.joint_noises) ctx_.joint_noises.push_back(std::move(row));
@@ -1452,7 +1474,8 @@ private:
         } else if (first == "pretrain") {
             dispatch_pretrain(fn, function.args);
         } else if (first == "sound" || first == "sound3d") {
-            dispatch_sound(fn, function.args, first == "sound3d");
+            dispatch_sound(fn, function.args, first == "sound3d",
+                           objects.front().has_key, objects.front().key);
         } else if (first == "rollingnoise") {
             dispatch_rolling_noise(fn, function.args);
         } else if (first == "flangenoise") {
@@ -1836,16 +1859,36 @@ private:
         }
     }
 
-    void dispatch_sound(const std::string& fn, const std::vector<Value>& a, bool is_3d) {
-        if (fn != "load" || a.empty()) return;
-        std::string list_path_text = as_text(a.at(0));
-        if (list_path_text.empty()) return;
-        try {
-            std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
-            LoadedText loaded = load_header_text(path, "BveTs Sound List ", 2.0);
-            parse_sound_list(loaded.body, loaded.root, is_3d);
-        } catch (const std::exception& e) {
-            log_warn(e.what());
+    void dispatch_sound(const std::string& fn, const std::vector<Value>& a,
+                        bool is_3d, bool has_key, const Value& sound_key) {
+        if (fn == "load" && !has_key && !a.empty()) {
+            std::string list_path_text = as_text(a.at(0));
+            if (list_path_text.empty()) return;
+            try {
+                std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
+                LoadedText loaded = load_header_text(path, "BveTs Sound List ", 2.0);
+                parse_sound_list(loaded.body, loaded.root, is_3d);
+            } catch (const std::exception& e) {
+                log_warn(e.what());
+            }
+        } else if (!is_3d && fn == "play" && has_key) {
+            note_distance_use(ctx_);
+            MapSoundPlay row;
+            row.distance = ctx_.distance;
+            row.sound_key = sound_key;
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            ctx_.map_sounds.push_back(std::move(row));
+        } else if (is_3d && fn == "put" && has_key && a.size() >= 2) {
+            note_distance_use(ctx_);
+            MapSound3DPut row;
+            row.distance = ctx_.distance;
+            row.sound_key = sound_key;
+            row.x = as_number(a[0]);
+            row.y = as_number(a[1]);
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            ctx_.map_sound_3d.push_back(std::move(row));
         }
     }
 
@@ -2905,6 +2948,8 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.signal_puts.begin(), ctx.signal_puts.end(), by_distance);
     std::stable_sort(ctx.beacons.begin(), ctx.beacons.end(), by_distance);
     std::stable_sort(ctx.pretrains.begin(), ctx.pretrains.end(), by_distance);
+    std::stable_sort(ctx.map_sounds.begin(), ctx.map_sounds.end(), by_distance);
+    std::stable_sort(ctx.map_sound_3d.begin(), ctx.map_sound_3d.end(), by_distance);
     std::stable_sort(ctx.rolling_noises.begin(), ctx.rolling_noises.end(), by_distance);
     std::stable_sort(ctx.flange_noises.begin(), ctx.flange_noises.end(), by_distance);
     std::stable_sort(ctx.joint_noises.begin(), ctx.joint_noises.end(), by_distance);
@@ -3270,6 +3315,30 @@ std::string build_ir_json(MapContext& ctx) {
             << "\",\"filePath\":\"" << json_escape(row.file_path)
             << "\",\"bufferCount\":" << row.buffer_count
             << ",\"is3D\":" << (row.is_3d ? "true" : "false") << "}";
+    }
+    out << "]";
+
+    out << ",\"mapSound\":[";
+    for (size_t i = 0; i < ctx.map_sounds.size(); ++i) {
+        if (i) out << ",";
+        const auto& row = ctx.map_sounds[i];
+        out << "{\"distance\":" << json_number(row.distance)
+            << ",\"soundKey\":" << json_value(row.sound_key)
+            << ",\"filePath\":\"" << json_escape(row.file_path)
+            << "\",\"order\":" << row.order << "}";
+    }
+    out << "]";
+
+    out << ",\"mapSound3D\":[";
+    for (size_t i = 0; i < ctx.map_sound_3d.size(); ++i) {
+        if (i) out << ",";
+        const auto& row = ctx.map_sound_3d[i];
+        out << "{\"distance\":" << json_number(row.distance)
+            << ",\"soundKey\":" << json_value(row.sound_key)
+            << ",\"x\":" << json_number(row.x)
+            << ",\"y\":" << json_number(row.y)
+            << ",\"filePath\":\"" << json_escape(row.file_path)
+            << "\",\"order\":" << row.order << "}";
     }
     out << "]";
 

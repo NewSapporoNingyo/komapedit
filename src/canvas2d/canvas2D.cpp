@@ -245,6 +245,8 @@ void App::rebuild_marker_overlay_cache() {
     beacon_marker_cache_.clear();
     pretrain_marker_cache_.clear();
     irregularity_marker_cache_.clear();
+    map_sound_marker_cache_.clear();
+    map_sound_3d_marker_cache_.clear();
     rolling_noise_marker_cache_.clear();
     flange_noise_marker_cache_.clear();
     joint_noise_marker_cache_.clear();
@@ -384,6 +386,40 @@ void App::rebuild_marker_overlay_cache() {
             irregularity_marker_cache_.push_back(std::move(marker));
         } else {
             irregularity_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    map_sound_marker_cache_.reserve(model_.map_sounds.size());
+    for (const auto& row : model_.map_sounds) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanMapSoundMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = table_cell(row, "soundKey");
+            if (marker.label.empty()) marker.label = "#" + std::to_string(map_sound_marker_cache_.size() + 1);
+            marker.row_index = map_sound_marker_cache_.size();
+            map_sound_marker_cache_.push_back(std::move(marker));
+        } else {
+            map_sound_marker_cache_.push_back(std::nullopt);
+        }
+    }
+
+    map_sound_3d_marker_cache_.reserve(model_.map_sound_3d.size());
+    for (const auto& row : model_.map_sound_3d) {
+        double distance = table_cell_number(row, "distance");
+        if (auto p = sample_track("", distance, 0.0, 0.0)) {
+            PlanMapSound3DMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.label = table_cell(row, "soundKey");
+            if (marker.label.empty()) marker.label = "#" + std::to_string(map_sound_3d_marker_cache_.size() + 1);
+            marker.row_index = map_sound_3d_marker_cache_.size();
+            map_sound_3d_marker_cache_.push_back(std::move(marker));
+        } else {
+            map_sound_3d_marker_cache_.push_back(std::nullopt);
         }
     }
 
@@ -877,6 +913,44 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.y = p.y;
             marker.row_index = i;
             out.irregularity_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    if (show_map_sound_markers_) {
+        out.map_sound_markers.reserve(map_sound_marker_cache_.size());
+        for (size_t i = 0; i < map_sound_marker_cache_.size(); ++i) {
+            if (!map_sound_marker_cache_[i]) continue;
+            const PlanMapSoundMarker& source = *map_sound_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanMapSoundMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.map_sound_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    if (show_map_sound_3d_markers_) {
+        out.map_sound_3d_markers.reserve(map_sound_3d_marker_cache_.size());
+        for (size_t i = 0; i < map_sound_3d_marker_cache_.size(); ++i) {
+            if (!map_sound_3d_marker_cache_[i]) continue;
+            const PlanMapSound3DMarker& source = *map_sound_3d_marker_cache_[i];
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p = rotate_point(p);
+            PlanMapSound3DMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.row_index = i;
+            out.map_sound_3d_markers.push_back(std::move(marker));
             append_marker_bounds(p.x, p.y);
         }
     }
@@ -1836,6 +1910,57 @@ static void draw_plan_wave_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float
     draw->AddPolyline(pts, IM_ARRAYSIZE(pts), color, ImDrawFlags_None, 1.6f * scale);
 }
 
+static void draw_plan_speaker_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const float body_w = 4.4f * scale;
+    const float body_h = 6.2f * scale;
+    const float cone_w = 5.0f * scale;
+    const float line_weight = 1.8f * scale;
+    const ImU32 outline = IM_COL32(58, 32, 92, 255);
+    ImVec2 body_min(p.x - 8.0f * scale, p.y - body_h * 0.5f);
+    ImVec2 body_max(body_min.x + body_w, p.y + body_h * 0.5f);
+    ImVec2 cone[3] = {
+        ImVec2(body_max.x, body_min.y - 1.0f * scale),
+        ImVec2(body_max.x + cone_w, p.y - 4.6f * scale),
+        ImVec2(body_max.x + cone_w, p.y + 4.6f * scale),
+    };
+    draw->AddRectFilled(body_min, body_max, color, 1.0f * scale);
+    draw->AddRect(body_min, body_max, outline, 1.0f * scale, 0, 1.0f * scale);
+    draw->AddConvexPolyFilled(cone, IM_ARRAYSIZE(cone), color);
+    draw->AddPolyline(cone, IM_ARRAYSIZE(cone), outline, ImDrawFlags_Closed, 1.0f * scale);
+    for (int i = 0; i < 2; ++i) {
+        float r = (5.4f + static_cast<float>(i) * 3.2f) * scale;
+        draw->PathArcTo(ImVec2(p.x - 1.0f * scale, p.y), r, -0.72f, 0.72f, 12);
+        draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
+        draw->PathArcTo(ImVec2(p.x - 1.0f * scale, p.y), r, -0.72f, 0.72f, 12);
+        draw->PathStroke(color, ImDrawFlags_None, line_weight);
+    }
+}
+
+static void draw_plan_broadcast_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    const ImU32 outline = IM_COL32(58, 32, 92, 255);
+    const float stem = 7.4f * scale;
+    const float line_weight = 1.8f * scale;
+    ImVec2 base(p.x, p.y + 4.8f * scale);
+    ImVec2 top(p.x, p.y + 4.8f * scale - stem);
+    draw->AddCircleFilled(base, 2.8f * scale, color, 16);
+    draw->AddCircle(base, 2.8f * scale, outline, 16, 1.0f * scale);
+    draw->AddLine(base, top, outline, line_weight + 1.6f * scale);
+    draw->AddLine(base, top, color, line_weight);
+    draw->AddCircleFilled(top, 2.0f * scale, color, 16);
+    draw->AddCircle(top, 2.0f * scale, outline, 16, 1.0f * scale);
+    for (int i = 0; i < 2; ++i) {
+        float r = (5.6f + static_cast<float>(i) * 3.8f) * scale;
+        draw->PathArcTo(top, r, -2.42f, -0.72f, 14);
+        draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
+        draw->PathArcTo(top, r, -2.42f, -0.72f, 14);
+        draw->PathStroke(color, ImDrawFlags_None, line_weight);
+        draw->PathArcTo(top, r, 0.72f, 2.42f, 14);
+        draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
+        draw->PathArcTo(top, r, 0.72f, 2.42f, 14);
+        draw->PathStroke(color, ImDrawFlags_None, line_weight);
+    }
+}
+
 static void draw_plan_axle_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
     const float half_width = 7.2f * scale;
     const float half_height = 4.4f * scale;
@@ -2177,6 +2302,42 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_map_sound_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.map_sound_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
+    auto nearest_map_sound_3d_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        constexpr double hover_radius_sq = 12.0 * 12.0;
+        double best = hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.map_sound_3d_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, 12.0f)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     auto nearest_flange_noise_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
         if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
         constexpr double hover_radius_sq = 12.0 * 12.0;
@@ -2293,6 +2454,8 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<MarkerHit> hovered_pretrain_hit = nearest_pretrain_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_rolling_noise_hit = nearest_rolling_noise_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_map_sound_hit = nearest_map_sound_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_map_sound_3d_hit = nearest_map_sound_3d_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_flange_noise_hit = nearest_flange_noise_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_joint_noise_hit = nearest_joint_noise_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_background_hit = nearest_background_marker_hit(hit_transform);
@@ -2320,6 +2483,12 @@ void App::render_plan_canvas(ImVec2 size) {
         : std::nullopt;
     std::optional<size_t> hovered_rolling_noise_row = hovered_rolling_noise_hit
         ? std::optional<size_t>(hovered_rolling_noise_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_map_sound_row = hovered_map_sound_hit
+        ? std::optional<size_t>(hovered_map_sound_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_map_sound_3d_row = hovered_map_sound_3d_hit
+        ? std::optional<size_t>(hovered_map_sound_3d_hit->row_index)
         : std::nullopt;
     std::optional<size_t> hovered_flange_noise_row = hovered_flange_noise_hit
         ? std::optional<size_t>(hovered_flange_noise_hit->row_index)
@@ -2352,6 +2521,8 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_signal_hit, hovered_structure_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_map_sound_hit) &&
+            closer_or_equal(hovered_signal_hit, hovered_map_sound_3d_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_joint_noise_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_fog_hit)) {
@@ -2366,6 +2537,8 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_beacon_hit, hovered_structure_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_map_sound_hit) &&
+            closer_or_equal(hovered_beacon_hit, hovered_map_sound_3d_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_joint_noise_hit) &&
             closer_or_equal(hovered_beacon_hit, hovered_fog_hit)) {
@@ -2378,6 +2551,8 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_adhesion_hit, hovered_structure_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_adhesion_hit, hovered_map_sound_hit) &&
+            closer_or_equal(hovered_adhesion_hit, hovered_map_sound_3d_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_joint_noise_hit) &&
             closer_or_equal(hovered_adhesion_hit, hovered_fog_hit)) {
@@ -2389,6 +2564,8 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_or_equal(hovered_irregularity_hit, hovered_cab_illuminance_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_fog_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_rolling_noise_hit) &&
+            closer_or_equal(hovered_irregularity_hit, hovered_map_sound_hit) &&
+            closer_or_equal(hovered_irregularity_hit, hovered_map_sound_3d_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_flange_noise_hit) &&
             closer_or_equal(hovered_irregularity_hit, hovered_joint_noise_hit) &&
             (!hovered_repeater_hit || hovered_irregularity_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
@@ -2401,12 +2578,46 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_rolling_noise_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_fog_hit) &&
+                   closer_or_equal(hovered_rolling_noise_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_rolling_noise_hit, hovered_map_sound_3d_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_rolling_noise_hit, hovered_joint_noise_hit) &&
                    (!hovered_repeater_hit || hovered_rolling_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_rolling_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
             plan_rolling_noise_popup_row_ = static_cast<int>(hovered_rolling_noise_hit->row_index);
             ImGui::OpenPopup("plan_rolling_noise_marker_context");
+        } else if (hovered_map_sound_hit &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_signal_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_beacon_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_adhesion_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_irregularity_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_background_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_cab_illuminance_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_fog_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_map_sound_3d_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_flange_noise_hit) &&
+                   closer_or_equal(hovered_map_sound_hit, hovered_joint_noise_hit) &&
+                   (!hovered_repeater_hit || hovered_map_sound_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
+                   (!hovered_structure_hit || hovered_map_sound_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+            plan_map_sound_popup_row_ = static_cast<int>(hovered_map_sound_hit->row_index);
+            ImGui::OpenPopup("plan_map_sound_marker_context");
+        } else if (hovered_map_sound_3d_hit &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_signal_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_beacon_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_adhesion_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_irregularity_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_background_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_cab_illuminance_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_fog_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_flange_noise_hit) &&
+                   closer_or_equal(hovered_map_sound_3d_hit, hovered_joint_noise_hit) &&
+                   (!hovered_repeater_hit || hovered_map_sound_3d_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
+                   (!hovered_structure_hit || hovered_map_sound_3d_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
+            plan_map_sound_3d_popup_row_ = static_cast<int>(hovered_map_sound_3d_hit->row_index);
+            ImGui::OpenPopup("plan_map_sound_3d_marker_context");
         } else if (hovered_flange_noise_hit &&
                    closer_or_equal(hovered_flange_noise_hit, hovered_adhesion_hit) &&
                    closer_or_equal(hovered_flange_noise_hit, hovered_irregularity_hit) &&
@@ -2414,6 +2625,8 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_flange_noise_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_flange_noise_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_flange_noise_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_flange_noise_hit, hovered_map_sound_3d_hit) &&
                    closer_or_equal(hovered_flange_noise_hit, hovered_joint_noise_hit) &&
                    (!hovered_repeater_hit || hovered_flange_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_flange_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
@@ -2426,6 +2639,8 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_joint_noise_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_joint_noise_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_joint_noise_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_joint_noise_hit, hovered_map_sound_3d_hit) &&
                    closer_or_equal(hovered_joint_noise_hit, hovered_flange_noise_hit) &&
                    (!hovered_repeater_hit || hovered_joint_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
                    (!hovered_structure_hit || hovered_joint_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
@@ -2437,6 +2652,8 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_background_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_background_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_background_hit, hovered_map_sound_3d_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_background_hit, hovered_joint_noise_hit) &&
                    (!hovered_repeater_hit || hovered_background_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
@@ -2449,6 +2666,8 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_repeater_hit, hovered_cab_illuminance_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_repeater_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_repeater_hit, hovered_map_sound_3d_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_repeater_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
@@ -2458,6 +2677,8 @@ void App::render_plan_canvas(ImVec2 size) {
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_fog_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_cab_illuminance_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_cab_illuminance_hit, hovered_map_sound_3d_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_cab_illuminance_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_cab_illuminance_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
@@ -2466,6 +2687,8 @@ void App::render_plan_canvas(ImVec2 size) {
         } else if (hovered_fog_hit &&
                    closer_or_equal(hovered_fog_hit, hovered_background_hit) &&
                    closer_or_equal(hovered_fog_hit, hovered_rolling_noise_hit) &&
+                   closer_or_equal(hovered_fog_hit, hovered_map_sound_hit) &&
+                   closer_or_equal(hovered_fog_hit, hovered_map_sound_3d_hit) &&
                    closer_or_equal(hovered_fog_hit, hovered_flange_noise_hit) &&
                    closer_or_equal(hovered_fog_hit, hovered_joint_noise_hit) &&
                    (!hovered_structure_hit || hovered_fog_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
@@ -2676,6 +2899,36 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
     debug_plan_stage("irregularity_markers");
+
+    if (!data.map_sound_markers.empty()) {
+        ImU32 map_sound_color = IM_COL32(222, 190, 255, 255);
+        for (const auto& marker : data.map_sound_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_map_sound_row && *hovered_map_sound_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_speaker_marker(draw, p, map_sound_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, map_sound_color, marker.label);
+        }
+    }
+    debug_plan_stage("map_sound_markers");
+
+    if (!data.map_sound_3d_markers.empty()) {
+        ImU32 map_sound_3d_color = IM_COL32(222, 190, 255, 255);
+        for (const auto& marker : data.map_sound_3d_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            bool marker_hovered = hovered_map_sound_3d_row && *hovered_map_sound_3d_row == marker.row_index &&
+                dx * dx + dy * dy <= 12.0 * 12.0;
+            draw_plan_broadcast_marker(draw, p, map_sound_3d_color, marker_hovered ? 1.28f : 1.0f);
+            if (marker_hovered) draw_plan_small_text(draw, p, map_sound_3d_color, marker.label);
+        }
+    }
+    debug_plan_stage("map_sound_3d_markers");
 
     if (!data.rolling_noise_markers.empty()) {
         ImU32 rolling_noise_color = IM_COL32(126, 214, 255, 255);
@@ -2912,6 +3165,26 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_rolling_noise_list").c_str()) && can_locate) {
             locate_rolling_noise_row_in_list(static_cast<size_t>(plan_rolling_noise_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_map_sound_marker_context")) {
+        bool can_locate = plan_map_sound_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_map_sound_popup_row_) < map_sound_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_map_sound_list").c_str()) && can_locate) {
+            locate_map_sound_row_in_list(static_cast<size_t>(plan_map_sound_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_map_sound_3d_marker_context")) {
+        bool can_locate = plan_map_sound_3d_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_map_sound_3d_popup_row_) < map_sound_3d_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_map_sound_3d_list").c_str()) && can_locate) {
+            locate_map_sound_3d_row_in_list(static_cast<size_t>(plan_map_sound_3d_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();

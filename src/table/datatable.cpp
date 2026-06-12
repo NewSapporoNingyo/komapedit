@@ -320,6 +320,7 @@ static const TableColumnDef kSoundListColumns[] = {
     {"filePath", "filePath", 200.0f},
     {"bufferCount", "bufferCount", 90.0f},
 };
+constexpr int kSoundListKeyColumn = 1;
 constexpr int kSoundListFilePathColumn = 2;
 constexpr int kSoundListBufferCountColumn = 3;
 
@@ -406,6 +407,16 @@ static const TableColumnDef kIrregularityColumns[] = {
 };
 constexpr int kIrregularityDistanceColumn = 1;
 constexpr int kIrregularityFilePathColumn = IM_ARRAYSIZE(kIrregularityColumns) - 1;
+
+static const TableColumnDef kMapSoundColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"soundKey", "soundKey", 120.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kMapSoundDistanceColumn = 1;
+constexpr int kMapSoundKeyColumn = 2;
+constexpr int kMapSoundFilePathColumn = IM_ARRAYSIZE(kMapSoundColumns) - 1;
 
 static const TableColumnDef kRollingNoiseColumns[] = {
     {"rowNumber", "#", 40.0f},
@@ -621,10 +632,104 @@ void render_change_point_table(const char* table_id,
     }
 }
 
+template <size_t N, typename CanLocateFn, typename LocateFn, typename FindFn>
+void render_map_sound_event_table(const char* table_id,
+                                  const TableColumnDef (&columns)[N],
+                                  int distance_column,
+                                  int sound_key_column,
+                                  int file_path_column,
+                                  const std::vector<CachedTableRow>& rows,
+                                  float distance_width,
+                                  float file_path_width,
+                                  const std::string& file_name_header,
+                                  const std::string& locate_menu_label,
+                                  const std::string& find_menu_label,
+                                  const std::string& open_menu_label,
+                                  int& scroll_row,
+                                  int& highlight_row,
+                                  ImU32 highlight_color,
+                                  CanLocateFn can_locate,
+                                  LocateFn locate_row_on_plan,
+                                  FindFn find_sound_file) {
+    if (ImGui::BeginTable(table_id, static_cast<int>(N),
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        for (int i = 0; i < static_cast<int>(N); ++i) {
+            float width = columns[i].width;
+            if (i == distance_column) width = distance_width;
+            if (i == file_path_column) width = file_path_width;
+            const char* header = i == file_path_column
+                ? file_name_header.c_str()
+                : columns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(rows.size());
+        if (scroll_row >= row_count) scroll_row = -1;
+        if (highlight_row >= row_count) highlight_row = -1;
+        const int scroll_target_row = scroll_row;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                if (row_index == highlight_row) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    scroll_row = -1;
+                }
+                ImGui::PushID(row_index);
+                for (int i = 0; i < static_cast<int>(N); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == distance_column) {
+                        const size_t marker_index = static_cast<size_t>(row_index);
+                        ImGui::PushID(i);
+                        const bool should_locate =
+                            render_text_cell_with_context(value, locate_menu_label, can_locate(marker_index));
+                        ImGui::PopID();
+                        if (should_locate) {
+                            locate_row_on_plan(marker_index);
+                        }
+                        continue;
+                    }
+                    if (i == sound_key_column) {
+                        ImGui::PushID(i);
+                        const bool should_find =
+                            render_text_cell_with_context(value, find_menu_label, !blank_ascii(value));
+                        ImGui::PopID();
+                        if (should_find) {
+                            find_sound_file(value);
+                        }
+                        continue;
+                    }
+                    if (value.empty()) continue;
+                    if (i == file_path_column) {
+                        render_file_path_cell_with_context(value, row.open_path, open_menu_label, row.open_path);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+}
+
 static void render_sound_list_table(const char* table_id,
                                     const std::vector<CachedTableRow>& rows,
                                     float file_path_width,
                                     float buffer_count_width,
+                                    TableFindState& find_state,
                                     const std::string& file_name_header,
                                     const std::string& open_menu_label) {
     if (ImGui::BeginTable(table_id, IM_ARRAYSIZE(kSoundListColumns),
@@ -643,11 +748,32 @@ static void render_sound_list_table(const char* table_id,
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(rows.size()));
+        const int row_count = static_cast<int>(rows.size());
+        if (find_state.scroll_row >= row_count) find_state.scroll_row = -1;
+        const int scroll_target_row = find_state.scroll_row;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
+                const bool is_find_match =
+                    static_cast<size_t>(row_index) < find_state.row_matches.size() &&
+                    find_state.row_matches[static_cast<size_t>(row_index)] != 0;
+                const bool is_unused =
+                    static_cast<size_t>(row_index) < find_state.unused_row_matches.size() &&
+                    find_state.unused_row_matches[static_cast<size_t>(row_index)] != 0;
                 ImGui::TableNextRow();
+                if (is_unused) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kUnusedStructureModelRowColor);
+                } else if (is_find_match) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.0f);
+                    find_state.scroll_row = -1;
+                }
                 ImGui::PushID(row_index);
                 for (int i = 0; i < IM_ARRAYSIZE(kSoundListColumns); ++i) {
                     ImGui::TableSetColumnIndex(i);
@@ -968,6 +1094,17 @@ void App::ensure_table_cache() {
                              cache.joint_noise_distance_width,
                              cache.joint_noise_file_path_width);
 
+    append_change_point_rows(model_.map_sounds, kMapSoundColumns,
+                             kMapSoundDistanceColumn, kMapSoundFilePathColumn,
+                             cache.map_sound_rows,
+                             cache.map_sound_distance_width,
+                             cache.map_sound_file_path_width);
+    append_change_point_rows(model_.map_sound_3d, kMapSoundColumns,
+                             kMapSoundDistanceColumn, kMapSoundFilePathColumn,
+                             cache.map_sound_3d_rows,
+                             cache.map_sound_3d_distance_width,
+                             cache.map_sound_3d_file_path_width);
+
     cache.background_distance_width = 0.0f;
     expand_width_for_text(cache.background_distance_width, kBackgroundColumns[kBackgroundDistanceColumn].header);
     cache.background_rows.reserve(model_.backgrounds.size());
@@ -1228,6 +1365,187 @@ std::string App::structure_model_find_status_text() const {
     return format_find_match_status(tr("status.find.match"),
                                     static_cast<size_t>(structure_model_find_current_) + 1,
                                     structure_model_find_matches_.size());
+}
+
+void App::reset_sound_file_find_results(bool is_3d) {
+    TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
+    state.committed.clear();
+    state.matches.clear();
+    state.row_matches.clear();
+    state.unused_row_matches.clear();
+    state.unused_count = 0;
+    state.unused_total = 0;
+    state.current = -1;
+    state.scroll_row = -1;
+    state.has_run = false;
+    state.unused_has_run = false;
+}
+
+void App::run_sound_file_find(bool is_3d) {
+    ensure_table_cache();
+    TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
+    const std::vector<CachedTableRow>& rows = is_3d
+        ? table_cache_.sound_3d_list_rows
+        : table_cache_.sound_list_rows;
+
+    state.committed = state.query;
+    state.matches.clear();
+    state.row_matches.assign(rows.size(), 0);
+    state.unused_row_matches.clear();
+    state.unused_count = 0;
+    state.unused_total = 0;
+    state.current = -1;
+    state.scroll_row = -1;
+    state.has_run = true;
+    state.unused_has_run = false;
+
+    if (blank_ascii(state.committed)) return;
+
+    for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+        const CachedTableRow& row = rows[row_index];
+        const bool matches_key = row.cells.size() > static_cast<size_t>(kSoundListKeyColumn) &&
+            matches_find_query(row.cells[static_cast<size_t>(kSoundListKeyColumn)],
+                               state.committed,
+                               state.exact);
+        const bool matches_file_name = row.cells.size() > static_cast<size_t>(kSoundListFilePathColumn) &&
+            matches_find_query(row.cells[static_cast<size_t>(kSoundListFilePathColumn)],
+                               state.committed,
+                               state.exact);
+        if (matches_key || matches_file_name) {
+            state.row_matches[row_index] = 1;
+            state.matches.push_back(row_index);
+        }
+    }
+
+    if (!state.matches.empty()) {
+        state.current = 0;
+        state.scroll_row = static_cast<int>(state.matches.front());
+    }
+}
+
+void App::run_unused_sound_file_search(bool is_3d) {
+    ensure_table_cache();
+    add_log(is_3d
+        ? "[INFO]datatable.cpp: Searching unused 3D sounds..."
+        : "[INFO]datatable.cpp: Searching unused sounds...");
+
+    TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
+    const std::vector<CachedTableRow>& file_rows = is_3d
+        ? table_cache_.sound_3d_list_rows
+        : table_cache_.sound_list_rows;
+    const std::vector<CachedTableRow>& usage_rows = is_3d
+        ? table_cache_.map_sound_3d_rows
+        : table_cache_.map_sound_rows;
+
+    state.exact = true;
+    state.committed.clear();
+    state.matches.clear();
+    state.row_matches.clear();
+    state.current = -1;
+    state.scroll_row = -1;
+    state.has_run = false;
+    state.unused_row_matches.assign(file_rows.size(), 0);
+    state.unused_count = 0;
+    state.unused_total = file_rows.size();
+    state.unused_has_run = true;
+
+    std::unordered_map<std::string, std::vector<size_t>> file_rows_by_key;
+    file_rows_by_key.reserve(file_rows.size() * 2 + 1);
+    for (size_t row_index = 0; row_index < file_rows.size(); ++row_index) {
+        const CachedTableRow& row = file_rows[row_index];
+        if (row.cells.size() <= static_cast<size_t>(kSoundListKeyColumn)) continue;
+        const std::string& key = row.cells[static_cast<size_t>(kSoundListKeyColumn)];
+        if (blank_ascii(key)) continue;
+        file_rows_by_key[ascii_case_key(key)].push_back(row_index);
+    }
+
+    std::vector<unsigned char> used_rows(file_rows.size(), 0);
+    std::unordered_set<std::string> warned_undefined_keys;
+    auto note_sound_key = [&](const std::string& raw_key) {
+        std::string key = trim_ascii_copy(raw_key);
+        if (key.empty()) return;
+        std::string folded_key = ascii_case_key(key);
+        auto match = file_rows_by_key.find(folded_key);
+        if (match == file_rows_by_key.end()) {
+            if (warned_undefined_keys.insert(folded_key).second) {
+                add_log(std::string("[WARN]datatable.cpp: Found undefined ") +
+                        (is_3d ? "3D " : "") + "soundKey:\"" + key + "\"");
+            }
+            return;
+        }
+        for (size_t row_index : match->second) used_rows[row_index] = 1;
+    };
+
+    for (const CachedTableRow& row : usage_rows) {
+        if (row.cells.size() > static_cast<size_t>(kMapSoundKeyColumn)) {
+            note_sound_key(row.cells[static_cast<size_t>(kMapSoundKeyColumn)]);
+        }
+    }
+
+    for (size_t row_index = 0; row_index < file_rows.size(); ++row_index) {
+        if (used_rows[row_index]) continue;
+        state.unused_row_matches[row_index] = 1;
+        if (state.scroll_row < 0) state.scroll_row = static_cast<int>(row_index);
+        ++state.unused_count;
+    }
+
+    if (state.unused_count == 0) {
+        add_log(is_3d
+            ? "[INFO]datatable.cpp: No unused 3D sounds found"
+            : "[INFO]datatable.cpp: No unused sounds found");
+    } else {
+        add_log(std::string("[INFO]datatable.cpp: Found unused ") +
+                (is_3d ? "3D sounds (" : "sounds (") +
+                std::to_string(state.unused_count) + "/" +
+                std::to_string(state.unused_total) + ")");
+    }
+}
+
+void App::find_sound_file_for_sound_key(const std::string& sound_key, bool is_3d) {
+    if (blank_ascii(sound_key)) return;
+    TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
+    const size_t capacity = IM_ARRAYSIZE(state.query);
+    const size_t copy_size = std::min(capacity - 1, sound_key.size());
+    std::copy_n(sound_key.data(), copy_size, state.query);
+    state.query[copy_size] = '\0';
+    state.exact = true;
+    if (is_3d) {
+        show_sound_3d_list_window_ = true;
+    } else {
+        show_sound_list_window_ = true;
+    }
+    state.panel_expanded = true;
+    run_sound_file_find(is_3d);
+}
+
+void App::step_sound_file_find(bool is_3d, int delta) {
+    TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
+    if (state.matches.empty()) return;
+    if (state.current < 0) {
+        state.current = 0;
+    } else {
+        const int count = static_cast<int>(state.matches.size());
+        state.current = (state.current + delta + count) % count;
+    }
+    state.scroll_row = static_cast<int>(state.matches[static_cast<size_t>(state.current)]);
+}
+
+std::string App::sound_file_find_status_text(bool is_3d) const {
+    const TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
+    if (state.unused_has_run) {
+        if (state.unused_count == 0) {
+            return tr(is_3d ? "status.unused_sound_3d_files.no_match" : "status.unused_sound_files.no_match");
+        }
+        std::string text = tr(is_3d ? "status.unused_sound_3d_files.match" : "status.unused_sound_files.match");
+        replace_all(text, "{unused}", std::to_string(state.unused_count));
+        replace_all(text, "{total}", std::to_string(state.unused_total));
+        return text;
+    }
+    if (!state.has_run) return {};
+    if (state.matches.empty() || state.current < 0) return tr("status.find.no_match");
+    return format_find_match_status(tr("status.find.match"),
+                                    static_cast<size_t>(state.current) + 1,
+                                    state.matches.size());
 }
 
 void App::render_othertracks_window() {
@@ -1561,6 +1879,75 @@ void App::render_structure_models_window() {
     ImGui::End();
 }
 
+void App::render_sound_file_find_panel(bool is_3d) {
+    TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
+    const bool stale_find_results = state.has_run && state.committed != state.query;
+    if (stale_find_results) reset_sound_file_find_results(is_3d);
+
+    ImGui::BeginGroup();
+    if (render_find_panel_toggle(is_3d
+                                     ? "##sound_3d_file_find_panel_toggle"
+                                     : "##sound_file_find_panel_toggle",
+                                 tr("button.find"),
+                                 state.panel_expanded)) {
+        state.panel_expanded = !state.panel_expanded;
+    }
+    if (state.panel_expanded) {
+        const float indent = ImGui::GetStyle().FramePadding.x;
+        const float right_padding = ImGui::GetStyle().FramePadding.x;
+        ImGui::Spacing();
+        ImGui::Indent(indent);
+        if (ImGui::Button(tr("button.find").c_str())) run_sound_file_find(is_3d);
+        ImGui::SameLine();
+        const float arrow_button_width = ImGui::GetFrameHeight();
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
+            arrow_button_width * 2.0f - spacing * 2.0f - right_padding);
+        ImGui::SetNextItemWidth(input_width);
+        if (ImGui::InputText(is_3d ? "##sound_3d_file_find_text" : "##sound_file_find_text",
+                             state.query, IM_ARRAYSIZE(state.query),
+                             ImGuiInputTextFlags_EnterReturnsTrue)) {
+            run_sound_file_find(is_3d);
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(state.matches.empty());
+        if (ImGui::Button(is_3d ? "↑##sound_3d_file_find_prev" : "↑##sound_file_find_prev",
+                          ImVec2(arrow_button_width, 0.0f))) {
+            step_sound_file_find(is_3d, -1);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(is_3d ? "↓##sound_3d_file_find_next" : "↓##sound_file_find_next",
+                          ImVec2(arrow_button_width, 0.0f))) {
+            step_sound_file_find(is_3d, 1);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::RadioButton(is_3d ? (tr("find.partial_match") + "##sound_3d_file_partial").c_str()
+                                      : (tr("find.partial_match") + "##sound_file_partial").c_str(),
+                               !state.exact)) {
+            state.exact = false;
+            if (state.has_run || !blank_ascii(state.query)) run_sound_file_find(is_3d);
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(is_3d ? (tr("find.exact_match") + "##sound_3d_file_exact").c_str()
+                                      : (tr("find.exact_match") + "##sound_file_exact").c_str(),
+                               state.exact)) {
+            state.exact = true;
+            if (state.has_run || !blank_ascii(state.query)) run_sound_file_find(is_3d);
+        }
+        if (ImGui::Button(tr(is_3d ? "button.find_unused_sound_3d_files"
+                                   : "button.find_unused_sound_files").c_str())) {
+            run_unused_sound_file_search(is_3d);
+        }
+        render_status_line(sound_file_find_status_text(is_3d));
+        ImGui::Unindent(indent);
+    }
+    ImGui::EndGroup();
+    ImVec2 find_panel_max = ImGui::GetItemRectMax();
+    if (state.panel_expanded) find_panel_max.x += ImGui::GetStyle().FramePadding.x;
+    render_find_panel_border(ImGui::GetItemRectMin(), find_panel_max);
+    ImGui::Spacing();
+}
+
 void App::render_sound_list_window() {
     if (!show_sound_list_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
@@ -1575,10 +1962,12 @@ void App::render_sound_list_window() {
         return;
     }
     ensure_table_cache();
+    render_sound_file_find_panel(false);
     render_sound_list_table("sound_list",
                             table_cache_.sound_list_rows,
                             table_cache_.sound_list_file_path_width,
                             table_cache_.sound_list_buffer_count_width,
+                            sound_file_find_,
                             tr("column.file_name"),
                             tr("menu.open_in_explorer"));
     ImGui::End();
@@ -1598,10 +1987,12 @@ void App::render_sound_3d_list_window() {
         return;
     }
     ensure_table_cache();
+    render_sound_file_find_panel(true);
     render_sound_list_table("sound_3d_list",
                             table_cache_.sound_3d_list_rows,
                             table_cache_.sound_3d_list_file_path_width,
                             table_cache_.sound_3d_list_buffer_count_width,
+                            sound_3d_file_find_,
                             tr("column.file_name"),
                             tr("menu.open_in_explorer"));
     ImGui::End();
@@ -2067,6 +2458,86 @@ void App::render_rolling_noises_window() {
         },
         [this](size_t marker_index) { locate_rolling_noise_row_on_plan(marker_index); });
     focus_rolling_noises_next_ = false;
+    ImGui::End();
+}
+
+void App::render_map_sounds_window() {
+    if (!show_map_sounds_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_map_sounds_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.map_sounds") + "###MapSounds";
+    if (!ImGui::Begin(title.c_str(), &show_map_sounds_window_)) {
+        focus_map_sounds_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_map_sounds_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    render_map_sound_event_table(
+        "map_sounds", kMapSoundColumns,
+        kMapSoundDistanceColumn, kMapSoundKeyColumn, kMapSoundFilePathColumn,
+        table_cache_.map_sound_rows,
+        table_cache_.map_sound_distance_width,
+        table_cache_.map_sound_file_path_width,
+        tr("column.file_name"),
+        tr("menu.locate_on_plan"),
+        tr("menu.find_in_sound_files"),
+        tr("menu.open_in_explorer"),
+        map_sound_list_scroll_row_,
+        map_sound_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this](size_t marker_index) {
+            return marker_index < map_sound_marker_cache_.size() &&
+                map_sound_marker_cache_[marker_index].has_value();
+        },
+        [this](size_t marker_index) { locate_map_sound_row_on_plan(marker_index); },
+        [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, false); });
+    focus_map_sounds_next_ = false;
+    ImGui::End();
+}
+
+void App::render_map_sound_3d_window() {
+    if (!show_map_sound_3d_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_map_sound_3d_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.map_sound_3d") + "###MapSound3D";
+    if (!ImGui::Begin(title.c_str(), &show_map_sound_3d_window_)) {
+        focus_map_sound_3d_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_map_sound_3d_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    render_map_sound_event_table(
+        "map_sound_3d", kMapSoundColumns,
+        kMapSoundDistanceColumn, kMapSoundKeyColumn, kMapSoundFilePathColumn,
+        table_cache_.map_sound_3d_rows,
+        table_cache_.map_sound_3d_distance_width,
+        table_cache_.map_sound_3d_file_path_width,
+        tr("column.file_name"),
+        tr("menu.locate_on_plan"),
+        tr("menu.find_in_sound_3d_files"),
+        tr("menu.open_in_explorer"),
+        map_sound_3d_list_scroll_row_,
+        map_sound_3d_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this](size_t marker_index) {
+            return marker_index < map_sound_3d_marker_cache_.size() &&
+                map_sound_3d_marker_cache_[marker_index].has_value();
+        },
+        [this](size_t marker_index) { locate_map_sound_3d_row_on_plan(marker_index); },
+        [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, true); });
+    focus_map_sound_3d_next_ = false;
     ImGui::End();
 }
 

@@ -80,7 +80,7 @@ At this stage, komapedit is closer to a map viewer and track-geometry visualizer
 
 ### Environmental Effects
 
-- [x] Display `Sound List` and `3D Sound List`.
+- [x] Display `Sound File List`, `3D Sound File List`, `Map Sound List`, and `Map 3D Sound List`.
 - [ ] Edit running sounds, switch sounds, station announcement sounds, and 3D sounds.
 - [ ] Edit cab-illuminance setting positions.
 - [ ] Edit fog effects.
@@ -123,7 +123,8 @@ On startup, the application creates or reads the following files next to the exe
    - `Signal Aspect List`: view signal aspect definitions.
    - `Map Signal List`: view signal positions and use the row `Show` checkboxes to toggle markers on the plan.
    - `Beacon List`: view beacon positions.
-   - `Sound List` and `3D Sound List`: view the loaded sound entries and open the linked files.
+   - `Sound File List` and `3D Sound File List`: view the loaded sound file entries, find matching keys, find unused entries, and open linked files.
+   - `Map Sound List` and `Map 3D Sound List`: view sound playback/fixed sound source positions and locate them on the plan.
    - `Background Change Point List`, `Cab Illuminance Change Point List`, and `Fog Change Point List`: view the corresponding change-point tables.
    - `Other Tracks`: toggle other-track display and adjust visible range and color.
    - `Station List`: view the station list and `Station.Put` placement data.

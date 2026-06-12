@@ -132,6 +132,8 @@ struct TableUiCache {
     std::vector<CachedTableRow> signal_rows;
     std::vector<CachedTableRow> beacon_rows;
     std::vector<CachedTableRow> irregularity_rows;
+    std::vector<CachedTableRow> map_sound_rows;
+    std::vector<CachedTableRow> map_sound_3d_rows;
     std::vector<CachedTableRow> rolling_noise_rows;
     std::vector<CachedTableRow> flange_noise_rows;
     std::vector<CachedTableRow> joint_noise_rows;
@@ -158,6 +160,10 @@ struct TableUiCache {
     float repeater_file_path_width = 200.0f;
     float irregularity_distance_width = 110.0f;
     float irregularity_file_path_width = 200.0f;
+    float map_sound_distance_width = 110.0f;
+    float map_sound_file_path_width = 200.0f;
+    float map_sound_3d_distance_width = 110.0f;
+    float map_sound_3d_file_path_width = 200.0f;
     float rolling_noise_distance_width = 110.0f;
     float rolling_noise_file_path_width = 200.0f;
     float flange_noise_distance_width = 110.0f;
@@ -197,6 +203,8 @@ struct MapModel {
     std::vector<TableRow> beacons;
     std::vector<TableRow> pretrains;
     std::vector<TableRow> irregularities;
+    std::vector<TableRow> map_sounds;
+    std::vector<TableRow> map_sound_3d;
     std::vector<TableRow> rolling_noises;
     std::vector<TableRow> flange_noises;
     std::vector<TableRow> joint_noises;
@@ -349,6 +357,22 @@ struct PlanIrregularityMarker {
     size_t row_index = 0;
 };
 
+struct PlanMapSoundMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    size_t row_index = 0;
+};
+
+struct PlanMapSound3DMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    size_t row_index = 0;
+};
+
 struct PlanRollingNoiseMarker {
     double d = 0.0;
     double x = 0.0;
@@ -444,6 +468,8 @@ struct PlanData {
     std::vector<PlanBeaconMarker> beacon_markers;
     std::vector<PlanPreTrainMarker> pretrain_markers;
     std::vector<PlanIrregularityMarker> irregularity_markers;
+    std::vector<PlanMapSoundMarker> map_sound_markers;
+    std::vector<PlanMapSound3DMarker> map_sound_3d_markers;
     std::vector<PlanRollingNoiseMarker> rolling_noise_markers;
     std::vector<PlanFlangeNoiseMarker> flange_noise_markers;
     std::vector<PlanJointNoiseMarker> joint_noise_markers;
@@ -515,6 +541,8 @@ struct WindowVisibilitySettings {
     bool show_signals_window = false;
     bool show_beacons_window = false;
     bool show_irregularities_window = false;
+    bool show_map_sounds_window = false;
+    bool show_map_sound_3d_window = false;
     bool show_rolling_noises_window = false;
     bool show_flange_noises_window = false;
     bool show_joint_noises_window = false;
@@ -537,6 +565,8 @@ struct WindowVisibilitySettings {
             show_signals_window == other.show_signals_window &&
             show_beacons_window == other.show_beacons_window &&
             show_irregularities_window == other.show_irregularities_window &&
+            show_map_sounds_window == other.show_map_sounds_window &&
+            show_map_sound_3d_window == other.show_map_sound_3d_window &&
             show_rolling_noises_window == other.show_rolling_noises_window &&
             show_flange_noises_window == other.show_flange_noises_window &&
             show_joint_noises_window == other.show_joint_noises_window &&
@@ -565,6 +595,8 @@ struct View2DSettings {
     bool show_irregularity_markers = true;
     bool show_beacon_markers = true;
     bool show_pretrain_markers = true;
+    bool show_map_sound_markers = true;
+    bool show_map_sound_3d_markers = true;
     bool show_rolling_noise_markers = true;
     bool show_flange_noise_markers = true;
     bool show_joint_noise_markers = true;
@@ -590,6 +622,8 @@ struct View2DSettings {
             show_irregularity_markers == other.show_irregularity_markers &&
             show_beacon_markers == other.show_beacon_markers &&
             show_pretrain_markers == other.show_pretrain_markers &&
+            show_map_sound_markers == other.show_map_sound_markers &&
+            show_map_sound_3d_markers == other.show_map_sound_3d_markers &&
             show_rolling_noise_markers == other.show_rolling_noise_markers &&
             show_flange_noise_markers == other.show_flange_noise_markers &&
             show_joint_noise_markers == other.show_joint_noise_markers &&
@@ -618,6 +652,22 @@ struct UserSettings {
     WindowVisibilitySettings window_visibility;
     View2DSettings view_2d;
     std::filesystem::path path;
+};
+
+struct TableFindState {
+    char query[256] = {};
+    std::string committed;
+    std::vector<size_t> matches;
+    std::vector<unsigned char> row_matches;
+    std::vector<unsigned char> unused_row_matches;
+    size_t unused_count = 0;
+    size_t unused_total = 0;
+    int current = -1;
+    int scroll_row = -1;
+    bool has_run = false;
+    bool exact = false;
+    bool panel_expanded = true;
+    bool unused_has_run = false;
 };
 
 struct BackgroundHistory {
@@ -728,6 +778,8 @@ private:
     bool show_irregularity_markers_ = true;
     bool show_beacon_markers_ = true;
     bool show_pretrain_markers_ = true;
+    bool show_map_sound_markers_ = true;
+    bool show_map_sound_3d_markers_ = true;
     bool show_rolling_noise_markers_ = true;
     bool show_flange_noise_markers_ = true;
     bool show_joint_noise_markers_ = true;
@@ -776,6 +828,8 @@ private:
     bool show_signals_window_ = false;
     bool show_beacons_window_ = false;
     bool show_irregularities_window_ = false;
+    bool show_map_sounds_window_ = false;
+    bool show_map_sound_3d_window_ = false;
     bool show_rolling_noises_window_ = false;
     bool show_flange_noises_window_ = false;
     bool show_joint_noises_window_ = false;
@@ -791,6 +845,8 @@ private:
     bool focus_signals_next_ = false;
     bool focus_beacons_next_ = false;
     bool focus_irregularities_next_ = false;
+    bool focus_map_sounds_next_ = false;
+    bool focus_map_sound_3d_next_ = false;
     bool focus_rolling_noises_next_ = false;
     bool focus_flange_noises_next_ = false;
     bool focus_joint_noises_next_ = false;
@@ -827,12 +883,16 @@ private:
     bool structure_model_find_exact_ = false;
     bool structure_model_find_panel_expanded_ = true;
     bool structure_model_unused_has_run_ = false;
+    TableFindState sound_file_find_;
+    TableFindState sound_3d_file_find_;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
     std::vector<std::optional<PlanSignalMarker>> signal_marker_cache_;
     std::vector<std::optional<PlanBeaconMarker>> beacon_marker_cache_;
     std::vector<std::optional<PlanPreTrainMarker>> pretrain_marker_cache_;
     std::vector<std::optional<PlanIrregularityMarker>> irregularity_marker_cache_;
+    std::vector<std::optional<PlanMapSoundMarker>> map_sound_marker_cache_;
+    std::vector<std::optional<PlanMapSound3DMarker>> map_sound_3d_marker_cache_;
     std::vector<std::optional<PlanRollingNoiseMarker>> rolling_noise_marker_cache_;
     std::vector<std::optional<PlanFlangeNoiseMarker>> flange_noise_marker_cache_;
     std::vector<std::optional<PlanJointNoiseMarker>> joint_noise_marker_cache_;
@@ -853,6 +913,10 @@ private:
     int beacon_list_highlight_row_ = -1;
     int irregularity_list_scroll_row_ = -1;
     int irregularity_list_highlight_row_ = -1;
+    int map_sound_list_scroll_row_ = -1;
+    int map_sound_list_highlight_row_ = -1;
+    int map_sound_3d_list_scroll_row_ = -1;
+    int map_sound_3d_list_highlight_row_ = -1;
     int rolling_noise_list_scroll_row_ = -1;
     int rolling_noise_list_highlight_row_ = -1;
     int flange_noise_list_scroll_row_ = -1;
@@ -872,6 +936,8 @@ private:
     int plan_signal_popup_row_ = -1;
     int plan_beacon_popup_row_ = -1;
     int plan_irregularity_popup_row_ = -1;
+    int plan_map_sound_popup_row_ = -1;
+    int plan_map_sound_3d_popup_row_ = -1;
     int plan_rolling_noise_popup_row_ = -1;
     int plan_flange_noise_popup_row_ = -1;
     int plan_joint_noise_popup_row_ = -1;
@@ -932,6 +998,7 @@ private:
     void render_station_list_window();
     void render_structures_window();
     void render_structure_models_window();
+    void render_sound_file_find_panel(bool is_3d);
     void render_sound_list_window();
     void render_sound_3d_list_window();
     void render_repeaters_window();
@@ -939,6 +1006,8 @@ private:
     void render_signals_window();
     void render_beacons_window();
     void render_irregularities_window();
+    void render_map_sounds_window();
+    void render_map_sound_3d_window();
     void render_rolling_noises_window();
     void render_flange_noises_window();
     void render_joint_noises_window();
@@ -965,6 +1034,12 @@ private:
     void find_structure_model_for_structure_key(const std::string& structure_key);
     void step_structure_model_find(int delta);
     std::string structure_model_find_status_text() const;
+    void reset_sound_file_find_results(bool is_3d);
+    void run_sound_file_find(bool is_3d);
+    void run_unused_sound_file_search(bool is_3d);
+    void find_sound_file_for_sound_key(const std::string& sound_key, bool is_3d);
+    void step_sound_file_find(bool is_3d, int delta);
+    std::string sound_file_find_status_text(bool is_3d) const;
     void rebuild_marker_overlay_cache();
     void reset_marker_visibility();
     void sync_marker_visibility_sizes();
@@ -978,6 +1053,10 @@ private:
     void locate_beacon_row_in_list(size_t row_index);
     void locate_irregularity_row_on_plan(size_t row_index);
     void locate_irregularity_row_in_list(size_t row_index);
+    void locate_map_sound_row_on_plan(size_t row_index);
+    void locate_map_sound_row_in_list(size_t row_index);
+    void locate_map_sound_3d_row_on_plan(size_t row_index);
+    void locate_map_sound_3d_row_in_list(size_t row_index);
     void locate_rolling_noise_row_on_plan(size_t row_index);
     void locate_rolling_noise_row_in_list(size_t row_index);
     void locate_flange_noise_row_on_plan(size_t row_index);

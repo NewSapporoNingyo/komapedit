@@ -821,6 +821,8 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     model.structures_between = make_table_rows(structure.at("between_data"));
     model.repeaters = make_table_rows(root.at("repeater"));
     model.irregularities = make_table_rows(root.at("irregularity"));
+    model.map_sounds = make_table_rows(root.at("mapSound"));
+    model.map_sound_3d = make_table_rows(root.at("mapSound3D"));
     model.rolling_noises = make_table_rows(root.at("rollingNoise"));
     model.flange_noises = make_table_rows(root.at("flangeNoise"));
     model.joint_noises = make_table_rows(root.at("jointNoise"));
@@ -1223,6 +1225,8 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Signals", dock_right);
     ImGui::DockBuilderDockWindow("Beacons", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
+    ImGui::DockBuilderDockWindow("MapSounds", dock_right);
+    ImGui::DockBuilderDockWindow("MapSound3D", dock_right);
     ImGui::DockBuilderDockWindow("RollingNoises", dock_right);
     ImGui::DockBuilderDockWindow("FlangeNoises", dock_right);
     ImGui::DockBuilderDockWindow("JointNoises", dock_right);
@@ -1253,6 +1257,8 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_signals_window = show_signals_window_;
     visibility.show_beacons_window = show_beacons_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
+    visibility.show_map_sounds_window = show_map_sounds_window_;
+    visibility.show_map_sound_3d_window = show_map_sound_3d_window_;
     visibility.show_rolling_noises_window = show_rolling_noises_window_;
     visibility.show_flange_noises_window = show_flange_noises_window_;
     visibility.show_joint_noises_window = show_joint_noises_window_;
@@ -1277,6 +1283,8 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_signals_window_ = visibility.show_signals_window;
     show_beacons_window_ = visibility.show_beacons_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
+    show_map_sounds_window_ = visibility.show_map_sounds_window;
+    show_map_sound_3d_window_ = visibility.show_map_sound_3d_window;
     show_rolling_noises_window_ = visibility.show_rolling_noises_window;
     show_flange_noises_window_ = visibility.show_flange_noises_window;
     show_joint_noises_window_ = visibility.show_joint_noises_window;
@@ -1301,6 +1309,8 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_irregularity_markers = show_irregularity_markers_;
     view.show_beacon_markers = show_beacon_markers_;
     view.show_pretrain_markers = show_pretrain_markers_;
+    view.show_map_sound_markers = show_map_sound_markers_;
+    view.show_map_sound_3d_markers = show_map_sound_3d_markers_;
     view.show_rolling_noise_markers = show_rolling_noise_markers_;
     view.show_flange_noise_markers = show_flange_noise_markers_;
     view.show_joint_noise_markers = show_joint_noise_markers_;
@@ -1328,6 +1338,8 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_irregularity_markers_ = settings.show_irregularity_markers;
     show_beacon_markers_ = settings.show_beacon_markers;
     show_pretrain_markers_ = settings.show_pretrain_markers;
+    show_map_sound_markers_ = settings.show_map_sound_markers;
+    show_map_sound_3d_markers_ = settings.show_map_sound_3d_markers;
     show_rolling_noise_markers_ = settings.show_rolling_noise_markers;
     show_flange_noise_markers_ = settings.show_flange_noise_markers;
     show_joint_noise_markers_ = settings.show_joint_noise_markers;
@@ -1458,6 +1470,12 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("frame.sound_3d_list").c_str(), nullptr, false, !show_sound_3d_list_window_)) {
             show_sound_3d_list_window_ = true;
         }
+        if (ImGui::MenuItem(tr("button.map_sound_list").c_str(), nullptr, false, !show_map_sounds_window_)) {
+            show_map_sounds_window_ = true;
+        }
+        if (ImGui::MenuItem(tr("button.map_sound_3d_list").c_str(), nullptr, false, !show_map_sound_3d_window_)) {
+            show_map_sound_3d_window_ = true;
+        }
         if (ImGui::MenuItem(tr("button.repeater_list").c_str(), nullptr, false, !show_repeaters_window_)) {
             show_repeaters_window_ = true;
         }
@@ -1502,6 +1520,8 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
         ImGui::MenuItem(tr("chk.beacon_markers").c_str(), nullptr, &show_beacon_markers_);
         ImGui::MenuItem(tr("chk.pretrain_markers").c_str(), nullptr, &show_pretrain_markers_);
+        ImGui::MenuItem(tr("chk.map_sound_markers").c_str(), nullptr, &show_map_sound_markers_);
+        ImGui::MenuItem(tr("chk.map_sound_3d_markers").c_str(), nullptr, &show_map_sound_3d_markers_);
         ImGui::MenuItem(tr("chk.rolling_noise_markers").c_str(), nullptr, &show_rolling_noise_markers_);
         ImGui::MenuItem(tr("chk.flange_noise_markers").c_str(), nullptr, &show_flange_noise_markers_);
         ImGui::MenuItem(tr("chk.joint_noise_markers").c_str(), nullptr, &show_joint_noise_markers_);
@@ -2047,6 +2067,8 @@ void App::render() {
     render_signals_window();
     render_beacons_window();
     render_irregularities_window();
+    render_map_sounds_window();
+    render_map_sound_3d_window();
     render_rolling_noises_window();
     render_flange_noises_window();
     render_joint_noises_window();

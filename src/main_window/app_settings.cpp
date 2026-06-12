@@ -331,6 +331,8 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_signals_window=" << bool_to_string(settings.window_visibility.show_signals_window) << "\n";
     out << "show_beacons_window=" << bool_to_string(settings.window_visibility.show_beacons_window) << "\n";
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
+    out << "show_map_sounds_window=" << bool_to_string(settings.window_visibility.show_map_sounds_window) << "\n";
+    out << "show_map_sound_3d_window=" << bool_to_string(settings.window_visibility.show_map_sound_3d_window) << "\n";
     out << "show_rolling_noises_window=" << bool_to_string(settings.window_visibility.show_rolling_noises_window) << "\n";
     out << "show_flange_noises_window=" << bool_to_string(settings.window_visibility.show_flange_noises_window) << "\n";
     out << "show_joint_noises_window=" << bool_to_string(settings.window_visibility.show_joint_noises_window) << "\n";
@@ -352,6 +354,8 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
     out << "show_beacon_markers=" << bool_to_string(settings.view_2d.show_beacon_markers) << "\n";
     out << "show_pretrain_markers=" << bool_to_string(settings.view_2d.show_pretrain_markers) << "\n";
+    out << "show_map_sound_markers=" << bool_to_string(settings.view_2d.show_map_sound_markers) << "\n";
+    out << "show_map_sound_3d_markers=" << bool_to_string(settings.view_2d.show_map_sound_3d_markers) << "\n";
     out << "show_rolling_noise_markers=" << bool_to_string(settings.view_2d.show_rolling_noise_markers) << "\n";
     out << "show_flange_noise_markers=" << bool_to_string(settings.view_2d.show_flange_noise_markers) << "\n";
     out << "show_joint_noise_markers=" << bool_to_string(settings.view_2d.show_joint_noise_markers) << "\n";
@@ -444,6 +448,10 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_beacons_window = parse_bool(value, settings.window_visibility.show_beacons_window);
         } else if (key == "show_irregularities_window") {
             settings.window_visibility.show_irregularities_window = parse_bool(value, settings.window_visibility.show_irregularities_window);
+        } else if (key == "show_map_sounds_window" || key == "show_map_sound_window") {
+            settings.window_visibility.show_map_sounds_window = parse_bool(value, settings.window_visibility.show_map_sounds_window);
+        } else if (key == "show_map_sound_3d_window" || key == "show_map_sounds_3d_window" || key == "show_map_sound3d_window") {
+            settings.window_visibility.show_map_sound_3d_window = parse_bool(value, settings.window_visibility.show_map_sound_3d_window);
         } else if (key == "show_rolling_noises_window" || key == "show_rolling_noise_window") {
             settings.window_visibility.show_rolling_noises_window = parse_bool(value, settings.window_visibility.show_rolling_noises_window);
         } else if (key == "show_flange_noises_window" || key == "show_flange_noise_window") {
@@ -495,6 +503,12 @@ UserSettings load_user_settings() {
         } else if (key == "show_pretrain_markers" || key == "show_pretrains" || key == "show_pretrain_points") {
             view_2d_keys_seen.insert("show_pretrain_markers");
             settings.view_2d.show_pretrain_markers = parse_bool(value, settings.view_2d.show_pretrain_markers);
+        } else if (key == "show_map_sound_markers" || key == "show_map_sounds" || key == "show_map_sound_points") {
+            view_2d_keys_seen.insert("show_map_sound_markers");
+            settings.view_2d.show_map_sound_markers = parse_bool(value, settings.view_2d.show_map_sound_markers);
+        } else if (key == "show_map_sound_3d_markers" || key == "show_map_sound3d_markers" || key == "show_map_sound_3d_points") {
+            view_2d_keys_seen.insert("show_map_sound_3d_markers");
+            settings.view_2d.show_map_sound_3d_markers = parse_bool(value, settings.view_2d.show_map_sound_3d_markers);
         } else if (key == "show_rolling_noise_markers" || key == "show_rolling_noises" || key == "show_rolling_noise_points") {
             view_2d_keys_seen.insert("show_rolling_noise_markers");
             settings.view_2d.show_rolling_noise_markers = parse_bool(value, settings.view_2d.show_rolling_noise_markers);
@@ -539,7 +553,7 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 21) save_user_settings(settings);
+    if (view_2d_keys_seen.size() < 23) save_user_settings(settings);
     return settings;
 }
 

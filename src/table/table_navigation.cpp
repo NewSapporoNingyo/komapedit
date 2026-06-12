@@ -12,6 +12,8 @@
 void App::invalidate_table_cache() {
     table_cache_ = TableUiCache{};
     reset_structure_model_find_results();
+    reset_sound_file_find_results(false);
+    reset_sound_file_find_results(true);
     structure_list_scroll_row_ = -1;
     structure_list_highlight_row_ = -1;
     repeater_list_scroll_row_ = -1;
@@ -22,6 +24,10 @@ void App::invalidate_table_cache() {
     beacon_list_highlight_row_ = -1;
     irregularity_list_scroll_row_ = -1;
     irregularity_list_highlight_row_ = -1;
+    map_sound_list_scroll_row_ = -1;
+    map_sound_list_highlight_row_ = -1;
+    map_sound_3d_list_scroll_row_ = -1;
+    map_sound_3d_list_highlight_row_ = -1;
     rolling_noise_list_scroll_row_ = -1;
     rolling_noise_list_highlight_row_ = -1;
     flange_noise_list_scroll_row_ = -1;
@@ -41,6 +47,8 @@ void App::invalidate_table_cache() {
     plan_signal_popup_row_ = -1;
     plan_beacon_popup_row_ = -1;
     plan_irregularity_popup_row_ = -1;
+    plan_map_sound_popup_row_ = -1;
+    plan_map_sound_3d_popup_row_ = -1;
     plan_rolling_noise_popup_row_ = -1;
     plan_flange_noise_popup_row_ = -1;
     plan_joint_noise_popup_row_ = -1;
@@ -141,6 +149,36 @@ void App::locate_irregularity_row_in_list(size_t row_index) {
     focus_irregularities_next_ = true;
     irregularity_list_scroll_row_ = static_cast<int>(row_index);
     irregularity_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_map_sound_row_on_plan(size_t row_index) {
+    if (row_index >= map_sound_marker_cache_.size() || !map_sound_marker_cache_[row_index]) return;
+    show_map_sound_markers_ = true;
+    const PlanMapSoundMarker& marker = *map_sound_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_map_sound_row_in_list(size_t row_index) {
+    if (row_index >= map_sound_marker_cache_.size() || !map_sound_marker_cache_[row_index]) return;
+    show_map_sounds_window_ = true;
+    focus_map_sounds_next_ = true;
+    map_sound_list_scroll_row_ = static_cast<int>(row_index);
+    map_sound_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_map_sound_3d_row_on_plan(size_t row_index) {
+    if (row_index >= map_sound_3d_marker_cache_.size() || !map_sound_3d_marker_cache_[row_index]) return;
+    show_map_sound_3d_markers_ = true;
+    const PlanMapSound3DMarker& marker = *map_sound_3d_marker_cache_[row_index];
+    focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_map_sound_3d_row_in_list(size_t row_index) {
+    if (row_index >= map_sound_3d_marker_cache_.size() || !map_sound_3d_marker_cache_[row_index]) return;
+    show_map_sound_3d_window_ = true;
+    focus_map_sound_3d_next_ = true;
+    map_sound_3d_list_scroll_row_ = static_cast<int>(row_index);
+    map_sound_3d_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::locate_rolling_noise_row_on_plan(size_t row_index) {
