@@ -8,6 +8,8 @@
 #pragma execution_character_set("utf-8")
 
 #include "kme.h"
+#include "app_settings.h"
+#include "debug_headless.h"
 
 #include "canvas3D.h"
 #include "maploader.h"
@@ -363,766 +365,6 @@ void wake_main_window() {
     if (g_main_hwnd) PostMessageW(g_main_hwnd, kAppWakeMessage, 0, 0);
 }
 
-std::string trim_ascii(const std::string& text) {
-    size_t begin = 0;
-    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
-    size_t end = text.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
-    return text.substr(begin, end - begin);
-}
-
-std::string ascii_lower(std::string text) {
-    for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return text;
-}
-
-std::string normalized_storage_path(const std::string& path) {
-    if (trim_ascii(path).empty()) return {};
-    try {
-        std::filesystem::path p = utf8_to_wide(path);
-        std::error_code ec;
-        std::filesystem::path abs = std::filesystem::absolute(p, ec);
-        if (ec) abs = p;
-        return narrow_path(abs.lexically_normal());
-    } catch (...) {
-        return path;
-    }
-}
-
-std::string normalized_path_key(const std::string& path) {
-    if (trim_ascii(path).empty()) return {};
-    try {
-        std::filesystem::path p = utf8_to_wide(path);
-        std::error_code ec;
-        std::filesystem::path abs = std::filesystem::absolute(p, ec);
-        if (ec) abs = p;
-        std::filesystem::path canonical = std::filesystem::weakly_canonical(abs, ec);
-        if (!ec) abs = canonical;
-        return ascii_lower(narrow_path(abs.lexically_normal()));
-    } catch (...) {
-        return ascii_lower(trim_ascii(path));
-    }
-}
-
-std::string display_name_from_path(const std::string& path) {
-    try {
-        std::filesystem::path p = utf8_to_wide(path);
-        std::string name = narrow_path(p.filename());
-        return name.empty() ? path : name;
-    } catch (...) {
-        return path;
-    }
-}
-
-float clamp_font_size(float value) {
-    if (!std::isfinite(value)) return kDefaultFontSize;
-    return std::clamp(value, kMinFontSize, kMaxFontSize);
-}
-
-float clamp_ui_component_size(float value) {
-    if (!std::isfinite(value)) return kDefaultUiComponentSize;
-    return std::clamp(value, kMinUiComponentSize, kMaxUiComponentSize);
-}
-
-float clamp_station_marker_size(float value) {
-    if (!std::isfinite(value)) return kDefaultStationMarkerSize;
-    return std::clamp(value, kMinStationMarkerSize, kMaxStationMarkerSize);
-}
-
-ImVec4 default_theme_color() {
-    return ImVec4(0.26f, 0.59f, 0.98f, 1.0f);
-}
-
-float clamp_color_component(float value) {
-    if (!std::isfinite(value)) return 0.0f;
-    return std::clamp(value, 0.0f, 1.0f);
-}
-
-ImVec4 clamp_theme_color(ImVec4 color) {
-    color.x = clamp_color_component(color.x);
-    color.y = clamp_color_component(color.y);
-    color.z = clamp_color_component(color.z);
-    color.w = 1.0f;
-    return color;
-}
-
-int color_component_to_byte(float value) {
-    return std::clamp(static_cast<int>(std::round(clamp_color_component(value) * 255.0f)), 0, 255);
-}
-
-std::string theme_color_to_string(const ImVec4& color) {
-    ImVec4 c = clamp_theme_color(color);
-    std::ostringstream out;
-    out << std::uppercase << std::hex << std::setfill('0')
-        << std::setw(2) << color_component_to_byte(c.x)
-        << std::setw(2) << color_component_to_byte(c.y)
-        << std::setw(2) << color_component_to_byte(c.z);
-    return out.str();
-}
-
-const std::array<ImVec4, 12>& ui_theme_palette() {
-    static const std::array<ImVec4, 12> palette = {
-        ImVec4(0.26f, 0.59f, 0.98f, 1.0f),
-        ImVec4(0.00f, 0.74f, 0.83f, 1.0f),
-        ImVec4(0.26f, 0.75f, 0.48f, 1.0f),
-        ImVec4(0.60f, 0.78f, 0.20f, 1.0f),
-        ImVec4(0.95f, 0.67f, 0.13f, 1.0f),
-        ImVec4(0.95f, 0.42f, 0.18f, 1.0f),
-        ImVec4(0.90f, 0.27f, 0.33f, 1.0f),
-        ImVec4(0.88f, 0.31f, 0.55f, 1.0f),
-        ImVec4(0.70f, 0.38f, 0.94f, 1.0f),
-        ImVec4(0.46f, 0.45f, 0.95f, 1.0f),
-        ImVec4(0.40f, 0.58f, 0.71f, 1.0f),
-        ImVec4(0.58f, 0.63f, 0.68f, 1.0f),
-    };
-    return palette;
-}
-
-int hex_digit(char ch) {
-    if (ch >= '0' && ch <= '9') return ch - '0';
-    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
-    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
-    return -1;
-}
-
-std::optional<ImVec4> parse_theme_color(const std::string& text) {
-    std::string value = trim_ascii(text);
-    if (value.empty()) return std::nullopt;
-    bool had_hash_prefix = value.front() == '#';
-    if (had_hash_prefix) {
-        value.erase(value.begin());
-        size_t trailing = value.find_first_of(" \t\r\n");
-        if (trailing != std::string::npos) value.erase(trailing);
-    }
-    if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) value.erase(0, 2);
-
-    if (value.size() == 6 || value.size() == 8) {
-        bool is_hex = true;
-        for (char ch : value) {
-            if (hex_digit(ch) < 0) {
-                is_hex = false;
-                break;
-            }
-        }
-        if (is_hex) {
-            auto byte_at = [&](size_t pos) {
-                return hex_digit(value[pos]) * 16 + hex_digit(value[pos + 1]);
-            };
-            return clamp_theme_color(ImVec4(
-                byte_at(0) / 255.0f,
-                byte_at(2) / 255.0f,
-                byte_at(4) / 255.0f,
-                1.0f));
-        }
-    }
-
-    std::array<float, 3> components{};
-    std::istringstream in(value);
-    std::string part;
-    int count = 0;
-    while (count < static_cast<int>(components.size()) && std::getline(in, part, ',')) {
-        try {
-            components[count++] = std::stof(trim_ascii(part));
-        } catch (...) {
-            return std::nullopt;
-        }
-    }
-    if (count == static_cast<int>(components.size())) {
-        bool byte_range = components[0] > 1.0f || components[1] > 1.0f || components[2] > 1.0f;
-        if (byte_range) {
-            for (float& component : components) component /= 255.0f;
-        }
-        return clamp_theme_color(ImVec4(components[0], components[1], components[2], 1.0f));
-    }
-
-    return std::nullopt;
-}
-
-ImVec4 with_alpha(ImVec4 color, float alpha) {
-    color = clamp_theme_color(color);
-    color.w = clamp_color_component(alpha);
-    return color;
-}
-
-ImVec4 mix_color(ImVec4 a, ImVec4 b, float t, float alpha = 1.0f) {
-    a = clamp_theme_color(a);
-    b = clamp_theme_color(b);
-    t = clamp_color_component(t);
-    return ImVec4(
-        a.x + (b.x - a.x) * t,
-        a.y + (b.y - a.y) * t,
-        a.z + (b.z - a.z) * t,
-        clamp_color_component(alpha));
-}
-
-std::string language_to_string(Language lang) {
-    switch (lang) {
-        case Language::Ja: return "ja";
-        case Language::En: return "en";
-        case Language::Zh: return "zh";
-    }
-    return "zh";
-}
-
-Language language_from_string(const std::string& text, Language fallback) {
-    std::string value = ascii_lower(trim_ascii(text));
-    if (value == "ja" || value == "jp" || value == "japanese") return Language::Ja;
-    if (value == "en" || value == "english") return Language::En;
-    if (value == "zh" || value == "cn" || value == "chinese" || value == "simplified_chinese") return Language::Zh;
-    return fallback;
-}
-
-std::filesystem::path executable_directory() {
-    std::vector<wchar_t> buffer(MAX_PATH);
-    while (true) {
-        DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (len == 0) break;
-        if (len < buffer.size() - 1) {
-            return std::filesystem::path(std::wstring(buffer.data(), len)).parent_path();
-        }
-        buffer.resize(buffer.size() * 2);
-    }
-    std::error_code ec;
-    std::filesystem::path cwd = std::filesystem::current_path(ec);
-    return ec ? std::filesystem::path(L".") : cwd;
-}
-
-std::filesystem::path default_settings_path() {
-    return executable_directory() / L"settings.ini";
-}
-
-std::filesystem::path default_history_path() {
-    return executable_directory() / L"history.ini";
-}
-
-std::filesystem::path default_imgui_ini_path() {
-    return executable_directory() / L"imgui.ini";
-}
-
-std::string bool_to_string(bool value) {
-    return value ? "true" : "false";
-}
-
-bool parse_bool(const std::string& value, bool fallback) {
-    std::string text = ascii_lower(trim_ascii(value));
-    if (text == "1" || text == "true" || text == "yes" || text == "on") return true;
-    if (text == "0" || text == "false" || text == "no" || text == "off") return false;
-    return fallback;
-}
-
-int normalize_view_2d_mode(int value) {
-    return value == 1 ? 1 : 0;
-}
-
-int normalize_grid_mode(int value) {
-    return value >= 0 && value <= 2 ? value : 0;
-}
-
-std::string view_2d_mode_to_string(int value) {
-    return normalize_view_2d_mode(value) == 1 ? "measure" : "pan";
-}
-
-std::string grid_mode_to_string(int value) {
-    switch (normalize_grid_mode(value)) {
-        case 1: return "movable";
-        case 2: return "none";
-        default: return "fixed";
-    }
-}
-
-int view_2d_mode_from_string(const std::string& value, int fallback) {
-    std::string text = ascii_lower(trim_ascii(value));
-    if (text == "1" || text == "measure" || text == "measurement") return 1;
-    if (text == "0" || text == "pan" || text == "move") return 0;
-    return normalize_view_2d_mode(fallback);
-}
-
-int grid_mode_from_string(const std::string& value, int fallback) {
-    std::string text = ascii_lower(trim_ascii(value));
-    if (text == "0" || text == "fixed") return 0;
-    if (text == "1" || text == "movable" || text == "moveable") return 1;
-    if (text == "2" || text == "none" || text == "off") return 2;
-    return normalize_grid_mode(fallback);
-}
-
-bool save_user_settings(const UserSettings& settings) {
-    std::ofstream out(settings.path, std::ios::binary | std::ios::trunc);
-    if (!out) return false;
-    out << "[General]\n";
-    out << "language=" << language_to_string(settings.language) << "\n";
-    out << "font_size=" << std::fixed << std::setprecision(1) << clamp_font_size(settings.font_size) << "\n";
-    out << "ui_component_size=" << std::fixed << std::setprecision(1) << clamp_ui_component_size(settings.ui_component_size) << "\n";
-    out << "station_marker_size=" << std::fixed << std::setprecision(1) << clamp_station_marker_size(settings.station_marker_size) << "\n";
-    out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
-    out << "\n[WindowVisibility]\n";
-    out << "show_othertracks_window=" << bool_to_string(settings.window_visibility.show_othertracks_window) << "\n";
-    out << "show_station_list_window=" << bool_to_string(settings.window_visibility.show_station_list_window) << "\n";
-    out << "show_structures_window=" << bool_to_string(settings.window_visibility.show_structures_window) << "\n";
-    out << "show_structure_models_window=" << bool_to_string(settings.window_visibility.show_structure_models_window) << "\n";
-    out << "show_sound_list_window=" << bool_to_string(settings.window_visibility.show_sound_list_window) << "\n";
-    out << "show_sound_3d_list_window=" << bool_to_string(settings.window_visibility.show_sound_3d_list_window) << "\n";
-    out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
-    out << "show_signal_aspects_window=" << bool_to_string(settings.window_visibility.show_signal_aspects_window) << "\n";
-    out << "show_signals_window=" << bool_to_string(settings.window_visibility.show_signals_window) << "\n";
-    out << "show_beacons_window=" << bool_to_string(settings.window_visibility.show_beacons_window) << "\n";
-    out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
-    out << "show_rolling_noises_window=" << bool_to_string(settings.window_visibility.show_rolling_noises_window) << "\n";
-    out << "show_flange_noises_window=" << bool_to_string(settings.window_visibility.show_flange_noises_window) << "\n";
-    out << "show_joint_noises_window=" << bool_to_string(settings.window_visibility.show_joint_noises_window) << "\n";
-    out << "show_backgrounds_window=" << bool_to_string(settings.window_visibility.show_backgrounds_window) << "\n";
-    out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
-    out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
-    out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
-    out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
-    out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
-    out << "\n[View2D]\n";
-    out << "show_stations=" << bool_to_string(settings.view_2d.show_stations) << "\n";
-    out << "show_station_names=" << bool_to_string(settings.view_2d.show_station_names) << "\n";
-    out << "show_station_mileage=" << bool_to_string(settings.view_2d.show_station_mileage) << "\n";
-    out << "show_gradient_pos=" << bool_to_string(settings.view_2d.show_gradient_pos) << "\n";
-    out << "show_gradient_values=" << bool_to_string(settings.view_2d.show_gradient_values) << "\n";
-    out << "show_curve_values=" << bool_to_string(settings.view_2d.show_curve_values) << "\n";
-    out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
-    out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
-    out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
-    out << "show_beacon_markers=" << bool_to_string(settings.view_2d.show_beacon_markers) << "\n";
-    out << "show_pretrain_markers=" << bool_to_string(settings.view_2d.show_pretrain_markers) << "\n";
-    out << "show_rolling_noise_markers=" << bool_to_string(settings.view_2d.show_rolling_noise_markers) << "\n";
-    out << "show_flange_noise_markers=" << bool_to_string(settings.view_2d.show_flange_noise_markers) << "\n";
-    out << "show_joint_noise_markers=" << bool_to_string(settings.view_2d.show_joint_noise_markers) << "\n";
-    out << "show_background_markers=" << bool_to_string(settings.view_2d.show_background_markers) << "\n";
-    out << "show_adhesion_markers=" << bool_to_string(settings.view_2d.show_adhesion_markers) << "\n";
-    out << "show_cab_illuminance_markers=" << bool_to_string(settings.view_2d.show_cab_illuminance_markers) << "\n";
-    out << "show_fog_markers=" << bool_to_string(settings.view_2d.show_fog_markers) << "\n";
-    out << "show_profile_graph=" << bool_to_string(settings.view_2d.show_profile_graph) << "\n";
-    out << "show_radius_graph=" << bool_to_string(settings.view_2d.show_radius_graph) << "\n";
-    out << "show_background_image=" << bool_to_string(settings.view_2d.show_background_image) << "\n";
-    out << "mode=" << view_2d_mode_to_string(settings.view_2d.mode) << "\n";
-    out << "grid_mode=" << grid_mode_to_string(settings.view_2d.grid_mode) << "\n";
-    return true;
-}
-
-UserSettings load_user_settings() {
-    UserSettings settings;
-    settings.path = default_settings_path();
-
-    std::error_code ec;
-    bool exists = std::filesystem::exists(settings.path, ec);
-    if (ec || !exists) {
-        save_user_settings(settings);
-        return settings;
-    }
-
-    std::ifstream in(settings.path, std::ios::binary);
-    if (!in) return settings;
-
-    std::string line;
-    std::set<std::string> view_2d_keys_seen;
-    while (std::getline(in, line)) {
-        std::string trimmed_line = trim_ascii(line);
-        if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string key = ascii_lower(trim_ascii(line.substr(0, eq)));
-        std::string value = trim_ascii(line.substr(eq + 1));
-        bool is_theme_color_key = key == "theme_color" || key == "ui_theme_color" || key == "interface_theme_color" || key == "accent_color";
-        size_t semicolon_comment = value.find(';');
-        if (semicolon_comment != std::string::npos) value.erase(semicolon_comment);
-        size_t hash_comment = value.find('#');
-        if (hash_comment != std::string::npos && !(is_theme_color_key && hash_comment == 0)) value.erase(hash_comment);
-        value = trim_ascii(value);
-        if (key == "language" || key == "lang") {
-            settings.language = language_from_string(value, settings.language);
-        } else if (key == "font_size" || key == "fontsize" || key == "text_size") {
-            try {
-                settings.font_size = clamp_font_size(std::stof(value));
-            } catch (...) {
-                settings.font_size = kDefaultFontSize;
-            }
-        } else if (key == "ui_component_size" || key == "component_size" || key == "ui_scale" || key == "ui_component_scale") {
-            try {
-                settings.ui_component_size = clamp_ui_component_size(std::stof(value));
-            } catch (...) {
-                settings.ui_component_size = kDefaultUiComponentSize;
-            }
-        } else if (key == "station_marker_size" || key == "station_marker_radius" || key == "station_size") {
-            try {
-                settings.station_marker_size = clamp_station_marker_size(std::stof(value));
-            } catch (...) {
-                settings.station_marker_size = kDefaultStationMarkerSize;
-            }
-        } else if (is_theme_color_key) {
-            if (auto color = parse_theme_color(value)) {
-                settings.theme_color = *color;
-            } else {
-                settings.theme_color = default_theme_color();
-            }
-        } else if (key == "show_othertracks_window") {
-            settings.window_visibility.show_othertracks_window = parse_bool(value, settings.window_visibility.show_othertracks_window);
-        } else if (key == "show_station_list_window") {
-            settings.window_visibility.show_station_list_window = parse_bool(value, settings.window_visibility.show_station_list_window);
-        } else if (key == "show_structures_window") {
-            settings.window_visibility.show_structures_window = parse_bool(value, settings.window_visibility.show_structures_window);
-        } else if (key == "show_structure_models_window") {
-            settings.window_visibility.show_structure_models_window = parse_bool(value, settings.window_visibility.show_structure_models_window);
-        } else if (key == "show_sound_list_window" || key == "show_soundlist_window") {
-            settings.window_visibility.show_sound_list_window = parse_bool(value, settings.window_visibility.show_sound_list_window);
-        } else if (key == "show_sound_3d_list_window" || key == "show_sound3d_list_window") {
-            settings.window_visibility.show_sound_3d_list_window = parse_bool(value, settings.window_visibility.show_sound_3d_list_window);
-        } else if (key == "show_repeaters_window") {
-            settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
-        } else if (key == "show_signal_aspects_window" || key == "show_signal_aspect_window") {
-            settings.window_visibility.show_signal_aspects_window = parse_bool(value, settings.window_visibility.show_signal_aspects_window);
-        } else if (key == "show_signals_window" || key == "show_signal_window") {
-            settings.window_visibility.show_signals_window = parse_bool(value, settings.window_visibility.show_signals_window);
-        } else if (key == "show_beacons_window" || key == "show_beacon_window") {
-            settings.window_visibility.show_beacons_window = parse_bool(value, settings.window_visibility.show_beacons_window);
-        } else if (key == "show_irregularities_window") {
-            settings.window_visibility.show_irregularities_window = parse_bool(value, settings.window_visibility.show_irregularities_window);
-        } else if (key == "show_rolling_noises_window" || key == "show_rolling_noise_window") {
-            settings.window_visibility.show_rolling_noises_window = parse_bool(value, settings.window_visibility.show_rolling_noises_window);
-        } else if (key == "show_flange_noises_window" || key == "show_flange_noise_window") {
-            settings.window_visibility.show_flange_noises_window = parse_bool(value, settings.window_visibility.show_flange_noises_window);
-        } else if (key == "show_joint_noises_window" || key == "show_joint_noise_window") {
-            settings.window_visibility.show_joint_noises_window = parse_bool(value, settings.window_visibility.show_joint_noises_window);
-        } else if (key == "show_backgrounds_window" || key == "show_background_window") {
-            settings.window_visibility.show_backgrounds_window = parse_bool(value, settings.window_visibility.show_backgrounds_window);
-        } else if (key == "show_adhesions_window" || key == "show_adhesion_window") {
-            settings.window_visibility.show_adhesions_window = parse_bool(value, settings.window_visibility.show_adhesions_window);
-        } else if (key == "show_cab_illuminance_window" || key == "show_cabilluminance_window") {
-            settings.window_visibility.show_cab_illuminance_window = parse_bool(value, settings.window_visibility.show_cab_illuminance_window);
-        } else if (key == "show_fogs_window" || key == "show_fog_window") {
-            settings.window_visibility.show_fogs_window = parse_bool(value, settings.window_visibility.show_fogs_window);
-        } else if (key == "show_plots_window") {
-            settings.window_visibility.show_plots_window = parse_bool(value, settings.window_visibility.show_plots_window);
-        } else if (key == "show_model_preview_window") {
-            settings.window_visibility.show_model_preview_window = parse_bool(value, settings.window_visibility.show_model_preview_window);
-        } else if (key == "show_stations" || key == "show_station_pos" || key == "show_station_positions") {
-            view_2d_keys_seen.insert("show_stations");
-            settings.view_2d.show_stations = parse_bool(value, settings.view_2d.show_stations);
-        } else if (key == "show_station_names" || key == "show_station_name") {
-            view_2d_keys_seen.insert("show_station_names");
-            settings.view_2d.show_station_names = parse_bool(value, settings.view_2d.show_station_names);
-        } else if (key == "show_station_mileage") {
-            view_2d_keys_seen.insert("show_station_mileage");
-            settings.view_2d.show_station_mileage = parse_bool(value, settings.view_2d.show_station_mileage);
-        } else if (key == "show_gradient_pos" || key == "show_gradient_positions") {
-            view_2d_keys_seen.insert("show_gradient_pos");
-            settings.view_2d.show_gradient_pos = parse_bool(value, settings.view_2d.show_gradient_pos);
-        } else if (key == "show_gradient_values" || key == "show_gradient_value") {
-            view_2d_keys_seen.insert("show_gradient_values");
-            settings.view_2d.show_gradient_values = parse_bool(value, settings.view_2d.show_gradient_values);
-        } else if (key == "show_curve_values" || key == "show_curve_value") {
-            view_2d_keys_seen.insert("show_curve_values");
-            settings.view_2d.show_curve_values = parse_bool(value, settings.view_2d.show_curve_values);
-        } else if (key == "show_profile_other" || key == "show_profile_othertracks") {
-            view_2d_keys_seen.insert("show_profile_other");
-            settings.view_2d.show_profile_other = parse_bool(value, settings.view_2d.show_profile_other);
-        } else if (key == "show_speedlimits" || key == "show_speedlimit") {
-            view_2d_keys_seen.insert("show_speedlimits");
-            settings.view_2d.show_speedlimits = parse_bool(value, settings.view_2d.show_speedlimits);
-        } else if (key == "show_irregularity_markers" || key == "show_irregularities" || key == "show_irregularity_points") {
-            view_2d_keys_seen.insert("show_irregularity_markers");
-            settings.view_2d.show_irregularity_markers = parse_bool(value, settings.view_2d.show_irregularity_markers);
-        } else if (key == "show_beacon_markers" || key == "show_beacons" || key == "show_beacon_points") {
-            view_2d_keys_seen.insert("show_beacon_markers");
-            settings.view_2d.show_beacon_markers = parse_bool(value, settings.view_2d.show_beacon_markers);
-        } else if (key == "show_pretrain_markers" || key == "show_pretrains" || key == "show_pretrain_points") {
-            view_2d_keys_seen.insert("show_pretrain_markers");
-            settings.view_2d.show_pretrain_markers = parse_bool(value, settings.view_2d.show_pretrain_markers);
-        } else if (key == "show_rolling_noise_markers" || key == "show_rolling_noises" || key == "show_rolling_noise_points") {
-            view_2d_keys_seen.insert("show_rolling_noise_markers");
-            settings.view_2d.show_rolling_noise_markers = parse_bool(value, settings.view_2d.show_rolling_noise_markers);
-        } else if (key == "show_flange_noise_markers" || key == "show_flange_noises" || key == "show_flange_noise_points") {
-            view_2d_keys_seen.insert("show_flange_noise_markers");
-            settings.view_2d.show_flange_noise_markers = parse_bool(value, settings.view_2d.show_flange_noise_markers);
-        } else if (key == "show_joint_noise_markers" || key == "show_joint_noises" || key == "show_joint_noise_points") {
-            view_2d_keys_seen.insert("show_joint_noise_markers");
-            settings.view_2d.show_joint_noise_markers = parse_bool(value, settings.view_2d.show_joint_noise_markers);
-        } else if (key == "show_background_markers" || key == "show_backgrounds" || key == "show_background_points") {
-            view_2d_keys_seen.insert("show_background_markers");
-            settings.view_2d.show_background_markers = parse_bool(value, settings.view_2d.show_background_markers);
-        } else if (key == "show_adhesion_markers" || key == "show_adhesions" || key == "show_adhesion_points") {
-            view_2d_keys_seen.insert("show_adhesion_markers");
-            settings.view_2d.show_adhesion_markers = parse_bool(value, settings.view_2d.show_adhesion_markers);
-        } else if (key == "show_cab_illuminance_markers" || key == "show_cabilluminance_markers" || key == "show_cab_illuminance_points") {
-            view_2d_keys_seen.insert("show_cab_illuminance_markers");
-            settings.view_2d.show_cab_illuminance_markers = parse_bool(value, settings.view_2d.show_cab_illuminance_markers);
-        } else if (key == "show_fog_markers" || key == "show_fogs" || key == "show_fog_points") {
-            view_2d_keys_seen.insert("show_fog_markers");
-            settings.view_2d.show_fog_markers = parse_bool(value, settings.view_2d.show_fog_markers);
-        } else if (key == "show_profile_graph" || key == "show_gradient_graph") {
-            view_2d_keys_seen.insert("show_profile_graph");
-            settings.view_2d.show_profile_graph = parse_bool(value, settings.view_2d.show_profile_graph);
-        } else if (key == "show_radius_graph" || key == "show_curve_graph") {
-            view_2d_keys_seen.insert("show_radius_graph");
-            settings.view_2d.show_radius_graph = parse_bool(value, settings.view_2d.show_radius_graph);
-        } else if (key == "show_background_image" || key == "show_bgimage" || key == "bg_show") {
-            view_2d_keys_seen.insert("show_background_image");
-            settings.view_2d.show_background_image = parse_bool(value, settings.view_2d.show_background_image);
-        } else if (key == "mode" || key == "view_2d_mode") {
-            view_2d_keys_seen.insert("mode");
-            settings.view_2d.mode = view_2d_mode_from_string(value, settings.view_2d.mode);
-        } else if (key == "grid_mode" || key == "view_2d_grid_mode") {
-            view_2d_keys_seen.insert("grid_mode");
-            settings.view_2d.grid_mode = grid_mode_from_string(value, settings.view_2d.grid_mode);
-        }
-    }
-    settings.font_size = clamp_font_size(settings.font_size);
-    settings.ui_component_size = clamp_ui_component_size(settings.ui_component_size);
-    settings.station_marker_size = clamp_station_marker_size(settings.station_marker_size);
-    settings.theme_color = clamp_theme_color(settings.theme_color);
-    settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
-    settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 21) save_user_settings(settings);
-    return settings;
-}
-
-bool load_imgui_layout(const std::filesystem::path& path) {
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec) || ec) return false;
-
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
-
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    std::string data = buffer.str();
-    if (data.empty()) return false;
-
-    ImGui::LoadIniSettingsFromMemory(data.data(), data.size());
-    return true;
-}
-
-bool save_imgui_layout(const std::filesystem::path& path) {
-    size_t size = 0;
-    const char* data = ImGui::SaveIniSettingsToMemory(&size);
-    if (!data || size == 0) return false;
-
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) return false;
-    out.write(data, static_cast<std::streamsize>(size));
-    return static_cast<bool>(out);
-}
-
-void save_imgui_layout_if_requested(const std::filesystem::path& path) {
-    ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantSaveIniSettings) return;
-    save_imgui_layout(path);
-    io.WantSaveIniSettings = false;
-}
-
-bool imgui_layout_save_pending() {
-    ImGuiContext* context = ImGui::GetCurrentContext();
-    return context && context->SettingsDirtyTimer > 0.0f;
-}
-
-bool ensure_history_file(const std::filesystem::path& path) {
-    std::error_code ec;
-    if (std::filesystem::exists(path, ec) && !ec) return true;
-    std::ofstream out(path, std::ios::binary);
-    return static_cast<bool>(out);
-}
-
-double parse_history_double(const std::string& value, double fallback) {
-    try {
-        size_t used = 0;
-        double parsed = std::stod(value, &used);
-        return used == 0 || !std::isfinite(parsed) ? fallback : parsed;
-    } catch (...) {
-        return fallback;
-    }
-}
-
-std::string history_number(double value) {
-    std::ostringstream out;
-    out << std::setprecision(17) << value;
-    return out.str();
-}
-
-std::optional<int> parse_history_section_index(std::string section) {
-    section = ascii_lower(trim_ascii(section));
-    size_t pos = std::string::npos;
-    if (section.rfind("map", 0) == 0) {
-        pos = 3;
-    } else if (section.rfind("recent_map", 0) == 0) {
-        pos = 10;
-    } else if (section.rfind("recent", 0) == 0) {
-        pos = 6;
-    }
-    if (pos == std::string::npos) return std::nullopt;
-    while (pos < section.size() && !std::isdigit(static_cast<unsigned char>(section[pos]))) ++pos;
-    if (pos >= section.size()) return std::nullopt;
-    try {
-        return std::stoi(section.substr(pos));
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
-std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& path) {
-    ensure_history_file(path);
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-
-    std::map<int, RecentMapEntry> parsed;
-    int current_index = -1;
-    std::string line;
-    while (std::getline(in, line)) {
-        std::string trimmed_line = trim_ascii(line);
-        if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
-        if (trimmed_line.front() == '[' && trimmed_line.back() == ']') {
-            std::string section = trimmed_line.substr(1, trimmed_line.size() - 2);
-            auto index = parse_history_section_index(section);
-            current_index = index ? *index : -1;
-            if (current_index >= 0 && parsed.find(current_index) == parsed.end()) parsed[current_index] = {};
-            continue;
-        }
-        if (current_index < 0) continue;
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string key = ascii_lower(trim_ascii(line.substr(0, eq)));
-        std::string value = trim_ascii(line.substr(eq + 1));
-        RecentMapEntry& entry = parsed[current_index];
-        if (key == "path" || key == "map_path" || key == "map") {
-            entry.path = normalized_storage_path(value);
-        } else if (key == "bg_path" || key == "background_path" || key == "image_path") {
-            entry.background.has_image = !value.empty();
-            entry.background.image_path = normalized_storage_path(value);
-        } else if (key == "bg_x" || key == "background_x") {
-            entry.background.x = parse_history_double(value, entry.background.x);
-        } else if (key == "bg_y" || key == "background_y") {
-            entry.background.y = parse_history_double(value, entry.background.y);
-        } else if (key == "bg_width" || key == "background_width") {
-            entry.background.width = parse_history_double(value, entry.background.width);
-        } else if (key == "bg_height" || key == "background_height") {
-            entry.background.height = parse_history_double(value, entry.background.height);
-        } else if (key == "bg_rotation" || key == "bg_rotation_deg" || key == "background_rotation") {
-            entry.background.rotation_deg = parse_history_double(value, entry.background.rotation_deg);
-        } else if (key == "bg_brightness" || key == "background_brightness") {
-            entry.background.brightness = parse_history_double(value, entry.background.brightness);
-        }
-    }
-
-    std::vector<RecentMapEntry> entries;
-    std::set<std::string> seen;
-    for (auto& kv : parsed) {
-        RecentMapEntry entry = std::move(kv.second);
-        if (entry.path.empty()) continue;
-        std::string key = normalized_path_key(entry.path);
-        if (!seen.insert(key).second) continue;
-        entries.push_back(std::move(entry));
-        if (entries.size() >= kMaxRecentMaps) break;
-    }
-    return entries;
-}
-
-bool save_history_entries(const std::filesystem::path& path, const std::vector<RecentMapEntry>& entries) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) return false;
-    if (entries.empty()) return true;
-    size_t count = std::min(entries.size(), kMaxRecentMaps);
-    out << "[Recent]\n";
-    out << "count=" << count << "\n\n";
-    for (size_t i = 0; i < count; ++i) {
-        const RecentMapEntry& entry = entries[i];
-        out << "[Map" << i << "]\n";
-        out << "path=" << normalized_storage_path(entry.path) << "\n";
-        if (entry.background.has_image && !entry.background.image_path.empty()) {
-            const BackgroundHistory& bg = entry.background;
-            out << "bg_path=" << normalized_storage_path(bg.image_path) << "\n";
-            out << "bg_x=" << history_number(bg.x) << "\n";
-            out << "bg_y=" << history_number(bg.y) << "\n";
-            out << "bg_width=" << history_number(bg.width) << "\n";
-            out << "bg_height=" << history_number(bg.height) << "\n";
-            out << "bg_rotation=" << history_number(bg.rotation_deg) << "\n";
-            out << "bg_brightness=" << history_number(bg.brightness) << "\n";
-        }
-        out << "\n";
-    }
-    return true;
-}
-
-void apply_ui_font_size(float font_size) {
-    ImGui::GetStyle().FontScaleMain = clamp_font_size(font_size) / kDefaultFontSize;
-}
-
-void apply_ui_theme_color(ImVec4 theme_color) {
-    ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = clamp_theme_color(theme_color);
-    ImVec4 dark_bg(0.06f, 0.07f, 0.08f, 1.0f);
-    ImVec4 panel_bg(0.12f, 0.13f, 0.15f, 1.0f);
-
-    style.Colors[ImGuiCol_FrameBg] = with_alpha(mix_color(panel_bg, accent, 0.16f), 0.88f);
-    style.Colors[ImGuiCol_Button] = with_alpha(accent, 0.62f);
-    style.Colors[ImGuiCol_ButtonHovered] = with_alpha(mix_color(accent, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.16f), 0.86f);
-    style.Colors[ImGuiCol_ButtonActive] = with_alpha(mix_color(accent, dark_bg, 0.18f), 1.0f);
-    style.Colors[ImGuiCol_Header] = with_alpha(accent, 0.34f);
-    style.Colors[ImGuiCol_HeaderHovered] = with_alpha(accent, 0.72f);
-    style.Colors[ImGuiCol_HeaderActive] = with_alpha(accent, 0.92f);
-    style.Colors[ImGuiCol_CheckMark] = with_alpha(accent, 1.0f);
-    style.Colors[ImGuiCol_CheckboxSelectedBg] = with_alpha(accent, 0.58f);
-    style.Colors[ImGuiCol_SliderGrab] = with_alpha(accent, 0.86f);
-    style.Colors[ImGuiCol_SliderGrabActive] = with_alpha(mix_color(accent, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.18f), 1.0f);
-    style.Colors[ImGuiCol_FrameBgHovered] = with_alpha(accent, 0.24f);
-    style.Colors[ImGuiCol_FrameBgActive] = with_alpha(accent, 0.42f);
-    style.Colors[ImGuiCol_SeparatorHovered] = with_alpha(accent, 0.78f);
-    style.Colors[ImGuiCol_SeparatorActive] = with_alpha(accent, 1.0f);
-    style.Colors[ImGuiCol_ResizeGrip] = with_alpha(accent, 0.30f);
-    style.Colors[ImGuiCol_ResizeGripHovered] = with_alpha(accent, 0.70f);
-    style.Colors[ImGuiCol_ResizeGripActive] = with_alpha(accent, 0.95f);
-    style.Colors[ImGuiCol_Tab] = with_alpha(mix_color(panel_bg, accent, 0.28f), 0.86f);
-    style.Colors[ImGuiCol_TabHovered] = with_alpha(accent, 0.82f);
-    style.Colors[ImGuiCol_TabSelected] = with_alpha(mix_color(panel_bg, accent, 0.58f), 1.0f);
-    style.Colors[ImGuiCol_TabSelectedOverline] = with_alpha(accent, 1.0f);
-    style.Colors[ImGuiCol_TabDimmedSelected] = with_alpha(mix_color(panel_bg, accent, 0.36f), 1.0f);
-    style.Colors[ImGuiCol_TabDimmedSelectedOverline] = with_alpha(accent, 0.72f);
-    style.Colors[ImGuiCol_TitleBgActive] = with_alpha(mix_color(dark_bg, accent, 0.35f), 1.0f);
-    style.Colors[ImGuiCol_DockingPreview] = with_alpha(accent, 0.70f);
-    style.Colors[ImGuiCol_TextLink] = with_alpha(mix_color(accent, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.12f), 1.0f);
-    style.Colors[ImGuiCol_TextSelectedBg] = with_alpha(accent, 0.42f);
-    style.Colors[ImGuiCol_NavCursor] = with_alpha(accent, 1.0f);
-
-    ImPlotStyle& plot_style = ImPlot::GetStyle();
-    ImVec4 canvas_bg(12.0f / 255.0f, 13.0f / 255.0f, 15.0f / 255.0f, 1.0f);
-    plot_style.Colors[ImPlotCol_FrameBg] = canvas_bg;
-    plot_style.Colors[ImPlotCol_PlotBg] = canvas_bg;
-    plot_style.Colors[ImPlotCol_PlotBorder] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
-    plot_style.Colors[ImPlotCol_LegendBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.94f);
-    plot_style.Colors[ImPlotCol_LegendBorder] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
-    plot_style.Colors[ImPlotCol_AxisText] = with_alpha(mix_color(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), accent, 0.20f), 1.0f);
-    plot_style.Colors[ImPlotCol_AxisGrid] = ImVec4(48.0f / 255.0f, 52.0f / 255.0f, 58.0f / 255.0f, 1.0f);
-    plot_style.Colors[ImPlotCol_AxisTick] = with_alpha(accent, 0.55f);
-    plot_style.Colors[ImPlotCol_AxisBg] = with_alpha(accent, 0.08f);
-    plot_style.Colors[ImPlotCol_AxisBgHovered] = with_alpha(accent, 0.22f);
-    plot_style.Colors[ImPlotCol_AxisBgActive] = with_alpha(accent, 0.34f);
-    plot_style.Colors[ImPlotCol_Selection] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-    plot_style.Colors[ImPlotCol_Crosshairs] = ImVec4(1.00f, 1.00f, 1.00f, 0.50f);
-}
-
-void apply_ui_component_size(float component_size, float dpi_scale, bool viewports_enabled) {
-    ImGuiStyle& style = ImGui::GetStyle();
-    float font_size_base = style.FontSizeBase;
-    float font_scale_main = style.FontScaleMain;
-    style = ImGuiStyle();
-    style.FontSizeBase = font_size_base;
-    style.FontScaleMain = font_scale_main;
-    ImGui::StyleColorsDark(&style);
-    style.ScaleAllSizes(dpi_scale * clamp_ui_component_size(component_size) / 100.0f);
-    style.FontScaleDpi = dpi_scale;
-    if (viewports_enabled) {
-        style.WindowRounding = 0.0f;
-        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-    }
-}
-
-void apply_ui_settings(float font_size, float component_size, ImVec4 theme_color, float dpi_scale, bool viewports_enabled) {
-    apply_ui_component_size(component_size, dpi_scale, viewports_enabled);
-    apply_ui_theme_color(theme_color);
-    apply_ui_font_size(font_size);
-}
-
-
 App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout)
     : device_(device), settings_(std::move(settings)), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled),
       has_saved_layout_(has_saved_layout) {
@@ -1193,16 +435,16 @@ void App::add_log(std::string text) {
 }
 
 void App::stop_loader() {
-    if (loader_.joinable()) loader_.join();
+    if (load_state_.worker.joinable()) load_state_.worker.join();
 }
 
 void App::poll_loader() {
     std::optional<LoadResult> result;
     {
-        std::lock_guard<std::mutex> lock(result_mutex_);
-        if (pending_result_) {
-            result = std::move(pending_result_);
-            pending_result_.reset();
+        std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+        if (load_state_.pending_result) {
+            result = std::move(load_state_.pending_result);
+            load_state_.pending_result.reset();
         }
     }
     if (result) apply_load_result(std::move(*result));
@@ -1210,7 +452,7 @@ void App::poll_loader() {
 
 void App::begin_load(std::string path, bool preserve_settings, bool record_history,
                      std::optional<BackgroundHistory> background_to_restore) {
-    if (path.empty() || loading_) return;
+    if (path.empty() || load_state_.running) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
     std::map<std::string, OtherTrack> old_other;
@@ -1225,8 +467,8 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
         last_log_.clear();
         error_count_ = warn_count_ = 0;
     }
-    loading_ = true;
-    pending_load_started_at_.reset();
+    load_state_.running = true;
+    load_state_.pending_started_at.reset();
     plan_canvas_rendered_this_frame_ = false;
     add_log(std::string("Start loading file: ") + path);
 
@@ -1235,7 +477,7 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     double cp1 = has_cp ? model_.cp_arb[1] : 0.0;
     double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
 
-    loader_ = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
+    load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
                            record_history, background_to_restore, load_started_at]() mutable {
         LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2);
         result.started_at = load_started_at;
@@ -1254,17 +496,17 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
             }
         }
         {
-            std::lock_guard<std::mutex> lock(result_mutex_);
-            pending_result_ = std::move(result);
+            std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+            load_state_.pending_result = std::move(result);
         }
-        loading_ = false;
+        load_state_.running = false;
         wake_main_window();
     });
 }
 
 void App::apply_load_result(LoadResult result) {
     if (!result.ok) {
-        pending_load_started_at_.reset();
+        load_state_.pending_started_at.reset();
         plan_canvas_rendered_this_frame_ = false;
         add_log("Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
@@ -1303,16 +545,16 @@ void App::apply_load_result(LoadResult result) {
         clear_background_image();
     }
     if (result.record_history) touch_recent_map(result.path);
-    pending_load_started_at_ = result.started_at;
+    load_state_.pending_started_at = result.started_at;
     plan_canvas_rendered_this_frame_ = false;
 }
 
 void App::after_frame_presented() {
-    if (!pending_load_started_at_ || !plan_canvas_rendered_this_frame_) return;
+    if (!load_state_.pending_started_at || !plan_canvas_rendered_this_frame_) return;
 
     double elapsed_seconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - *pending_load_started_at_).count();
-    pending_load_started_at_.reset();
+        std::chrono::steady_clock::now() - *load_state_.pending_started_at).count();
+    load_state_.pending_started_at.reset();
     plan_canvas_rendered_this_frame_ = false;
 
     std::ostringstream elapsed;
@@ -1321,7 +563,7 @@ void App::after_frame_presented() {
 }
 
 void App::regenerate_geometry() {
-    if (!handle_ || loading_) return;
+    if (!handle_ || load_state_.running) return;
     if (!kv_generate_geometry(handle_, unit_distance_, 1, cp_start_, cp_end_, cp_interval_)) {
         const char* err = kv_get_last_error();
         add_log(std::string("[ERROR]") + (err ? err : "geometry failed"));
@@ -2141,7 +1383,7 @@ void App::render_menu() {
                 for (size_t i = 0; i < recent_maps_.size(); ++i) {
                     const RecentMapEntry& entry = recent_maps_[i];
                     std::string label = display_name_from_path(entry.path) + "###recent_map_" + std::to_string(i);
-                    if (ImGui::MenuItem(label.c_str(), nullptr, false, !loading_)) {
+                    if (ImGui::MenuItem(label.c_str(), nullptr, false, !load_state_.running)) {
                         begin_load(entry.path, false, true, entry.background);
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.path.c_str());
@@ -2155,7 +1397,7 @@ void App::render_menu() {
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem(tr("menu.reload").c_str(), "F5", false,
-                            !loading_ && ((has_model_ && !file_path_.empty()) ||
+                            !load_state_.running && ((has_model_ && !file_path_.empty()) ||
                                           (model_preview_canvas_ && model_preview_canvas_->has_model())))) {
             reload_current_map_and_model_preview();
         }
@@ -2173,18 +1415,18 @@ void App::render_menu() {
             station_marker_size_before_dialog_ = station_marker_size_;
             pending_theme_color_ = theme_color_;
             theme_color_before_dialog_ = theme_color_;
-            show_font_size_popup_ = true;
+            popups_.ui_settings = true;
         }
         if (ImGui::MenuItem(tr("menu.plotlimit").c_str(), nullptr, false, has_model_)) {
             plot_min_ = dmin_;
             plot_max_ = dmax_;
-            show_range_popup_ = true;
+            popups_.range = true;
         }
         if (ImGui::MenuItem(tr("menu.controlpoints").c_str(), nullptr, false, has_model_)) {
             cp_start_ = model_.cp_arb[0];
             cp_end_ = model_.cp_arb[1];
             cp_interval_ = model_.cp_arb[2];
-            show_cp_popup_ = true;
+            popups_.control_points = true;
         }
         ImGui::EndMenu();
     }
@@ -2286,14 +1528,14 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.bgimg_show").c_str(), nullptr, &bg_show_);
         if (ImGui::MenuItem(tr("button.adjust_bg").c_str())) {
             sync_pending_background_values();
-            show_bg_adjust_popup_ = true;
+            popups_.background_adjust = true;
         }
         if (ImGui::MenuItem(tr("button.align_to_station").c_str(), nullptr, false,
                             has_model_ && model_.stations.size() >= 2 && !bg_image_.path.empty())) {
             align_pick1_.reset();
             align_pick2_.reset();
             pick_slot_ = 0;
-            show_align_popup_ = true;
+            popups_.background_align = true;
         }
         ImGui::EndMenu();
     }
@@ -2324,7 +1566,7 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("menu.report_bugs").c_str())) {
             ShellExecuteW(nullptr, L"open", L"https://github.com/NewSapporoNingyo/komapedit/issues/new", nullptr, nullptr, SW_SHOWNORMAL);
         }
-        if (ImGui::MenuItem(tr("menu.about").c_str())) show_about_popup_ = true;
+        if (ImGui::MenuItem(tr("menu.about").c_str())) popups_.about = true;
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
@@ -2351,7 +1593,7 @@ void App::render_toolbar() {
         }
         ImGui::SameLine();
 
-        const bool can_reload = !loading_ && ((has_model_ && !file_path_.empty()) ||
+        const bool can_reload = !load_state_.running && ((has_model_ && !file_path_.empty()) ||
                                              (model_preview_canvas_ && model_preview_canvas_->has_model()));
         ImGui::BeginDisabled(!can_reload);
         if (ImGui::Button(tr("button.reload").c_str())) reload_current_map_and_model_preview();
@@ -2426,9 +1668,9 @@ void App::render_console() {
 }
 
 void App::render_popups() {
-    if (show_font_size_popup_) {
+    if (popups_.ui_settings) {
         ImGui::OpenPopup(tr("dialog.ui_settings").c_str());
-        show_font_size_popup_ = false;
+        popups_.ui_settings = false;
     }
     bool ui_settings_popup_open = true;
     if (ImGui::BeginPopupModal(tr("dialog.ui_settings").c_str(), &ui_settings_popup_open, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -2523,9 +1765,9 @@ void App::render_popups() {
         apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     }
 
-    if (show_range_popup_) {
+    if (popups_.range) {
         ImGui::OpenPopup(tr("menu.plotlimit").c_str());
-        show_range_popup_ = false;
+        popups_.range = false;
     }
     if (ImGui::BeginPopupModal(tr("menu.plotlimit").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::InputDouble("Min", &plot_min_);
@@ -2548,9 +1790,9 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
-    if (show_cp_popup_) {
+    if (popups_.control_points) {
         ImGui::OpenPopup(tr("menu.controlpoints").c_str());
-        show_cp_popup_ = false;
+        popups_.control_points = false;
     }
     if (ImGui::BeginPopupModal(tr("menu.controlpoints").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::InputDouble("Min", &cp_start_);
@@ -2569,9 +1811,9 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
-    if (show_bg_adjust_popup_) {
+    if (popups_.background_adjust) {
         ImGui::OpenPopup(tr("dialog.bgimage_adjust").c_str());
-        show_bg_adjust_popup_ = false;
+        popups_.background_adjust = false;
     }
     if (ImGui::BeginPopupModal(tr("dialog.bgimage_adjust").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (ImGui::BeginTable("bg_adjust_params", 2, ImGuiTableFlags_SizingStretchProp)) {
@@ -2616,9 +1858,9 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
-    if (show_align_popup_) {
+    if (popups_.background_align) {
         ImGui::OpenPopup(tr("dialog.align_to_station").c_str());
-        show_align_popup_ = false;
+        popups_.background_align = false;
     }
     if (ImGui::BeginPopupModal(tr("dialog.align_to_station").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         auto combo_station = [&](const char* label, int& index) {
@@ -2656,9 +1898,9 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
-    if (show_about_popup_) {
+    if (popups_.about) {
         ImGui::OpenPopup(tr("menu.about").c_str());
-        show_about_popup_ = false;
+        popups_.about = false;
     }
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal(tr("menu.about").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -2697,7 +1939,7 @@ void App::reload_model_preview() {
 }
 
 void App::reload_current_map_and_model_preview() {
-    if (loading_) return;
+    if (load_state_.running) return;
     if (has_model_ && !file_path_.empty()) begin_load(file_path_, true);
     reload_model_preview();
 }
@@ -2893,469 +2135,6 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
-
-#ifndef NDEBUG
-std::vector<std::string> command_line_args_utf8() {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::vector<std::string> args;
-    if (!argv) return args;
-    args.reserve(static_cast<size_t>(argc));
-    for (int i = 0; i < argc; ++i) {
-        args.push_back(wide_to_utf8(argv[i]));
-    }
-    LocalFree(argv);
-    return args;
-}
-
-struct HeadlessLoadOptions {
-    bool requested = false;
-    std::string path;
-    std::string output_path;
-    int repeat = 1;
-    double unit_distance = 25.0;
-    std::string error;
-};
-
-struct HeadlessPlanBenchmarkOptions {
-    bool requested = false;
-    std::string path;
-    std::string output_path;
-    int frames = 300;
-    double unit_distance = 25.0;
-    double pan_pixels = 8.0;
-    double max_frame_ms = 16.667;
-    bool profile_stages = false;
-    std::string error;
-};
-
-HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
-    HeadlessLoadOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--headless-load-map" || arg == "--headless-load") {
-            options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
-        } else if (arg == "--repeat") {
-            if (i + 1 >= args.size()) {
-                options.error = "--repeat requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            long parsed = std::strtol(args[++i].c_str(), &end, 10);
-            if (!end || *end != '\0' || parsed <= 0 || parsed > 10000) {
-                options.error = "--repeat must be between 1 and 10000";
-                return options;
-            }
-            options.repeat = static_cast<int>(parsed);
-        } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive number";
-                return options;
-            }
-            options.unit_distance = parsed;
-        } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
-        }
-    }
-    if (options.requested && options.path.empty() && options.error.empty()) {
-        options.error = "--headless-load-map requires a map path";
-    }
-    return options;
-}
-
-HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args) {
-    HeadlessPlanBenchmarkOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-plan-bench") {
-            options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
-        } else if (arg == "--frames") {
-            if (i + 1 >= args.size()) {
-                options.error = "--frames requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            long parsed = std::strtol(args[++i].c_str(), &end, 10);
-            if (!end || *end != '\0' || parsed <= 0 || parsed > 100000) {
-                options.error = "--frames must be between 1 and 100000";
-                return options;
-            }
-            options.frames = static_cast<int>(parsed);
-        } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive number";
-                return options;
-            }
-            options.unit_distance = parsed;
-        } else if (arg == "--pan-pixels") {
-            if (i + 1 >= args.size()) {
-                options.error = "--pan-pixels requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || !std::isfinite(parsed)) {
-                options.error = "--pan-pixels must be a finite number";
-                return options;
-            }
-            options.pan_pixels = parsed;
-        } else if (arg == "--max-frame-ms") {
-            if (i + 1 >= args.size()) {
-                options.error = "--max-frame-ms requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--max-frame-ms must be a positive number";
-                return options;
-            }
-            options.max_frame_ms = parsed;
-        } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
-        } else if (arg == "--profile-stages") {
-            options.profile_stages = true;
-        }
-    }
-    if (options.requested && options.path.empty() && options.error.empty()) {
-        options.error = "--debug-headless-plan-bench requires a map path";
-    }
-    return options;
-}
-
-std::uint64_t hash_double_bits(double value) {
-    if (value == 0.0) value = 0.0;
-    std::uint64_t bits = 0;
-    static_assert(sizeof(bits) == sizeof(value), "unexpected double size");
-    std::memcpy(&bits, &value, sizeof(bits));
-    return bits;
-}
-
-struct HeadlessBufferSummary {
-    size_t rows = 0;
-    size_t cols = 0;
-    bool finite = true;
-    std::uint64_t hash = 1469598103934665603ULL;
-};
-
-HeadlessBufferSummary summarize_headless_buffer(KvDoubleBuffer buffer) {
-    HeadlessBufferSummary summary;
-    summary.rows = buffer.rows;
-    summary.cols = buffer.cols;
-    if (!buffer.data || buffer.rows == 0 || buffer.cols == 0) return summary;
-    const size_t count = buffer.rows * buffer.cols;
-    for (size_t i = 0; i < count; ++i) {
-        const double value = buffer.data[i];
-        summary.finite = summary.finite && std::isfinite(value);
-        std::uint64_t bits = hash_double_bits(value);
-        for (int byte = 0; byte < 8; ++byte) {
-            summary.hash ^= static_cast<unsigned char>((bits >> (byte * 8)) & 0xff);
-            summary.hash *= 1099511628211ULL;
-        }
-    }
-    return summary;
-}
-
-std::string hex_u64(std::uint64_t value) {
-    std::ostringstream out;
-    out << std::hex << std::setw(16) << std::setfill('0') << value;
-    return out.str();
-}
-
-void print_headless_buffer_summary(std::ostream& out, const char* label, const HeadlessBufferSummary& summary) {
-    out << " " << label << "=" << summary.rows << "x" << summary.cols
-        << ":" << hex_u64(summary.hash)
-        << (summary.finite ? "" : ":nonfinite");
-}
-
-int run_headless_load_map(const HeadlessLoadOptions& options) {
-    std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!options.output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << options.output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
-
-    *out << "komapedit headless-load-map path=\"" << options.path
-         << "\" repeat=" << options.repeat
-         << " unit_distance=" << format_double(options.unit_distance, 3) << "\n";
-
-    for (int run = 1; run <= options.repeat; ++run) {
-        auto started_at = std::chrono::steady_clock::now();
-        void* handle = kv_load_map(options.path.c_str(), options.unit_distance);
-        auto loaded_at = std::chrono::steady_clock::now();
-        if (!handle) {
-            const char* err = kv_get_last_error();
-            std::cerr << "headless run " << run << " failed: "
-                      << (err ? err : "maploader failed") << "\n";
-            return 2;
-        }
-
-        const char* json = kv_get_ir_json(handle);
-        const size_t json_bytes = json ? std::strlen(json) : 0;
-        if (json) kv_free_string(json);
-        auto json_at = std::chrono::steady_clock::now();
-
-        HeadlessBufferSummary own = summarize_headless_buffer(kv_get_owntrack_buffer(handle));
-        HeadlessBufferSummary curve = summarize_headless_buffer(kv_get_curveradius_buffer(handle));
-        HeadlessBufferSummary structures = summarize_headless_buffer(kv_get_structure_puts(handle));
-        const size_t other_count = kv_get_othertrack_count(handle);
-        HeadlessBufferSummary other_total;
-        other_total.rows = 0;
-        other_total.cols = 8;
-        for (size_t i = 0; i < other_count; ++i) {
-            const char* key = kv_get_othertrack_key(handle, i);
-            HeadlessBufferSummary item = summarize_headless_buffer(kv_get_othertrack_buffer(handle, key));
-            other_total.rows += item.rows;
-            other_total.finite = other_total.finite && item.finite;
-            other_total.hash ^= item.hash + 0x9e3779b97f4a7c15ULL + (other_total.hash << 6) + (other_total.hash >> 2);
-        }
-        kv_free(handle);
-        auto finished_at = std::chrono::steady_clock::now();
-
-        const double load_seconds = std::chrono::duration<double>(loaded_at - started_at).count();
-        const double json_seconds = std::chrono::duration<double>(json_at - loaded_at).count();
-        const double total_seconds = std::chrono::duration<double>(finished_at - started_at).count();
-        *out << "headless run " << run
-             << " load=" << std::fixed << std::setprecision(3) << load_seconds << "s"
-             << " json=" << json_seconds << "s"
-             << " total=" << total_seconds << "s"
-             << " json_bytes=" << json_bytes
-             << " othertracks=" << other_count;
-        print_headless_buffer_summary(*out, "own", own);
-        print_headless_buffer_summary(*out, "curve", curve);
-        print_headless_buffer_summary(*out, "structures", structures);
-        print_headless_buffer_summary(*out, "other", other_total);
-        *out << "\n";
-    }
-    return 0;
-}
-
-int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
-                                           double unit_distance, double pan_pixels,
-                                           double max_frame_ms, const std::string& output_path,
-                                           bool profile_stages) {
-    std::ofstream output_file;
-    std::ostream* out = &std::cout;
-    if (!output_path.empty()) {
-        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
-        if (!output_file) {
-            std::cerr << "failed to open headless output: " << output_path << "\n";
-            return 1;
-        }
-        output_file.write("\xEF\xBB\xBF", 3);
-        out = &output_file;
-    }
-
-    *out << "komapedit debug-headless-plan-bench path=\"" << path
-         << "\" frames=" << frames
-         << " unit_distance=" << format_double(unit_distance, 3)
-         << " pan_pixels=" << format_double(pan_pixels, 3)
-         << " max_frame_ms=" << format_double(max_frame_ms, 3) << "\n";
-    *out << "stage=load-start\n";
-    out->flush();
-
-    LoadResult result = load_map_worker(path, unit_distance, false, 0.0, 0.0, 25.0);
-    if (!result.ok) {
-        std::cerr << "debug headless plan benchmark load failed: " << result.error << "\n";
-        return 2;
-    }
-    *out << "stage=load-complete\n";
-    out->flush();
-
-    ImGui::CreateContext();
-    ImPlot::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(1280.0f, 720.0f);
-    io.DeltaTime = 1.0f / 60.0f;
-    io.IniFilename = nullptr;
-    io.Fonts->AddFontDefault();
-    io.Fonts->Build();
-    *out << "stage=imgui-ready\n";
-    out->flush();
-
-    int exit_code = 0;
-    try {
-        g_debug_plan_benchmark_log = profile_stages ? out : nullptr;
-        UserSettings settings;
-        App app(nullptr, settings, 1.0f, false, false);
-        app.handle_ = result.handle;
-        result.handle = nullptr;
-        app.model_ = std::move(result.model);
-        app.file_path_ = path;
-        app.has_model_ = true;
-        app.dmin_ = app.model_.default_min;
-        app.dmax_ = app.model_.default_max;
-        app.plot_min_ = app.dmin_;
-        app.plot_max_ = app.dmax_;
-        app.rebuild_marker_overlay_cache();
-        app.reset_marker_visibility();
-        std::fill(app.signal_row_visible_.begin(), app.signal_row_visible_.end(), 1);
-        std::fill(app.repeater_row_visible_.begin(), app.repeater_row_visible_.end(), 1);
-        *out << "stage=overlay-cache-ready\n";
-        out->flush();
-
-        size_t chunk_count = 0;
-        size_t segment_point_count = 0;
-        for (const RepeaterOverlayRow& row : app.repeater_marker_cache_) {
-            for (const PlanRepeaterSegment::Chunk& chunk : row.segment.chunks) {
-                ++chunk_count;
-                segment_point_count += chunk.points.size();
-            }
-        }
-        size_t visible_other_count = 0;
-        size_t visible_other_rows = 0;
-        for (const OtherTrack& track : app.model_.other_tracks) {
-            if (!track.visible) continue;
-            ++visible_other_count;
-            visible_other_rows += track.points.rows;
-        }
-        *out << "loaded own_rows=" << app.model_.own.rows
-             << " visible_othertracks=" << visible_other_count
-             << " visible_other_rows=" << visible_other_rows
-             << " signal_aspects=" << app.model_.signal_aspects.size()
-             << " signals=" << app.model_.signals.size()
-             << " signal_markers=" << app.signal_marker_cache_.size()
-             << " beacons=" << app.model_.beacons.size()
-             << " beacon_markers=" << app.beacon_marker_cache_.size()
-             << " pretrains=" << app.model_.pretrains.size()
-             << " pretrain_markers=" << app.pretrain_marker_cache_.size()
-             << " rolling_noises=" << app.model_.rolling_noises.size()
-             << " rolling_noise_markers=" << app.rolling_noise_marker_cache_.size()
-             << " flange_noises=" << app.model_.flange_noises.size()
-             << " flange_noise_markers=" << app.flange_noise_marker_cache_.size()
-             << " joint_noises=" << app.model_.joint_noises.size()
-             << " joint_noise_markers=" << app.joint_noise_marker_cache_.size()
-             << " backgrounds=" << app.model_.backgrounds.size()
-             << " background_markers=" << app.background_marker_cache_.size()
-             << " repeaters=" << app.repeater_marker_cache_.size()
-             << " selected_repeaters=" << app.repeater_row_visible_.size()
-             << " repeater_chunks=" << chunk_count
-             << " repeater_chunk_points=" << segment_point_count << "\n";
-        out->flush();
-
-        auto render_frame = [&]() {
-            io.DisplaySize = ImVec2(1280.0f, 720.0f);
-            io.DeltaTime = 1.0f / 60.0f;
-            ImGui::NewFrame();
-            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
-            ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
-            ImGui::Begin("DebugHeadlessPlanBenchmark", nullptr, flags);
-            app.render_plan_canvas(ImVec2(1260.0f, 680.0f));
-            if (g_debug_plan_benchmark_log) {
-                int total_vtx = 0;
-                int total_idx = 0;
-                ImGuiContext& context = *GImGui;
-                for (ImGuiWindow* window : context.Windows) {
-                    if (!window || !window->WasActive || !window->DrawList) continue;
-                    total_vtx += window->DrawList->VtxBuffer.Size;
-                    total_idx += window->DrawList->IdxBuffer.Size;
-                }
-                *g_debug_plan_benchmark_log << "render_stage=before_imgui_render"
-                                            << " scale=" << std::fixed << std::setprecision(6) << app.plan_view_.scale
-                                            << " vtx=" << total_vtx
-                                            << " idx=" << total_idx << "\n";
-                g_debug_plan_benchmark_log->flush();
-            }
-            ImGui::End();
-            ImGui::EndFrame();
-        };
-
-        *out << "stage=warmup-start\n";
-        out->flush();
-        for (int frame = 0; frame < 1; ++frame) {
-            render_frame();
-        }
-        *out << "stage=warmup-complete\n";
-        out->flush();
-
-        std::vector<double> frame_ms;
-        frame_ms.reserve(static_cast<size_t>(frames));
-        for (int frame = 0; frame < frames; ++frame) {
-            double step = (frame % 120 < 60) ? pan_pixels : -pan_pixels;
-            app.plan_view_.pan_by_screen_delta(ImVec2(static_cast<float>(step), 0.0f));
-            auto started_at = std::chrono::steady_clock::now();
-            render_frame();
-            auto finished_at = std::chrono::steady_clock::now();
-            frame_ms.push_back(std::chrono::duration<double, std::milli>(finished_at - started_at).count());
-        }
-        *out << "stage=frames-complete\n";
-        out->flush();
-
-        std::vector<double> sorted_ms = frame_ms;
-        std::sort(sorted_ms.begin(), sorted_ms.end());
-        double sum_ms = 0.0;
-        for (double value : frame_ms) sum_ms += value;
-        auto percentile = [&](double p) {
-            if (sorted_ms.empty()) return 0.0;
-            size_t index = static_cast<size_t>(std::ceil(p * static_cast<double>(sorted_ms.size()))) - 1;
-            index = std::min(index, sorted_ms.size() - 1);
-            return sorted_ms[index];
-        };
-        double avg_ms = frame_ms.empty() ? 0.0 : sum_ms / static_cast<double>(frame_ms.size());
-        double min_ms = sorted_ms.empty() ? 0.0 : sorted_ms.front();
-        double p95_ms = percentile(0.95);
-        double max_ms = sorted_ms.empty() ? 0.0 : sorted_ms.back();
-        double p95_fps = p95_ms > 0.0 ? 1000.0 / p95_ms : 0.0;
-        bool pass = p95_ms <= max_frame_ms;
-
-        *out << std::fixed << std::setprecision(3)
-             << "plan_bench avg_ms=" << avg_ms
-             << " min_ms=" << min_ms
-             << " p95_ms=" << p95_ms
-             << " max_ms=" << max_ms
-             << " p95_fps=" << p95_fps
-             << " result=" << (pass ? "PASS" : "FAIL") << "\n";
-        if (!pass) exit_code = 3;
-    } catch (const std::exception& e) {
-        std::cerr << "debug headless plan benchmark failed: " << e.what() << "\n";
-        exit_code = 4;
-    }
-
-    g_debug_plan_benchmark_log = nullptr;
-    if (result.handle) kv_free(result.handle);
-    ImPlot::DestroyContext();
-    ImGui::DestroyContext();
-    return exit_code;
-}
-#endif
 
 int main(int, char**) {
 #ifndef NDEBUG

@@ -1,0 +1,38 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ */
+
+#pragma once
+
+#include <string>
+#include <vector>
+
+#ifndef NDEBUG
+struct HeadlessLoadOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int repeat = 1;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
+struct HeadlessPlanBenchmarkOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int frames = 300;
+    double unit_distance = 25.0;
+    double pan_pixels = 8.0;
+    double max_frame_ms = 16.667;
+    bool profile_stages = false;
+    std::string error;
+};
+
+std::vector<std::string> command_line_args_utf8();
+HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
+HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
+int run_headless_load_map(const HeadlessLoadOptions& options);
+#endif

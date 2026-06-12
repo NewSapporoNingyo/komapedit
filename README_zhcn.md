@@ -155,13 +155,26 @@ komapedit/
 │  ├─ model_loader.h               # model_loader C ABI
 │  └─ multilanguage.h              # 界面多语言文本
 ├─ src/
-│  ├─ canvas2D.cpp                 # 2D 平面/纵断面/曲线半径画布渲染
-│  ├─ canvas3D.cpp                 # DirectX 11 模型预览画布渲染
-│  ├─ datatable.cpp                # 数据表格列定义、缓存与表格窗口
-│  ├─ gui_kme.cpp                  # 主窗口、Win32/DirectX11 初始化、主循环
-│  ├─ kme.h                        # App 声明与 GUI 共享状态
-│  ├─ maploader.cpp                # BVE Map 解析和几何生成
-│  └─ model_loader.cpp             # 基于 Assimp 的布景模型加载
+│  ├─ main_window/
+│  │  ├─ gui_kme.cpp               # 主窗口、Win32/DirectX 11 初始化和主循环
+│  │  ├─ app_settings.cpp/.h       # 运行时设置、历史记录和 UI 样式辅助代码
+│  │  ├─ debug_headless.cpp/.h     # 仅 Debug 构建使用的 headless 验证入口
+│  │  └─ kme.h                     # App 声明与 GUI 共享状态
+│  ├─ table/
+│  │  ├─ datatable.cpp             # 数据表格列定义、缓存与表格窗口
+│  │  └─ table_navigation.cpp      # 表格到平面图标记的定位与可见状态
+│  ├─ canvas2d/
+│  │  ├─ canvas2D.cpp              # 2D 平面画布、标记、测量和背景图
+│  │  └─ profile_plots.cpp         # 纵断面和曲线半径图渲染
+│  ├─ canvas3d/
+│  │  └─ canvas3D.cpp              # DirectX 11 模型预览画布渲染
+│  ├─ maploader/
+│  │  ├─ maploader.cpp             # BVE Map 解析、IR 组装、JSON 导出和几何生成
+│  │  ├─ text_decoder.cpp/.h       # 文件读取、UTF-8 路径和文本解码
+│  │  ├─ diagnostics.cpp/.h        # 加载器日志与最后错误状态
+│  │  └─ c_api.cpp/.h              # C ABI 分配辅助代码
+│  └─ model_loader/
+│     └─ model_loader.cpp          # 基于 Assimp 的布景模型加载
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui，docking 分支
 │  └─ implot/                      # ImPlot

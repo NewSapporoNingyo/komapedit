@@ -9,7 +9,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(maploader SHARED
-    src/maploader.cpp
+    src/maploader/maploader.cpp
+    src/maploader/diagnostics.cpp
+    src/maploader/text_decoder.cpp
+    src/maploader/c_api.cpp
 )
 
 target_compile_features(maploader PRIVATE cxx_std_17)
@@ -32,7 +35,7 @@ set_target_properties(maploader PROPERTIES
 find_package(assimp CONFIG REQUIRED)
 
 add_library(model_loader SHARED
-    src/model_loader.cpp
+    src/model_loader/model_loader.cpp
 )
 
 target_compile_features(model_loader PRIVATE cxx_std_17)
@@ -125,10 +128,14 @@ target_include_directories(implot PUBLIC ${IMPLOT_DIR})
 target_link_libraries(implot PUBLIC imgui)
 
 add_executable(komapedit
-    src/gui_kme.cpp
-    src/canvas2D.cpp
-    src/canvas3D.cpp
-    src/datatable.cpp
+    src/main_window/gui_kme.cpp
+    src/main_window/app_settings.cpp
+    src/main_window/debug_headless.cpp
+    src/canvas2d/canvas2D.cpp
+    src/canvas2d/profile_plots.cpp
+    src/canvas3d/canvas3D.cpp
+    src/table/datatable.cpp
+    src/table/table_navigation.cpp
 )
 add_dependencies(komapedit model_loader)
 set_target_properties(komapedit PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -139,6 +146,7 @@ if(WIN32)
 endif()
 target_include_directories(komapedit PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main_window
 )
 target_compile_definitions(komapedit PRIVATE
     UNICODE

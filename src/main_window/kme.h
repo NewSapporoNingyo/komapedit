@@ -686,8 +686,6 @@ private:
     int error_count_ = 0;
     int warn_count_ = 0;
 
-    std::thread loader_;
-    std::atomic<bool> loading_{false};
     struct LoadResult {
         bool ok = false;
         bool preserve_settings = false;
@@ -700,8 +698,14 @@ private:
         std::chrono::steady_clock::time_point started_at;
         double elapsed_seconds = 0.0;
     };
-    std::mutex result_mutex_;
-    std::optional<LoadResult> pending_result_;
+    struct AsyncLoadState {
+        std::thread worker;
+        std::atomic<bool> running{false};
+        std::mutex result_mutex;
+        std::optional<LoadResult> pending_result;
+        std::optional<std::chrono::steady_clock::time_point> pending_started_at;
+    };
+    AsyncLoadState load_state_;
 
     double dmin_ = 0.0;
     double dmax_ = 0.0;
@@ -711,7 +715,6 @@ private:
     double cp_end_ = 0.0;
     double cp_interval_ = 25.0;
     double unit_distance_ = 25.0;
-    std::optional<std::chrono::steady_clock::time_point> pending_load_started_at_;
     bool plan_canvas_rendered_this_frame_ = false;
 
     bool show_stations_ = true;
@@ -797,12 +800,15 @@ private:
     bool focus_fogs_next_ = false;
     bool focus_model_preview_next_ = false;
     bool focus_plots_next_ = true;
-    bool show_range_popup_ = false;
-    bool show_cp_popup_ = false;
-    bool show_bg_adjust_popup_ = false;
-    bool show_align_popup_ = false;
-    bool show_about_popup_ = false;
-    bool show_font_size_popup_ = false;
+    struct PopupState {
+        bool range = false;
+        bool control_points = false;
+        bool background_adjust = false;
+        bool background_align = false;
+        bool about = false;
+        bool ui_settings = false;
+    };
+    PopupState popups_;
     bool has_saved_layout_ = false;
     bool initial_dockspace_done_ = false;
     ImGuiID dock_right_id_ = 0;

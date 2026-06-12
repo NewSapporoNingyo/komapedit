@@ -1,0 +1,493 @@
+/*
+ * Copyright (c) 2026 Sapporo_ningyo
+ *
+ * Licensed under Apache License 2.0; see LICENSE and NOTICE.
+ * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
+ */
+
+#pragma execution_character_set("utf-8")
+
+#include "kme.h"
+#include "maploader.h"
+
+#include "imgui.h"
+#include "imgui_internal.h"
+#include "implot.h"
+
+#include <windows.h>
+#include <shellapi.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+#ifndef NDEBUG
+std::vector<std::string> command_line_args_utf8() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::vector<std::string> args;
+    if (!argv) return args;
+    args.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        args.push_back(wide_to_utf8(argv[i]));
+    }
+    LocalFree(argv);
+    return args;
+}
+
+struct HeadlessLoadOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int repeat = 1;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
+struct HeadlessPlanBenchmarkOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int frames = 300;
+    double unit_distance = 25.0;
+    double pan_pixels = 8.0;
+    double max_frame_ms = 16.667;
+    bool profile_stages = false;
+    std::string error;
+};
+
+HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
+    HeadlessLoadOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--headless-load-map" || arg == "--headless-load") {
+            options.requested = true;
+            if (i + 1 >= args.size()) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
+        } else if (arg == "--repeat") {
+            if (i + 1 >= args.size()) {
+                options.error = "--repeat requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            long parsed = std::strtol(args[++i].c_str(), &end, 10);
+            if (!end || *end != '\0' || parsed <= 0 || parsed > 10000) {
+                options.error = "--repeat must be between 1 and 10000";
+                return options;
+            }
+            options.repeat = static_cast<int>(parsed);
+        } else if (arg == "--unit-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--unit-distance requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--unit-distance must be a positive number";
+                return options;
+            }
+            options.unit_distance = parsed;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--headless-load-map requires a map path";
+    }
+    return options;
+}
+
+HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args) {
+    HeadlessPlanBenchmarkOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-plan-bench") {
+            options.requested = true;
+            if (i + 1 >= args.size()) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
+        } else if (arg == "--frames") {
+            if (i + 1 >= args.size()) {
+                options.error = "--frames requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            long parsed = std::strtol(args[++i].c_str(), &end, 10);
+            if (!end || *end != '\0' || parsed <= 0 || parsed > 100000) {
+                options.error = "--frames must be between 1 and 100000";
+                return options;
+            }
+            options.frames = static_cast<int>(parsed);
+        } else if (arg == "--unit-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--unit-distance requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--unit-distance must be a positive number";
+                return options;
+            }
+            options.unit_distance = parsed;
+        } else if (arg == "--pan-pixels") {
+            if (i + 1 >= args.size()) {
+                options.error = "--pan-pixels requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || !std::isfinite(parsed)) {
+                options.error = "--pan-pixels must be a finite number";
+                return options;
+            }
+            options.pan_pixels = parsed;
+        } else if (arg == "--max-frame-ms") {
+            if (i + 1 >= args.size()) {
+                options.error = "--max-frame-ms requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--max-frame-ms must be a positive number";
+                return options;
+            }
+            options.max_frame_ms = parsed;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        } else if (arg == "--profile-stages") {
+            options.profile_stages = true;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-plan-bench requires a map path";
+    }
+    return options;
+}
+
+std::uint64_t hash_double_bits(double value) {
+    if (value == 0.0) value = 0.0;
+    std::uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value), "unexpected double size");
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+struct HeadlessBufferSummary {
+    size_t rows = 0;
+    size_t cols = 0;
+    bool finite = true;
+    std::uint64_t hash = 1469598103934665603ULL;
+};
+
+HeadlessBufferSummary summarize_headless_buffer(KvDoubleBuffer buffer) {
+    HeadlessBufferSummary summary;
+    summary.rows = buffer.rows;
+    summary.cols = buffer.cols;
+    if (!buffer.data || buffer.rows == 0 || buffer.cols == 0) return summary;
+    const size_t count = buffer.rows * buffer.cols;
+    for (size_t i = 0; i < count; ++i) {
+        const double value = buffer.data[i];
+        summary.finite = summary.finite && std::isfinite(value);
+        std::uint64_t bits = hash_double_bits(value);
+        for (int byte = 0; byte < 8; ++byte) {
+            summary.hash ^= static_cast<unsigned char>((bits >> (byte * 8)) & 0xff);
+            summary.hash *= 1099511628211ULL;
+        }
+    }
+    return summary;
+}
+
+std::string hex_u64(std::uint64_t value) {
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << value;
+    return out.str();
+}
+
+void print_headless_buffer_summary(std::ostream& out, const char* label, const HeadlessBufferSummary& summary) {
+    out << " " << label << "=" << summary.rows << "x" << summary.cols
+        << ":" << hex_u64(summary.hash)
+        << (summary.finite ? "" : ":nonfinite");
+}
+
+int run_headless_load_map(const HeadlessLoadOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit headless-load-map path=\"" << options.path
+         << "\" repeat=" << options.repeat
+         << " unit_distance=" << format_double(options.unit_distance, 3) << "\n";
+
+    for (int run = 1; run <= options.repeat; ++run) {
+        auto started_at = std::chrono::steady_clock::now();
+        void* handle = kv_load_map(options.path.c_str(), options.unit_distance);
+        auto loaded_at = std::chrono::steady_clock::now();
+        if (!handle) {
+            const char* err = kv_get_last_error();
+            std::cerr << "headless run " << run << " failed: "
+                      << (err ? err : "maploader failed") << "\n";
+            return 2;
+        }
+
+        const char* json = kv_get_ir_json(handle);
+        const size_t json_bytes = json ? std::strlen(json) : 0;
+        if (json) kv_free_string(json);
+        auto json_at = std::chrono::steady_clock::now();
+
+        HeadlessBufferSummary own = summarize_headless_buffer(kv_get_owntrack_buffer(handle));
+        HeadlessBufferSummary curve = summarize_headless_buffer(kv_get_curveradius_buffer(handle));
+        HeadlessBufferSummary structures = summarize_headless_buffer(kv_get_structure_puts(handle));
+        const size_t other_count = kv_get_othertrack_count(handle);
+        HeadlessBufferSummary other_total;
+        other_total.rows = 0;
+        other_total.cols = 8;
+        for (size_t i = 0; i < other_count; ++i) {
+            const char* key = kv_get_othertrack_key(handle, i);
+            HeadlessBufferSummary item = summarize_headless_buffer(kv_get_othertrack_buffer(handle, key));
+            other_total.rows += item.rows;
+            other_total.finite = other_total.finite && item.finite;
+            other_total.hash ^= item.hash + 0x9e3779b97f4a7c15ULL + (other_total.hash << 6) + (other_total.hash >> 2);
+        }
+        kv_free(handle);
+        auto finished_at = std::chrono::steady_clock::now();
+
+        const double load_seconds = std::chrono::duration<double>(loaded_at - started_at).count();
+        const double json_seconds = std::chrono::duration<double>(json_at - loaded_at).count();
+        const double total_seconds = std::chrono::duration<double>(finished_at - started_at).count();
+        *out << "headless run " << run
+             << " load=" << std::fixed << std::setprecision(3) << load_seconds << "s"
+             << " json=" << json_seconds << "s"
+             << " total=" << total_seconds << "s"
+             << " json_bytes=" << json_bytes
+             << " othertracks=" << other_count;
+        print_headless_buffer_summary(*out, "own", own);
+        print_headless_buffer_summary(*out, "curve", curve);
+        print_headless_buffer_summary(*out, "structures", structures);
+        print_headless_buffer_summary(*out, "other", other_total);
+        *out << "\n";
+    }
+    return 0;
+}
+
+int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
+                                           double unit_distance, double pan_pixels,
+                                           double max_frame_ms, const std::string& output_path,
+                                           bool profile_stages) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-plan-bench path=\"" << path
+         << "\" frames=" << frames
+         << " unit_distance=" << format_double(unit_distance, 3)
+         << " pan_pixels=" << format_double(pan_pixels, 3)
+         << " max_frame_ms=" << format_double(max_frame_ms, 3) << "\n";
+    *out << "stage=load-start\n";
+    out->flush();
+
+    LoadResult result = load_map_worker(path, unit_distance, false, 0.0, 0.0, 25.0);
+    if (!result.ok) {
+        std::cerr << "debug headless plan benchmark load failed: " << result.error << "\n";
+        return 2;
+    }
+    *out << "stage=load-complete\n";
+    out->flush();
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    *out << "stage=imgui-ready\n";
+    out->flush();
+
+    int exit_code = 0;
+    try {
+        g_debug_plan_benchmark_log = profile_stages ? out : nullptr;
+        UserSettings settings;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = result.handle;
+        result.handle = nullptr;
+        app.model_ = std::move(result.model);
+        app.file_path_ = path;
+        app.has_model_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.plot_min_ = app.dmin_;
+        app.plot_max_ = app.dmax_;
+        app.rebuild_marker_overlay_cache();
+        app.reset_marker_visibility();
+        std::fill(app.signal_row_visible_.begin(), app.signal_row_visible_.end(), 1);
+        std::fill(app.repeater_row_visible_.begin(), app.repeater_row_visible_.end(), 1);
+        *out << "stage=overlay-cache-ready\n";
+        out->flush();
+
+        size_t chunk_count = 0;
+        size_t segment_point_count = 0;
+        for (const RepeaterOverlayRow& row : app.repeater_marker_cache_) {
+            for (const PlanRepeaterSegment::Chunk& chunk : row.segment.chunks) {
+                ++chunk_count;
+                segment_point_count += chunk.points.size();
+            }
+        }
+        size_t visible_other_count = 0;
+        size_t visible_other_rows = 0;
+        for (const OtherTrack& track : app.model_.other_tracks) {
+            if (!track.visible) continue;
+            ++visible_other_count;
+            visible_other_rows += track.points.rows;
+        }
+        *out << "loaded own_rows=" << app.model_.own.rows
+             << " visible_othertracks=" << visible_other_count
+             << " visible_other_rows=" << visible_other_rows
+             << " signal_aspects=" << app.model_.signal_aspects.size()
+             << " signals=" << app.model_.signals.size()
+             << " signal_markers=" << app.signal_marker_cache_.size()
+             << " beacons=" << app.model_.beacons.size()
+             << " beacon_markers=" << app.beacon_marker_cache_.size()
+             << " pretrains=" << app.model_.pretrains.size()
+             << " pretrain_markers=" << app.pretrain_marker_cache_.size()
+             << " rolling_noises=" << app.model_.rolling_noises.size()
+             << " rolling_noise_markers=" << app.rolling_noise_marker_cache_.size()
+             << " flange_noises=" << app.model_.flange_noises.size()
+             << " flange_noise_markers=" << app.flange_noise_marker_cache_.size()
+             << " joint_noises=" << app.model_.joint_noises.size()
+             << " joint_noise_markers=" << app.joint_noise_marker_cache_.size()
+             << " backgrounds=" << app.model_.backgrounds.size()
+             << " background_markers=" << app.background_marker_cache_.size()
+             << " repeaters=" << app.repeater_marker_cache_.size()
+             << " selected_repeaters=" << app.repeater_row_visible_.size()
+             << " repeater_chunks=" << chunk_count
+             << " repeater_chunk_points=" << segment_point_count << "\n";
+        out->flush();
+
+        auto render_frame = [&]() {
+            io.DisplaySize = ImVec2(1280.0f, 720.0f);
+            io.DeltaTime = 1.0f / 60.0f;
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
+            ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
+            ImGui::Begin("DebugHeadlessPlanBenchmark", nullptr, flags);
+            app.render_plan_canvas(ImVec2(1260.0f, 680.0f));
+            if (g_debug_plan_benchmark_log) {
+                int total_vtx = 0;
+                int total_idx = 0;
+                ImGuiContext& context = *GImGui;
+                for (ImGuiWindow* window : context.Windows) {
+                    if (!window || !window->WasActive || !window->DrawList) continue;
+                    total_vtx += window->DrawList->VtxBuffer.Size;
+                    total_idx += window->DrawList->IdxBuffer.Size;
+                }
+                *g_debug_plan_benchmark_log << "render_stage=before_imgui_render"
+                                            << " scale=" << std::fixed << std::setprecision(6) << app.plan_view_.scale
+                                            << " vtx=" << total_vtx
+                                            << " idx=" << total_idx << "\n";
+                g_debug_plan_benchmark_log->flush();
+            }
+            ImGui::End();
+            ImGui::EndFrame();
+        };
+
+        *out << "stage=warmup-start\n";
+        out->flush();
+        for (int frame = 0; frame < 1; ++frame) {
+            render_frame();
+        }
+        *out << "stage=warmup-complete\n";
+        out->flush();
+
+        std::vector<double> frame_ms;
+        frame_ms.reserve(static_cast<size_t>(frames));
+        for (int frame = 0; frame < frames; ++frame) {
+            double step = (frame % 120 < 60) ? pan_pixels : -pan_pixels;
+            app.plan_view_.pan_by_screen_delta(ImVec2(static_cast<float>(step), 0.0f));
+            auto started_at = std::chrono::steady_clock::now();
+            render_frame();
+            auto finished_at = std::chrono::steady_clock::now();
+            frame_ms.push_back(std::chrono::duration<double, std::milli>(finished_at - started_at).count());
+        }
+        *out << "stage=frames-complete\n";
+        out->flush();
+
+        std::vector<double> sorted_ms = frame_ms;
+        std::sort(sorted_ms.begin(), sorted_ms.end());
+        double sum_ms = 0.0;
+        for (double value : frame_ms) sum_ms += value;
+        auto percentile = [&](double p) {
+            if (sorted_ms.empty()) return 0.0;
+            size_t index = static_cast<size_t>(std::ceil(p * static_cast<double>(sorted_ms.size()))) - 1;
+            index = std::min(index, sorted_ms.size() - 1);
+            return sorted_ms[index];
+        };
+        double avg_ms = frame_ms.empty() ? 0.0 : sum_ms / static_cast<double>(frame_ms.size());
+        double min_ms = sorted_ms.empty() ? 0.0 : sorted_ms.front();
+        double p95_ms = percentile(0.95);
+        double max_ms = sorted_ms.empty() ? 0.0 : sorted_ms.back();
+        double p95_fps = p95_ms > 0.0 ? 1000.0 / p95_ms : 0.0;
+        bool pass = p95_ms <= max_frame_ms;
+
+        *out << std::fixed << std::setprecision(3)
+             << "plan_bench avg_ms=" << avg_ms
+             << " min_ms=" << min_ms
+             << " p95_ms=" << p95_ms
+             << " max_ms=" << max_ms
+             << " p95_fps=" << p95_fps
+             << " result=" << (pass ? "PASS" : "FAIL") << "\n";
+        if (!pass) exit_code = 3;
+    } catch (const std::exception& e) {
+        std::cerr << "debug headless plan benchmark failed: " << e.what() << "\n";
+        exit_code = 4;
+    }
+
+    g_debug_plan_benchmark_log = nullptr;
+    if (result.handle) kv_free(result.handle);
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    return exit_code;
+}
+#endif

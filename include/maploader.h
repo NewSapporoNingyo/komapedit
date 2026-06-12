@@ -23,6 +23,9 @@ extern "C" {
 #endif
 
 typedef struct KvDoubleBuffer {
+    /* Non-owning view into an active map handle. Do not free data directly.
+       The view stays valid until kv_free(handle) or kv_generate_geometry(handle, ...)
+       mutates the handle's internal buffers. */
     const double* data;
     size_t rows;
     size_t cols;
@@ -31,7 +34,13 @@ typedef struct KvDoubleBuffer {
 typedef void (*KvLogCallback)(const char* message);
 
 KV_API void kv_set_log_callback(KvLogCallback callback);
+
+/* Returns an opaque map handle owned by the caller. Release it exactly once
+   with kv_free(), even after retrieving buffers or IR JSON from it. */
 KV_API void* kv_load_map(const char* path, double unit_distance);
+
+/* Regenerates geometry in-place for an existing handle and invalidates any
+   KvDoubleBuffer views previously obtained from that handle. */
 KV_API int kv_generate_geometry(
     void* handle,
     double unit_distance,
@@ -45,9 +54,18 @@ KV_API size_t kv_get_othertrack_count(void* handle);
 KV_API const char* kv_get_othertrack_key(void* handle, size_t index);
 KV_API KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key);
 KV_API KvDoubleBuffer kv_get_structure_puts(void* handle);
+
+/* Returns a newly allocated UTF-8 JSON string owned by the caller.
+   Release it with kv_free_string(). */
 KV_API const char* kv_get_ir_json(void* handle);
+
+/* Returns a thread-local error string owned by maploader.dll. Do not free it. */
 KV_API const char* kv_get_last_error(void);
+
+/* Releases a handle returned by kv_load_map(). Passing NULL is allowed. */
 KV_API void kv_free(void* handle);
+
+/* Releases strings returned by kv_get_ir_json(). Passing NULL is allowed. */
 KV_API void kv_free_string(const char* text);
 
 #ifdef __cplusplus

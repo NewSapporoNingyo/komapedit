@@ -51,7 +51,7 @@ At this stage, komapedit is closer to a map viewer and track-geometry visualizer
 - [x] Support jumping to stations.
 - [x] Import a background image and adjust its position, size, rotation, and brightness.
 - [x] Align a background image using two station positions.
-- [ ] Structure and repeater placement markers on the plan view.
+- [x] Structure and repeater placement markers on the plan view.
 - [x] Display signal position markers on the plan view.
 - [x] Display beacon position markers on the plan view.
 - [x] Display background change-point markers on the plan view.
@@ -155,13 +155,26 @@ komapedit/
 │  ├─ model_loader.h               # model_loader C ABI
 │  └─ multilanguage.h              # UI localization strings
 ├─ src/
-│  ├─ canvas2D.cpp                 # 2D plan/profile/radius canvas rendering
-│  ├─ canvas3D.cpp                 # DirectX 11 model preview canvas rendering
-│  ├─ datatable.cpp                # Data table columns, cache, and table windows
-│  ├─ gui_kme.cpp                  # Main window, Win32/DirectX 11 setup, app loop
-│  ├─ kme.h                        # App declaration and shared GUI state
-│  ├─ maploader.cpp                # BVE Map parsing and geometry generation
-│  └─ model_loader.cpp             # Assimp-based Structure model loading
+│  ├─ main_window/
+│  │  ├─ gui_kme.cpp               # Main window, Win32/DirectX 11 setup, app loop
+│  │  ├─ app_settings.cpp/.h       # Runtime settings, history, and UI style helpers
+│  │  ├─ debug_headless.cpp/.h     # Debug-only headless validation entry points
+│  │  └─ kme.h                     # App declaration and shared GUI state
+│  ├─ table/
+│  │  ├─ datatable.cpp             # Data table columns, cache, and table windows
+│  │  └─ table_navigation.cpp      # Table-to-plan marker navigation and visibility state
+│  ├─ canvas2d/
+│  │  ├─ canvas2D.cpp              # 2D plan canvas, markers, measurement, and background image
+│  │  └─ profile_plots.cpp         # Profile and curve-radius chart rendering
+│  ├─ canvas3d/
+│  │  └─ canvas3D.cpp              # DirectX 11 model preview canvas rendering
+│  ├─ maploader/
+│  │  ├─ maploader.cpp             # BVE Map parsing, IR assembly, JSON export, and geometry generation
+│  │  ├─ text_decoder.cpp/.h       # File reading, UTF-8 paths, and text decoding
+│  │  ├─ diagnostics.cpp/.h        # Loader logs and last-error state
+│  │  └─ c_api.cpp/.h              # C ABI allocation helpers
+│  └─ model_loader/
+│     └─ model_loader.cpp          # Assimp-based Structure model loading
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui, docking branch
 │  └─ implot/                      # ImPlot
