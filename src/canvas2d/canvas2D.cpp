@@ -1914,14 +1914,17 @@ static void draw_plan_speaker_marker(ImDrawList* draw, ImVec2 p, ImU32 color, fl
     const float body_w = 4.4f * scale;
     const float body_h = 6.2f * scale;
     const float cone_w = 5.0f * scale;
+    const float cone_left_h = 4.0f * scale;
+    const float cone_right_h = 9.2f * scale;
     const float line_weight = 1.8f * scale;
     const ImU32 outline = IM_COL32(58, 32, 92, 255);
     ImVec2 body_min(p.x - 8.0f * scale, p.y - body_h * 0.5f);
     ImVec2 body_max(body_min.x + body_w, p.y + body_h * 0.5f);
-    ImVec2 cone[3] = {
-        ImVec2(body_max.x, body_min.y - 1.0f * scale),
-        ImVec2(body_max.x + cone_w, p.y - 4.6f * scale),
-        ImVec2(body_max.x + cone_w, p.y + 4.6f * scale),
+    ImVec2 cone[4] = {
+        ImVec2(body_max.x, p.y - cone_left_h * 0.5f),
+        ImVec2(body_max.x + cone_w, p.y - cone_right_h * 0.5f),
+        ImVec2(body_max.x + cone_w, p.y + cone_right_h * 0.5f),
+        ImVec2(body_max.x, p.y + cone_left_h * 0.5f),
     };
     draw->AddRectFilled(body_min, body_max, color, 1.0f * scale);
     draw->AddRect(body_min, body_max, outline, 1.0f * scale, 0, 1.0f * scale);
@@ -1950,13 +1953,13 @@ static void draw_plan_broadcast_marker(ImDrawList* draw, ImVec2 p, ImU32 color, 
     draw->AddCircle(top, 2.0f * scale, outline, 16, 1.0f * scale);
     for (int i = 0; i < 2; ++i) {
         float r = (5.6f + static_cast<float>(i) * 3.8f) * scale;
-        draw->PathArcTo(top, r, -2.42f, -0.72f, 14);
+        draw->PathArcTo(top, r, -0.72f, 0.72f, 14);
         draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
-        draw->PathArcTo(top, r, -2.42f, -0.72f, 14);
+        draw->PathArcTo(top, r, -0.72f, 0.72f, 14);
         draw->PathStroke(color, ImDrawFlags_None, line_weight);
-        draw->PathArcTo(top, r, 0.72f, 2.42f, 14);
+        draw->PathArcTo(top, r, 2.42f, 3.86f, 14);
         draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
-        draw->PathArcTo(top, r, 0.72f, 2.42f, 14);
+        draw->PathArcTo(top, r, 2.42f, 3.86f, 14);
         draw->PathStroke(color, ImDrawFlags_None, line_weight);
     }
 }
