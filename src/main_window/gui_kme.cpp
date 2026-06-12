@@ -1505,34 +1505,44 @@ void App::render_menu() {
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
-        if (ImGui::MenuItem(tr("chk.view_2d_window").c_str(), nullptr, &show_plots_window_) && show_plots_window_) {
-            focus_plots_next_ = true;
-        }
-        ImGui::Separator();
-        ImGui::MenuItem(tr("frame.aux_info").c_str(), nullptr, false, false);
+    auto render_aux_info_menu_items = [&]() {
+        ImGui::MenuItem(tr("aux.station").c_str(), nullptr, false, false);
         ImGui::MenuItem(tr("chk.station_pos").c_str(), nullptr, &show_stations_);
         ImGui::MenuItem(tr("chk.station_name").c_str(), nullptr, &show_station_names_);
         ImGui::MenuItem(tr("chk.station_mileage").c_str(), nullptr, &show_station_mileage_);
-        ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
+        ImGui::Separator();
+        ImGui::MenuItem(tr("aux.track_geometry").c_str(), nullptr, false, false);
         ImGui::MenuItem(tr("chk.curve_val").c_str(), nullptr, &show_curve_values_);
-        ImGui::MenuItem(tr("chk.speedlimit").c_str(), nullptr, &show_speedlimits_);
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
+        ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
+        ImGui::Separator();
+        ImGui::MenuItem(tr("aux.signal").c_str(), nullptr, false, false);
+        ImGui::MenuItem(tr("chk.speedlimit").c_str(), nullptr, &show_speedlimits_);
         ImGui::MenuItem(tr("chk.beacon_markers").c_str(), nullptr, &show_beacon_markers_);
         ImGui::MenuItem(tr("chk.pretrain_markers").c_str(), nullptr, &show_pretrain_markers_);
+        ImGui::Separator();
+        ImGui::MenuItem(tr("aux.sound").c_str(), nullptr, false, false);
         ImGui::MenuItem(tr("chk.map_sound_markers").c_str(), nullptr, &show_map_sound_markers_);
         ImGui::MenuItem(tr("chk.map_sound_3d_markers").c_str(), nullptr, &show_map_sound_3d_markers_);
         ImGui::MenuItem(tr("chk.rolling_noise_markers").c_str(), nullptr, &show_rolling_noise_markers_);
         ImGui::MenuItem(tr("chk.flange_noise_markers").c_str(), nullptr, &show_flange_noise_markers_);
         ImGui::MenuItem(tr("chk.joint_noise_markers").c_str(), nullptr, &show_joint_noise_markers_);
+        ImGui::Separator();
+        ImGui::MenuItem(tr("aux.effects").c_str(), nullptr, false, false);
         ImGui::MenuItem(tr("chk.background_markers").c_str(), nullptr, &show_background_markers_);
-        ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
         ImGui::MenuItem(tr("chk.cab_illuminance_markers").c_str(), nullptr, &show_cab_illuminance_markers_);
         ImGui::MenuItem(tr("chk.fog_markers").c_str(), nullptr, &show_fog_markers_);
+    };
+
+    if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
+        if (ImGui::MenuItem(tr("chk.view_2d_window").c_str(), nullptr, &show_plots_window_) && show_plots_window_) {
+            focus_plots_next_ = true;
+        }
         ImGui::Separator();
         ImGui::MenuItem(tr("frame.chart_visibility").c_str(), nullptr, false, false);
         if (ImGui::MenuItem(tr("chk.gradient_graph").c_str(), nullptr, &show_profile_graph_) && show_profile_graph_) reset_profile_axes_next_ = true;
         if (ImGui::MenuItem(tr("chk.curve_graph").c_str(), nullptr, &show_radius_graph_) && show_radius_graph_) reset_radius_axes_next_ = true;
+        ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
         ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.prof_othert").c_str(), nullptr, &show_profile_other_);
         ImGui::Separator();
@@ -1561,6 +1571,10 @@ void App::render_menu() {
     }
     if (ImGui::BeginMenu(tr("menu.view_3d").c_str())) {
         ImGui::MenuItem(tr("menu.structure_model_preview").c_str(), nullptr, &show_model_preview_window_);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu(tr("frame.aux_info").c_str())) {
+        render_aux_info_menu_items();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.lang").c_str())) {
