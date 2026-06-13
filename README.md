@@ -1,4 +1,9 @@
 # komapedit
+<p align="center">
+    <img src="icons/titleimage.png" alt="titleimage" width="600";>
+</p>
+<br>
+
 [简体中文Readme](README_zhcn.md)
 ## Project Overview
 
