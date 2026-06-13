@@ -35,6 +35,8 @@
 
 namespace {
 
+constexpr float kDefaultSceneCameraHeight = 2.0f;
+
 template <typename T>
 void release_com(T*& p) {
     if (p) {
@@ -1686,10 +1688,21 @@ fail:
         return true;
     }
 
+    bool reset_scene_camera_pose_at_distance(double distance) {
+        if (!scene_active) return false;
+        scene_camera_distance = std::clamp(distance, scene_data.min_distance, scene_data.max_distance);
+        scene_camera_lateral_offset = 0.0;
+        scene_camera_vertical_offset = kDefaultSceneCameraHeight;
+        scene_camera_yaw_offset = 0.0f;
+        scene_camera_pitch = 0.0f;
+        scene_rotating = false;
+        return update_scene_camera_from_owntrack();
+    }
+
     void reset_scene_camera_tracking() {
         Canvas3DTrackPoint point;
         scene_camera_lateral_offset = 0.0;
-        scene_camera_vertical_offset = 2.0f;
+        scene_camera_vertical_offset = kDefaultSceneCameraHeight;
         scene_camera_yaw_offset = 0.0f;
         if (!sample_own_track(scene_camera_distance, point)) return;
 
@@ -1708,13 +1721,17 @@ fail:
             return;
         }
         ImGuiIO& io = ImGui::GetIO();
+        if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+            reset_scene_camera_pose_at_distance(scene_camera_distance);
+        }
+
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             if (!scene_rotating) {
                 scene_rotating = true;
                 scene_last_mouse = io.MousePos;
             } else {
                 ImVec2 delta(io.MousePos.x - scene_last_mouse.x, io.MousePos.y - scene_last_mouse.y);
-                const float yaw_delta = delta.x * 0.005f;
+                const float yaw_delta = -delta.x * 0.005f;
                 scene_camera_yaw += yaw_delta;
                 scene_camera_yaw_offset += yaw_delta;
                 scene_camera_pitch = std::clamp(scene_camera_pitch + delta.y * 0.005f, -1.45f, 1.45f);
@@ -2196,6 +2213,10 @@ bool Canvas3D::has_scene() const {
 
 Canvas3DSceneStats Canvas3D::scene_stats() const {
     return impl_->scene_stats();
+}
+
+bool Canvas3D::jump_scene_camera_to_distance(double distance) {
+    return impl_->reset_scene_camera_pose_at_distance(distance);
 }
 
 void Canvas3D::render_scene_preview(ImVec2 size) {

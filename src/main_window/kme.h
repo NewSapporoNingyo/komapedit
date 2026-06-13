@@ -201,6 +201,16 @@ struct TableUiCache {
 const std::string& table_cell(const TableRow& row, const std::string& key);
 double table_cell_number(const TableRow& row, const std::string& key);
 
+inline bool repeater_event_distance_order_less(const TableRow& a, const TableRow& b) {
+    double ad = table_cell_number(a, "distance");
+    double bd = table_cell_number(b, "distance");
+    if (ad < bd) return true;
+    if (ad > bd) return false;
+    double ao = table_cell_number(a, "order");
+    double bo = table_cell_number(b, "order");
+    return ao < bo;
+}
+
 struct MapModel {
     std::string path;
     Matrix own;

@@ -819,9 +819,7 @@ std::string format_repeater_file_path_tooltip(const std::string& begin_path, con
 
 std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
     std::vector<TableRow> ordered_rows = data;
-    std::stable_sort(ordered_rows.begin(), ordered_rows.end(), [](const TableRow& a, const TableRow& b) {
-        return table_cell_number(a, "order") < table_cell_number(b, "order");
-    });
+    std::stable_sort(ordered_rows.begin(), ordered_rows.end(), repeater_event_distance_order_less);
 
     std::vector<TableRow> merged_rows;
     std::map<std::string, size_t> open_rows;

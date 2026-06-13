@@ -116,10 +116,6 @@ TrackPoint offset_track_point(TrackPoint base, double lateral, double forward) {
     return base;
 }
 
-int table_row_order(const TableRow& row) {
-    return static_cast<int>(std::round(table_cell_number(row, "order")));
-}
-
 size_t matrix_lower_bound_distance(const Matrix& points, double distance) {
     size_t lo = 0;
     size_t hi = points.rows;
@@ -596,12 +592,7 @@ void App::rebuild_marker_overlay_cache() {
     };
 
     std::vector<TableRow> repeater_events = model_.repeaters;
-    std::stable_sort(repeater_events.begin(), repeater_events.end(), [](const TableRow& a, const TableRow& b) {
-        int ao = table_row_order(a);
-        int bo = table_row_order(b);
-        if (ao != bo) return ao < bo;
-        return table_cell_number(a, "distance") < table_cell_number(b, "distance");
-    });
+    std::stable_sort(repeater_events.begin(), repeater_events.end(), repeater_event_distance_order_less);
 
     std::map<std::string, RepeaterBeginState> active_repeaters;
     for (const auto& row : repeater_events) {

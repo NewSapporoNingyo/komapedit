@@ -98,6 +98,7 @@ public:
     void clear_scene();
     bool has_scene() const;
     Canvas3DSceneStats scene_stats() const;
+    bool jump_scene_camera_to_distance(double distance);
     void render_scene_preview(ImVec2 size);
 
 private:

@@ -1844,7 +1844,11 @@ void App::render_station_jump_combo() {
             const bool selected = i == station_jump_index_;
             if (ImGui::Selectable(label.c_str(), selected)) {
                 station_jump_index_ = i;
-                focus_station(model_.stations[i].distance);
+                const double distance = model_.stations[i].distance;
+                focus_station(distance);
+                if (scene_preview_canvas_) {
+                    scene_preview_canvas_->jump_scene_camera_to_distance(distance);
+                }
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
@@ -2274,12 +2278,7 @@ Canvas3DScene App::build_scene_preview_scene() const {
         std::vector<std::string> model_paths;
     };
     std::vector<TableRow> repeater_events = model_.repeaters;
-    std::stable_sort(repeater_events.begin(), repeater_events.end(), [](const TableRow& a, const TableRow& b) {
-        double ao = table_cell_number(a, "order");
-        double bo = table_cell_number(b, "order");
-        if (ao != bo) return ao < bo;
-        return table_cell_number(a, "distance") < table_cell_number(b, "distance");
-    });
+    std::stable_sort(repeater_events.begin(), repeater_events.end(), repeater_event_distance_order_less);
     std::map<std::string, RepeaterBegin> active_repeaters;
     auto emit_repeater = [&](const RepeaterBegin& begin, double end_distance) {
         if (begin.model_paths.empty()) return;
@@ -2354,7 +2353,11 @@ Canvas3DScene App::build_scene_preview_scene() const {
 
     scene.min_distance = model_.own.at(0, 0);
     scene.max_distance = model_.own.at(model_.own.rows - 1, 0);
-    double camera_distance = !model_.stations.empty() ? model_.stations.front().distance : scene.min_distance;
+    double camera_distance = scene.min_distance;
+    if (!model_.stations.empty()) {
+        int station_index = std::clamp(station_jump_index_, 0, static_cast<int>(model_.stations.size()) - 1);
+        camera_distance = model_.stations[station_index].distance;
+    }
     auto camera_point = sample_track("", camera_distance);
     if (!camera_point) camera_point = scene_matrix_row_point(model_.own, 0, true);
     scene.camera.distance = camera_distance;
