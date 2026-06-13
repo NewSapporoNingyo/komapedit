@@ -48,6 +48,15 @@ KV_API int kv_generate_geometry(
     double arbitrary_start,
     double arbitrary_end,
     double arbitrary_step);
+/* Generates denser geometry for 3D scene preview without changing parser state.
+   Existing KvDoubleBuffer views are invalidated just like kv_generate_geometry(). */
+KV_API int kv_generate_scene_geometry(
+    void* handle,
+    double unit_distance,
+    double min_step,
+    double max_step,
+    double max_angle_degrees,
+    double max_chord_error);
 KV_API KvDoubleBuffer kv_get_owntrack_buffer(void* handle);
 KV_API KvDoubleBuffer kv_get_curveradius_buffer(void* handle);
 KV_API size_t kv_get_othertrack_count(void* handle);

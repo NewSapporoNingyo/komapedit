@@ -81,6 +81,8 @@ struct HeadlessScene3DBenchmarkOptions {
     int frames = 300;
     double unit_distance = 25.0;
     double max_frame_ms = 16.667;
+    double window_back_m = 100.0;
+    double window_forward_m = 1200.0;
     std::string error;
 };
 
@@ -255,6 +257,30 @@ HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const s
                 return options;
             }
             options.max_frame_ms = parsed;
+        } else if (arg == "--window-back-m") {
+            if (i + 1 >= args.size()) {
+                options.error = "--window-back-m requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed < 0.0 || !std::isfinite(parsed)) {
+                options.error = "--window-back-m must be a non-negative number";
+                return options;
+            }
+            options.window_back_m = parsed;
+        } else if (arg == "--window-forward-m") {
+            if (i + 1 >= args.size()) {
+                options.error = "--window-forward-m requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--window-forward-m must be a positive number";
+                return options;
+            }
+            options.window_forward_m = parsed;
         } else if (arg == "--headless-output") {
             if (i + 1 >= args.size()) {
                 options.error = "--headless-output requires a path";
@@ -587,6 +613,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
 
 int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
                                               double unit_distance, double max_frame_ms,
+                                              double window_back_m, double window_forward_m,
                                               const std::string& output_path) {
     std::ofstream output_file;
     std::ostream* out = &std::cout;
@@ -603,7 +630,9 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
     *out << "komapedit debug-headless-scene3d-bench path=\"" << path
          << "\" frames=" << frames
          << " unit_distance=" << format_double(unit_distance, 3)
-         << " max_frame_ms=" << format_double(max_frame_ms, 3) << "\n";
+         << " max_frame_ms=" << format_double(max_frame_ms, 3)
+         << " window_back_m=" << format_double(window_back_m, 3)
+         << " window_forward_m=" << format_double(window_forward_m, 3) << "\n";
     *out << "stage=d3d-create-start\n";
     out->flush();
 
@@ -667,6 +696,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         app.rebuild_marker_overlay_cache();
         app.reset_marker_visibility();
         app.scene_preview_started_ = true;
+        app.scene_preview_canvas_->set_scene_window(window_back_m, window_forward_m);
         app.rebuild_scene_preview();
         Canvas3DSceneStats initial_stats = app.scene_preview_canvas_->scene_stats();
         *out << "stage=scene-ready"

@@ -2527,9 +2527,13 @@ double round_minus2(double value) {
 }
 
 void generate_owntrack(MapContext& ctx, double unitdist,
-                       bool has_arb, double arb_start, double arb_end, double arb_step) {
+                       bool has_arb, double arb_start, double arb_end, double arb_step,
+                       const std::vector<double>* extra_controlpoints = nullptr) {
     std::vector<double> list_cp = ctx.controlpoints;
     if (list_cp.empty()) list_cp.push_back(0.0);
+    if (extra_controlpoints) {
+        list_cp.insert(list_cp.end(), extra_controlpoints->begin(), extra_controlpoints->end());
+    }
     list_cp = sorted_unique(list_cp);
     double cp_min = list_cp.front();
     double cp_max = list_cp.back();
@@ -2972,8 +2976,132 @@ void build_structure_put_buffer(MapContext& ctx) {
     }
 }
 
+double matrix_value(const Matrix& matrix, size_t row, size_t col) {
+    return matrix.data[row * matrix.cols + col];
+}
+
+double angle_delta_abs(double a, double b) {
+    return std::abs(std::atan2(std::sin(b - a), std::cos(b - a)));
+}
+
+void append_controlpoint_if_in_range(std::vector<double>& values, double distance,
+                                     double min_distance, double max_distance) {
+    if (!std::isfinite(distance)) return;
+    constexpr double eps = 1e-6;
+    if (distance < min_distance - eps || distance > max_distance + eps) return;
+    values.push_back(std::clamp(distance, min_distance, max_distance));
+}
+
+void append_scene_model_distance(std::vector<double>& values, double distance, double span,
+                                 double min_distance, double max_distance) {
+    append_controlpoint_if_in_range(values, distance, min_distance, max_distance);
+    if (span > 1.0) append_controlpoint_if_in_range(values, distance + span, min_distance, max_distance);
+}
+
+std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
+                                                       const Matrix& baseline,
+                                                       double min_step,
+                                                       double max_step,
+                                                       double max_angle_degrees,
+                                                       double max_chord_error) {
+    std::vector<double> values;
+    if (baseline.rows < 2 || baseline.cols < 5) return values;
+
+    min_step = std::clamp(std::isfinite(min_step) ? min_step : 1.0, 0.25, 100.0);
+    max_step = std::clamp(std::isfinite(max_step) ? max_step : 25.0, min_step, 200.0);
+    const double max_angle = std::max(0.001, (std::isfinite(max_angle_degrees) ? max_angle_degrees : 1.0) * kPi / 180.0);
+    const double max_error = std::max(0.001, std::isfinite(max_chord_error) ? max_chord_error : 0.01);
+    const double min_distance = matrix_value(baseline, 0, 0);
+    const double max_distance = matrix_value(baseline, baseline.rows - 1, 0);
+
+    values.reserve(baseline.rows);
+    for (size_t row = 1; row < baseline.rows; ++row) {
+        const double a_distance = matrix_value(baseline, row - 1, 0);
+        const double b_distance = matrix_value(baseline, row, 0);
+        const double span = b_distance - a_distance;
+        if (!(span > 0.0) || !std::isfinite(span)) continue;
+
+        double desired_step = max_step;
+        if (baseline.cols > 5) {
+            const double r0 = std::abs(matrix_value(baseline, row - 1, 5));
+            const double r1 = std::abs(matrix_value(baseline, row, 5));
+            double radius = 0.0;
+            if (r0 > 1e-6 && r1 > 1e-6) radius = std::min(r0, r1);
+            else if (r0 > 1e-6) radius = r0;
+            else if (r1 > 1e-6) radius = r1;
+            if (radius > 1e-6 && std::isfinite(radius)) {
+                desired_step = std::min(desired_step, std::sqrt(std::max(min_step * min_step,
+                                                                         8.0 * radius * max_error)));
+            }
+        }
+
+        const double theta_delta = angle_delta_abs(matrix_value(baseline, row - 1, 4),
+                                                   matrix_value(baseline, row, 4));
+        if (theta_delta > max_angle) {
+            const double angle_step = span / std::ceil(theta_delta / max_angle);
+            desired_step = std::min(desired_step, angle_step);
+        }
+
+        desired_step = std::clamp(desired_step, min_step, max_step);
+        const int divisions = std::max(1, static_cast<int>(std::ceil(span / desired_step)));
+        for (int i = 1; i < divisions; ++i) {
+            values.push_back(a_distance + span * (static_cast<double>(i) / static_cast<double>(divisions)));
+        }
+    }
+
+    for (const StructurePut& row : ctx.structure_puts) {
+        append_scene_model_distance(values, row.distance, row.span, min_distance, max_distance);
+    }
+    for (const StructurePut& row : ctx.structure_betweens) {
+        append_controlpoint_if_in_range(values, row.distance, min_distance, max_distance);
+    }
+
+    struct ActiveRepeater {
+        double begin = 0.0;
+        double interval = 0.0;
+        double span = 0.0;
+    };
+    auto append_repeater_range = [&](const ActiveRepeater& repeater, double end_distance) {
+        if (end_distance < repeater.begin) return;
+        append_scene_model_distance(values, repeater.begin, repeater.span, min_distance, max_distance);
+        append_scene_model_distance(values, end_distance, repeater.span, min_distance, max_distance);
+        if (repeater.interval <= 1e-9 || !std::isfinite(repeater.interval)) return;
+
+        size_t guard = 0;
+        for (double distance = repeater.begin; distance < end_distance + 1e-6; distance += repeater.interval) {
+            append_scene_model_distance(values, distance, repeater.span, min_distance, max_distance);
+            if (++guard > 1000000) break;
+        }
+    };
+
+    std::map<std::string, ActiveRepeater> active_repeaters;
+    for (const RepeaterEvent& row : ctx.repeaters) {
+        std::string key = key_text(row.repeater_key);
+        if (key.empty()) continue;
+        if (row.method == "Begin" || row.method == "Begin0") {
+            auto existing = active_repeaters.find(key);
+            if (existing != active_repeaters.end()) {
+                append_repeater_range(existing->second, row.distance);
+                active_repeaters.erase(existing);
+            }
+            active_repeaters[key] = ActiveRepeater{row.distance, row.interval, row.span};
+        } else if (row.method == "End") {
+            auto existing = active_repeaters.find(key);
+            if (existing == active_repeaters.end()) continue;
+            append_repeater_range(existing->second, row.distance);
+            active_repeaters.erase(existing);
+        }
+    }
+    for (const auto& kv : active_repeaters) {
+        append_repeater_range(kv.second, max_distance);
+    }
+
+    return values;
+}
+
 void generate_geometry(MapContext& ctx, double unitdist,
-                       bool has_arb, double arb_start, double arb_end, double arb_step) {
+                       bool has_arb, double arb_start, double arb_end, double arb_step,
+                       const std::vector<double>* extra_controlpoints = nullptr) {
     log_info("calculating track geometry");
     ctx.othertrack_buffers.clear();
     ctx.timing.owntrack_seconds = 0.0;
@@ -2982,7 +3110,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
     ctx.load_timing_logged = false;
     {
         ScopedTimer timer(&ctx.timing.owntrack_seconds);
-        generate_owntrack(ctx, unitdist, has_arb, arb_start, arb_end, arb_step);
+        generate_owntrack(ctx, unitdist, has_arb, arb_start, arb_end, arb_step, extra_controlpoints);
     }
     generate_curveradius(ctx);
     std::vector<std::future<OtherTrackBuildResult>> futures;
@@ -3512,6 +3640,31 @@ KV_API int kv_generate_geometry(void* handle, double unit_distance,
         auto* ctx = static_cast<MapContext*>(handle);
         generate_geometry(*ctx, unit_distance, has_arbitrary_distribution != 0,
                           arbitrary_start, arbitrary_end, arbitrary_step);
+        return 1;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        log_error(e.what());
+        return 0;
+    }
+}
+
+KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
+                                      double min_step, double max_step,
+                                      double max_angle_degrees,
+                                      double max_chord_error) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        if (ctx->owntrack_buffer.rows == 0) {
+            generate_geometry(*ctx, unit_distance, false, 0.0, 0.0, 0.0);
+        }
+
+        const bool has_arb = ctx->has_cp_arbdistribution;
+        const std::array<double, 3> arb = ctx->cp_arbdistribution;
+        Matrix baseline = ctx->owntrack_buffer;
+        std::vector<double> extra = build_scene_adaptive_controlpoints(
+            *ctx, baseline, min_step, max_step, max_angle_degrees, max_chord_error);
+        generate_geometry(*ctx, unit_distance, has_arb, arb[0], arb[1], arb[2], &extra);
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());

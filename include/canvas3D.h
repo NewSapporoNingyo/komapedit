@@ -16,10 +16,10 @@ struct ID3D11Device;
 
 struct Canvas3DTrackPoint {
     double distance = 0.0;
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-    float theta = 0.0f;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double theta = 0.0;
 };
 
 struct Canvas3DTrackPath {
@@ -31,12 +31,28 @@ struct Canvas3DTrackPath {
 struct Canvas3DModelInstance {
     std::string model_path;
     double distance = 0.0;
-    float world[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f
+    double world[16] = {
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
     };
+};
+
+struct Canvas3DRepeaterSegment {
+    std::string track_key;
+    std::vector<std::string> model_paths;
+    double begin_distance = 0.0;
+    double end_distance = 0.0;
+    double interval = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double rx = 0.0;
+    double ry = 0.0;
+    double rz = 0.0;
+    double tilt = 0.0;
+    double span = 0.0;
 };
 
 struct Canvas3DBackgroundChange {
@@ -46,16 +62,17 @@ struct Canvas3DBackgroundChange {
 
 struct Canvas3DCameraStart {
     double distance = 0.0;
-    float x = 0.0f;
-    float y = 2.0f;
-    float z = 0.0f;
-    float yaw = 0.0f;
-    float pitch = 0.0f;
+    double x = 0.0;
+    double y = 2.0;
+    double z = 0.0;
+    double yaw = 0.0;
+    double pitch = 0.0;
 };
 
 struct Canvas3DScene {
     std::vector<Canvas3DTrackPath> tracks;
     std::vector<Canvas3DModelInstance> instances;
+    std::vector<Canvas3DRepeaterSegment> repeaters;
     std::vector<Canvas3DBackgroundChange> backgrounds;
     Canvas3DCameraStart camera;
     double min_distance = 0.0;
@@ -97,6 +114,7 @@ public:
     bool load_scene(Canvas3DScene scene, std::string& error);
     void clear_scene();
     bool has_scene() const;
+    void set_scene_window(double back_m, double forward_m);
     Canvas3DSceneStats scene_stats() const;
     bool jump_scene_camera_to_distance(double distance);
     void render_scene_preview(ImVec2 size);

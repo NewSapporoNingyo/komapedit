@@ -358,9 +358,9 @@ Matrix copy_buffer(KvDoubleBuffer buffer) {
 }
 
 struct SceneVec3 {
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
 };
 
 SceneVec3 operator+(SceneVec3 a, SceneVec3 b) {
@@ -371,11 +371,11 @@ SceneVec3 operator-(SceneVec3 a, SceneVec3 b) {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-SceneVec3 operator*(SceneVec3 v, float s) {
+SceneVec3 operator*(SceneVec3 v, double s) {
     return {v.x * s, v.y * s, v.z * s};
 }
 
-float scene_dot(SceneVec3 a, SceneVec3 b) {
+double scene_dot(SceneVec3 a, SceneVec3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
@@ -388,22 +388,22 @@ SceneVec3 scene_cross(SceneVec3 a, SceneVec3 b) {
 }
 
 SceneVec3 scene_normalize(SceneVec3 v) {
-    float len = std::sqrt(std::max(scene_dot(v, v), 1e-12f));
+    double len = std::sqrt(std::max(scene_dot(v, v), 1e-12));
     return {v.x / len, v.y / len, v.z / len};
 }
 
-SceneVec3 scene_right_from_theta(float theta) {
+SceneVec3 scene_right_from_theta(double theta) {
     return {std::cos(theta), 0.0f, std::sin(theta)};
 }
 
-SceneVec3 scene_forward_from_theta(float theta) {
+SceneVec3 scene_forward_from_theta(double theta) {
     return {std::sin(theta), 0.0f, -std::cos(theta)};
 }
 
-SceneVec3 scene_rotate_axis(SceneVec3 v, SceneVec3 axis, float radians) {
+SceneVec3 scene_rotate_axis(SceneVec3 v, SceneVec3 axis, double radians) {
     axis = scene_normalize(axis);
-    float c = std::cos(radians);
-    float s = std::sin(radians);
+    double c = std::cos(radians);
+    double s = std::sin(radians);
     return v * c + scene_cross(axis, v) * s + axis * (scene_dot(axis, v) * (1.0f - c));
 }
 
@@ -431,10 +431,10 @@ double scene_matrix_track_tangent(const Matrix& points, size_t row) {
 Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool has_theta_column) {
     Canvas3DTrackPoint p;
     p.distance = points.at(row, 0);
-    p.x = static_cast<float>(points.at(row, 2));
-    p.z = static_cast<float>(-points.at(row, 1));
-    p.y = points.cols > 3 ? static_cast<float>(points.at(row, 3)) : 0.0f;
-    p.theta = static_cast<float>(has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_matrix_track_tangent(points, row));
+    p.x = points.at(row, 2);
+    p.z = -points.at(row, 1);
+    p.y = points.cols > 3 ? points.at(row, 3) : 0.0;
+    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_matrix_track_tangent(points, row);
     return p;
 }
 
@@ -461,10 +461,10 @@ std::optional<Canvas3DTrackPoint> scene_sample_track(const Matrix& points, doubl
     double t = std::abs(span) < eps ? 0.0 : std::clamp((distance - a.distance) / span, 0.0, 1.0);
     Canvas3DTrackPoint p;
     p.distance = distance;
-    p.x = static_cast<float>(a.x + (b.x - a.x) * t);
-    p.y = static_cast<float>(a.y + (b.y - a.y) * t);
-    p.z = static_cast<float>(a.z + (b.z - a.z) * t);
-    p.theta = static_cast<float>(scene_angle_lerp(a.theta, b.theta, t));
+    p.x = a.x + (b.x - a.x) * t;
+    p.y = a.y + (b.y - a.y) * t;
+    p.z = a.z + (b.z - a.z) * t;
+    p.theta = scene_angle_lerp(a.theta, b.theta, t);
     return p;
 }
 
@@ -473,12 +473,12 @@ struct SceneTrackSource {
     bool has_theta_column = false;
 };
 
-void scene_store_world(float out[16], SceneVec3 right, SceneVec3 up, SceneVec3 forward, SceneVec3 origin) {
+void scene_store_world(double out[16], SceneVec3 right, SceneVec3 up, SceneVec3 forward, SceneVec3 origin) {
     right = scene_normalize(right);
     up = scene_normalize(up);
     forward = scene_normalize(forward);
     SceneVec3 model_z = forward * -1.0f;
-    const float values[16] = {
+    const double values[16] = {
         right.x, right.y, right.z, 0.0f,
         up.x, up.y, up.z, 0.0f,
         model_z.x, model_z.y, model_z.z, 0.0f,
@@ -489,19 +489,19 @@ void scene_store_world(float out[16], SceneVec3 right, SceneVec3 up, SceneVec3 f
 
 void scene_apply_euler(SceneVec3& right, SceneVec3& up, SceneVec3& forward,
                        double rx_deg, double ry_deg, double rz_deg) {
-    constexpr float deg_to_rad = 0.01745329251994329577f;
-    float rx = static_cast<float>(rx_deg) * deg_to_rad;
-    float ry = static_cast<float>(ry_deg) * deg_to_rad;
-    float rz = static_cast<float>(rz_deg) * deg_to_rad;
-    if (std::abs(rx) > 1e-6f) {
+    constexpr double deg_to_rad = 0.01745329251994329577;
+    double rx = rx_deg * deg_to_rad;
+    double ry = ry_deg * deg_to_rad;
+    double rz = rz_deg * deg_to_rad;
+    if (std::abs(rx) > 1e-6) {
         up = scene_rotate_axis(up, right, -rx);
         forward = scene_rotate_axis(forward, right, -rx);
     }
-    if (std::abs(rz) > 1e-6f) {
+    if (std::abs(rz) > 1e-6) {
         right = scene_rotate_axis(right, forward * -1.0f, rz);
         up = scene_rotate_axis(up, forward * -1.0f, rz);
     }
-    if (std::abs(ry) > 1e-6f) {
+    if (std::abs(ry) > 1e-6) {
         right = scene_rotate_axis(right, up, -ry);
         forward = scene_rotate_axis(forward, up, -ry);
     }
@@ -2129,16 +2129,48 @@ void App::render_popups() {
     }
 }
 
-Canvas3DScene App::build_scene_preview_scene() const {
+Canvas3DScene App::build_scene_preview_scene() {
     Canvas3DScene scene;
     if (!has_model_ || model_.own.empty()) return scene;
 
+    Matrix scene_own = model_.own;
+    std::vector<OtherTrack> scene_other_tracks = model_.other_tracks;
+    if (handle_) {
+        const double max_step = std::clamp(cp_interval_ > 0.0 ? cp_interval_ : 25.0, 1.0, 25.0);
+        bool scene_geometry_ok = kv_generate_scene_geometry(handle_, unit_distance_, 1.0, max_step, 1.0, 0.01) != 0;
+        if (scene_geometry_ok) {
+            Matrix dense_own = copy_buffer(kv_get_owntrack_buffer(handle_));
+            std::vector<OtherTrack> dense_other_tracks;
+            dense_other_tracks.reserve(model_.other_tracks.size());
+            for (const OtherTrack& track : model_.other_tracks) {
+                OtherTrack dense = track;
+                dense.points = copy_buffer(kv_get_othertrack_buffer(handle_, track.key.c_str()));
+                dense_other_tracks.push_back(std::move(dense));
+            }
+            if (!dense_own.empty()) {
+                scene_own = std::move(dense_own);
+                scene_other_tracks = std::move(dense_other_tracks);
+            }
+        } else {
+            const char* err = kv_get_last_error();
+            add_log(std::string("[WARN]3D scene preview adaptive geometry failed: ") +
+                    (err ? err : "geometry failed"));
+        }
+
+        if (!kv_generate_geometry(handle_, unit_distance_, model_.has_cp_arb ? 1 : 0,
+                                  cp_start_, cp_end_, cp_interval_)) {
+            const char* err = kv_get_last_error();
+            add_log(std::string("[ERROR]3D scene preview failed to restore 2D geometry: ") +
+                    (err ? err : "geometry failed"));
+        }
+    }
+
     std::map<std::string, SceneTrackSource> track_sources;
-    SceneTrackSource own_source{&model_.own, true};
+    SceneTrackSource own_source{&scene_own, true};
     for (const char* key : kOwnTrackLookupAliases) {
         track_sources[normalize_track_lookup_key(key)] = own_source;
     }
-    for (const OtherTrack& track : model_.other_tracks) {
+    for (const OtherTrack& track : scene_other_tracks) {
         track_sources[normalize_track_lookup_key(track.key)] = SceneTrackSource{&track.points, false};
     }
     auto find_track = [&](const std::string& normalized_key) -> std::optional<SceneTrackSource> {
@@ -2180,8 +2212,8 @@ Canvas3DScene App::build_scene_preview_scene() const {
         }
         scene.tracks.push_back(std::move(path));
     };
-    append_track_path("own", model_.own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f));
-    for (const OtherTrack& track : model_.other_tracks) {
+    append_track_path("own", scene_own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f));
+    for (const OtherTrack& track : scene_other_tracks) {
         append_track_path(track.key, track.points, false, track.color);
     }
 
@@ -2281,33 +2313,24 @@ Canvas3DScene App::build_scene_preview_scene() const {
     std::stable_sort(repeater_events.begin(), repeater_events.end(), repeater_event_distance_order_less);
     std::map<std::string, RepeaterBegin> active_repeaters;
     auto emit_repeater = [&](const RepeaterBegin& begin, double end_distance) {
-        if (begin.model_paths.empty()) return;
         if (end_distance < begin.distance) return;
-        auto emit_at = [&](double distance, size_t model_index) {
-            std::string path = begin.model_paths[model_index % begin.model_paths.size()];
-            if (path.empty()) return;
-            auto point = sample_track(begin.track_key, distance);
-            if (!point) return;
-            std::optional<Canvas3DTrackPoint> span_point;
-            if (begin.span > 1.0) span_point = sample_track(begin.track_key, distance + begin.span);
-            Canvas3DModelInstance instance;
-            instance.model_path = path;
-            instance.distance = distance;
-            fill_world_from_track(instance, *point, span_point,
-                                  begin.x, begin.y, begin.z,
-                                  begin.rx, begin.ry, begin.rz,
-                                  begin.tilt, begin.span);
-            scene.instances.push_back(std::move(instance));
-        };
-        if (begin.interval <= 1e-9) {
-            emit_at(begin.distance, 0);
-            return;
+        Canvas3DRepeaterSegment segment;
+        segment.track_key = begin.track_key;
+        segment.begin_distance = begin.distance;
+        segment.end_distance = end_distance;
+        segment.interval = begin.interval;
+        segment.x = begin.x;
+        segment.y = begin.y;
+        segment.z = begin.z;
+        segment.rx = begin.rx;
+        segment.ry = begin.ry;
+        segment.rz = begin.rz;
+        segment.tilt = begin.tilt;
+        segment.span = begin.span;
+        for (const std::string& path : begin.model_paths) {
+            if (!path.empty()) segment.model_paths.push_back(path);
         }
-        size_t model_index = 0;
-        for (double d = begin.distance; d < end_distance + 1e-6; d += begin.interval) {
-            emit_at(d, model_index++);
-            if (model_index > 1000000) break;
-        }
+        if (!segment.model_paths.empty()) scene.repeaters.push_back(std::move(segment));
     };
     for (const TableRow& row : repeater_events) {
         std::string key = scene_key(table_cell(row, "repeaterKey"));
@@ -2351,15 +2374,15 @@ Canvas3DScene App::build_scene_preview_scene() const {
         scene.backgrounds.push_back(std::move(change));
     }
 
-    scene.min_distance = model_.own.at(0, 0);
-    scene.max_distance = model_.own.at(model_.own.rows - 1, 0);
+    scene.min_distance = scene_own.at(0, 0);
+    scene.max_distance = scene_own.at(scene_own.rows - 1, 0);
     double camera_distance = scene.min_distance;
     if (!model_.stations.empty()) {
         int station_index = std::clamp(station_jump_index_, 0, static_cast<int>(model_.stations.size()) - 1);
         camera_distance = model_.stations[station_index].distance;
     }
     auto camera_point = sample_track("", camera_distance);
-    if (!camera_point) camera_point = scene_matrix_row_point(model_.own, 0, true);
+    if (!camera_point) camera_point = scene_matrix_row_point(scene_own, 0, true);
     scene.camera.distance = camera_distance;
     scene.camera.x = camera_point->x;
     scene.camera.y = camera_point->y + 2.0f;
@@ -2667,11 +2690,14 @@ int main(int, char**) {
         if (!scene3d_bench.error.empty()) {
             std::cerr << scene3d_bench.error << "\n"
                       << "usage: komapedit.exe --debug-headless-scene3d-bench <map-path> "
-                      << "[--frames N] [--unit-distance M] [--max-frame-ms MS] [--headless-output FILE]\n";
+                      << "[--frames N] [--unit-distance M] [--max-frame-ms MS] "
+                      << "[--window-back-m M] [--window-forward-m M] [--headless-output FILE]\n";
             return 1;
         }
         return App::run_debug_headless_scene3d_benchmark(scene3d_bench.path, scene3d_bench.frames,
                                                          scene3d_bench.unit_distance, scene3d_bench.max_frame_ms,
+                                                         scene3d_bench.window_back_m,
+                                                         scene3d_bench.window_forward_m,
                                                          scene3d_bench.output_path);
     }
 

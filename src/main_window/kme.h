@@ -731,6 +731,7 @@ public:
                                                  bool profile_stages);
     static int run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
                                                     double unit_distance, double max_frame_ms,
+                                                    double window_back_m, double window_forward_m,
                                                     const std::string& output_path);
 #endif
 
@@ -1059,7 +1060,7 @@ private:
     void reload_model_preview();
     void start_scene_preview();
     void rebuild_scene_preview();
-    Canvas3DScene build_scene_preview_scene() const;
+    Canvas3DScene build_scene_preview_scene();
     void reload_current_map_and_model_preview();
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);
