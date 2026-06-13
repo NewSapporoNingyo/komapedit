@@ -448,7 +448,13 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
 
         size_t chunk_count = 0;
         size_t segment_point_count = 0;
+        size_t repeater_begin_marker_count = 0;
+        size_t repeater_end_marker_count = 0;
+        size_t repeater_segment_count = 0;
         for (const RepeaterOverlayRow& row : app.repeater_marker_cache_) {
+            if (row.begin_marker) ++repeater_begin_marker_count;
+            if (row.end_marker) ++repeater_end_marker_count;
+            if (row.segment.bounds_valid) ++repeater_segment_count;
             for (const PlanRepeaterSegment::Chunk& chunk : row.segment.chunks) {
                 ++chunk_count;
                 segment_point_count += chunk.points.size();
@@ -484,6 +490,9 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
              << " backgrounds=" << app.model_.backgrounds.size()
              << " background_markers=" << app.background_marker_cache_.size()
              << " repeaters=" << app.repeater_marker_cache_.size()
+             << " repeater_begin_markers=" << repeater_begin_marker_count
+             << " repeater_end_markers=" << repeater_end_marker_count
+             << " repeater_segments=" << repeater_segment_count
              << " selected_repeaters=" << app.repeater_row_visible_.size()
              << " repeater_chunks=" << chunk_count
              << " repeater_chunk_points=" << segment_point_count << "\n";
@@ -663,7 +672,10 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         *out << "stage=scene-ready"
              << " chunks=" << initial_stats.chunk_count
              << " instances=" << initial_stats.instance_count
-             << " models=" << initial_stats.model_path_count << "\n";
+             << " models=" << initial_stats.model_path_count
+             << " camera_distance=" << format_double(initial_stats.camera_distance, 3)
+             << " window_back_m=" << format_double(initial_stats.window_back_m, 3)
+             << " window_forward_m=" << format_double(initial_stats.window_forward_m, 3) << "\n";
         out->flush();
 
         auto render_frame = [&]() {

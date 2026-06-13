@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -45,6 +46,22 @@ inline constexpr float kDefaultStationMarkerSize = 4.0f;
 inline constexpr float kMinStationMarkerSize = 1.0f;
 inline constexpr float kMaxStationMarkerSize = 16.0f;
 inline constexpr size_t kMaxRecentMaps = 10;
+inline constexpr const char* kOwnTrackLookupAliases[] = {"", "0", "1", "\\", "own", "main"};
+
+inline std::string normalize_track_lookup_key(std::string key) {
+    key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    }), key.end());
+    for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return key;
+}
+
+inline bool is_own_track_lookup_alias(const std::string& normalized_key) {
+    for (const char* alias : kOwnTrackLookupAliases) {
+        if (normalized_key == alias) return true;
+    }
+    return false;
+}
 
 std::wstring utf8_to_wide(const std::string& text);
 std::string wide_to_utf8(const std::wstring& text);

@@ -39,14 +39,6 @@ void set_move_cursor() {
     ::SetCursor(::LoadCursor(nullptr, IDC_SIZEALL));
 }
 
-std::string normalize_track_key(std::string key) {
-    key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char ch) {
-        return std::isspace(ch) != 0;
-    }), key.end());
-    for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return key;
-}
-
 double angle_lerp(double a, double b, double t) {
     double delta = std::atan2(std::sin(b - a), std::cos(b - a));
     return a + delta * t;
@@ -258,23 +250,33 @@ void App::rebuild_marker_overlay_cache() {
 
     std::map<std::string, TrackSource> track_sources;
     TrackSource own_source{&model_.own, true};
-    for (const char* key : {"", "0", "\\", "own", "main"}) {
-        track_sources[normalize_track_key(key)] = own_source;
+    for (const char* key : kOwnTrackLookupAliases) {
+        track_sources[normalize_track_lookup_key(key)] = own_source;
     }
     for (const auto& track : model_.other_tracks) {
-        track_sources[normalize_track_key(track.key)] = TrackSource{&track.points, false};
+        track_sources[normalize_track_lookup_key(track.key)] = TrackSource{&track.points, false};
     }
 
-    auto find_track_source = [&](const std::string& key) -> std::optional<TrackSource> {
-        auto it = track_sources.find(normalize_track_key(key));
+    auto find_track_source = [&](const std::string& normalized_key) -> std::optional<TrackSource> {
+        auto it = track_sources.find(normalized_key);
         if (it == track_sources.end() || !it->second.points) return std::nullopt;
         return it->second;
     };
 
+    auto sample_track_base = [&](const std::string& key, double distance) -> std::optional<TrackPoint> {
+        std::string normalized_key = normalize_track_lookup_key(key);
+        if (auto source = find_track_source(normalized_key)) {
+            auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+            if (sampled) return sampled;
+        }
+        if (is_own_track_lookup_alias(normalized_key)) {
+            return sample_matrix_track_point(*own_source.points, distance, own_source.has_theta_column);
+        }
+        return std::nullopt;
+    };
+
     auto sample_track = [&](const std::string& key, double distance, double lateral, double forward) -> std::optional<TrackPoint> {
-        auto source = find_track_source(key);
-        if (!source) return std::nullopt;
-        auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+        auto sampled = sample_track_base(key, distance);
         if (!sampled) return std::nullopt;
         return offset_track_point(*sampled, lateral, forward);
     };
@@ -540,11 +542,17 @@ void App::rebuild_marker_overlay_cache() {
                                       double lateral, double forward) -> PlanRepeaterSegment {
         PlanRepeaterSegment segment;
         if (end < start) std::swap(start, end);
-        auto source = find_track_source(key);
+        std::string normalized_key = normalize_track_lookup_key(key);
+        auto source = find_track_source(normalized_key);
+        if (source && is_own_track_lookup_alias(normalized_key) &&
+            !sample_matrix_track_point(*source->points, start, source->has_theta_column) &&
+            !sample_matrix_track_point(*source->points, end, source->has_theta_column)) {
+            source = own_source;
+        }
         if (!source) return segment;
 
         auto append_at = [&](double distance) {
-            auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+            auto sampled = sample_track_base(key, distance);
             if (!sampled) return;
             TrackPoint p = offset_track_point(*sampled, lateral, forward);
             append_repeater_segment_point(segment, p);

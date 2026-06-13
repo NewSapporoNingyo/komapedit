@@ -2131,21 +2131,27 @@ Canvas3DScene App::build_scene_preview_scene() const {
 
     std::map<std::string, SceneTrackSource> track_sources;
     SceneTrackSource own_source{&model_.own, true};
-    for (const char* key : {"", "0", "\\", "own", "main"}) {
-        track_sources[scene_key(key)] = own_source;
+    for (const char* key : kOwnTrackLookupAliases) {
+        track_sources[normalize_track_lookup_key(key)] = own_source;
     }
     for (const OtherTrack& track : model_.other_tracks) {
-        track_sources[scene_key(track.key)] = SceneTrackSource{&track.points, false};
+        track_sources[normalize_track_lookup_key(track.key)] = SceneTrackSource{&track.points, false};
     }
-    auto find_track = [&](const std::string& key) -> std::optional<SceneTrackSource> {
-        auto it = track_sources.find(scene_key(key));
+    auto find_track = [&](const std::string& normalized_key) -> std::optional<SceneTrackSource> {
+        auto it = track_sources.find(normalized_key);
         if (it == track_sources.end() || !it->second.points) return std::nullopt;
         return it->second;
     };
     auto sample_track = [&](const std::string& key, double distance) -> std::optional<Canvas3DTrackPoint> {
-        auto source = find_track(key);
-        if (!source) return std::nullopt;
-        return scene_sample_track(*source->points, distance, source->has_theta_column);
+        std::string normalized_key = normalize_track_lookup_key(key);
+        if (auto source = find_track(normalized_key)) {
+            auto sampled = scene_sample_track(*source->points, distance, source->has_theta_column);
+            if (sampled) return sampled;
+        }
+        if (is_own_track_lookup_alias(normalized_key)) {
+            return scene_sample_track(*own_source.points, distance, own_source.has_theta_column);
+        }
+        return std::nullopt;
     };
 
     std::map<std::string, std::string> model_paths;
@@ -2183,19 +2189,25 @@ Canvas3DScene App::build_scene_preview_scene() const {
                                      double tilt, double span) {
         SceneVec3 right = scene_right_from_theta(point.theta);
         SceneVec3 forward = scene_forward_from_theta(point.theta);
-        if (span > 1.0 && span_point) {
-            SceneVec3 base{point.x, point.y, point.z};
-            SceneVec3 next{span_point->x, span_point->y, span_point->z};
-            if (static_cast<int>(tilt) % 2 == 0) next.y = base.y;
-            forward = scene_normalize(next - base);
-            right = scene_normalize(scene_cross(forward, {0.0f, 1.0f, 0.0f}));
-        }
         SceneVec3 up = scene_cross(right, forward);
-        scene_apply_euler(right, up, forward, rx, ry, rz);
         SceneVec3 origin{point.x, point.y, point.z};
-        origin = origin + right * static_cast<float>(x) +
-            up * static_cast<float>(y) +
-            forward * static_cast<float>(z);
+        origin = origin + right * static_cast<float>(x) + up * static_cast<float>(y);
+        if (span > 1.0 && span_point) {
+            SceneVec3 span_right = scene_right_from_theta(span_point->theta);
+            SceneVec3 span_forward = scene_forward_from_theta(span_point->theta);
+            SceneVec3 span_up = scene_cross(span_right, span_forward);
+            SceneVec3 next{span_point->x, span_point->y, span_point->z};
+            next = next + span_right * static_cast<float>(x) + span_up * static_cast<float>(y);
+            if (static_cast<int>(tilt) % 2 == 0) next.y = origin.y;
+            SceneVec3 span_forward_vec = next - origin;
+            if (scene_dot(span_forward_vec, span_forward_vec) > 1e-8f) {
+                forward = scene_normalize(span_forward_vec);
+                right = scene_normalize(scene_cross(forward, {0.0f, 1.0f, 0.0f}));
+                up = scene_cross(right, forward);
+            }
+        }
+        origin = origin + forward * static_cast<float>(z);
+        scene_apply_euler(right, up, forward, rx, ry, rz);
         scene_store_world(instance.world, right, up, forward, origin);
     };
 
