@@ -20,17 +20,34 @@ struct Canvas3DTrackPoint {
     double y = 0.0;
     double z = 0.0;
     double theta = 0.0;
+    double cant_angle = 0.0;
 };
 
 struct Canvas3DTrackPath {
     std::string key;
     std::vector<Canvas3DTrackPoint> points;
     ImVec4 color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+    bool visible = true;
+};
+
+struct Canvas3DTrackVisibility {
+    std::string key;
+    bool visible = true;
 };
 
 struct Canvas3DModelInstance {
     std::string model_path;
+    std::string track_key;
     double distance = 0.0;
+    bool follow_track = false;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double rx = 0.0;
+    double ry = 0.0;
+    double rz = 0.0;
+    double tilt = 0.0;
+    double span = 0.0;
     double world[16] = {
         1.0, 0.0, 0.0, 0.0,
         0.0, 1.0, 0.0, 0.0,
@@ -114,6 +131,7 @@ public:
     bool load_scene(Canvas3DScene scene, std::string& error);
     void clear_scene();
     bool has_scene() const;
+    bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error);
     void set_scene_window(double back_m, double forward_m);
     Canvas3DSceneStats scene_stats() const;
     bool jump_scene_camera_to_distance(double distance);

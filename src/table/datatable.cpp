@@ -1554,12 +1554,14 @@ void App::render_othertracks_window() {
         if (!has_model_) {
             ImGui::TextDisabled("-");
         } else {
+            bool scene_track_visibility_changed = false;
             bool all_visible = !model_.other_tracks.empty() &&
                 std::all_of(model_.other_tracks.begin(), model_.other_tracks.end(),
                             [](const OtherTrack& t) { return t.visible; });
             ImGui::BeginDisabled(model_.other_tracks.empty());
             if (ImGui::Checkbox(tr("chk.select_all").c_str(), &all_visible)) {
                 for (auto& t : model_.other_tracks) t.visible = all_visible;
+                scene_track_visibility_changed = true;
             }
             ImGui::EndDisabled();
             if (ImGui::BeginTable("othertracks", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
@@ -1574,7 +1576,9 @@ void App::render_othertracks_window() {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     ImGui::PushID(t.key.c_str());
-                    ImGui::Checkbox("##show", &t.visible);
+                    if (ImGui::Checkbox("##show", &t.visible)) {
+                        scene_track_visibility_changed = true;
+                    }
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TextUnformatted(t.key.empty() ? "\\" : t.key.c_str());
                     ImGui::TableSetColumnIndex(2);
@@ -1588,6 +1592,9 @@ void App::render_othertracks_window() {
                     ImGui::PopID();
                 }
                 ImGui::EndTable();
+            }
+            if (scene_track_visibility_changed) {
+                sync_scene_preview_track_visibility();
             }
         }
     }

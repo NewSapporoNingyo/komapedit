@@ -400,13 +400,6 @@ SceneVec3 scene_forward_from_theta(double theta) {
     return {std::sin(theta), 0.0f, -std::cos(theta)};
 }
 
-SceneVec3 scene_rotate_axis(SceneVec3 v, SceneVec3 axis, double radians) {
-    axis = scene_normalize(axis);
-    double c = std::cos(radians);
-    double s = std::sin(radians);
-    return v * c + scene_cross(axis, v) * s + axis * (scene_dot(axis, v) * (1.0f - c));
-}
-
 double scene_angle_lerp(double a, double b, double t) {
     double delta = std::atan2(std::sin(b - a), std::cos(b - a));
     return a + delta * t;
@@ -429,12 +422,28 @@ double scene_matrix_track_tangent(const Matrix& points, size_t row) {
 }
 
 Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool has_theta_column) {
+    constexpr double default_gauge = 1067.0;
+    auto cant_angle = [default_gauge](double cant, double gauge) {
+        if (!std::isfinite(cant)) return 0.0;
+        double effective_gauge = std::abs(gauge) > 1e-9 && std::isfinite(gauge) ? std::abs(gauge) : default_gauge;
+        return std::asin(std::clamp(cant / effective_gauge, -1.0, 1.0));
+    };
+
     Canvas3DTrackPoint p;
     p.distance = points.at(row, 0);
     p.x = points.at(row, 2);
     p.z = -points.at(row, 1);
     p.y = points.cols > 3 ? points.at(row, 3) : 0.0;
     p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_matrix_track_tangent(points, row);
+    if (has_theta_column) {
+        double cant = points.cols > 8 ? points.at(row, 8) : 0.0;
+        double gauge = points.cols > 10 ? points.at(row, 10) : default_gauge;
+        p.cant_angle = cant_angle(cant, gauge);
+    } else {
+        double cant = points.cols > 5 ? points.at(row, 5) : 0.0;
+        double gauge = points.cols > 7 ? points.at(row, 7) : default_gauge;
+        p.cant_angle = cant_angle(cant, gauge);
+    }
     return p;
 }
 
@@ -465,6 +474,7 @@ std::optional<Canvas3DTrackPoint> scene_sample_track(const Matrix& points, doubl
     p.y = a.y + (b.y - a.y) * t;
     p.z = a.z + (b.z - a.z) * t;
     p.theta = scene_angle_lerp(a.theta, b.theta, t);
+    p.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
     return p;
 }
 
@@ -485,26 +495,6 @@ void scene_store_world(double out[16], SceneVec3 right, SceneVec3 up, SceneVec3 
         origin.x, origin.y, origin.z, 1.0f
     };
     std::copy(values, values + 16, out);
-}
-
-void scene_apply_euler(SceneVec3& right, SceneVec3& up, SceneVec3& forward,
-                       double rx_deg, double ry_deg, double rz_deg) {
-    constexpr double deg_to_rad = 0.01745329251994329577;
-    double rx = rx_deg * deg_to_rad;
-    double ry = ry_deg * deg_to_rad;
-    double rz = rz_deg * deg_to_rad;
-    if (std::abs(rx) > 1e-6) {
-        up = scene_rotate_axis(up, right, -rx);
-        forward = scene_rotate_axis(forward, right, -rx);
-    }
-    if (std::abs(rz) > 1e-6) {
-        right = scene_rotate_axis(right, forward * -1.0f, rz);
-        up = scene_rotate_axis(up, forward * -1.0f, rz);
-    }
-    if (std::abs(ry) > 1e-6) {
-        right = scene_rotate_axis(right, up, -ry);
-        forward = scene_rotate_axis(forward, up, -ry);
-    }
 }
 
 std::vector<std::string> scene_split_key_list(const std::string& text) {
@@ -540,7 +530,7 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     model_preview_canvas_ = std::make_unique<Canvas3D>(device_);
     model_preview_canvas_->set_background_color(model_preview_bg_color_);
     scene_preview_canvas_ = std::make_unique<Canvas3D>(device_);
-    scene_preview_canvas_->set_background_color(ImVec4(0.48f, 0.62f, 0.82f, 1.0f));
+    scene_preview_canvas_->set_background_color(ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
     lang_ = settings_.language;
     font_size_ = clamp_font_size(settings_.font_size);
     ui_component_size_ = clamp_ui_component_size(settings_.ui_component_size);
@@ -2201,51 +2191,22 @@ Canvas3DScene App::build_scene_preview_scene() {
         return it == model_paths.end() ? std::string{} : it->second;
     };
 
-    auto append_track_path = [&](const std::string& key, const Matrix& points, bool has_theta, ImVec4 color) {
+    auto append_track_path = [&](const std::string& key, const Matrix& points, bool has_theta, ImVec4 color, bool visible) {
         if (points.empty() || points.cols < 3) return;
         Canvas3DTrackPath path;
         path.key = key;
         path.color = color;
+        path.visible = visible;
         path.points.reserve(points.rows);
         for (size_t row = 0; row < points.rows; ++row) {
             path.points.push_back(scene_matrix_row_point(points, row, has_theta));
         }
         scene.tracks.push_back(std::move(path));
     };
-    append_track_path("own", scene_own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f));
+    append_track_path("own", scene_own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f), true);
     for (const OtherTrack& track : scene_other_tracks) {
-        append_track_path(track.key, track.points, false, track.color);
+        append_track_path(track.key, track.points, false, track.color, track.visible);
     }
-
-    auto fill_world_from_track = [&](Canvas3DModelInstance& instance,
-                                     const Canvas3DTrackPoint& point,
-                                     std::optional<Canvas3DTrackPoint> span_point,
-                                     double x, double y, double z,
-                                     double rx, double ry, double rz,
-                                     double tilt, double span) {
-        SceneVec3 right = scene_right_from_theta(point.theta);
-        SceneVec3 forward = scene_forward_from_theta(point.theta);
-        SceneVec3 up = scene_cross(right, forward);
-        SceneVec3 origin{point.x, point.y, point.z};
-        origin = origin + right * static_cast<float>(x) + up * static_cast<float>(y);
-        if (span > 1.0 && span_point) {
-            SceneVec3 span_right = scene_right_from_theta(span_point->theta);
-            SceneVec3 span_forward = scene_forward_from_theta(span_point->theta);
-            SceneVec3 span_up = scene_cross(span_right, span_forward);
-            SceneVec3 next{span_point->x, span_point->y, span_point->z};
-            next = next + span_right * static_cast<float>(x) + span_up * static_cast<float>(y);
-            if (static_cast<int>(tilt) % 2 == 0) next.y = origin.y;
-            SceneVec3 span_forward_vec = next - origin;
-            if (scene_dot(span_forward_vec, span_forward_vec) > 1e-8f) {
-                forward = scene_normalize(span_forward_vec);
-                right = scene_normalize(scene_cross(forward, {0.0f, 1.0f, 0.0f}));
-                up = scene_cross(right, forward);
-            }
-        }
-        origin = origin + forward * static_cast<float>(z);
-        scene_apply_euler(right, up, forward, rx, ry, rz);
-        scene_store_world(instance.world, right, up, forward, origin);
-    };
 
     auto append_structure_instance = [&](const TableRow& row) {
         std::string path = model_path_for_key(table_cell(row, "structureKey"));
@@ -2253,21 +2214,19 @@ Canvas3DScene App::build_scene_preview_scene() {
         double distance = table_cell_number(row, "distance");
         auto point = sample_track(table_cell(row, "trackKey"), distance);
         if (!point) return;
-        double span = table_cell_number(row, "span");
-        std::optional<Canvas3DTrackPoint> span_point;
-        if (span > 1.0) span_point = sample_track(table_cell(row, "trackKey"), distance + span);
         Canvas3DModelInstance instance;
         instance.model_path = path;
+        instance.track_key = table_cell(row, "trackKey");
         instance.distance = distance;
-        fill_world_from_track(instance, *point, span_point,
-                              table_cell_number(row, "x"),
-                              table_cell_number(row, "y"),
-                              table_cell_number(row, "z"),
-                              table_cell_number(row, "rx"),
-                              table_cell_number(row, "ry"),
-                              table_cell_number(row, "rz"),
-                              table_cell_number(row, "tilt"),
-                              span);
+        instance.follow_track = true;
+        instance.x = table_cell_number(row, "x");
+        instance.y = table_cell_number(row, "y");
+        instance.z = table_cell_number(row, "z");
+        instance.rx = table_cell_number(row, "rx");
+        instance.ry = table_cell_number(row, "ry");
+        instance.rz = table_cell_number(row, "rz");
+        instance.tilt = table_cell_number(row, "tilt");
+        instance.span = table_cell_number(row, "span");
         scene.instances.push_back(std::move(instance));
     };
     for (const TableRow& row : model_.structures) append_structure_instance(row);
@@ -2399,6 +2358,13 @@ void App::start_scene_preview() {
     rebuild_scene_preview();
 }
 
+void App::stop_scene_preview() {
+    scene_preview_started_ = false;
+    scene_preview_dirty_ = true;
+    if (scene_preview_canvas_) scene_preview_canvas_->clear_scene();
+    add_log("[INFO]3D scene preview stopped");
+}
+
 void App::rebuild_scene_preview() {
     if (!scene_preview_canvas_ || !scene_preview_started_) return;
     if (!has_model_ || model_.own.empty()) {
@@ -2421,6 +2387,21 @@ void App::rebuild_scene_preview() {
             " models=" + std::to_string(stats.model_path_count));
 }
 
+void App::sync_scene_preview_track_visibility() {
+    if (!scene_preview_canvas_ || !scene_preview_started_) return;
+
+    std::vector<Canvas3DTrackVisibility> visibility;
+    visibility.reserve(model_.other_tracks.size());
+    for (const OtherTrack& track : model_.other_tracks) {
+        visibility.push_back(Canvas3DTrackVisibility{track.key, track.visible});
+    }
+
+    std::string error;
+    if (!scene_preview_canvas_->set_scene_track_visibility(visibility, error)) {
+        add_log("[ERROR]3D scene preview track visibility: " + error);
+    }
+}
+
 void App::render_scene_preview_window() {
     if (!show_scene_preview_window_) return;
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
@@ -2434,12 +2415,16 @@ void App::render_scene_preview_window() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(window_padding_x, toolbar_padding_y));
     if (ImGui::Begin(title.c_str(), &show_scene_preview_window_)) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(item_spacing_x * 1.35f, 0.0f));
-        ImGui::BeginDisabled(load_state_.running || !has_model_);
+        ImGui::BeginDisabled(scene_preview_started_ || load_state_.running || !has_model_);
         if (ImGui::Button(tr("button.start_scene_preview").c_str())) start_scene_preview();
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!scene_preview_started_ || load_state_.running || !has_model_);
         if (ImGui::Button(tr("button.reload").c_str())) rebuild_scene_preview();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!scene_preview_started_);
+        if (ImGui::Button(tr("button.close").c_str())) stop_scene_preview();
         ImGui::EndDisabled();
         ImGui::PopStyleVar();
         if (scene_preview_started_ && scene_preview_dirty_ && has_model_ && !load_state_.running) {

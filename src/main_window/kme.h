@@ -1059,7 +1059,9 @@ private:
     void preview_structure_model(const std::string& path);
     void reload_model_preview();
     void start_scene_preview();
+    void stop_scene_preview();
     void rebuild_scene_preview();
+    void sync_scene_preview_track_visibility();
     Canvas3DScene build_scene_preview_scene();
     void reload_current_map_and_model_preview();
     void render_popups();

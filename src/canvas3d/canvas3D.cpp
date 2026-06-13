@@ -493,6 +493,11 @@ bool is_scene_own_track_alias(const std::string& normalized_key) {
         normalized_key == "\\" || normalized_key == "own" || normalized_key == "main";
 }
 
+int scene_tilt_flags(double tilt) {
+    if (!std::isfinite(tilt)) return 0;
+    return static_cast<int>(tilt);
+}
+
 void store_world(double out[16], DVec3 right, DVec3 up, DVec3 forward, DVec3 origin) {
     right = normalize(right);
     up = normalize(up);
@@ -911,6 +916,32 @@ struct Canvas3D::Impl {
         return scene_active;
     }
 
+    bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error) {
+        if (!scene_active) return true;
+
+        std::map<std::string, bool> visible_by_key;
+        for (const Canvas3DTrackVisibility& item : visibility) {
+            visible_by_key[normalize_scene_track_key(item.key)] = item.visible;
+        }
+
+        bool changed = false;
+        for (Canvas3DTrackPath& path : scene_data.tracks) {
+            auto it = visible_by_key.find(normalize_scene_track_key(path.key));
+            if (it == visible_by_key.end() || path.visible == it->second) continue;
+            path.visible = it->second;
+            changed = true;
+        }
+        if (!changed) return true;
+
+        release_scene_track_chunks();
+        if (!build_scene_track_chunks(error)) {
+            if (!error.empty()) scene_last_error = error;
+            release_scene_track_chunks();
+            return false;
+        }
+        return true;
+    }
+
     void set_scene_window(double back_m, double forward_m) {
         if (std::isfinite(back_m) && back_m >= 0.0) scene_window_back_m = back_m;
         if (std::isfinite(forward_m) && forward_m > 0.0) scene_window_forward_m = forward_m;
@@ -1077,11 +1108,15 @@ fail:
         chunk.index_count = 0;
     }
 
+    void release_scene_track_chunks() {
+        for (SceneTrackChunkGpu& chunk : scene_track_chunks) release_track_chunk(chunk);
+        scene_track_chunks.clear();
+    }
+
     void release_scene_resources() {
         for (auto& kv : scene_models) release_scene_model(kv.second);
         scene_models.clear();
-        for (SceneTrackChunkGpu& chunk : scene_track_chunks) release_track_chunk(chunk);
-        scene_track_chunks.clear();
+        release_scene_track_chunks();
         scene_chunks.clear();
         {
             std::lock_guard<std::mutex> lock(scene_upload_mutex);
@@ -1581,7 +1616,17 @@ fail:
             SceneInstance instance;
             instance.model_path = source.model_path;
             instance.distance = source.distance;
-            std::copy(source.world, source.world + 16, instance.world);
+            if (source.follow_track) {
+                if (!make_track_world(source.track_key, source.distance,
+                                      source.x, source.y, source.z,
+                                      source.rx, source.ry, source.rz,
+                                      source.tilt, source.span,
+                                      instance.world)) {
+                    continue;
+                }
+            } else {
+                std::copy(source.world, source.world + 16, instance.world);
+            }
             scene_chunks[static_cast<size_t>(index)].instances.push_back(std::move(instance));
         }
         for (size_t repeater_index = 0; repeater_index < scene_data.repeaters.size(); ++repeater_index) {
@@ -1696,7 +1741,7 @@ fail:
             std::vector<unsigned int> indices;
 
             for (const Canvas3DTrackPath& track : scene_data.tracks) {
-                if (track.points.size() < 2) continue;
+                if (!track.visible || track.points.size() < 2) continue;
                 size_t part_start = indices.size();
                 UINT material_index = static_cast<UINT>(gpu_chunk.materials.size());
                 GpuMaterial material;
@@ -1833,6 +1878,7 @@ fail:
         out.y = a.y + (b.y - a.y) * t;
         out.z = a.z + (b.z - a.z) * t;
         out.theta = angle_lerp(a.theta, b.theta, t);
+        out.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
         return true;
     }
 
@@ -1855,40 +1901,88 @@ fail:
         return path && sample_track_path(*path, distance, out);
     }
 
-    bool make_repeater_instance_data(const Canvas3DRepeaterSegment& repeater,
-                                     double distance,
-                                     SceneInstanceData& out) const {
+    static void apply_track_cant(DVec3& right, DVec3& up, const DVec3& forward, double cant_angle) {
+        if (std::abs(cant_angle) <= 1e-9 || !std::isfinite(cant_angle)) return;
+        DVec3 axis = forward * -1.0;
+        right = rotate_axis(right, axis, -cant_angle);
+        up = rotate_axis(up, axis, -cant_angle);
+    }
+
+    bool make_track_world(const std::string& track_key,
+                          double distance,
+                          double x,
+                          double y,
+                          double z,
+                          double rx,
+                          double ry,
+                          double rz,
+                          double tilt,
+                          double span,
+                          double out_world[16]) const {
         Canvas3DTrackPoint point;
-        if (!sample_scene_track(repeater.track_key, distance, point)) return false;
+        if (!sample_scene_track(track_key, distance, point)) return false;
+
+        const int flags = scene_tilt_flags(tilt);
+        const bool follow_gradient = (flags & 1) != 0;
+        const bool follow_cant = (flags & 2) != 0;
 
         DVec3 right = right_from_theta_d(point.theta);
         DVec3 forward = forward_from_theta_d(point.theta);
         DVec3 up = cross(right, forward);
-        DVec3 origin{point.x, point.y, point.z};
-        origin = origin + right * repeater.x + up * repeater.y;
+        DVec3 offset_right = right;
+        DVec3 offset_up = up;
+        if (follow_cant) apply_track_cant(offset_right, offset_up, forward, point.cant_angle);
 
-        if (repeater.span > 1.0) {
-            Canvas3DTrackPoint span_point;
-            if (sample_scene_track(repeater.track_key, distance + repeater.span, span_point)) {
-                DVec3 span_right = right_from_theta_d(span_point.theta);
-                DVec3 span_forward = forward_from_theta_d(span_point.theta);
-                DVec3 span_up = cross(span_right, span_forward);
-                DVec3 next{span_point.x, span_point.y, span_point.z};
-                next = next + span_right * repeater.x + span_up * repeater.y;
-                if ((static_cast<int>(repeater.tilt) & 1) == 0) next.y = origin.y;
-                DVec3 span_forward_vec = next - origin;
-                if (dot(span_forward_vec, span_forward_vec) > 1e-12) {
-                    forward = normalize(span_forward_vec);
-                    right = normalize(cross(forward, {0.0, 1.0, 0.0}));
-                    up = cross(right, forward);
-                }
+        DVec3 origin{point.x, point.y, point.z};
+        origin = origin + offset_right * x + offset_up * y;
+
+        double effective_span = std::isfinite(span) && span >= 1.0 ? span : 1.0;
+        Canvas3DTrackPoint span_point;
+        if (sample_scene_track(track_key, distance + effective_span, span_point)) {
+            DVec3 span_right = right_from_theta_d(span_point.theta);
+            DVec3 span_forward = forward_from_theta_d(span_point.theta);
+            DVec3 span_up = cross(span_right, span_forward);
+            DVec3 span_offset_right = span_right;
+            DVec3 span_offset_up = span_up;
+            if (follow_cant) apply_track_cant(span_offset_right, span_offset_up, span_forward, span_point.cant_angle);
+
+            DVec3 next{span_point.x, span_point.y, span_point.z};
+            next = next + span_offset_right * x + span_offset_up * y;
+            if (!follow_gradient) next.y = origin.y;
+            DVec3 span_forward_vec = next - origin;
+            if (dot(span_forward_vec, span_forward_vec) > 1e-12) {
+                forward = normalize(span_forward_vec);
+                right = normalize(cross(forward, {0.0, 1.0, 0.0}));
+                up = cross(right, forward);
             }
         }
 
-        origin = origin + forward * repeater.z;
-        apply_euler(right, up, forward, repeater.rx, repeater.ry, repeater.rz);
+        if (follow_cant) {
+            double cant_angle = point.cant_angle;
+            Canvas3DTrackPoint mid_point;
+            if (sample_scene_track(track_key, distance + effective_span * 0.5, mid_point)) {
+                cant_angle = mid_point.cant_angle;
+            }
+            apply_track_cant(right, up, forward, cant_angle);
+        }
+
+        origin = origin + forward * z;
+        apply_euler(right, up, forward, rx, ry, rz);
+        store_world(out_world, right, up, forward, origin);
+        return true;
+    }
+
+    bool make_repeater_instance_data(const Canvas3DRepeaterSegment& repeater,
+                                     double distance,
+                                     SceneInstanceData& out) const {
         double world[16] = {};
-        store_world(world, right, up, forward, origin);
+        if (!make_track_world(repeater.track_key, distance,
+                              repeater.x, repeater.y, repeater.z,
+                              repeater.rx, repeater.ry, repeater.rz,
+                              repeater.tilt, repeater.span,
+                              world)) {
+            return false;
+        }
         out = make_instance_data(world);
         return true;
     }
@@ -2481,6 +2575,10 @@ void Canvas3D::clear_scene() {
 
 bool Canvas3D::has_scene() const {
     return impl_->has_scene();
+}
+
+bool Canvas3D::set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error) {
+    return impl_->set_scene_track_visibility(visibility, error);
 }
 
 void Canvas3D::set_scene_window(double back_m, double forward_m) {
