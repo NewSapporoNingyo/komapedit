@@ -1,7 +1,7 @@
 <p align="center">
     <img src="icons/titleimage.png" alt="titleimage" width="600";>
 </p>
-<br>
+
 
 # komapedit
 
