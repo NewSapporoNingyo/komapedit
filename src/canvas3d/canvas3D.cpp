@@ -37,6 +37,11 @@
 namespace {
 
 constexpr float kDefaultSceneCameraHeight = 2.0f;
+constexpr double kSceneRepeaterDistanceEpsilon = 1e-6;
+constexpr long long kSceneRepeaterInstanceLimit = 1000000;
+constexpr float kSceneNearZ = 0.2f;
+constexpr float kSceneBackgroundNearZ = 0.05f;
+constexpr float kSceneBackgroundFarZ = 5000.0f;
 
 template <typename T>
 void release_com(T*& p) {
@@ -90,6 +95,13 @@ ImVec4 clamp_background_color(ImVec4 color) {
     color.z = clamp_color_component(color.z);
     color.w = 1.0f;
     return color;
+}
+
+bool texture_pixels_have_alpha(const std::vector<unsigned char>& pixels) {
+    for (size_t i = 3; i < pixels.size(); i += 4) {
+        if (pixels[i] < 255) return true;
+    }
+    return false;
 }
 
 std::string win32_error_text(DWORD code) {
@@ -409,6 +421,7 @@ struct GpuMaterial {
     ID3D11ShaderResourceView* texture = nullptr;
     float diffuse[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool has_texture = false;
+    bool texture_has_alpha = false;
 };
 
 struct CpuMaterial {
@@ -469,6 +482,11 @@ struct SceneChunk {
     std::vector<size_t> repeater_indices;
 };
 
+struct SceneRepeaterIndexRange {
+    long long first = 0;
+    long long last = -1;
+};
+
 using MlApiVersionFn = unsigned int (*)();
 using MlLoadModelFn = int (*)(const char*, MlMeshData*);
 using MlFreeModelFn = void (*)(MlMeshData*);
@@ -496,6 +514,95 @@ bool is_scene_own_track_alias(const std::string& normalized_key) {
 int scene_tilt_flags(double tilt) {
     if (!std::isfinite(tilt)) return 0;
     return static_cast<int>(tilt);
+}
+
+bool scene_material_is_translucent(const GpuMaterial* material) {
+    return material && material->diffuse[3] < 0.999f;
+}
+
+bool scene_material_uses_alpha_mask(const GpuMaterial* material) {
+    return material && material->has_texture && material->texture_has_alpha && !scene_material_is_translucent(material);
+}
+
+bool scene_repeater_has_interval(const Canvas3DRepeaterSegment& repeater) {
+    return repeater.interval > 1e-9 && std::isfinite(repeater.interval);
+}
+
+double scene_repeater_index_epsilon(const Canvas3DRepeaterSegment& repeater) {
+    if (!scene_repeater_has_interval(repeater)) return kSceneRepeaterDistanceEpsilon;
+    return std::min(kSceneRepeaterDistanceEpsilon, repeater.interval * 0.25);
+}
+
+bool scene_repeater_index_range(const Canvas3DRepeaterSegment& repeater,
+                                double range_min,
+                                double range_max,
+                                SceneRepeaterIndexRange& out) {
+    out = {};
+    if (!scene_repeater_has_interval(repeater) || repeater.end_distance < repeater.begin_distance) return false;
+    const double begin = std::max(range_min, repeater.begin_distance);
+    const double end = std::min(range_max, repeater.end_distance);
+    if (end < begin - kSceneRepeaterDistanceEpsilon) return false;
+
+    const double eps = scene_repeater_index_epsilon(repeater);
+    const double first_index_d = std::ceil((begin - repeater.begin_distance - eps) / repeater.interval);
+    const double last_visible_index_d = std::floor((end - repeater.begin_distance + eps) / repeater.interval);
+    const double last_before_end_index_d =
+        std::ceil((repeater.end_distance - repeater.begin_distance - eps) / repeater.interval) - 1.0;
+    if (!std::isfinite(first_index_d) ||
+        !std::isfinite(last_visible_index_d) ||
+        !std::isfinite(last_before_end_index_d)) {
+        return false;
+    }
+
+    long long first_index = 0;
+    if (first_index_d > 0.0) {
+        if (first_index_d > static_cast<double>(std::numeric_limits<long long>::max())) return false;
+        first_index = static_cast<long long>(first_index_d);
+    }
+
+    const double last_index_d = std::min(last_visible_index_d, last_before_end_index_d);
+    if (last_index_d < 0.0) return false;
+    if (last_index_d > static_cast<double>(std::numeric_limits<long long>::max())) {
+        out.first = first_index;
+        out.last = std::numeric_limits<long long>::max();
+        return out.last >= out.first;
+    }
+
+    out.first = first_index;
+    out.last = static_cast<long long>(last_index_d);
+    return out.last >= out.first;
+}
+
+size_t scene_repeater_index_count(const SceneRepeaterIndexRange& range) {
+    if (range.last < range.first) return 0;
+    double count = static_cast<double>(range.last - range.first) + 1.0;
+    return static_cast<size_t>(std::min<double>(count, static_cast<double>(kSceneRepeaterInstanceLimit)));
+}
+
+size_t scene_repeater_instance_count(const Canvas3DRepeaterSegment& repeater) {
+    if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) return 0;
+    if (!scene_repeater_has_interval(repeater)) return 1;
+
+    SceneRepeaterIndexRange range;
+    if (!scene_repeater_index_range(repeater, repeater.begin_distance, repeater.end_distance, range)) return 0;
+    return scene_repeater_index_count(range);
+}
+
+bool scene_repeater_render_distance_span(const Canvas3DRepeaterSegment& repeater,
+                                         double& first_distance,
+                                         double& last_distance) {
+    if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) return false;
+    if (!scene_repeater_has_interval(repeater)) {
+        first_distance = repeater.begin_distance;
+        last_distance = repeater.begin_distance;
+        return true;
+    }
+
+    SceneRepeaterIndexRange range;
+    if (!scene_repeater_index_range(repeater, repeater.begin_distance, repeater.end_distance, range)) return false;
+    first_distance = repeater.begin_distance + static_cast<double>(range.first) * repeater.interval;
+    last_distance = repeater.begin_distance + static_cast<double>(range.last) * repeater.interval;
+    return true;
 }
 
 void store_world(double out[16], DVec3 right, DVec3 up, DVec3 forward, DVec3 origin) {
@@ -616,7 +723,7 @@ float4 ps_main(VSOutput input) : SV_TARGET
     float4 color = materialColor;
     if (useTexture.x > 0.5)
         color *= diffuseTexture.Sample(diffuseSampler, input.texcoord);
-    clip(color.a - 0.01);
+    clip(color.a - 0.1);
     return color;
 }
 )";
@@ -704,6 +811,8 @@ struct Canvas3D::Impl {
         release_com(scene_constant_buffer);
         release_com(blend_state);
         release_com(depth_state);
+        release_com(depth_read_state);
+        release_com(alpha_mask_rasterizer_state);
         release_com(track_rasterizer_state);
         release_com(rasterizer_state);
         release_com(input_layout);
@@ -812,11 +921,13 @@ struct Canvas3D::Impl {
                 materials[i].diffuse[2] = src->diffuse[2];
                 materials[i].diffuse[3] = std::clamp(src->diffuse[3], 0.0f, 1.0f);
                 if (src->texture_path && *src->texture_path) {
-                    if (!load_texture(src->texture_path, &materials[i].texture, error)) {
+                    bool texture_has_alpha = false;
+                    if (!load_texture(src->texture_path, &materials[i].texture, error, &texture_has_alpha)) {
                         release_resources();
                         return false;
                     }
                     materials[i].has_texture = true;
+                    materials[i].texture_has_alpha = texture_has_alpha;
                 }
             }
         }
@@ -971,23 +1082,18 @@ struct Canvas3D::Impl {
     size_t count_scene_instances() const {
         size_t count = scene_data.instances.size();
         for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
-            if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) continue;
-            if (repeater.interval <= 1e-9 || !std::isfinite(repeater.interval)) {
-                ++count;
-                continue;
-            }
-            double span = repeater.end_distance - repeater.begin_distance;
-            double estimated = std::floor(span / repeater.interval) + 1.0;
-            if (estimated > 0.0 && std::isfinite(estimated)) {
-                count += static_cast<size_t>(std::min<double>(estimated, 1000000.0));
-            }
+            count += scene_repeater_instance_count(repeater);
         }
         return count;
     }
 
-    bool load_texture(const std::string& path, ID3D11ShaderResourceView** out_srv, std::string& error) {
+    bool load_texture(const std::string& path,
+                      ID3D11ShaderResourceView** out_srv,
+                      std::string& error,
+                      bool* out_has_alpha = nullptr) {
         if (!out_srv) return false;
         *out_srv = nullptr;
+        if (out_has_alpha) *out_has_alpha = false;
         IWICImagingFactory* factory = nullptr;
         IWICBitmapDecoder* decoder = nullptr;
         IWICBitmapFrameDecode* frame = nullptr;
@@ -1034,6 +1140,7 @@ struct Canvas3D::Impl {
             error = "failed to copy texture pixels: " + path;
             goto fail;
         }
+        if (out_has_alpha) *out_has_alpha = texture_pixels_have_alpha(pixels);
 
         {
             D3D11_TEXTURE2D_DESC desc = {};
@@ -1074,6 +1181,7 @@ struct Canvas3D::Impl {
 
 fail:
         release_com(*out_srv);
+        if (out_has_alpha) *out_has_alpha = false;
         release_com(converter);
         release_com(frame);
         release_com(decoder);
@@ -1085,6 +1193,7 @@ fail:
         for (GpuMaterial& material : model.materials) {
             release_com(material.texture);
             material.has_texture = false;
+            material.texture_has_alpha = false;
         }
         model.materials.clear();
         model.parts.clear();
@@ -1099,6 +1208,7 @@ fail:
         for (GpuMaterial& material : chunk.materials) {
             release_com(material.texture);
             material.has_texture = false;
+            material.texture_has_alpha = false;
         }
         chunk.materials.clear();
         chunk.parts.clear();
@@ -1251,8 +1361,10 @@ fail:
             model.materials[i].diffuse[3] = src->diffuse[3];
             if (!src->texture_path.empty()) {
                 std::string texture_error;
-                if (load_texture(src->texture_path, &model.materials[i].texture, texture_error)) {
+                bool texture_has_alpha = false;
+                if (load_texture(src->texture_path, &model.materials[i].texture, texture_error, &texture_has_alpha)) {
                     model.materials[i].has_texture = true;
+                    model.materials[i].texture_has_alpha = texture_has_alpha;
                 } else if (scene_last_error.empty()) {
                     scene_last_error = texture_error;
                 }
@@ -1289,7 +1401,8 @@ fail:
             return false;
         }
         if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
-            depth_state && rasterizer_state && sampler_state && blend_state) return true;
+            depth_state && depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
+            track_rasterizer_state && sampler_state && blend_state) return true;
 
         if (!ensure_pipeline(error)) return false;
 
@@ -1421,7 +1534,8 @@ fail:
                          const std::vector<MeshPart>& mesh_parts,
                          const std::vector<GpuMaterial>& mesh_materials,
                          UINT instance_count,
-                         const Mat4& view_proj) {
+                         const Mat4& view_proj,
+                         ID3D11RasterizerState* base_rasterizer) {
         if (!vb || !ib || !instance_buffer || instance_count == 0) return;
 
         UINT strides[2] = {sizeof(GpuVertex), sizeof(SceneInstanceData)};
@@ -1437,8 +1551,16 @@ fail:
         context->PSSetConstantBuffers(0, 1, &scene_constant_buffer);
         context->PSSetSamplers(0, 1, &sampler_state);
 
+        const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        if (!base_rasterizer) base_rasterizer = rasterizer_state;
         for (const MeshPart& part : mesh_parts) {
             const GpuMaterial* material = part.material_index < mesh_materials.size() ? &mesh_materials[part.material_index] : nullptr;
+            const bool alpha_masked = scene_material_uses_alpha_mask(material);
+            const bool translucent = scene_material_is_translucent(material);
+            context->RSSetState(alpha_masked && alpha_mask_rasterizer_state ? alpha_mask_rasterizer_state : base_rasterizer);
+            context->OMSetDepthStencilState(translucent && depth_read_state ? depth_read_state : depth_state, 0);
+            context->OMSetBlendState(translucent ? blend_state : nullptr, blend_factor, 0xffffffff);
+
             SceneViewConstants constants = {};
             constants.view_proj = view_proj;
             constants.material_color[0] = material ? material->diffuse[0] : 1.0f;
@@ -1453,6 +1575,9 @@ fail:
         }
         ID3D11ShaderResourceView* null_srv = nullptr;
         context->PSSetShaderResources(0, 1, &null_srv);
+        context->RSSetState(base_rasterizer);
+        context->OMSetDepthStencilState(depth_state, 0);
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
     }
 
     void draw_scene_model(SceneModelGpu& model, const std::vector<SceneInstanceData>& instances, const Mat4& view_proj) {
@@ -1463,7 +1588,7 @@ fail:
             return;
         }
         draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
-                        model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj);
+                        model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj, rasterizer_state);
     }
 
     bool ensure_pipeline(std::string& error) {
@@ -1472,7 +1597,8 @@ fail:
             return false;
         }
         if (vertex_shader && pixel_shader && input_layout && constant_buffer && depth_state &&
-            rasterizer_state && track_rasterizer_state && sampler_state && blend_state) return true;
+            depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
+            track_rasterizer_state && sampler_state && blend_state) return true;
 
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
@@ -1543,6 +1669,13 @@ fail:
             error = hresult_text("CreateDepthStencilState", hr);
             return false;
         }
+        D3D11_DEPTH_STENCIL_DESC ds_read_desc = ds_desc;
+        ds_read_desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        hr = device->CreateDepthStencilState(&ds_read_desc, &depth_read_state);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateDepthStencilState(read-only)", hr);
+            return false;
+        }
 
         D3D11_RASTERIZER_DESC rs_desc = {};
         rs_desc.FillMode = D3D11_FILL_SOLID;
@@ -1552,6 +1685,13 @@ fail:
         hr = device->CreateRasterizerState(&rs_desc, &rasterizer_state);
         if (FAILED(hr)) {
             error = hresult_text("CreateRasterizerState", hr);
+            return false;
+        }
+        D3D11_RASTERIZER_DESC alpha_mask_rs_desc = rs_desc;
+        alpha_mask_rs_desc.DepthBias = -8;
+        hr = device->CreateRasterizerState(&alpha_mask_rs_desc, &alpha_mask_rasterizer_state);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateRasterizerState(alpha mask)", hr);
             return false;
         }
         rs_desc.CullMode = D3D11_CULL_NONE;
@@ -1631,9 +1771,11 @@ fail:
         }
         for (size_t repeater_index = 0; repeater_index < scene_data.repeaters.size(); ++repeater_index) {
             const Canvas3DRepeaterSegment& repeater = scene_data.repeaters[repeater_index];
-            if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) continue;
-            int begin_index = static_cast<int>(std::floor((repeater.begin_distance - first) / scene_chunk_m));
-            int end_index = static_cast<int>(std::floor((repeater.end_distance - first) / scene_chunk_m));
+            double repeater_first = 0.0;
+            double repeater_last = 0.0;
+            if (!scene_repeater_render_distance_span(repeater, repeater_first, repeater_last)) continue;
+            int begin_index = static_cast<int>(std::floor((repeater_first - first) / scene_chunk_m));
+            int end_index = static_cast<int>(std::floor((repeater_last - first) / scene_chunk_m));
             begin_index = std::clamp(begin_index, 0, static_cast<int>(scene_chunks.size()) - 1);
             end_index = std::clamp(end_index, 0, static_cast<int>(scene_chunks.size()) - 1);
             for (int index = begin_index; index <= end_index; ++index) {
@@ -1991,9 +2133,8 @@ fail:
                                            double visible_min,
                                            double visible_max,
                                            std::map<std::string, std::vector<SceneInstanceData>>& visible_instances) const {
-        constexpr double eps = 1e-6;
         double chunk_max = chunk.d_max;
-        if (chunk.d_max < scene_data.max_distance) chunk_max -= eps;
+        if (chunk.d_max < scene_data.max_distance) chunk_max -= kSceneRepeaterDistanceEpsilon;
         double range_min = std::max(visible_min, chunk.d_min);
         double range_max = std::min(visible_max, chunk_max);
         if (range_max < range_min) return;
@@ -2005,7 +2146,7 @@ fail:
 
             const double begin = std::max(range_min, repeater.begin_distance);
             const double end = std::min(range_max, repeater.end_distance);
-            if (end < begin - eps) continue;
+            if (end < begin - kSceneRepeaterDistanceEpsilon) continue;
 
             auto emit = [&](double distance, size_t model_index) {
                 const std::string& path = repeater.model_paths[model_index % repeater.model_paths.size()];
@@ -2016,25 +2157,25 @@ fail:
                 }
             };
 
-            if (repeater.interval <= 1e-9 || !std::isfinite(repeater.interval)) {
-                if (repeater.begin_distance >= begin - eps && repeater.begin_distance <= end + eps) {
+            if (!scene_repeater_has_interval(repeater)) {
+                if (repeater.begin_distance >= begin - kSceneRepeaterDistanceEpsilon &&
+                    repeater.begin_distance <= end + kSceneRepeaterDistanceEpsilon) {
                     emit(repeater.begin_distance, 0);
                 }
                 continue;
             }
 
-            double first_index_d = std::ceil((begin - repeater.begin_distance - eps) / repeater.interval);
-            double last_index_d = std::floor((end - repeater.begin_distance + eps) / repeater.interval);
-            if (!std::isfinite(first_index_d) || !std::isfinite(last_index_d)) continue;
-            long long first_index = std::max<long long>(0, static_cast<long long>(first_index_d));
-            long long last_index = std::max<long long>(-1, static_cast<long long>(last_index_d));
+            SceneRepeaterIndexRange range;
+            if (!scene_repeater_index_range(repeater, begin, end, range)) continue;
             long long emitted = 0;
-            for (long long index = first_index; index <= last_index; ++index) {
+            const double end_epsilon = scene_repeater_index_epsilon(repeater);
+            for (long long index = range.first; index <= range.last; ++index) {
                 double distance = repeater.begin_distance + static_cast<double>(index) * repeater.interval;
-                if (distance < begin - eps) continue;
-                if (distance > end + eps) break;
+                if (distance < begin - kSceneRepeaterDistanceEpsilon) continue;
+                if (distance > end + kSceneRepeaterDistanceEpsilon) break;
+                if (distance >= repeater.end_distance - end_epsilon) break;
                 emit(distance, static_cast<size_t>(index));
-                if (++emitted > 1000000) break;
+                if (++emitted >= kSceneRepeaterInstanceLimit) break;
             }
         }
     }
@@ -2156,6 +2297,12 @@ fail:
         draw_scene_model(it->second, instances, view_proj);
     }
 
+    float scene_far_z() const {
+        double far_z = scene_window_back_m + scene_window_forward_m + scene_chunk_m * 2.0;
+        if (!std::isfinite(far_z)) far_z = kSceneBackgroundFarZ;
+        return static_cast<float>(std::clamp(far_z, 256.0, static_cast<double>(kSceneBackgroundFarZ)));
+    }
+
     void render_scene_preview_target(int width, int height) {
         std::string error;
         if (!ensure_render_target(width, height, error)) {
@@ -2183,20 +2330,22 @@ fail:
         context->RSSetState(rasterizer_state);
         context->OMSetDepthStencilState(depth_state, 0);
         const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-        context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
 
         Vec3 forward = scene_forward();
         Mat4 view = look_to_bve(scene_camera_pos, forward, {0.0f, 1.0f, 0.0f});
         float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
-        Mat4 proj = perspective_fov_lh(1.0471975512f, aspect, 0.05f, 5000.0f);
+        Mat4 background_proj = perspective_fov_lh(1.0471975512f, aspect, kSceneBackgroundNearZ, kSceneBackgroundFarZ);
+        Mat4 background_view_proj = multiply(view, background_proj);
+        draw_background_model(background_view_proj);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+        Mat4 proj = perspective_fov_lh(1.0471975512f, aspect, kSceneNearZ, scene_far_z());
         Mat4 view_proj = multiply(view, proj);
 
         scene_stats_value.drawn_instance_count = 0;
         scene_stats_value.drawn_track_chunk_count = 0;
         scene_stats_value.camera_distance = scene_camera_distance;
-
-        draw_background_model(view_proj);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
         double visible_min = scene_camera_distance - scene_window_back_m;
         double visible_max = scene_camera_distance + scene_window_forward_m;
@@ -2209,7 +2358,7 @@ fail:
                 if (track.vertex_buffer && track.index_buffer && track.instance_buffer && track.index_count > 0) {
                     context->RSSetState(track_rasterizer_state);
                     draw_scene_mesh(track.vertex_buffer, track.index_buffer, track.instance_buffer,
-                                    track.parts, track.materials, 1, view_proj);
+                                    track.parts, track.materials, 1, view_proj, track_rasterizer_state);
                     context->RSSetState(rasterizer_state);
                     ++scene_stats_value.drawn_track_chunk_count;
                 }
@@ -2443,6 +2592,7 @@ fail:
         for (GpuMaterial& material : materials) {
             release_com(material.texture);
             material.has_texture = false;
+            material.texture_has_alpha = false;
         }
         materials.clear();
         parts.clear();
@@ -2478,7 +2628,9 @@ fail:
     ID3D11Buffer* scene_constant_buffer = nullptr;
     ID3D11SamplerState* sampler_state = nullptr;
     ID3D11DepthStencilState* depth_state = nullptr;
+    ID3D11DepthStencilState* depth_read_state = nullptr;
     ID3D11RasterizerState* rasterizer_state = nullptr;
+    ID3D11RasterizerState* alpha_mask_rasterizer_state = nullptr;
     ID3D11RasterizerState* track_rasterizer_state = nullptr;
     ID3D11BlendState* blend_state = nullptr;
     ID3D11Buffer* vertex_buffer = nullptr;
