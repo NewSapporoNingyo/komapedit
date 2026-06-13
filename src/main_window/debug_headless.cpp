@@ -8,6 +8,7 @@
 #pragma execution_character_set("utf-8")
 
 #include "kme.h"
+#include "canvas3D.h"
 #include "maploader.h"
 
 #include "imgui.h"
@@ -15,6 +16,7 @@
 #include "implot.h"
 
 #include <windows.h>
+#include <d3d11.h>
 #include <shellapi.h>
 
 #include <algorithm>
@@ -30,6 +32,14 @@
 #include <string>
 #include <vector>
 #ifndef NDEBUG
+template <typename T>
+void release_com(T*& p) {
+    if (p) {
+        p->Release();
+        p = nullptr;
+    }
+}
+
 std::vector<std::string> command_line_args_utf8() {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -61,6 +71,16 @@ struct HeadlessPlanBenchmarkOptions {
     double pan_pixels = 8.0;
     double max_frame_ms = 16.667;
     bool profile_stages = false;
+    std::string error;
+};
+
+struct HeadlessScene3DBenchmarkOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int frames = 300;
+    double unit_distance = 25.0;
+    double max_frame_ms = 16.667;
     std::string error;
 };
 
@@ -184,6 +204,67 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
         options.error = "--debug-headless-plan-bench requires a map path";
+    }
+    return options;
+}
+
+HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args) {
+    HeadlessScene3DBenchmarkOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-scene3d-bench") {
+            options.requested = true;
+            if (i + 1 >= args.size()) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
+        } else if (arg == "--frames") {
+            if (i + 1 >= args.size()) {
+                options.error = "--frames requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            long parsed = std::strtol(args[++i].c_str(), &end, 10);
+            if (!end || *end != '\0' || parsed <= 0 || parsed > 100000) {
+                options.error = "--frames must be between 1 and 100000";
+                return options;
+            }
+            options.frames = static_cast<int>(parsed);
+        } else if (arg == "--unit-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--unit-distance requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--unit-distance must be a positive number";
+                return options;
+            }
+            options.unit_distance = parsed;
+        } else if (arg == "--max-frame-ms") {
+            if (i + 1 >= args.size()) {
+                options.error = "--max-frame-ms requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--max-frame-ms must be a positive number";
+                return options;
+            }
+            options.max_frame_ms = parsed;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-scene3d-bench requires a map path";
     }
     return options;
 }
@@ -492,6 +573,184 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
     if (result.handle) kv_free(result.handle);
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
+    return exit_code;
+}
+
+int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
+                                              double unit_distance, double max_frame_ms,
+                                              const std::string& output_path) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-scene3d-bench path=\"" << path
+         << "\" frames=" << frames
+         << " unit_distance=" << format_double(unit_distance, 3)
+         << " max_frame_ms=" << format_double(max_frame_ms, 3) << "\n";
+    *out << "stage=d3d-create-start\n";
+    out->flush();
+
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
+    D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
+    const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0};
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+                                   levels, 2, D3D11_SDK_VERSION, &device,
+                                   &feature_level, &context);
+    const char* driver = "hardware";
+    if (FAILED(hr)) {
+        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+                               levels, 2, D3D11_SDK_VERSION, &device,
+                               &feature_level, &context);
+        driver = "warp";
+    }
+    if (FAILED(hr) || !device || !context) {
+        std::cerr << "debug headless scene3d benchmark failed: D3D11CreateDevice\n";
+        release_com(context);
+        release_com(device);
+        return 2;
+    }
+    *out << "stage=d3d-ready driver=" << driver << "\n";
+    out->flush();
+
+    *out << "stage=load-start\n";
+    out->flush();
+    LoadResult result = load_map_worker(path, unit_distance, false, 0.0, 0.0, 25.0);
+    if (!result.ok) {
+        std::cerr << "debug headless scene3d benchmark load failed: " << result.error << "\n";
+        release_com(context);
+        release_com(device);
+        return 3;
+    }
+    *out << "stage=load-complete\n";
+    out->flush();
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+
+    int exit_code = 0;
+    try {
+        UserSettings settings;
+        App app(device, settings, 1.0f, false, false);
+        app.handle_ = result.handle;
+        result.handle = nullptr;
+        app.model_ = std::move(result.model);
+        app.file_path_ = path;
+        app.has_model_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.plot_min_ = app.dmin_;
+        app.plot_max_ = app.dmax_;
+        app.rebuild_marker_overlay_cache();
+        app.reset_marker_visibility();
+        app.scene_preview_started_ = true;
+        app.rebuild_scene_preview();
+        Canvas3DSceneStats initial_stats = app.scene_preview_canvas_->scene_stats();
+        *out << "stage=scene-ready"
+             << " chunks=" << initial_stats.chunk_count
+             << " instances=" << initial_stats.instance_count
+             << " models=" << initial_stats.model_path_count << "\n";
+        out->flush();
+
+        auto render_frame = [&]() {
+            io.DisplaySize = ImVec2(1280.0f, 720.0f);
+            io.DeltaTime = 1.0f / 60.0f;
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
+            ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
+            ImGui::Begin("DebugHeadlessScene3DBenchmark", nullptr, flags);
+            app.scene_preview_canvas_->render_scene_preview(ImVec2(1260.0f, 680.0f));
+            ImGui::End();
+            ImGui::EndFrame();
+        };
+
+        *out << "stage=warmup-start\n";
+        out->flush();
+        int warmup_frames = 0;
+        for (; warmup_frames < 900; ++warmup_frames) {
+            render_frame();
+            Canvas3DSceneStats stats = app.scene_preview_canvas_->scene_stats();
+            if (!stats.loading && stats.model_ready_count + stats.model_failed_count >= stats.model_path_count) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        for (int i = 0; i < 5; ++i) render_frame();
+        Canvas3DSceneStats warmed_stats = app.scene_preview_canvas_->scene_stats();
+        *out << "stage=warmup-complete"
+             << " warmup_frames=" << warmup_frames
+             << " model_ready=" << warmed_stats.model_ready_count
+             << " model_failed=" << warmed_stats.model_failed_count
+             << " model_total=" << warmed_stats.model_path_count
+             << " drawn_instances=" << warmed_stats.drawn_instance_count
+             << " drawn_track_chunks=" << warmed_stats.drawn_track_chunk_count << "\n";
+        out->flush();
+
+        std::vector<double> frame_ms;
+        frame_ms.reserve(static_cast<size_t>(frames));
+        for (int frame = 0; frame < frames; ++frame) {
+            auto started_at = std::chrono::steady_clock::now();
+            render_frame();
+            auto finished_at = std::chrono::steady_clock::now();
+            frame_ms.push_back(std::chrono::duration<double, std::milli>(finished_at - started_at).count());
+        }
+        *out << "stage=frames-complete\n";
+        out->flush();
+
+        std::vector<double> sorted_ms = frame_ms;
+        std::sort(sorted_ms.begin(), sorted_ms.end());
+        double sum_ms = 0.0;
+        for (double value : frame_ms) sum_ms += value;
+        auto percentile = [&](double p) {
+            if (sorted_ms.empty()) return 0.0;
+            size_t index = static_cast<size_t>(std::ceil(p * static_cast<double>(sorted_ms.size()))) - 1;
+            index = std::min(index, sorted_ms.size() - 1);
+            return sorted_ms[index];
+        };
+        double avg_ms = frame_ms.empty() ? 0.0 : sum_ms / static_cast<double>(frame_ms.size());
+        double min_ms = sorted_ms.empty() ? 0.0 : sorted_ms.front();
+        double p95_ms = percentile(0.95);
+        double max_ms = sorted_ms.empty() ? 0.0 : sorted_ms.back();
+        double p95_fps = p95_ms > 0.0 ? 1000.0 / p95_ms : 0.0;
+        bool pass = p95_ms <= max_frame_ms;
+        Canvas3DSceneStats final_stats = app.scene_preview_canvas_->scene_stats();
+
+        *out << std::fixed << std::setprecision(3)
+             << "scene3d_bench avg_ms=" << avg_ms
+             << " min_ms=" << min_ms
+             << " p95_ms=" << p95_ms
+             << " max_ms=" << max_ms
+             << " p95_fps=" << p95_fps
+             << " drawn_instances=" << final_stats.drawn_instance_count
+             << " drawn_track_chunks=" << final_stats.drawn_track_chunk_count
+             << " result=" << (pass ? "PASS" : "FAIL") << "\n";
+        if (!pass) exit_code = 4;
+    } catch (const std::exception& e) {
+        std::cerr << "debug headless scene3d benchmark failed: " << e.what() << "\n";
+        exit_code = 5;
+    }
+
+    if (result.handle) kv_free(result.handle);
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    context->ClearState();
+    context->Flush();
+    release_com(context);
+    release_com(device);
     return exit_code;
 }
 #endif

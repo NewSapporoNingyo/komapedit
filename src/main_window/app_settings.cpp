@@ -342,6 +342,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
     out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
     out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
+    out << "show_scene_preview_window=" << bool_to_string(settings.window_visibility.show_scene_preview_window) << "\n";
     out << "\n[View2D]\n";
     out << "show_stations=" << bool_to_string(settings.view_2d.show_stations) << "\n";
     out << "show_station_names=" << bool_to_string(settings.view_2d.show_station_names) << "\n";
@@ -470,6 +471,8 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_plots_window = parse_bool(value, settings.window_visibility.show_plots_window);
         } else if (key == "show_model_preview_window") {
             settings.window_visibility.show_model_preview_window = parse_bool(value, settings.window_visibility.show_model_preview_window);
+        } else if (key == "show_scene_preview_window" || key == "show_3d_scene_preview_window") {
+            settings.window_visibility.show_scene_preview_window = parse_bool(value, settings.window_visibility.show_scene_preview_window);
         } else if (key == "show_stations" || key == "show_station_pos" || key == "show_station_positions") {
             view_2d_keys_seen.insert("show_stations");
             settings.view_2d.show_stations = parse_bool(value, settings.view_2d.show_stations);

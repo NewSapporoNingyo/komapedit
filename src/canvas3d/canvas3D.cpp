@@ -18,12 +18,19 @@
 #include <wincodec.h>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <filesystem>
+#include <mutex>
 #include <limits>
+#include <set>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -126,6 +133,14 @@ Vec3 operator-(Vec3 a, Vec3 b) {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
+Vec3 operator+(Vec3 a, Vec3 b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+Vec3 operator*(Vec3 v, float s) {
+    return {v.x * s, v.y * s, v.z * s};
+}
+
 float dot(Vec3 a, Vec3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
@@ -143,6 +158,14 @@ Vec3 normalize(Vec3 v) {
     return {v.x / len, v.y / len, v.z / len};
 }
 
+Vec3 right_from_theta(float theta) {
+    return {std::cos(theta), 0.0f, std::sin(theta)};
+}
+
+Vec3 forward_from_theta(float theta) {
+    return {std::sin(theta), 0.0f, -std::cos(theta)};
+}
+
 struct Mat4 {
     float m[4][4] = {};
 };
@@ -151,6 +174,24 @@ Mat4 identity() {
     Mat4 r;
     for (int i = 0; i < 4; ++i) r.m[i][i] = 1.0f;
     return r;
+}
+
+Mat4 mat4_from_array(const float values[16]) {
+    Mat4 r;
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            r.m[row][col] = values[row * 4 + col];
+        }
+    }
+    return r;
+}
+
+void mat4_to_array(const Mat4& m, float values[16]) {
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            values[row * 4 + col] = m.m[row][col];
+        }
+    }
 }
 
 Mat4 multiply(const Mat4& a, const Mat4& b) {
@@ -193,10 +234,63 @@ Mat4 rotation_y(float angle) {
     return r;
 }
 
+Mat4 rotation_z(float angle) {
+    Mat4 r = identity();
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+    r.m[0][0] = c;
+    r.m[0][1] = s;
+    r.m[1][0] = -s;
+    r.m[1][1] = c;
+    return r;
+}
+
+Mat4 structure_basis(Vec3 right, Vec3 up, Vec3 forward, Vec3 origin) {
+    Mat4 r = identity();
+    r.m[0][0] = right.x;
+    r.m[0][1] = right.y;
+    r.m[0][2] = right.z;
+    r.m[1][0] = up.x;
+    r.m[1][1] = up.y;
+    r.m[1][2] = up.z;
+    r.m[2][0] = forward.x;
+    r.m[2][1] = forward.y;
+    r.m[2][2] = forward.z;
+    r.m[3][0] = origin.x;
+    r.m[3][1] = origin.y;
+    r.m[3][2] = origin.z;
+    return r;
+}
+
+Mat4 make_scene_model_world(const float values[16]) {
+    return mat4_from_array(values);
+}
+
 Mat4 look_at_lh(Vec3 eye, Vec3 target, Vec3 up) {
     Vec3 zaxis = normalize(target - eye);
     Vec3 xaxis = normalize(cross(up, zaxis));
     Vec3 yaxis = cross(zaxis, xaxis);
+
+    Mat4 r = identity();
+    r.m[0][0] = xaxis.x;
+    r.m[1][0] = xaxis.y;
+    r.m[2][0] = xaxis.z;
+    r.m[3][0] = -dot(xaxis, eye);
+    r.m[0][1] = yaxis.x;
+    r.m[1][1] = yaxis.y;
+    r.m[2][1] = yaxis.z;
+    r.m[3][1] = -dot(yaxis, eye);
+    r.m[0][2] = zaxis.x;
+    r.m[1][2] = zaxis.y;
+    r.m[2][2] = zaxis.z;
+    r.m[3][2] = -dot(zaxis, eye);
+    return r;
+}
+
+Mat4 look_to_bve(Vec3 eye, Vec3 forward, Vec3 up) {
+    Vec3 zaxis = normalize(forward);
+    Vec3 xaxis = normalize(cross(zaxis, up));
+    Vec3 yaxis = cross(xaxis, zaxis);
 
     Mat4 r = identity();
     r.m[0][0] = xaxis.x;
@@ -243,6 +337,19 @@ struct SceneConstants {
     float use_texture[4];
 };
 
+struct SceneViewConstants {
+    Mat4 view_proj;
+    float material_color[4];
+    float use_texture[4];
+};
+
+struct SceneInstanceData {
+    float world0[4];
+    float world1[4];
+    float world2[4];
+    float world3[4];
+};
+
 struct MeshPart {
     UINT start_index = 0;
     UINT index_count = 0;
@@ -255,10 +362,68 @@ struct GpuMaterial {
     bool has_texture = false;
 };
 
+struct CpuMaterial {
+    std::string texture_path;
+    float diffuse[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+};
+
+struct CpuModelData {
+    std::string path;
+    std::vector<GpuVertex> vertices;
+    std::vector<unsigned int> indices;
+    std::vector<MeshPart> parts;
+    std::vector<CpuMaterial> materials;
+    bool ok = false;
+    std::string error;
+};
+
+struct SceneModelGpu {
+    enum class State { Pending, Ready, Failed };
+
+    State state = State::Pending;
+    ID3D11Buffer* vertex_buffer = nullptr;
+    ID3D11Buffer* index_buffer = nullptr;
+    ID3D11Buffer* instance_buffer = nullptr;
+    UINT instance_capacity = 0;
+    UINT index_count = 0;
+    std::vector<MeshPart> parts;
+    std::vector<GpuMaterial> materials;
+    std::string error;
+};
+
+struct SceneTrackChunkGpu {
+    double d_min = 0.0;
+    double d_max = 0.0;
+    ID3D11Buffer* vertex_buffer = nullptr;
+    ID3D11Buffer* index_buffer = nullptr;
+    ID3D11Buffer* instance_buffer = nullptr;
+    UINT index_count = 0;
+    std::vector<MeshPart> parts;
+    std::vector<GpuMaterial> materials;
+};
+
+struct SceneInstance {
+    std::string model_path;
+    double distance = 0.0;
+    Mat4 world;
+};
+
+struct SceneChunk {
+    double d_min = 0.0;
+    double d_max = 0.0;
+    std::vector<SceneInstance> instances;
+};
+
 using MlApiVersionFn = unsigned int (*)();
 using MlLoadModelFn = int (*)(const char*, MlMeshData*);
 using MlFreeModelFn = void (*)(MlMeshData*);
 using MlGetLastErrorFn = const char* (*)();
+
+float angle_lerp(float a, float b, double t) {
+    double delta = std::atan2(std::sin(static_cast<double>(b) - static_cast<double>(a)),
+                              std::cos(static_cast<double>(b) - static_cast<double>(a)));
+    return static_cast<float>(static_cast<double>(a) + delta * t);
+}
 
 const char* kShaderSource = R"(
 cbuffer SceneConstants : register(b0)
@@ -302,11 +467,58 @@ float4 ps_main(VSOutput input) : SV_TARGET
 }
 )";
 
+const char* kSceneShaderSource = R"(
+cbuffer SceneViewConstants : register(b0)
+{
+    row_major float4x4 viewProj;
+    float4 materialColor;
+    float4 useTexture;
+};
+
+Texture2D diffuseTexture : register(t0);
+SamplerState diffuseSampler : register(s0);
+
+struct VSInput
+{
+    float3 position : POSITION;
+    float3 normal : NORMAL;
+    float2 texcoord : TEXCOORD0;
+    float4 world0 : WORLD0;
+    float4 world1 : WORLD1;
+    float4 world2 : WORLD2;
+    float4 world3 : WORLD3;
+};
+
+struct VSOutput
+{
+    float4 position : SV_POSITION;
+    float2 texcoord : TEXCOORD0;
+};
+
+VSOutput vs_main(VSInput input)
+{
+    float4x4 world = float4x4(input.world0, input.world1, input.world2, input.world3);
+    VSOutput output;
+    output.position = mul(mul(float4(input.position, 1.0), world), viewProj);
+    output.texcoord = input.texcoord;
+    return output;
+}
+
+float4 ps_main(VSOutput input) : SV_TARGET
+{
+    float4 color = materialColor;
+    if (useTexture.x > 0.5)
+        color *= diffuseTexture.Sample(diffuseSampler, input.texcoord);
+    clip(color.a - 0.01);
+    return color;
+}
+)";
+
 class ModelLoaderClient {
 public:
-    ~ModelLoaderClient() {
-        if (library_) FreeLibrary(library_);
-    }
+    // Keep Assimp/model_loader loaded for the process lifetime; unloading it before
+    // CRT/DLL teardown can leave stale cleanup callbacks in some dependency builds.
+    ~ModelLoaderClient() = default;
 
     bool load(const std::string& path, MlMeshData& data, std::string& error) {
         if (!ensure_loaded(error)) return false;
@@ -375,8 +587,14 @@ struct Canvas3D::Impl {
     }
 
     ~Impl() {
+        stop_scene_loader();
+        release_scene_resources();
         release_resources();
         release_render_target();
+        release_com(scene_input_layout);
+        release_com(scene_vertex_shader);
+        release_com(scene_pixel_shader);
+        release_com(scene_constant_buffer);
         release_com(blend_state);
         release_com(depth_state);
         release_com(rasterizer_state);
@@ -519,6 +737,89 @@ struct Canvas3D::Impl {
         return vertex_buffer && index_buffer && index_count > 0;
     }
 
+    bool load_scene(Canvas3DScene scene, std::string& error) {
+        if (!device || !context) {
+            error = "Direct3D device is not available";
+            return false;
+        }
+
+        stop_scene_loader();
+        release_scene_resources();
+        scene_data = std::move(scene);
+        std::sort(scene_data.backgrounds.begin(), scene_data.backgrounds.end(),
+                  [](const Canvas3DBackgroundChange& a, const Canvas3DBackgroundChange& b) {
+                      return a.distance < b.distance;
+                  });
+        if (scene_data.min_distance > scene_data.max_distance) {
+            std::swap(scene_data.min_distance, scene_data.max_distance);
+        }
+
+        scene_camera_pos = {scene_data.camera.x, scene_data.camera.y, scene_data.camera.z};
+        scene_camera_yaw = scene_data.camera.yaw;
+        scene_camera_pitch = scene_data.camera.pitch;
+        scene_camera_distance = std::clamp(scene_data.camera.distance, scene_data.min_distance, scene_data.max_distance);
+        reset_scene_camera_tracking();
+        scene_active = true;
+
+        build_scene_chunks();
+        if (!build_scene_track_chunks(error)) {
+            clear_scene();
+            return false;
+        }
+
+        std::set<std::string> paths;
+        for (const SceneChunk& chunk : scene_chunks) {
+            for (const SceneInstance& instance : chunk.instances) {
+                if (!instance.model_path.empty()) paths.insert(instance.model_path);
+            }
+        }
+        for (const Canvas3DBackgroundChange& bg : scene_data.backgrounds) {
+            if (!bg.model_path.empty()) paths.insert(bg.model_path);
+        }
+        for (const std::string& path : paths) {
+            scene_models[path] = SceneModelGpu{};
+        }
+        scene_stats_value.model_path_count = paths.size();
+        scene_stats_value.instance_count = scene_data.instances.size();
+        scene_stats_value.chunk_count = scene_chunks.size();
+        scene_stats_value.window_back_m = scene_window_back_m;
+        scene_stats_value.window_forward_m = scene_window_forward_m;
+        scene_stats_value.camera_distance = scene_camera_distance;
+        start_scene_model_worker(std::vector<std::string>(paths.begin(), paths.end()));
+        return true;
+    }
+
+    void clear_scene() {
+        stop_scene_loader();
+        release_scene_resources();
+        scene_data = {};
+        scene_active = false;
+        scene_stats_value = {};
+    }
+
+    bool has_scene() const {
+        return scene_active;
+    }
+
+    Canvas3DSceneStats scene_stats() const {
+        Canvas3DSceneStats stats = scene_stats_value;
+        stats.active = scene_active;
+        stats.loading = scene_worker_running.load();
+        stats.camera_distance = scene_camera_distance;
+        stats.chunk_count = scene_chunks.size();
+        stats.model_path_count = scene_models.size();
+        stats.instance_count = scene_data.instances.size();
+        stats.window_back_m = scene_window_back_m;
+        stats.window_forward_m = scene_window_forward_m;
+        stats.model_ready_count = 0;
+        stats.model_failed_count = 0;
+        for (const auto& kv : scene_models) {
+            if (kv.second.state == SceneModelGpu::State::Ready) ++stats.model_ready_count;
+            if (kv.second.state == SceneModelGpu::State::Failed) ++stats.model_failed_count;
+        }
+        return stats;
+    }
+
     bool load_texture(const std::string& path, ID3D11ShaderResourceView** out_srv, std::string& error) {
         if (!out_srv) return false;
         *out_srv = nullptr;
@@ -613,6 +914,376 @@ fail:
         release_com(decoder);
         release_com(factory);
         return false;
+    }
+
+    void release_scene_model(SceneModelGpu& model) {
+        for (GpuMaterial& material : model.materials) {
+            release_com(material.texture);
+            material.has_texture = false;
+        }
+        model.materials.clear();
+        model.parts.clear();
+        release_com(model.vertex_buffer);
+        release_com(model.index_buffer);
+        release_com(model.instance_buffer);
+        model.instance_capacity = 0;
+        model.index_count = 0;
+    }
+
+    void release_track_chunk(SceneTrackChunkGpu& chunk) {
+        for (GpuMaterial& material : chunk.materials) {
+            release_com(material.texture);
+            material.has_texture = false;
+        }
+        chunk.materials.clear();
+        chunk.parts.clear();
+        release_com(chunk.vertex_buffer);
+        release_com(chunk.index_buffer);
+        release_com(chunk.instance_buffer);
+        chunk.index_count = 0;
+    }
+
+    void release_scene_resources() {
+        for (auto& kv : scene_models) release_scene_model(kv.second);
+        scene_models.clear();
+        for (SceneTrackChunkGpu& chunk : scene_track_chunks) release_track_chunk(chunk);
+        scene_track_chunks.clear();
+        scene_chunks.clear();
+        {
+            std::lock_guard<std::mutex> lock(scene_upload_mutex);
+            scene_pending_uploads.clear();
+        }
+        scene_last_error.clear();
+        scene_stats_value = {};
+    }
+
+    void stop_scene_loader() {
+        scene_cancel.store(true);
+        if (scene_worker.joinable()) scene_worker.join();
+        scene_worker_running.store(false);
+        scene_cancel.store(false);
+    }
+
+    CpuModelData copy_cpu_model(const std::string& path, const MlMeshData& data) {
+        CpuModelData out;
+        out.path = path;
+        if (data.vertex_count == 0 || data.index_count == 0 || !data.vertices || !data.indices) {
+            out.error = "model contains no renderable data";
+            return out;
+        }
+        out.vertices.resize(data.vertex_count);
+        for (size_t i = 0; i < data.vertex_count; ++i) {
+            out.vertices[i] = {
+                data.vertices[i].px, data.vertices[i].py, data.vertices[i].pz,
+                data.vertices[i].nx, data.vertices[i].ny, data.vertices[i].nz,
+                data.vertices[i].u, data.vertices[i].v
+            };
+        }
+        out.indices.assign(data.indices, data.indices + data.index_count);
+        if (data.parts && data.part_count > 0) {
+            out.parts.reserve(data.part_count);
+            for (size_t i = 0; i < data.part_count; ++i) {
+                out.parts.push_back({data.parts[i].start_index, data.parts[i].index_count, data.parts[i].material_index});
+            }
+        } else {
+            out.parts.push_back({0, static_cast<UINT>(data.index_count), 0});
+        }
+        size_t material_count = std::max<size_t>(data.material_count, 1);
+        out.materials.resize(material_count);
+        for (size_t i = 0; i < material_count; ++i) {
+            const MlMaterial* src = data.materials && i < data.material_count ? &data.materials[i] : nullptr;
+            if (!src) continue;
+            out.materials[i].diffuse[0] = src->diffuse[0];
+            out.materials[i].diffuse[1] = src->diffuse[1];
+            out.materials[i].diffuse[2] = src->diffuse[2];
+            out.materials[i].diffuse[3] = std::clamp(src->diffuse[3], 0.0f, 1.0f);
+            if (src->texture_path && *src->texture_path) out.materials[i].texture_path = src->texture_path;
+        }
+        out.ok = true;
+        return out;
+    }
+
+    void start_scene_model_worker(std::vector<std::string> paths) {
+        if (paths.empty()) return;
+        scene_worker_running.store(true);
+        scene_worker = std::thread([this, paths = std::move(paths)]() {
+            for (size_t path_index = 0; path_index < paths.size(); ++path_index) {
+                const std::string& path = paths[path_index];
+                if (scene_cancel.load()) break;
+                CpuModelData cpu;
+                cpu.path = path;
+                MlMeshData data = {};
+                std::string error;
+                if (scene_loader.load(path, data, error)) {
+                    cpu = copy_cpu_model(path, data);
+                    scene_loader.free_model(data);
+                } else {
+                    cpu.error = error;
+                }
+                if (scene_cancel.load()) break;
+                {
+                    std::lock_guard<std::mutex> lock(scene_upload_mutex);
+                    scene_pending_uploads.push_back(std::move(cpu));
+                }
+            }
+            scene_worker_running.store(false);
+        });
+    }
+
+    bool upload_scene_model(const CpuModelData& cpu, std::string& error) {
+        auto it = scene_models.find(cpu.path);
+        if (it == scene_models.end()) return true;
+        SceneModelGpu& model = it->second;
+        release_scene_model(model);
+        if (!cpu.ok) {
+            model.state = SceneModelGpu::State::Failed;
+            model.error = cpu.error.empty() ? "model load failed" : cpu.error;
+            return true;
+        }
+        if (cpu.vertices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(GpuVertex)) ||
+            cpu.indices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(unsigned int))) {
+            model.state = SceneModelGpu::State::Failed;
+            model.error = "model is too large for a Direct3D 11 buffer";
+            return true;
+        }
+
+        D3D11_BUFFER_DESC vb_desc = {};
+        vb_desc.ByteWidth = static_cast<UINT>(cpu.vertices.size() * sizeof(GpuVertex));
+        vb_desc.Usage = D3D11_USAGE_DEFAULT;
+        vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vb_data = {};
+        vb_data.pSysMem = cpu.vertices.data();
+        HRESULT hr = device->CreateBuffer(&vb_desc, &vb_data, &model.vertex_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene vertex)", hr);
+            return false;
+        }
+
+        D3D11_BUFFER_DESC ib_desc = {};
+        ib_desc.ByteWidth = static_cast<UINT>(cpu.indices.size() * sizeof(unsigned int));
+        ib_desc.Usage = D3D11_USAGE_DEFAULT;
+        ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA ib_data = {};
+        ib_data.pSysMem = cpu.indices.data();
+        hr = device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene index)", hr);
+            return false;
+        }
+
+        model.parts = cpu.parts;
+        model.materials.resize(std::max<size_t>(cpu.materials.size(), 1));
+        for (size_t i = 0; i < model.materials.size(); ++i) {
+            const CpuMaterial* src = i < cpu.materials.size() ? &cpu.materials[i] : nullptr;
+            if (!src) continue;
+            model.materials[i].diffuse[0] = src->diffuse[0];
+            model.materials[i].diffuse[1] = src->diffuse[1];
+            model.materials[i].diffuse[2] = src->diffuse[2];
+            model.materials[i].diffuse[3] = src->diffuse[3];
+            if (!src->texture_path.empty()) {
+                std::string texture_error;
+                if (load_texture(src->texture_path, &model.materials[i].texture, texture_error)) {
+                    model.materials[i].has_texture = true;
+                } else if (scene_last_error.empty()) {
+                    scene_last_error = texture_error;
+                }
+            }
+        }
+        model.index_count = static_cast<UINT>(cpu.indices.size());
+        model.state = SceneModelGpu::State::Ready;
+        model.error.clear();
+        return true;
+    }
+
+    void upload_pending_scene_models() {
+        std::vector<CpuModelData> pending;
+        {
+            std::lock_guard<std::mutex> lock(scene_upload_mutex);
+            pending.swap(scene_pending_uploads);
+        }
+        for (const CpuModelData& cpu : pending) {
+            std::string error;
+            if (!upload_scene_model(cpu, error)) {
+                auto it = scene_models.find(cpu.path);
+                if (it != scene_models.end()) {
+                    it->second.state = SceneModelGpu::State::Failed;
+                    it->second.error = error;
+                }
+                if (!error.empty()) scene_last_error = error;
+            }
+        }
+    }
+
+    bool ensure_scene_pipeline(std::string& error) {
+        if (!device || !context) {
+            error = "Direct3D device is not available";
+            return false;
+        }
+        if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
+            depth_state && rasterizer_state && sampler_state && blend_state) return true;
+
+        if (!ensure_pipeline(error)) return false;
+
+        ID3DBlob* vs_blob = nullptr;
+        ID3DBlob* ps_blob = nullptr;
+        ID3DBlob* errors = nullptr;
+        HRESULT hr = D3DCompile(kSceneShaderSource, std::strlen(kSceneShaderSource), nullptr, nullptr, nullptr,
+                                "vs_main", "vs_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene vertex shader)", hr);
+            release_com(errors);
+            return false;
+        }
+        release_com(errors);
+
+        hr = D3DCompile(kSceneShaderSource, std::strlen(kSceneShaderSource), nullptr, nullptr, nullptr,
+                        "ps_main", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene pixel shader)", hr);
+            release_com(errors);
+            release_com(vs_blob);
+            return false;
+        }
+        release_com(errors);
+
+        hr = device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &scene_vertex_shader);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateVertexShader(scene)", hr);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            return false;
+        }
+        hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &scene_pixel_shader);
+        if (FAILED(hr)) {
+            error = hresult_text("CreatePixelShader(scene)", hr);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            return false;
+        }
+
+        D3D11_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"WORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"WORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"WORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"WORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        };
+        hr = device->CreateInputLayout(layout, 7, vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &scene_input_layout);
+        release_com(vs_blob);
+        release_com(ps_blob);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateInputLayout(scene)", hr);
+            return false;
+        }
+
+        D3D11_BUFFER_DESC cb_desc = {};
+        cb_desc.ByteWidth = sizeof(SceneViewConstants);
+        cb_desc.Usage = D3D11_USAGE_DEFAULT;
+        cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        hr = device->CreateBuffer(&cb_desc, nullptr, &scene_constant_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene constants)", hr);
+            return false;
+        }
+        return true;
+    }
+
+    static SceneInstanceData make_instance_data(const Mat4& world) {
+        SceneInstanceData data = {};
+        for (int col = 0; col < 4; ++col) {
+            data.world0[col] = world.m[0][col];
+            data.world1[col] = world.m[1][col];
+            data.world2[col] = world.m[2][col];
+            data.world3[col] = world.m[3][col];
+        }
+        return data;
+    }
+
+    bool ensure_instance_buffer(ID3D11Buffer*& buffer, UINT& capacity,
+                                const std::vector<SceneInstanceData>& instances,
+                                std::string& error) {
+        if (instances.empty()) return true;
+        if (instances.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(SceneInstanceData))) {
+            error = "too many scene instances for a Direct3D 11 buffer";
+            return false;
+        }
+        UINT needed = static_cast<UINT>(instances.size());
+        if (!buffer || capacity < needed) {
+            release_com(buffer);
+            capacity = std::max<UINT>(needed, 64);
+            D3D11_BUFFER_DESC desc = {};
+            desc.ByteWidth = capacity * sizeof(SceneInstanceData);
+            desc.Usage = D3D11_USAGE_DYNAMIC;
+            desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            HRESULT hr = device->CreateBuffer(&desc, nullptr, &buffer);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateBuffer(scene instances)", hr);
+                capacity = 0;
+                return false;
+            }
+        }
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        HRESULT hr = context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        if (FAILED(hr)) {
+            error = hresult_text("Map(scene instances)", hr);
+            return false;
+        }
+        std::memcpy(mapped.pData, instances.data(), instances.size() * sizeof(SceneInstanceData));
+        context->Unmap(buffer, 0);
+        return true;
+    }
+
+    void draw_scene_mesh(ID3D11Buffer* vb, ID3D11Buffer* ib, ID3D11Buffer* instance_buffer,
+                         const std::vector<MeshPart>& mesh_parts,
+                         const std::vector<GpuMaterial>& mesh_materials,
+                         UINT instance_count,
+                         const Mat4& view_proj) {
+        if (!vb || !ib || !instance_buffer || instance_count == 0) return;
+
+        UINT strides[2] = {sizeof(GpuVertex), sizeof(SceneInstanceData)};
+        UINT offsets[2] = {0, 0};
+        ID3D11Buffer* buffers[2] = {vb, instance_buffer};
+        context->IASetInputLayout(scene_input_layout);
+        context->IASetVertexBuffers(0, 2, buffers, strides, offsets);
+        context->IASetIndexBuffer(ib, DXGI_FORMAT_R32_UINT, 0);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context->VSSetShader(scene_vertex_shader, nullptr, 0);
+        context->PSSetShader(scene_pixel_shader, nullptr, 0);
+        context->VSSetConstantBuffers(0, 1, &scene_constant_buffer);
+        context->PSSetConstantBuffers(0, 1, &scene_constant_buffer);
+        context->PSSetSamplers(0, 1, &sampler_state);
+
+        for (const MeshPart& part : mesh_parts) {
+            const GpuMaterial* material = part.material_index < mesh_materials.size() ? &mesh_materials[part.material_index] : nullptr;
+            SceneViewConstants constants = {};
+            constants.view_proj = view_proj;
+            constants.material_color[0] = material ? material->diffuse[0] : 1.0f;
+            constants.material_color[1] = material ? material->diffuse[1] : 1.0f;
+            constants.material_color[2] = material ? material->diffuse[2] : 1.0f;
+            constants.material_color[3] = material ? material->diffuse[3] : 1.0f;
+            constants.use_texture[0] = material && material->has_texture ? 1.0f : 0.0f;
+            context->UpdateSubresource(scene_constant_buffer, 0, nullptr, &constants, 0, 0);
+            ID3D11ShaderResourceView* texture = material && material->has_texture ? material->texture : nullptr;
+            context->PSSetShaderResources(0, 1, &texture);
+            context->DrawIndexedInstanced(part.index_count, instance_count, part.start_index, 0, 0);
+        }
+        ID3D11ShaderResourceView* null_srv = nullptr;
+        context->PSSetShaderResources(0, 1, &null_srv);
+    }
+
+    void draw_scene_model(SceneModelGpu& model, const std::vector<SceneInstanceData>& instances, const Mat4& view_proj) {
+        if (model.state != SceneModelGpu::State::Ready || instances.empty()) return;
+        std::string error;
+        if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, instances, error)) {
+            scene_last_error = error;
+            return;
+        }
+        draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
+                        model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj);
     }
 
     bool ensure_pipeline(std::string& error) {
@@ -735,6 +1406,163 @@ fail:
         return true;
     }
 
+    void build_scene_chunks() {
+        scene_chunks.clear();
+        double min_d = scene_data.min_distance;
+        double max_d = scene_data.max_distance;
+        if (max_d <= min_d) {
+            min_d = scene_camera_distance - scene_window_back_m;
+            max_d = scene_camera_distance + scene_window_forward_m;
+        }
+        double first = std::floor(min_d / scene_chunk_m) * scene_chunk_m;
+        double last = std::ceil(max_d / scene_chunk_m) * scene_chunk_m;
+        size_t count = static_cast<size_t>(std::max(1.0, (last - first) / scene_chunk_m));
+        scene_chunks.resize(count);
+        for (size_t i = 0; i < count; ++i) {
+            scene_chunks[i].d_min = first + static_cast<double>(i) * scene_chunk_m;
+            scene_chunks[i].d_max = scene_chunks[i].d_min + scene_chunk_m;
+        }
+        for (const Canvas3DModelInstance& source : scene_data.instances) {
+            if (source.model_path.empty()) continue;
+            int index = static_cast<int>(std::floor((source.distance - first) / scene_chunk_m));
+            index = std::clamp(index, 0, static_cast<int>(scene_chunks.size()) - 1);
+            SceneInstance instance;
+            instance.model_path = source.model_path;
+            instance.distance = source.distance;
+            instance.world = make_scene_model_world(source.world);
+            scene_chunks[static_cast<size_t>(index)].instances.push_back(std::move(instance));
+        }
+    }
+
+    static void append_track_quad(std::vector<GpuVertex>& vertices,
+                                  std::vector<unsigned int>& indices,
+                                  Vec3 a, Vec3 b, Vec3 side, float half_width) {
+        if (vertices.size() > static_cast<size_t>(std::numeric_limits<unsigned int>::max() - 4)) return;
+        Vec3 n = {0.0f, 1.0f, 0.0f};
+        unsigned int base = static_cast<unsigned int>(vertices.size());
+        Vec3 a0 = a - side * half_width;
+        Vec3 a1 = a + side * half_width;
+        Vec3 b0 = b - side * half_width;
+        Vec3 b1 = b + side * half_width;
+        vertices.push_back({a0.x, a0.y, a0.z, n.x, n.y, n.z, 0.0f, 0.0f});
+        vertices.push_back({a1.x, a1.y, a1.z, n.x, n.y, n.z, 1.0f, 0.0f});
+        vertices.push_back({b1.x, b1.y, b1.z, n.x, n.y, n.z, 1.0f, 1.0f});
+        vertices.push_back({b0.x, b0.y, b0.z, n.x, n.y, n.z, 0.0f, 1.0f});
+        indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    }
+
+    static void append_track_segment(std::vector<GpuVertex>& vertices,
+                                     std::vector<unsigned int>& indices,
+                                     const Canvas3DTrackPoint& p0,
+                                     const Canvas3DTrackPoint& p1) {
+        constexpr float rail_gauge_half = 0.5335f;
+        constexpr float rail_half_width = 0.035f;
+        constexpr float rail_lift = 0.035f;
+        Vec3 right0 = right_from_theta(p0.theta);
+        Vec3 right1 = right_from_theta(p1.theta);
+        Vec3 center0{p0.x, p0.y + rail_lift, p0.z};
+        Vec3 center1{p1.x, p1.y + rail_lift, p1.z};
+        for (float rail_offset : {-rail_gauge_half, rail_gauge_half}) {
+            Vec3 a = center0 + right0 * rail_offset;
+            Vec3 b = center1 + right1 * rail_offset;
+            Vec3 segment = b - a;
+            Vec3 side = normalize(cross({0.0f, 1.0f, 0.0f}, segment));
+            append_track_quad(vertices, indices, a, b, side, rail_half_width);
+        }
+    }
+
+    bool upload_track_chunk(SceneTrackChunkGpu& chunk,
+                            const std::vector<GpuVertex>& vertices,
+                            const std::vector<unsigned int>& indices,
+                            std::string& error) {
+        if (vertices.empty() || indices.empty()) return true;
+        if (vertices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(GpuVertex)) ||
+            indices.size() > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(unsigned int))) {
+            error = "track chunk is too large for a Direct3D 11 buffer";
+            return false;
+        }
+        D3D11_BUFFER_DESC vb_desc = {};
+        vb_desc.ByteWidth = static_cast<UINT>(vertices.size() * sizeof(GpuVertex));
+        vb_desc.Usage = D3D11_USAGE_DEFAULT;
+        vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vb_data = {};
+        vb_data.pSysMem = vertices.data();
+        HRESULT hr = device->CreateBuffer(&vb_desc, &vb_data, &chunk.vertex_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(track vertex)", hr);
+            return false;
+        }
+
+        D3D11_BUFFER_DESC ib_desc = {};
+        ib_desc.ByteWidth = static_cast<UINT>(indices.size() * sizeof(unsigned int));
+        ib_desc.Usage = D3D11_USAGE_DEFAULT;
+        ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA ib_data = {};
+        ib_data.pSysMem = indices.data();
+        hr = device->CreateBuffer(&ib_desc, &ib_data, &chunk.index_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(track index)", hr);
+            return false;
+        }
+
+        SceneInstanceData identity_instance = make_instance_data(identity());
+        D3D11_BUFFER_DESC inst_desc = {};
+        inst_desc.ByteWidth = sizeof(SceneInstanceData);
+        inst_desc.Usage = D3D11_USAGE_DEFAULT;
+        inst_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA inst_data = {};
+        inst_data.pSysMem = &identity_instance;
+        hr = device->CreateBuffer(&inst_desc, &inst_data, &chunk.instance_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(track instance)", hr);
+            return false;
+        }
+        chunk.index_count = static_cast<UINT>(indices.size());
+        return true;
+    }
+
+    bool build_scene_track_chunks(std::string& error) {
+        scene_track_chunks.clear();
+        scene_track_chunks.resize(scene_chunks.size());
+        for (size_t chunk_index = 0; chunk_index < scene_chunks.size(); ++chunk_index) {
+            const SceneChunk& scene_chunk = scene_chunks[chunk_index];
+            SceneTrackChunkGpu& gpu_chunk = scene_track_chunks[chunk_index];
+            gpu_chunk.d_min = scene_chunk.d_min;
+            gpu_chunk.d_max = scene_chunk.d_max;
+            std::vector<GpuVertex> vertices;
+            std::vector<unsigned int> indices;
+
+            for (const Canvas3DTrackPath& track : scene_data.tracks) {
+                if (track.points.size() < 2) continue;
+                size_t part_start = indices.size();
+                UINT material_index = static_cast<UINT>(gpu_chunk.materials.size());
+                GpuMaterial material;
+                material.diffuse[0] = clamp_color_component(track.color.x);
+                material.diffuse[1] = clamp_color_component(track.color.y);
+                material.diffuse[2] = clamp_color_component(track.color.z);
+                material.diffuse[3] = 1.0f;
+                gpu_chunk.materials.push_back(material);
+
+                for (size_t i = 1; i < track.points.size(); ++i) {
+                    const Canvas3DTrackPoint& a = track.points[i - 1];
+                    const Canvas3DTrackPoint& b = track.points[i];
+                    if (b.distance < scene_chunk.d_min || a.distance > scene_chunk.d_max) continue;
+                    append_track_segment(vertices, indices, a, b);
+                }
+
+                size_t part_count = indices.size() - part_start;
+                if (part_count > 0) {
+                    gpu_chunk.parts.push_back({static_cast<UINT>(part_start), static_cast<UINT>(part_count), material_index});
+                } else {
+                    gpu_chunk.materials.pop_back();
+                }
+            }
+
+            if (!upload_track_chunk(gpu_chunk, vertices, indices, error)) return false;
+        }
+        return true;
+    }
+
     bool ensure_render_target(int width, int height, std::string& error) {
         if (!device || width <= 0 || height <= 0) return false;
         if (render_srv && render_width == width && render_height == height) return true;
@@ -793,6 +1621,296 @@ fail:
             return false;
         }
         return true;
+    }
+
+    Vec3 scene_forward() const {
+        float cp = std::cos(scene_camera_pitch);
+        return normalize({cp * std::sin(scene_camera_yaw), std::sin(scene_camera_pitch), -cp * std::cos(scene_camera_yaw)});
+    }
+
+    Vec3 scene_right() const {
+        return normalize(cross(scene_forward(), {0.0f, 1.0f, 0.0f}));
+    }
+
+    const Canvas3DTrackPath* own_track_path() const {
+        for (const Canvas3DTrackPath& path : scene_data.tracks) {
+            if (path.key == "own" || path.key.empty() || path.key == "0") return &path;
+        }
+        return scene_data.tracks.empty() ? nullptr : &scene_data.tracks.front();
+    }
+
+    bool sample_track_path(const Canvas3DTrackPath& path, double distance, Canvas3DTrackPoint& out) const {
+        if (path.points.empty()) return false;
+        if (distance <= path.points.front().distance) {
+            out = path.points.front();
+            return true;
+        }
+        if (distance >= path.points.back().distance) {
+            out = path.points.back();
+            return true;
+        }
+        size_t lo = 0;
+        size_t hi = path.points.size();
+        while (lo < hi) {
+            size_t mid = (lo + hi) / 2;
+            if (path.points[mid].distance < distance) lo = mid + 1;
+            else hi = mid;
+        }
+        size_t a_index = lo == 0 ? 0 : lo - 1;
+        size_t b_index = std::min(lo, path.points.size() - 1);
+        const Canvas3DTrackPoint& a = path.points[a_index];
+        const Canvas3DTrackPoint& b = path.points[b_index];
+        double span = b.distance - a.distance;
+        double t = std::abs(span) < 1e-9 ? 0.0 : std::clamp((distance - a.distance) / span, 0.0, 1.0);
+        out.distance = distance;
+        out.x = static_cast<float>(a.x + (b.x - a.x) * t);
+        out.y = static_cast<float>(a.y + (b.y - a.y) * t);
+        out.z = static_cast<float>(a.z + (b.z - a.z) * t);
+        out.theta = angle_lerp(a.theta, b.theta, t);
+        return true;
+    }
+
+    bool sample_own_track(double distance, Canvas3DTrackPoint& out) const {
+        const Canvas3DTrackPath* path = own_track_path();
+        return path && sample_track_path(*path, distance, out);
+    }
+
+    bool update_scene_camera_from_owntrack() {
+        Canvas3DTrackPoint point;
+        if (!sample_own_track(scene_camera_distance, point)) return false;
+        Vec3 base{point.x, point.y, point.z};
+        Vec3 right = right_from_theta(point.theta);
+        scene_camera_pos = base + right * static_cast<float>(scene_camera_lateral_offset);
+        scene_camera_pos.y += scene_camera_vertical_offset;
+        scene_camera_yaw = point.theta + scene_camera_yaw_offset;
+        return true;
+    }
+
+    void reset_scene_camera_tracking() {
+        Canvas3DTrackPoint point;
+        scene_camera_lateral_offset = 0.0;
+        scene_camera_vertical_offset = 2.0f;
+        scene_camera_yaw_offset = 0.0f;
+        if (!sample_own_track(scene_camera_distance, point)) return;
+
+        Vec3 base{point.x, point.y, point.z};
+        Vec3 current = scene_camera_pos;
+        Vec3 diff = current - base;
+        scene_camera_lateral_offset = dot(diff, right_from_theta(point.theta));
+        scene_camera_vertical_offset = diff.y;
+        scene_camera_yaw_offset = scene_camera_yaw - point.theta;
+        update_scene_camera_from_owntrack();
+    }
+
+    void handle_scene_input(bool hovered) {
+        if (!hovered) {
+            scene_rotating = false;
+            return;
+        }
+        ImGuiIO& io = ImGui::GetIO();
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            if (!scene_rotating) {
+                scene_rotating = true;
+                scene_last_mouse = io.MousePos;
+            } else {
+                ImVec2 delta(io.MousePos.x - scene_last_mouse.x, io.MousePos.y - scene_last_mouse.y);
+                const float yaw_delta = delta.x * 0.005f;
+                scene_camera_yaw += yaw_delta;
+                scene_camera_yaw_offset += yaw_delta;
+                scene_camera_pitch = std::clamp(scene_camera_pitch + delta.y * 0.005f, -1.45f, 1.45f);
+                scene_last_mouse = io.MousePos;
+            }
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        } else {
+            scene_rotating = false;
+        }
+
+        float dt = std::clamp(io.DeltaTime, 1.0f / 240.0f, 0.1f);
+        bool fast = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+        float step = scene_slow_speed_mps * (fast ? scene_fast_multiplier : 1.0f) * dt;
+        float distance_delta = 0.0f;
+        float lateral_delta = 0.0f;
+        float vertical_delta = 0.0f;
+        if (ImGui::IsKeyDown(ImGuiKey_W)) distance_delta += step;
+        if (ImGui::IsKeyDown(ImGuiKey_S)) distance_delta -= step;
+        if (ImGui::IsKeyDown(ImGuiKey_D)) lateral_delta += step;
+        if (ImGui::IsKeyDown(ImGuiKey_A)) lateral_delta -= step;
+        if (ImGui::IsKeyDown(ImGuiKey_R)) vertical_delta += step;
+        if (ImGui::IsKeyDown(ImGuiKey_F)) vertical_delta -= step;
+
+        Canvas3DTrackPoint own_point;
+        if (sample_own_track(scene_camera_distance, own_point)) {
+            scene_camera_distance = std::clamp(scene_camera_distance + static_cast<double>(distance_delta),
+                                               scene_data.min_distance, scene_data.max_distance);
+            scene_camera_lateral_offset += lateral_delta;
+            scene_camera_vertical_offset += vertical_delta;
+            update_scene_camera_from_owntrack();
+        } else {
+            Vec3 forward = scene_forward();
+            Vec3 right = scene_right();
+            Vec3 delta{};
+            delta = delta + forward * distance_delta;
+            delta = delta + right * lateral_delta;
+            delta.y += vertical_delta;
+            scene_camera_pos = scene_camera_pos + delta;
+            scene_camera_distance = std::clamp(scene_camera_distance + static_cast<double>(distance_delta),
+                                               scene_data.min_distance, scene_data.max_distance);
+        }
+    }
+
+    std::string current_background_path() const {
+        std::string path;
+        for (const Canvas3DBackgroundChange& bg : scene_data.backgrounds) {
+            if (bg.distance > scene_camera_distance) break;
+            path = bg.model_path;
+        }
+        return path;
+    }
+
+    void draw_background_model(const Mat4& view_proj) {
+        std::string path = current_background_path();
+        if (path.empty()) return;
+        auto it = scene_models.find(path);
+        if (it == scene_models.end() || it->second.state != SceneModelGpu::State::Ready) return;
+        Mat4 world = translation(scene_camera_pos.x, scene_camera_pos.y, scene_camera_pos.z);
+        std::vector<SceneInstanceData> instances{make_instance_data(world)};
+        draw_scene_model(it->second, instances, view_proj);
+    }
+
+    void render_scene_preview_target(int width, int height) {
+        std::string error;
+        if (!ensure_render_target(width, height, error)) {
+            if (scene_last_error != error) scene_last_error = error;
+            return;
+        }
+        if (!ensure_scene_pipeline(error)) {
+            if (scene_last_error != error) scene_last_error = error;
+            return;
+        }
+        upload_pending_scene_models();
+
+        const ImVec4 bg = clamp_background_color(background_color_value);
+        const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
+        context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
+        context->ClearRenderTargetView(render_rtv, clear_color);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+        D3D11_VIEWPORT viewport = {};
+        viewport.Width = static_cast<float>(width);
+        viewport.Height = static_cast<float>(height);
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+        context->RSSetViewports(1, &viewport);
+        context->RSSetState(rasterizer_state);
+        context->OMSetDepthStencilState(depth_state, 0);
+        const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
+
+        Vec3 forward = scene_forward();
+        Mat4 view = look_to_bve(scene_camera_pos, forward, {0.0f, 1.0f, 0.0f});
+        float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
+        Mat4 proj = perspective_fov_lh(1.0471975512f, aspect, 0.05f, 5000.0f);
+        Mat4 view_proj = multiply(view, proj);
+
+        scene_stats_value.drawn_instance_count = 0;
+        scene_stats_value.drawn_track_chunk_count = 0;
+        scene_stats_value.camera_distance = scene_camera_distance;
+
+        draw_background_model(view_proj);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+        double visible_min = scene_camera_distance - scene_window_back_m;
+        double visible_max = scene_camera_distance + scene_window_forward_m;
+        std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
+        for (size_t i = 0; i < scene_chunks.size(); ++i) {
+            const SceneChunk& chunk = scene_chunks[i];
+            if (chunk.d_max < visible_min || chunk.d_min > visible_max) continue;
+            if (i < scene_track_chunks.size()) {
+                SceneTrackChunkGpu& track = scene_track_chunks[i];
+                if (track.vertex_buffer && track.index_buffer && track.instance_buffer && track.index_count > 0) {
+                    draw_scene_mesh(track.vertex_buffer, track.index_buffer, track.instance_buffer,
+                                    track.parts, track.materials, 1, view_proj);
+                    ++scene_stats_value.drawn_track_chunk_count;
+                }
+            }
+            for (const SceneInstance& instance : chunk.instances) {
+                if (instance.distance < visible_min || instance.distance > visible_max) continue;
+                visible_instances[instance.model_path].push_back(make_instance_data(instance.world));
+            }
+        }
+
+        for (auto& kv : visible_instances) {
+            auto model_it = scene_models.find(kv.first);
+            if (model_it == scene_models.end()) continue;
+            draw_scene_model(model_it->second, kv.second, view_proj);
+            if (model_it->second.state == SceneModelGpu::State::Ready) {
+                scene_stats_value.drawn_instance_count += kv.second.size();
+            }
+        }
+
+        ID3D11ShaderResourceView* null_srv = nullptr;
+        context->PSSetShaderResources(0, 1, &null_srv);
+        context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+        ID3D11RenderTargetView* null_rtv = nullptr;
+        context->OMSetRenderTargets(1, &null_rtv, nullptr);
+    }
+
+    void draw_scene_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
+        if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active) return;
+        Canvas3DSceneStats stats = scene_stats();
+        char buffer[256] = {};
+        std::snprintf(buffer, sizeof(buffer), "d=%.1fm  chunks=%zu  instances=%zu  models=%zu/%zu",
+                      stats.camera_distance,
+                      stats.drawn_track_chunk_count,
+                      stats.drawn_instance_count,
+                      stats.model_ready_count,
+                      stats.model_path_count);
+        const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
+        ImVec2 text_size = ImGui::CalcTextSize(buffer);
+        ImVec2 pos(origin.x + pad * 2.0f, origin.y + pad * 2.0f);
+        draw->AddRectFilled(ImVec2(pos.x - pad, pos.y - pad * 0.5f),
+                            ImVec2(pos.x + text_size.x + pad, pos.y + text_size.y + pad * 0.5f),
+                            IM_COL32(0, 0, 0, 140), 3.0f);
+        draw->AddText(pos, IM_COL32(255, 255, 255, 230), buffer);
+    }
+
+    void render_scene_preview(ImVec2 requested_size) {
+        ImVec2 avail = requested_size;
+        if (avail.x <= 0.0f || avail.y <= 0.0f) avail = ImGui::GetContentRegionAvail();
+        avail.x = std::max(avail.x, 50.0f);
+        avail.y = std::max(avail.y, 50.0f);
+
+        ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("ScenePreview3DCanvas", avail, ImGuiButtonFlags_MouseButtonLeft);
+        bool hovered = ImGui::IsItemHovered();
+        if (scene_active) handle_scene_input(hovered);
+
+        int width = std::max(1, static_cast<int>(std::round(avail.x)));
+        int height = std::max(1, static_cast<int>(std::round(avail.y)));
+        if (scene_active) {
+            render_scene_preview_target(width, height);
+        } else {
+            std::string error;
+            ensure_render_target(width, height, error);
+            if (render_rtv && context) {
+                const ImVec4 bg = clamp_background_color(background_color_value);
+                const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
+                context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
+                context->ClearRenderTargetView(render_rtv, clear_color);
+                if (depth_dsv) context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+                ID3D11RenderTargetView* null_rtv = nullptr;
+                context->OMSetRenderTargets(1, &null_rtv, nullptr);
+            }
+        }
+
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        ImVec2 end(origin.x + avail.x, origin.y + avail.y);
+        if (render_srv) {
+            draw->AddImage(reinterpret_cast<void*>(render_srv), origin, end);
+        } else {
+            draw->AddRectFilled(origin, end, IM_COL32(0, 0, 0, 255));
+        }
+        draw_scene_overlay(draw, origin, avail);
     }
 
     void render_scene(int width, int height) {
@@ -972,6 +2090,10 @@ fail:
     ID3D11PixelShader* pixel_shader = nullptr;
     ID3D11InputLayout* input_layout = nullptr;
     ID3D11Buffer* constant_buffer = nullptr;
+    ID3D11VertexShader* scene_vertex_shader = nullptr;
+    ID3D11PixelShader* scene_pixel_shader = nullptr;
+    ID3D11InputLayout* scene_input_layout = nullptr;
+    ID3D11Buffer* scene_constant_buffer = nullptr;
     ID3D11SamplerState* sampler_state = nullptr;
     ID3D11DepthStencilState* depth_state = nullptr;
     ID3D11RasterizerState* rasterizer_state = nullptr;
@@ -993,7 +2115,34 @@ fail:
     std::string model_path_value;
     ImVec4 background_color_value = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
     std::string last_error;
+    Canvas3DScene scene_data;
+    bool scene_active = false;
+    std::vector<SceneChunk> scene_chunks;
+    std::vector<SceneTrackChunkGpu> scene_track_chunks;
+    std::map<std::string, SceneModelGpu> scene_models;
+    std::mutex scene_upload_mutex;
+    std::vector<CpuModelData> scene_pending_uploads;
+    std::thread scene_worker;
+    std::atomic<bool> scene_cancel{false};
+    std::atomic<bool> scene_worker_running{false};
+    Vec3 scene_camera_pos;
+    float scene_camera_yaw = 0.0f;
+    float scene_camera_pitch = 0.0f;
+    double scene_camera_distance = 0.0;
+    double scene_camera_lateral_offset = 0.0;
+    float scene_camera_vertical_offset = 2.0f;
+    float scene_camera_yaw_offset = 0.0f;
+    bool scene_rotating = false;
+    ImVec2 scene_last_mouse = ImVec2(0.0f, 0.0f);
+    double scene_chunk_m = 100.0;
+    double scene_window_back_m = 100.0;
+    double scene_window_forward_m = 1200.0;
+    float scene_slow_speed_mps = 8.0f;
+    float scene_fast_multiplier = 10.0f;
+    std::string scene_last_error;
+    Canvas3DSceneStats scene_stats_value;
     ModelLoaderClient loader;
+    ModelLoaderClient scene_loader;
 };
 
 Canvas3D::Canvas3D(ID3D11Device* device) : impl_(std::make_unique<Impl>(device)) {
@@ -1031,4 +2180,24 @@ ImVec4 Canvas3D::background_color() const {
 
 void Canvas3D::render(ImVec2 size) {
     impl_->render(size);
+}
+
+bool Canvas3D::load_scene(Canvas3DScene scene, std::string& error) {
+    return impl_->load_scene(std::move(scene), error);
+}
+
+void Canvas3D::clear_scene() {
+    impl_->clear_scene();
+}
+
+bool Canvas3D::has_scene() const {
+    return impl_->has_scene();
+}
+
+Canvas3DSceneStats Canvas3D::scene_stats() const {
+    return impl_->scene_stats();
+}
+
+void Canvas3D::render_scene_preview(ImVec2 size) {
+    impl_->render_scene_preview(size);
 }

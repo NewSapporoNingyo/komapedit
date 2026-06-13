@@ -29,6 +29,7 @@
 struct ID3D11Device;
 struct ID3D11ShaderResourceView;
 class Canvas3D;
+struct Canvas3DScene;
 
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
@@ -552,6 +553,7 @@ struct WindowVisibilitySettings {
     bool show_fogs_window = false;
     bool show_plots_window = true;
     bool show_model_preview_window = true;
+    bool show_scene_preview_window = true;
 
     bool operator==(const WindowVisibilitySettings& other) const {
         return show_othertracks_window == other.show_othertracks_window &&
@@ -575,7 +577,8 @@ struct WindowVisibilitySettings {
             show_cab_illuminance_window == other.show_cab_illuminance_window &&
             show_fogs_window == other.show_fogs_window &&
             show_plots_window == other.show_plots_window &&
-            show_model_preview_window == other.show_model_preview_window;
+            show_model_preview_window == other.show_model_preview_window &&
+            show_scene_preview_window == other.show_scene_preview_window;
     }
 
     bool operator!=(const WindowVisibilitySettings& other) const {
@@ -699,6 +702,9 @@ public:
                                                  double unit_distance, double pan_pixels,
                                                  double max_frame_ms, const std::string& output_path,
                                                  bool profile_stages);
+    static int run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
+                                                    double unit_distance, double max_frame_ms,
+                                                    const std::string& output_path);
 #endif
 
 private:
@@ -839,6 +845,7 @@ private:
     bool show_fogs_window_ = false;
     bool show_plots_window_ = true;
     bool show_model_preview_window_ = true;
+    bool show_scene_preview_window_ = true;
     bool focus_structures_next_ = false;
     bool focus_repeaters_next_ = false;
     bool focus_signal_aspects_next_ = false;
@@ -855,6 +862,7 @@ private:
     bool focus_cab_illuminance_next_ = false;
     bool focus_fogs_next_ = false;
     bool focus_model_preview_next_ = false;
+    bool focus_scene_preview_next_ = false;
     bool focus_plots_next_ = true;
     struct PopupState {
         bool range = false;
@@ -948,7 +956,10 @@ private:
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;
     std::unique_ptr<Canvas3D> model_preview_canvas_;
+    std::unique_ptr<Canvas3D> scene_preview_canvas_;
     ImVec4 model_preview_bg_color_ = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    bool scene_preview_started_ = false;
+    bool scene_preview_dirty_ = true;
 
     TextureImage bg_image_;
     bool bg_show_ = true;
@@ -1016,8 +1027,12 @@ private:
     void render_cab_illuminance_window();
     void render_fogs_window();
     void render_model_preview_window();
+    void render_scene_preview_window();
     void preview_structure_model(const std::string& path);
     void reload_model_preview();
+    void start_scene_preview();
+    void rebuild_scene_preview();
+    Canvas3DScene build_scene_preview_scene() const;
     void reload_current_map_and_model_preview();
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);

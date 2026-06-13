@@ -204,7 +204,7 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
         aiProcess_GenSmoothNormals |
         aiProcess_ImproveCacheLocality |
         aiProcess_PreTransformVertices |
-        aiProcess_ConvertToLeftHanded;
+        aiProcess_FlipUVs;
     const aiScene* scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), flags, hint.c_str());
     if (!scene || !scene->HasMeshes()) {
         std::string error = importer.GetErrorString();

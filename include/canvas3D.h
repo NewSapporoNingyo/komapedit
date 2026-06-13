@@ -10,8 +10,72 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 struct ID3D11Device;
+
+struct Canvas3DTrackPoint {
+    double distance = 0.0;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float theta = 0.0f;
+};
+
+struct Canvas3DTrackPath {
+    std::string key;
+    std::vector<Canvas3DTrackPoint> points;
+    ImVec4 color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+};
+
+struct Canvas3DModelInstance {
+    std::string model_path;
+    double distance = 0.0;
+    float world[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+    };
+};
+
+struct Canvas3DBackgroundChange {
+    double distance = 0.0;
+    std::string model_path;
+};
+
+struct Canvas3DCameraStart {
+    double distance = 0.0;
+    float x = 0.0f;
+    float y = 2.0f;
+    float z = 0.0f;
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+};
+
+struct Canvas3DScene {
+    std::vector<Canvas3DTrackPath> tracks;
+    std::vector<Canvas3DModelInstance> instances;
+    std::vector<Canvas3DBackgroundChange> backgrounds;
+    Canvas3DCameraStart camera;
+    double min_distance = 0.0;
+    double max_distance = 0.0;
+};
+
+struct Canvas3DSceneStats {
+    bool active = false;
+    bool loading = false;
+    size_t chunk_count = 0;
+    size_t model_path_count = 0;
+    size_t model_ready_count = 0;
+    size_t model_failed_count = 0;
+    size_t instance_count = 0;
+    size_t drawn_instance_count = 0;
+    size_t drawn_track_chunk_count = 0;
+    double camera_distance = 0.0;
+    double window_back_m = 100.0;
+    double window_forward_m = 1200.0;
+};
 
 class Canvas3D {
 public:
@@ -30,6 +94,11 @@ public:
     ImVec4 background_color() const;
 
     void render(ImVec2 size);
+    bool load_scene(Canvas3DScene scene, std::string& error);
+    void clear_scene();
+    bool has_scene() const;
+    Canvas3DSceneStats scene_stats() const;
+    void render_scene_preview(ImVec2 size);
 
 private:
     struct Impl;

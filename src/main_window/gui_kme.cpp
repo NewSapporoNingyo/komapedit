@@ -357,6 +357,173 @@ Matrix copy_buffer(KvDoubleBuffer buffer) {
     return m;
 }
 
+struct SceneVec3 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
+SceneVec3 operator+(SceneVec3 a, SceneVec3 b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+SceneVec3 operator-(SceneVec3 a, SceneVec3 b) {
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+SceneVec3 operator*(SceneVec3 v, float s) {
+    return {v.x * s, v.y * s, v.z * s};
+}
+
+float scene_dot(SceneVec3 a, SceneVec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+SceneVec3 scene_cross(SceneVec3 a, SceneVec3 b) {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
+
+SceneVec3 scene_normalize(SceneVec3 v) {
+    float len = std::sqrt(std::max(scene_dot(v, v), 1e-12f));
+    return {v.x / len, v.y / len, v.z / len};
+}
+
+SceneVec3 scene_right_from_theta(float theta) {
+    return {std::cos(theta), 0.0f, std::sin(theta)};
+}
+
+SceneVec3 scene_forward_from_theta(float theta) {
+    return {std::sin(theta), 0.0f, -std::cos(theta)};
+}
+
+SceneVec3 scene_rotate_axis(SceneVec3 v, SceneVec3 axis, float radians) {
+    axis = scene_normalize(axis);
+    float c = std::cos(radians);
+    float s = std::sin(radians);
+    return v * c + scene_cross(axis, v) * s + axis * (scene_dot(axis, v) * (1.0f - c));
+}
+
+double scene_angle_lerp(double a, double b, double t) {
+    double delta = std::atan2(std::sin(b - a), std::cos(b - a));
+    return a + delta * t;
+}
+
+std::string scene_key(std::string key) {
+    return ascii_lower(trim_ascii(key));
+}
+
+double scene_matrix_track_tangent(const Matrix& points, size_t row) {
+    if (points.rows < 2 || points.cols < 3) return 0.0;
+    size_t a = row == 0 ? 0 : row - 1;
+    size_t b = row + 1 < points.rows ? row + 1 : row;
+    if (a == b && b + 1 < points.rows) ++b;
+    if (a == b) return 0.0;
+    double dx = points.at(b, 1) - points.at(a, 1);
+    double dy = points.at(b, 2) - points.at(a, 2);
+    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
+    return std::atan2(dy, dx);
+}
+
+Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool has_theta_column) {
+    Canvas3DTrackPoint p;
+    p.distance = points.at(row, 0);
+    p.x = static_cast<float>(points.at(row, 2));
+    p.z = static_cast<float>(-points.at(row, 1));
+    p.y = points.cols > 3 ? static_cast<float>(points.at(row, 3)) : 0.0f;
+    p.theta = static_cast<float>(has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_matrix_track_tangent(points, row));
+    return p;
+}
+
+std::optional<Canvas3DTrackPoint> scene_sample_track(const Matrix& points, double distance, bool has_theta_column) {
+    if (points.empty() || points.cols < 3) return std::nullopt;
+    double first = points.at(0, 0);
+    double last = points.at(points.rows - 1, 0);
+    constexpr double eps = 1e-6;
+    if (distance < first - eps || distance > last + eps) return std::nullopt;
+    if (distance <= first) return scene_matrix_row_point(points, 0, has_theta_column);
+    if (distance >= last) return scene_matrix_row_point(points, points.rows - 1, has_theta_column);
+    size_t lo = 0;
+    size_t hi = points.rows;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (points.at(mid, 0) < distance) lo = mid + 1;
+        else hi = mid;
+    }
+    size_t a_row = lo == 0 ? 0 : lo - 1;
+    size_t b_row = std::min(lo, points.rows - 1);
+    Canvas3DTrackPoint a = scene_matrix_row_point(points, a_row, has_theta_column);
+    Canvas3DTrackPoint b = scene_matrix_row_point(points, b_row, has_theta_column);
+    double span = b.distance - a.distance;
+    double t = std::abs(span) < eps ? 0.0 : std::clamp((distance - a.distance) / span, 0.0, 1.0);
+    Canvas3DTrackPoint p;
+    p.distance = distance;
+    p.x = static_cast<float>(a.x + (b.x - a.x) * t);
+    p.y = static_cast<float>(a.y + (b.y - a.y) * t);
+    p.z = static_cast<float>(a.z + (b.z - a.z) * t);
+    p.theta = static_cast<float>(scene_angle_lerp(a.theta, b.theta, t));
+    return p;
+}
+
+struct SceneTrackSource {
+    const Matrix* points = nullptr;
+    bool has_theta_column = false;
+};
+
+void scene_store_world(float out[16], SceneVec3 right, SceneVec3 up, SceneVec3 forward, SceneVec3 origin) {
+    right = scene_normalize(right);
+    up = scene_normalize(up);
+    forward = scene_normalize(forward);
+    SceneVec3 model_z = forward * -1.0f;
+    const float values[16] = {
+        right.x, right.y, right.z, 0.0f,
+        up.x, up.y, up.z, 0.0f,
+        model_z.x, model_z.y, model_z.z, 0.0f,
+        origin.x, origin.y, origin.z, 1.0f
+    };
+    std::copy(values, values + 16, out);
+}
+
+void scene_apply_euler(SceneVec3& right, SceneVec3& up, SceneVec3& forward,
+                       double rx_deg, double ry_deg, double rz_deg) {
+    constexpr float deg_to_rad = 0.01745329251994329577f;
+    float rx = static_cast<float>(rx_deg) * deg_to_rad;
+    float ry = static_cast<float>(ry_deg) * deg_to_rad;
+    float rz = static_cast<float>(rz_deg) * deg_to_rad;
+    if (std::abs(rx) > 1e-6f) {
+        up = scene_rotate_axis(up, right, -rx);
+        forward = scene_rotate_axis(forward, right, -rx);
+    }
+    if (std::abs(rz) > 1e-6f) {
+        right = scene_rotate_axis(right, forward * -1.0f, rz);
+        up = scene_rotate_axis(up, forward * -1.0f, rz);
+    }
+    if (std::abs(ry) > 1e-6f) {
+        right = scene_rotate_axis(right, up, -ry);
+        forward = scene_rotate_axis(forward, up, -ry);
+    }
+}
+
+std::vector<std::string> scene_split_key_list(const std::string& text) {
+    std::vector<std::string> keys;
+    std::string current;
+    for (char ch : text) {
+        if (ch == ',' || ch == ';' || std::isspace(static_cast<unsigned char>(ch))) {
+            std::string key = trim_ascii(current);
+            if (!key.empty()) keys.push_back(key);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    std::string key = trim_ascii(current);
+    if (!key.empty()) keys.push_back(key);
+    return keys;
+}
+
 App* g_app = nullptr;
 HWND g_main_hwnd = nullptr;
 constexpr UINT kAppWakeMessage = WM_APP + 1;
@@ -372,6 +539,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     kv_set_log_callback(&App::log_callback);
     model_preview_canvas_ = std::make_unique<Canvas3D>(device_);
     model_preview_canvas_->set_background_color(model_preview_bg_color_);
+    scene_preview_canvas_ = std::make_unique<Canvas3D>(device_);
+    scene_preview_canvas_->set_background_color(ImVec4(0.48f, 0.62f, 0.82f, 1.0f));
     lang_ = settings_.language;
     font_size_ = clamp_font_size(settings_.font_size);
     ui_component_size_ = clamp_ui_component_size(settings_.ui_component_size);
@@ -519,6 +688,8 @@ void App::apply_load_result(LoadResult result) {
     has_model_ = true;
     rebuild_marker_overlay_cache();
     reset_marker_visibility();
+    scene_preview_dirty_ = true;
+    if (!scene_preview_started_ && scene_preview_canvas_) scene_preview_canvas_->clear_scene();
     file_path_ = result.path;
     dmin_ = model_.default_min;
     dmax_ = model_.default_max;
@@ -586,6 +757,7 @@ void App::regenerate_geometry() {
         invalidate_table_cache();
         rebuild_marker_overlay_cache();
         sync_marker_visibility_sizes();
+        scene_preview_dirty_ = true;
         model_.has_cp_arb = true;
         model_.cp_arb[0] = cp_start_;
         model_.cp_arb[1] = cp_end_;
@@ -1236,6 +1408,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Fogs", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
+    ImGui::DockBuilderDockWindow("ScenePreview3D", dock_main);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
     if (ImGuiDockNode* main_node = ImGui::DockBuilderGetNode(dock_main)) {
         main_node->SelectedTabId = ImHashStr("Plots");
@@ -1268,6 +1441,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_fogs_window = show_fogs_window_;
     visibility.show_plots_window = show_plots_window_;
     visibility.show_model_preview_window = show_model_preview_window_;
+    visibility.show_scene_preview_window = show_scene_preview_window_;
     return visibility;
 }
 
@@ -1294,6 +1468,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_fogs_window_ = visibility.show_fogs_window;
     show_plots_window_ = visibility.show_plots_window;
     show_model_preview_window_ = visibility.show_model_preview_window;
+    show_scene_preview_window_ = visibility.show_scene_preview_window;
 }
 
 View2DSettings App::current_view_2d_settings() const {
@@ -1571,6 +1746,10 @@ void App::render_menu() {
     }
     if (ImGui::BeginMenu(tr("menu.view_3d").c_str())) {
         ImGui::MenuItem(tr("menu.structure_model_preview").c_str(), nullptr, &show_model_preview_window_);
+        if (ImGui::MenuItem(tr("menu.scene_preview").c_str(), nullptr, &show_scene_preview_window_) &&
+            show_scene_preview_window_) {
+            focus_scene_preview_next_ = true;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("frame.aux_info").c_str())) {
@@ -1946,6 +2125,297 @@ void App::render_popups() {
     }
 }
 
+Canvas3DScene App::build_scene_preview_scene() const {
+    Canvas3DScene scene;
+    if (!has_model_ || model_.own.empty()) return scene;
+
+    std::map<std::string, SceneTrackSource> track_sources;
+    SceneTrackSource own_source{&model_.own, true};
+    for (const char* key : {"", "0", "\\", "own", "main"}) {
+        track_sources[scene_key(key)] = own_source;
+    }
+    for (const OtherTrack& track : model_.other_tracks) {
+        track_sources[scene_key(track.key)] = SceneTrackSource{&track.points, false};
+    }
+    auto find_track = [&](const std::string& key) -> std::optional<SceneTrackSource> {
+        auto it = track_sources.find(scene_key(key));
+        if (it == track_sources.end() || !it->second.points) return std::nullopt;
+        return it->second;
+    };
+    auto sample_track = [&](const std::string& key, double distance) -> std::optional<Canvas3DTrackPoint> {
+        auto source = find_track(key);
+        if (!source) return std::nullopt;
+        return scene_sample_track(*source->points, distance, source->has_theta_column);
+    };
+
+    std::map<std::string, std::string> model_paths;
+    for (const TableRow& row : model_.structure_models) {
+        std::string key = scene_key(table_cell(row, "structureKey"));
+        std::string path = table_cell(row, "filePath");
+        if (!key.empty() && !path.empty()) model_paths[key] = path;
+    }
+    auto model_path_for_key = [&](const std::string& key) -> std::string {
+        auto it = model_paths.find(scene_key(key));
+        return it == model_paths.end() ? std::string{} : it->second;
+    };
+
+    auto append_track_path = [&](const std::string& key, const Matrix& points, bool has_theta, ImVec4 color) {
+        if (points.empty() || points.cols < 3) return;
+        Canvas3DTrackPath path;
+        path.key = key;
+        path.color = color;
+        path.points.reserve(points.rows);
+        for (size_t row = 0; row < points.rows; ++row) {
+            path.points.push_back(scene_matrix_row_point(points, row, has_theta));
+        }
+        scene.tracks.push_back(std::move(path));
+    };
+    append_track_path("own", model_.own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f));
+    for (const OtherTrack& track : model_.other_tracks) {
+        append_track_path(track.key, track.points, false, track.color);
+    }
+
+    auto fill_world_from_track = [&](Canvas3DModelInstance& instance,
+                                     const Canvas3DTrackPoint& point,
+                                     std::optional<Canvas3DTrackPoint> span_point,
+                                     double x, double y, double z,
+                                     double rx, double ry, double rz,
+                                     double tilt, double span) {
+        SceneVec3 right = scene_right_from_theta(point.theta);
+        SceneVec3 forward = scene_forward_from_theta(point.theta);
+        if (span > 1.0 && span_point) {
+            SceneVec3 base{point.x, point.y, point.z};
+            SceneVec3 next{span_point->x, span_point->y, span_point->z};
+            if (static_cast<int>(tilt) % 2 == 0) next.y = base.y;
+            forward = scene_normalize(next - base);
+            right = scene_normalize(scene_cross(forward, {0.0f, 1.0f, 0.0f}));
+        }
+        SceneVec3 up = scene_cross(right, forward);
+        scene_apply_euler(right, up, forward, rx, ry, rz);
+        SceneVec3 origin{point.x, point.y, point.z};
+        origin = origin + right * static_cast<float>(x) +
+            up * static_cast<float>(y) +
+            forward * static_cast<float>(z);
+        scene_store_world(instance.world, right, up, forward, origin);
+    };
+
+    auto append_structure_instance = [&](const TableRow& row) {
+        std::string path = model_path_for_key(table_cell(row, "structureKey"));
+        if (path.empty()) return;
+        double distance = table_cell_number(row, "distance");
+        auto point = sample_track(table_cell(row, "trackKey"), distance);
+        if (!point) return;
+        double span = table_cell_number(row, "span");
+        std::optional<Canvas3DTrackPoint> span_point;
+        if (span > 1.0) span_point = sample_track(table_cell(row, "trackKey"), distance + span);
+        Canvas3DModelInstance instance;
+        instance.model_path = path;
+        instance.distance = distance;
+        fill_world_from_track(instance, *point, span_point,
+                              table_cell_number(row, "x"),
+                              table_cell_number(row, "y"),
+                              table_cell_number(row, "z"),
+                              table_cell_number(row, "rx"),
+                              table_cell_number(row, "ry"),
+                              table_cell_number(row, "rz"),
+                              table_cell_number(row, "tilt"),
+                              span);
+        scene.instances.push_back(std::move(instance));
+    };
+    for (const TableRow& row : model_.structures) append_structure_instance(row);
+
+    for (const TableRow& row : model_.structures_between) {
+        std::string path = model_path_for_key(table_cell(row, "structureKey"));
+        if (path.empty()) continue;
+        double distance = table_cell_number(row, "distance");
+        auto p1 = sample_track(table_cell(row, "trackKey1"), distance);
+        auto p2 = sample_track(table_cell(row, "trackKey2"), distance);
+        if (!p1 || !p2) continue;
+        SceneVec3 a{p1->x, p1->y, p1->z};
+        SceneVec3 b{p2->x, p2->y, p2->z};
+        if (static_cast<int>(table_cell_number(row, "flag")) & 1) b.y = a.y;
+        SceneVec3 right = scene_normalize(b - a);
+        SceneVec3 forward = scene_normalize(scene_forward_from_theta(
+            static_cast<float>(scene_angle_lerp(p1->theta, p2->theta, 0.5))));
+        forward = scene_normalize(forward - right * scene_dot(forward, right));
+        SceneVec3 up = scene_cross(right, forward);
+        SceneVec3 origin = (a + b) * 0.5f;
+        Canvas3DModelInstance instance;
+        instance.model_path = path;
+        instance.distance = distance;
+        scene_store_world(instance.world, right, up, forward, origin);
+        scene.instances.push_back(std::move(instance));
+    }
+
+    struct RepeaterBegin {
+        double distance = 0.0;
+        std::string track_key;
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        double rx = 0.0;
+        double ry = 0.0;
+        double rz = 0.0;
+        double tilt = 0.0;
+        double span = 0.0;
+        double interval = 0.0;
+        std::vector<std::string> model_paths;
+    };
+    std::vector<TableRow> repeater_events = model_.repeaters;
+    std::stable_sort(repeater_events.begin(), repeater_events.end(), [](const TableRow& a, const TableRow& b) {
+        double ao = table_cell_number(a, "order");
+        double bo = table_cell_number(b, "order");
+        if (ao != bo) return ao < bo;
+        return table_cell_number(a, "distance") < table_cell_number(b, "distance");
+    });
+    std::map<std::string, RepeaterBegin> active_repeaters;
+    auto emit_repeater = [&](const RepeaterBegin& begin, double end_distance) {
+        if (begin.model_paths.empty()) return;
+        if (end_distance < begin.distance) return;
+        auto emit_at = [&](double distance, size_t model_index) {
+            std::string path = begin.model_paths[model_index % begin.model_paths.size()];
+            if (path.empty()) return;
+            auto point = sample_track(begin.track_key, distance);
+            if (!point) return;
+            std::optional<Canvas3DTrackPoint> span_point;
+            if (begin.span > 1.0) span_point = sample_track(begin.track_key, distance + begin.span);
+            Canvas3DModelInstance instance;
+            instance.model_path = path;
+            instance.distance = distance;
+            fill_world_from_track(instance, *point, span_point,
+                                  begin.x, begin.y, begin.z,
+                                  begin.rx, begin.ry, begin.rz,
+                                  begin.tilt, begin.span);
+            scene.instances.push_back(std::move(instance));
+        };
+        if (begin.interval <= 1e-9) {
+            emit_at(begin.distance, 0);
+            return;
+        }
+        size_t model_index = 0;
+        for (double d = begin.distance; d < end_distance + 1e-6; d += begin.interval) {
+            emit_at(d, model_index++);
+            if (model_index > 1000000) break;
+        }
+    };
+    for (const TableRow& row : repeater_events) {
+        std::string key = scene_key(table_cell(row, "repeaterKey"));
+        if (key.empty()) continue;
+        std::string method = table_cell(row, "method");
+        double distance = table_cell_number(row, "distance");
+        if (method == "Begin" || method == "Begin0") {
+            auto existing = active_repeaters.find(key);
+            if (existing != active_repeaters.end()) {
+                emit_repeater(existing->second, distance);
+                active_repeaters.erase(existing);
+            }
+            RepeaterBegin begin;
+            begin.distance = distance;
+            begin.track_key = table_cell(row, "trackKey");
+            begin.x = table_cell_number(row, "x");
+            begin.y = table_cell_number(row, "y");
+            begin.z = table_cell_number(row, "z");
+            begin.rx = table_cell_number(row, "rx");
+            begin.ry = table_cell_number(row, "ry");
+            begin.rz = table_cell_number(row, "rz");
+            begin.tilt = table_cell_number(row, "tilt");
+            begin.span = table_cell_number(row, "span");
+            begin.interval = table_cell_number(row, "interval");
+            for (const std::string& structure_key : scene_split_key_list(table_cell(row, "structureKeys"))) {
+                begin.model_paths.push_back(model_path_for_key(structure_key));
+            }
+            active_repeaters[key] = std::move(begin);
+        } else if (method == "End") {
+            auto existing = active_repeaters.find(key);
+            if (existing == active_repeaters.end()) continue;
+            emit_repeater(existing->second, distance);
+            active_repeaters.erase(existing);
+        }
+    }
+
+    for (const TableRow& row : model_.backgrounds) {
+        Canvas3DBackgroundChange change;
+        change.distance = table_cell_number(row, "distance");
+        change.model_path = model_path_for_key(table_cell(row, "structureKey"));
+        scene.backgrounds.push_back(std::move(change));
+    }
+
+    scene.min_distance = model_.own.at(0, 0);
+    scene.max_distance = model_.own.at(model_.own.rows - 1, 0);
+    double camera_distance = !model_.stations.empty() ? model_.stations.front().distance : scene.min_distance;
+    auto camera_point = sample_track("", camera_distance);
+    if (!camera_point) camera_point = scene_matrix_row_point(model_.own, 0, true);
+    scene.camera.distance = camera_distance;
+    scene.camera.x = camera_point->x;
+    scene.camera.y = camera_point->y + 2.0f;
+    scene.camera.z = camera_point->z;
+    scene.camera.yaw = camera_point->theta;
+    scene.camera.pitch = 0.0f;
+    return scene;
+}
+
+void App::start_scene_preview() {
+    scene_preview_started_ = true;
+    show_scene_preview_window_ = true;
+    focus_scene_preview_next_ = true;
+    rebuild_scene_preview();
+}
+
+void App::rebuild_scene_preview() {
+    if (!scene_preview_canvas_ || !scene_preview_started_) return;
+    if (!has_model_ || model_.own.empty()) {
+        scene_preview_canvas_->clear_scene();
+        scene_preview_dirty_ = true;
+        add_log("[WARN]3D scene preview: no map geometry is loaded");
+        return;
+    }
+    Canvas3DScene scene = build_scene_preview_scene();
+    std::string error;
+    if (!scene_preview_canvas_->load_scene(std::move(scene), error)) {
+        add_log("[ERROR]3D scene preview: " + error);
+        scene_preview_dirty_ = true;
+        return;
+    }
+    scene_preview_dirty_ = false;
+    Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
+    add_log("[INFO]3D scene preview started: chunks=" + std::to_string(stats.chunk_count) +
+            " instances=" + std::to_string(stats.instance_count) +
+            " models=" + std::to_string(stats.model_path_count));
+}
+
+void App::render_scene_preview_window() {
+    if (!show_scene_preview_window_) return;
+    if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
+    if (focus_scene_preview_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.scene_preview") + "###ScenePreview3D";
+    ImGuiStyle& style = ImGui::GetStyle();
+    const float button_height = ImGui::GetFrameHeight();
+    const float toolbar_padding_y = button_height * 0.25f;
+    const float window_padding_x = style.WindowPadding.x;
+    const float item_spacing_x = style.ItemSpacing.x;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(window_padding_x, toolbar_padding_y));
+    if (ImGui::Begin(title.c_str(), &show_scene_preview_window_)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(item_spacing_x * 1.35f, 0.0f));
+        ImGui::BeginDisabled(load_state_.running || !has_model_);
+        if (ImGui::Button(tr("button.start_scene_preview").c_str())) start_scene_preview();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!scene_preview_started_ || load_state_.running || !has_model_);
+        if (ImGui::Button(tr("button.reload").c_str())) rebuild_scene_preview();
+        ImGui::EndDisabled();
+        ImGui::PopStyleVar();
+        if (scene_preview_started_ && scene_preview_dirty_ && has_model_ && !load_state_.running) {
+            rebuild_scene_preview();
+        }
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        scene_preview_canvas_->render_scene_preview(avail);
+    }
+    focus_scene_preview_next_ = false;
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
 void App::preview_structure_model(const std::string& path) {
     if (path.empty()) {
         add_log("[WARN]model preview: empty model path");
@@ -2072,6 +2542,7 @@ void App::render() {
     render_console();
     render_plots();
     render_model_preview_window();
+    render_scene_preview_window();
     render_structures_window();
     render_structure_models_window();
     render_sound_list_window();
@@ -2174,7 +2645,21 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int main(int, char**) {
 #ifndef NDEBUG
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     std::vector<std::string> args = command_line_args_utf8();
+    HeadlessScene3DBenchmarkOptions scene3d_bench = parse_headless_scene3d_benchmark_options(args);
+    if (scene3d_bench.requested) {
+        if (!scene3d_bench.error.empty()) {
+            std::cerr << scene3d_bench.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-scene3d-bench <map-path> "
+                      << "[--frames N] [--unit-distance M] [--max-frame-ms MS] [--headless-output FILE]\n";
+            return 1;
+        }
+        return App::run_debug_headless_scene3d_benchmark(scene3d_bench.path, scene3d_bench.frames,
+                                                         scene3d_bench.unit_distance, scene3d_bench.max_frame_ms,
+                                                         scene3d_bench.output_path);
+    }
+
     HeadlessPlanBenchmarkOptions plan_bench = parse_headless_plan_benchmark_options(args);
     if (plan_bench.requested) {
         if (!plan_bench.error.empty()) {
