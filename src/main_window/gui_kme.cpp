@@ -2207,6 +2207,8 @@ Canvas3DScene App::build_scene_preview_scene() {
     for (const OtherTrack& track : scene_other_tracks) {
         append_track_path(track.key, track.points, false, track.color, track.visible);
     }
+    scene.min_distance = scene_own.at(0, 0);
+    scene.max_distance = scene_own.at(scene_own.rows - 1, 0);
 
     auto append_structure_instance = [&](const TableRow& row) {
         std::string path = model_path_for_key(table_cell(row, "structureKey"));
@@ -2325,6 +2327,9 @@ Canvas3DScene App::build_scene_preview_scene() {
             active_repeaters.erase(existing);
         }
     }
+    for (const auto& kv : active_repeaters) {
+        emit_repeater(kv.second, scene.max_distance);
+    }
 
     for (const TableRow& row : model_.backgrounds) {
         Canvas3DBackgroundChange change;
@@ -2333,8 +2338,6 @@ Canvas3DScene App::build_scene_preview_scene() {
         scene.backgrounds.push_back(std::move(change));
     }
 
-    scene.min_distance = scene_own.at(0, 0);
-    scene.max_distance = scene_own.at(scene_own.rows - 1, 0);
     double camera_distance = scene.min_distance;
     if (!model_.stations.empty()) {
         int station_index = std::clamp(station_jump_index_, 0, static_cast<int>(model_.stations.size()) - 1);
