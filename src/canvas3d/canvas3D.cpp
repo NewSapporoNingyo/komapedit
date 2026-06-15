@@ -543,8 +543,8 @@ bool is_scene_own_track_alias(const std::string& normalized_key) {
 }
 
 bool is_scene_own_track_placement_key(const std::string& normalized_key) {
-    // BVE Structure/Repeater placement uses only trackKey 0 for the own track.
-    return normalized_key == "0";
+    // BVE Structure/Repeater placement uses empty trackKey or trackKey 0 for the own track.
+    return normalized_key.empty() || normalized_key == "0";
 }
 
 int scene_tilt_flags(double tilt) {
