@@ -13,6 +13,7 @@
 #include <vector>
 
 struct ID3D11Device;
+struct MapModel;
 
 struct Canvas3DTrackPoint {
     double distance = 0.0;
@@ -110,6 +111,27 @@ struct Canvas3DSceneStats {
     double window_back_m = 100.0;
     double window_forward_m = 1200.0;
 };
+
+struct Canvas3DSceneBuildOptions {
+    const MapModel* model = nullptr;
+    void* map_handle = nullptr;
+    double unit_distance = 25.0;
+    double control_point_start = 0.0;
+    double control_point_end = 0.0;
+    double control_point_interval = 25.0;
+    int station_index = 0;
+    bool show_own_track_markers = true;
+};
+
+struct Canvas3DSceneBuildResult {
+    Canvas3DScene scene;
+    std::vector<std::string> log_messages;
+};
+
+Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options);
+std::vector<Canvas3DTrackVisibility> build_canvas3d_scene_track_visibility(
+    const MapModel& model,
+    bool show_own_track_markers);
 
 class Canvas3D {
 public:

@@ -30,7 +30,6 @@
 struct ID3D11Device;
 struct ID3D11ShaderResourceView;
 class Canvas3D;
-struct Canvas3DScene;
 
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
@@ -1077,7 +1076,6 @@ private:
     void stop_scene_preview();
     void rebuild_scene_preview();
     void sync_scene_preview_track_visibility();
-    Canvas3DScene build_scene_preview_scene();
     void reload_current_map_and_model_preview();
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);

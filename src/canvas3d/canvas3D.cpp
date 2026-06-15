@@ -8,6 +8,8 @@
 
 #include "canvas3D.h"
 
+#include "kme.h"
+#include "maploader.h"
 #include "model_loader.h"
 
 #include "imgui.h"
@@ -639,6 +641,123 @@ void apply_euler(DVec3& right, DVec3& up, DVec3& forward,
     }
 }
 
+std::string trim_scene_ascii(const std::string& text) {
+    size_t first = 0;
+    while (first < text.size() && std::isspace(static_cast<unsigned char>(text[first]))) ++first;
+    size_t last = text.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1]))) --last;
+    return text.substr(first, last - first);
+}
+
+std::string scene_model_key(std::string key) {
+    key = trim_scene_ascii(key);
+    for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return key;
+}
+
+Matrix copy_scene_buffer(KvDoubleBuffer buffer) {
+    Matrix m;
+    m.rows = buffer.rows;
+    m.cols = buffer.cols;
+    if (buffer.data && buffer.rows > 0 && buffer.cols > 0) {
+        m.data.assign(buffer.data, buffer.data + buffer.rows * buffer.cols);
+    }
+    return m;
+}
+
+double scene_matrix_track_tangent(const Matrix& points, size_t row) {
+    if (points.rows < 2 || points.cols < 3) return 0.0;
+    size_t a = row == 0 ? 0 : row - 1;
+    size_t b = row + 1 < points.rows ? row + 1 : row;
+    if (a == b && b + 1 < points.rows) ++b;
+    if (a == b) return 0.0;
+    double dx = points.at(b, 1) - points.at(a, 1);
+    double dy = points.at(b, 2) - points.at(a, 2);
+    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
+    return std::atan2(dy, dx);
+}
+
+Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool has_theta_column) {
+    constexpr double default_gauge = 1067.0;
+    auto cant_angle = [default_gauge](double cant, double gauge) {
+        if (!std::isfinite(cant)) return 0.0;
+        double effective_gauge = std::abs(gauge) > 1e-9 && std::isfinite(gauge) ? std::abs(gauge) : default_gauge;
+        return std::asin(std::clamp(cant / effective_gauge, -1.0, 1.0));
+    };
+
+    Canvas3DTrackPoint p;
+    p.distance = points.at(row, 0);
+    p.x = points.at(row, 2);
+    p.z = -points.at(row, 1);
+    p.y = points.cols > 3 ? points.at(row, 3) : 0.0;
+    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_matrix_track_tangent(points, row);
+    if (has_theta_column) {
+        double cant = points.cols > 8 ? points.at(row, 8) : 0.0;
+        double gauge = points.cols > 10 ? points.at(row, 10) : default_gauge;
+        p.cant_angle = cant_angle(cant, gauge);
+    } else {
+        double cant = points.cols > 5 ? points.at(row, 5) : 0.0;
+        double gauge = points.cols > 7 ? points.at(row, 7) : default_gauge;
+        p.cant_angle = cant_angle(cant, gauge);
+    }
+    return p;
+}
+
+std::optional<Canvas3DTrackPoint> scene_sample_matrix_track(const Matrix& points,
+                                                            double distance,
+                                                            bool has_theta_column) {
+    if (points.empty() || points.cols < 3) return std::nullopt;
+    double first = points.at(0, 0);
+    double last = points.at(points.rows - 1, 0);
+    constexpr double eps = 1e-6;
+    if (distance < first - eps || distance > last + eps) return std::nullopt;
+    if (distance <= first) return scene_matrix_row_point(points, 0, has_theta_column);
+    if (distance >= last) return scene_matrix_row_point(points, points.rows - 1, has_theta_column);
+    size_t lo = 0;
+    size_t hi = points.rows;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (points.at(mid, 0) < distance) lo = mid + 1;
+        else hi = mid;
+    }
+    size_t a_row = lo == 0 ? 0 : lo - 1;
+    size_t b_row = std::min(lo, points.rows - 1);
+    Canvas3DTrackPoint a = scene_matrix_row_point(points, a_row, has_theta_column);
+    Canvas3DTrackPoint b = scene_matrix_row_point(points, b_row, has_theta_column);
+    double span = b.distance - a.distance;
+    double t = std::abs(span) < eps ? 0.0 : std::clamp((distance - a.distance) / span, 0.0, 1.0);
+    Canvas3DTrackPoint p;
+    p.distance = distance;
+    p.x = a.x + (b.x - a.x) * t;
+    p.y = a.y + (b.y - a.y) * t;
+    p.z = a.z + (b.z - a.z) * t;
+    p.theta = angle_lerp(a.theta, b.theta, t);
+    p.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
+    return p;
+}
+
+struct SceneTrackSource {
+    const Matrix* points = nullptr;
+    bool has_theta_column = false;
+};
+
+std::vector<std::string> scene_split_key_list(const std::string& text) {
+    std::vector<std::string> keys;
+    std::string current;
+    for (char ch : text) {
+        if (ch == ',' || ch == ';' || std::isspace(static_cast<unsigned char>(ch))) {
+            std::string key = trim_scene_ascii(current);
+            if (!key.empty()) keys.push_back(key);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    std::string key = trim_scene_ascii(current);
+    if (!key.empty()) keys.push_back(key);
+    return keys;
+}
+
 const char* kShaderSource = R"(
 cbuffer SceneConstants : register(b0)
 {
@@ -791,6 +910,261 @@ private:
 };
 
 } // namespace
+
+Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options) {
+    Canvas3DSceneBuildResult result;
+    Canvas3DScene& scene = result.scene;
+    if (!options.model || options.model->own.empty()) return result;
+
+    const MapModel& model = *options.model;
+    Matrix scene_own = model.own;
+    std::vector<OtherTrack> scene_other_tracks = model.other_tracks;
+    if (options.map_handle) {
+        const double max_step = std::clamp(
+            options.control_point_interval > 0.0 ? options.control_point_interval : 25.0,
+            1.0,
+            25.0);
+        bool scene_geometry_ok =
+            kv_generate_scene_geometry(options.map_handle, options.unit_distance, 1.0, max_step, 1.0, 0.01) != 0;
+        if (scene_geometry_ok) {
+            Matrix dense_own = copy_scene_buffer(kv_get_owntrack_buffer(options.map_handle));
+            std::vector<OtherTrack> dense_other_tracks;
+            dense_other_tracks.reserve(model.other_tracks.size());
+            for (const OtherTrack& track : model.other_tracks) {
+                OtherTrack dense = track;
+                dense.points = copy_scene_buffer(kv_get_othertrack_buffer(options.map_handle, track.key.c_str()));
+                dense_other_tracks.push_back(std::move(dense));
+            }
+            if (!dense_own.empty()) {
+                scene_own = std::move(dense_own);
+                scene_other_tracks = std::move(dense_other_tracks);
+            }
+        } else {
+            const char* err = kv_get_last_error();
+            result.log_messages.push_back(std::string("[WARN]3D scene preview adaptive geometry failed: ") +
+                                          (err ? err : "geometry failed"));
+        }
+
+        if (!kv_generate_geometry(options.map_handle, options.unit_distance, model.has_cp_arb ? 1 : 0,
+                                  options.control_point_start, options.control_point_end,
+                                  options.control_point_interval)) {
+            const char* err = kv_get_last_error();
+            result.log_messages.push_back(std::string("[ERROR]3D scene preview failed to restore 2D geometry: ") +
+                                          (err ? err : "geometry failed"));
+        }
+    }
+
+    std::map<std::string, SceneTrackSource> track_sources;
+    SceneTrackSource own_source{&scene_own, true};
+    for (const char* key : kOwnTrackLookupAliases) {
+        track_sources[normalize_scene_track_key(key)] = own_source;
+    }
+    for (const OtherTrack& track : scene_other_tracks) {
+        track_sources[normalize_scene_track_key(track.key)] = SceneTrackSource{&track.points, false};
+    }
+    auto find_track = [&](const std::string& normalized_key) -> std::optional<SceneTrackSource> {
+        auto it = track_sources.find(normalized_key);
+        if (it == track_sources.end() || !it->second.points) return std::nullopt;
+        return it->second;
+    };
+    auto sample_track = [&](const std::string& key, double distance) -> std::optional<Canvas3DTrackPoint> {
+        std::string normalized_key = normalize_scene_track_key(key);
+        if (auto source = find_track(normalized_key)) {
+            auto sampled = scene_sample_matrix_track(*source->points, distance, source->has_theta_column);
+            if (sampled) return sampled;
+        }
+        if (is_scene_own_track_alias(normalized_key)) {
+            return scene_sample_matrix_track(*own_source.points, distance, own_source.has_theta_column);
+        }
+        return std::nullopt;
+    };
+
+    std::map<std::string, std::string> model_paths;
+    for (const TableRow& row : model.structure_models) {
+        std::string key = scene_model_key(table_cell(row, "structureKey"));
+        std::string path = table_cell(row, "filePath");
+        if (!key.empty() && !path.empty()) model_paths[key] = path;
+    }
+    auto model_path_for_key = [&](const std::string& key) -> std::string {
+        auto it = model_paths.find(scene_model_key(key));
+        return it == model_paths.end() ? std::string{} : it->second;
+    };
+
+    auto append_track_path = [&](const std::string& key, const Matrix& points, bool has_theta, ImVec4 color,
+                                 bool visible) {
+        if (points.empty() || points.cols < 3) return;
+        Canvas3DTrackPath path;
+        path.key = key;
+        path.color = color;
+        path.visible = visible;
+        path.points.reserve(points.rows);
+        for (size_t row = 0; row < points.rows; ++row) {
+            path.points.push_back(scene_matrix_row_point(points, row, has_theta));
+        }
+        scene.tracks.push_back(std::move(path));
+    };
+    append_track_path("own", scene_own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f),
+                      options.show_own_track_markers);
+    for (const OtherTrack& track : scene_other_tracks) {
+        append_track_path(track.key, track.points, false, track.color, track.visible);
+    }
+    scene.min_distance = scene_own.at(0, 0);
+    scene.max_distance = scene_own.at(scene_own.rows - 1, 0);
+
+    auto append_structure_instance = [&](const TableRow& row) {
+        std::string path = model_path_for_key(table_cell(row, "structureKey"));
+        if (path.empty()) return;
+        double distance = table_cell_number(row, "distance");
+        auto point = sample_track(table_cell(row, "trackKey"), distance);
+        if (!point) return;
+        Canvas3DModelInstance instance;
+        instance.model_path = path;
+        instance.track_key = table_cell(row, "trackKey");
+        instance.distance = distance;
+        instance.follow_track = true;
+        instance.x = table_cell_number(row, "x");
+        instance.y = table_cell_number(row, "y");
+        instance.z = table_cell_number(row, "z");
+        instance.rx = table_cell_number(row, "rx");
+        instance.ry = table_cell_number(row, "ry");
+        instance.rz = table_cell_number(row, "rz");
+        instance.tilt = table_cell_number(row, "tilt");
+        instance.span = table_cell_number(row, "span");
+        scene.instances.push_back(std::move(instance));
+    };
+    for (const TableRow& row : model.structures) append_structure_instance(row);
+
+    for (const TableRow& row : model.structures_between) {
+        std::string path = model_path_for_key(table_cell(row, "structureKey"));
+        if (path.empty()) continue;
+        double distance = table_cell_number(row, "distance");
+        auto p1 = sample_track(table_cell(row, "trackKey1"), distance);
+        auto p2 = sample_track(table_cell(row, "trackKey2"), distance);
+        if (!p1 || !p2) continue;
+        DVec3 a{p1->x, p1->y, p1->z};
+        DVec3 b{p2->x, p2->y, p2->z};
+        if (static_cast<int>(table_cell_number(row, "flag")) & 1) b.y = a.y;
+        DVec3 right = normalize(b - a);
+        DVec3 forward = normalize(forward_from_theta_d(angle_lerp(p1->theta, p2->theta, 0.5)));
+        forward = normalize(forward - right * dot(forward, right));
+        DVec3 up = cross(right, forward);
+        DVec3 origin = (a + b) * 0.5;
+        Canvas3DModelInstance instance;
+        instance.model_path = path;
+        instance.distance = distance;
+        store_world(instance.world, right, up, forward, origin);
+        scene.instances.push_back(std::move(instance));
+    }
+
+    struct RepeaterBegin {
+        double distance = 0.0;
+        std::string track_key;
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        double rx = 0.0;
+        double ry = 0.0;
+        double rz = 0.0;
+        double tilt = 0.0;
+        double span = 0.0;
+        double interval = 0.0;
+        std::vector<std::string> model_paths;
+    };
+    std::vector<TableRow> repeater_events = model.repeaters;
+    std::stable_sort(repeater_events.begin(), repeater_events.end(), repeater_event_distance_order_less);
+    std::map<std::string, RepeaterBegin> active_repeaters;
+    auto emit_repeater = [&](const RepeaterBegin& begin, double end_distance) {
+        if (end_distance < begin.distance) return;
+        Canvas3DRepeaterSegment segment;
+        segment.track_key = begin.track_key;
+        segment.begin_distance = begin.distance;
+        segment.end_distance = end_distance;
+        segment.interval = begin.interval;
+        segment.x = begin.x;
+        segment.y = begin.y;
+        segment.z = begin.z;
+        segment.rx = begin.rx;
+        segment.ry = begin.ry;
+        segment.rz = begin.rz;
+        segment.tilt = begin.tilt;
+        segment.span = begin.span;
+        for (const std::string& path : begin.model_paths) {
+            if (!path.empty()) segment.model_paths.push_back(path);
+        }
+        if (!segment.model_paths.empty()) scene.repeaters.push_back(std::move(segment));
+    };
+    for (const TableRow& row : repeater_events) {
+        std::string key = scene_model_key(table_cell(row, "repeaterKey"));
+        if (key.empty()) continue;
+        std::string method = table_cell(row, "method");
+        double distance = table_cell_number(row, "distance");
+        if (method == "Begin" || method == "Begin0") {
+            auto existing = active_repeaters.find(key);
+            if (existing != active_repeaters.end()) {
+                emit_repeater(existing->second, distance);
+                active_repeaters.erase(existing);
+            }
+            RepeaterBegin begin;
+            begin.distance = distance;
+            begin.track_key = table_cell(row, "trackKey");
+            begin.x = table_cell_number(row, "x");
+            begin.y = table_cell_number(row, "y");
+            begin.z = table_cell_number(row, "z");
+            begin.rx = table_cell_number(row, "rx");
+            begin.ry = table_cell_number(row, "ry");
+            begin.rz = table_cell_number(row, "rz");
+            begin.tilt = table_cell_number(row, "tilt");
+            begin.span = table_cell_number(row, "span");
+            begin.interval = table_cell_number(row, "interval");
+            for (const std::string& structure_key : scene_split_key_list(table_cell(row, "structureKeys"))) {
+                begin.model_paths.push_back(model_path_for_key(structure_key));
+            }
+            active_repeaters[key] = std::move(begin);
+        } else if (method == "End") {
+            auto existing = active_repeaters.find(key);
+            if (existing == active_repeaters.end()) continue;
+            emit_repeater(existing->second, distance);
+            active_repeaters.erase(existing);
+        }
+    }
+    for (const auto& kv : active_repeaters) {
+        emit_repeater(kv.second, scene.max_distance);
+    }
+
+    for (const TableRow& row : model.backgrounds) {
+        Canvas3DBackgroundChange change;
+        change.distance = table_cell_number(row, "distance");
+        change.model_path = model_path_for_key(table_cell(row, "structureKey"));
+        scene.backgrounds.push_back(std::move(change));
+    }
+
+    double camera_distance = scene.min_distance;
+    if (!model.stations.empty()) {
+        int station_index = std::clamp(options.station_index, 0, static_cast<int>(model.stations.size()) - 1);
+        camera_distance = model.stations[station_index].distance;
+    }
+    auto camera_point = sample_track("", camera_distance);
+    if (!camera_point) camera_point = scene_matrix_row_point(scene_own, 0, true);
+    scene.camera.distance = camera_distance;
+    scene.camera.x = camera_point->x;
+    scene.camera.y = camera_point->y + kDefaultSceneCameraHeight;
+    scene.camera.z = camera_point->z;
+    scene.camera.yaw = camera_point->theta;
+    scene.camera.pitch = 0.0f;
+    return result;
+}
+
+std::vector<Canvas3DTrackVisibility> build_canvas3d_scene_track_visibility(
+    const MapModel& model,
+    bool show_own_track_markers) {
+    std::vector<Canvas3DTrackVisibility> visibility;
+    visibility.reserve(model.other_tracks.size() + 1);
+    visibility.push_back(Canvas3DTrackVisibility{"own", show_own_track_markers});
+    for (const OtherTrack& track : model.other_tracks) {
+        visibility.push_back(Canvas3DTrackVisibility{track.key, track.visible});
+    }
+    return visibility;
+}
 
 struct Canvas3D::Impl {
     explicit Impl(ID3D11Device* device) : device(device) {
