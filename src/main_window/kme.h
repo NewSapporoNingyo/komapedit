@@ -673,6 +673,18 @@ struct View2DSettings {
     }
 };
 
+struct View3DSettings {
+    bool show_scene_owntrack_markers = true;
+
+    bool operator==(const View3DSettings& other) const {
+        return show_scene_owntrack_markers == other.show_scene_owntrack_markers;
+    }
+
+    bool operator!=(const View3DSettings& other) const {
+        return !(*this == other);
+    }
+};
+
 struct UserSettings {
     Language language = Language::Zh;
     float font_size = kDefaultFontSize;
@@ -681,6 +693,7 @@ struct UserSettings {
     ImVec4 theme_color = default_theme_color();
     WindowVisibilitySettings window_visibility;
     View2DSettings view_2d;
+    View3DSettings view_3d;
     std::filesystem::path path;
 };
 
@@ -756,6 +769,7 @@ private:
     ImVec4 theme_color_before_dialog_ = default_theme_color();
     WindowVisibilitySettings last_saved_window_visibility_;
     View2DSettings last_saved_view_2d_settings_;
+    View3DSettings last_saved_view_3d_settings_;
     std::filesystem::path history_path_;
     std::vector<RecentMapEntry> recent_maps_;
 
@@ -821,6 +835,7 @@ private:
     bool show_adhesion_markers_ = true;
     bool show_cab_illuminance_markers_ = true;
     bool show_fog_markers_ = true;
+    bool show_scene_owntrack_markers_ = true;
     bool show_profile_graph_ = true;
     bool show_radius_graph_ = true;
     bool show_othertracks_window_ = true;
@@ -1070,6 +1085,8 @@ private:
     void apply_window_visibility_settings(const WindowVisibilitySettings& visibility);
     View2DSettings current_view_2d_settings() const;
     void apply_view_2d_settings(const View2DSettings& settings);
+    View3DSettings current_view_3d_settings() const;
+    void apply_view_3d_settings(const View3DSettings& settings);
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();

@@ -369,6 +369,8 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_background_image=" << bool_to_string(settings.view_2d.show_background_image) << "\n";
     out << "mode=" << view_2d_mode_to_string(settings.view_2d.mode) << "\n";
     out << "grid_mode=" << grid_mode_to_string(settings.view_2d.grid_mode) << "\n";
+    out << "\n[View3D]\n";
+    out << "show_scene_owntrack_markers=" << bool_to_string(settings.view_3d.show_scene_owntrack_markers) << "\n";
     return true;
 }
 
@@ -388,6 +390,7 @@ UserSettings load_user_settings() {
 
     std::string line;
     std::set<std::string> view_2d_keys_seen;
+    std::set<std::string> view_3d_keys_seen;
     while (std::getline(in, line)) {
         std::string trimmed_line = trim_ascii(line);
         if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
@@ -548,6 +551,12 @@ UserSettings load_user_settings() {
         } else if (key == "grid_mode" || key == "view_2d_grid_mode") {
             view_2d_keys_seen.insert("grid_mode");
             settings.view_2d.grid_mode = grid_mode_from_string(value, settings.view_2d.grid_mode);
+        } else if (key == "show_scene_owntrack_markers" ||
+                   key == "show_scene_own_track_markers" ||
+                   key == "show_3d_scene_owntrack_markers" ||
+                   key == "show_scene_owntrack") {
+            view_3d_keys_seen.insert("show_scene_owntrack_markers");
+            settings.view_3d.show_scene_owntrack_markers = parse_bool(value, settings.view_3d.show_scene_owntrack_markers);
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
@@ -556,7 +565,7 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 23) save_user_settings(settings);
+    if (view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 1) save_user_settings(settings);
     return settings;
 }
 

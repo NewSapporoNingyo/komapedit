@@ -555,6 +555,9 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     apply_view_2d_settings(settings_.view_2d);
     last_saved_view_2d_settings_ = current_view_2d_settings();
     settings_.view_2d = last_saved_view_2d_settings_;
+    apply_view_3d_settings(settings_.view_3d);
+    last_saved_view_3d_settings_ = current_view_3d_settings();
+    settings_.view_3d = last_saved_view_3d_settings_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -1529,6 +1532,16 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     }
 }
 
+View3DSettings App::current_view_3d_settings() const {
+    View3DSettings view;
+    view.show_scene_owntrack_markers = show_scene_owntrack_markers_;
+    return view;
+}
+
+void App::apply_view_3d_settings(const View3DSettings& settings) {
+    show_scene_owntrack_markers_ = settings.show_scene_owntrack_markers;
+}
+
 void App::save_runtime_settings_if_changed() {
     bool changed = false;
     WindowVisibilitySettings visibility = current_window_visibility();
@@ -1541,6 +1554,12 @@ void App::save_runtime_settings_if_changed() {
     if (view_2d != last_saved_view_2d_settings_) {
         settings_.view_2d = view_2d;
         last_saved_view_2d_settings_ = view_2d;
+        changed = true;
+    }
+    View3DSettings view_3d = current_view_3d_settings();
+    if (view_3d != last_saved_view_3d_settings_) {
+        settings_.view_3d = view_3d;
+        last_saved_view_3d_settings_ = view_3d;
         changed = true;
     }
     if (changed) save_user_settings(settings_);
@@ -1697,6 +1716,11 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.background_markers").c_str(), nullptr, &show_background_markers_);
         ImGui::MenuItem(tr("chk.cab_illuminance_markers").c_str(), nullptr, &show_cab_illuminance_markers_);
         ImGui::MenuItem(tr("chk.fog_markers").c_str(), nullptr, &show_fog_markers_);
+        ImGui::Separator();
+        ImGui::MenuItem(tr("aux.scene_3d").c_str(), nullptr, false, false);
+        if (ImGui::MenuItem(tr("chk.scene_owntrack_markers").c_str(), nullptr, &show_scene_owntrack_markers_)) {
+            sync_scene_preview_track_visibility();
+        }
     };
 
     if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
@@ -1755,6 +1779,8 @@ void App::render_menu() {
             last_saved_window_visibility_ = settings_.window_visibility;
             settings_.view_2d = current_view_2d_settings();
             last_saved_view_2d_settings_ = settings_.view_2d;
+            settings_.view_3d = current_view_3d_settings();
+            last_saved_view_3d_settings_ = settings_.view_3d;
             save_user_settings(settings_);
         };
         if (ImGui::MenuItem("简体中文", nullptr, lang_ == Language::Zh)) set_language(Language::Zh);
@@ -1947,6 +1973,8 @@ void App::render_popups() {
             last_saved_window_visibility_ = settings_.window_visibility;
             settings_.view_2d = current_view_2d_settings();
             last_saved_view_2d_settings_ = settings_.view_2d;
+            settings_.view_3d = current_view_3d_settings();
+            last_saved_view_3d_settings_ = settings_.view_3d;
             save_user_settings(settings_);
             apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
             ImGui::CloseCurrentPopup();
@@ -2203,7 +2231,7 @@ Canvas3DScene App::build_scene_preview_scene() {
         }
         scene.tracks.push_back(std::move(path));
     };
-    append_track_path("own", scene_own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f), true);
+    append_track_path("own", scene_own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f), show_scene_owntrack_markers_);
     for (const OtherTrack& track : scene_other_tracks) {
         append_track_path(track.key, track.points, false, track.color, track.visible);
     }
@@ -2394,7 +2422,8 @@ void App::sync_scene_preview_track_visibility() {
     if (!scene_preview_canvas_ || !scene_preview_started_) return;
 
     std::vector<Canvas3DTrackVisibility> visibility;
-    visibility.reserve(model_.other_tracks.size());
+    visibility.reserve(model_.other_tracks.size() + 1);
+    visibility.push_back(Canvas3DTrackVisibility{"own", show_scene_owntrack_markers_});
     for (const OtherTrack& track : model_.other_tracks) {
         visibility.push_back(Canvas3DTrackVisibility{track.key, track.visible});
     }
