@@ -45,6 +45,8 @@ constexpr float kSceneCameraFovY = 0.6108652382f;
 constexpr float kSceneNearZ = 0.2f;
 constexpr float kSceneBackgroundNearZ = 0.05f;
 constexpr float kSceneBackgroundFarZ = 5000.0f;
+constexpr float kSceneDepthClear = 0.0f;
+constexpr float kMaterialOpaqueAlphaThreshold = 0.98f;
 
 template <typename T>
 void release_com(T*& p) {
@@ -90,6 +92,12 @@ std::string path_filename_utf8(const std::string& path) {
 float clamp_color_component(float value) {
     if (!std::isfinite(value)) return 0.0f;
     return std::clamp(value, 0.0f, 1.0f);
+}
+
+float normalize_material_alpha(float value) {
+    float alpha = clamp_color_component(value);
+    // BVE .x models commonly use 0.99/0.999999 for opaque alpha-tested textures.
+    return alpha >= kMaterialOpaqueAlphaThreshold ? 1.0f : alpha;
 }
 
 ImVec4 clamp_background_color(ImVec4 color) {
@@ -200,6 +208,10 @@ DVec3 operator+(DVec3 a, DVec3 b) {
 
 DVec3 operator*(DVec3 v, double s) {
     return {v.x * s, v.y * s, v.z * s};
+}
+
+DVec3 dvec3_from_vec3(Vec3 v) {
+    return {static_cast<double>(v.x), static_cast<double>(v.y), static_cast<double>(v.z)};
 }
 
 double dot(DVec3 a, DVec3 b) {
@@ -384,6 +396,19 @@ Mat4 perspective_fov_lh(float fovy, float aspect, float zn, float zf) {
     return r;
 }
 
+Mat4 perspective_fov_lh_reverse_z(float fovy, float aspect, float zn, float zf) {
+    Mat4 r;
+    float y_scale = 1.0f / std::tan(fovy * 0.5f);
+    float x_scale = y_scale / std::max(aspect, 0.001f);
+    float span = std::max(zf - zn, 0.001f);
+    r.m[0][0] = x_scale;
+    r.m[1][1] = y_scale;
+    r.m[2][2] = -zn / span;
+    r.m[2][3] = 1.0f;
+    r.m[3][2] = zn * zf / span;
+    return r;
+}
+
 struct GpuVertex {
     float px;
     float py;
@@ -459,9 +484,11 @@ struct SceneModelGpu {
 struct SceneTrackChunkGpu {
     double d_min = 0.0;
     double d_max = 0.0;
+    DVec3 origin;
     ID3D11Buffer* vertex_buffer = nullptr;
     ID3D11Buffer* index_buffer = nullptr;
     ID3D11Buffer* instance_buffer = nullptr;
+    UINT instance_capacity = 0;
     UINT index_count = 0;
     std::vector<MeshPart> parts;
     std::vector<GpuMaterial> materials;
@@ -481,6 +508,7 @@ struct SceneInstance {
 struct SceneChunk {
     double d_min = 0.0;
     double d_max = 0.0;
+    DVec3 origin;
     std::vector<SceneInstance> instances;
     std::vector<size_t> repeater_indices;
 };
@@ -520,7 +548,7 @@ int scene_tilt_flags(double tilt) {
 }
 
 bool scene_material_is_translucent(const GpuMaterial* material) {
-    return material && material->diffuse[3] < 0.999f;
+    return material && material->diffuse[3] < kMaterialOpaqueAlphaThreshold;
 }
 
 bool scene_material_uses_alpha_mask(const GpuMaterial* material) {
@@ -844,6 +872,8 @@ float4 ps_main(VSOutput input) : SV_TARGET
     if (useTexture.x > 0.5)
         color *= diffuseTexture.Sample(diffuseSampler, input.texcoord);
     clip(color.a - 0.1);
+    if (useTexture.y > 0.5)
+        color.a = 1.0;
     return color;
 }
 )";
@@ -1184,6 +1214,8 @@ struct Canvas3D::Impl {
         release_com(scene_vertex_shader);
         release_com(scene_pixel_shader);
         release_com(scene_constant_buffer);
+        release_com(scene_depth_state);
+        release_com(scene_depth_read_state);
         release_com(blend_state);
         release_com(depth_state);
         release_com(depth_read_state);
@@ -1294,7 +1326,7 @@ struct Canvas3D::Impl {
                 materials[i].diffuse[0] = src->diffuse[0];
                 materials[i].diffuse[1] = src->diffuse[1];
                 materials[i].diffuse[2] = src->diffuse[2];
-                materials[i].diffuse[3] = std::clamp(src->diffuse[3], 0.0f, 1.0f);
+                materials[i].diffuse[3] = normalize_material_alpha(src->diffuse[3]);
                 if (src->texture_path && *src->texture_path) {
                     bool texture_has_alpha = false;
                     if (!load_texture(src->texture_path, &materials[i].texture, error, &texture_has_alpha)) {
@@ -1348,9 +1380,7 @@ struct Canvas3D::Impl {
             std::swap(scene_data.min_distance, scene_data.max_distance);
         }
 
-        scene_camera_pos = {static_cast<float>(scene_data.camera.x),
-                            static_cast<float>(scene_data.camera.y),
-                            static_cast<float>(scene_data.camera.z)};
+        scene_camera_pos = {scene_data.camera.x, scene_data.camera.y, scene_data.camera.z};
         scene_camera_yaw = static_cast<float>(scene_data.camera.yaw);
         scene_camera_pitch = static_cast<float>(scene_data.camera.pitch);
         scene_camera_distance = std::clamp(scene_data.camera.distance, scene_data.min_distance, scene_data.max_distance);
@@ -1590,6 +1620,7 @@ fail:
         release_com(chunk.vertex_buffer);
         release_com(chunk.index_buffer);
         release_com(chunk.instance_buffer);
+        chunk.instance_capacity = 0;
         chunk.index_count = 0;
     }
 
@@ -1650,7 +1681,7 @@ fail:
             out.materials[i].diffuse[0] = src->diffuse[0];
             out.materials[i].diffuse[1] = src->diffuse[1];
             out.materials[i].diffuse[2] = src->diffuse[2];
-            out.materials[i].diffuse[3] = std::clamp(src->diffuse[3], 0.0f, 1.0f);
+            out.materials[i].diffuse[3] = normalize_material_alpha(src->diffuse[3]);
             if (src->texture_path && *src->texture_path) out.materials[i].texture_path = src->texture_path;
         }
         out.ok = true;
@@ -1733,7 +1764,7 @@ fail:
             model.materials[i].diffuse[0] = src->diffuse[0];
             model.materials[i].diffuse[1] = src->diffuse[1];
             model.materials[i].diffuse[2] = src->diffuse[2];
-            model.materials[i].diffuse[3] = src->diffuse[3];
+            model.materials[i].diffuse[3] = normalize_material_alpha(src->diffuse[3]);
             if (!src->texture_path.empty()) {
                 std::string texture_error;
                 bool texture_has_alpha = false;
@@ -1776,10 +1807,13 @@ fail:
             return false;
         }
         if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
-            depth_state && depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
+            scene_depth_state && scene_depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
             track_rasterizer_state && sampler_state && blend_state) return true;
 
         if (!ensure_pipeline(error)) return false;
+        if (!ensure_scene_depth_states(error)) return false;
+        if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
+            track_rasterizer_state && sampler_state && blend_state) return true;
 
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
@@ -1847,6 +1881,31 @@ fail:
         return true;
     }
 
+    bool ensure_scene_depth_states(std::string& error) {
+        if (scene_depth_state && scene_depth_read_state) return true;
+        release_com(scene_depth_state);
+        release_com(scene_depth_read_state);
+
+        D3D11_DEPTH_STENCIL_DESC ds_desc = {};
+        ds_desc.DepthEnable = TRUE;
+        ds_desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        ds_desc.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
+        HRESULT hr = device->CreateDepthStencilState(&ds_desc, &scene_depth_state);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateDepthStencilState(scene reverse)", hr);
+            return false;
+        }
+
+        D3D11_DEPTH_STENCIL_DESC ds_read_desc = ds_desc;
+        ds_read_desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        hr = device->CreateDepthStencilState(&ds_read_desc, &scene_depth_read_state);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateDepthStencilState(scene reverse read-only)", hr);
+            return false;
+        }
+        return true;
+    }
+
     static SceneInstanceData make_instance_data(const Mat4& world) {
         SceneInstanceData data = {};
         for (int col = 0; col < 4; ++col) {
@@ -1858,7 +1917,7 @@ fail:
         return data;
     }
 
-    static SceneInstanceData make_instance_data(const double world[16]) {
+    static SceneInstanceData make_instance_data_relative(const double world[16], DVec3 origin) {
         SceneInstanceData data = {};
         for (int col = 0; col < 4; ++col) {
             data.world0[col] = static_cast<float>(world[col]);
@@ -1866,7 +1925,18 @@ fail:
             data.world2[col] = static_cast<float>(world[8 + col]);
             data.world3[col] = static_cast<float>(world[12 + col]);
         }
+        data.world3[0] = static_cast<float>(world[12] - origin.x);
+        data.world3[1] = static_cast<float>(world[13] - origin.y);
+        data.world3[2] = static_cast<float>(world[14] - origin.z);
         return data;
+    }
+
+    static SceneInstanceData make_chunk_instance_data(DVec3 chunk_origin, DVec3 render_origin) {
+        Mat4 world = identity();
+        world.m[3][0] = static_cast<float>(chunk_origin.x - render_origin.x);
+        world.m[3][1] = static_cast<float>(chunk_origin.y - render_origin.y);
+        world.m[3][2] = static_cast<float>(chunk_origin.z - render_origin.z);
+        return make_instance_data(world);
     }
 
     bool ensure_instance_buffer(ID3D11Buffer*& buffer, UINT& capacity,
@@ -1933,7 +2003,7 @@ fail:
             const bool alpha_masked = scene_material_uses_alpha_mask(material);
             const bool translucent = scene_material_is_translucent(material);
             context->RSSetState(alpha_masked && alpha_mask_rasterizer_state ? alpha_mask_rasterizer_state : base_rasterizer);
-            context->OMSetDepthStencilState(translucent && depth_read_state ? depth_read_state : depth_state, 0);
+            context->OMSetDepthStencilState(translucent && scene_depth_read_state ? scene_depth_read_state : scene_depth_state, 0);
             context->OMSetBlendState(translucent ? blend_state : nullptr, blend_factor, 0xffffffff);
 
             SceneViewConstants constants = {};
@@ -1943,6 +2013,7 @@ fail:
             constants.material_color[2] = material ? material->diffuse[2] : 1.0f;
             constants.material_color[3] = material ? material->diffuse[3] : 1.0f;
             constants.use_texture[0] = material && material->has_texture ? 1.0f : 0.0f;
+            constants.use_texture[1] = translucent ? 0.0f : 1.0f;
             context->UpdateSubresource(scene_constant_buffer, 0, nullptr, &constants, 0, 0);
             ID3D11ShaderResourceView* texture = material && material->has_texture ? material->texture : nullptr;
             context->PSSetShaderResources(0, 1, &texture);
@@ -1951,7 +2022,7 @@ fail:
         ID3D11ShaderResourceView* null_srv = nullptr;
         context->PSSetShaderResources(0, 1, &null_srv);
         context->RSSetState(base_rasterizer);
-        context->OMSetDepthStencilState(depth_state, 0);
+        context->OMSetDepthStencilState(scene_depth_state, 0);
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
     }
 
@@ -2063,7 +2134,7 @@ fail:
             return false;
         }
         D3D11_RASTERIZER_DESC alpha_mask_rs_desc = rs_desc;
-        alpha_mask_rs_desc.DepthBias = -8;
+        alpha_mask_rs_desc.DepthBias = 8;
         hr = device->CreateRasterizerState(&alpha_mask_rs_desc, &alpha_mask_rasterizer_state);
         if (FAILED(hr)) {
             error = hresult_text("CreateRasterizerState(alpha mask)", hr);
@@ -2123,6 +2194,10 @@ fail:
         for (size_t i = 0; i < count; ++i) {
             scene_chunks[i].d_min = first + static_cast<double>(i) * scene_chunk_m;
             scene_chunks[i].d_max = scene_chunks[i].d_min + scene_chunk_m;
+            Canvas3DTrackPoint origin_point;
+            if (sample_own_track(scene_chunks[i].d_min, origin_point)) {
+                scene_chunks[i].origin = {origin_point.x, origin_point.y, origin_point.z};
+            }
         }
         for (const Canvas3DModelInstance& source : scene_data.instances) {
             if (source.model_path.empty()) continue;
@@ -2178,6 +2253,7 @@ fail:
 
     static void append_track_segment(std::vector<GpuVertex>& vertices,
                                      std::vector<unsigned int>& indices,
+                                     DVec3 origin,
                                      const Canvas3DTrackPoint& p0,
                                      const Canvas3DTrackPoint& p1) {
         constexpr float rail_gauge_half = 0.5335f;
@@ -2185,8 +2261,12 @@ fail:
         constexpr float rail_lift = 0.035f;
         Vec3 right0 = right_from_theta(p0.theta);
         Vec3 right1 = right_from_theta(p1.theta);
-        Vec3 center0{static_cast<float>(p0.x), static_cast<float>(p0.y + rail_lift), static_cast<float>(p0.z)};
-        Vec3 center1{static_cast<float>(p1.x), static_cast<float>(p1.y + rail_lift), static_cast<float>(p1.z)};
+        Vec3 center0{static_cast<float>(p0.x - origin.x),
+                     static_cast<float>(p0.y - origin.y + rail_lift),
+                     static_cast<float>(p0.z - origin.z)};
+        Vec3 center1{static_cast<float>(p1.x - origin.x),
+                     static_cast<float>(p1.y - origin.y + rail_lift),
+                     static_cast<float>(p1.z - origin.z)};
         for (float rail_offset : {-rail_gauge_half, rail_gauge_half}) {
             Vec3 a = center0 + right0 * rail_offset;
             Vec3 b = center1 + right1 * rail_offset;
@@ -2230,18 +2310,6 @@ fail:
             return false;
         }
 
-        SceneInstanceData identity_instance = make_instance_data(identity());
-        D3D11_BUFFER_DESC inst_desc = {};
-        inst_desc.ByteWidth = sizeof(SceneInstanceData);
-        inst_desc.Usage = D3D11_USAGE_DEFAULT;
-        inst_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA inst_data = {};
-        inst_data.pSysMem = &identity_instance;
-        hr = device->CreateBuffer(&inst_desc, &inst_data, &chunk.instance_buffer);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateBuffer(track instance)", hr);
-            return false;
-        }
         chunk.index_count = static_cast<UINT>(indices.size());
         return true;
     }
@@ -2254,6 +2322,7 @@ fail:
             SceneTrackChunkGpu& gpu_chunk = scene_track_chunks[chunk_index];
             gpu_chunk.d_min = scene_chunk.d_min;
             gpu_chunk.d_max = scene_chunk.d_max;
+            gpu_chunk.origin = scene_chunk.origin;
             std::vector<GpuVertex> vertices;
             std::vector<unsigned int> indices;
 
@@ -2272,7 +2341,7 @@ fail:
                     const Canvas3DTrackPoint& a = track.points[i - 1];
                     const Canvas3DTrackPoint& b = track.points[i];
                     if (b.distance < scene_chunk.d_min || a.distance > scene_chunk.d_max) continue;
-                    append_track_segment(vertices, indices, a, b);
+                    append_track_segment(vertices, indices, gpu_chunk.origin, a, b);
                 }
 
                 size_t part_count = indices.size() - part_start;
@@ -2329,7 +2398,7 @@ fail:
         depth_desc.Height = static_cast<UINT>(height);
         depth_desc.MipLevels = 1;
         depth_desc.ArraySize = 1;
-        depth_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        depth_desc.Format = DXGI_FORMAT_D32_FLOAT;
         depth_desc.SampleDesc.Count = 1;
         depth_desc.Usage = D3D11_USAGE_DEFAULT;
         depth_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
@@ -2491,6 +2560,7 @@ fail:
 
     bool make_repeater_instance_data(const Canvas3DRepeaterSegment& repeater,
                                      double distance,
+                                     DVec3 render_origin,
                                      SceneInstanceData& out) const {
         double world[16] = {};
         if (!make_track_world(repeater.track_key, distance,
@@ -2500,13 +2570,14 @@ fail:
                               world)) {
             return false;
         }
-        out = make_instance_data(world);
+        out = make_instance_data_relative(world, render_origin);
         return true;
     }
 
     void append_visible_repeater_instances(const SceneChunk& chunk,
                                            double visible_min,
                                            double visible_max,
+                                           DVec3 render_origin,
                                            std::map<std::string, std::vector<SceneInstanceData>>& visible_instances) const {
         double chunk_max = chunk.d_max;
         if (chunk.d_max < scene_data.max_distance) chunk_max -= kSceneRepeaterDistanceEpsilon;
@@ -2527,7 +2598,7 @@ fail:
                 const std::string& path = repeater.model_paths[model_index % repeater.model_paths.size()];
                 if (path.empty()) return;
                 SceneInstanceData data;
-                if (make_repeater_instance_data(repeater, distance, data)) {
+                if (make_repeater_instance_data(repeater, distance, render_origin, data)) {
                     visible_instances[path].push_back(data);
                 }
             };
@@ -2558,9 +2629,9 @@ fail:
     bool update_scene_camera_from_owntrack() {
         Canvas3DTrackPoint point;
         if (!sample_own_track(scene_camera_distance, point)) return false;
-        Vec3 base{static_cast<float>(point.x), static_cast<float>(point.y), static_cast<float>(point.z)};
-        Vec3 right = right_from_theta(point.theta);
-        scene_camera_pos = base + right * static_cast<float>(scene_camera_lateral_offset);
+        DVec3 base{point.x, point.y, point.z};
+        DVec3 right = right_from_theta_d(point.theta);
+        scene_camera_pos = base + right * scene_camera_lateral_offset;
         scene_camera_pos.y += scene_camera_vertical_offset;
         scene_camera_yaw = point.theta + scene_camera_yaw_offset;
         return true;
@@ -2584,11 +2655,11 @@ fail:
         scene_camera_yaw_offset = 0.0f;
         if (!sample_own_track(scene_camera_distance, point)) return;
 
-        Vec3 base{static_cast<float>(point.x), static_cast<float>(point.y), static_cast<float>(point.z)};
-        Vec3 current = scene_camera_pos;
-        Vec3 diff = current - base;
-        scene_camera_lateral_offset = dot(diff, right_from_theta(point.theta));
-        scene_camera_vertical_offset = diff.y;
+        DVec3 base{point.x, point.y, point.z};
+        DVec3 current = scene_camera_pos;
+        DVec3 diff = current - base;
+        scene_camera_lateral_offset = dot(diff, right_from_theta_d(point.theta));
+        scene_camera_vertical_offset = static_cast<float>(diff.y);
         scene_camera_yaw_offset = scene_camera_yaw - point.theta;
         update_scene_camera_from_owntrack();
     }
@@ -2643,9 +2714,9 @@ fail:
         } else {
             Vec3 forward = scene_forward();
             Vec3 right = scene_right();
-            Vec3 delta{};
-            delta = delta + forward * distance_delta;
-            delta = delta + right * lateral_delta;
+            DVec3 delta{};
+            delta = delta + dvec3_from_vec3(forward) * static_cast<double>(distance_delta);
+            delta = delta + dvec3_from_vec3(right) * static_cast<double>(lateral_delta);
             delta.y += vertical_delta;
             scene_camera_pos = scene_camera_pos + delta;
             scene_camera_distance = std::clamp(scene_camera_distance + static_cast<double>(distance_delta),
@@ -2667,7 +2738,7 @@ fail:
         if (path.empty()) return;
         auto it = scene_models.find(path);
         if (it == scene_models.end() || it->second.state != SceneModelGpu::State::Ready) return;
-        Mat4 world = translation(scene_camera_pos.x, scene_camera_pos.y, scene_camera_pos.z);
+        Mat4 world = identity();
         std::vector<SceneInstanceData> instances{make_instance_data(world)};
         draw_scene_model(it->second, instances, view_proj);
     }
@@ -2694,7 +2765,7 @@ fail:
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
 
         D3D11_VIEWPORT viewport = {};
         viewport.Width = static_cast<float>(width);
@@ -2703,19 +2774,20 @@ fail:
         viewport.MaxDepth = 1.0f;
         context->RSSetViewports(1, &viewport);
         context->RSSetState(rasterizer_state);
-        context->OMSetDepthStencilState(depth_state, 0);
+        context->OMSetDepthStencilState(scene_depth_state, 0);
         const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
 
+        const DVec3 render_origin = scene_camera_pos;
         Vec3 forward = scene_forward();
-        Mat4 view = look_to_bve(scene_camera_pos, forward, {0.0f, 1.0f, 0.0f});
+        Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, forward, {0.0f, 1.0f, 0.0f});
         float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
-        Mat4 background_proj = perspective_fov_lh(kSceneCameraFovY, aspect, kSceneBackgroundNearZ, kSceneBackgroundFarZ);
+        Mat4 background_proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect, kSceneBackgroundNearZ, kSceneBackgroundFarZ);
         Mat4 background_view_proj = multiply(view, background_proj);
         draw_background_model(background_view_proj);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
 
-        Mat4 proj = perspective_fov_lh(kSceneCameraFovY, aspect, kSceneNearZ, scene_far_z());
+        Mat4 proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect, kSceneNearZ, scene_far_z());
         Mat4 view_proj = multiply(view, proj);
 
         scene_stats_value.drawn_instance_count = 0;
@@ -2725,12 +2797,18 @@ fail:
         double visible_min = scene_camera_distance - scene_window_back_m;
         double visible_max = scene_camera_distance + scene_window_forward_m;
         std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
+        std::vector<SceneInstanceData> track_instance(1);
         for (size_t i = 0; i < scene_chunks.size(); ++i) {
             const SceneChunk& chunk = scene_chunks[i];
             if (chunk.d_max < visible_min || chunk.d_min > visible_max) continue;
             if (i < scene_track_chunks.size()) {
                 SceneTrackChunkGpu& track = scene_track_chunks[i];
-                if (track.vertex_buffer && track.index_buffer && track.instance_buffer && track.index_count > 0) {
+                if (track.vertex_buffer && track.index_buffer && track.index_count > 0) {
+                    track_instance[0] = make_chunk_instance_data(track.origin, render_origin);
+                    if (!ensure_instance_buffer(track.instance_buffer, track.instance_capacity, track_instance, error)) {
+                        if (!error.empty()) scene_last_error = error;
+                        continue;
+                    }
                     context->RSSetState(track_rasterizer_state);
                     draw_scene_mesh(track.vertex_buffer, track.index_buffer, track.instance_buffer,
                                     track.parts, track.materials, 1, view_proj, track_rasterizer_state);
@@ -2740,9 +2818,9 @@ fail:
             }
             for (const SceneInstance& instance : chunk.instances) {
                 if (instance.distance < visible_min || instance.distance > visible_max) continue;
-                visible_instances[instance.model_path].push_back(make_instance_data(instance.world));
+                visible_instances[instance.model_path].push_back(make_instance_data_relative(instance.world, render_origin));
             }
-            append_visible_repeater_instances(chunk, visible_min, visible_max, visible_instances);
+            append_visible_repeater_instances(chunk, visible_min, visible_max, render_origin, visible_instances);
         }
 
         for (auto& kv : visible_instances) {
@@ -2803,7 +2881,7 @@ fail:
                 const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
                 context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
                 context->ClearRenderTargetView(render_rtv, clear_color);
-                if (depth_dsv) context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+                if (depth_dsv) context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
                 ID3D11RenderTargetView* null_rtv = nullptr;
                 context->OMSetRenderTargets(1, &null_rtv, nullptr);
             }
@@ -2833,7 +2911,7 @@ fail:
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
         if (has_model() && vertex_shader && pixel_shader && input_layout && constant_buffer && blend_state) {
             D3D11_VIEWPORT viewport = {};
@@ -3004,6 +3082,8 @@ fail:
     ID3D11SamplerState* sampler_state = nullptr;
     ID3D11DepthStencilState* depth_state = nullptr;
     ID3D11DepthStencilState* depth_read_state = nullptr;
+    ID3D11DepthStencilState* scene_depth_state = nullptr;
+    ID3D11DepthStencilState* scene_depth_read_state = nullptr;
     ID3D11RasterizerState* rasterizer_state = nullptr;
     ID3D11RasterizerState* alpha_mask_rasterizer_state = nullptr;
     ID3D11RasterizerState* track_rasterizer_state = nullptr;
@@ -3035,7 +3115,7 @@ fail:
     std::thread scene_worker;
     std::atomic<bool> scene_cancel{false};
     std::atomic<bool> scene_worker_running{false};
-    Vec3 scene_camera_pos;
+    DVec3 scene_camera_pos;
     float scene_camera_yaw = 0.0f;
     float scene_camera_pitch = 0.0f;
     double scene_camera_distance = 0.0;
