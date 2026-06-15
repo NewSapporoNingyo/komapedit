@@ -43,9 +43,20 @@ struct HeadlessScene3DBenchmarkOptions {
     std::string error;
 };
 
+struct HeadlessSceneCameraTransferOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    bool has_camera_distance = false;
+    double camera_distance = 0.0;
+    std::string error;
+};
+
 std::vector<std::string> command_line_args_utf8();
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args);
+HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(const std::vector<std::string>& args);
 int run_headless_load_map(const HeadlessLoadOptions& options);
 #endif

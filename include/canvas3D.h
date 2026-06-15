@@ -112,6 +112,16 @@ struct Canvas3DSceneStats {
     double window_forward_m = 1200.0;
 };
 
+struct Canvas3DSceneCameraPose {
+    bool valid = false;
+    double distance = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double theta = 0.0;
+    double pitch = 0.0;
+};
+
 struct Canvas3DSceneBuildOptions {
     const MapModel* model = nullptr;
     void* map_handle = nullptr;
@@ -156,6 +166,7 @@ public:
     bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error);
     void set_scene_window(double back_m, double forward_m);
     Canvas3DSceneStats scene_stats() const;
+    Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
     void render_scene_preview(ImVec2 size);
 

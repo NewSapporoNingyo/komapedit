@@ -1486,6 +1486,19 @@ struct Canvas3D::Impl {
         return stats;
     }
 
+    Canvas3DSceneCameraPose scene_camera_pose() const {
+        Canvas3DSceneCameraPose pose;
+        if (!scene_active) return pose;
+        pose.valid = true;
+        pose.distance = scene_camera_distance;
+        pose.x = -scene_camera_pos.z;
+        pose.y = scene_camera_pos.x;
+        pose.z = scene_camera_pos.y;
+        pose.theta = scene_camera_yaw;
+        pose.pitch = scene_camera_pitch;
+        return pose;
+    }
+
     size_t count_scene_instances() const {
         size_t count = scene_data.instances.size();
         for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
@@ -2865,7 +2878,7 @@ fail:
         char buffer[256] = {};
         std::snprintf(buffer, sizeof(buffer), "d=%.1fm  chunks=%zu  instances=%zu  models=%zu/%zu",
                       stats.camera_distance,
-                      stats.drawn_track_chunk_count,
+                      stats.chunk_count,
                       stats.drawn_instance_count,
                       stats.model_ready_count,
                       stats.model_path_count);
@@ -3214,6 +3227,10 @@ void Canvas3D::set_scene_window(double back_m, double forward_m) {
 
 Canvas3DSceneStats Canvas3D::scene_stats() const {
     return impl_->scene_stats();
+}
+
+Canvas3DSceneCameraPose Canvas3D::scene_camera_pose() const {
+    return impl_->scene_camera_pose();
 }
 
 bool Canvas3D::jump_scene_camera_to_distance(double distance) {

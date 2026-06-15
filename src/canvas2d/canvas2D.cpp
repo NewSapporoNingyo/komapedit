@@ -8,6 +8,7 @@
 #pragma execution_character_set("utf-8")
 
 #include "kme.h"
+#include "canvas3D.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -2102,6 +2103,31 @@ static void draw_plan_focus_arrow(ImDrawList* draw, ImVec2 target) {
     draw->AddConvexPolyFilled(pts, IM_ARRAYSIZE(pts), fill);
 }
 
+static void draw_plan_current_position_arrow(ImDrawList* draw, ImVec2 center, ImVec2 direction) {
+    float len = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+    if (len < 1e-3f) return;
+    ImVec2 forward(direction.x / len, direction.y / len);
+    ImVec2 normal(-forward.y, forward.x);
+    const float tip_len = 18.0f;
+    const float tail_back = 10.0f;
+    const float notch_back = 3.0f;
+    const float half_width = 8.0f;
+    ImVec2 pts[4] = {
+        ImVec2(center.x + forward.x * tip_len,
+               center.y + forward.y * tip_len),
+        ImVec2(center.x - forward.x * tail_back + normal.x * half_width,
+               center.y - forward.y * tail_back + normal.y * half_width),
+        ImVec2(center.x - forward.x * notch_back,
+               center.y - forward.y * notch_back),
+        ImVec2(center.x - forward.x * tail_back - normal.x * half_width,
+               center.y - forward.y * tail_back - normal.y * half_width),
+    };
+    const ImU32 fill = IM_COL32(0, 122, 255, 255);
+    draw->AddTriangleFilled(pts[0], pts[1], pts[2], fill);
+    draw->AddTriangleFilled(pts[0], pts[2], pts[3], fill);
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(255, 255, 255, 255), ImDrawFlags_Closed, 3.0f);
+}
+
 static void draw_plan_small_text(ImDrawList* draw, ImVec2 p, ImU32 color, const std::string& text) {
     if (text.empty()) return;
     draw->AddText(nullptr, ImGui::GetFontSize() * 0.78f, ImVec2(p.x + 8.0f, p.y - 9.0f), color, text.c_str());
@@ -3105,6 +3131,19 @@ void App::render_plan_canvas(ImVec2 size) {
             plan_focus_arrow_.reset();
         }
     }
+
+    if (show_scene_current_position_on_plan_ && scene_preview_started_ && scene_preview_canvas_) {
+        Canvas3DSceneCameraPose pose = scene_preview_canvas_->scene_camera_pose();
+        if (pose.valid && std::isfinite(pose.x) && std::isfinite(pose.y) && std::isfinite(pose.theta)) {
+            ImVec2 p = transform.model_to_screen(pose.x, pose.y);
+            ImVec2 q = transform.model_to_screen(pose.x + std::cos(pose.theta),
+                                                 pose.y + std::sin(pose.theta));
+            if (point_near_canvas(p, origin, avail)) {
+                draw_plan_current_position_arrow(draw, p, ImVec2(q.x - p.x, q.y - p.y));
+            }
+        }
+    }
+    debug_plan_stage("scene_camera_marker");
 
     draw->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(255, 255, 255, 255), tr("canvas.plan").c_str());
     draw_scalebar(draw, plan_view_, origin, avail);

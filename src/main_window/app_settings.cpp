@@ -371,6 +371,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "grid_mode=" << grid_mode_to_string(settings.view_2d.grid_mode) << "\n";
     out << "\n[View3D]\n";
     out << "show_scene_owntrack_markers=" << bool_to_string(settings.view_3d.show_scene_owntrack_markers) << "\n";
+    out << "show_scene_current_position_on_plan=" << bool_to_string(settings.view_3d.show_scene_current_position_on_plan) << "\n";
     return true;
 }
 
@@ -557,6 +558,12 @@ UserSettings load_user_settings() {
                    key == "show_scene_owntrack") {
             view_3d_keys_seen.insert("show_scene_owntrack_markers");
             settings.view_3d.show_scene_owntrack_markers = parse_bool(value, settings.view_3d.show_scene_owntrack_markers);
+        } else if (key == "show_scene_current_position_on_plan" ||
+                   key == "show_scene_current_camera_on_plan" ||
+                   key == "show_3d_scene_current_position_on_plan") {
+            view_3d_keys_seen.insert("show_scene_current_position_on_plan");
+            settings.view_3d.show_scene_current_position_on_plan =
+                parse_bool(value, settings.view_3d.show_scene_current_position_on_plan);
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
@@ -565,7 +572,7 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 1) save_user_settings(settings);
+    if (view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 2) save_user_settings(settings);
     return settings;
 }
 

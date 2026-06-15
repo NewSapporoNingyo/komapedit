@@ -1378,11 +1378,13 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
 View3DSettings App::current_view_3d_settings() const {
     View3DSettings view;
     view.show_scene_owntrack_markers = show_scene_owntrack_markers_;
+    view.show_scene_current_position_on_plan = show_scene_current_position_on_plan_;
     return view;
 }
 
 void App::apply_view_3d_settings(const View3DSettings& settings) {
     show_scene_owntrack_markers_ = settings.show_scene_owntrack_markers;
+    show_scene_current_position_on_plan_ = settings.show_scene_current_position_on_plan;
 }
 
 void App::save_runtime_settings_if_changed() {
@@ -1564,6 +1566,8 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("chk.scene_owntrack_markers").c_str(), nullptr, &show_scene_owntrack_markers_)) {
             sync_scene_preview_track_visibility();
         }
+        ImGui::MenuItem(tr("chk.scene_current_position_on_plan").c_str(), nullptr,
+                        &show_scene_current_position_on_plan_, scene_preview_started_);
     };
 
     if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
@@ -2331,6 +2335,21 @@ int main(int, char**) {
                                                          scene3d_bench.window_back_m,
                                                          scene3d_bench.window_forward_m,
                                                          scene3d_bench.output_path);
+    }
+
+    HeadlessSceneCameraTransferOptions scene_camera_transfer = parse_headless_scene_camera_transfer_options(args);
+    if (scene_camera_transfer.requested) {
+        if (!scene_camera_transfer.error.empty()) {
+            std::cerr << scene_camera_transfer.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-scene-camera-transfer <map-path> "
+                      << "[--unit-distance M] [--camera-distance M] [--headless-output FILE]\n";
+            return 1;
+        }
+        return App::run_debug_headless_scene_camera_transfer(scene_camera_transfer.path,
+                                                             scene_camera_transfer.unit_distance,
+                                                             scene_camera_transfer.has_camera_distance,
+                                                             scene_camera_transfer.camera_distance,
+                                                             scene_camera_transfer.output_path);
     }
 
     HeadlessPlanBenchmarkOptions plan_bench = parse_headless_plan_benchmark_options(args);

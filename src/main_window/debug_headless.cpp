@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -85,6 +86,38 @@ struct HeadlessScene3DBenchmarkOptions {
     double window_forward_m = 1200.0;
     std::string error;
 };
+
+struct HeadlessSceneCameraTransferOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    bool has_camera_distance = false;
+    double camera_distance = 0.0;
+    std::string error;
+};
+
+bool create_headless_d3d_device(ID3D11Device*& device, ID3D11DeviceContext*& context, const char*& driver) {
+    device = nullptr;
+    context = nullptr;
+    driver = "hardware";
+    D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
+    const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0};
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+                                   levels, 2, D3D11_SDK_VERSION, &device,
+                                   &feature_level, &context);
+    if (FAILED(hr)) {
+        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+                               levels, 2, D3D11_SDK_VERSION, &device,
+                               &feature_level, &context);
+        driver = "warp";
+    }
+    return SUCCEEDED(hr) && device && context;
+}
+
+double angle_distance(double a, double b) {
+    return std::abs(std::atan2(std::sin(a - b), std::cos(a - b)));
+}
 
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
@@ -291,6 +324,56 @@ HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const s
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
         options.error = "--debug-headless-scene3d-bench requires a map path";
+    }
+    return options;
+}
+
+HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(const std::vector<std::string>& args) {
+    HeadlessSceneCameraTransferOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-scene-camera-transfer") {
+            options.requested = true;
+            if (i + 1 >= args.size()) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
+        } else if (arg == "--unit-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--unit-distance requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--unit-distance must be a positive number";
+                return options;
+            }
+            options.unit_distance = parsed;
+        } else if (arg == "--camera-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--camera-distance requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || !std::isfinite(parsed)) {
+                options.error = "--camera-distance must be a finite number";
+                return options;
+            }
+            options.has_camera_distance = true;
+            options.camera_distance = parsed;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-scene-camera-transfer requires a map path";
     }
     return options;
 }
@@ -638,19 +721,8 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
 
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
-    D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
-    const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0};
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-                                   levels, 2, D3D11_SDK_VERSION, &device,
-                                   &feature_level, &context);
     const char* driver = "hardware";
-    if (FAILED(hr)) {
-        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
-                               levels, 2, D3D11_SDK_VERSION, &device,
-                               &feature_level, &context);
-        driver = "warp";
-    }
-    if (FAILED(hr) || !device || !context) {
+    if (!create_headless_d3d_device(device, context, driver)) {
         std::cerr << "debug headless scene3d benchmark failed: D3D11CreateDevice\n";
         release_com(context);
         release_com(device);
@@ -793,6 +865,131 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
     context->Flush();
     release_com(context);
     release_com(device);
+    return exit_code;
+}
+
+int App::run_debug_headless_scene_camera_transfer(const std::string& path, double unit_distance,
+                                                  bool has_camera_distance, double camera_distance,
+                                                  const std::string& output_path) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-scene-camera-transfer path=\"" << path
+         << "\" unit_distance=" << format_double(unit_distance, 3);
+    if (has_camera_distance) *out << " camera_distance=" << format_double(camera_distance, 3);
+    *out << "\n";
+    *out << "stage=d3d-create-start\n";
+    out->flush();
+
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
+    const char* driver = "hardware";
+    if (!create_headless_d3d_device(device, context, driver)) {
+        std::cerr << "debug headless scene camera transfer failed: D3D11CreateDevice\n";
+        release_com(context);
+        release_com(device);
+        return 2;
+    }
+    *out << "stage=d3d-ready driver=" << driver << "\n";
+    out->flush();
+
+    *out << "stage=load-start\n";
+    out->flush();
+    LoadResult load_result = load_map_worker(path, unit_distance, false, 0.0, 0.0, 25.0);
+    if (!load_result.ok) {
+        std::cerr << "debug headless scene camera transfer load failed: " << load_result.error << "\n";
+        release_com(context);
+        release_com(device);
+        return 3;
+    }
+    *out << "stage=load-complete\n";
+
+    int exit_code = 0;
+    try {
+        Canvas3DSceneBuildOptions options;
+        options.model = &load_result.model;
+        options.map_handle = load_result.handle;
+        options.unit_distance = unit_distance;
+        options.control_point_start = load_result.model.cp_arb[0];
+        options.control_point_end = load_result.model.cp_arb[1];
+        options.control_point_interval = load_result.model.cp_arb[2];
+        options.show_own_track_markers = true;
+        Canvas3DSceneBuildResult build_result = build_canvas3d_scene_preview(options);
+        for (const std::string& message : build_result.log_messages) *out << message << "\n";
+        Canvas3DScene scene = std::move(build_result.scene);
+        if (scene.tracks.empty()) {
+            *out << "stage=scene-build-empty result=FAIL\n";
+            exit_code = 4;
+        } else {
+            Canvas3DCameraStart expected_start = scene.camera;
+            Canvas3D canvas(device);
+            std::string error;
+            if (!canvas.load_scene(std::move(scene), error)) {
+                *out << "stage=scene-load-failed error=\"" << error << "\" result=FAIL\n";
+                exit_code = 5;
+            } else {
+                Canvas3DSceneCameraPose start_pose = canvas.scene_camera_pose();
+                const double expected_x = -expected_start.z;
+                const double expected_y = expected_start.x;
+                bool start_ok = start_pose.valid &&
+                    std::abs(start_pose.distance - expected_start.distance) <= 1e-6 &&
+                    std::abs(start_pose.x - expected_x) <= 1e-6 &&
+                    std::abs(start_pose.y - expected_y) <= 1e-6 &&
+                    angle_distance(start_pose.theta, expected_start.yaw) <= 1e-6;
+                *out << "stage=start-pose"
+                     << " valid=" << (start_pose.valid ? "true" : "false")
+                     << " x=" << format_double(start_pose.x, 6)
+                     << " y=" << format_double(start_pose.y, 6)
+                     << " z=" << format_double(start_pose.z, 6)
+                     << " theta=" << format_double(start_pose.theta, 6)
+                     << " distance=" << format_double(start_pose.distance, 6)
+                     << " expected_x=" << format_double(expected_x, 6)
+                     << " expected_y=" << format_double(expected_y, 6)
+                     << " expected_theta=" << format_double(expected_start.yaw, 6)
+                     << " transfer=" << (start_ok ? "PASS" : "FAIL") << "\n";
+
+                double target_distance = has_camera_distance
+                    ? camera_distance
+                    : std::clamp(expected_start.distance + unit_distance,
+                                 load_result.model.default_min,
+                                 load_result.model.default_max);
+                bool jumped = canvas.jump_scene_camera_to_distance(target_distance);
+                Canvas3DSceneCameraPose jump_pose = canvas.scene_camera_pose();
+                bool jump_ok = jumped && jump_pose.valid &&
+                    std::isfinite(jump_pose.x) && std::isfinite(jump_pose.y) &&
+                    std::isfinite(jump_pose.theta);
+                *out << "stage=jump-pose"
+                     << " requested_distance=" << format_double(target_distance, 6)
+                     << " valid=" << (jump_pose.valid ? "true" : "false")
+                     << " x=" << format_double(jump_pose.x, 6)
+                     << " y=" << format_double(jump_pose.y, 6)
+                     << " theta=" << format_double(jump_pose.theta, 6)
+                     << " distance=" << format_double(jump_pose.distance, 6)
+                     << " transfer=" << (jump_ok ? "PASS" : "FAIL") << "\n";
+                if (!start_ok || !jump_ok) exit_code = 6;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "debug headless scene camera transfer failed: " << e.what() << "\n";
+        exit_code = 7;
+    }
+
+    if (load_result.handle) kv_free(load_result.handle);
+    context->ClearState();
+    context->Flush();
+    release_com(context);
+    release_com(device);
+    if (exit_code == 0) *out << "result=PASS\n";
+    out->flush();
     return exit_code;
 }
 #endif

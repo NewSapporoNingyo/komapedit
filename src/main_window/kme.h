@@ -674,9 +674,11 @@ struct View2DSettings {
 
 struct View3DSettings {
     bool show_scene_owntrack_markers = true;
+    bool show_scene_current_position_on_plan = true;
 
     bool operator==(const View3DSettings& other) const {
-        return show_scene_owntrack_markers == other.show_scene_owntrack_markers;
+        return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
+            show_scene_current_position_on_plan == other.show_scene_current_position_on_plan;
     }
 
     bool operator!=(const View3DSettings& other) const {
@@ -745,6 +747,9 @@ public:
                                                     double unit_distance, double max_frame_ms,
                                                     double window_back_m, double window_forward_m,
                                                     const std::string& output_path);
+    static int run_debug_headless_scene_camera_transfer(const std::string& path, double unit_distance,
+                                                        bool has_camera_distance, double camera_distance,
+                                                        const std::string& output_path);
 #endif
 
 private:
@@ -835,6 +840,7 @@ private:
     bool show_cab_illuminance_markers_ = true;
     bool show_fog_markers_ = true;
     bool show_scene_owntrack_markers_ = true;
+    bool show_scene_current_position_on_plan_ = true;
     bool show_profile_graph_ = true;
     bool show_radius_graph_ = true;
     bool show_othertracks_window_ = true;
