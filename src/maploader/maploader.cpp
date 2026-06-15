@@ -2844,9 +2844,6 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackke
     result.clear(8);
     result.reserve_rows(ctx.owntrack_buffer.rows);
 
-    double min_dist = data.front().distance;
-    for (const auto& e : data) min_dist = std::min(min_dist, e.distance);
-
     auto advance_over = [](TrackPointer& p, double& last, double& next, double dist) {
         while (p.over_nextpoint(dist)) {
             p.seeknext();
@@ -2868,10 +2865,11 @@ Matrix build_othertrack_buffer(const MapContext& ctx, const std::string& trackke
         }
     };
 
+    // Child tracks keep their first defined value before the first explicit point.
+    // The initial values above already hold that first point, so emit the full own-track range.
     for (size_t r = 0; r < ctx.owntrack_buffer.rows; ++r) {
         const double* element = &ctx.owntrack_buffer.data[r * ctx.owntrack_buffer.cols];
         double dist = element[0];
-        if (min_dist > dist) continue;
 
         advance_over(x_position_p, x_position_last, x_position_next, dist);
         advance_over(x_radius_p, x_radius_last, x_radius_next, dist);

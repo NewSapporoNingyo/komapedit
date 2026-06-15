@@ -41,6 +41,7 @@ namespace {
 constexpr float kDefaultSceneCameraHeight = 2.0f;
 constexpr double kSceneRepeaterDistanceEpsilon = 1e-6;
 constexpr long long kSceneRepeaterInstanceLimit = 1000000;
+constexpr float kSceneCameraFovY = 0.6108652382f;
 constexpr float kSceneNearZ = 0.2f;
 constexpr float kSceneBackgroundNearZ = 0.05f;
 constexpr float kSceneBackgroundFarZ = 5000.0f;
@@ -2709,12 +2710,12 @@ fail:
         Vec3 forward = scene_forward();
         Mat4 view = look_to_bve(scene_camera_pos, forward, {0.0f, 1.0f, 0.0f});
         float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
-        Mat4 background_proj = perspective_fov_lh(1.0471975512f, aspect, kSceneBackgroundNearZ, kSceneBackgroundFarZ);
+        Mat4 background_proj = perspective_fov_lh(kSceneCameraFovY, aspect, kSceneBackgroundNearZ, kSceneBackgroundFarZ);
         Mat4 background_view_proj = multiply(view, background_proj);
         draw_background_model(background_view_proj);
         context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-        Mat4 proj = perspective_fov_lh(1.0471975512f, aspect, kSceneNearZ, scene_far_z());
+        Mat4 proj = perspective_fov_lh(kSceneCameraFovY, aspect, kSceneNearZ, scene_far_z());
         Mat4 view_proj = multiply(view, proj);
 
         scene_stats_value.drawn_instance_count = 0;
