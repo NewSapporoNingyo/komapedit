@@ -542,6 +542,11 @@ bool is_scene_own_track_alias(const std::string& normalized_key) {
         normalized_key == "\\" || normalized_key == "own" || normalized_key == "main";
 }
 
+bool is_scene_own_track_placement_key(const std::string& normalized_key) {
+    // BVE Structure/Repeater placement uses only trackKey 0 for the own track.
+    return normalized_key == "0";
+}
+
 int scene_tilt_flags(double tilt) {
     if (!std::isfinite(tilt)) return 0;
     return static_cast<int>(tilt);
@@ -985,27 +990,24 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         }
     }
 
-    std::map<std::string, SceneTrackSource> track_sources;
+    std::map<std::string, SceneTrackSource> other_track_sources;
     SceneTrackSource own_source{&scene_own, true};
-    for (const char* key : kOwnTrackLookupAliases) {
-        track_sources[normalize_scene_track_key(key)] = own_source;
-    }
     for (const OtherTrack& track : scene_other_tracks) {
-        track_sources[normalize_scene_track_key(track.key)] = SceneTrackSource{&track.points, false};
+        other_track_sources[normalize_scene_track_key(track.key)] = SceneTrackSource{&track.points, false};
     }
-    auto find_track = [&](const std::string& normalized_key) -> std::optional<SceneTrackSource> {
-        auto it = track_sources.find(normalized_key);
-        if (it == track_sources.end() || !it->second.points) return std::nullopt;
+    auto find_other_track = [&](const std::string& normalized_key) -> std::optional<SceneTrackSource> {
+        auto it = other_track_sources.find(normalized_key);
+        if (it == other_track_sources.end() || !it->second.points) return std::nullopt;
         return it->second;
     };
-    auto sample_track = [&](const std::string& key, double distance) -> std::optional<Canvas3DTrackPoint> {
+    auto sample_placement_track = [&](const std::string& key, double distance) -> std::optional<Canvas3DTrackPoint> {
         std::string normalized_key = normalize_scene_track_key(key);
-        if (auto source = find_track(normalized_key)) {
+        if (is_scene_own_track_placement_key(normalized_key)) {
+            return scene_sample_matrix_track(*own_source.points, distance, own_source.has_theta_column);
+        }
+        if (auto source = find_other_track(normalized_key)) {
             auto sampled = scene_sample_matrix_track(*source->points, distance, source->has_theta_column);
             if (sampled) return sampled;
-        }
-        if (is_scene_own_track_alias(normalized_key)) {
-            return scene_sample_matrix_track(*own_source.points, distance, own_source.has_theta_column);
         }
         return std::nullopt;
     };
@@ -1046,7 +1048,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         std::string path = model_path_for_key(table_cell(row, "structureKey"));
         if (path.empty()) return;
         double distance = table_cell_number(row, "distance");
-        auto point = sample_track(table_cell(row, "trackKey"), distance);
+        auto point = sample_placement_track(table_cell(row, "trackKey"), distance);
         if (!point) return;
         Canvas3DModelInstance instance;
         instance.model_path = path;
@@ -1069,8 +1071,8 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         std::string path = model_path_for_key(table_cell(row, "structureKey"));
         if (path.empty()) continue;
         double distance = table_cell_number(row, "distance");
-        auto p1 = sample_track(table_cell(row, "trackKey1"), distance);
-        auto p2 = sample_track(table_cell(row, "trackKey2"), distance);
+        auto p1 = sample_placement_track(table_cell(row, "trackKey1"), distance);
+        auto p2 = sample_placement_track(table_cell(row, "trackKey2"), distance);
         if (!p1 || !p2) continue;
         DVec3 a{p1->x, p1->y, p1->z};
         DVec3 b{p2->x, p2->y, p2->z};
@@ -1174,7 +1176,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         int station_index = std::clamp(options.station_index, 0, static_cast<int>(model.stations.size()) - 1);
         camera_distance = model.stations[station_index].distance;
     }
-    auto camera_point = sample_track("", camera_distance);
+    auto camera_point = scene_sample_matrix_track(scene_own, camera_distance, true);
     if (!camera_point) camera_point = scene_matrix_row_point(scene_own, 0, true);
     scene.camera.distance = camera_distance;
     scene.camera.x = camera_point->x;
@@ -2473,17 +2475,35 @@ fail:
         return path && sample_track_path(*path, distance, out);
     }
 
-    const Canvas3DTrackPath* track_path_for_key(const std::string& key) const {
-        std::string normalized = normalize_scene_track_key(key);
-        if (is_scene_own_track_alias(normalized)) return own_track_path();
+    const Canvas3DTrackPath* other_track_path_for_normalized_key(const std::string& normalized) const {
+        const Canvas3DTrackPath* own = own_track_path();
         for (const Canvas3DTrackPath& path : scene_data.tracks) {
+            if (&path == own) continue;
             if (normalize_scene_track_key(path.key) == normalized) return &path;
         }
         return nullptr;
     }
 
+    const Canvas3DTrackPath* track_path_for_key(const std::string& key) const {
+        std::string normalized = normalize_scene_track_key(key);
+        if (const Canvas3DTrackPath* other = other_track_path_for_normalized_key(normalized)) return other;
+        if (is_scene_own_track_alias(normalized)) return own_track_path();
+        return nullptr;
+    }
+
+    const Canvas3DTrackPath* placement_track_path_for_key(const std::string& key) const {
+        std::string normalized = normalize_scene_track_key(key);
+        if (is_scene_own_track_placement_key(normalized)) return own_track_path();
+        return other_track_path_for_normalized_key(normalized);
+    }
+
     bool sample_scene_track(const std::string& key, double distance, Canvas3DTrackPoint& out) const {
         const Canvas3DTrackPath* path = track_path_for_key(key);
+        return path && sample_track_path(*path, distance, out);
+    }
+
+    bool sample_scene_placement_track(const std::string& key, double distance, Canvas3DTrackPoint& out) const {
+        const Canvas3DTrackPath* path = placement_track_path_for_key(key);
         return path && sample_track_path(*path, distance, out);
     }
 
@@ -2506,7 +2526,7 @@ fail:
                           double span,
                           double out_world[16]) const {
         Canvas3DTrackPoint point;
-        if (!sample_scene_track(track_key, distance, point)) return false;
+        if (!sample_scene_placement_track(track_key, distance, point)) return false;
 
         const int flags = scene_tilt_flags(tilt);
         const bool follow_gradient = (flags & 1) != 0;
@@ -2524,7 +2544,7 @@ fail:
 
         double effective_span = std::isfinite(span) && span >= 1.0 ? span : 1.0;
         Canvas3DTrackPoint span_point;
-        if (sample_scene_track(track_key, distance + effective_span, span_point)) {
+        if (sample_scene_placement_track(track_key, distance + effective_span, span_point)) {
             DVec3 span_right = right_from_theta_d(span_point.theta);
             DVec3 span_forward = forward_from_theta_d(span_point.theta);
             DVec3 span_up = cross(span_right, span_forward);
@@ -2546,7 +2566,7 @@ fail:
         if (follow_cant) {
             double cant_angle = point.cant_angle;
             Canvas3DTrackPoint mid_point;
-            if (sample_scene_track(track_key, distance + effective_span * 0.5, mid_point)) {
+            if (sample_scene_placement_track(track_key, distance + effective_span * 0.5, mid_point)) {
                 cant_angle = mid_point.cant_angle;
             }
             apply_track_cant(right, up, forward, cant_angle);
