@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <initializer_list>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -209,6 +210,149 @@ std::string format_find_match_status(std::string format, size_t current, size_t 
     return format;
 }
 
+void reset_table_find_results(TableFindState& state) {
+    state.committed.clear();
+    state.matches.clear();
+    state.row_matches.clear();
+    state.unused_row_matches.clear();
+    state.unused_count = 0;
+    state.unused_total = 0;
+    state.current = -1;
+    state.scroll_row = -1;
+    state.has_run = false;
+    state.unused_has_run = false;
+}
+
+void run_table_find(TableFindState& state,
+                    const std::vector<CachedTableRow>& rows,
+                    std::initializer_list<size_t> search_columns) {
+    state.committed = state.query;
+    state.matches.clear();
+    state.row_matches.assign(rows.size(), 0);
+    state.unused_row_matches.clear();
+    state.unused_count = 0;
+    state.unused_total = 0;
+    state.current = -1;
+    state.scroll_row = -1;
+    state.has_run = true;
+    state.unused_has_run = false;
+
+    if (blank_ascii(state.committed)) return;
+
+    for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+        const CachedTableRow& row = rows[row_index];
+        bool matched = false;
+        for (size_t column : search_columns) {
+            if (column < row.cells.size() &&
+                matches_find_query(row.cells[column], state.committed, state.exact)) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) continue;
+        state.row_matches[row_index] = 1;
+        state.matches.push_back(row_index);
+    }
+
+    if (!state.matches.empty()) {
+        state.current = 0;
+        state.scroll_row = static_cast<int>(state.matches.front());
+    }
+}
+
+void set_exact_table_find_query(TableFindState& state, const std::string& query) {
+    const size_t capacity = IM_ARRAYSIZE(state.query);
+    const size_t copy_size = std::min(capacity - 1, query.size());
+    std::copy_n(query.data(), copy_size, state.query);
+    state.query[copy_size] = '\0';
+    state.exact = true;
+    state.panel_expanded = true;
+}
+
+void step_table_find(TableFindState& state, int delta) {
+    if (state.matches.empty()) return;
+    if (state.current < 0) {
+        state.current = 0;
+    } else {
+        const int count = static_cast<int>(state.matches.size());
+        state.current = (state.current + delta + count) % count;
+    }
+    state.scroll_row = static_cast<int>(state.matches[static_cast<size_t>(state.current)]);
+}
+
+std::string table_find_status_text(const TableFindState& state,
+                                   const std::string& find_no_match,
+                                   const std::string& find_match,
+                                   const std::string& unused_no_match,
+                                   const std::string& unused_match) {
+    if (state.unused_has_run) {
+        if (state.unused_count == 0) return unused_no_match;
+        std::string text = unused_match;
+        replace_all(text, "{unused}", std::to_string(state.unused_count));
+        replace_all(text, "{total}", std::to_string(state.unused_total));
+        return text;
+    }
+    if (!state.has_run) return {};
+    if (state.matches.empty() || state.current < 0) return find_no_match;
+    return format_find_match_status(find_match,
+                                    static_cast<size_t>(state.current) + 1,
+                                    state.matches.size());
+}
+
+template <typename NoteUsedKeysFn, typename UndefinedKeyFn>
+void run_unused_key_search(TableFindState& state,
+                           const std::vector<CachedTableRow>& definition_rows,
+                           size_t definition_key_column,
+                           NoteUsedKeysFn note_used_keys,
+                           UndefinedKeyFn on_undefined_key) {
+    state.exact = true;
+    state.committed.clear();
+    state.matches.clear();
+    state.row_matches.clear();
+    state.current = -1;
+    state.scroll_row = -1;
+    state.has_run = false;
+    state.unused_row_matches.assign(definition_rows.size(), 0);
+    state.unused_count = 0;
+    state.unused_total = definition_rows.size();
+    state.unused_has_run = true;
+
+    std::unordered_map<std::string, std::vector<size_t>> rows_by_key;
+    rows_by_key.reserve(definition_rows.size() * 2 + 1);
+    for (size_t row_index = 0; row_index < definition_rows.size(); ++row_index) {
+        const CachedTableRow& row = definition_rows[row_index];
+        if (definition_key_column >= row.cells.size()) continue;
+        const std::string& key = row.cells[definition_key_column];
+        if (blank_ascii(key)) continue;
+        rows_by_key[ascii_case_key(key)].push_back(row_index);
+    }
+
+    std::vector<unsigned char> used_rows(definition_rows.size(), 0);
+    std::unordered_set<std::string> warned_undefined_keys;
+    auto note_key = [&](const std::string& raw_key) {
+        std::string key = trim_ascii_copy(raw_key);
+        if (key.empty()) return;
+        std::string folded_key = ascii_case_key(key);
+        auto match = rows_by_key.find(folded_key);
+        if (match == rows_by_key.end()) {
+            if (warned_undefined_keys.insert(folded_key).second) {
+                on_undefined_key(key);
+            }
+            return;
+        }
+        for (size_t row_index : match->second) used_rows[row_index] = 1;
+    };
+
+    note_used_keys(note_key);
+
+    for (size_t row_index = 0; row_index < definition_rows.size(); ++row_index) {
+        if (used_rows[row_index]) continue;
+        state.unused_row_matches[row_index] = 1;
+        if (state.scroll_row < 0) state.scroll_row = static_cast<int>(row_index);
+        ++state.unused_count;
+    }
+}
+
 void render_status_line(const std::string& text) {
     const ImGuiStyle& style = ImGui::GetStyle();
     const float height = ImGui::GetFrameHeight();
@@ -300,6 +444,74 @@ void render_find_panel_border(ImVec2 min, ImVec2 max) {
                                         ImGui::GetStyle().FrameRounding, 0, 1.0f);
 }
 
+template <typename RunFindFn, typename RunUnusedFn, typename StepFn, typename StatusTextFn>
+void render_table_find_panel(TableFindState& state,
+                             const char* id,
+                             const std::string& find_label,
+                             const std::string& partial_label,
+                             const std::string& exact_label,
+                             const std::string& unused_label,
+                             RunFindFn run_find,
+                             RunUnusedFn run_unused,
+                             StepFn step,
+                             StatusTextFn status_text) {
+    std::string toggle_id = std::string("##") + id + "_find_panel_toggle";
+    std::string input_id = std::string("##") + id + "_find_text";
+    std::string prev_id = std::string("↑##") + id + "_find_prev";
+    std::string next_id = std::string("↓##") + id + "_find_next";
+    std::string partial_id = partial_label + "##" + id + "_partial";
+    std::string exact_id = exact_label + "##" + id + "_exact";
+
+    ImGui::BeginGroup();
+    if (render_find_panel_toggle(toggle_id.c_str(), find_label, state.panel_expanded)) {
+        state.panel_expanded = !state.panel_expanded;
+    }
+    if (state.panel_expanded) {
+        const float indent = ImGui::GetStyle().FramePadding.x;
+        const float right_padding = ImGui::GetStyle().FramePadding.x;
+        ImGui::Spacing();
+        ImGui::Indent(indent);
+        if (ImGui::Button(find_label.c_str())) run_find();
+        ImGui::SameLine();
+        const float arrow_button_width = ImGui::GetFrameHeight();
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
+            arrow_button_width * 2.0f - spacing * 2.0f - right_padding);
+        ImGui::SetNextItemWidth(input_width);
+        if (ImGui::InputText(input_id.c_str(), state.query, IM_ARRAYSIZE(state.query),
+                             ImGuiInputTextFlags_EnterReturnsTrue)) {
+            run_find();
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(state.matches.empty());
+        if (ImGui::Button(prev_id.c_str(), ImVec2(arrow_button_width, 0.0f))) {
+            step(-1);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(next_id.c_str(), ImVec2(arrow_button_width, 0.0f))) {
+            step(1);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::RadioButton(partial_id.c_str(), !state.exact)) {
+            state.exact = false;
+            if (state.has_run || !blank_ascii(state.query)) run_find();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(exact_id.c_str(), state.exact)) {
+            state.exact = true;
+            if (state.has_run || !blank_ascii(state.query)) run_find();
+        }
+        if (ImGui::Button(unused_label.c_str())) run_unused();
+        render_status_line(status_text());
+        ImGui::Unindent(indent);
+    }
+    ImGui::EndGroup();
+    ImVec2 find_panel_max = ImGui::GetItemRectMax();
+    if (state.panel_expanded) find_panel_max.x += ImGui::GetStyle().FramePadding.x;
+    render_find_panel_border(ImGui::GetItemRectMin(), find_panel_max);
+    ImGui::Spacing();
+}
+
 } // namespace
 
 constexpr float kShowColumnWidth = 56.0f;
@@ -359,6 +571,7 @@ static const TableColumnDef kSignalAspectFixedColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"signalAspectKey", "signalAspectKey", 150.0f},
 };
+constexpr int kSignalAspectKeyColumn = 1;
 constexpr int kSignalAspectStructureKeyColumnOffset = IM_ARRAYSIZE(kSignalAspectFixedColumns);
 constexpr size_t kMaxSignalAspectTableColumns = 511;
 constexpr size_t kMaxSignalAspectStructureKeyColumns =
@@ -381,6 +594,7 @@ static const TableColumnDef kSignalColumns[] = {
     {"filePath", "filePath", 200.0f},
 };
 constexpr int kSignalDistanceColumn = 1;
+constexpr int kSignalSignalAspectKeyColumn = 3;
 constexpr int kSignalFilePathColumn = IM_ARRAYSIZE(kSignalColumns) - 1;
 
 static const TableColumnDef kBeaconColumns[] = {
@@ -1191,192 +1405,143 @@ void App::ensure_table_cache() {
 }
 
 void App::reset_structure_model_find_results() {
-    structure_model_find_committed_.clear();
-    structure_model_find_matches_.clear();
-    structure_model_find_row_matches_.clear();
-    structure_model_unused_row_matches_.clear();
-    structure_model_unused_count_ = 0;
-    structure_model_unused_total_ = 0;
-    structure_model_find_current_ = -1;
-    structure_model_find_scroll_row_ = -1;
-    structure_model_find_has_run_ = false;
-    structure_model_unused_has_run_ = false;
+    reset_table_find_results(structure_model_find_);
 }
 
 void App::run_structure_model_find() {
     ensure_table_cache();
-    structure_model_find_committed_ = structure_model_find_query_;
-    structure_model_find_matches_.clear();
-    structure_model_find_row_matches_.assign(table_cache_.structure_model_rows.size(), 0);
-    structure_model_unused_row_matches_.clear();
-    structure_model_unused_count_ = 0;
-    structure_model_unused_total_ = 0;
-    structure_model_find_current_ = -1;
-    structure_model_find_scroll_row_ = -1;
-    structure_model_find_has_run_ = true;
-    structure_model_unused_has_run_ = false;
-
-    if (blank_ascii(structure_model_find_committed_)) return;
-
-    for (size_t row_index = 0; row_index < table_cache_.structure_model_rows.size(); ++row_index) {
-        const CachedTableRow& row = table_cache_.structure_model_rows[row_index];
-        const bool matches_key = row.cells.size() > static_cast<size_t>(kStructureModelKeyColumn) &&
-            matches_find_query(row.cells[static_cast<size_t>(kStructureModelKeyColumn)],
-                               structure_model_find_committed_,
-                               structure_model_find_exact_);
-        const bool matches_file_name = row.cells.size() > static_cast<size_t>(kStructureModelFilePathColumn) &&
-            matches_find_query(row.cells[static_cast<size_t>(kStructureModelFilePathColumn)],
-                               structure_model_find_committed_,
-                               structure_model_find_exact_);
-        if (matches_key || matches_file_name) {
-            structure_model_find_row_matches_[row_index] = 1;
-            structure_model_find_matches_.push_back(row_index);
-        }
-    }
-
-    if (!structure_model_find_matches_.empty()) {
-        structure_model_find_current_ = 0;
-        structure_model_find_scroll_row_ = static_cast<int>(structure_model_find_matches_.front());
-    }
+    run_table_find(structure_model_find_,
+                   table_cache_.structure_model_rows,
+                   {static_cast<size_t>(kStructureModelKeyColumn),
+                    static_cast<size_t>(kStructureModelFilePathColumn)});
 }
 
 void App::run_unused_structure_model_search() {
     ensure_table_cache();
     add_log("[INFO]datatable.cpp: Searching unused models...");
 
-    structure_model_find_exact_ = true;
-    structure_model_find_committed_.clear();
-    structure_model_find_matches_.clear();
-    structure_model_find_row_matches_.clear();
-    structure_model_find_current_ = -1;
-    structure_model_find_scroll_row_ = -1;
-    structure_model_find_has_run_ = false;
-
-    const size_t model_count = table_cache_.structure_model_rows.size();
-    structure_model_unused_row_matches_.assign(model_count, 0);
-    structure_model_unused_count_ = 0;
-    structure_model_unused_total_ = model_count;
-    structure_model_unused_has_run_ = true;
-
-    std::unordered_map<std::string, std::vector<size_t>> model_rows_by_key;
-    model_rows_by_key.reserve(model_count * 2 + 1);
-    for (size_t row_index = 0; row_index < model_count; ++row_index) {
-        const CachedTableRow& row = table_cache_.structure_model_rows[row_index];
-        if (row.cells.size() <= static_cast<size_t>(kStructureModelKeyColumn)) continue;
-        const std::string& key = row.cells[static_cast<size_t>(kStructureModelKeyColumn)];
-        if (blank_ascii(key)) continue;
-        model_rows_by_key[ascii_case_key(key)].push_back(row_index);
-    }
-
-    std::vector<unsigned char> used_model_rows(model_count, 0);
-    std::unordered_set<std::string> warned_undefined_keys;
-    auto note_structure_key = [&](const std::string& raw_key) {
-        std::string key = trim_ascii_copy(raw_key);
-        if (key.empty()) return;
-        std::string folded_key = ascii_case_key(key);
-        auto match = model_rows_by_key.find(folded_key);
-        if (match == model_rows_by_key.end()) {
-            if (warned_undefined_keys.insert(folded_key).second) {
-                add_log("[WARN]datatable.cpp: Found undefined structureKey:\"" + key + "\"");
+    run_unused_key_search(
+        structure_model_find_,
+        table_cache_.structure_model_rows,
+        static_cast<size_t>(kStructureModelKeyColumn),
+        [this](auto& note_structure_key) {
+            for (const CachedTableRow& row : table_cache_.structure_rows) {
+                if (row.cells.size() > static_cast<size_t>(kStructureKeyColumn)) {
+                    note_structure_key(row.cells[static_cast<size_t>(kStructureKeyColumn)]);
+                }
             }
-            return;
-        }
-        for (size_t row_index : match->second) used_model_rows[row_index] = 1;
-    };
+            for (const CachedTableRow& row : table_cache_.repeater_rows) {
+                if (row.cells.size() <= static_cast<size_t>(kRepeaterStructureKeysColumn)) continue;
+                for (const std::string& key :
+                     split_structure_key_list(row.cells[static_cast<size_t>(kRepeaterStructureKeysColumn)])) {
+                    note_structure_key(key);
+                }
+            }
+            for (const CachedTableRow& row : table_cache_.background_rows) {
+                if (row.cells.size() > static_cast<size_t>(kBackgroundStructureKeyColumn)) {
+                    note_structure_key(row.cells[static_cast<size_t>(kBackgroundStructureKeyColumn)]);
+                }
+            }
+            for (const CachedTableRow& row : table_cache_.signal_aspect_rows) {
+                for (size_t i = kSignalAspectStructureKeyColumnOffset; i < row.cells.size(); ++i) {
+                    note_structure_key(row.cells[i]);
+                }
+            }
+        },
+        [this](const std::string& key) {
+            add_log("[WARN]datatable.cpp: Found undefined structureKey:\"" + key + "\"");
+        });
 
-    for (const CachedTableRow& row : table_cache_.structure_rows) {
-        if (row.cells.size() > static_cast<size_t>(kStructureKeyColumn)) {
-            note_structure_key(row.cells[static_cast<size_t>(kStructureKeyColumn)]);
-        }
-    }
-    for (const CachedTableRow& row : table_cache_.repeater_rows) {
-        if (row.cells.size() <= static_cast<size_t>(kRepeaterStructureKeysColumn)) continue;
-        for (const std::string& key : split_structure_key_list(row.cells[static_cast<size_t>(kRepeaterStructureKeysColumn)])) {
-            note_structure_key(key);
-        }
-    }
-    for (const CachedTableRow& row : table_cache_.background_rows) {
-        if (row.cells.size() > static_cast<size_t>(kBackgroundStructureKeyColumn)) {
-            note_structure_key(row.cells[static_cast<size_t>(kBackgroundStructureKeyColumn)]);
-        }
-    }
-    for (const CachedTableRow& row : table_cache_.signal_aspect_rows) {
-        for (size_t i = kSignalAspectStructureKeyColumnOffset; i < row.cells.size(); ++i) {
-            note_structure_key(row.cells[i]);
-        }
-    }
-
-    for (size_t row_index = 0; row_index < model_count; ++row_index) {
-        if (used_model_rows[row_index]) continue;
-        structure_model_unused_row_matches_[row_index] = 1;
-        if (structure_model_find_scroll_row_ < 0) {
-            structure_model_find_scroll_row_ = static_cast<int>(row_index);
-        }
-        ++structure_model_unused_count_;
-    }
-
-    if (structure_model_unused_count_ == 0) {
+    if (structure_model_find_.unused_count == 0) {
         add_log("[INFO]datatable.cpp: No unused models found");
     } else {
         add_log("[INFO]datatable.cpp: Found unused models (" +
-                std::to_string(structure_model_unused_count_) + "/" +
-                std::to_string(structure_model_unused_total_) + ")");
+                std::to_string(structure_model_find_.unused_count) + "/" +
+                std::to_string(structure_model_find_.unused_total) + ")");
     }
 }
 
 void App::find_structure_model_for_structure_key(const std::string& structure_key) {
     if (blank_ascii(structure_key)) return;
-    const size_t capacity = IM_ARRAYSIZE(structure_model_find_query_);
-    const size_t copy_size = std::min(capacity - 1, structure_key.size());
-    std::copy_n(structure_key.data(), copy_size, structure_model_find_query_);
-    structure_model_find_query_[copy_size] = '\0';
-    structure_model_find_exact_ = true;
+    set_exact_table_find_query(structure_model_find_, structure_key);
     show_structure_models_window_ = true;
-    structure_model_find_panel_expanded_ = true;
     run_structure_model_find();
 }
 
 void App::step_structure_model_find(int delta) {
-    if (structure_model_find_matches_.empty()) return;
-    if (structure_model_find_current_ < 0) {
-        structure_model_find_current_ = 0;
-    } else {
-        const int count = static_cast<int>(structure_model_find_matches_.size());
-        structure_model_find_current_ = (structure_model_find_current_ + delta + count) % count;
-    }
-    structure_model_find_scroll_row_ =
-        static_cast<int>(structure_model_find_matches_[static_cast<size_t>(structure_model_find_current_)]);
+    step_table_find(structure_model_find_, delta);
 }
 
 std::string App::structure_model_find_status_text() const {
-    if (structure_model_unused_has_run_) {
-        if (structure_model_unused_count_ == 0) return tr("status.unused_structure_models.no_match");
-        std::string text = tr("status.unused_structure_models.match");
-        replace_all(text, "{unused}", std::to_string(structure_model_unused_count_));
-        replace_all(text, "{total}", std::to_string(structure_model_unused_total_));
-        return text;
+    return table_find_status_text(structure_model_find_,
+                                  tr("status.find.no_match"),
+                                  tr("status.find.match"),
+                                  tr("status.unused_structure_models.no_match"),
+                                  tr("status.unused_structure_models.match"));
+}
+
+void App::reset_signal_aspect_find_results() {
+    reset_table_find_results(signal_aspect_find_);
+}
+
+void App::run_signal_aspect_find() {
+    ensure_table_cache();
+    run_table_find(signal_aspect_find_,
+                   table_cache_.signal_aspect_rows,
+                   {static_cast<size_t>(kSignalAspectKeyColumn)});
+}
+
+void App::run_unused_signal_aspect_search() {
+    ensure_table_cache();
+    add_log("[INFO]datatable.cpp: Searching unused signal aspects...");
+
+    run_unused_key_search(
+        signal_aspect_find_,
+        table_cache_.signal_aspect_rows,
+        static_cast<size_t>(kSignalAspectKeyColumn),
+        [this](auto& note_signal_aspect_key) {
+            for (const CachedTableRow& row : table_cache_.signal_rows) {
+                if (row.cells.size() > static_cast<size_t>(kSignalSignalAspectKeyColumn)) {
+                    note_signal_aspect_key(row.cells[static_cast<size_t>(kSignalSignalAspectKeyColumn)]);
+                }
+            }
+        },
+        [this](const std::string& key) {
+            add_log("[WARN]datatable.cpp: Found undefined signalAspectKey:\"" + key + "\"");
+        });
+
+    if (signal_aspect_find_.unused_count == 0) {
+        add_log("[INFO]datatable.cpp: No unused signal aspects found");
+    } else {
+        add_log("[INFO]datatable.cpp: Found unused signal aspects (" +
+                std::to_string(signal_aspect_find_.unused_count) + "/" +
+                std::to_string(signal_aspect_find_.unused_total) + ")");
     }
-    if (!structure_model_find_has_run_) return {};
-    if (structure_model_find_matches_.empty() || structure_model_find_current_ < 0) {
-        return tr("status.find.no_match");
-    }
-    return format_find_match_status(tr("status.find.match"),
-                                    static_cast<size_t>(structure_model_find_current_) + 1,
-                                    structure_model_find_matches_.size());
+}
+
+void App::find_signal_aspect_for_signal_aspect_key(const std::string& signal_aspect_key) {
+    if (blank_ascii(signal_aspect_key)) return;
+    set_exact_table_find_query(signal_aspect_find_, signal_aspect_key);
+    show_signal_aspects_window_ = true;
+    focus_signal_aspects_next_ = true;
+    run_signal_aspect_find();
+}
+
+void App::step_signal_aspect_find(int delta) {
+    step_table_find(signal_aspect_find_, delta);
+}
+
+std::string App::signal_aspect_find_status_text() const {
+    return table_find_status_text(signal_aspect_find_,
+                                  tr("status.find.no_match"),
+                                  tr("status.find.match"),
+                                  tr("status.unused_signal_aspects.no_match"),
+                                  tr("status.unused_signal_aspects.match"));
 }
 
 void App::reset_sound_file_find_results(bool is_3d) {
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
-    state.committed.clear();
-    state.matches.clear();
-    state.row_matches.clear();
-    state.unused_row_matches.clear();
-    state.unused_count = 0;
-    state.unused_total = 0;
-    state.current = -1;
-    state.scroll_row = -1;
-    state.has_run = false;
-    state.unused_has_run = false;
+    reset_table_find_results(state);
 }
 
 void App::run_sound_file_find(bool is_3d) {
@@ -1386,39 +1551,10 @@ void App::run_sound_file_find(bool is_3d) {
         ? table_cache_.sound_3d_list_rows
         : table_cache_.sound_list_rows;
 
-    state.committed = state.query;
-    state.matches.clear();
-    state.row_matches.assign(rows.size(), 0);
-    state.unused_row_matches.clear();
-    state.unused_count = 0;
-    state.unused_total = 0;
-    state.current = -1;
-    state.scroll_row = -1;
-    state.has_run = true;
-    state.unused_has_run = false;
-
-    if (blank_ascii(state.committed)) return;
-
-    for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
-        const CachedTableRow& row = rows[row_index];
-        const bool matches_key = row.cells.size() > static_cast<size_t>(kSoundListKeyColumn) &&
-            matches_find_query(row.cells[static_cast<size_t>(kSoundListKeyColumn)],
-                               state.committed,
-                               state.exact);
-        const bool matches_file_name = row.cells.size() > static_cast<size_t>(kSoundListFilePathColumn) &&
-            matches_find_query(row.cells[static_cast<size_t>(kSoundListFilePathColumn)],
-                               state.committed,
-                               state.exact);
-        if (matches_key || matches_file_name) {
-            state.row_matches[row_index] = 1;
-            state.matches.push_back(row_index);
-        }
-    }
-
-    if (!state.matches.empty()) {
-        state.current = 0;
-        state.scroll_row = static_cast<int>(state.matches.front());
-    }
+    run_table_find(state,
+                   rows,
+                   {static_cast<size_t>(kSoundListKeyColumn),
+                    static_cast<size_t>(kSoundListFilePathColumn)});
 }
 
 void App::run_unused_sound_file_search(bool is_3d) {
@@ -1435,57 +1571,21 @@ void App::run_unused_sound_file_search(bool is_3d) {
         ? table_cache_.map_sound_3d_rows
         : table_cache_.map_sound_rows;
 
-    state.exact = true;
-    state.committed.clear();
-    state.matches.clear();
-    state.row_matches.clear();
-    state.current = -1;
-    state.scroll_row = -1;
-    state.has_run = false;
-    state.unused_row_matches.assign(file_rows.size(), 0);
-    state.unused_count = 0;
-    state.unused_total = file_rows.size();
-    state.unused_has_run = true;
-
-    std::unordered_map<std::string, std::vector<size_t>> file_rows_by_key;
-    file_rows_by_key.reserve(file_rows.size() * 2 + 1);
-    for (size_t row_index = 0; row_index < file_rows.size(); ++row_index) {
-        const CachedTableRow& row = file_rows[row_index];
-        if (row.cells.size() <= static_cast<size_t>(kSoundListKeyColumn)) continue;
-        const std::string& key = row.cells[static_cast<size_t>(kSoundListKeyColumn)];
-        if (blank_ascii(key)) continue;
-        file_rows_by_key[ascii_case_key(key)].push_back(row_index);
-    }
-
-    std::vector<unsigned char> used_rows(file_rows.size(), 0);
-    std::unordered_set<std::string> warned_undefined_keys;
-    auto note_sound_key = [&](const std::string& raw_key) {
-        std::string key = trim_ascii_copy(raw_key);
-        if (key.empty()) return;
-        std::string folded_key = ascii_case_key(key);
-        auto match = file_rows_by_key.find(folded_key);
-        if (match == file_rows_by_key.end()) {
-            if (warned_undefined_keys.insert(folded_key).second) {
-                add_log(std::string("[WARN]datatable.cpp: Found undefined ") +
-                        (is_3d ? "3D " : "") + "soundKey:\"" + key + "\"");
+    run_unused_key_search(
+        state,
+        file_rows,
+        static_cast<size_t>(kSoundListKeyColumn),
+        [&](auto& note_sound_key) {
+            for (const CachedTableRow& row : usage_rows) {
+                if (row.cells.size() > static_cast<size_t>(kMapSoundKeyColumn)) {
+                    note_sound_key(row.cells[static_cast<size_t>(kMapSoundKeyColumn)]);
+                }
             }
-            return;
-        }
-        for (size_t row_index : match->second) used_rows[row_index] = 1;
-    };
-
-    for (const CachedTableRow& row : usage_rows) {
-        if (row.cells.size() > static_cast<size_t>(kMapSoundKeyColumn)) {
-            note_sound_key(row.cells[static_cast<size_t>(kMapSoundKeyColumn)]);
-        }
-    }
-
-    for (size_t row_index = 0; row_index < file_rows.size(); ++row_index) {
-        if (used_rows[row_index]) continue;
-        state.unused_row_matches[row_index] = 1;
-        if (state.scroll_row < 0) state.scroll_row = static_cast<int>(row_index);
-        ++state.unused_count;
-    }
+        },
+        [this, is_3d](const std::string& key) {
+            add_log(std::string("[WARN]datatable.cpp: Found undefined ") +
+                    (is_3d ? "3D " : "") + "soundKey:\"" + key + "\"");
+        });
 
     if (state.unused_count == 0) {
         add_log(is_3d
@@ -1502,48 +1602,29 @@ void App::run_unused_sound_file_search(bool is_3d) {
 void App::find_sound_file_for_sound_key(const std::string& sound_key, bool is_3d) {
     if (blank_ascii(sound_key)) return;
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
-    const size_t capacity = IM_ARRAYSIZE(state.query);
-    const size_t copy_size = std::min(capacity - 1, sound_key.size());
-    std::copy_n(sound_key.data(), copy_size, state.query);
-    state.query[copy_size] = '\0';
-    state.exact = true;
+    set_exact_table_find_query(state, sound_key);
     if (is_3d) {
         show_sound_3d_list_window_ = true;
     } else {
         show_sound_list_window_ = true;
     }
-    state.panel_expanded = true;
     run_sound_file_find(is_3d);
 }
 
 void App::step_sound_file_find(bool is_3d, int delta) {
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
-    if (state.matches.empty()) return;
-    if (state.current < 0) {
-        state.current = 0;
-    } else {
-        const int count = static_cast<int>(state.matches.size());
-        state.current = (state.current + delta + count) % count;
-    }
-    state.scroll_row = static_cast<int>(state.matches[static_cast<size_t>(state.current)]);
+    step_table_find(state, delta);
 }
 
 std::string App::sound_file_find_status_text(bool is_3d) const {
     const TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
-    if (state.unused_has_run) {
-        if (state.unused_count == 0) {
-            return tr(is_3d ? "status.unused_sound_3d_files.no_match" : "status.unused_sound_files.no_match");
-        }
-        std::string text = tr(is_3d ? "status.unused_sound_3d_files.match" : "status.unused_sound_files.match");
-        replace_all(text, "{unused}", std::to_string(state.unused_count));
-        replace_all(text, "{total}", std::to_string(state.unused_total));
-        return text;
-    }
-    if (!state.has_run) return {};
-    if (state.matches.empty() || state.current < 0) return tr("status.find.no_match");
-    return format_find_match_status(tr("status.find.match"),
-                                    static_cast<size_t>(state.current) + 1,
-                                    state.matches.size());
+    return table_find_status_text(state,
+                                  tr("status.find.no_match"),
+                                  tr("status.find.match"),
+                                  tr(is_3d ? "status.unused_sound_3d_files.no_match"
+                                           : "status.unused_sound_files.no_match"),
+                                  tr(is_3d ? "status.unused_sound_3d_files.match"
+                                           : "status.unused_sound_files.match"));
 }
 
 void App::render_othertracks_window() {
@@ -1739,62 +1820,21 @@ void App::render_structure_models_window() {
         return;
     }
     ensure_table_cache();
-    const bool stale_find_results = structure_model_find_has_run_ &&
-        structure_model_find_committed_ != structure_model_find_query_;
+    const bool stale_find_results = structure_model_find_.has_run &&
+        structure_model_find_.committed != structure_model_find_.query;
     if (stale_find_results) reset_structure_model_find_results();
 
-    ImGui::BeginGroup();
-    if (render_find_panel_toggle("##structure_model_find_panel_toggle",
-                                 tr("button.find"),
-                                 structure_model_find_panel_expanded_)) {
-        structure_model_find_panel_expanded_ = !structure_model_find_panel_expanded_;
-    }
-    if (structure_model_find_panel_expanded_) {
-        const float indent = ImGui::GetStyle().FramePadding.x;
-        const float right_padding = ImGui::GetStyle().FramePadding.x;
-        ImGui::Spacing();
-        ImGui::Indent(indent);
-        if (ImGui::Button(tr("button.find").c_str())) run_structure_model_find();
-        ImGui::SameLine();
-        const float arrow_button_width = ImGui::GetFrameHeight();
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
-            arrow_button_width * 2.0f - spacing * 2.0f - right_padding);
-        ImGui::SetNextItemWidth(input_width);
-        if (ImGui::InputText("##structure_model_find_text", structure_model_find_query_,
-                             IM_ARRAYSIZE(structure_model_find_query_), ImGuiInputTextFlags_EnterReturnsTrue)) {
-            run_structure_model_find();
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(structure_model_find_matches_.empty());
-        if (ImGui::Button("↑##structure_model_find_prev", ImVec2(arrow_button_width, 0.0f))) {
-            step_structure_model_find(-1);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("↓##structure_model_find_next", ImVec2(arrow_button_width, 0.0f))) {
-            step_structure_model_find(1);
-        }
-        ImGui::EndDisabled();
-        if (ImGui::RadioButton(tr("find.partial_match").c_str(), !structure_model_find_exact_)) {
-            structure_model_find_exact_ = false;
-            if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton(tr("find.exact_match").c_str(), structure_model_find_exact_)) {
-            structure_model_find_exact_ = true;
-            if (structure_model_find_has_run_ || !blank_ascii(structure_model_find_query_)) run_structure_model_find();
-        }
-        if (ImGui::Button(tr("button.find_unused_structure_models").c_str())) {
-            run_unused_structure_model_search();
-        }
-        render_status_line(structure_model_find_status_text());
-        ImGui::Unindent(indent);
-    }
-    ImGui::EndGroup();
-    ImVec2 find_panel_max = ImGui::GetItemRectMax();
-    if (structure_model_find_panel_expanded_) find_panel_max.x += ImGui::GetStyle().FramePadding.x;
-    render_find_panel_border(ImGui::GetItemRectMin(), find_panel_max);
-    ImGui::Spacing();
+    render_table_find_panel(
+        structure_model_find_,
+        "structure_model",
+        tr("button.find"),
+        tr("find.partial_match"),
+        tr("find.exact_match"),
+        tr("button.find_unused_structure_models"),
+        [this]() { run_structure_model_find(); },
+        [this]() { run_unused_structure_model_search(); },
+        [this](int delta) { step_structure_model_find(delta); },
+        [this]() { return structure_model_find_status_text(); });
 
     if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(kStructureModelColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
@@ -1808,7 +1848,7 @@ void App::render_structure_models_window() {
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
         const int row_count = static_cast<int>(table_cache_.structure_model_rows.size());
-        const int scroll_target_row = structure_model_find_scroll_row_;
+        const int scroll_target_row = structure_model_find_.scroll_row;
         clipper.Begin(row_count);
         if (scroll_target_row >= 0 && scroll_target_row < row_count) {
             clipper.IncludeItemByIndex(scroll_target_row);
@@ -1818,11 +1858,11 @@ void App::render_structure_models_window() {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.structure_model_rows[static_cast<size_t>(row_index)];
                 const bool is_find_match =
-                    static_cast<size_t>(row_index) < structure_model_find_row_matches_.size() &&
-                    structure_model_find_row_matches_[static_cast<size_t>(row_index)] != 0;
+                    static_cast<size_t>(row_index) < structure_model_find_.row_matches.size() &&
+                    structure_model_find_.row_matches[static_cast<size_t>(row_index)] != 0;
                 const bool is_unused_model =
-                    static_cast<size_t>(row_index) < structure_model_unused_row_matches_.size() &&
-                    structure_model_unused_row_matches_[static_cast<size_t>(row_index)] != 0;
+                    static_cast<size_t>(row_index) < structure_model_find_.unused_row_matches.size() &&
+                    structure_model_find_.unused_row_matches[static_cast<size_t>(row_index)] != 0;
                 const bool is_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model() &&
                     row.open_path == model_preview_canvas_->model_path();
                 const ImU32 row_text_color = is_preview_model
@@ -1836,7 +1876,7 @@ void App::render_structure_models_window() {
                 }
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.0f);
-                    structure_model_find_scroll_row_ = -1;
+                    structure_model_find_.scroll_row = -1;
                 }
                 ImGui::PushID(row_index);
                 for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
@@ -1889,68 +1929,17 @@ void App::render_sound_file_find_panel(bool is_3d) {
     const bool stale_find_results = state.has_run && state.committed != state.query;
     if (stale_find_results) reset_sound_file_find_results(is_3d);
 
-    ImGui::BeginGroup();
-    if (render_find_panel_toggle(is_3d
-                                     ? "##sound_3d_file_find_panel_toggle"
-                                     : "##sound_file_find_panel_toggle",
-                                 tr("button.find"),
-                                 state.panel_expanded)) {
-        state.panel_expanded = !state.panel_expanded;
-    }
-    if (state.panel_expanded) {
-        const float indent = ImGui::GetStyle().FramePadding.x;
-        const float right_padding = ImGui::GetStyle().FramePadding.x;
-        ImGui::Spacing();
-        ImGui::Indent(indent);
-        if (ImGui::Button(tr("button.find").c_str())) run_sound_file_find(is_3d);
-        ImGui::SameLine();
-        const float arrow_button_width = ImGui::GetFrameHeight();
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
-            arrow_button_width * 2.0f - spacing * 2.0f - right_padding);
-        ImGui::SetNextItemWidth(input_width);
-        if (ImGui::InputText(is_3d ? "##sound_3d_file_find_text" : "##sound_file_find_text",
-                             state.query, IM_ARRAYSIZE(state.query),
-                             ImGuiInputTextFlags_EnterReturnsTrue)) {
-            run_sound_file_find(is_3d);
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(state.matches.empty());
-        if (ImGui::Button(is_3d ? "↑##sound_3d_file_find_prev" : "↑##sound_file_find_prev",
-                          ImVec2(arrow_button_width, 0.0f))) {
-            step_sound_file_find(is_3d, -1);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(is_3d ? "↓##sound_3d_file_find_next" : "↓##sound_file_find_next",
-                          ImVec2(arrow_button_width, 0.0f))) {
-            step_sound_file_find(is_3d, 1);
-        }
-        ImGui::EndDisabled();
-        if (ImGui::RadioButton(is_3d ? (tr("find.partial_match") + "##sound_3d_file_partial").c_str()
-                                      : (tr("find.partial_match") + "##sound_file_partial").c_str(),
-                               !state.exact)) {
-            state.exact = false;
-            if (state.has_run || !blank_ascii(state.query)) run_sound_file_find(is_3d);
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton(is_3d ? (tr("find.exact_match") + "##sound_3d_file_exact").c_str()
-                                      : (tr("find.exact_match") + "##sound_file_exact").c_str(),
-                               state.exact)) {
-            state.exact = true;
-            if (state.has_run || !blank_ascii(state.query)) run_sound_file_find(is_3d);
-        }
-        if (ImGui::Button(tr(is_3d ? "button.find_unused_sound_3d_files"
-                                   : "button.find_unused_sound_files").c_str())) {
-            run_unused_sound_file_search(is_3d);
-        }
-        render_status_line(sound_file_find_status_text(is_3d));
-        ImGui::Unindent(indent);
-    }
-    ImGui::EndGroup();
-    ImVec2 find_panel_max = ImGui::GetItemRectMax();
-    if (state.panel_expanded) find_panel_max.x += ImGui::GetStyle().FramePadding.x;
-    render_find_panel_border(ImGui::GetItemRectMin(), find_panel_max);
-    ImGui::Spacing();
+    render_table_find_panel(
+        state,
+        is_3d ? "sound_3d_file" : "sound_file",
+        tr("button.find"),
+        tr("find.partial_match"),
+        tr("find.exact_match"),
+        tr(is_3d ? "button.find_unused_sound_3d_files" : "button.find_unused_sound_files"),
+        [this, is_3d]() { run_sound_file_find(is_3d); },
+        [this, is_3d]() { run_unused_sound_file_search(is_3d); },
+        [this, is_3d](int delta) { step_sound_file_find(is_3d, delta); },
+        [this, is_3d]() { return sound_file_find_status_text(is_3d); });
 }
 
 void App::render_sound_list_window() {
@@ -2114,6 +2103,22 @@ void App::render_signal_aspects_window() {
         return;
     }
     ensure_table_cache();
+    const bool stale_find_results = signal_aspect_find_.has_run &&
+        signal_aspect_find_.committed != signal_aspect_find_.query;
+    if (stale_find_results) reset_signal_aspect_find_results();
+
+    render_table_find_panel(
+        signal_aspect_find_,
+        "signal_aspect",
+        tr("button.find"),
+        tr("find.partial_match"),
+        tr("find.exact_match"),
+        tr("button.find_unused_signal_aspects"),
+        [this]() { run_signal_aspect_find(); },
+        [this]() { run_unused_signal_aspect_search(); },
+        [this](int delta) { step_signal_aspect_find(delta); },
+        [this]() { return signal_aspect_find_status_text(); });
+
     const int column_count = static_cast<int>(kSignalAspectStructureKeyColumnOffset +
         table_cache_.signal_aspect_structure_key_columns);
     if (ImGui::BeginTable("signal_aspects", column_count,
@@ -2138,11 +2143,32 @@ void App::render_signal_aspects_window() {
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(table_cache_.signal_aspect_rows.size()));
+        const int row_count = static_cast<int>(table_cache_.signal_aspect_rows.size());
+        if (signal_aspect_find_.scroll_row >= row_count) signal_aspect_find_.scroll_row = -1;
+        const int scroll_target_row = signal_aspect_find_.scroll_row;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.signal_aspect_rows[static_cast<size_t>(row_index)];
+                const bool is_find_match =
+                    static_cast<size_t>(row_index) < signal_aspect_find_.row_matches.size() &&
+                    signal_aspect_find_.row_matches[static_cast<size_t>(row_index)] != 0;
+                const bool is_unused =
+                    static_cast<size_t>(row_index) < signal_aspect_find_.unused_row_matches.size() &&
+                    signal_aspect_find_.unused_row_matches[static_cast<size_t>(row_index)] != 0;
                 ImGui::TableNextRow();
+                if (is_unused) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kUnusedStructureModelRowColor);
+                } else if (is_find_match) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.0f);
+                    signal_aspect_find_.scroll_row = -1;
+                }
                 ImGui::PushID(row_index);
                 for (int i = 0; i < column_count; ++i) {
                     ImGui::TableSetColumnIndex(i);
@@ -2244,7 +2270,14 @@ void App::render_signals_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kSignalFilePathColumn) {
+                    if (i == kSignalSignalAspectKeyColumn) {
+                        ImGui::PushID("signal_aspect_key");
+                        if (render_text_cell_with_context(value, tr("menu.find_in_signal_aspects"),
+                                                          !blank_ascii(value))) {
+                            find_signal_aspect_for_signal_aspect_key(value);
+                        }
+                        ImGui::PopID();
+                    } else if (i == kSignalFilePathColumn) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.tooltip_text);
                     } else {

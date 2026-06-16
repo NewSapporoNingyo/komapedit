@@ -2321,6 +2321,16 @@ int main(int, char**) {
 #ifndef NDEBUG
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     std::vector<std::string> args = command_line_args_utf8();
+    HeadlessTableFindOptions table_find = parse_headless_table_find_options(args);
+    if (table_find.requested) {
+        if (!table_find.error.empty()) {
+            std::cerr << table_find.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-table-find [--headless-output FILE]\n";
+            return 1;
+        }
+        return App::run_debug_headless_table_find(table_find.output_path);
+    }
+
     HeadlessScene3DBenchmarkOptions scene3d_bench = parse_headless_scene3d_benchmark_options(args);
     if (scene3d_bench.requested) {
         if (!scene3d_bench.error.empty()) {

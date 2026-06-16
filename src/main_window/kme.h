@@ -750,6 +750,7 @@ public:
     static int run_debug_headless_scene_camera_transfer(const std::string& path, double unit_distance,
                                                         bool has_camera_distance, double camera_distance,
                                                         const std::string& output_path);
+    static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 
 private:
@@ -926,19 +927,8 @@ private:
     ImGuiID dock_right_id_ = 0;
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
-    char structure_model_find_query_[256] = {};
-    std::string structure_model_find_committed_;
-    std::vector<size_t> structure_model_find_matches_;
-    std::vector<unsigned char> structure_model_find_row_matches_;
-    std::vector<unsigned char> structure_model_unused_row_matches_;
-    size_t structure_model_unused_count_ = 0;
-    size_t structure_model_unused_total_ = 0;
-    int structure_model_find_current_ = -1;
-    int structure_model_find_scroll_row_ = -1;
-    bool structure_model_find_has_run_ = false;
-    bool structure_model_find_exact_ = false;
-    bool structure_model_find_panel_expanded_ = true;
-    bool structure_model_unused_has_run_ = false;
+    TableFindState structure_model_find_;
+    TableFindState signal_aspect_find_;
     TableFindState sound_file_find_;
     TableFindState sound_3d_file_find_;
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
@@ -1100,6 +1090,12 @@ private:
     void find_structure_model_for_structure_key(const std::string& structure_key);
     void step_structure_model_find(int delta);
     std::string structure_model_find_status_text() const;
+    void reset_signal_aspect_find_results();
+    void run_signal_aspect_find();
+    void run_unused_signal_aspect_search();
+    void find_signal_aspect_for_signal_aspect_key(const std::string& signal_aspect_key);
+    void step_signal_aspect_find(int delta);
+    std::string signal_aspect_find_status_text() const;
     void reset_sound_file_find_results(bool is_3d);
     void run_sound_file_find(bool is_3d);
     void run_unused_sound_file_search(bool is_3d);

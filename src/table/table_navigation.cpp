@@ -12,6 +12,7 @@
 void App::invalidate_table_cache() {
     table_cache_ = TableUiCache{};
     reset_structure_model_find_results();
+    reset_signal_aspect_find_results();
     reset_sound_file_find_results(false);
     reset_sound_file_find_results(true);
     structure_list_scroll_row_ = -1;

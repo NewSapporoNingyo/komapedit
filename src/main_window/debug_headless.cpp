@@ -28,9 +28,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <initializer_list>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #ifndef NDEBUG
 template <typename T>
@@ -94,6 +96,12 @@ struct HeadlessSceneCameraTransferOptions {
     double unit_distance = 25.0;
     bool has_camera_distance = false;
     double camera_distance = 0.0;
+    std::string error;
+};
+
+struct HeadlessTableFindOptions {
+    bool requested = false;
+    std::string output_path;
     std::string error;
 };
 
@@ -378,6 +386,23 @@ HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(
     return options;
 }
 
+HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args) {
+    HeadlessTableFindOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-table-find") {
+            options.requested = true;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    return options;
+}
+
 std::uint64_t hash_double_bits(double value) {
     if (value == 0.0) value = 0.0;
     std::uint64_t bits = 0;
@@ -489,6 +514,119 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
         *out << "\n";
     }
     return 0;
+}
+
+int App::run_debug_headless_table_find(const std::string& output_path) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-table-find\n";
+    out->flush();
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+
+    int exit_code = 0;
+    try {
+        auto make_row = [](std::initializer_list<std::pair<const char*, const char*>> cells) {
+            TableRow row;
+            for (const auto& cell : cells) row.cells[cell.first] = cell.second;
+            return row;
+        };
+
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.model_.signal_aspects.push_back(make_row({
+            {"signalAspectKey", "aspectA"},
+            {"_structureKeyCount", "1"},
+            {"structureKey1", "structureOnlyKey"},
+        }));
+        app.model_.signal_aspects.push_back(make_row({
+            {"signalAspectKey", "aspectB"},
+            {"_structureKeyCount", "1"},
+            {"structureKey1", "modelB"},
+        }));
+        app.model_.signal_aspects.push_back(make_row({
+            {"signalAspectKey", "unusedAspect"},
+            {"_structureKeyCount", "1"},
+            {"structureKey1", "modelUnused"},
+        }));
+        app.model_.signals.push_back(make_row({
+            {"distance", "100"},
+            {"signalAspectKey", "aspectA"},
+        }));
+        app.model_.signals.push_back(make_row({
+            {"distance", "200"},
+            {"signalAspectKey", "AspectB"},
+        }));
+        app.model_.signals.push_back(make_row({
+            {"distance", "300"},
+            {"signalAspectKey", "structureOnlyKey"},
+        }));
+        app.has_model_ = true;
+
+        auto check = [&](bool condition, const char* label) {
+            *out << label << "=" << (condition ? "PASS" : "FAIL") << "\n";
+            if (!condition) exit_code = 2;
+        };
+
+        app.find_signal_aspect_for_signal_aspect_key("aspectA");
+        check(app.show_signal_aspects_window_, "opens_signal_aspect_window");
+        check(app.signal_aspect_find_.exact, "signal_aspect_context_search_is_exact");
+        check(app.signal_aspect_find_.matches.size() == 1 &&
+              app.signal_aspect_find_.matches[0] == 0 &&
+              app.signal_aspect_find_.scroll_row == 0,
+              "finds_signal_aspect_key_column");
+
+        app.find_signal_aspect_for_signal_aspect_key("ASPECTB");
+        check(app.signal_aspect_find_.matches.size() == 1 &&
+              app.signal_aspect_find_.matches[0] == 1,
+              "finds_signal_aspect_key_case_insensitive");
+
+        app.find_signal_aspect_for_signal_aspect_key("structureOnlyKey");
+        check(app.signal_aspect_find_.matches.empty(),
+              "does_not_match_signal_aspect_structure_key_columns");
+
+        app.run_unused_signal_aspect_search();
+        check(app.signal_aspect_find_.unused_has_run &&
+              app.signal_aspect_find_.unused_total == 3 &&
+              app.signal_aspect_find_.unused_count == 1,
+              "finds_unused_signal_aspects_count");
+        check(app.signal_aspect_find_.unused_row_matches.size() == 3 &&
+              app.signal_aspect_find_.unused_row_matches[0] == 0 &&
+              app.signal_aspect_find_.unused_row_matches[1] == 0 &&
+              app.signal_aspect_find_.unused_row_matches[2] != 0 &&
+              app.signal_aspect_find_.scroll_row == 2,
+              "marks_only_unused_signal_aspect_row");
+    } catch (const std::exception& e) {
+        *out << "exception=\"" << e.what() << "\"\n";
+        exit_code = 3;
+    }
+
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (exit_code == 0) *out << "result=PASS\n";
+    else *out << "result=FAIL code=" << exit_code << "\n";
+    out->flush();
+    return exit_code;
 }
 
 int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
