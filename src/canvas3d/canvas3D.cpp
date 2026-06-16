@@ -47,6 +47,8 @@ constexpr float kSceneBackgroundNearZ = 0.05f;
 constexpr float kSceneBackgroundFarZ = 5000.0f;
 constexpr float kSceneDepthClear = 0.0f;
 constexpr float kMaterialOpaqueAlphaThreshold = 0.98f;
+constexpr float kSceneTrackMarkerWidth = 0.5f;
+constexpr float kSceneTrackMarkerAlpha = 0.8f;
 
 template <typename T>
 void release_com(T*& p) {
@@ -182,14 +184,6 @@ Vec3 cross(Vec3 a, Vec3 b) {
 Vec3 normalize(Vec3 v) {
     float len = std::sqrt(std::max(dot(v, v), 1e-12f));
     return {v.x / len, v.y / len, v.z / len};
-}
-
-Vec3 right_from_theta(double theta) {
-    return {static_cast<float>(std::cos(theta)), 0.0f, static_cast<float>(std::sin(theta))};
-}
-
-Vec3 forward_from_theta(double theta) {
-    return {static_cast<float>(std::sin(theta)), 0.0f, static_cast<float>(-std::cos(theta))};
 }
 
 struct DVec3 {
@@ -2052,6 +2046,27 @@ fail:
                         model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj, rasterizer_state);
     }
 
+    static bool scene_chunk_visible(const SceneChunk& chunk, double visible_min, double visible_max) {
+        return chunk.d_max >= visible_min && chunk.d_min <= visible_max;
+    }
+
+    void draw_scene_track_chunk(SceneTrackChunkGpu& track,
+                                DVec3 render_origin,
+                                const Mat4& view_proj,
+                                std::vector<SceneInstanceData>& track_instance,
+                                std::string& error) {
+        if (!track.vertex_buffer || !track.index_buffer || track.index_count == 0) return;
+
+        track_instance[0] = make_chunk_instance_data(track.origin, render_origin);
+        if (!ensure_instance_buffer(track.instance_buffer, track.instance_capacity, track_instance, error)) {
+            if (!error.empty()) scene_last_error = error;
+            return;
+        }
+        draw_scene_mesh(track.vertex_buffer, track.index_buffer, track.instance_buffer,
+                        track.parts, track.materials, 1, view_proj, track_rasterizer_state);
+        ++scene_stats_value.drawn_track_chunk_count;
+    }
+
     bool ensure_pipeline(std::string& error) {
         if (!device || !context) {
             error = "Direct3D device is not available";
@@ -2251,14 +2266,14 @@ fail:
 
     static void append_track_quad(std::vector<GpuVertex>& vertices,
                                   std::vector<unsigned int>& indices,
-                                  Vec3 a, Vec3 b, Vec3 side, float half_width) {
+                                  Vec3 a, Vec3 b, Vec3 side0, Vec3 side1, float half_width) {
         if (vertices.size() > static_cast<size_t>(std::numeric_limits<unsigned int>::max() - 4)) return;
         Vec3 n = {0.0f, 1.0f, 0.0f};
         unsigned int base = static_cast<unsigned int>(vertices.size());
-        Vec3 a0 = a - side * half_width;
-        Vec3 a1 = a + side * half_width;
-        Vec3 b0 = b - side * half_width;
-        Vec3 b1 = b + side * half_width;
+        Vec3 a0 = a - side0 * half_width;
+        Vec3 a1 = a + side0 * half_width;
+        Vec3 b0 = b - side1 * half_width;
+        Vec3 b1 = b + side1 * half_width;
         vertices.push_back({a0.x, a0.y, a0.z, n.x, n.y, n.z, 0.0f, 0.0f});
         vertices.push_back({a1.x, a1.y, a1.z, n.x, n.y, n.z, 1.0f, 0.0f});
         vertices.push_back({b1.x, b1.y, b1.z, n.x, n.y, n.z, 1.0f, 1.0f});
@@ -2266,29 +2281,41 @@ fail:
         indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
     }
 
+    static Vec3 vec3_from_dvec3(DVec3 v) {
+        return {static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z)};
+    }
+
+    static void track_marker_frame(const Canvas3DTrackPoint& point, Vec3& right, Vec3& up) {
+        DVec3 right_d = right_from_theta_d(point.theta);
+        DVec3 forward_d = forward_from_theta_d(point.theta);
+        DVec3 up_d = cross(right_d, forward_d);
+        apply_track_cant(right_d, up_d, forward_d, point.cant_angle);
+        right = vec3_from_dvec3(normalize(right_d));
+        up = vec3_from_dvec3(normalize(up_d));
+    }
+
     static void append_track_segment(std::vector<GpuVertex>& vertices,
                                      std::vector<unsigned int>& indices,
                                      DVec3 origin,
                                      const Canvas3DTrackPoint& p0,
                                      const Canvas3DTrackPoint& p1) {
-        constexpr float rail_gauge_half = 0.5335f;
-        constexpr float rail_half_width = 0.035f;
-        constexpr float rail_lift = 0.035f;
-        Vec3 right0 = right_from_theta(p0.theta);
-        Vec3 right1 = right_from_theta(p1.theta);
+        constexpr float marker_lift = 0.035f;
+        constexpr float marker_half_width = kSceneTrackMarkerWidth * 0.5f;
+        Vec3 right0;
+        Vec3 right1;
+        Vec3 up0;
+        Vec3 up1;
+        track_marker_frame(p0, right0, up0);
+        track_marker_frame(p1, right1, up1);
         Vec3 center0{static_cast<float>(p0.x - origin.x),
-                     static_cast<float>(p0.y - origin.y + rail_lift),
+                     static_cast<float>(p0.y - origin.y),
                      static_cast<float>(p0.z - origin.z)};
         Vec3 center1{static_cast<float>(p1.x - origin.x),
-                     static_cast<float>(p1.y - origin.y + rail_lift),
+                     static_cast<float>(p1.y - origin.y),
                      static_cast<float>(p1.z - origin.z)};
-        for (float rail_offset : {-rail_gauge_half, rail_gauge_half}) {
-            Vec3 a = center0 + right0 * rail_offset;
-            Vec3 b = center1 + right1 * rail_offset;
-            Vec3 segment = b - a;
-            Vec3 side = normalize(cross({0.0f, 1.0f, 0.0f}, segment));
-            append_track_quad(vertices, indices, a, b, side, rail_half_width);
-        }
+        center0 = center0 + up0 * marker_lift;
+        center1 = center1 + up1 * marker_lift;
+        append_track_quad(vertices, indices, center0, center1, right0, right1, marker_half_width);
     }
 
     bool upload_track_chunk(SceneTrackChunkGpu& chunk,
@@ -2349,7 +2376,7 @@ fail:
                 material.diffuse[0] = clamp_color_component(track.color.x);
                 material.diffuse[1] = clamp_color_component(track.color.y);
                 material.diffuse[2] = clamp_color_component(track.color.z);
-                material.diffuse[3] = 1.0f;
+                material.diffuse[3] = kSceneTrackMarkerAlpha;
                 gpu_chunk.materials.push_back(material);
 
                 for (size_t i = 1; i < track.points.size(); ++i) {
@@ -2833,22 +2860,7 @@ fail:
         std::vector<SceneInstanceData> track_instance(1);
         for (size_t i = 0; i < scene_chunks.size(); ++i) {
             const SceneChunk& chunk = scene_chunks[i];
-            if (chunk.d_max < visible_min || chunk.d_min > visible_max) continue;
-            if (i < scene_track_chunks.size()) {
-                SceneTrackChunkGpu& track = scene_track_chunks[i];
-                if (track.vertex_buffer && track.index_buffer && track.index_count > 0) {
-                    track_instance[0] = make_chunk_instance_data(track.origin, render_origin);
-                    if (!ensure_instance_buffer(track.instance_buffer, track.instance_capacity, track_instance, error)) {
-                        if (!error.empty()) scene_last_error = error;
-                        continue;
-                    }
-                    context->RSSetState(track_rasterizer_state);
-                    draw_scene_mesh(track.vertex_buffer, track.index_buffer, track.instance_buffer,
-                                    track.parts, track.materials, 1, view_proj, track_rasterizer_state);
-                    context->RSSetState(rasterizer_state);
-                    ++scene_stats_value.drawn_track_chunk_count;
-                }
-            }
+            if (!scene_chunk_visible(chunk, visible_min, visible_max)) continue;
             for (const SceneInstance& instance : chunk.instances) {
                 if (instance.distance < visible_min || instance.distance > visible_max) continue;
                 visible_instances[instance.model_path].push_back(make_instance_data_relative(instance.world, render_origin));
@@ -2863,6 +2875,10 @@ fail:
             if (model_it->second.state == SceneModelGpu::State::Ready) {
                 scene_stats_value.drawn_instance_count += kv.second.size();
             }
+        }
+        for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
+            if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
+            draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj, track_instance, error);
         }
 
         ID3D11ShaderResourceView* null_srv = nullptr;
