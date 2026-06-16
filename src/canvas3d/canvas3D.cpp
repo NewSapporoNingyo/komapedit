@@ -52,6 +52,7 @@ constexpr float kSceneTrackMarkerWidth = 0.5f;
 constexpr float kSceneTrackMarkerAlpha = 0.8f;
 constexpr float kSceneSelectionMinScreenRadius = 6.0f;
 constexpr float kSceneSelectionHitPadding = 4.0f;
+constexpr float kSceneHighlightOutlineWidthPx = 5.0f;
 
 template <typename T>
 void release_com(T*& p) {
@@ -469,6 +470,11 @@ struct SceneViewConstants {
     float use_texture[4];
 };
 
+struct SceneOutlineConstants {
+    float texel_radius[4];
+    float color[4];
+};
+
 struct SceneInstanceData {
     float world0[4];
     float world1[4];
@@ -559,6 +565,8 @@ struct ScenePickCandidate {
     int object_index = -1;
     std::string model_path;
     SceneInstanceData instance_data = {};
+    ImVec2 screen_min = ImVec2(0.0f, 0.0f);
+    ImVec2 screen_max = ImVec2(0.0f, 0.0f);
     double depth = std::numeric_limits<double>::max();
 };
 
@@ -929,6 +937,66 @@ float4 ps_main(VSOutput input) : SV_TARGET
     if (useTexture.y > 0.5)
         color.a = 1.0;
     return color;
+}
+)";
+
+const char* kSceneHighlightOutlineShaderSource = R"(
+cbuffer SceneOutlineConstants : register(b0)
+{
+    float4 texelRadius;
+    float4 outlineColor;
+};
+
+Texture2D highlightMask : register(t0);
+SamplerState maskSampler : register(s0);
+
+struct VSOutput
+{
+    float4 position : SV_POSITION;
+};
+
+VSOutput vs_main(uint vertexId : SV_VertexID)
+{
+    float2 positions[3] = {
+        float2(-1.0, -1.0),
+        float2(-1.0,  3.0),
+        float2( 3.0, -1.0)
+    };
+
+    VSOutput output;
+    output.position = float4(positions[vertexId], 0.0, 1.0);
+    return output;
+}
+
+float mask_at(float2 uv)
+{
+    return highlightMask.SampleLevel(maskSampler, uv, 0).a;
+}
+
+float4 ps_main(VSOutput input) : SV_TARGET
+{
+    float2 uv = input.position.xy * texelRadius.xy;
+    const float threshold = 0.1;
+    const int sampleRadius = 3;
+    bool centerInside = mask_at(uv) > threshold;
+    bool border = false;
+
+    [unroll]
+    for (int y = -sampleRadius; y <= sampleRadius; ++y) {
+        [unroll]
+        for (int x = -sampleRadius; x <= sampleRadius; ++x) {
+            float2 offsetPixels = float2((float)x, (float)y);
+            if (dot(offsetPixels, offsetPixels) > texelRadius.z * texelRadius.z) continue;
+
+            bool sampleInside = mask_at(uv + offsetPixels * texelRadius.xy) > threshold;
+            if (sampleInside != centerInside) {
+                border = true;
+            }
+        }
+    }
+
+    clip(border ? 1.0 : -1.0);
+    return outlineColor;
 }
 )";
 
@@ -1336,8 +1404,11 @@ struct Canvas3D::Impl {
         release_com(depth_read_state);
         release_com(alpha_mask_rasterizer_state);
         release_com(track_rasterizer_state);
-        release_com(scene_highlight_rasterizer_state);
         release_com(rasterizer_state);
+        release_com(scene_outline_sampler_state);
+        release_com(scene_outline_constant_buffer);
+        release_com(scene_outline_pixel_shader);
+        release_com(scene_outline_vertex_shader);
         release_com(input_layout);
         release_com(vertex_shader);
         release_com(pixel_shader);
@@ -1987,6 +2058,88 @@ fail:
         }
     }
 
+    bool ensure_scene_outline_pipeline(std::string& error) {
+        if (scene_outline_vertex_shader && scene_outline_pixel_shader &&
+            scene_outline_constant_buffer && scene_outline_sampler_state) {
+            return true;
+        }
+
+        ID3DBlob* vs_blob = nullptr;
+        ID3DBlob* ps_blob = nullptr;
+        ID3DBlob* errors = nullptr;
+        HRESULT hr = D3DCompile(kSceneHighlightOutlineShaderSource, std::strlen(kSceneHighlightOutlineShaderSource),
+                                nullptr, nullptr, nullptr, "vs_main", "vs_4_0",
+                                D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) :
+                hresult_text("D3DCompile(scene outline vertex shader)", hr);
+            release_com(errors);
+            return false;
+        }
+        release_com(errors);
+
+        hr = D3DCompile(kSceneHighlightOutlineShaderSource, std::strlen(kSceneHighlightOutlineShaderSource),
+                        nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
+                        D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) :
+                hresult_text("D3DCompile(scene outline pixel shader)", hr);
+            release_com(errors);
+            release_com(vs_blob);
+            return false;
+        }
+        release_com(errors);
+
+        hr = device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr,
+                                        &scene_outline_vertex_shader);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateVertexShader(scene outline)", hr);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            return false;
+        }
+        hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr,
+                                       &scene_outline_pixel_shader);
+        release_com(vs_blob);
+        release_com(ps_blob);
+        if (FAILED(hr)) {
+            error = hresult_text("CreatePixelShader(scene outline)", hr);
+            release_com(scene_outline_vertex_shader);
+            return false;
+        }
+
+        D3D11_BUFFER_DESC cb_desc = {};
+        cb_desc.ByteWidth = sizeof(SceneOutlineConstants);
+        cb_desc.Usage = D3D11_USAGE_DEFAULT;
+        cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        hr = device->CreateBuffer(&cb_desc, nullptr, &scene_outline_constant_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene outline constants)", hr);
+            release_com(scene_outline_pixel_shader);
+            release_com(scene_outline_vertex_shader);
+            return false;
+        }
+
+        D3D11_SAMPLER_DESC sampler_desc = {};
+        sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+        sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sampler_desc.MinLOD = 0.0f;
+        sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
+        hr = device->CreateSamplerState(&sampler_desc, &scene_outline_sampler_state);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateSamplerState(scene outline)", hr);
+            release_com(scene_outline_constant_buffer);
+            release_com(scene_outline_pixel_shader);
+            release_com(scene_outline_vertex_shader);
+            return false;
+        }
+
+        return true;
+    }
+
     bool ensure_scene_pipeline(std::string& error) {
         if (!device || !context) {
             error = "Direct3D device is not available";
@@ -1994,12 +2147,16 @@ fail:
         }
         if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
             scene_depth_state && scene_depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
-            track_rasterizer_state && sampler_state && blend_state) return true;
+            track_rasterizer_state && sampler_state && blend_state &&
+            scene_outline_vertex_shader && scene_outline_pixel_shader &&
+            scene_outline_constant_buffer && scene_outline_sampler_state) return true;
 
         if (!ensure_pipeline(error)) return false;
         if (!ensure_scene_depth_states(error)) return false;
         if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
-            track_rasterizer_state && sampler_state && blend_state) return true;
+            track_rasterizer_state && sampler_state && blend_state) {
+            return ensure_scene_outline_pipeline(error);
+        }
 
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
@@ -2064,7 +2221,7 @@ fail:
             error = hresult_text("CreateBuffer(scene constants)", hr);
             return false;
         }
-        return true;
+        return ensure_scene_outline_pipeline(error);
     }
 
     bool ensure_scene_depth_states(std::string& error) {
@@ -2166,7 +2323,8 @@ fail:
                          const std::vector<GpuMaterial>& mesh_materials,
                          UINT instance_count,
                          const Mat4& view_proj,
-                         ID3D11RasterizerState* base_rasterizer) {
+                         ID3D11RasterizerState* base_rasterizer,
+                         bool mask_pass = false) {
         if (!vb || !ib || !instance_buffer || instance_count == 0) return;
 
         UINT strides[2] = {sizeof(GpuVertex), sizeof(SceneInstanceData)};
@@ -2189,14 +2347,16 @@ fail:
             const bool alpha_masked = scene_material_uses_alpha_mask(material);
             const bool translucent = scene_material_is_translucent(material);
             context->RSSetState(alpha_masked && alpha_mask_rasterizer_state ? alpha_mask_rasterizer_state : base_rasterizer);
-            context->OMSetDepthStencilState(translucent && scene_depth_read_state ? scene_depth_read_state : scene_depth_state, 0);
-            context->OMSetBlendState(translucent ? blend_state : nullptr, blend_factor, 0xffffffff);
+            context->OMSetDepthStencilState(
+                (mask_pass || translucent) && scene_depth_read_state ? scene_depth_read_state : scene_depth_state, 0);
+            context->OMSetBlendState(mask_pass ? nullptr : (translucent ? blend_state : nullptr),
+                                     blend_factor, 0xffffffff);
 
             SceneViewConstants constants = {};
             constants.view_proj = view_proj;
-            constants.material_color[0] = material ? material->diffuse[0] : 1.0f;
-            constants.material_color[1] = material ? material->diffuse[1] : 1.0f;
-            constants.material_color[2] = material ? material->diffuse[2] : 1.0f;
+            constants.material_color[0] = mask_pass ? 1.0f : (material ? material->diffuse[0] : 1.0f);
+            constants.material_color[1] = mask_pass ? 1.0f : (material ? material->diffuse[1] : 1.0f);
+            constants.material_color[2] = mask_pass ? 1.0f : (material ? material->diffuse[2] : 1.0f);
             constants.material_color[3] = material ? material->diffuse[3] : 1.0f;
             constants.use_texture[0] = material && material->has_texture ? 1.0f : 0.0f;
             constants.use_texture[1] = translucent ? 0.0f : 1.0f;
@@ -2212,50 +2372,6 @@ fail:
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
     }
 
-    void draw_scene_mesh_highlight(ID3D11Buffer* vb, ID3D11Buffer* ib, ID3D11Buffer* instance_buffer,
-                                   const std::vector<MeshPart>& mesh_parts,
-                                   UINT instance_count,
-                                   const Mat4& view_proj) {
-        if (!vb || !ib || !instance_buffer || instance_count == 0 || !scene_highlight_rasterizer_state) return;
-
-        UINT strides[2] = {sizeof(GpuVertex), sizeof(SceneInstanceData)};
-        UINT offsets[2] = {0, 0};
-        ID3D11Buffer* buffers[2] = {vb, instance_buffer};
-        context->IASetInputLayout(scene_input_layout);
-        context->IASetVertexBuffers(0, 2, buffers, strides, offsets);
-        context->IASetIndexBuffer(ib, DXGI_FORMAT_R32_UINT, 0);
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context->VSSetShader(scene_vertex_shader, nullptr, 0);
-        context->PSSetShader(scene_pixel_shader, nullptr, 0);
-        context->VSSetConstantBuffers(0, 1, &scene_constant_buffer);
-        context->PSSetConstantBuffers(0, 1, &scene_constant_buffer);
-        context->PSSetSamplers(0, 1, &sampler_state);
-        context->RSSetState(scene_highlight_rasterizer_state);
-        context->OMSetDepthStencilState(scene_depth_read_state ? scene_depth_read_state : scene_depth_state, 0);
-        const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-        context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
-
-        SceneViewConstants constants = {};
-        constants.view_proj = view_proj;
-        constants.material_color[0] = 0.62f;
-        constants.material_color[1] = 1.0f;
-        constants.material_color[2] = 0.72f;
-        constants.material_color[3] = 0.92f;
-        constants.use_texture[0] = 0.0f;
-        constants.use_texture[1] = 0.0f;
-        context->UpdateSubresource(scene_constant_buffer, 0, nullptr, &constants, 0, 0);
-        ID3D11ShaderResourceView* null_srv = nullptr;
-        context->PSSetShaderResources(0, 1, &null_srv);
-
-        for (const MeshPart& part : mesh_parts) {
-            context->DrawIndexedInstanced(part.index_count, instance_count, part.start_index, 0, 0);
-        }
-
-        context->RSSetState(rasterizer_state);
-        context->OMSetDepthStencilState(scene_depth_state, 0);
-        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
-    }
-
     void draw_scene_model(SceneModelGpu& model, const std::vector<SceneInstanceData>& instances, const Mat4& view_proj) {
         if (model.state != SceneModelGpu::State::Ready || instances.empty()) return;
         std::string error;
@@ -2267,16 +2383,102 @@ fail:
                         model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj, rasterizer_state);
     }
 
-    void draw_scene_model_highlight(SceneModelGpu& model, const SceneInstanceData& instance, const Mat4& view_proj) {
-        if (model.state != SceneModelGpu::State::Ready) return;
-        const std::vector<SceneInstanceData> instances{instance};
+    void composite_scene_highlight_outline(int width, int height, ImVec2 screen_min, ImVec2 screen_max) {
+        if (!render_rtv || !scene_highlight_mask_srv ||
+            !scene_outline_vertex_shader || !scene_outline_pixel_shader ||
+            !scene_outline_constant_buffer || !scene_outline_sampler_state ||
+            width <= 0 || height <= 0) {
+            return;
+        }
+
+        const float left = std::floor(std::clamp(screen_min.x, 0.0f, static_cast<float>(width)));
+        const float top = std::floor(std::clamp(screen_min.y, 0.0f, static_cast<float>(height)));
+        const float right = std::ceil(std::clamp(screen_max.x, 0.0f, static_cast<float>(width)));
+        const float bottom = std::ceil(std::clamp(screen_max.y, 0.0f, static_cast<float>(height)));
+        if (right <= left || bottom <= top) return;
+
+        SceneOutlineConstants constants = {};
+        constants.texel_radius[0] = 1.0f / static_cast<float>(width);
+        constants.texel_radius[1] = 1.0f / static_cast<float>(height);
+        constants.texel_radius[2] = kSceneHighlightOutlineWidthPx * 0.5f;
+        constants.texel_radius[3] = 0.0f;
+        constants.color[0] = 0.62f;
+        constants.color[1] = 1.0f;
+        constants.color[2] = 0.72f;
+        constants.color[3] = 0.92f;
+        context->UpdateSubresource(scene_outline_constant_buffer, 0, nullptr, &constants, 0, 0);
+
+        D3D11_VIEWPORT outline_viewport = {};
+        outline_viewport.TopLeftX = left;
+        outline_viewport.TopLeftY = top;
+        outline_viewport.Width = right - left;
+        outline_viewport.Height = bottom - top;
+        outline_viewport.MinDepth = 0.0f;
+        outline_viewport.MaxDepth = 1.0f;
+        context->RSSetViewports(1, &outline_viewport);
+
+        ID3D11RenderTargetView* target = render_rtv;
+        context->OMSetRenderTargets(1, &target, nullptr);
+        context->IASetInputLayout(nullptr);
+        ID3D11Buffer* null_buffer = nullptr;
+        UINT zero = 0;
+        context->IASetVertexBuffers(0, 1, &null_buffer, &zero, &zero);
+        context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context->VSSetShader(scene_outline_vertex_shader, nullptr, 0);
+        context->PSSetShader(scene_outline_pixel_shader, nullptr, 0);
+        context->PSSetConstantBuffers(0, 1, &scene_outline_constant_buffer);
+        context->PSSetShaderResources(0, 1, &scene_highlight_mask_srv);
+        context->PSSetSamplers(0, 1, &scene_outline_sampler_state);
+        context->RSSetState(track_rasterizer_state ? track_rasterizer_state : rasterizer_state);
+        context->OMSetDepthStencilState(nullptr, 0);
+        const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
+        context->Draw(3, 0);
+
+        ID3D11ShaderResourceView* null_srv = nullptr;
+        context->PSSetShaderResources(0, 1, &null_srv);
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
+        context->OMSetDepthStencilState(scene_depth_state, 0);
+        context->RSSetState(rasterizer_state);
+
+        D3D11_VIEWPORT full_viewport = {};
+        full_viewport.Width = static_cast<float>(width);
+        full_viewport.Height = static_cast<float>(height);
+        full_viewport.MinDepth = 0.0f;
+        full_viewport.MaxDepth = 1.0f;
+        context->RSSetViewports(1, &full_viewport);
+    }
+
+    void draw_scene_model_highlight_outline(SceneModelGpu& model,
+                                            const SceneInstanceData& instance,
+                                            const Mat4& view_proj,
+                                            int width,
+                                            int height,
+                                            ImVec2 screen_min,
+                                            ImVec2 screen_max) {
+        if (model.state != SceneModelGpu::State::Ready || !render_rtv || !depth_dsv) return;
         std::string error;
+        if (!ensure_scene_highlight_mask_target(width, height, error)) {
+            if (!error.empty()) scene_last_error = error;
+            return;
+        }
+
+        const std::vector<SceneInstanceData> instances{instance};
         if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, instances, error)) {
             scene_last_error = error;
             return;
         }
-        draw_scene_mesh_highlight(model.vertex_buffer, model.index_buffer, model.instance_buffer,
-                                  model.parts, 1, view_proj);
+
+        ID3D11ShaderResourceView* null_srv = nullptr;
+        context->PSSetShaderResources(0, 1, &null_srv);
+        ID3D11RenderTargetView* mask_target = scene_highlight_mask_rtv;
+        context->OMSetRenderTargets(1, &mask_target, depth_dsv);
+        const float clear_mask[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context->ClearRenderTargetView(scene_highlight_mask_rtv, clear_mask);
+        draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
+                        model.parts, model.materials, 1, view_proj, rasterizer_state, true);
+        composite_scene_highlight_outline(width, height, screen_min, screen_max);
     }
 
 
@@ -2357,6 +2559,11 @@ fail:
         best.object_index = instance.object_index;
         best.model_path = instance.model_path;
         best.instance_data = make_instance_data_relative(instance.world, render_origin);
+        const float outline_padding = kSceneHighlightOutlineWidthPx + 2.0f;
+        best.screen_min = ImVec2(std::max(0.0f, screen_center.x - screen_radius - outline_padding),
+                                 std::max(0.0f, screen_center.y - screen_radius - outline_padding));
+        best.screen_max = ImVec2(std::min(static_cast<float>(width), screen_center.x + screen_radius + outline_padding),
+                                 std::min(static_cast<float>(height), screen_center.y + screen_radius + outline_padding));
         best.depth = depth;
     }
 
@@ -2367,8 +2574,7 @@ fail:
         }
         if (vertex_shader && pixel_shader && input_layout && constant_buffer && depth_state &&
             depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
-            track_rasterizer_state && scene_highlight_rasterizer_state &&
-            sampler_state && blend_state) return true;
+            track_rasterizer_state && sampler_state && blend_state) return true;
 
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
@@ -2470,16 +2676,6 @@ fail:
             error = hresult_text("CreateRasterizerState(track)", hr);
             return false;
         }
-        D3D11_RASTERIZER_DESC highlight_rs_desc = rs_desc;
-        highlight_rs_desc.FillMode = D3D11_FILL_WIREFRAME;
-        highlight_rs_desc.CullMode = D3D11_CULL_NONE;
-        highlight_rs_desc.DepthBias = 16;
-        hr = device->CreateRasterizerState(&highlight_rs_desc, &scene_highlight_rasterizer_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateRasterizerState(scene highlight)", hr);
-            return false;
-        }
-
         D3D11_SAMPLER_DESC sampler_desc = {};
         sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
@@ -2758,6 +2954,48 @@ fail:
         if (FAILED(hr)) {
             error = hresult_text("CreateDepthStencilView", hr);
             release_render_target();
+            return false;
+        }
+        return true;
+    }
+
+    bool ensure_scene_highlight_mask_target(int width, int height, std::string& error) {
+        if (!device || width <= 0 || height <= 0) return false;
+        if (scene_highlight_mask_texture && scene_highlight_mask_rtv && scene_highlight_mask_srv &&
+            render_width == width && render_height == height) {
+            return true;
+        }
+
+        release_com(scene_highlight_mask_srv);
+        release_com(scene_highlight_mask_rtv);
+        release_com(scene_highlight_mask_texture);
+
+        D3D11_TEXTURE2D_DESC tex_desc = {};
+        tex_desc.Width = static_cast<UINT>(width);
+        tex_desc.Height = static_cast<UINT>(height);
+        tex_desc.MipLevels = 1;
+        tex_desc.ArraySize = 1;
+        tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        tex_desc.SampleDesc.Count = 1;
+        tex_desc.Usage = D3D11_USAGE_DEFAULT;
+        tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        HRESULT hr = device->CreateTexture2D(&tex_desc, nullptr, &scene_highlight_mask_texture);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateTexture2D(scene highlight mask)", hr);
+            release_com(scene_highlight_mask_texture);
+            return false;
+        }
+        hr = device->CreateRenderTargetView(scene_highlight_mask_texture, nullptr, &scene_highlight_mask_rtv);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateRenderTargetView(scene highlight mask)", hr);
+            release_com(scene_highlight_mask_texture);
+            return false;
+        }
+        hr = device->CreateShaderResourceView(scene_highlight_mask_texture, nullptr, &scene_highlight_mask_srv);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateShaderResourceView(scene highlight mask)", hr);
+            release_com(scene_highlight_mask_rtv);
+            release_com(scene_highlight_mask_texture);
             return false;
         }
         return true;
@@ -3196,15 +3434,22 @@ fail:
             scene_hovered_object_index = pick_candidate.object_index;
             scene_highlight_model_path = pick_candidate.model_path;
             scene_highlight_instance = pick_candidate.instance_data;
+            scene_highlight_screen_min = pick_candidate.screen_min;
+            scene_highlight_screen_max = pick_candidate.screen_max;
             scene_has_highlight = true;
-            auto model_it = scene_models.find(scene_highlight_model_path);
-            if (model_it != scene_models.end()) {
-                draw_scene_model_highlight(model_it->second, scene_highlight_instance, view_proj);
-            }
         }
         for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
             if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj, track_instance, error);
+        }
+        if (scene_has_highlight) {
+            auto model_it = scene_models.find(scene_highlight_model_path);
+            if (model_it != scene_models.end()) {
+                draw_scene_model_highlight_outline(model_it->second, scene_highlight_instance,
+                                                   view_proj, width, height,
+                                                   scene_highlight_screen_min,
+                                                   scene_highlight_screen_max);
+            }
         }
 
         ID3D11ShaderResourceView* null_srv = nullptr;
@@ -3468,6 +3713,9 @@ fail:
     }
 
     void release_render_target() {
+        release_com(scene_highlight_mask_srv);
+        release_com(scene_highlight_mask_rtv);
+        release_com(scene_highlight_mask_texture);
         release_com(render_srv);
         release_com(render_rtv);
         release_com(render_texture);
@@ -3484,6 +3732,9 @@ fail:
     ID3D11ShaderResourceView* render_srv = nullptr;
     ID3D11Texture2D* depth_texture = nullptr;
     ID3D11DepthStencilView* depth_dsv = nullptr;
+    ID3D11Texture2D* scene_highlight_mask_texture = nullptr;
+    ID3D11RenderTargetView* scene_highlight_mask_rtv = nullptr;
+    ID3D11ShaderResourceView* scene_highlight_mask_srv = nullptr;
     ID3D11VertexShader* vertex_shader = nullptr;
     ID3D11PixelShader* pixel_shader = nullptr;
     ID3D11InputLayout* input_layout = nullptr;
@@ -3492,7 +3743,11 @@ fail:
     ID3D11PixelShader* scene_pixel_shader = nullptr;
     ID3D11InputLayout* scene_input_layout = nullptr;
     ID3D11Buffer* scene_constant_buffer = nullptr;
+    ID3D11VertexShader* scene_outline_vertex_shader = nullptr;
+    ID3D11PixelShader* scene_outline_pixel_shader = nullptr;
+    ID3D11Buffer* scene_outline_constant_buffer = nullptr;
     ID3D11SamplerState* sampler_state = nullptr;
+    ID3D11SamplerState* scene_outline_sampler_state = nullptr;
     ID3D11DepthStencilState* depth_state = nullptr;
     ID3D11DepthStencilState* depth_read_state = nullptr;
     ID3D11DepthStencilState* scene_depth_state = nullptr;
@@ -3500,7 +3755,6 @@ fail:
     ID3D11RasterizerState* rasterizer_state = nullptr;
     ID3D11RasterizerState* alpha_mask_rasterizer_state = nullptr;
     ID3D11RasterizerState* track_rasterizer_state = nullptr;
-    ID3D11RasterizerState* scene_highlight_rasterizer_state = nullptr;
     ID3D11BlendState* blend_state = nullptr;
     ID3D11Buffer* vertex_buffer = nullptr;
     ID3D11Buffer* index_buffer = nullptr;
@@ -3544,6 +3798,8 @@ fail:
     bool scene_has_highlight = false;
     std::string scene_highlight_model_path;
     SceneInstanceData scene_highlight_instance = {};
+    ImVec2 scene_highlight_screen_min = ImVec2(0.0f, 0.0f);
+    ImVec2 scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
     double scene_chunk_m = 100.0;
     double scene_window_back_m = 100.0;
     double scene_window_forward_m = 1200.0;
