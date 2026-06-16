@@ -2077,13 +2077,33 @@ void App::render_scene_preview_window() {
         ImGui::BeginDisabled(!scene_preview_started_);
         if (ImGui::Button(tr("button.close").c_str())) stop_scene_preview();
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(tr("frame.mode").c_str());
+        ImGui::SameLine();
+        Canvas3DSceneInteractionMode scene_mode = scene_preview_canvas_
+            ? scene_preview_canvas_->scene_interaction_mode()
+            : Canvas3DSceneInteractionMode::Move;
+        if (ImGui::RadioButton((tr("mode.pan") + "##scene_preview_move").c_str(),
+                               scene_mode == Canvas3DSceneInteractionMode::Move)) {
+            scene_mode = Canvas3DSceneInteractionMode::Move;
+            if (scene_preview_canvas_) scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton((tr("mode.select") + "##scene_preview_select").c_str(),
+                               scene_mode == Canvas3DSceneInteractionMode::Select)) {
+            scene_mode = Canvas3DSceneInteractionMode::Select;
+            if (scene_preview_canvas_) scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
+        }
         ImGui::PopStyleVar();
         if (scene_preview_started_ && scene_preview_dirty_ && has_model_ && !load_state_.running) {
             rebuild_scene_preview();
         }
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        scene_preview_canvas_->render_scene_preview(avail);
+        Canvas3DSceneUiText scene_ui_text;
+        scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect");
+        scene_preview_canvas_->render_scene_preview(avail, scene_ui_text);
     }
     focus_scene_preview_next_ = false;
     ImGui::End();

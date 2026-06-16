@@ -8,6 +8,7 @@
 
 #include "imgui.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,10 +37,35 @@ struct Canvas3DTrackVisibility {
     bool visible = true;
 };
 
+enum class Canvas3DSceneInteractionMode {
+    Move,
+    Select,
+};
+
+enum class Canvas3DSceneObjectKind {
+    Generic,
+    Signal,
+};
+
+struct Canvas3DSceneModelOption {
+    int structure_key_index = 0;
+    std::string structure_key;
+    std::string model_path;
+};
+
+struct Canvas3DSceneObject {
+    Canvas3DSceneObjectKind kind = Canvas3DSceneObjectKind::Generic;
+    size_t source_row = 0;
+    std::string label;
+    std::vector<Canvas3DSceneModelOption> model_options;
+    size_t selected_model_option = 0;
+};
+
 struct Canvas3DModelInstance {
     std::string model_path;
     std::string track_key;
     double distance = 0.0;
+    int object_index = -1;
     bool follow_track = false;
     double x = 0.0;
     double y = 0.0;
@@ -89,6 +115,7 @@ struct Canvas3DCameraStart {
 
 struct Canvas3DScene {
     std::vector<Canvas3DTrackPath> tracks;
+    std::vector<Canvas3DSceneObject> objects;
     std::vector<Canvas3DModelInstance> instances;
     std::vector<Canvas3DRepeaterSegment> repeaters;
     std::vector<Canvas3DBackgroundChange> backgrounds;
@@ -138,6 +165,10 @@ struct Canvas3DSceneBuildResult {
     std::vector<std::string> log_messages;
 };
 
+struct Canvas3DSceneUiText {
+    std::string switch_signal_aspect = "Switch Signal Aspect";
+};
+
 Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options);
 std::vector<Canvas3DTrackVisibility> build_canvas3d_scene_track_visibility(
     const MapModel& model,
@@ -165,10 +196,12 @@ public:
     bool has_scene() const;
     bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error);
     void set_scene_window(double back_m, double forward_m);
+    void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
+    Canvas3DSceneInteractionMode scene_interaction_mode() const;
     Canvas3DSceneStats scene_stats() const;
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
-    void render_scene_preview(ImVec2 size);
+    void render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{});
 
 private:
     struct Impl;
