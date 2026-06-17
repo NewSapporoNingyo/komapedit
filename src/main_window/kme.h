@@ -794,6 +794,7 @@ private:
         bool preserve_settings = false;
         bool record_history = false;
         bool preserve_scene_preview_models = false;
+        bool preserve_scene_preview_camera = false;
         std::optional<BackgroundHistory> background_to_restore;
         void* handle = nullptr;
         MapModel model;
@@ -1000,6 +1001,7 @@ private:
     bool scene_preview_started_ = false;
     bool scene_preview_dirty_ = true;
     bool scene_preview_preserve_models_on_rebuild_ = false;
+    bool scene_preview_preserve_camera_on_rebuild_ = false;
 
     TextureImage bg_image_;
     bool bg_show_ = true;
@@ -1030,7 +1032,8 @@ private:
     void poll_loader();
     void begin_load(std::string path, bool preserve_settings, bool record_history = false,
                     std::optional<BackgroundHistory> background_to_restore = std::nullopt,
-                    bool preserve_scene_preview_models = false);
+                    bool preserve_scene_preview_models = false,
+                    bool preserve_scene_preview_camera = false);
     void apply_load_result(LoadResult result);
     void regenerate_geometry();
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step);
@@ -1073,7 +1076,7 @@ private:
     void reload_model_preview();
     void start_scene_preview();
     void stop_scene_preview();
-    void rebuild_scene_preview(bool preserve_loaded_models = false);
+    void rebuild_scene_preview(bool preserve_loaded_models = false, bool preserve_camera = false);
     void reload_scene_preview_models();
     void sync_scene_preview_track_visibility();
     void reload_current_map_and_model_preview();

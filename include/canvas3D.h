@@ -192,7 +192,9 @@ public:
     ImVec4 background_color() const;
 
     void render(ImVec2 size);
-    bool load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models = false);
+    bool load_scene(Canvas3DScene scene, std::string& error,
+                    bool preserve_loaded_models = false,
+                    bool preserve_camera = false);
     void clear_scene();
     bool has_scene() const;
     bool reload_scene_models(std::string& error);

@@ -528,6 +528,14 @@ struct SceneModelGpu {
     std::string error;
 };
 
+struct SceneCameraState {
+    bool valid = false;
+    DVec3 pos;
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    double distance = 0.0;
+};
+
 struct SceneTrackChunkGpu {
     double d_min = 0.0;
     double d_max = 0.0;
@@ -1550,10 +1558,19 @@ struct Canvas3D::Impl {
         return vertex_buffer && index_buffer && index_count > 0;
     }
 
-    bool load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models) {
+    bool load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models, bool preserve_camera) {
         if (!device || !context) {
             error = "Direct3D device is not available";
             return false;
+        }
+
+        SceneCameraState camera_state;
+        if (preserve_camera && scene_active) {
+            camera_state.valid = true;
+            camera_state.pos = scene_camera_pos;
+            camera_state.yaw = scene_camera_yaw;
+            camera_state.pitch = scene_camera_pitch;
+            camera_state.distance = scene_camera_distance;
         }
 
         stop_scene_loader();
@@ -1576,11 +1593,20 @@ struct Canvas3D::Impl {
             std::swap(scene_data.min_distance, scene_data.max_distance);
         }
 
-        scene_camera_pos = {scene_data.camera.x, scene_data.camera.y, scene_data.camera.z};
-        scene_camera_yaw = static_cast<float>(scene_data.camera.yaw);
-        scene_camera_pitch = static_cast<float>(scene_data.camera.pitch);
-        scene_camera_distance = std::clamp(scene_data.camera.distance, scene_data.min_distance, scene_data.max_distance);
-        reset_scene_camera_tracking();
+        if (camera_state.valid) {
+            scene_camera_pos = camera_state.pos;
+            scene_camera_yaw = camera_state.yaw;
+            scene_camera_pitch = camera_state.pitch;
+            scene_camera_distance = std::clamp(camera_state.distance, scene_data.min_distance, scene_data.max_distance);
+            reset_scene_camera_tracking();
+            scene_camera_pitch = camera_state.pitch;
+        } else {
+            scene_camera_pos = {scene_data.camera.x, scene_data.camera.y, scene_data.camera.z};
+            scene_camera_yaw = static_cast<float>(scene_data.camera.yaw);
+            scene_camera_pitch = static_cast<float>(scene_data.camera.pitch);
+            scene_camera_distance = std::clamp(scene_data.camera.distance, scene_data.min_distance, scene_data.max_distance);
+            reset_scene_camera_tracking();
+        }
         scene_active = true;
 
         build_scene_chunks();
@@ -3978,8 +4004,10 @@ void Canvas3D::render(ImVec2 size) {
     impl_->render(size);
 }
 
-bool Canvas3D::load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models) {
-    return impl_->load_scene(std::move(scene), error, preserve_loaded_models);
+bool Canvas3D::load_scene(Canvas3DScene scene, std::string& error,
+                          bool preserve_loaded_models,
+                          bool preserve_camera) {
+    return impl_->load_scene(std::move(scene), error, preserve_loaded_models, preserve_camera);
 }
 
 void Canvas3D::clear_scene() {
