@@ -3463,7 +3463,9 @@ fail:
         if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active) return;
         Canvas3DSceneStats stats = scene_stats();
         char buffer[256] = {};
-        std::snprintf(buffer, sizeof(buffer), "d=%.1fm  chunks=%zu  instances=%zu  models=%zu/%zu",
+        std::snprintf(buffer, sizeof(buffer), "x=%.1fm  y=%.1fm  d=%.1fm  chunks=%zu  instances=%zu  models=%zu/%zu",
+                      scene_camera_lateral_offset,
+                      static_cast<double>(scene_camera_vertical_offset),
                       stats.camera_distance,
                       stats.chunk_count,
                       stats.drawn_instance_count,
