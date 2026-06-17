@@ -192,9 +192,10 @@ public:
     ImVec4 background_color() const;
 
     void render(ImVec2 size);
-    bool load_scene(Canvas3DScene scene, std::string& error);
+    bool load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models = false);
     void clear_scene();
     bool has_scene() const;
+    bool reload_scene_models(std::string& error);
     bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error);
     void set_scene_window(double back_m, double forward_m);
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);

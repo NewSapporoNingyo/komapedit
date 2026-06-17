@@ -793,6 +793,7 @@ private:
         bool ok = false;
         bool preserve_settings = false;
         bool record_history = false;
+        bool preserve_scene_preview_models = false;
         std::optional<BackgroundHistory> background_to_restore;
         void* handle = nullptr;
         MapModel model;
@@ -998,6 +999,7 @@ private:
     ImVec4 model_preview_bg_color_ = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
     bool scene_preview_started_ = false;
     bool scene_preview_dirty_ = true;
+    bool scene_preview_preserve_models_on_rebuild_ = false;
 
     TextureImage bg_image_;
     bool bg_show_ = true;
@@ -1027,7 +1029,8 @@ private:
     void stop_loader();
     void poll_loader();
     void begin_load(std::string path, bool preserve_settings, bool record_history = false,
-                    std::optional<BackgroundHistory> background_to_restore = std::nullopt);
+                    std::optional<BackgroundHistory> background_to_restore = std::nullopt,
+                    bool preserve_scene_preview_models = false);
     void apply_load_result(LoadResult result);
     void regenerate_geometry();
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step);
@@ -1070,9 +1073,11 @@ private:
     void reload_model_preview();
     void start_scene_preview();
     void stop_scene_preview();
-    void rebuild_scene_preview();
+    void rebuild_scene_preview(bool preserve_loaded_models = false);
+    void reload_scene_preview_models();
     void sync_scene_preview_track_visibility();
     void reload_current_map_and_model_preview();
+    void reload_current_map_geometry();
     void render_popups();
     void setup_initial_dockspace(ImGuiID dockspace_id);
     WindowVisibilitySettings current_window_visibility() const;

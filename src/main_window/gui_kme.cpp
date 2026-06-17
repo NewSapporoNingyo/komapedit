@@ -464,7 +464,8 @@ void App::poll_loader() {
 }
 
 void App::begin_load(std::string path, bool preserve_settings, bool record_history,
-                     std::optional<BackgroundHistory> background_to_restore) {
+                     std::optional<BackgroundHistory> background_to_restore,
+                     bool preserve_scene_preview_models) {
     if (path.empty() || load_state_.running) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
@@ -491,11 +492,13 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
 
     load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
-                           record_history, background_to_restore, load_started_at]() mutable {
+                           record_history, background_to_restore, load_started_at,
+                           preserve_scene_preview_models]() mutable {
         LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2);
         result.started_at = load_started_at;
         result.preserve_settings = preserve_settings;
         result.record_history = record_history;
+        result.preserve_scene_preview_models = preserve_scene_preview_models;
         result.background_to_restore = background_to_restore;
         if (result.ok && preserve_settings) {
             for (auto& t : result.model.other_tracks) {
@@ -533,7 +536,12 @@ void App::apply_load_result(LoadResult result) {
     rebuild_marker_overlay_cache();
     reset_marker_visibility();
     scene_preview_dirty_ = true;
-    if (!scene_preview_started_ && scene_preview_canvas_) scene_preview_canvas_->clear_scene();
+    scene_preview_preserve_models_on_rebuild_ =
+        scene_preview_started_ && result.preserve_scene_preview_models;
+    if (!scene_preview_started_ && scene_preview_canvas_) {
+        scene_preview_canvas_->clear_scene();
+        scene_preview_preserve_models_on_rebuild_ = false;
+    }
     file_path_ = result.path;
     dmin_ = model_.default_min;
     dmax_ = model_.default_max;
@@ -1683,6 +1691,12 @@ void App::render_toolbar() {
         if (ImGui::Button(tr("button.reload").c_str())) reload_current_map_and_model_preview();
         ImGui::EndDisabled();
 
+        ImGui::SameLine();
+        const bool can_reload_geometry = !load_state_.running && has_model_ && !file_path_.empty();
+        ImGui::BeginDisabled(!can_reload_geometry);
+        if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
+        ImGui::EndDisabled();
+
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
@@ -2006,26 +2020,31 @@ void App::start_scene_preview() {
     scene_preview_started_ = true;
     show_scene_preview_window_ = true;
     focus_scene_preview_next_ = true;
+    scene_preview_preserve_models_on_rebuild_ = false;
     add_log("[info]gui_kme.cpp: starting 3D scene preview");
-    rebuild_scene_preview();
+    rebuild_scene_preview(false);
 }
 
 void App::stop_scene_preview() {
     scene_preview_started_ = false;
     scene_preview_dirty_ = true;
+    scene_preview_preserve_models_on_rebuild_ = false;
     if (scene_preview_canvas_) scene_preview_canvas_->clear_scene();
     add_log("[INFO]3D scene preview stopped");
 }
 
-void App::rebuild_scene_preview() {
+void App::rebuild_scene_preview(bool preserve_loaded_models) {
     if (!scene_preview_canvas_ || !scene_preview_started_) return;
     if (!has_model_ || model_.own.empty()) {
         scene_preview_canvas_->clear_scene();
         scene_preview_dirty_ = true;
+        scene_preview_preserve_models_on_rebuild_ = false;
         add_log("[warn]gui_kme.cpp: 3D scene preview has no map geometry loaded");
         return;
     }
-    add_log("[info]gui_kme.cpp: generating 3D scene preview track geometry");
+    add_log(preserve_loaded_models
+                ? "[info]gui_kme.cpp: reloading 3D scene preview track geometry with preserved models"
+                : "[info]gui_kme.cpp: generating 3D scene preview track geometry");
     Canvas3DSceneBuildOptions options;
     options.model = &model_;
     options.map_handle = handle_;
@@ -2049,18 +2068,38 @@ void App::rebuild_scene_preview() {
             " repeaters=" + std::to_string(build_result.scene.repeaters.size()));
 
     std::string error;
-    if (!scene_preview_canvas_->load_scene(std::move(build_result.scene), error)) {
+    if (!scene_preview_canvas_->load_scene(std::move(build_result.scene), error, preserve_loaded_models)) {
         add_log("[error]gui_kme.cpp: 3D scene preview failed: " + error);
         scene_preview_dirty_ = true;
+        scene_preview_preserve_models_on_rebuild_ = false;
         return;
     }
     scene_preview_dirty_ = false;
+    scene_preview_preserve_models_on_rebuild_ = false;
     Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
-    add_log("[info]gui_kme.cpp: 3D scene preview model loading queued: models=" +
-            std::to_string(stats.model_path_count));
+    if (preserve_loaded_models) {
+        add_log("[info]gui_kme.cpp: 3D scene preview line geometry reloaded: models_preserved=" +
+                std::to_string(stats.model_ready_count) +
+                " models_total=" + std::to_string(stats.model_path_count));
+    } else {
+        add_log("[info]gui_kme.cpp: 3D scene preview model loading queued: models=" +
+                std::to_string(stats.model_path_count));
+    }
     add_log("[info]gui_kme.cpp: 3D scene preview started: chunks=" + std::to_string(stats.chunk_count) +
             " instances=" + std::to_string(stats.instance_count) +
             " models=" + std::to_string(stats.model_path_count));
+}
+
+void App::reload_scene_preview_models() {
+    if (!scene_preview_canvas_ || !scene_preview_started_) return;
+    std::string error;
+    if (!scene_preview_canvas_->reload_scene_models(error)) {
+        add_log("[error]gui_kme.cpp: 3D scene preview model reload failed: " + error);
+        return;
+    }
+    Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
+    add_log("[info]gui_kme.cpp: 3D scene preview model reload queued: models=" +
+            std::to_string(stats.model_path_count));
 }
 
 void App::sync_scene_preview_track_visibility() {
@@ -2100,7 +2139,7 @@ void App::render_scene_preview_window() {
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!scene_preview_started_ || load_state_.running || !has_model_);
-        if (ImGui::Button(tr("button.reload").c_str())) rebuild_scene_preview();
+        if (ImGui::Button(tr("button.reload_scene_models").c_str())) reload_scene_preview_models();
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!scene_preview_started_);
@@ -2126,7 +2165,8 @@ void App::render_scene_preview_window() {
         }
         ImGui::PopStyleVar();
         if (scene_preview_started_ && scene_preview_dirty_ && has_model_ && !load_state_.running) {
-            rebuild_scene_preview();
+            const bool preserve_loaded_models = scene_preview_preserve_models_on_rebuild_;
+            rebuild_scene_preview(preserve_loaded_models);
         }
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
         ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -2171,6 +2211,12 @@ void App::reload_current_map_and_model_preview() {
     if (load_state_.running) return;
     if (has_model_ && !file_path_.empty()) begin_load(file_path_, true);
     reload_model_preview();
+}
+
+void App::reload_current_map_geometry() {
+    if (load_state_.running || !has_model_ || file_path_.empty()) return;
+    add_log("[info]gui_kme.cpp: reloading map geometry with existing 3D models preserved");
+    begin_load(file_path_, true, false, std::nullopt, true);
 }
 
 void App::handle_shortcuts() {

@@ -1550,14 +1550,23 @@ struct Canvas3D::Impl {
         return vertex_buffer && index_buffer && index_count > 0;
     }
 
-    bool load_scene(Canvas3DScene scene, std::string& error) {
+    bool load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models) {
         if (!device || !context) {
             error = "Direct3D device is not available";
             return false;
         }
 
         stop_scene_loader();
-        release_scene_resources();
+        if (preserve_loaded_models) {
+            release_scene_track_chunks();
+            scene_chunks.clear();
+            clear_pending_scene_model_uploads();
+            scene_last_error.clear();
+            scene_stats_value = {};
+            scene_load_summary_pending = false;
+        } else {
+            release_scene_resources();
+        }
         scene_data = std::move(scene);
         std::sort(scene_data.backgrounds.begin(), scene_data.backgrounds.end(),
                   [](const Canvas3DBackgroundChange& a, const Canvas3DBackgroundChange& b) {
@@ -1580,27 +1589,31 @@ struct Canvas3D::Impl {
             return false;
         }
 
-        std::set<std::string> paths;
-        for (const SceneChunk& chunk : scene_chunks) {
-            for (const SceneInstance& instance : chunk.instances) {
-                if (!instance.model_path.empty()) paths.insert(instance.model_path);
+        std::set<std::string> paths = collect_scene_model_paths();
+        std::vector<std::string> paths_to_load;
+        paths_to_load.reserve(paths.size());
+        if (preserve_loaded_models) {
+            for (auto it = scene_models.begin(); it != scene_models.end();) {
+                if (paths.find(it->first) == paths.end()) {
+                    release_scene_model(it->second);
+                    it = scene_models.erase(it);
+                } else {
+                    ++it;
+                }
             }
-        }
-        for (const Canvas3DSceneObject& object : scene_data.objects) {
-            for (const Canvas3DSceneModelOption& option : object.model_options) {
-                if (!option.model_path.empty()) paths.insert(option.model_path);
+            for (const std::string& path : paths) {
+                auto [it, inserted] = scene_models.try_emplace(path);
+                if (inserted || it->second.state == SceneModelGpu::State::Pending) {
+                    release_scene_model(it->second);
+                    it->second = SceneModelGpu{};
+                    paths_to_load.push_back(path);
+                }
             }
-        }
-        for (const Canvas3DBackgroundChange& bg : scene_data.backgrounds) {
-            if (!bg.model_path.empty()) paths.insert(bg.model_path);
-        }
-        for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
-            for (const std::string& path : repeater.model_paths) {
-                if (!path.empty()) paths.insert(path);
+        } else {
+            for (const std::string& path : paths) {
+                scene_models[path] = SceneModelGpu{};
+                paths_to_load.push_back(path);
             }
-        }
-        for (const std::string& path : paths) {
-            scene_models[path] = SceneModelGpu{};
         }
         scene_stats_value.model_path_count = paths.size();
         scene_stats_value.instance_count = count_scene_instances();
@@ -1608,7 +1621,7 @@ struct Canvas3D::Impl {
         scene_stats_value.window_back_m = scene_window_back_m;
         scene_stats_value.window_forward_m = scene_window_forward_m;
         scene_stats_value.camera_distance = scene_camera_distance;
-        start_scene_model_worker(std::vector<std::string>(paths.begin(), paths.end()));
+        start_scene_model_worker(std::move(paths_to_load));
         return true;
     }
 
@@ -1626,6 +1639,27 @@ struct Canvas3D::Impl {
 
     bool has_scene() const {
         return scene_active;
+    }
+
+    bool reload_scene_models(std::string& error) {
+        if (!scene_active) {
+            error = "3D scene preview is not started";
+            return false;
+        }
+        stop_scene_loader();
+        clear_pending_scene_model_uploads();
+        std::vector<std::string> paths;
+        paths.reserve(scene_models.size());
+        for (auto& kv : scene_models) {
+            release_scene_model(kv.second);
+            kv.second = SceneModelGpu{};
+            paths.push_back(kv.first);
+        }
+        scene_last_error.clear();
+        scene_stats_value.model_path_count = scene_models.size();
+        scene_load_summary_pending = false;
+        start_scene_model_worker(std::move(paths));
+        return true;
     }
 
     bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error) {
@@ -1721,6 +1755,29 @@ struct Canvas3D::Impl {
             count += scene_repeater_instance_count(repeater);
         }
         return count;
+    }
+
+    std::set<std::string> collect_scene_model_paths() const {
+        std::set<std::string> paths;
+        for (const SceneChunk& chunk : scene_chunks) {
+            for (const SceneInstance& instance : chunk.instances) {
+                if (!instance.model_path.empty()) paths.insert(instance.model_path);
+            }
+        }
+        for (const Canvas3DSceneObject& object : scene_data.objects) {
+            for (const Canvas3DSceneModelOption& option : object.model_options) {
+                if (!option.model_path.empty()) paths.insert(option.model_path);
+            }
+        }
+        for (const Canvas3DBackgroundChange& bg : scene_data.backgrounds) {
+            if (!bg.model_path.empty()) paths.insert(bg.model_path);
+        }
+        for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
+            for (const std::string& path : repeater.model_paths) {
+                if (!path.empty()) paths.insert(path);
+            }
+        }
+        return paths;
     }
 
     bool set_scene_object_model_option(int object_index, size_t option_index) {
@@ -1887,17 +1944,20 @@ fail:
         scene_track_chunks.clear();
     }
 
+    void clear_pending_scene_model_uploads() {
+        std::lock_guard<std::mutex> lock(scene_upload_mutex);
+        scene_pending_uploads.clear();
+    }
+
     void release_scene_resources() {
         for (auto& kv : scene_models) release_scene_model(kv.second);
         scene_models.clear();
         release_scene_track_chunks();
         scene_chunks.clear();
-        {
-            std::lock_guard<std::mutex> lock(scene_upload_mutex);
-            scene_pending_uploads.clear();
-        }
+        clear_pending_scene_model_uploads();
         scene_last_error.clear();
         scene_stats_value = {};
+        scene_load_summary_pending = false;
     }
 
     void stop_scene_loader() {
@@ -1959,13 +2019,13 @@ fail:
             if (scene_worker_running.load()) return;
             scene_worker.join();
         }
+        scene_load_summary_pending = true;
         scene_worker_running.store(true);
         scene_worker = std::thread([this, paths = std::move(paths)]() {
             for (size_t path_index = 0; path_index < paths.size(); ++path_index) {
                 const std::string& path = paths[path_index];
                 if (scene_cancel.load()) break;
                 const std::string progress = std::to_string(path_index + 1) + "/" + std::to_string(paths.size());
-                push_scene_load_log("[info]canvas3D.cpp: loading scene model " + progress + ": " + path);
                 CpuModelData cpu;
                 cpu.path = path;
                 MlMeshData data = {};
@@ -1973,9 +2033,7 @@ fail:
                 if (scene_loader.load(path, data, error)) {
                     cpu = copy_cpu_model(path, data);
                     scene_loader.free_model(data);
-                    if (cpu.ok) {
-                        push_scene_load_log("[info]canvas3D.cpp: loaded scene model " + progress + ": " + path);
-                    } else {
+                    if (!cpu.ok) {
                         push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
                                             path + ": " + cpu.error);
                     }
@@ -1992,6 +2050,17 @@ fail:
             }
             scene_worker_running.store(false);
         });
+    }
+
+    void maybe_log_scene_model_load_summary() {
+        if (!scene_load_summary_pending || scene_worker_running.load()) return;
+        Canvas3DSceneStats stats = scene_stats();
+        if (stats.model_ready_count + stats.model_failed_count < stats.model_path_count) return;
+        push_scene_load_log("[info]canvas3D.cpp: scene model loading finished: loaded=" +
+                            std::to_string(stats.model_ready_count) +
+                            " failed=" + std::to_string(stats.model_failed_count) +
+                            " total=" + std::to_string(stats.model_path_count));
+        scene_load_summary_pending = false;
     }
 
     bool upload_scene_model(const CpuModelData& cpu, std::string& error) {
@@ -2084,6 +2153,7 @@ fail:
                 }
             }
         }
+        maybe_log_scene_model_load_summary();
     }
 
     bool ensure_scene_outline_pipeline(std::string& error) {
@@ -3839,6 +3909,7 @@ fail:
     std::vector<CpuModelData> scene_pending_uploads;
     std::mutex scene_log_mutex;
     std::vector<std::string> scene_pending_logs;
+    bool scene_load_summary_pending = false;
     std::thread scene_worker;
     std::atomic<bool> scene_cancel{false};
     std::atomic<bool> scene_worker_running{false};
@@ -3907,8 +3978,8 @@ void Canvas3D::render(ImVec2 size) {
     impl_->render(size);
 }
 
-bool Canvas3D::load_scene(Canvas3DScene scene, std::string& error) {
-    return impl_->load_scene(std::move(scene), error);
+bool Canvas3D::load_scene(Canvas3DScene scene, std::string& error, bool preserve_loaded_models) {
+    return impl_->load_scene(std::move(scene), error, preserve_loaded_models);
 }
 
 void Canvas3D::clear_scene() {
@@ -3917,6 +3988,10 @@ void Canvas3D::clear_scene() {
 
 bool Canvas3D::has_scene() const {
     return impl_->has_scene();
+}
+
+bool Canvas3D::reload_scene_models(std::string& error) {
+    return impl_->reload_scene_models(error);
 }
 
 bool Canvas3D::set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error) {
