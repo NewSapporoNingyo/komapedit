@@ -517,6 +517,8 @@ void render_table_find_panel(TableFindState& state,
 constexpr float kShowColumnWidth = 56.0f;
 constexpr ImU32 kFindMatchRowColor = IM_COL32(104, 184, 255, 96);
 constexpr ImU32 kUnusedStructureModelRowColor = IM_COL32(72, 196, 112, 120);
+constexpr ImU32 kInvalidTrackKeyRowColor = IM_COL32(255, 72, 72, 130);
+constexpr const char* kInvalidTrackKeyCell = "_invalidTrackKey";
 
 static const TableColumnDef kStructureModelColumns[] = {
     {"rowNumber", "#", 40.0f},
@@ -737,6 +739,91 @@ double table_cell_number(const TableRow& row, const std::string& key) {
     char* end = nullptr;
     double value = std::strtod(text.c_str(), &end);
     return end == text.c_str() ? 0.0 : value;
+}
+
+namespace {
+
+bool is_scene_table_own_track_key(const std::string& normalized_key) {
+    return normalized_key.empty() || normalized_key == "0";
+}
+
+bool is_scene_table_track_key_valid(const std::string& raw_key,
+                                    const std::unordered_set<std::string>& other_track_keys) {
+    std::string normalized_key = normalize_track_lookup_key(raw_key);
+    return is_scene_table_own_track_key(normalized_key) ||
+        other_track_keys.find(normalized_key) != other_track_keys.end();
+}
+
+bool is_invalid_track_key_row(const TableRow& row) {
+    return table_cell(row, kInvalidTrackKeyCell) == "true";
+}
+
+void clear_invalid_track_key_flags(std::vector<TableRow>& rows) {
+    for (TableRow& row : rows) row.cells.erase(kInvalidTrackKeyCell);
+}
+
+void mark_invalid_track_key_row(TableRow& row) {
+    row.cells[kInvalidTrackKeyCell] = "true";
+}
+
+void append_scene_track_key_warning(MapModel& model,
+                                    TableRow& row,
+                                    const std::string& item_label,
+                                    size_t display_row,
+                                    const std::string& column_key,
+                                    const std::string& track_key) {
+    mark_invalid_track_key_row(row);
+    std::string message = "[WARN]datatable.cpp: " + item_label + " #" +
+        std::to_string(display_row) + " was placed on nonexistent track \"" + track_key + "\"";
+    if (!column_key.empty()) message += " (" + column_key + ")";
+    model.scene_track_key_warnings.push_back(std::move(message));
+}
+
+void check_scene_track_key(MapModel& model,
+                           TableRow& row,
+                           const std::unordered_set<std::string>& other_track_keys,
+                           const std::string& item_label,
+                           size_t display_row,
+                           const std::string& column_key) {
+    const std::string& key = table_cell(row, column_key);
+    if (is_scene_table_track_key_valid(key, other_track_keys)) return;
+    append_scene_track_key_warning(model, row, item_label, display_row, column_key, key);
+}
+
+} // namespace
+
+void annotate_scene_track_key_warnings(MapModel& model) {
+    model.scene_track_key_warnings.clear();
+    clear_invalid_track_key_flags(model.structures);
+    clear_invalid_track_key_flags(model.structures_between);
+    clear_invalid_track_key_flags(model.repeaters);
+
+    std::unordered_set<std::string> other_track_keys;
+    other_track_keys.reserve(model.other_tracks.size() * 2 + 1);
+    for (const OtherTrack& track : model.other_tracks) {
+        std::string key = normalize_track_lookup_key(track.key);
+        if (!is_scene_table_own_track_key(key)) other_track_keys.insert(std::move(key));
+    }
+
+    size_t structure_display_row = 1;
+    for (TableRow& row : model.structures) {
+        check_scene_track_key(model, row, other_track_keys, "Structure", structure_display_row, "trackKey");
+        ++structure_display_row;
+    }
+    for (TableRow& row : model.structures_between) {
+        check_scene_track_key(model, row, other_track_keys, "Structure", structure_display_row, "trackKey1");
+        check_scene_track_key(model, row, other_track_keys, "Structure", structure_display_row, "trackKey2");
+        ++structure_display_row;
+    }
+
+    size_t repeater_display_row = 1;
+    for (TableRow& row : model.repeaters) {
+        const std::string& method = table_cell(row, "method");
+        if (method == "Begin" || method == "Begin0") {
+            check_scene_track_key(model, row, other_track_keys, "Repeater", repeater_display_row, "trackKey");
+            ++repeater_display_row;
+        }
+    }
 }
 
 template <size_t N>
@@ -1165,6 +1252,7 @@ void App::ensure_table_cache() {
         for (const auto& row : rows) {
             CachedTableRow cached;
             cached.cells.resize(IM_ARRAYSIZE(kStructureColumns));
+            cached.invalid_track_key = is_invalid_track_key_row(row);
             for (int i = 0; i < IM_ARRAYSIZE(kStructureColumns); ++i) {
                 const std::string& value = table_cell(row, kStructureColumns[i]);
                 if (i == kStructureFilePathColumn) {
@@ -1189,6 +1277,7 @@ void App::ensure_table_cache() {
     for (const auto& row : repeater_rows) {
         CachedTableRow cached;
         cached.cells.resize(IM_ARRAYSIZE(kRepeaterColumns));
+        cached.invalid_track_key = is_invalid_track_key_row(row);
         cached.open_path = table_cell(row, "_openFilePath");
         cached.tooltip_text = table_cell(row, "_filePathTooltip");
         if (cached.tooltip_text.empty()) cached.tooltip_text = cached.open_path;
@@ -1761,7 +1850,9 @@ void App::render_structures_window() {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.structure_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
-                if (row_index == structure_list_highlight_row_) {
+                if (row.invalid_track_key) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kInvalidTrackKeyRowColor);
+                } else if (row_index == structure_list_highlight_row_) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
                 }
                 if (row_index == scroll_target_row) {
@@ -2035,7 +2126,9 @@ void App::render_repeaters_window() {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.repeater_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
-                if (row_index == repeater_list_highlight_row_) {
+                if (row.invalid_track_key) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kInvalidTrackKeyRowColor);
+                } else if (row_index == repeater_list_highlight_row_) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
                 }
                 if (row_index == scroll_target_row) {

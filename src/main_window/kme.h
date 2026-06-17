@@ -135,6 +135,7 @@ struct CachedTableRow {
     std::vector<std::string> cells;
     std::string open_path;
     std::string tooltip_text;
+    bool invalid_track_key = false;
 };
 
 struct TableUiCache {
@@ -199,6 +200,8 @@ struct TableUiCache {
 
 const std::string& table_cell(const TableRow& row, const std::string& key);
 double table_cell_number(const TableRow& row, const std::string& key);
+struct MapModel;
+void annotate_scene_track_key_warnings(MapModel& model);
 
 inline bool repeater_event_distance_order_less(const TableRow& a, const TableRow& b) {
     double ad = table_cell_number(a, "distance");
@@ -239,6 +242,7 @@ struct MapModel {
     std::vector<TableRow> adhesions;
     std::vector<TableRow> cab_illuminance;
     std::vector<TableRow> fogs;
+    std::vector<std::string> scene_track_key_warnings;
     double distance_origin = 0.0;
     double height_origin = 0.0;
     double origin_angle = 0.0;
