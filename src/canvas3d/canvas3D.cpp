@@ -1094,7 +1094,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
             }
         } else {
             const char* err = kv_get_last_error();
-            result.log_messages.push_back(std::string("[WARN]3D scene preview adaptive geometry failed: ") +
+            result.log_messages.push_back(std::string("[warn]canvas3D.cpp: 3D scene preview adaptive geometry failed: ") +
                                           (err ? err : "geometry failed"));
         }
 
@@ -1102,7 +1102,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
                                   options.control_point_start, options.control_point_end,
                                   options.control_point_interval)) {
             const char* err = kv_get_last_error();
-            result.log_messages.push_back(std::string("[ERROR]3D scene preview failed to restore 2D geometry: ") +
+            result.log_messages.push_back(std::string("[error]canvas3D.cpp: 3D scene preview failed to restore 2D geometry: ") +
                                           (err ? err : "geometry failed"));
         }
     }
@@ -1677,7 +1677,6 @@ struct Canvas3D::Impl {
     Canvas3DSceneStats scene_stats() const {
         Canvas3DSceneStats stats = scene_stats_value;
         stats.active = scene_active;
-        stats.loading = scene_worker_running.load();
         stats.camera_distance = scene_camera_distance;
         stats.chunk_count = scene_chunks.size();
         stats.model_path_count = scene_models.size();
@@ -1690,7 +1689,17 @@ struct Canvas3D::Impl {
             if (kv.second.state == SceneModelGpu::State::Ready) ++stats.model_ready_count;
             if (kv.second.state == SceneModelGpu::State::Failed) ++stats.model_failed_count;
         }
+        const size_t completed_count = stats.model_ready_count + stats.model_failed_count;
+        stats.loading = scene_active &&
+            (scene_worker_running.load() || completed_count < stats.model_path_count);
         return stats;
+    }
+
+    std::vector<std::string> drain_scene_load_messages() {
+        std::vector<std::string> messages;
+        std::lock_guard<std::mutex> lock(scene_log_mutex);
+        messages.swap(scene_pending_logs);
+        return messages;
     }
 
     Canvas3DSceneCameraPose scene_camera_pose() const {
@@ -1939,6 +1948,11 @@ fail:
         return out;
     }
 
+    void push_scene_load_log(std::string message) {
+        std::lock_guard<std::mutex> lock(scene_log_mutex);
+        scene_pending_logs.push_back(std::move(message));
+    }
+
     void start_scene_model_worker(std::vector<std::string> paths) {
         if (paths.empty()) return;
         if (scene_worker.joinable()) {
@@ -1950,6 +1964,8 @@ fail:
             for (size_t path_index = 0; path_index < paths.size(); ++path_index) {
                 const std::string& path = paths[path_index];
                 if (scene_cancel.load()) break;
+                const std::string progress = std::to_string(path_index + 1) + "/" + std::to_string(paths.size());
+                push_scene_load_log("[info]canvas3D.cpp: loading scene model " + progress + ": " + path);
                 CpuModelData cpu;
                 cpu.path = path;
                 MlMeshData data = {};
@@ -1957,8 +1973,16 @@ fail:
                 if (scene_loader.load(path, data, error)) {
                     cpu = copy_cpu_model(path, data);
                     scene_loader.free_model(data);
+                    if (cpu.ok) {
+                        push_scene_load_log("[info]canvas3D.cpp: loaded scene model " + progress + ": " + path);
+                    } else {
+                        push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
+                                            path + ": " + cpu.error);
+                    }
                 } else {
                     cpu.error = error;
+                    push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
+                                        path + ": " + error);
                 }
                 if (scene_cancel.load()) break;
                 {
@@ -2053,7 +2077,11 @@ fail:
                     it->second.state = SceneModelGpu::State::Failed;
                     it->second.error = error;
                 }
-                if (!error.empty()) scene_last_error = error;
+                if (!error.empty()) {
+                    scene_last_error = error;
+                    push_scene_load_log("[warn]canvas3D.cpp: failed to upload scene model: " +
+                                        cpu.path + ": " + error);
+                }
             }
         }
     }
@@ -3480,6 +3508,27 @@ fail:
         draw->AddText(pos, IM_COL32(255, 255, 255, 230), buffer);
     }
 
+    void draw_scene_loading_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
+                                    const std::string& text) const {
+        if (!draw || size.x <= 0.0f || size.y <= 0.0f) return;
+        ImVec2 end(origin.x + size.x, origin.y + size.y);
+        ImVec4 bg = clamp_background_color(background_color_value);
+        bg.w = 1.0f;
+        draw->AddRectFilled(origin, end, ImGui::ColorConvertFloat4ToU32(bg));
+
+        const char* label = text.empty() ? "Loading..." : text.c_str();
+        ImVec2 text_size = ImGui::CalcTextSize(label);
+        ImVec2 pos(origin.x + std::max(0.0f, (size.x - text_size.x) * 0.5f),
+                   origin.y + std::max(0.0f, (size.y - text_size.y) * 0.5f));
+        const float luminance = bg.x * 0.2126f + bg.y * 0.7152f + bg.z * 0.0722f;
+        const ImU32 text_color = luminance > 0.55f ? IM_COL32(24, 24, 24, 235)
+                                                   : IM_COL32(255, 255, 255, 235);
+        const ImU32 shadow_color = luminance > 0.55f ? IM_COL32(255, 255, 255, 90)
+                                                     : IM_COL32(0, 0, 0, 110);
+        draw->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f), shadow_color, label);
+        draw->AddText(pos, text_color, label);
+    }
+
     void render_scene_context_popup(const Canvas3DSceneUiText& ui_text) {
         if (!ImGui::BeginPopup("ScenePreviewObjectContext")) return;
 
@@ -3514,7 +3563,8 @@ fail:
         ImGui::InvisibleButton("ScenePreview3DCanvas", avail,
                                ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         bool hovered = ImGui::IsItemHovered();
-        if (scene_active) handle_scene_input(hovered);
+        const bool loading_before_render = scene_stats().loading;
+        if (scene_active && !loading_before_render) handle_scene_input(hovered);
         ImGuiIO& io = ImGui::GetIO();
         ImVec2 mouse_local(io.MousePos.x - origin.x, io.MousePos.y - origin.y);
 
@@ -3543,13 +3593,18 @@ fail:
         } else {
             draw->AddRectFilled(origin, end, IM_COL32(0, 0, 0, 255));
         }
-        draw_scene_overlay(draw, origin, avail);
+        const Canvas3DSceneStats stats = scene_stats();
+        if (stats.loading) {
+            draw_scene_loading_overlay(draw, origin, avail, ui_text.loading);
+        } else {
+            draw_scene_overlay(draw, origin, avail);
+        }
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
-        if (select_mode && hovered && scene_hovered_object_index >= 0) {
+        if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         }
-        if (select_mode && hovered && scene_hovered_object_index >= 0 &&
+        if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0 &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
             scene_context_object_index = scene_hovered_object_index;
             ImGui::OpenPopup("ScenePreviewObjectContext");
@@ -3782,6 +3837,8 @@ fail:
     std::map<std::string, SceneModelGpu> scene_models;
     std::mutex scene_upload_mutex;
     std::vector<CpuModelData> scene_pending_uploads;
+    std::mutex scene_log_mutex;
+    std::vector<std::string> scene_pending_logs;
     std::thread scene_worker;
     std::atomic<bool> scene_cancel{false};
     std::atomic<bool> scene_worker_running{false};
@@ -3880,6 +3937,10 @@ Canvas3DSceneInteractionMode Canvas3D::scene_interaction_mode() const {
 
 Canvas3DSceneStats Canvas3D::scene_stats() const {
     return impl_->scene_stats();
+}
+
+std::vector<std::string> Canvas3D::drain_scene_load_messages() {
+    return impl_->drain_scene_load_messages();
 }
 
 Canvas3DSceneCameraPose Canvas3D::scene_camera_pose() const {

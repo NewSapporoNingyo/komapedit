@@ -426,9 +426,17 @@ void TextureImage::release() {
 }
 
 void App::add_log(std::string text) {
+    std::string lower_text = text;
+    std::transform(lower_text.begin(), lower_text.end(), lower_text.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     int sev = 0;
-    if (text.find("[ERROR]") != std::string::npos || text.find("Error") != std::string::npos) sev = 2;
-    else if (text.find("[WARN]") != std::string::npos || text.find("Warning") != std::string::npos) sev = 1;
+    if (lower_text.find("[error]") != std::string::npos ||
+        lower_text.find("error") != std::string::npos) {
+        sev = 2;
+    } else if (lower_text.find("[warn]") != std::string::npos ||
+               lower_text.find("warning") != std::string::npos) {
+        sev = 1;
+    }
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.push_back({text, sev});
@@ -1998,6 +2006,7 @@ void App::start_scene_preview() {
     scene_preview_started_ = true;
     show_scene_preview_window_ = true;
     focus_scene_preview_next_ = true;
+    add_log("[info]gui_kme.cpp: starting 3D scene preview");
     rebuild_scene_preview();
 }
 
@@ -2013,9 +2022,10 @@ void App::rebuild_scene_preview() {
     if (!has_model_ || model_.own.empty()) {
         scene_preview_canvas_->clear_scene();
         scene_preview_dirty_ = true;
-        add_log("[WARN]3D scene preview: no map geometry is loaded");
+        add_log("[warn]gui_kme.cpp: 3D scene preview has no map geometry loaded");
         return;
     }
+    add_log("[info]gui_kme.cpp: generating 3D scene preview track geometry");
     Canvas3DSceneBuildOptions options;
     options.model = &model_;
     options.map_handle = handle_;
@@ -2028,15 +2038,27 @@ void App::rebuild_scene_preview() {
     Canvas3DSceneBuildResult build_result = build_canvas3d_scene_preview(options);
     for (const std::string& message : build_result.log_messages) add_log(message);
 
+    size_t track_point_count = 0;
+    for (const Canvas3DTrackPath& track : build_result.scene.tracks) {
+        track_point_count += track.points.size();
+    }
+    add_log("[info]gui_kme.cpp: 3D scene preview track geometry ready: tracks=" +
+            std::to_string(build_result.scene.tracks.size()) +
+            " points=" + std::to_string(track_point_count) +
+            " instances=" + std::to_string(build_result.scene.instances.size()) +
+            " repeaters=" + std::to_string(build_result.scene.repeaters.size()));
+
     std::string error;
     if (!scene_preview_canvas_->load_scene(std::move(build_result.scene), error)) {
-        add_log("[ERROR]3D scene preview: " + error);
+        add_log("[error]gui_kme.cpp: 3D scene preview failed: " + error);
         scene_preview_dirty_ = true;
         return;
     }
     scene_preview_dirty_ = false;
     Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
-    add_log("[INFO]3D scene preview started: chunks=" + std::to_string(stats.chunk_count) +
+    add_log("[info]gui_kme.cpp: 3D scene preview model loading queued: models=" +
+            std::to_string(stats.model_path_count));
+    add_log("[info]gui_kme.cpp: 3D scene preview started: chunks=" + std::to_string(stats.chunk_count) +
             " instances=" + std::to_string(stats.instance_count) +
             " models=" + std::to_string(stats.model_path_count));
 }
@@ -2049,11 +2071,18 @@ void App::sync_scene_preview_track_visibility() {
 
     std::string error;
     if (!scene_preview_canvas_->set_scene_track_visibility(visibility, error)) {
-        add_log("[ERROR]3D scene preview track visibility: " + error);
+        add_log("[error]gui_kme.cpp: 3D scene preview track visibility failed: " + error);
     }
 }
 
 void App::render_scene_preview_window() {
+    auto drain_scene_preview_logs = [this]() {
+        if (!scene_preview_canvas_) return;
+        for (std::string& message : scene_preview_canvas_->drain_scene_load_messages()) {
+            add_log(std::move(message));
+        }
+    };
+    drain_scene_preview_logs();
     if (!show_scene_preview_window_) return;
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_scene_preview_next_) ImGui::SetNextWindowFocus();
@@ -2103,7 +2132,9 @@ void App::render_scene_preview_window() {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         Canvas3DSceneUiText scene_ui_text;
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect");
+        scene_ui_text.loading = tr("status.scene_loading");
         scene_preview_canvas_->render_scene_preview(avail, scene_ui_text);
+        drain_scene_preview_logs();
     }
     focus_scene_preview_next_ = false;
     ImGui::End();

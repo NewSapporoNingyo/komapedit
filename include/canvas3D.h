@@ -167,6 +167,7 @@ struct Canvas3DSceneBuildResult {
 
 struct Canvas3DSceneUiText {
     std::string switch_signal_aspect = "Switch Signal Aspect";
+    std::string loading = "Loading...";
 };
 
 Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options);
@@ -199,6 +200,7 @@ public:
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
     Canvas3DSceneInteractionMode scene_interaction_mode() const;
     Canvas3DSceneStats scene_stats() const;
+    std::vector<std::string> drain_scene_load_messages();
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
     void render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{});
