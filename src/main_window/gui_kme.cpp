@@ -1761,6 +1761,21 @@ void App::render_console() {
         error_count_ = warn_count_ = 0;
     }
     ImGui::SameLine();
+    if (ImGui::Button(tr("button.copy").c_str())) {
+        std::string console_text;
+        {
+            std::lock_guard<std::mutex> lock(log_mutex_);
+            size_t text_size = logs_.empty() ? 0 : logs_.size() - 1;
+            for (const auto& line : logs_) text_size += line.text.size();
+            console_text.reserve(text_size);
+            for (size_t i = 0; i < logs_.size(); ++i) {
+                if (i > 0) console_text.push_back('\n');
+                console_text.append(logs_[i].text);
+            }
+        }
+        ImGui::SetClipboardText(console_text.c_str());
+    }
+    ImGui::SameLine();
     ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "E %d", error_count_);
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "W %d", warn_count_);
