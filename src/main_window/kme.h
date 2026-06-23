@@ -616,27 +616,30 @@ struct WindowVisibilitySettings {
     }
 };
 
+inline constexpr bool kDefaultStationAuxInfoVisible = true;
+inline constexpr bool kDefaultNonStationAuxInfoVisible = false;
+
 struct View2DSettings {
-    bool show_stations = true;
-    bool show_station_names = true;
-    bool show_station_mileage = true;
+    bool show_stations = kDefaultStationAuxInfoVisible;
+    bool show_station_names = kDefaultStationAuxInfoVisible;
+    bool show_station_mileage = kDefaultStationAuxInfoVisible;
     bool show_gradient_pos = true;
     bool show_gradient_values = true;
-    bool show_curve_values = true;
+    bool show_curve_values = kDefaultNonStationAuxInfoVisible;
     bool show_profile_other = false;
-    bool show_speedlimits = true;
-    bool show_irregularity_markers = true;
-    bool show_beacon_markers = true;
-    bool show_pretrain_markers = true;
-    bool show_map_sound_markers = true;
-    bool show_map_sound_3d_markers = true;
-    bool show_rolling_noise_markers = true;
-    bool show_flange_noise_markers = true;
-    bool show_joint_noise_markers = true;
-    bool show_background_markers = true;
-    bool show_adhesion_markers = true;
-    bool show_cab_illuminance_markers = true;
-    bool show_fog_markers = true;
+    bool show_speedlimits = kDefaultNonStationAuxInfoVisible;
+    bool show_irregularity_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_beacon_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_pretrain_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_map_sound_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_map_sound_3d_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_rolling_noise_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_flange_noise_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_joint_noise_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_background_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_adhesion_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_cab_illuminance_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_fog_markers = kDefaultNonStationAuxInfoVisible;
     bool show_profile_graph = true;
     bool show_radius_graph = true;
     bool show_background_image = true;
@@ -677,8 +680,8 @@ struct View2DSettings {
 };
 
 struct View3DSettings {
-    bool show_scene_owntrack_markers = true;
-    bool show_scene_current_position_on_plan = true;
+    bool show_scene_owntrack_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_scene_current_position_on_plan = kDefaultNonStationAuxInfoVisible;
 
     bool operator==(const View3DSettings& other) const {
         return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
@@ -826,28 +829,28 @@ private:
     double unit_distance_ = 25.0;
     bool plan_canvas_rendered_this_frame_ = false;
 
-    bool show_stations_ = true;
-    bool show_station_names_ = true;
-    bool show_station_mileage_ = true;
+    bool show_stations_ = kDefaultStationAuxInfoVisible;
+    bool show_station_names_ = kDefaultStationAuxInfoVisible;
+    bool show_station_mileage_ = kDefaultStationAuxInfoVisible;
     bool show_gradient_pos_ = true;
     bool show_gradient_values_ = true;
-    bool show_curve_values_ = true;
+    bool show_curve_values_ = kDefaultNonStationAuxInfoVisible;
     bool show_profile_other_ = false;
-    bool show_speedlimits_ = true;
-    bool show_irregularity_markers_ = true;
-    bool show_beacon_markers_ = true;
-    bool show_pretrain_markers_ = true;
-    bool show_map_sound_markers_ = true;
-    bool show_map_sound_3d_markers_ = true;
-    bool show_rolling_noise_markers_ = true;
-    bool show_flange_noise_markers_ = true;
-    bool show_joint_noise_markers_ = true;
-    bool show_background_markers_ = true;
-    bool show_adhesion_markers_ = true;
-    bool show_cab_illuminance_markers_ = true;
-    bool show_fog_markers_ = true;
-    bool show_scene_owntrack_markers_ = true;
-    bool show_scene_current_position_on_plan_ = true;
+    bool show_speedlimits_ = kDefaultNonStationAuxInfoVisible;
+    bool show_irregularity_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_beacon_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_pretrain_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_map_sound_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_map_sound_3d_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_rolling_noise_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_flange_noise_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_joint_noise_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_background_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_adhesion_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_cab_illuminance_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_fog_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_scene_owntrack_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_scene_current_position_on_plan_ = kDefaultNonStationAuxInfoVisible;
     bool show_profile_graph_ = true;
     bool show_radius_graph_ = true;
     bool show_othertracks_window_ = true;

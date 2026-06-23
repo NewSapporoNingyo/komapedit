@@ -1497,65 +1497,48 @@ void App::render_menu() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.map_info").c_str())) {
-        if (ImGui::MenuItem(tr("frame.othertracks").c_str(), nullptr, false, !show_othertracks_window_)) {
-            show_othertracks_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.station_list").c_str(), nullptr, false, !show_station_list_window_)) {
-            show_station_list_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.signal_aspects").c_str(), nullptr, false, !show_signal_aspects_window_)) {
-            show_signal_aspects_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.signals").c_str(), nullptr, false, !show_signals_window_)) {
-            show_signals_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.beacons").c_str(), nullptr, false, !show_beacons_window_)) {
-            show_beacons_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("button.structure_list").c_str(), nullptr, false, !show_structures_window_)) {
-            show_structures_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.structure_models").c_str(), nullptr, false, !show_structure_models_window_)) {
-            show_structure_models_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.sound_list").c_str(), nullptr, false, !show_sound_list_window_)) {
-            show_sound_list_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.sound_3d_list").c_str(), nullptr, false, !show_sound_3d_list_window_)) {
-            show_sound_3d_list_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("button.map_sound_list").c_str(), nullptr, false, !show_map_sounds_window_)) {
-            show_map_sounds_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("button.map_sound_3d_list").c_str(), nullptr, false, !show_map_sound_3d_window_)) {
-            show_map_sound_3d_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("button.repeater_list").c_str(), nullptr, false, !show_repeaters_window_)) {
-            show_repeaters_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.irregularities").c_str(), nullptr, false, !show_irregularities_window_)) {
-            show_irregularities_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.rolling_noises").c_str(), nullptr, false, !show_rolling_noises_window_)) {
-            show_rolling_noises_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.flange_noises").c_str(), nullptr, false, !show_flange_noises_window_)) {
-            show_flange_noises_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.joint_noises").c_str(), nullptr, false, !show_joint_noises_window_)) {
-            show_joint_noises_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.backgrounds").c_str(), nullptr, false, !show_backgrounds_window_)) {
-            show_backgrounds_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.adhesions").c_str(), nullptr, false, !show_adhesions_window_)) {
-            show_adhesions_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.cab_illuminance").c_str(), nullptr, false, !show_cab_illuminance_window_)) {
-            show_cab_illuminance_window_ = true;
-        }
-        if (ImGui::MenuItem(tr("frame.fogs").c_str(), nullptr, false, !show_fogs_window_)) {
-            show_fogs_window_ = true;
+        struct MapInfoMenuEntry {
+            const char* label_key;
+            bool App::*window_visible;
+        };
+        static constexpr std::array<MapInfoMenuEntry, 26> kMapInfoMenuEntries = {{
+            {"aux.station", nullptr},
+            {"menu.map_info.station", &App::show_station_list_window_},
+            {"aux.scenery", nullptr},
+            {"menu.map_info.structures", &App::show_structures_window_},
+            {"menu.map_info.structure_models", &App::show_structure_models_window_},
+            {"menu.map_info.repeaters", &App::show_repeaters_window_},
+            {"aux.track_geometry", nullptr},
+            {"menu.map_info.othertracks", &App::show_othertracks_window_},
+            {"menu.map_info.irregularities", &App::show_irregularities_window_},
+            {"menu.map_info.adhesions", &App::show_adhesions_window_},
+            {"aux.signal", nullptr},
+            {"menu.map_info.signal_aspects", &App::show_signal_aspects_window_},
+            {"menu.map_info.signals", &App::show_signals_window_},
+            {"menu.map_info.beacons", &App::show_beacons_window_},
+            {"aux.sound", nullptr},
+            {"menu.map_info.sound_files", &App::show_sound_list_window_},
+            {"menu.map_info.sound_3d_files", &App::show_sound_3d_list_window_},
+            {"menu.map_info.map_sounds", &App::show_map_sounds_window_},
+            {"menu.map_info.map_sound_3d", &App::show_map_sound_3d_window_},
+            {"menu.map_info.rolling_noises", &App::show_rolling_noises_window_},
+            {"menu.map_info.flange_noises", &App::show_flange_noises_window_},
+            {"menu.map_info.joint_noises", &App::show_joint_noises_window_},
+            {"aux.effects", nullptr},
+            {"menu.map_info.backgrounds", &App::show_backgrounds_window_},
+            {"menu.map_info.cab_illuminance", &App::show_cab_illuminance_window_},
+            {"menu.map_info.fogs", &App::show_fogs_window_},
+        }};
+        bool has_category = false;
+        for (const MapInfoMenuEntry& entry : kMapInfoMenuEntries) {
+            if (!entry.window_visible) {
+                if (has_category) ImGui::Separator();
+                ImGui::MenuItem(tr(entry.label_key).c_str(), nullptr, false, false);
+                has_category = true;
+                continue;
+            }
+            bool& window_visible = this->*entry.window_visible;
+            ImGui::MenuItem(tr(entry.label_key).c_str(), nullptr, &window_visible);
         }
         ImGui::EndMenu();
     }
