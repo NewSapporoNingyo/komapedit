@@ -94,6 +94,12 @@ float clamp_station_marker_size(float value) {
     return std::clamp(value, kMinStationMarkerSize, kMaxStationMarkerSize);
 }
 
+int clamp_scene_draw_distance(double value) {
+    if (!std::isfinite(value)) return kDefaultSceneDrawDistanceM;
+    const int rounded = static_cast<int>(std::round(value / kSceneDrawDistanceStepM)) * kSceneDrawDistanceStepM;
+    return std::clamp(rounded, kMinSceneDrawDistanceM, kMaxSceneDrawDistanceM);
+}
+
 ImVec4 default_theme_color() {
     return ImVec4(0.26f, 0.59f, 0.98f, 1.0f);
 }
@@ -372,6 +378,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "\n[View3D]\n";
     out << "show_scene_owntrack_markers=" << bool_to_string(settings.view_3d.show_scene_owntrack_markers) << "\n";
     out << "show_scene_current_position_on_plan=" << bool_to_string(settings.view_3d.show_scene_current_position_on_plan) << "\n";
+    out << "scene_draw_distance_m=" << clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m) << "\n";
     return true;
 }
 
@@ -564,6 +571,17 @@ UserSettings load_user_settings() {
             view_3d_keys_seen.insert("show_scene_current_position_on_plan");
             settings.view_3d.show_scene_current_position_on_plan =
                 parse_bool(value, settings.view_3d.show_scene_current_position_on_plan);
+        } else if (key == "scene_draw_distance_m" ||
+                   key == "scene_draw_distance" ||
+                   key == "scene_window_forward_m" ||
+                   key == "draw_distance_m" ||
+                   key == "draw_distance") {
+            view_3d_keys_seen.insert("scene_draw_distance_m");
+            try {
+                settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(std::stod(value));
+            } catch (...) {
+                settings.view_3d.scene_draw_distance_m = kDefaultSceneDrawDistanceM;
+            }
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
@@ -572,7 +590,8 @@ UserSettings load_user_settings() {
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    if (view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 2) save_user_settings(settings);
+    settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m);
+    if (view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 3) save_user_settings(settings);
     return settings;
 }
 

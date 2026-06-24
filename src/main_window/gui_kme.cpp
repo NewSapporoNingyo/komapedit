@@ -401,6 +401,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     apply_view_3d_settings(settings_.view_3d);
     last_saved_view_3d_settings_ = current_view_3d_settings();
     settings_.view_3d = last_saved_view_3d_settings_;
+    pending_scene_draw_distance_m_ = scene_draw_distance_m_;
+    scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -1404,12 +1406,22 @@ View3DSettings App::current_view_3d_settings() const {
     View3DSettings view;
     view.show_scene_owntrack_markers = show_scene_owntrack_markers_;
     view.show_scene_current_position_on_plan = show_scene_current_position_on_plan_;
+    view.scene_draw_distance_m = scene_draw_distance_m_;
     return view;
 }
 
 void App::apply_view_3d_settings(const View3DSettings& settings) {
     show_scene_owntrack_markers_ = settings.show_scene_owntrack_markers;
     show_scene_current_position_on_plan_ = settings.show_scene_current_position_on_plan;
+    scene_draw_distance_m_ = clamp_scene_draw_distance(settings.scene_draw_distance_m);
+    apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+}
+
+void App::apply_scene_draw_distance_to_canvas(int distance_m) {
+    if (scene_preview_canvas_) {
+        scene_preview_canvas_->set_scene_window(kSceneWindowBackDistanceM,
+                                                static_cast<double>(clamp_scene_draw_distance(distance_m)));
+    }
 }
 
 void App::save_runtime_settings_if_changed() {
@@ -1500,6 +1512,11 @@ void App::render_menu() {
                 popups_.control_points = true;
             }
             ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem(tr("menu.canvas_3d_settings").c_str())) {
+            pending_scene_draw_distance_m_ = scene_draw_distance_m_;
+            scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
+            popups_.canvas_3d_settings = true;
         }
         ImGui::EndMenu();
     }
@@ -1905,6 +1922,45 @@ void App::render_popups() {
     if (!canvas_element_sizes_popup_open) {
         pending_station_marker_size_ = station_marker_size_before_dialog_;
         station_marker_size_ = station_marker_size_before_dialog_;
+    }
+
+    if (popups_.canvas_3d_settings) {
+        ImGui::OpenPopup(tr("dialog.canvas_3d_settings").c_str());
+        popups_.canvas_3d_settings = false;
+    }
+    bool canvas_3d_settings_popup_open = true;
+    if (ImGui::BeginPopupModal(tr("dialog.canvas_3d_settings").c_str(), &canvas_3d_settings_popup_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        int draw_distance_chunks = clamp_scene_draw_distance(pending_scene_draw_distance_m_) / kSceneDrawDistanceStepM;
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::SliderInt(tr("label.scene_draw_distance").c_str(),
+                             &draw_distance_chunks,
+                             kMinSceneDrawDistanceM / kSceneDrawDistanceStepM,
+                             kMaxSceneDrawDistanceM / kSceneDrawDistanceStepM,
+                             "%d00 m",
+                             ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
+            pending_scene_draw_distance_m_ = clamp_scene_draw_distance(draw_distance_chunks * kSceneDrawDistanceStepM);
+            apply_scene_draw_distance_to_canvas(pending_scene_draw_distance_m_);
+        }
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            scene_draw_distance_m_ = clamp_scene_draw_distance(pending_scene_draw_distance_m_);
+            pending_scene_draw_distance_m_ = scene_draw_distance_m_;
+            scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
+            apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+            sync_runtime_settings_before_save();
+            save_user_settings(settings_);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
+            apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (!canvas_3d_settings_popup_open) {
+        pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
+        apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
     }
 
     if (popups_.range) {

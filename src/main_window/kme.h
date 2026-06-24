@@ -44,6 +44,11 @@ inline constexpr float kMaxUiComponentSize = 200.0f;
 inline constexpr float kDefaultStationMarkerSize = 4.0f;
 inline constexpr float kMinStationMarkerSize = 1.0f;
 inline constexpr float kMaxStationMarkerSize = 16.0f;
+inline constexpr int kDefaultSceneDrawDistanceM = 1200;
+inline constexpr int kMinSceneDrawDistanceM = 200;
+inline constexpr int kMaxSceneDrawDistanceM = 10000;
+inline constexpr int kSceneDrawDistanceStepM = 100;
+inline constexpr double kSceneWindowBackDistanceM = 100.0;
 inline constexpr size_t kMaxRecentMaps = 10;
 inline constexpr const char* kOwnTrackLookupAliases[] = {"", "0", "1", "\\", "own", "main"};
 
@@ -68,6 +73,7 @@ std::string format_double(double value, int precision = 6);
 float clamp_font_size(float value);
 float clamp_ui_component_size(float value);
 float clamp_station_marker_size(float value);
+int clamp_scene_draw_distance(double value);
 ImVec4 default_theme_color();
 ImVec4 clamp_theme_color(ImVec4 color);
 std::string theme_color_to_string(const ImVec4& color);
@@ -682,10 +688,12 @@ struct View2DSettings {
 struct View3DSettings {
     bool show_scene_owntrack_markers = kDefaultNonStationAuxInfoVisible;
     bool show_scene_current_position_on_plan = kDefaultNonStationAuxInfoVisible;
+    int scene_draw_distance_m = kDefaultSceneDrawDistanceM;
 
     bool operator==(const View3DSettings& other) const {
         return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
-            show_scene_current_position_on_plan == other.show_scene_current_position_on_plan;
+            show_scene_current_position_on_plan == other.show_scene_current_position_on_plan &&
+            scene_draw_distance_m == other.scene_draw_distance_m;
     }
 
     bool operator!=(const View3DSettings& other) const {
@@ -776,6 +784,9 @@ private:
     float station_marker_size_ = kDefaultStationMarkerSize;
     float pending_station_marker_size_ = kDefaultStationMarkerSize;
     float station_marker_size_before_dialog_ = kDefaultStationMarkerSize;
+    int scene_draw_distance_m_ = kDefaultSceneDrawDistanceM;
+    int pending_scene_draw_distance_m_ = kDefaultSceneDrawDistanceM;
+    int scene_draw_distance_before_dialog_m_ = kDefaultSceneDrawDistanceM;
     ImVec4 theme_color_ = default_theme_color();
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
@@ -930,6 +941,7 @@ private:
         bool about = false;
         bool ui_settings = false;
         bool canvas_element_sizes = false;
+        bool canvas_3d_settings = false;
     };
     PopupState popups_;
     bool has_saved_layout_ = false;
@@ -1097,6 +1109,7 @@ private:
     void apply_view_2d_settings(const View2DSettings& settings);
     View3DSettings current_view_3d_settings() const;
     void apply_view_3d_settings(const View3DSettings& settings);
+    void apply_scene_draw_distance_to_canvas(int distance_m);
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
