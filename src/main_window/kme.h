@@ -929,6 +929,7 @@ private:
         bool background_align = false;
         bool about = false;
         bool ui_settings = false;
+        bool canvas_element_sizes = false;
     };
     PopupState popups_;
     bool has_saved_layout_ = false;
