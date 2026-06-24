@@ -166,7 +166,7 @@ enum class ProfileMarkerDirection {
 
 static void draw_profile_vertical_marker(double x, double track_y, ProfileMarkerDirection direction,
                                          ImU32 line_color, float line_weight, bool draw_station_marker,
-                                         float station_marker_size = kDefaultStationMarkerSize) {
+                                         float station_marker_radius = kDefaultStationMarkerSize) {
     ImDrawList* draw = ImPlot::GetPlotDrawList();
     ImVec2 pos = ImPlot::GetPlotPos();
     ImVec2 size = ImPlot::GetPlotSize();
@@ -185,7 +185,7 @@ static void draw_profile_vertical_marker(double x, double track_y, ProfileMarker
         draw->AddLine(ImVec2(p.x, line_min), ImVec2(p.x, line_max), line_color, line_weight);
     }
     if (draw_station_marker) {
-        float radius = clamp_station_marker_size(station_marker_size);
+        float radius = std::max(0.0f, station_marker_radius);
         float outline_weight = std::max(1.0f, radius * 0.375f);
         draw->AddCircleFilled(p, radius, IM_COL32(0, 0, 0, 255));
         draw->AddCircle(p, radius, IM_COL32(255, 255, 255, 255), 0, outline_weight);
@@ -281,11 +281,13 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
             }
         }
         if (show_stations_) {
+            const float station_marker_radius =
+                kDefaultStationMarkerSize * marker_size_scale_from_percent(marker_size_percent_);
             for (const auto& s : data.stations) {
                 double x = s.distance;
                 double y = s.z - model_.height_origin;
                 draw_profile_vertical_marker(x, y, ProfileMarkerDirection::Up,
-                                             IM_COL32(255, 255, 255, 191), 1.0f, true, station_marker_size_);
+                                             IM_COL32(255, 255, 255, 191), 1.0f, true, station_marker_radius);
                 if (show_station_names_) draw_plot_point_right_text(x, y, s.name, IM_COL32(255, 255, 255, 255));
                 if (show_station_mileage_) draw_fixed_y_plot_text(x, station_mileage_text(s), IM_COL32(255, 216, 77, 255), FixedPlotY::Top);
             }

@@ -89,9 +89,13 @@ float clamp_ui_component_size(float value) {
     return std::clamp(value, kMinUiComponentSize, kMaxUiComponentSize);
 }
 
-float clamp_station_marker_size(float value) {
-    if (!std::isfinite(value)) return kDefaultStationMarkerSize;
-    return std::clamp(value, kMinStationMarkerSize, kMaxStationMarkerSize);
+float clamp_marker_size_percent(float value) {
+    if (!std::isfinite(value)) return kDefaultMarkerSizePercent;
+    return std::clamp(value, kMinMarkerSizePercent, kMaxMarkerSizePercent);
+}
+
+float marker_size_scale_from_percent(float value) {
+    return clamp_marker_size_percent(value) / 100.0f;
 }
 
 int clamp_scene_draw_distance(double value) {
@@ -323,7 +327,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "language=" << language_to_string(settings.language) << "\n";
     out << "font_size=" << std::fixed << std::setprecision(1) << clamp_font_size(settings.font_size) << "\n";
     out << "ui_component_size=" << std::fixed << std::setprecision(1) << clamp_ui_component_size(settings.ui_component_size) << "\n";
-    out << "station_marker_size=" << std::fixed << std::setprecision(1) << clamp_station_marker_size(settings.station_marker_size) << "\n";
+    out << "marker_size_percent=" << std::fixed << std::setprecision(1) << clamp_marker_size_percent(settings.marker_size_percent) << "\n";
     out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
     out << "\n[WindowVisibility]\n";
     out << "show_othertracks_window=" << bool_to_string(settings.window_visibility.show_othertracks_window) << "\n";
@@ -426,11 +430,20 @@ UserSettings load_user_settings() {
             } catch (...) {
                 settings.ui_component_size = kDefaultUiComponentSize;
             }
+        } else if (key == "marker_size_percent" || key == "marker_size_scale_percent" || key == "station_marker_size_percent") {
+            try {
+                settings.marker_size_percent = clamp_marker_size_percent(std::stof(value));
+            } catch (...) {
+                settings.marker_size_percent = kDefaultMarkerSizePercent;
+            }
         } else if (key == "station_marker_size" || key == "station_marker_radius" || key == "station_size") {
             try {
-                settings.station_marker_size = clamp_station_marker_size(std::stof(value));
+                float raw = std::stof(value);
+                settings.marker_size_percent = raw < kMinMarkerSizePercent
+                    ? clamp_marker_size_percent(raw / kDefaultStationMarkerSize * 100.0f)
+                    : clamp_marker_size_percent(raw);
             } catch (...) {
-                settings.station_marker_size = kDefaultStationMarkerSize;
+                settings.marker_size_percent = kDefaultMarkerSizePercent;
             }
         } else if (is_theme_color_key) {
             if (auto color = parse_theme_color(value)) {
@@ -586,7 +599,7 @@ UserSettings load_user_settings() {
     }
     settings.font_size = clamp_font_size(settings.font_size);
     settings.ui_component_size = clamp_ui_component_size(settings.ui_component_size);
-    settings.station_marker_size = clamp_station_marker_size(settings.station_marker_size);
+    settings.marker_size_percent = clamp_marker_size_percent(settings.marker_size_percent);
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);

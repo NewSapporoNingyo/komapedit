@@ -377,19 +377,19 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     lang_ = settings_.language;
     font_size_ = clamp_font_size(settings_.font_size);
     ui_component_size_ = clamp_ui_component_size(settings_.ui_component_size);
-    station_marker_size_ = clamp_station_marker_size(settings_.station_marker_size);
+    marker_size_percent_ = clamp_marker_size_percent(settings_.marker_size_percent);
     theme_color_ = clamp_theme_color(settings_.theme_color);
     settings_.language = lang_;
     settings_.font_size = font_size_;
     settings_.ui_component_size = ui_component_size_;
-    settings_.station_marker_size = station_marker_size_;
+    settings_.marker_size_percent = marker_size_percent_;
     settings_.theme_color = theme_color_;
     pending_font_size_ = font_size_;
     font_size_before_dialog_ = font_size_;
     pending_ui_component_size_ = ui_component_size_;
     ui_component_size_before_dialog_ = ui_component_size_;
-    pending_station_marker_size_ = station_marker_size_;
-    station_marker_size_before_dialog_ = station_marker_size_;
+    pending_marker_size_percent_ = marker_size_percent_;
+    marker_size_percent_before_dialog_ = marker_size_percent_;
     pending_theme_color_ = theme_color_;
     theme_color_before_dialog_ = theme_color_;
     apply_window_visibility_settings(settings_.window_visibility);
@@ -1495,8 +1495,8 @@ void App::render_menu() {
         }
         if (ImGui::BeginMenu(tr("menu.canvas_2d_settings").c_str())) {
             if (ImGui::MenuItem(tr("menu.canvas_element_sizes").c_str())) {
-                pending_station_marker_size_ = station_marker_size_;
-                station_marker_size_before_dialog_ = station_marker_size_;
+                pending_marker_size_percent_ = marker_size_percent_;
+                marker_size_percent_before_dialog_ = marker_size_percent_;
                 popups_.canvas_element_sizes = true;
             }
             ImGui::Separator();
@@ -1899,29 +1899,29 @@ void App::render_popups() {
     bool canvas_element_sizes_popup_open = true;
     if (ImGui::BeginPopupModal(tr("dialog.canvas_element_sizes").c_str(), &canvas_element_sizes_popup_open, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SetNextItemWidth(260.0f);
-        if (ImGui::SliderFloat(tr("label.station_marker_size").c_str(), &pending_station_marker_size_, kMinStationMarkerSize, kMaxStationMarkerSize, "%.0f px", ImGuiSliderFlags_AlwaysClamp)) {
-            pending_station_marker_size_ = clamp_station_marker_size(pending_station_marker_size_);
-            station_marker_size_ = pending_station_marker_size_;
+        if (ImGui::SliderFloat(tr("label.station_marker_size").c_str(), &pending_marker_size_percent_, kMinMarkerSizePercent, kMaxMarkerSizePercent, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
+            pending_marker_size_percent_ = clamp_marker_size_percent(pending_marker_size_percent_);
+            marker_size_percent_ = pending_marker_size_percent_;
         }
         if (ImGui::Button(tr("button.ok").c_str())) {
-            station_marker_size_ = clamp_station_marker_size(pending_station_marker_size_);
-            station_marker_size_before_dialog_ = station_marker_size_;
-            settings_.station_marker_size = station_marker_size_;
+            marker_size_percent_ = clamp_marker_size_percent(pending_marker_size_percent_);
+            marker_size_percent_before_dialog_ = marker_size_percent_;
+            settings_.marker_size_percent = marker_size_percent_;
             sync_runtime_settings_before_save();
             save_user_settings(settings_);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
-            pending_station_marker_size_ = station_marker_size_before_dialog_;
-            station_marker_size_ = station_marker_size_before_dialog_;
+            pending_marker_size_percent_ = marker_size_percent_before_dialog_;
+            marker_size_percent_ = marker_size_percent_before_dialog_;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
     if (!canvas_element_sizes_popup_open) {
-        pending_station_marker_size_ = station_marker_size_before_dialog_;
-        station_marker_size_ = station_marker_size_before_dialog_;
+        pending_marker_size_percent_ = marker_size_percent_before_dialog_;
+        marker_size_percent_ = marker_size_percent_before_dialog_;
     }
 
     if (popups_.canvas_3d_settings) {
