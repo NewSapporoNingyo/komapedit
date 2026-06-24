@@ -45,6 +45,7 @@ inline constexpr float kDefaultStationMarkerSize = 4.0f;
 inline constexpr float kDefaultMarkerSizePercent = 100.0f;
 inline constexpr float kMinMarkerSizePercent = 20.0f;
 inline constexpr float kMaxMarkerSizePercent = 1000.0f;
+inline constexpr int kMarkerSizePercentStep = 10;
 inline constexpr int kDefaultSceneDrawDistanceM = 1200;
 inline constexpr int kMinSceneDrawDistanceM = 200;
 inline constexpr int kMaxSceneDrawDistanceM = 10000;

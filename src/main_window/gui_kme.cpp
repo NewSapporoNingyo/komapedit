@@ -1899,8 +1899,14 @@ void App::render_popups() {
     bool canvas_element_sizes_popup_open = true;
     if (ImGui::BeginPopupModal(tr("dialog.canvas_element_sizes").c_str(), &canvas_element_sizes_popup_open, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SetNextItemWidth(260.0f);
-        if (ImGui::SliderFloat(tr("label.station_marker_size").c_str(), &pending_marker_size_percent_, kMinMarkerSizePercent, kMaxMarkerSizePercent, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
-            pending_marker_size_percent_ = clamp_marker_size_percent(pending_marker_size_percent_);
+        int marker_size_steps = static_cast<int>(clamp_marker_size_percent(pending_marker_size_percent_) / kMarkerSizePercentStep);
+        if (ImGui::SliderInt(tr("label.station_marker_size").c_str(),
+                             &marker_size_steps,
+                             static_cast<int>(kMinMarkerSizePercent) / kMarkerSizePercentStep,
+                             static_cast<int>(kMaxMarkerSizePercent) / kMarkerSizePercentStep,
+                             "%d0%%",
+                             ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
+            pending_marker_size_percent_ = clamp_marker_size_percent(static_cast<float>(marker_size_steps * kMarkerSizePercentStep));
             marker_size_percent_ = pending_marker_size_percent_;
         }
         if (ImGui::Button(tr("button.ok").c_str())) {

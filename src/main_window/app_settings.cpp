@@ -91,7 +91,8 @@ float clamp_ui_component_size(float value) {
 
 float clamp_marker_size_percent(float value) {
     if (!std::isfinite(value)) return kDefaultMarkerSizePercent;
-    return std::clamp(value, kMinMarkerSizePercent, kMaxMarkerSizePercent);
+    const int rounded = static_cast<int>(std::round(value / kMarkerSizePercentStep)) * kMarkerSizePercentStep;
+    return std::clamp(static_cast<float>(rounded), kMinMarkerSizePercent, kMaxMarkerSizePercent);
 }
 
 float marker_size_scale_from_percent(float value) {
