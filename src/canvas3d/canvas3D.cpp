@@ -23,6 +23,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -53,6 +54,9 @@ constexpr float kSceneTrackMarkerAlpha = 0.8f;
 constexpr float kSceneSelectionMinScreenRadius = 6.0f;
 constexpr float kSceneSelectionHitPadding = 4.0f;
 constexpr float kSceneHighlightOutlineWidthPx = 5.0f;
+// The event-driven canvas stops repainting while idle, so preserve the last active FPS across long gaps.
+constexpr double kSceneFpsIdleResetSeconds = 0.25;
+constexpr float kSceneFpsSmoothing = 0.15f;
 
 template <typename T>
 void release_com(T*& p) {
@@ -1647,6 +1651,7 @@ struct Canvas3D::Impl {
         scene_stats_value.window_back_m = scene_window_back_m;
         scene_stats_value.window_forward_m = scene_window_forward_m;
         scene_stats_value.camera_distance = scene_camera_distance;
+        reset_scene_fps_counter();
         start_scene_model_worker(std::move(paths_to_load));
         return true;
     }
@@ -1661,6 +1666,7 @@ struct Canvas3D::Impl {
         scene_context_object_index = -1;
         scene_has_highlight = false;
         scene_stats_value = {};
+        reset_scene_fps_counter();
     }
 
     bool has_scene() const {
@@ -3581,6 +3587,36 @@ fail:
         context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         ID3D11RenderTargetView* null_rtv = nullptr;
         context->OMSetRenderTargets(1, &null_rtv, nullptr);
+        update_scene_fps_counter();
+    }
+
+    void reset_scene_fps_counter() {
+        scene_fps_last_frame_valid = false;
+        scene_fps_value = 0.0f;
+    }
+
+    void update_scene_fps_counter() {
+        using Clock = std::chrono::steady_clock;
+        const Clock::time_point now = Clock::now();
+        if (scene_fps_last_frame_valid) {
+            const double elapsed_seconds = std::chrono::duration<double>(now - scene_fps_last_frame_at).count();
+            if (elapsed_seconds > 0.0 && elapsed_seconds <= kSceneFpsIdleResetSeconds) {
+                const float sample = static_cast<float>(1.0 / elapsed_seconds);
+                scene_fps_value = scene_fps_value > 0.0f
+                    ? scene_fps_value + (sample - scene_fps_value) * kSceneFpsSmoothing
+                    : sample;
+            }
+        }
+        scene_fps_last_frame_at = now;
+        scene_fps_last_frame_valid = true;
+    }
+
+    void draw_scene_overlay_label(ImDrawList* draw, ImVec2 pos, ImVec2 text_size,
+                                  const char* text, float pad) const {
+        draw->AddRectFilled(ImVec2(pos.x - pad, pos.y - pad * 0.5f),
+                            ImVec2(pos.x + text_size.x + pad, pos.y + text_size.y + pad * 0.5f),
+                            IM_COL32(0, 0, 0, 140), 3.0f);
+        draw->AddText(pos, IM_COL32(255, 255, 255, 230), text);
     }
 
     void draw_scene_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
@@ -3598,10 +3634,20 @@ fail:
         const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
         ImVec2 text_size = ImGui::CalcTextSize(buffer);
         ImVec2 pos(origin.x + pad * 2.0f, origin.y + pad * 2.0f);
-        draw->AddRectFilled(ImVec2(pos.x - pad, pos.y - pad * 0.5f),
-                            ImVec2(pos.x + text_size.x + pad, pos.y + text_size.y + pad * 0.5f),
-                            IM_COL32(0, 0, 0, 140), 3.0f);
-        draw->AddText(pos, IM_COL32(255, 255, 255, 230), buffer);
+        draw_scene_overlay_label(draw, pos, text_size, buffer, pad);
+    }
+
+    void draw_scene_fps_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
+        if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active || scene_fps_value <= 0.0f) return;
+        char buffer[32] = {};
+        std::snprintf(buffer, sizeof(buffer), "%.1f fps", static_cast<double>(scene_fps_value));
+        const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
+        ImVec2 text_size = ImGui::CalcTextSize(buffer);
+        ImVec2 pos(origin.x + size.x - text_size.x - pad * 2.0f,
+                   origin.y + size.y - text_size.y - pad * 2.0f);
+        pos.x = std::max(origin.x + pad, pos.x);
+        pos.y = std::max(origin.y + pad, pos.y);
+        draw_scene_overlay_label(draw, pos, text_size, buffer, pad);
     }
 
     void draw_scene_loading_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
@@ -3695,6 +3741,7 @@ fail:
         } else {
             draw_scene_overlay(draw, origin, avail);
         }
+        draw_scene_fps_overlay(draw, origin, avail);
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
         if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0) {
@@ -3963,6 +4010,9 @@ fail:
     float scene_fast_multiplier = 10.0f;
     std::string scene_last_error;
     Canvas3DSceneStats scene_stats_value;
+    std::chrono::steady_clock::time_point scene_fps_last_frame_at{};
+    bool scene_fps_last_frame_valid = false;
+    float scene_fps_value = 0.0f;
     ModelLoaderClient loader;
     ModelLoaderClient scene_loader;
 };
