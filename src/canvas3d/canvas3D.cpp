@@ -3621,26 +3621,27 @@ fail:
 
     void draw_scene_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
         if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active) return;
-        Canvas3DSceneStats stats = scene_stats();
         char buffer[256] = {};
-        std::snprintf(buffer, sizeof(buffer), "x=%.1fm  y=%.1fm  d=%.1fm  chunks=%zu  instances=%zu  models=%zu/%zu",
+        std::snprintf(buffer, sizeof(buffer), "x=%.1fm  y=%.1fm  d=%.1fm",
                       scene_camera_lateral_offset,
                       static_cast<double>(scene_camera_vertical_offset),
-                      stats.camera_distance,
-                      stats.chunk_count,
-                      stats.drawn_instance_count,
-                      stats.model_ready_count,
-                      stats.model_path_count);
+                      scene_camera_distance);
         const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
         ImVec2 text_size = ImGui::CalcTextSize(buffer);
         ImVec2 pos(origin.x + pad * 2.0f, origin.y + pad * 2.0f);
         draw_scene_overlay_label(draw, pos, text_size, buffer, pad);
     }
 
-    void draw_scene_fps_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
-        if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active || scene_fps_value <= 0.0f) return;
-        char buffer[32] = {};
-        std::snprintf(buffer, sizeof(buffer), "%.1f fps", static_cast<double>(scene_fps_value));
+    void draw_scene_metrics_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
+                                    const Canvas3DSceneStats& stats) const {
+        if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active) return;
+        char buffer[128] = {};
+        std::snprintf(buffer, sizeof(buffer), "chunks=%zu  instances=%zu  models=%zu/%zu  %.1f fps",
+                      stats.chunk_count,
+                      stats.drawn_instance_count,
+                      stats.model_ready_count,
+                      stats.model_path_count,
+                      static_cast<double>(scene_fps_value));
         const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
         ImVec2 text_size = ImGui::CalcTextSize(buffer);
         ImVec2 pos(origin.x + size.x - text_size.x - pad * 2.0f,
@@ -3740,8 +3741,8 @@ fail:
             draw_scene_loading_overlay(draw, origin, avail, ui_text.loading);
         } else {
             draw_scene_overlay(draw, origin, avail);
+            draw_scene_metrics_overlay(draw, origin, avail, stats);
         }
-        draw_scene_fps_overlay(draw, origin, avail);
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
         if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0) {
