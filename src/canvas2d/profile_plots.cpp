@@ -249,8 +249,12 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     ImGuiIO& io = ImGui::GetIO();
     bool mouse_in_profile_plot = profile_plot_rect_valid_ && point_in_rect(io.MousePos, profile_plot_pos_, profile_plot_size_);
     ScopedImPlotWheelZoomDisabled disable_default_wheel_zoom(mouse_in_profile_plot);
+    const CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(canvas_line_widths_);
+    const ImVec2 grid_line_size(line_widths.background_grid_px, line_widths.background_grid_px);
     ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(4.0f, 4.0f));
     ImPlot::PushStyleVar(ImPlotStyleVar_LabelPadding, ImVec2(2.0f, 2.0f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_MajorGridSize, grid_line_size);
+    ImPlot::PushStyleVar(ImPlotStyleVar_MinorGridSize, grid_line_size);
     bool consumed_profile_x_zoom = false;
     if (ImPlot::BeginPlot("##ProfilePlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
         ImVec2 frame_min = ImGui::GetItemRectMin();
@@ -269,12 +273,12 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
             if (reset_profile_axes_next_) profile_x_zoom_pending_ = false;
         }
         ImPlot::SetupAxisLimits(ImAxis_Y1, data.ymin, data.ymax, reset_cond);
-        plot_line_vec("Own", data.own_x, data.own_y, ImVec4(1, 1, 1, 1), 2.0f);
-        for (const auto& t : data.other) plot_line_vec(t.key.c_str(), t.x, t.y, t.color, 1.2f);
+        plot_line_vec("Own", data.own_x, data.own_y, ImVec4(1, 1, 1, 1), line_widths.own_track_px);
+        for (const auto& t : data.other) plot_line_vec(t.key.c_str(), t.x, t.y, t.color, line_widths.other_track_px);
         if (show_gradient_pos_) {
             for (const auto& p : data.gradient_points) {
                 draw_profile_vertical_marker(p.x, p.y, ProfileMarkerDirection::Down,
-                                             IM_COL32(255, 255, 255, 140), 1.0f, false);
+                                             IM_COL32(255, 255, 255, 140), line_widths.chart_marker_px, false);
             }
             if (show_gradient_values_) {
                 draw_bottom_locked_plot_labels(data.gradient_labels);
@@ -287,7 +291,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
                 double x = s.distance;
                 double y = s.z - model_.height_origin;
                 draw_profile_vertical_marker(x, y, ProfileMarkerDirection::Up,
-                                             IM_COL32(255, 255, 255, 191), 1.0f, true, station_marker_radius);
+                                             IM_COL32(255, 255, 255, 191), line_widths.chart_marker_px, true, station_marker_radius);
                 if (show_station_names_) draw_plot_point_right_text(x, y, s.name, IM_COL32(255, 255, 255, 255));
                 if (show_station_mileage_) draw_fixed_y_plot_text(x, station_mileage_text(s), IM_COL32(255, 216, 77, 255), FixedPlotY::Top);
             }
@@ -322,14 +326,18 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         reset_profile_axes_next_ = false;
         ImPlot::EndPlot();
     }
-    ImPlot::PopStyleVar(2);
+    ImPlot::PopStyleVar(4);
 }
 
 void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
     if (!show_radius_graph_) return;
     ScopedImPlotFitButton disable_fit(mode_ == Mode::Measure);
+    const CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(canvas_line_widths_);
+    const ImVec2 grid_line_size(line_widths.background_grid_px, line_widths.background_grid_px);
     ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(4.0f, 4.0f));
     ImPlot::PushStyleVar(ImPlotStyleVar_LabelPadding, ImVec2(2.0f, 2.0f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_MajorGridSize, grid_line_size);
+    ImPlot::PushStyleVar(ImPlotStyleVar_MinorGridSize, grid_line_size);
     if (ImPlot::BeginPlot("##RadiusPlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
         ImVec2 frame_min = ImGui::GetItemRectMin();
         ImVec2 frame_max = ImGui::GetItemRectMax();
@@ -343,12 +351,12 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
             ImPlot::SetupAxisLimits(ImAxis_X1, dmin_, dmax_, reset_cond);
         }
         ImPlot::SetupAxisLimits(ImAxis_Y1, -2.2, 2.2, ImPlotCond_Always);
-        plot_line_vec("RadiusSign", data.curve_x, data.curve_y, ImVec4(1, 1, 1, 1), 2.0f);
+        plot_line_vec("RadiusSign", data.curve_x, data.curve_y, ImVec4(1, 1, 1, 1), line_widths.own_track_px);
         for (const auto& label : data.radius_labels) ImPlot::PlotText(label.text.c_str(), label.x, label.y, ImVec2(-6, 0), {ImPlotProp_Flags, ImPlotTextFlags_Vertical});
         if (show_stations_) {
             for (const auto& s : data.stations) {
                 double x = s.distance;
-                ImPlot::PlotInfLines(("##rst" + s.key).c_str(), &x, 1, {ImPlotProp_LineColor, ImVec4(1, 1, 1, 0.55f), ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
+                ImPlot::PlotInfLines(("##rst" + s.key).c_str(), &x, 1, {ImPlotProp_LineColor, ImVec4(1, 1, 1, 0.55f), ImPlotProp_LineWeight, line_widths.chart_marker_px, ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
                 if (show_station_names_) draw_fixed_y_plot_text(x, s.name, IM_COL32(255, 255, 255, 255), FixedPlotY::Top);
                 if (show_station_mileage_) draw_fixed_y_plot_text(x, station_mileage_text(s), IM_COL32(255, 216, 77, 255), FixedPlotY::Bottom);
             }
@@ -374,7 +382,7 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
         reset_radius_axes_next_ = false;
         ImPlot::EndPlot();
     }
-    ImPlot::PopStyleVar(2);
+    ImPlot::PopStyleVar(4);
 }
 
 void App::render_plots() {

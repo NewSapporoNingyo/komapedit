@@ -46,6 +46,13 @@ inline constexpr float kDefaultMarkerSizePercent = 100.0f;
 inline constexpr float kMinMarkerSizePercent = 20.0f;
 inline constexpr float kMaxMarkerSizePercent = 1000.0f;
 inline constexpr int kMarkerSizePercentStep = 10;
+inline constexpr float kDefaultOwnTrackLineWidthPx = 2.0f;
+inline constexpr float kDefaultOtherTrackLineWidthPx = 1.5f;
+inline constexpr float kDefaultChartMarkerLineWidthPx = 1.0f;
+inline constexpr float kDefaultBackgroundGridLineWidthPx = 1.0f;
+inline constexpr float kMinCanvasLineWidthPx = 1.0f;
+inline constexpr float kMaxCanvasLineWidthPx = 20.0f;
+inline constexpr float kCanvasLineWidthStepPx = 0.5f;
 inline constexpr int kDefaultSceneDrawDistanceM = 1200;
 inline constexpr int kMinSceneDrawDistanceM = 200;
 inline constexpr int kMaxSceneDrawDistanceM = 10000;
@@ -69,6 +76,13 @@ inline bool is_own_track_lookup_alias(const std::string& normalized_key) {
     return false;
 }
 
+struct CanvasLineWidthSettings {
+    float own_track_px = kDefaultOwnTrackLineWidthPx;
+    float other_track_px = kDefaultOtherTrackLineWidthPx;
+    float chart_marker_px = kDefaultChartMarkerLineWidthPx;
+    float background_grid_px = kDefaultBackgroundGridLineWidthPx;
+};
+
 std::wstring utf8_to_wide(const std::string& text);
 std::string wide_to_utf8(const std::wstring& text);
 std::string format_double(double value, int precision = 6);
@@ -76,6 +90,8 @@ float clamp_font_size(float value);
 float clamp_ui_component_size(float value);
 float clamp_marker_size_percent(float value);
 float marker_size_scale_from_percent(float value);
+float clamp_canvas_line_width(float value, float fallback);
+CanvasLineWidthSettings clamp_canvas_line_widths(CanvasLineWidthSettings value);
 int clamp_scene_draw_distance(double value);
 ImVec4 default_theme_color();
 ImVec4 clamp_theme_color(ImVec4 color);
@@ -709,6 +725,7 @@ struct UserSettings {
     float font_size = kDefaultFontSize;
     float ui_component_size = kDefaultUiComponentSize;
     float marker_size_percent = kDefaultMarkerSizePercent;
+    CanvasLineWidthSettings canvas_line_widths;
     ImVec4 theme_color = default_theme_color();
     WindowVisibilitySettings window_visibility;
     View2DSettings view_2d;
@@ -787,6 +804,9 @@ private:
     float marker_size_percent_ = kDefaultMarkerSizePercent;
     float pending_marker_size_percent_ = kDefaultMarkerSizePercent;
     float marker_size_percent_before_dialog_ = kDefaultMarkerSizePercent;
+    CanvasLineWidthSettings canvas_line_widths_;
+    CanvasLineWidthSettings pending_canvas_line_widths_;
+    CanvasLineWidthSettings canvas_line_widths_before_dialog_;
     int scene_draw_distance_m_ = kDefaultSceneDrawDistanceM;
     int pending_scene_draw_distance_m_ = kDefaultSceneDrawDistanceM;
     int scene_draw_distance_before_dialog_m_ = kDefaultSceneDrawDistanceM;

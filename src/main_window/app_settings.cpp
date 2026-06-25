@@ -99,6 +99,20 @@ float marker_size_scale_from_percent(float value) {
     return clamp_marker_size_percent(value) / 100.0f;
 }
 
+float clamp_canvas_line_width(float value, float fallback) {
+    if (!std::isfinite(value)) return fallback;
+    const float rounded = std::round(value / kCanvasLineWidthStepPx) * kCanvasLineWidthStepPx;
+    return std::clamp(rounded, kMinCanvasLineWidthPx, kMaxCanvasLineWidthPx);
+}
+
+CanvasLineWidthSettings clamp_canvas_line_widths(CanvasLineWidthSettings value) {
+    value.own_track_px = clamp_canvas_line_width(value.own_track_px, kDefaultOwnTrackLineWidthPx);
+    value.other_track_px = clamp_canvas_line_width(value.other_track_px, kDefaultOtherTrackLineWidthPx);
+    value.chart_marker_px = clamp_canvas_line_width(value.chart_marker_px, kDefaultChartMarkerLineWidthPx);
+    value.background_grid_px = clamp_canvas_line_width(value.background_grid_px, kDefaultBackgroundGridLineWidthPx);
+    return value;
+}
+
 int clamp_scene_draw_distance(double value) {
     if (!std::isfinite(value)) return kDefaultSceneDrawDistanceM;
     const int rounded = static_cast<int>(std::round(value / kSceneDrawDistanceStepM)) * kSceneDrawDistanceStepM;
@@ -329,6 +343,11 @@ bool save_user_settings(const UserSettings& settings) {
     out << "font_size=" << std::fixed << std::setprecision(1) << clamp_font_size(settings.font_size) << "\n";
     out << "ui_component_size=" << std::fixed << std::setprecision(1) << clamp_ui_component_size(settings.ui_component_size) << "\n";
     out << "marker_size_percent=" << std::fixed << std::setprecision(1) << clamp_marker_size_percent(settings.marker_size_percent) << "\n";
+    CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(settings.canvas_line_widths);
+    out << "own_track_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.own_track_px << "\n";
+    out << "other_track_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.other_track_px << "\n";
+    out << "chart_marker_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.chart_marker_px << "\n";
+    out << "background_grid_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.background_grid_px << "\n";
     out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
     out << "\n[WindowVisibility]\n";
     out << "show_othertracks_window=" << bool_to_string(settings.window_visibility.show_othertracks_window) << "\n";
@@ -404,6 +423,13 @@ UserSettings load_user_settings() {
     std::string line;
     std::set<std::string> view_2d_keys_seen;
     std::set<std::string> view_3d_keys_seen;
+    auto parse_line_width = [](const std::string& value, float fallback) {
+        try {
+            return clamp_canvas_line_width(std::stof(value), fallback);
+        } catch (...) {
+            return fallback;
+        }
+    };
     while (std::getline(in, line)) {
         std::string trimmed_line = trim_ascii(line);
         if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
@@ -446,6 +472,30 @@ UserSettings load_user_settings() {
             } catch (...) {
                 settings.marker_size_percent = kDefaultMarkerSizePercent;
             }
+        } else if (key == "own_track_line_width_px" ||
+                   key == "own_track_line_width" ||
+                   key == "canvas_own_track_line_width_px" ||
+                   key == "canvas_own_track_line_width") {
+            settings.canvas_line_widths.own_track_px =
+                parse_line_width(value, kDefaultOwnTrackLineWidthPx);
+        } else if (key == "other_track_line_width_px" ||
+                   key == "other_track_line_width" ||
+                   key == "canvas_other_track_line_width_px" ||
+                   key == "canvas_other_track_line_width") {
+            settings.canvas_line_widths.other_track_px =
+                parse_line_width(value, kDefaultOtherTrackLineWidthPx);
+        } else if (key == "chart_marker_line_width_px" ||
+                   key == "chart_marker_line_width" ||
+                   key == "canvas_chart_marker_line_width_px" ||
+                   key == "canvas_chart_marker_line_width") {
+            settings.canvas_line_widths.chart_marker_px =
+                parse_line_width(value, kDefaultChartMarkerLineWidthPx);
+        } else if (key == "background_grid_line_width_px" ||
+                   key == "background_grid_line_width" ||
+                   key == "canvas_background_grid_line_width_px" ||
+                   key == "canvas_background_grid_line_width") {
+            settings.canvas_line_widths.background_grid_px =
+                parse_line_width(value, kDefaultBackgroundGridLineWidthPx);
         } else if (is_theme_color_key) {
             if (auto color = parse_theme_color(value)) {
                 settings.theme_color = *color;
@@ -601,6 +651,7 @@ UserSettings load_user_settings() {
     settings.font_size = clamp_font_size(settings.font_size);
     settings.ui_component_size = clamp_ui_component_size(settings.ui_component_size);
     settings.marker_size_percent = clamp_marker_size_percent(settings.marker_size_percent);
+    settings.canvas_line_widths = clamp_canvas_line_widths(settings.canvas_line_widths);
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);

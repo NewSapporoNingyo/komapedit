@@ -378,11 +378,13 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     font_size_ = clamp_font_size(settings_.font_size);
     ui_component_size_ = clamp_ui_component_size(settings_.ui_component_size);
     marker_size_percent_ = clamp_marker_size_percent(settings_.marker_size_percent);
+    canvas_line_widths_ = clamp_canvas_line_widths(settings_.canvas_line_widths);
     theme_color_ = clamp_theme_color(settings_.theme_color);
     settings_.language = lang_;
     settings_.font_size = font_size_;
     settings_.ui_component_size = ui_component_size_;
     settings_.marker_size_percent = marker_size_percent_;
+    settings_.canvas_line_widths = canvas_line_widths_;
     settings_.theme_color = theme_color_;
     pending_font_size_ = font_size_;
     font_size_before_dialog_ = font_size_;
@@ -390,6 +392,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     ui_component_size_before_dialog_ = ui_component_size_;
     pending_marker_size_percent_ = marker_size_percent_;
     marker_size_percent_before_dialog_ = marker_size_percent_;
+    pending_canvas_line_widths_ = canvas_line_widths_;
+    canvas_line_widths_before_dialog_ = canvas_line_widths_;
     pending_theme_color_ = theme_color_;
     theme_color_before_dialog_ = theme_color_;
     apply_window_visibility_settings(settings_.window_visibility);
@@ -1497,6 +1501,8 @@ void App::render_menu() {
             if (ImGui::MenuItem(tr("menu.canvas_element_sizes").c_str())) {
                 pending_marker_size_percent_ = marker_size_percent_;
                 marker_size_percent_before_dialog_ = marker_size_percent_;
+                pending_canvas_line_widths_ = canvas_line_widths_;
+                canvas_line_widths_before_dialog_ = canvas_line_widths_;
                 popups_.canvas_element_sizes = true;
             }
             ImGui::Separator();
@@ -1909,10 +1915,60 @@ void App::render_popups() {
             pending_marker_size_percent_ = clamp_marker_size_percent(static_cast<float>(marker_size_steps * kMarkerSizePercentStep));
             marker_size_percent_ = pending_marker_size_percent_;
         }
+        auto line_width_slider = [&](const char* label_key, float* value, float fallback) {
+            ImGui::SetNextItemWidth(260.0f);
+            int width_steps = static_cast<int>(std::round(clamp_canvas_line_width(*value, fallback) /
+                                                          kCanvasLineWidthStepPx));
+            const int min_steps = static_cast<int>(std::round(kMinCanvasLineWidthPx / kCanvasLineWidthStepPx));
+            const int max_steps = static_cast<int>(std::round(kMaxCanvasLineWidthPx / kCanvasLineWidthStepPx));
+            std::string slider_id = std::string("##") + label_key;
+            if (ImGui::SliderInt(slider_id.c_str(),
+                                 &width_steps,
+                                 min_steps,
+                                 max_steps,
+                                 "",
+                                 ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
+                *value = clamp_canvas_line_width(static_cast<float>(width_steps) * kCanvasLineWidthStepPx,
+                                                 fallback);
+                pending_canvas_line_widths_ = clamp_canvas_line_widths(pending_canvas_line_widths_);
+                canvas_line_widths_ = pending_canvas_line_widths_;
+            }
+            ImVec2 slider_min = ImGui::GetItemRectMin();
+            ImVec2 slider_max = ImGui::GetItemRectMax();
+            std::string value_text = format_double(
+                static_cast<double>(clamp_canvas_line_width(static_cast<float>(width_steps) *
+                                                            kCanvasLineWidthStepPx,
+                                                            fallback)),
+                1) + " px";
+            ImVec2 value_size = ImGui::CalcTextSize(value_text.c_str());
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2((slider_min.x + slider_max.x - value_size.x) * 0.5f,
+                       (slider_min.y + slider_max.y - value_size.y) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Text),
+                value_text.c_str());
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+            ImGui::TextUnformatted(tr(label_key).c_str());
+        };
+        line_width_slider("label.own_track_line_width",
+                          &pending_canvas_line_widths_.own_track_px,
+                          kDefaultOwnTrackLineWidthPx);
+        line_width_slider("label.other_track_line_width",
+                          &pending_canvas_line_widths_.other_track_px,
+                          kDefaultOtherTrackLineWidthPx);
+        line_width_slider("label.chart_marker_line_width",
+                          &pending_canvas_line_widths_.chart_marker_px,
+                          kDefaultChartMarkerLineWidthPx);
+        line_width_slider("label.background_grid_line_width",
+                          &pending_canvas_line_widths_.background_grid_px,
+                          kDefaultBackgroundGridLineWidthPx);
         if (ImGui::Button(tr("button.ok").c_str())) {
             marker_size_percent_ = clamp_marker_size_percent(pending_marker_size_percent_);
             marker_size_percent_before_dialog_ = marker_size_percent_;
+            canvas_line_widths_ = clamp_canvas_line_widths(pending_canvas_line_widths_);
+            pending_canvas_line_widths_ = canvas_line_widths_;
+            canvas_line_widths_before_dialog_ = canvas_line_widths_;
             settings_.marker_size_percent = marker_size_percent_;
+            settings_.canvas_line_widths = canvas_line_widths_;
             sync_runtime_settings_before_save();
             save_user_settings(settings_);
             ImGui::CloseCurrentPopup();
@@ -1921,6 +1977,8 @@ void App::render_popups() {
         if (ImGui::Button(tr("button.cancel").c_str())) {
             pending_marker_size_percent_ = marker_size_percent_before_dialog_;
             marker_size_percent_ = marker_size_percent_before_dialog_;
+            pending_canvas_line_widths_ = canvas_line_widths_before_dialog_;
+            canvas_line_widths_ = canvas_line_widths_before_dialog_;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1928,6 +1986,8 @@ void App::render_popups() {
     if (!canvas_element_sizes_popup_open) {
         pending_marker_size_percent_ = marker_size_percent_before_dialog_;
         marker_size_percent_ = marker_size_percent_before_dialog_;
+        pending_canvas_line_widths_ = canvas_line_widths_before_dialog_;
+        canvas_line_widths_ = canvas_line_widths_before_dialog_;
     }
 
     if (popups_.canvas_3d_settings) {

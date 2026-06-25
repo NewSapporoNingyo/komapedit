@@ -2770,10 +2770,12 @@ void App::render_plan_canvas(ImVec2 size) {
     }
 
     PlanScreenTransform transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
+    const CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(canvas_line_widths_);
+    const float background_grid_line_width = line_widths.background_grid_px;
 
     if (grid_mode_ == GridMode::Fixed) {
-        for (float x = origin.x; x <= origin.x + avail.x; x += 80.0f) draw->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + avail.y), IM_COL32(48, 52, 58, 255));
-        for (float y = origin.y; y <= origin.y + avail.y; y += 80.0f) draw->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + avail.x, y), IM_COL32(48, 52, 58, 255));
+        for (float x = origin.x; x <= origin.x + avail.x; x += 80.0f) draw->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + avail.y), IM_COL32(48, 52, 58, 255), background_grid_line_width);
+        for (float y = origin.y; y <= origin.y + avail.y; y += 80.0f) draw->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + avail.x, y), IM_COL32(48, 52, 58, 255), background_grid_line_width);
     } else if (grid_mode_ == GridMode::Movable) {
         ImVec2 screen_corners[] = {
             origin,
@@ -2799,12 +2801,12 @@ void App::render_plan_canvas(ImVec2 size) {
         for (double x = xmin; x <= xmax; x += step) {
             ImVec2 a = plan_view_.world_to_screen(x, ymin, origin, avail);
             ImVec2 b = plan_view_.world_to_screen(x, ymax, origin, avail);
-            draw->AddLine(a, b, IM_COL32(48, 52, 58, 255));
+            draw->AddLine(a, b, IM_COL32(48, 52, 58, 255), background_grid_line_width);
         }
         for (double y = ymin; y <= ymax; y += step) {
             ImVec2 a = plan_view_.world_to_screen(xmin, y, origin, avail);
             ImVec2 b = plan_view_.world_to_screen(xmax, y, origin, avail);
-            draw->AddLine(a, b, IM_COL32(48, 52, 58, 255));
+            draw->AddLine(a, b, IM_COL32(48, 52, 58, 255), background_grid_line_width);
         }
     }
 
@@ -2825,12 +2827,12 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& s : data.curve_sections) draw_section(s, IM_COL32(130, 130, 130, 220), 10.0f * marker_size_scale);
         for (const auto& s : data.transition_sections) draw_section(s, IM_COL32(84, 84, 84, 220), 8.0f * marker_size_scale);
     }
-    draw_polyline(draw, data.own, transform, origin, avail, IM_COL32(245, 245, 245, 255), 2.0f);
+    draw_polyline(draw, data.own, transform, origin, avail, IM_COL32(245, 245, 245, 255), line_widths.own_track_px);
     for (const auto& t : model_.other_tracks) {
         if (!t.visible || t.points.empty()) continue;
         double rmin = std::max(dmin_, t.range_min);
         double rmax = std::min(dmax_, t.range_max);
-        draw_matrix_plan_polyline(draw, t.points, rmin, rmax, transform, origin, avail, color_u32(t.color), 1.5f);
+        draw_matrix_plan_polyline(draw, t.points, rmin, rmax, transform, origin, avail, color_u32(t.color), line_widths.other_track_px);
     }
     debug_plan_stage("tracks");
 
