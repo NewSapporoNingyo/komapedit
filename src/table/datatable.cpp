@@ -8,6 +8,7 @@
 #pragma execution_character_set("utf-8")
 
 #include "kme.h"
+#include "touch_input.h"
 
 #include "canvas3D.h"
 #include "imgui.h"
@@ -66,6 +67,7 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
     }
     ImGui::GetWindowDrawList()->AddText(pos, text_color, display_text.c_str());
 
+    touch_input::open_popup_on_last_item_long_press("file_path_context");
     if (ImGui::BeginPopupContextItem("file_path_context", ImGuiPopupFlags_MouseButtonRight)) {
         bool can_open = !blank_ascii(open_path);
         ImGui::BeginDisabled(!can_open);
@@ -93,6 +95,7 @@ bool render_text_cell_with_context(const std::string& display_text, const std::s
     }
 
     bool selected = false;
+    touch_input::open_popup_on_last_item_long_press("text_cell_context");
     if (ImGui::BeginPopupContextItem("text_cell_context", ImGuiPopupFlags_MouseButtonRight)) {
         ImGui::BeginDisabled(!menu_enabled);
         selected = ImGui::MenuItem(menu_label.c_str());
@@ -140,6 +143,7 @@ std::string render_text_cell_with_submenu(const std::string& display_text, const
     }
 
     std::string selected;
+    touch_input::open_popup_on_last_item_long_press("text_cell_submenu_context");
     if (ImGui::BeginPopupContextItem("text_cell_submenu_context", ImGuiPopupFlags_MouseButtonRight)) {
         if (ImGui::BeginMenu(menu_label.c_str(), !menu_items.empty())) {
             for (size_t i = 0; i < menu_items.size(); ++i) {
@@ -1988,6 +1992,7 @@ void App::render_structure_models_window() {
                         if (!value.empty()) {
                             ImGui::GetWindowDrawList()->AddText(pos, row_text_color, value.c_str());
                         }
+                        touch_input::open_popup_on_last_item_long_press("structure_key_context");
                         if (ImGui::BeginPopupContextItem("structure_key_context", ImGuiPopupFlags_MouseButtonRight)) {
                             bool can_preview = !blank_ascii(row.open_path);
                             ImGui::BeginDisabled(!can_preview);

@@ -10,6 +10,7 @@
 #include "kme.h"
 #include "app_settings.h"
 #include "debug_headless.h"
+#include "touch_input.h"
 
 #include "canvas3D.h"
 #include "maploader.h"
@@ -2470,6 +2471,7 @@ void App::render_model_preview_window() {
 }
 
 void App::render() {
+    touch_input::new_frame();
     poll_loader();
     plan_canvas_rendered_this_frame_ = false;
     handle_shortcuts();
@@ -2502,6 +2504,7 @@ void App::render() {
     render_cab_illuminance_window();
     render_fogs_window();
     render_popups();
+    touch_input::apply_touch_scroll_to_hovered_window();
     save_runtime_settings_if_changed();
 }
 
@@ -2565,6 +2568,7 @@ void CleanupDeviceD3D() {
 
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (::ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) return true;
+    if (touch_input::handle_message(hWnd, msg, wParam, lParam)) return 0;
     switch (msg) {
         case kAppWakeMessage:
             return 0;
@@ -2595,6 +2599,16 @@ int main(int, char**) {
             return 1;
         }
         return App::run_debug_headless_table_find(table_find.output_path);
+    }
+
+    HeadlessTouchInputOptions touch_input_options = parse_headless_touch_input_options(args);
+    if (touch_input_options.requested) {
+        if (!touch_input_options.error.empty()) {
+            std::cerr << touch_input_options.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-touch-input [--headless-output FILE]\n";
+            return 1;
+        }
+        return run_debug_headless_touch_input(touch_input_options);
     }
 
     HeadlessScene3DBenchmarkOptions scene3d_bench = parse_headless_scene3d_benchmark_options(args);
@@ -2680,6 +2694,7 @@ int main(int, char**) {
     }
     if (app_icon) SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(app_icon));
     if (app_icon_small) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(app_icon_small));
+    touch_input::initialize(hwnd);
     g_main_hwnd = hwnd;
     if (!CreateDeviceD3D(hwnd)) {
         CleanupDeviceD3D();
@@ -2789,6 +2804,8 @@ int main(int, char**) {
             needs_render = true;
         }
         save_imgui_layout_if_requested(layout_path);
+        if (GImGui && GImGui->InputEventsQueue.Size > 0) needs_render = true;
+        if (touch_input::wants_continuous_render()) needs_render = true;
         if (imgui_layout_save_pending()) needs_render = true;
     }
 

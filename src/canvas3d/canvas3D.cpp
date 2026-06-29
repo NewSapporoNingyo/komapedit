@@ -11,6 +11,7 @@
 #include "kme.h"
 #include "maploader.h"
 #include "model_loader.h"
+#include "touch_input.h"
 
 #include "imgui.h"
 
@@ -3709,7 +3710,11 @@ fail:
         const bool loading_before_render = scene_stats().loading;
         if (scene_active && !loading_before_render) handle_scene_input(hovered);
         ImGuiIO& io = ImGui::GetIO();
-        ImVec2 mouse_local(io.MousePos.x - origin.x, io.MousePos.y - origin.y);
+        ImVec2 pointer_pos = io.MousePos;
+        const touch_input::TouchFrame& touch = touch_input::current_frame();
+        if (touch.long_press) pointer_pos = touch.long_press_pos;
+        else if (touch.tap) pointer_pos = touch.tap_pos;
+        ImVec2 mouse_local(pointer_pos.x - origin.x, pointer_pos.y - origin.y);
 
         int width = std::max(1, static_cast<int>(std::round(avail.x)));
         int height = std::max(1, static_cast<int>(std::round(avail.y)));
@@ -3748,8 +3753,12 @@ fail:
         if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         }
-        if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0 &&
-            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        ImVec2 long_press_pos;
+        const bool touch_context =
+            select_mode && !stats.loading && scene_hovered_object_index >= 0 &&
+            touch_input::consume_long_press_in_rect(origin, end, &long_press_pos);
+        if (!stats.loading && select_mode && scene_hovered_object_index >= 0 &&
+            ((hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) || touch_context)) {
             scene_context_object_index = scene_hovered_object_index;
             ImGui::OpenPopup("ScenePreviewObjectContext");
         }

@@ -9,6 +9,7 @@
 
 #include "kme.h"
 #include "canvas3D.h"
+#include "touch_input.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -2166,7 +2167,10 @@ void App::render_plan_canvas(ImVec2 size) {
     debug_plan_stage("fit");
 
     ImGuiIO& io = ImGui::GetIO();
+    const touch_input::TouchFrame& touch = touch_input::current_frame();
     ImVec2 mouse = io.MousePos;
+    if (touch.long_press) mouse = touch.long_press_pos;
+    else if (touch.tap) mouse = touch.tap_pos;
     auto nearest_measure_distance = [&]() -> std::optional<double> {
         PlanScreenTransform measure_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
         double best = std::numeric_limits<double>::max();
@@ -2194,6 +2198,23 @@ void App::render_plan_canvas(ImVec2 size) {
             double factor = io.MouseWheel > 0 ? 1.15 : 1.0 / 1.15;
             plan_view_.scale = std::clamp(plan_view_.scale * factor, 0.001, 10000.0);
         }
+    }
+    if (hovered && mode_ == Mode::Pan && pick_slot_ == 0 && touch.pinch && touch.active_count >= 2 &&
+        point_near_canvas(touch.pinch_center, origin, avail, 0.0f)) {
+        ImVec2 anchor_before = plan_view_.screen_to_world(touch.pinch_center, origin, avail);
+        const double scale_delta = std::abs(static_cast<double>(touch.pinch_scale) - 1.0) < 0.004
+            ? 1.0
+            : static_cast<double>(touch.pinch_scale);
+        plan_view_.scale = std::clamp(plan_view_.scale * scale_delta, 0.001, 10000.0);
+        if (std::abs(touch.pinch_rotation_delta) >= 0.003f) {
+            plan_view_.rotation += static_cast<double>(touch.pinch_rotation_delta);
+        }
+        ImVec2 anchor_after = plan_view_.screen_to_world(touch.pinch_center, origin, avail);
+        plan_view_.cx += static_cast<double>(anchor_before.x - anchor_after.x);
+        plan_view_.cy += static_cast<double>(anchor_before.y - anchor_after.y);
+        plan_view_.pan_by_screen_delta(touch.pinch_center_delta);
+        plan_view_.dragging = false;
+        plan_view_.rotating = false;
     }
 
     struct MarkerHit {
@@ -2525,10 +2546,47 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<size_t> hovered_fog_row = hovered_fog_hit
         ? std::optional<size_t>(hovered_fog_hit->row_index)
         : std::nullopt;
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-        auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
-            return hit && (!other || hit->dist_sq <= other->dist_sq);
+
+    auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
+        return hit && (!other || hit->dist_sq <= other->dist_sq);
+    };
+    auto select_nearest_touch_marker = [&]() {
+        std::optional<PlanMarkerSelection> best;
+        double best_dist_sq = std::numeric_limits<double>::max();
+        auto note = [&](const std::optional<MarkerHit>& hit, PlanMarkerKind kind) {
+            if (!hit || hit->dist_sq > best_dist_sq) return;
+            best_dist_sq = hit->dist_sq;
+            best = PlanMarkerSelection{kind, hit->row_index};
         };
+        note(hovered_signal_hit, PlanMarkerKind::Signal);
+        note(hovered_beacon_hit, PlanMarkerKind::Beacon);
+        note(hovered_pretrain_hit, PlanMarkerKind::PreTrain);
+        note(hovered_adhesion_hit, PlanMarkerKind::Adhesion);
+        note(hovered_irregularity_hit, PlanMarkerKind::Irregularity);
+        note(hovered_background_hit, PlanMarkerKind::Background);
+        note(hovered_repeater_hit, PlanMarkerKind::Repeater);
+        note(hovered_structure_hit, PlanMarkerKind::Structure);
+        note(hovered_cab_illuminance_hit, PlanMarkerKind::CabIlluminance);
+        note(hovered_rolling_noise_hit, PlanMarkerKind::RollingNoise);
+        note(hovered_map_sound_hit, PlanMarkerKind::MapSound);
+        note(hovered_map_sound_3d_hit, PlanMarkerKind::MapSound3D);
+        note(hovered_flange_noise_hit, PlanMarkerKind::FlangeNoise);
+        note(hovered_joint_noise_hit, PlanMarkerKind::JointNoise);
+        note(hovered_fog_hit, PlanMarkerKind::Fog);
+        if (best) plan_marker_selection_ = *best;
+    };
+    ImVec2 touch_tap_pos;
+    if (touch_input::consume_tap_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), &touch_tap_pos)) {
+        (void)touch_tap_pos;
+        select_nearest_touch_marker();
+    }
+
+    ImVec2 touch_long_press_pos;
+    bool touch_marker_context_requested =
+        touch_input::consume_long_press_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y),
+                                                &touch_long_press_pos);
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
+        if (touch_marker_context_requested) plan_marker_selection_.clear();
         if (hovered_signal_hit &&
             closer_or_equal(hovered_signal_hit, hovered_beacon_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_adhesion_hit) &&
@@ -2717,8 +2775,10 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
 
-    bool rotate_plan = hovered && io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    if (hovered && mode_ == Mode::Pan && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan) {
+    const bool touch_multi_input = touch.active_count >= 2 || touch.pinch;
+    bool rotate_plan = hovered && !touch_multi_input && io.KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    if (hovered && mode_ == Mode::Pan && !touch_multi_input &&
+        ImGui::IsMouseDown(ImGuiMouseButton_Left) && !rotate_plan) {
         if (!plan_view_.dragging) {
             plan_view_.dragging = true;
             plan_view_.last_mouse = mouse;
@@ -2770,6 +2830,14 @@ void App::render_plan_canvas(ImVec2 size) {
     }
 
     PlanScreenTransform transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
+    auto marker_emphasized = [&](PlanMarkerKind kind, size_t row_index, bool hovered_marker) {
+        return hovered_marker || plan_marker_selection_.matches(kind, row_index);
+    };
+    auto draw_selected_marker_ring = [&](ImVec2 p, PlanMarkerKind kind, size_t row_index, ImU32 color) {
+        if (!plan_marker_selection_.matches(kind, row_index)) return;
+        const float radius = std::max(12.0f, 14.0f * marker_size_scale);
+        draw->AddCircle(p, radius, color, 24, std::max(2.0f, 2.0f * marker_size_scale));
+    };
     const CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(canvas_line_widths_);
     const float background_grid_line_width = line_widths.background_grid_px;
 
@@ -2872,8 +2940,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_signal_row && *hovered_signal_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_signal_marker(draw, p, signal_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, signal_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::Signal, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::Signal, marker.row_index, signal_color);
+            draw_plan_signal_marker(draw, p, signal_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, signal_color, marker.label);
         }
     }
     debug_plan_stage("signal_markers");
@@ -2887,8 +2957,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_beacon_row && *hovered_beacon_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_beacon_marker(draw, p, beacon_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, beacon_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::Beacon, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::Beacon, marker.row_index, beacon_color);
+            draw_plan_beacon_marker(draw, p, beacon_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, beacon_color, marker.label);
         }
     }
     debug_plan_stage("beacon_markers");
@@ -2901,7 +2973,9 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_pretrain_row && *hovered_pretrain_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_pretrain_marker(draw, p, marker.label, marker_size_scale * (marker_hovered ? 1.22f : 1.0f));
+            bool marker_active = marker_emphasized(PlanMarkerKind::PreTrain, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::PreTrain, marker.row_index, IM_COL32(255, 255, 255, 255));
+            draw_plan_pretrain_marker(draw, p, marker.label, marker_size_scale * (marker_active ? 1.22f : 1.0f));
         }
     }
     debug_plan_stage("pretrain_markers");
@@ -2915,8 +2989,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_irregularity_row && *hovered_irregularity_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_wave_marker(draw, p, irregularity_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, irregularity_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::Irregularity, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::Irregularity, marker.row_index, irregularity_color);
+            draw_plan_wave_marker(draw, p, irregularity_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, irregularity_color, marker.label);
         }
     }
     debug_plan_stage("irregularity_markers");
@@ -2930,8 +3006,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_map_sound_row && *hovered_map_sound_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_speaker_marker(draw, p, map_sound_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, map_sound_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::MapSound, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::MapSound, marker.row_index, map_sound_color);
+            draw_plan_speaker_marker(draw, p, map_sound_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, map_sound_color, marker.label);
         }
     }
     debug_plan_stage("map_sound_markers");
@@ -2945,8 +3023,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_map_sound_3d_row && *hovered_map_sound_3d_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_broadcast_marker(draw, p, map_sound_3d_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, map_sound_3d_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::MapSound3D, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::MapSound3D, marker.row_index, map_sound_3d_color);
+            draw_plan_broadcast_marker(draw, p, map_sound_3d_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, map_sound_3d_color, marker.label);
         }
     }
     debug_plan_stage("map_sound_3d_markers");
@@ -2960,8 +3040,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_rolling_noise_row && *hovered_rolling_noise_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_axle_marker(draw, p, rolling_noise_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, rolling_noise_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::RollingNoise, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::RollingNoise, marker.row_index, rolling_noise_color);
+            draw_plan_axle_marker(draw, p, rolling_noise_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, rolling_noise_color, marker.label);
         }
     }
     debug_plan_stage("rolling_noise_markers");
@@ -2975,8 +3057,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_flange_noise_row && *hovered_flange_noise_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_flange_noise_marker(draw, p, flange_noise_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, flange_noise_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::FlangeNoise, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::FlangeNoise, marker.row_index, flange_noise_color);
+            draw_plan_flange_noise_marker(draw, p, flange_noise_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, flange_noise_color, marker.label);
         }
     }
     debug_plan_stage("flange_noise_markers");
@@ -2990,8 +3074,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_joint_noise_row && *hovered_joint_noise_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_joint_noise_marker(draw, p, joint_noise_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, joint_noise_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::JointNoise, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::JointNoise, marker.row_index, joint_noise_color);
+            draw_plan_joint_noise_marker(draw, p, joint_noise_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, joint_noise_color, marker.label);
         }
     }
     debug_plan_stage("joint_noise_markers");
@@ -3005,8 +3091,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_background_row && *hovered_background_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_square_marker(draw, p, background_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, background_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::Background, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::Background, marker.row_index, background_color);
+            draw_plan_square_marker(draw, p, background_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, background_color, marker.label);
         }
     }
     debug_plan_stage("background_change_markers");
@@ -3020,8 +3108,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_adhesion_row && *hovered_adhesion_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_adhesion_marker(draw, p, adhesion_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, adhesion_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::Adhesion, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::Adhesion, marker.row_index, adhesion_color);
+            draw_plan_adhesion_marker(draw, p, adhesion_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, adhesion_color, marker.label);
         }
     }
     debug_plan_stage("adhesion_markers");
@@ -3035,8 +3125,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_cab_illuminance_row && *hovered_cab_illuminance_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_sun_marker(draw, p, cab_color, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, cab_color, marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::CabIlluminance, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::CabIlluminance, marker.row_index, cab_color);
+            draw_plan_sun_marker(draw, p, cab_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, cab_color, marker.label);
         }
     }
     debug_plan_stage("cab_illuminance_markers");
@@ -3049,8 +3141,10 @@ void App::render_plan_canvas(ImVec2 size) {
             double dy = static_cast<double>(p.y - mouse.y);
             bool marker_hovered = hovered_fog_row && *hovered_fog_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            draw_plan_fog_marker(draw, p, marker_size_scale * (marker_hovered ? 1.28f : 1.0f));
-            if (marker_hovered) draw_plan_small_text(draw, p, IM_COL32(255, 255, 255, 255), marker.label);
+            bool marker_active = marker_emphasized(PlanMarkerKind::Fog, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::Fog, marker.row_index, IM_COL32(255, 255, 255, 255));
+            draw_plan_fog_marker(draw, p, marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, p, IM_COL32(255, 255, 255, 255), marker.label);
         }
     }
     debug_plan_stage("fog_markers");
@@ -3069,9 +3163,11 @@ void App::render_plan_canvas(ImVec2 size) {
                 double dy = static_cast<double>(p.y - mouse.y);
                 bool marker_hovered = hovered_repeater_row && *hovered_repeater_row == marker.row_index &&
                     dx * dx + dy * dy <= marker_hover_radius_sq;
-                float marker_scale = marker_size_scale * (marker_hovered ? 1.28f : 1.0f);
+                bool marker_active = marker_emphasized(PlanMarkerKind::Repeater, marker.row_index, marker_hovered);
+                draw_selected_marker_ring(p, PlanMarkerKind::Repeater, marker.row_index, repeater_color);
+                float marker_scale = marker_size_scale * (marker_active ? 1.28f : 1.0f);
                 draw_plan_diamond_marker(draw, p, repeater_color, marker_scale);
-                if (draw_repeater_labels || marker_hovered) draw_plan_small_text(draw, p, repeater_color, marker.label);
+                if (draw_repeater_labels || marker_active) draw_plan_small_text(draw, p, repeater_color, marker.label);
             }
         }
         debug_plan_stage("repeater_markers");
@@ -3082,8 +3178,11 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& marker : data.structure_markers) {
             ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
+            bool marker_hovered = hovered_structure_row && *hovered_structure_row == marker.row_index;
+            bool marker_active = marker_emphasized(PlanMarkerKind::Structure, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(p, PlanMarkerKind::Structure, marker.row_index, structure_color);
             float marker_scale = marker_size_scale *
-                (hovered_structure_row && *hovered_structure_row == marker.row_index ? 1.28f : 1.0f);
+                (marker_active ? 1.28f : 1.0f);
             draw_plan_triangle_marker(draw, p, structure_color, marker_scale);
             draw_plan_small_text(draw, p, structure_color, marker.label);
         }

@@ -485,6 +485,39 @@ struct PlanFogMarker {
     size_t row_index = 0;
 };
 
+enum class PlanMarkerKind {
+    None,
+    Structure,
+    Repeater,
+    Signal,
+    Beacon,
+    PreTrain,
+    Irregularity,
+    MapSound,
+    MapSound3D,
+    RollingNoise,
+    FlangeNoise,
+    JointNoise,
+    Background,
+    Adhesion,
+    CabIlluminance,
+    Fog
+};
+
+struct PlanMarkerSelection {
+    PlanMarkerKind kind = PlanMarkerKind::None;
+    size_t row_index = 0;
+
+    bool matches(PlanMarkerKind other_kind, size_t other_row_index) const {
+        return kind == other_kind && row_index == other_row_index;
+    }
+
+    void clear() {
+        kind = PlanMarkerKind::None;
+        row_index = 0;
+    }
+};
+
 struct PlanRepeaterSegment {
     struct Chunk {
         std::vector<TrackPoint> points;
@@ -1036,6 +1069,7 @@ private:
     int plan_adhesion_popup_row_ = -1;
     int plan_cab_illuminance_popup_row_ = -1;
     int plan_fog_popup_row_ = -1;
+    PlanMarkerSelection plan_marker_selection_;
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;
     std::unique_ptr<Canvas3D> model_preview_canvas_;

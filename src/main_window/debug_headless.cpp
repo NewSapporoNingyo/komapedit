@@ -10,6 +10,7 @@
 #include "kme.h"
 #include "canvas3D.h"
 #include "maploader.h"
+#include "touch_input.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -100,6 +101,12 @@ struct HeadlessSceneCameraTransferOptions {
 };
 
 struct HeadlessTableFindOptions {
+    bool requested = false;
+    std::string output_path;
+    std::string error;
+};
+
+struct HeadlessTouchInputOptions {
     bool requested = false;
     std::string output_path;
     std::string error;
@@ -403,6 +410,23 @@ HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std
     return options;
 }
 
+HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<std::string>& args) {
+    HeadlessTouchInputOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-touch-input") {
+            options.requested = true;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    return options;
+}
+
 std::uint64_t hash_double_bits(double value) {
     if (value == 0.0) value = 0.0;
     std::uint64_t bits = 0;
@@ -625,6 +649,80 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
     ImGui::DestroyContext();
     if (exit_code == 0) *out << "result=PASS\n";
     else *out << "result=FAIL code=" << exit_code << "\n";
+    out->flush();
+    return exit_code;
+}
+
+int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-touch-input\n";
+    int exit_code = 0;
+    auto check = [&](bool condition, const char* label) {
+        *out << label << "=" << (condition ? "PASS" : "FAIL") << "\n";
+        if (!condition) exit_code = 2;
+    };
+
+    touch_input::debug_reset_for_tests(0.0);
+    touch_input::debug_touch_down(1, ImVec2(100.0f, 100.0f));
+    touch_input::debug_set_time_for_tests(0.08);
+    touch_input::debug_touch_up(1, ImVec2(103.0f, 102.0f));
+    touch_input::new_frame();
+    check(touch_input::current_frame().tap, "short_touch_emits_tap");
+    check(!touch_input::current_frame().long_press, "short_touch_not_long_press");
+
+    touch_input::debug_reset_for_tests(0.0);
+    touch_input::debug_touch_down(1, ImVec2(200.0f, 200.0f));
+    touch_input::debug_set_time_for_tests(0.60);
+    touch_input::new_frame();
+    check(touch_input::current_frame().long_press, "stationary_touch_emits_long_press");
+    check(!touch_input::current_frame().tap, "long_press_not_tap");
+    touch_input::debug_touch_up(1, ImVec2(200.0f, 200.0f));
+    touch_input::new_frame();
+    check(!touch_input::current_frame().tap, "long_press_release_not_tap");
+
+    touch_input::debug_reset_for_tests(0.0);
+    touch_input::debug_touch_down(1, ImVec2(300.0f, 300.0f));
+    touch_input::debug_set_time_for_tests(0.20);
+    touch_input::debug_touch_move(1, ImVec2(340.0f, 300.0f));
+    touch_input::debug_set_time_for_tests(0.70);
+    touch_input::new_frame();
+    check(!touch_input::current_frame().long_press, "moved_touch_cancels_long_press");
+    check(touch_input::current_frame().single_drag, "moved_touch_emits_single_drag");
+
+    touch_input::debug_reset_for_tests(0.0);
+    touch_input::debug_touch_down(1, ImVec2(100.0f, 100.0f));
+    touch_input::debug_touch_down(2, ImVec2(200.0f, 100.0f));
+    touch_input::debug_set_time_for_tests(0.02);
+    touch_input::debug_touch_move(2, ImVec2(220.0f, 120.0f));
+    touch_input::new_frame();
+    const touch_input::TouchFrame& pinch = touch_input::current_frame();
+    check(pinch.pinch, "two_touch_emits_pinch");
+    check(pinch.pinch_scale > 1.0f, "two_touch_scale_grows");
+    check(std::abs(pinch.pinch_rotation_delta) > 0.01f, "two_touch_rotation_delta");
+
+    ImGui::CreateContext();
+    GImGui->InputEventsQueue.clear();
+    touch_input::debug_reset_for_tests(0.0);
+    touch_input::debug_touch_down(1, ImVec2(50.0f, 60.0f));
+    const int queued_after_down = GImGui->InputEventsQueue.Size;
+    touch_input::debug_touch_up(1, ImVec2(50.0f, 60.0f));
+    const int queued_after_up = GImGui->InputEventsQueue.Size;
+    check(queued_after_down >= 2, "touch_down_queues_imgui_mouse_events");
+    check(queued_after_up >= queued_after_down + 1, "touch_up_queues_imgui_mouse_events");
+    ImGui::DestroyContext();
+
+    *out << "result=" << (exit_code == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();
     return exit_code;
 }

@@ -57,6 +57,7 @@ void App::invalidate_table_cache() {
     plan_adhesion_popup_row_ = -1;
     plan_cab_illuminance_popup_row_ = -1;
     plan_fog_popup_row_ = -1;
+    plan_marker_selection_.clear();
 }
 
 void App::reset_marker_visibility() {

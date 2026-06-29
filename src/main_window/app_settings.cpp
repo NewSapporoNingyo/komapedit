@@ -891,6 +891,10 @@ void apply_ui_component_size(float component_size, float dpi_scale, bool viewpor
     style.FontScaleMain = font_scale_main;
     ImGui::StyleColorsDark(&style);
     style.ScaleAllSizes(dpi_scale * clamp_ui_component_size(component_size) / 100.0f);
+    const float touch_padding = std::max(2.0f, 4.0f * dpi_scale);
+    style.TouchExtraPadding = ImVec2(touch_padding, touch_padding);
+    style.ScrollbarSize = std::max(style.ScrollbarSize, 16.0f * dpi_scale);
+    style.GrabMinSize = std::max(style.GrabMinSize, 12.0f * dpi_scale);
     style.FontScaleDpi = dpi_scale;
     if (viewports_enabled) {
         style.WindowRounding = 0.0f;

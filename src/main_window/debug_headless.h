@@ -59,11 +59,19 @@ struct HeadlessTableFindOptions {
     std::string error;
 };
 
+struct HeadlessTouchInputOptions {
+    bool requested = false;
+    std::string output_path;
+    std::string error;
+};
+
 std::vector<std::string> command_line_args_utf8();
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args);
 HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(const std::vector<std::string>& args);
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args);
+HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<std::string>& args);
 int run_headless_load_map(const HeadlessLoadOptions& options);
+int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options);
 #endif
