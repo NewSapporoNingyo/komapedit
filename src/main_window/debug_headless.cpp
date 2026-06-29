@@ -709,7 +709,20 @@ int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options) {
     const touch_input::TouchFrame& pinch = touch_input::current_frame();
     check(pinch.pinch, "two_touch_emits_pinch");
     check(pinch.pinch_scale > 1.0f, "two_touch_scale_grows");
+    check(pinch.pinch_axis == touch_input::PinchAxis::Horizontal, "two_touch_axis_horizontal");
+    check(pinch.pinch_x_scale > 1.0f, "two_touch_x_scale_grows");
     check(std::abs(pinch.pinch_rotation_delta) > 0.01f, "two_touch_rotation_delta");
+
+    touch_input::debug_reset_for_tests(0.0);
+    touch_input::debug_touch_down(1, ImVec2(300.0f, 100.0f));
+    touch_input::debug_touch_down(2, ImVec2(300.0f, 200.0f));
+    touch_input::debug_set_time_for_tests(0.02);
+    touch_input::debug_touch_move(2, ImVec2(300.0f, 240.0f));
+    touch_input::new_frame();
+    const touch_input::TouchFrame& vertical_pinch = touch_input::current_frame();
+    check(vertical_pinch.pinch, "vertical_two_touch_emits_pinch");
+    check(vertical_pinch.pinch_axis == touch_input::PinchAxis::Vertical, "two_touch_axis_vertical");
+    check(vertical_pinch.pinch_y_scale > 1.0f, "two_touch_y_scale_grows");
 
     ImGui::CreateContext();
     GImGui->InputEventsQueue.clear();

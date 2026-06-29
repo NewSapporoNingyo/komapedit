@@ -6,6 +6,7 @@
  */
 
 #include "kme.h"
+#include "touch_input.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -234,6 +235,57 @@ static bool point_in_rect(ImVec2 p, ImVec2 pos, ImVec2 size) {
     return p.x >= pos.x && p.x <= pos.x + size.x && p.y >= pos.y && p.y <= pos.y + size.y;
 }
 
+struct PlotTouchZoom {
+    bool x = false;
+    double x_min = 0.0;
+    double x_max = 0.0;
+    bool y = false;
+    double y_min = 0.0;
+    double y_max = 0.0;
+};
+
+static std::optional<std::pair<double, double>> zoom_axis_limits(double min_value, double max_value,
+                                                                  double anchor, float scale) {
+    if (!std::isfinite(min_value) || !std::isfinite(max_value) || max_value <= min_value) return std::nullopt;
+    if (!std::isfinite(anchor) || !std::isfinite(scale) || scale <= 0.0f) return std::nullopt;
+    if (std::abs(scale - 1.0f) < 0.004f) return std::nullopt;
+
+    anchor = std::clamp(anchor, min_value, max_value);
+    double new_min = anchor - (anchor - min_value) / static_cast<double>(scale);
+    double new_max = anchor + (max_value - anchor) / static_cast<double>(scale);
+    if (!std::isfinite(new_min) || !std::isfinite(new_max) || new_max <= new_min) return std::nullopt;
+    return std::make_pair(new_min, new_max);
+}
+
+static PlotTouchZoom plot_touch_zoom_limits(const ImPlotRect& limits, bool allow_y_axis) {
+    PlotTouchZoom zoom;
+    const touch_input::TouchFrame& touch = touch_input::current_frame();
+    if (!touch.pinch || touch.active_count < 2 || touch.pinch_axis == touch_input::PinchAxis::None) return zoom;
+
+    ImVec2 pos = ImPlot::GetPlotPos();
+    ImVec2 size = ImPlot::GetPlotSize();
+    if (size.x <= 1.0f || size.y <= 1.0f) return zoom;
+    if (!point_in_rect(touch.pinch_center, pos, size) && !point_in_rect(touch.pinch_previous_center, pos, size)) {
+        return zoom;
+    }
+
+    ImPlotPoint anchor = ImPlot::PixelsToPlot(touch.pinch_center);
+    if (touch.pinch_axis == touch_input::PinchAxis::Horizontal) {
+        if (auto range = zoom_axis_limits(limits.X.Min, limits.X.Max, anchor.x, touch.pinch_x_scale)) {
+            zoom.x = true;
+            zoom.x_min = range->first;
+            zoom.x_max = range->second;
+        }
+    } else if (allow_y_axis) {
+        if (auto range = zoom_axis_limits(limits.Y.Min, limits.Y.Max, anchor.y, touch.pinch_y_scale)) {
+            zoom.y = true;
+            zoom.y_min = range->first;
+            zoom.y_max = range->second;
+        }
+    }
+    return zoom;
+}
+
 static double preserved_plot_span(double current_span, double fallback_min, double fallback_max) {
     if (std::isfinite(current_span) && current_span > 1e-6) return current_span;
     double fallback = fallback_max - fallback_min;
@@ -256,6 +308,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     ImPlot::PushStyleVar(ImPlotStyleVar_MajorGridSize, grid_line_size);
     ImPlot::PushStyleVar(ImPlotStyleVar_MinorGridSize, grid_line_size);
     bool consumed_profile_x_zoom = false;
+    bool consumed_profile_y_zoom = false;
     if (ImPlot::BeginPlot("##ProfilePlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
         ImVec2 frame_min = ImGui::GetItemRectMin();
         ImVec2 frame_max = ImGui::GetItemRectMax();
@@ -272,7 +325,13 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
             ImPlot::SetupAxisLimits(ImAxis_X1, dmin_, dmax_, reset_cond);
             if (reset_profile_axes_next_) profile_x_zoom_pending_ = false;
         }
-        ImPlot::SetupAxisLimits(ImAxis_Y1, data.ymin, data.ymax, reset_cond);
+        if (!reset_profile_axes_next_ && profile_y_zoom_pending_) {
+            ImPlot::SetupAxisLimits(ImAxis_Y1, profile_y_zoom_min_, profile_y_zoom_max_, ImPlotCond_Always);
+            consumed_profile_y_zoom = true;
+        } else {
+            ImPlot::SetupAxisLimits(ImAxis_Y1, data.ymin, data.ymax, reset_cond);
+            if (reset_profile_axes_next_) profile_y_zoom_pending_ = false;
+        }
         plot_line_vec("Own", data.own_x, data.own_y, ImVec4(1, 1, 1, 1), line_widths.own_track_px);
         for (const auto& t : data.other) plot_line_vec(t.key.c_str(), t.x, t.y, t.color, line_widths.other_track_px);
         if (show_gradient_pos_) {
@@ -311,12 +370,30 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         profile_plot_pos_ = ImPlot::GetPlotPos();
         profile_plot_size_ = ImPlot::GetPlotSize();
         profile_plot_rect_valid_ = profile_plot_size_.x > 0.0f && profile_plot_size_.y > 0.0f;
+        bool queued_profile_x_zoom = false;
         if (auto zoom_limits = plot_x_wheel_zoom_limits(limits)) {
             profile_x_zoom_min_ = zoom_limits->first;
             profile_x_zoom_max_ = zoom_limits->second;
             profile_x_zoom_pending_ = true;
-        } else if (consumed_profile_x_zoom) {
+            queued_profile_x_zoom = true;
+        }
+        PlotTouchZoom touch_zoom = plot_touch_zoom_limits(limits, true);
+        if (touch_zoom.x) {
+            profile_x_zoom_min_ = touch_zoom.x_min;
+            profile_x_zoom_max_ = touch_zoom.x_max;
+            profile_x_zoom_pending_ = true;
+            queued_profile_x_zoom = true;
+        }
+        if (touch_zoom.y) {
+            profile_y_zoom_min_ = touch_zoom.y_min;
+            profile_y_zoom_max_ = touch_zoom.y_max;
+            profile_y_zoom_pending_ = true;
+        }
+        if (!queued_profile_x_zoom && consumed_profile_x_zoom) {
             profile_x_zoom_pending_ = false;
+        }
+        if (!touch_zoom.y && consumed_profile_y_zoom) {
+            profile_y_zoom_pending_ = false;
         }
         ImVec2 plot_pos = profile_plot_pos_;
         ImVec2 plot_size = profile_plot_size_;
@@ -338,6 +415,7 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
     ImPlot::PushStyleVar(ImPlotStyleVar_LabelPadding, ImVec2(2.0f, 2.0f));
     ImPlot::PushStyleVar(ImPlotStyleVar_MajorGridSize, grid_line_size);
     ImPlot::PushStyleVar(ImPlotStyleVar_MinorGridSize, grid_line_size);
+    bool consumed_radius_x_zoom = false;
     if (ImPlot::BeginPlot("##RadiusPlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
         ImVec2 frame_min = ImGui::GetItemRectMin();
         ImVec2 frame_max = ImGui::GetItemRectMax();
@@ -347,8 +425,13 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
         if (focus_radius_next_) {
             double span = preserved_plot_span(radius_x_span_, dmin_, dmax_);
             ImPlot::SetupAxisLimits(ImAxis_X1, focus_radius_distance_ - span * 0.5, focus_radius_distance_ + span * 0.5, ImPlotCond_Always);
+            radius_x_zoom_pending_ = false;
+        } else if (!reset_radius_axes_next_ && radius_x_zoom_pending_) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, radius_x_zoom_min_, radius_x_zoom_max_, ImPlotCond_Always);
+            consumed_radius_x_zoom = true;
         } else {
             ImPlot::SetupAxisLimits(ImAxis_X1, dmin_, dmax_, reset_cond);
+            if (reset_radius_axes_next_) radius_x_zoom_pending_ = false;
         }
         ImPlot::SetupAxisLimits(ImAxis_Y1, -2.2, 2.2, ImPlotCond_Always);
         plot_line_vec("RadiusSign", data.curve_x, data.curve_y, ImVec4(1, 1, 1, 1), line_widths.own_track_px);
@@ -375,6 +458,14 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
         radius_x_span_ = std::abs(limits.X.Size());
         ImVec2 plot_pos = ImPlot::GetPlotPos();
         ImVec2 plot_size = ImPlot::GetPlotSize();
+        PlotTouchZoom touch_zoom = plot_touch_zoom_limits(limits, false);
+        if (touch_zoom.x) {
+            radius_x_zoom_min_ = touch_zoom.x_min;
+            radius_x_zoom_max_ = touch_zoom.x_max;
+            radius_x_zoom_pending_ = true;
+        } else if (consumed_radius_x_zoom) {
+            radius_x_zoom_pending_ = false;
+        }
         mask_plot_axis_tick_edges(frame_min, frame_max, plot_pos, plot_size);
         draw_radius_side_markers();
         draw_plot_overlay_labels(tr("plot.radius"), tr("unit.m"));

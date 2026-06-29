@@ -34,6 +34,7 @@ constexpr float kMoveCancelPixels = 12.0f;
 constexpr float kMoveCancelPixelsSq = kMoveCancelPixels * kMoveCancelPixels;
 constexpr float kScrollStartPixels = 8.0f;
 constexpr float kScrollStartPixelsSq = kScrollStartPixels * kScrollStartPixels;
+constexpr float kAxisPinchMinPixels = 8.0f;
 constexpr double kTouchRecentSeconds = 2.0;
 
 struct ActiveTouch {
@@ -51,6 +52,8 @@ struct PairState {
     std::uint32_t first_id = 0;
     std::uint32_t second_id = 0;
     ImVec2 center = ImVec2(0.0f, 0.0f);
+    float dx = 0.0f;
+    float dy = 0.0f;
     float distance = 0.0f;
     float angle = 0.0f;
 };
@@ -140,9 +143,18 @@ struct TouchManager {
         out.center = ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
         float dx = b.x - a.x;
         float dy = b.y - a.y;
+        out.dx = dx;
+        out.dy = dy;
         out.distance = std::sqrt(dx * dx + dy * dy);
         out.angle = std::atan2(dy, dx);
         return out;
+    }
+
+    static float axis_scale(float prev_delta, float next_delta) {
+        float prev = std::abs(prev_delta);
+        float next = std::abs(next_delta);
+        if (prev < kAxisPinchMinPixels || next < kAxisPinchMinPixels) return 1.0f;
+        return std::clamp(next / prev, 0.75f, 1.333f);
     }
 
     void update_pair_gesture() {
@@ -166,6 +178,10 @@ struct TouchManager {
             float scale = next.distance / pair.distance;
             pending.pinch_scale *= std::clamp(scale, 0.75f, 1.333f);
         }
+        pending.pinch_x_scale *= axis_scale(pair.dx, next.dx);
+        pending.pinch_y_scale *= axis_scale(pair.dy, next.dy);
+        pending.pinch_axis =
+            std::abs(next.dx) >= std::abs(next.dy) ? PinchAxis::Horizontal : PinchAxis::Vertical;
         pending.pinch_rotation_delta += angle_delta(next.angle, pair.angle);
         pair = next;
     }

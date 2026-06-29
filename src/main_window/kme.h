@@ -943,6 +943,12 @@ private:
     bool profile_x_zoom_pending_ = false;
     double profile_x_zoom_min_ = 0.0;
     double profile_x_zoom_max_ = 0.0;
+    bool profile_y_zoom_pending_ = false;
+    double profile_y_zoom_min_ = 0.0;
+    double profile_y_zoom_max_ = 0.0;
+    bool radius_x_zoom_pending_ = false;
+    double radius_x_zoom_min_ = 0.0;
+    double radius_x_zoom_max_ = 0.0;
     bool profile_plot_rect_valid_ = false;
     ImVec2 profile_plot_pos_ = ImVec2(0.0f, 0.0f);
     ImVec2 profile_plot_size_ = ImVec2(0.0f, 0.0f);

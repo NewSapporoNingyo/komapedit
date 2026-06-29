@@ -15,6 +15,12 @@
 
 namespace touch_input {
 
+enum class PinchAxis {
+    None,
+    Horizontal,
+    Vertical
+};
+
 struct TouchFrame {
     bool touch_recent = false;
     int active_count = 0;
@@ -35,6 +41,9 @@ struct TouchFrame {
     ImVec2 pinch_previous_center = ImVec2(0.0f, 0.0f);
     ImVec2 pinch_center_delta = ImVec2(0.0f, 0.0f);
     float pinch_scale = 1.0f;
+    float pinch_x_scale = 1.0f;
+    float pinch_y_scale = 1.0f;
+    PinchAxis pinch_axis = PinchAxis::None;
     float pinch_rotation_delta = 0.0f;
 };
 
