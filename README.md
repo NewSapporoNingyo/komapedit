@@ -90,11 +90,12 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] 3D scene preview canvas for track paths, Structures, repeaters, and background changes.
 - [x] Jump the 3D scene camera from station selections and show the current 3D position on the plan view.
 - [ ] Structure position editing tools in the 3D canvas.
+- [ ] Jump to structure elements between 3D preview & tables.
 
 ### Environmental Effects
 
 - [x] Display `Sound File List`, `3D Sound File List`, `Map Sound List`, and `Map 3D Sound List`.
-- [ ] Edit running sounds, switch sounds, station announcement sounds, and 3D sounds.
+- [ ] Edit rolling-noises, joint-noises, station announcement sounds, and 3D sounds.
 - [ ] Edit cab-illuminance setting positions.
 - [ ] Edit fog effects.
 
