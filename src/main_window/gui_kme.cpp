@@ -1801,6 +1801,14 @@ void App::render_console() {
     ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "W %d", warn_count_);
     ImGui::Separator();
     ImGui::BeginChild("console_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    const bool was_at_bottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
+    const touch_input::TouchFrame& touch = touch_input::current_frame();
+    ImGuiWindow* console_window = ImGui::GetCurrentWindow();
+    ImRect console_rect(console_window->Pos, ImVec2(console_window->Pos.x + console_window->Size.x,
+                                                   console_window->Pos.y + console_window->Size.y));
+    const bool touch_vertical_scroll =
+        touch.single_drag && touch.active_count == 1 && std::abs(touch.single_drag_delta.y) > 0.01f &&
+        (console_rect.Contains(touch.single_start_pos) || console_rect.Contains(touch.single_pos));
     std::lock_guard<std::mutex> lock(log_mutex_);
     for (const auto& line : logs_) {
         ImVec4 color = line.severity == 2 ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
@@ -1808,7 +1816,7 @@ void App::render_console() {
                                           : ImVec4(0.88f, 0.88f, 0.88f, 1.0f);
         ImGui::TextColored(color, "%s", line.text.c_str());
     }
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) ImGui::SetScrollHereY(1.0f);
+    if (was_at_bottom && !touch_vertical_scroll) ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
     ImGui::End();
 }

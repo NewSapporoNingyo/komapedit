@@ -1417,6 +1417,7 @@ struct Canvas3D::Impl {
         release_com(depth_read_state);
         release_com(alpha_mask_rasterizer_state);
         release_com(track_rasterizer_state);
+        release_com(model_preview_rasterizer_state);
         release_com(rasterizer_state);
         release_com(scene_outline_sampler_state);
         release_com(scene_outline_constant_buffer);
@@ -2704,7 +2705,7 @@ fail:
             return false;
         }
         if (vertex_shader && pixel_shader && input_layout && constant_buffer && depth_state &&
-            depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
+            depth_read_state && rasterizer_state && model_preview_rasterizer_state && alpha_mask_rasterizer_state &&
             track_rasterizer_state && sampler_state && blend_state) return true;
 
         ID3DBlob* vs_blob = nullptr;
@@ -2792,6 +2793,13 @@ fail:
         hr = device->CreateRasterizerState(&rs_desc, &rasterizer_state);
         if (FAILED(hr)) {
             error = hresult_text("CreateRasterizerState", hr);
+            return false;
+        }
+        D3D11_RASTERIZER_DESC model_preview_rs_desc = rs_desc;
+        model_preview_rs_desc.FrontCounterClockwise = FALSE;
+        hr = device->CreateRasterizerState(&model_preview_rs_desc, &model_preview_rasterizer_state);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateRasterizerState(model preview)", hr);
             return false;
         }
         D3D11_RASTERIZER_DESC alpha_mask_rs_desc = rs_desc;
@@ -3788,7 +3796,7 @@ fail:
             viewport.MinDepth = 0.0f;
             viewport.MaxDepth = 1.0f;
             context->RSSetViewports(1, &viewport);
-            context->RSSetState(rasterizer_state);
+            context->RSSetState(model_preview_rasterizer_state);
             context->OMSetDepthStencilState(depth_state, 0);
             const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
@@ -3797,7 +3805,7 @@ fail:
             Mat4 rotation = multiply(rotation_y(yaw), rotation_x(pitch));
             Mat4 world = multiply(center_transform, rotation);
             float distance = std::max(radius * distance_factor, radius + 0.1f);
-            Mat4 view = look_at_lh({0.0f, 0.0f, -distance}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+            Mat4 view = look_at_lh({0.0f, 0.0f, distance}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
             float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
             float near_z = std::max(0.001f, radius * 0.001f);
             float far_z = std::max(distance + radius * 4.0f, radius * 50.0f);
@@ -3963,6 +3971,7 @@ fail:
     ID3D11DepthStencilState* scene_depth_state = nullptr;
     ID3D11DepthStencilState* scene_depth_read_state = nullptr;
     ID3D11RasterizerState* rasterizer_state = nullptr;
+    ID3D11RasterizerState* model_preview_rasterizer_state = nullptr;
     ID3D11RasterizerState* alpha_mask_rasterizer_state = nullptr;
     ID3D11RasterizerState* track_rasterizer_state = nullptr;
     ID3D11BlendState* blend_state = nullptr;
