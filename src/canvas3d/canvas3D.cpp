@@ -132,6 +132,30 @@ ImVec4 scene_highlight_color_for_kind(Canvas3DSceneObjectKind kind) {
     }
 }
 
+bool scene_pick_id_for_object(int object_index, unsigned int& id) {
+    if (object_index < 0 || object_index >= 0x00ffffff) return false;
+    id = static_cast<unsigned int>(object_index) + 1u;
+    return true;
+}
+
+std::array<float, 4> scene_pick_color_for_id(unsigned int id) {
+    return {{
+        static_cast<float>(id & 0xffu) / 255.0f,
+        static_cast<float>((id >> 8) & 0xffu) / 255.0f,
+        static_cast<float>((id >> 16) & 0xffu) / 255.0f,
+        1.0f
+    }};
+}
+
+int scene_object_index_from_pick_rgba(const unsigned char* rgba) {
+    if (!rgba) return -1;
+    const unsigned int id = static_cast<unsigned int>(rgba[0]) |
+        (static_cast<unsigned int>(rgba[1]) << 8) |
+        (static_cast<unsigned int>(rgba[2]) << 16);
+    if (id == 0) return -1;
+    return static_cast<int>(id - 1u);
+}
+
 bool texture_pixels_have_alpha(const std::vector<unsigned char>& pixels) {
     for (size_t i = 3; i < pixels.size(); i += 4) {
         if (pixels[i] < 255) return true;
@@ -452,11 +476,6 @@ DVec3 transform_point_row(const double world[16], Vec3 p) {
     };
 }
 
-DVec3 world_basis_row(const double world[16], int row) {
-    const int offset = row * 4;
-    return {world[offset + 0], world[offset + 1], world[offset + 2]};
-}
-
 std::array<Vec3, 8> bounds_corners(Vec3 mn, Vec3 mx) {
     return {{
         {mn.x, mn.y, mn.z},
@@ -482,56 +501,6 @@ Vec3 scene_bounds_min_or_sphere(Vec3 mn, Vec3 mx, Vec3 center, float radius) {
 
 Vec3 scene_bounds_max_or_sphere(Vec3 mn, Vec3 mx, Vec3 center, float radius) {
     return scene_bounds_valid(mn, mx) ? mx : Vec3{center.x + radius, center.y + radius, center.z + radius};
-}
-
-bool intersect_scene_obb(const double world[16],
-                         Vec3 bounds_min,
-                         Vec3 bounds_max,
-                         DVec3 ray_origin,
-                         DVec3 ray_dir,
-                         double& out_t) {
-    Vec3 local_center{
-        (bounds_min.x + bounds_max.x) * 0.5f,
-        (bounds_min.y + bounds_max.y) * 0.5f,
-        (bounds_min.z + bounds_max.z) * 0.5f
-    };
-    const double half_extents[3] = {
-        std::max(0.0, static_cast<double>(bounds_max.x - bounds_min.x) * 0.5),
-        std::max(0.0, static_cast<double>(bounds_max.y - bounds_min.y) * 0.5),
-        std::max(0.0, static_cast<double>(bounds_max.z - bounds_min.z) * 0.5)
-    };
-
-    DVec3 center = transform_point_row(world, local_center);
-    DVec3 center_delta = center - ray_origin;
-    double t_min = -std::numeric_limits<double>::infinity();
-    double t_max = std::numeric_limits<double>::infinity();
-    constexpr double eps = 1e-8;
-
-    for (int axis_index = 0; axis_index < 3; ++axis_index) {
-        DVec3 axis = world_basis_row(world, axis_index);
-        const double axis_len = std::sqrt(std::max(dot(axis, axis), 0.0));
-        if (axis_len <= eps) continue;
-        axis = axis * (1.0 / axis_len);
-        const double extent = half_extents[axis_index] * axis_len;
-        const double center_axis = dot(axis, center_delta);
-        const double ray_axis = dot(axis, ray_dir);
-
-        if (std::abs(ray_axis) <= eps) {
-            if (std::abs(center_axis) > extent) return false;
-            continue;
-        }
-
-        double t1 = (center_axis - extent) / ray_axis;
-        double t2 = (center_axis + extent) / ray_axis;
-        if (t1 > t2) std::swap(t1, t2);
-        t_min = std::max(t_min, t1);
-        t_max = std::min(t_max, t2);
-        if (t_min > t_max) return false;
-    }
-
-    if (t_max < 0.0) return false;
-    out_t = t_min >= 0.0 ? t_min : t_max;
-    return std::isfinite(out_t);
 }
 
 struct GpuVertex {
@@ -560,6 +529,11 @@ struct SceneViewConstants {
 struct SceneOutlineConstants {
     float texel_radius[4];
     float color[4];
+};
+
+struct ScenePickConstants {
+    float pick_color[4];
+    float alpha_controls[4];
 };
 
 struct SceneInstanceData {
@@ -660,25 +634,21 @@ struct SceneChunk {
     std::vector<size_t> repeater_indices;
 };
 
-struct ScenePickCandidate {
-    int object_index = -1;
-    std::string model_path;
-    SceneInstanceData instance_data = {};
+struct SceneScreenBounds {
     ImVec2 screen_min = ImVec2(0.0f, 0.0f);
     ImVec2 screen_max = ImVec2(0.0f, 0.0f);
-    double depth = std::numeric_limits<double>::max();
-};
-
-struct ScenePickBounds {
-    ImVec2 screen_min = ImVec2(0.0f, 0.0f);
-    ImVec2 screen_max = ImVec2(0.0f, 0.0f);
-    double depth = std::numeric_limits<double>::max();
-    bool hit = false;
 };
 
 struct SceneVisibleInstanceRef {
     const std::string* model_path = nullptr;
     size_t instance_index = 0;
+    ImVec2 screen_min = ImVec2(0.0f, 0.0f);
+    ImVec2 screen_max = ImVec2(0.0f, 0.0f);
+};
+
+struct SceneHighlightInstance {
+    std::string model_path;
+    SceneInstanceData instance_data = {};
     ImVec2 screen_min = ImVec2(0.0f, 0.0f);
     ImVec2 screen_max = ImVec2(0.0f, 0.0f);
 };
@@ -1050,6 +1020,32 @@ float4 ps_main(VSOutput input) : SV_TARGET
     if (useTexture.y > 0.5)
         color.a = 1.0;
     return color;
+}
+)";
+
+const char* kScenePickShaderSource = R"(
+cbuffer ScenePickConstants : register(b1)
+{
+    float4 pickColor;
+    float4 alphaControls;
+};
+
+Texture2D diffuseTexture : register(t0);
+SamplerState diffuseSampler : register(s0);
+
+struct VSOutput
+{
+    float4 position : SV_POSITION;
+    float2 texcoord : TEXCOORD0;
+};
+
+float4 ps_main(VSOutput input) : SV_TARGET
+{
+    float alpha = alphaControls.x;
+    if (alphaControls.y > 0.5)
+        alpha *= diffuseTexture.Sample(diffuseSampler, input.texcoord).a;
+    clip(alpha - 0.1);
+    return pickColor;
 }
 )";
 
@@ -1555,6 +1551,8 @@ struct Canvas3D::Impl {
         release_com(scene_outline_constant_buffer);
         release_com(scene_outline_pixel_shader);
         release_com(scene_outline_vertex_shader);
+        release_com(scene_pick_constant_buffer);
+        release_com(scene_pick_pixel_shader);
         release_com(input_layout);
         release_com(vertex_shader);
         release_com(pixel_shader);
@@ -2412,6 +2410,44 @@ fail:
         return true;
     }
 
+    bool ensure_scene_pick_pipeline(std::string& error) {
+        if (scene_pick_pixel_shader && scene_pick_constant_buffer) return true;
+
+        ID3DBlob* ps_blob = nullptr;
+        ID3DBlob* errors = nullptr;
+        HRESULT hr = D3DCompile(kScenePickShaderSource, std::strlen(kScenePickShaderSource),
+                                nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
+                                D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) :
+                hresult_text("D3DCompile(scene pick pixel shader)", hr);
+            release_com(errors);
+            return false;
+        }
+        release_com(errors);
+
+        hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr,
+                                       &scene_pick_pixel_shader);
+        release_com(ps_blob);
+        if (FAILED(hr)) {
+            error = hresult_text("CreatePixelShader(scene pick)", hr);
+            return false;
+        }
+
+        D3D11_BUFFER_DESC cb_desc = {};
+        cb_desc.ByteWidth = sizeof(ScenePickConstants);
+        cb_desc.Usage = D3D11_USAGE_DEFAULT;
+        cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        hr = device->CreateBuffer(&cb_desc, nullptr, &scene_pick_constant_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene pick constants)", hr);
+            release_com(scene_pick_pixel_shader);
+            return false;
+        }
+
+        return true;
+    }
+
     bool ensure_scene_pipeline(std::string& error) {
         if (!device || !context) {
             error = "Direct3D device is not available";
@@ -2421,13 +2457,14 @@ fail:
             scene_depth_state && scene_depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
             track_rasterizer_state && sampler_state && blend_state &&
             scene_outline_vertex_shader && scene_outline_pixel_shader &&
-            scene_outline_constant_buffer && scene_outline_sampler_state) return true;
+            scene_outline_constant_buffer && scene_outline_sampler_state &&
+            scene_pick_pixel_shader && scene_pick_constant_buffer) return true;
 
         if (!ensure_pipeline(error)) return false;
         if (!ensure_scene_depth_states(error)) return false;
         if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
             track_rasterizer_state && sampler_state && blend_state) {
-            return ensure_scene_outline_pipeline(error);
+            return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error);
         }
 
         ID3DBlob* vs_blob = nullptr;
@@ -2493,7 +2530,7 @@ fail:
             error = hresult_text("CreateBuffer(scene constants)", hr);
             return false;
         }
-        return ensure_scene_outline_pipeline(error);
+        return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error);
     }
 
     bool ensure_scene_depth_states(std::string& error) {
@@ -2590,6 +2627,16 @@ fail:
         return true;
     }
 
+    void bind_scene_instanced_mesh(ID3D11Buffer* vb, ID3D11Buffer* ib, ID3D11Buffer* instance_buffer) {
+        UINT strides[2] = {sizeof(GpuVertex), sizeof(SceneInstanceData)};
+        UINT offsets[2] = {0, 0};
+        ID3D11Buffer* buffers[2] = {vb, instance_buffer};
+        context->IASetInputLayout(scene_input_layout);
+        context->IASetVertexBuffers(0, 2, buffers, strides, offsets);
+        context->IASetIndexBuffer(ib, DXGI_FORMAT_R32_UINT, 0);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    }
+
     void draw_scene_mesh(ID3D11Buffer* vb, ID3D11Buffer* ib, ID3D11Buffer* instance_buffer,
                          const std::vector<MeshPart>& mesh_parts,
                          const std::vector<GpuMaterial>& mesh_materials,
@@ -2599,13 +2646,7 @@ fail:
                          bool mask_pass = false) {
         if (!vb || !ib || !instance_buffer || instance_count == 0) return;
 
-        UINT strides[2] = {sizeof(GpuVertex), sizeof(SceneInstanceData)};
-        UINT offsets[2] = {0, 0};
-        ID3D11Buffer* buffers[2] = {vb, instance_buffer};
-        context->IASetInputLayout(scene_input_layout);
-        context->IASetVertexBuffers(0, 2, buffers, strides, offsets);
-        context->IASetIndexBuffer(ib, DXGI_FORMAT_R32_UINT, 0);
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        bind_scene_instanced_mesh(vb, ib, instance_buffer);
         context->VSSetShader(scene_vertex_shader, nullptr, 0);
         context->PSSetShader(scene_pixel_shader, nullptr, 0);
         context->VSSetConstantBuffers(0, 1, &scene_constant_buffer);
@@ -2653,6 +2694,136 @@ fail:
         }
         draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
                         model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj, rasterizer_state);
+    }
+
+    bool draw_scene_pick_model(SceneModelGpu& model,
+                               const std::vector<SceneInstanceData>& instances,
+                               const Mat4& view_proj,
+                               int object_index,
+                               std::string& error) {
+        if (model.state != SceneModelGpu::State::Ready || instances.empty()) return true;
+        unsigned int pick_id = 0;
+        if (!scene_pick_id_for_object(object_index, pick_id)) return true;
+        if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, instances, error)) return false;
+
+        bind_scene_instanced_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer);
+        context->VSSetShader(scene_vertex_shader, nullptr, 0);
+        context->PSSetShader(scene_pick_pixel_shader, nullptr, 0);
+        context->VSSetConstantBuffers(0, 1, &scene_constant_buffer);
+        context->PSSetConstantBuffers(1, 1, &scene_pick_constant_buffer);
+        context->PSSetSamplers(0, 1, &sampler_state);
+        context->OMSetDepthStencilState(scene_depth_read_state, 0);
+
+        SceneViewConstants view_constants = {};
+        view_constants.view_proj = view_proj;
+        context->UpdateSubresource(scene_constant_buffer, 0, nullptr, &view_constants, 0, 0);
+
+        const std::array<float, 4> pick_color = scene_pick_color_for_id(pick_id);
+        const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
+        for (const MeshPart& part : model.parts) {
+            const GpuMaterial* material = part.material_index < model.materials.size() ? &model.materials[part.material_index] : nullptr;
+            const bool alpha_masked = scene_material_uses_alpha_mask(material);
+            context->RSSetState(alpha_masked && alpha_mask_rasterizer_state ? alpha_mask_rasterizer_state : rasterizer_state);
+
+            ScenePickConstants constants = {};
+            constants.pick_color[0] = pick_color[0];
+            constants.pick_color[1] = pick_color[1];
+            constants.pick_color[2] = pick_color[2];
+            constants.pick_color[3] = pick_color[3];
+            constants.alpha_controls[0] = material ? material->diffuse[3] : 1.0f;
+            constants.alpha_controls[1] = material && material->has_texture ? 1.0f : 0.0f;
+            context->UpdateSubresource(scene_pick_constant_buffer, 0, nullptr, &constants, 0, 0);
+            ID3D11ShaderResourceView* texture = material && material->has_texture ? material->texture : nullptr;
+            context->PSSetShaderResources(0, 1, &texture);
+            context->DrawIndexedInstanced(part.index_count, static_cast<UINT>(instances.size()), part.start_index, 0, 0);
+        }
+
+        ID3D11ShaderResourceView* null_srv = nullptr;
+        context->PSSetShaderResources(0, 1, &null_srv);
+        ID3D11Buffer* null_buffer = nullptr;
+        context->PSSetConstantBuffers(1, 1, &null_buffer);
+        context->RSSetState(rasterizer_state);
+        context->OMSetDepthStencilState(scene_depth_state, 0);
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
+        return true;
+    }
+
+    int pick_scene_object_at_mouse(const std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
+                                   const std::map<int, std::vector<SceneVisibleInstanceRef>>& object_refs,
+                                   const Mat4& view_proj,
+                                   int width,
+                                   int height,
+                                   ImVec2 mouse_local,
+                                   std::string& error) {
+        const int pixel_x = static_cast<int>(std::floor(mouse_local.x));
+        const int pixel_y = static_cast<int>(std::floor(mouse_local.y));
+        if (pixel_x < 0 || pixel_y < 0 || pixel_x >= width || pixel_y >= height) return -1;
+        if (object_refs.empty()) return -1;
+        if (!ensure_scene_pick_target(width, height, error)) return -1;
+
+        using PickBatchKey = std::pair<int, std::string>;
+        std::map<PickBatchKey, std::vector<SceneInstanceData>> pick_batches;
+        for (const auto& object_kv : object_refs) {
+            const int object_index = object_kv.first;
+            if (!scene_object_index_valid(object_index)) continue;
+            unsigned int pick_id = 0;
+            if (!scene_pick_id_for_object(object_index, pick_id)) continue;
+            for (const SceneVisibleInstanceRef& ref : object_kv.second) {
+                if (!ref.model_path) continue;
+                auto visible_it = visible_instances.find(*ref.model_path);
+                if (visible_it == visible_instances.end() || ref.instance_index >= visible_it->second.size()) continue;
+                pick_batches[PickBatchKey{object_index, *ref.model_path}].push_back(visible_it->second[ref.instance_index]);
+            }
+        }
+        if (pick_batches.empty()) return -1;
+
+        const float clear_id[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context->ClearRenderTargetView(scene_pick_rtv, clear_id);
+        ID3D11RenderTargetView* pick_target = scene_pick_rtv;
+        context->OMSetRenderTargets(1, &pick_target, depth_dsv);
+
+        D3D11_VIEWPORT viewport = {};
+        viewport.Width = static_cast<float>(width);
+        viewport.Height = static_cast<float>(height);
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+        context->RSSetViewports(1, &viewport);
+
+        for (auto& kv : pick_batches) {
+            const int object_index = kv.first.first;
+            const std::string& model_path = kv.first.second;
+            auto model_it = scene_models.find(model_path);
+            if (model_it == scene_models.end()) continue;
+            if (!draw_scene_pick_model(model_it->second, kv.second, view_proj, object_index, error)) {
+                if (!error.empty()) scene_last_error = error;
+            }
+        }
+
+        ID3D11RenderTargetView* null_rtv = nullptr;
+        context->OMSetRenderTargets(1, &null_rtv, nullptr);
+
+        D3D11_BOX box = {};
+        box.left = static_cast<UINT>(pixel_x);
+        box.top = static_cast<UINT>(pixel_y);
+        box.front = 0;
+        box.right = static_cast<UINT>(pixel_x + 1);
+        box.bottom = static_cast<UINT>(pixel_y + 1);
+        box.back = 1;
+        context->CopySubresourceRegion(scene_pick_readback_texture, 0, 0, 0, 0, scene_pick_texture, 0, &box);
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        HRESULT hr = context->Map(scene_pick_readback_texture, 0, D3D11_MAP_READ, 0, &mapped);
+        if (FAILED(hr)) {
+            error = hresult_text("Map(scene pick readback)", hr);
+            return -1;
+        }
+        unsigned char rgba[4] = {};
+        if (mapped.pData) std::memcpy(rgba, mapped.pData, sizeof(rgba));
+        context->Unmap(scene_pick_readback_texture, 0);
+
+        const int object_index = scene_object_index_from_pick_rgba(rgba);
+        return scene_object_index_valid(object_index) ? object_index : -1;
     }
 
     void composite_scene_highlight_outline(int width, int height,
@@ -2725,26 +2896,11 @@ fail:
         context->RSSetViewports(1, &full_viewport);
     }
 
-    void draw_scene_model_highlight_outlines(const std::map<std::string, std::vector<SceneInstanceData>>& batches,
-                                             const Mat4& view_proj,
-                                             int width,
-                                             int height,
-                                             ImVec2 screen_min,
-                                             ImVec2 screen_max,
-                                             ImVec4 color) {
-        if (batches.empty() || !render_rtv || !depth_dsv) return;
-        std::string error;
-        if (!ensure_scene_highlight_mask_target(width, height, error)) {
-            if (!error.empty()) scene_last_error = error;
-            return;
-        }
-
-        ID3D11ShaderResourceView* null_srv = nullptr;
-        context->PSSetShaderResources(0, 1, &null_srv);
+    void draw_scene_highlight_mask_batches(const std::map<std::string, std::vector<SceneInstanceData>>& batches,
+                                           const Mat4& view_proj,
+                                           std::string& error) {
         ID3D11RenderTargetView* mask_target = scene_highlight_mask_rtv;
-        context->OMSetRenderTargets(1, &mask_target, depth_dsv);
-        const float clear_mask[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-        context->ClearRenderTargetView(scene_highlight_mask_rtv, clear_mask);
+        context->OMSetRenderTargets(1, &mask_target, nullptr);
 
         for (const auto& kv : batches) {
             auto model_it = scene_models.find(kv.first);
@@ -2760,6 +2916,45 @@ fail:
                             static_cast<UINT>(kv.second.size()),
                             view_proj, rasterizer_state, true);
         }
+    }
+
+    void draw_scene_model_highlight_outlines(const std::vector<SceneHighlightInstance>& instances,
+                                             const Mat4& view_proj,
+                                             int width,
+                                             int height,
+                                             ImVec2 screen_min,
+                                             ImVec2 screen_max,
+                                             ImVec4 color,
+                                             bool separate_instances) {
+        if (instances.empty() || !render_rtv) return;
+        std::string error;
+        if (!ensure_scene_highlight_mask_target(width, height, error)) {
+            if (!error.empty()) scene_last_error = error;
+            return;
+        }
+
+        ID3D11ShaderResourceView* null_srv = nullptr;
+        context->PSSetShaderResources(0, 1, &null_srv);
+        const float clear_mask[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        if (separate_instances) {
+            std::map<std::string, std::vector<SceneInstanceData>> batch;
+            for (const SceneHighlightInstance& instance : instances) {
+                batch.clear();
+                batch[instance.model_path].push_back(instance.instance_data);
+                context->ClearRenderTargetView(scene_highlight_mask_rtv, clear_mask);
+                draw_scene_highlight_mask_batches(batch, view_proj, error);
+                composite_scene_highlight_outline(width, height, instance.screen_min, instance.screen_max, color);
+            }
+            return;
+        }
+
+        std::map<std::string, std::vector<SceneInstanceData>> batches;
+        for (const SceneHighlightInstance& instance : instances) {
+            batches[instance.model_path].push_back(instance.instance_data);
+        }
+        context->ClearRenderTargetView(scene_highlight_mask_rtv, clear_mask);
+        draw_scene_highlight_mask_batches(batches, view_proj, error);
         composite_scene_highlight_outline(width, height, screen_min, screen_max, color);
     }
 
@@ -2810,32 +3005,13 @@ fail:
         return true;
     }
 
-    DVec3 scene_mouse_ray_direction(ImVec2 mouse_local, int width, int height) const {
-        const float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
-        const float y_scale = 1.0f / std::tan(kSceneCameraFovY * 0.5f);
-        const float x_scale = y_scale / std::max(aspect, 0.001f);
-        const float ndc_x = (mouse_local.x / std::max(1.0f, static_cast<float>(width))) * 2.0f - 1.0f;
-        const float ndc_y = 1.0f - (mouse_local.y / std::max(1.0f, static_cast<float>(height))) * 2.0f;
-        const double view_x = static_cast<double>(ndc_x / x_scale);
-        const double view_y = static_cast<double>(ndc_y / y_scale);
-
-        Vec3 forward_v = scene_forward();
-        Vec3 right_v = scene_right();
-        Vec3 up_v = normalize(cross(right_v, forward_v));
-        DVec3 direction = dvec3_from_vec3(right_v) * view_x +
-            dvec3_from_vec3(up_v) * view_y +
-            dvec3_from_vec3(forward_v);
-        return normalize(direction);
-    }
-
-    bool compute_scene_pick_bounds(const double world[16],
-                                   const SceneModelGpu& model,
-                                   DVec3 render_origin,
-                                   const Mat4& view_proj,
-                                   int width,
-                                   int height,
-                                   ImVec2 mouse_local,
-                                   ScenePickBounds& out) const {
+    bool compute_scene_instance_screen_bounds(const double world[16],
+                                              const SceneModelGpu& model,
+                                              DVec3 render_origin,
+                                              const Mat4& view_proj,
+                                              int width,
+                                              int height,
+                                              SceneScreenBounds& out) const {
         if (model.state != SceneModelGpu::State::Ready) return false;
 
         const Vec3 bounds_min = scene_bounds_min_or_sphere(model.bounds_min, model.bounds_max,
@@ -2846,7 +3022,6 @@ fail:
         bool projected = false;
         ImVec2 raw_min(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
         ImVec2 raw_max(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
-        double front_depth = std::numeric_limits<double>::max();
         for (Vec3 corner : bounds_corners(bounds_min, bounds_max)) {
             DVec3 world_point = transform_point_row(world, corner);
             DVec3 relative_point = world_point - render_origin;
@@ -2858,42 +3033,16 @@ fail:
             raw_min.y = std::min(raw_min.y, screen.y);
             raw_max.x = std::max(raw_max.x, screen.x);
             raw_max.y = std::max(raw_max.y, screen.y);
-            front_depth = std::min(front_depth, view_depth);
             projected = true;
         }
         if (!projected) return false;
 
-        out.hit = mouse_local.x >= raw_min.x && mouse_local.x <= raw_max.x &&
-            mouse_local.y >= raw_min.y && mouse_local.y <= raw_max.y;
         const float outline_padding = kSceneHighlightOutlineWidthPx + 2.0f;
         out.screen_min = ImVec2(std::max(0.0f, raw_min.x - outline_padding),
                                 std::max(0.0f, raw_min.y - outline_padding));
         out.screen_max = ImVec2(std::min(static_cast<float>(width), raw_max.x + outline_padding),
                                 std::min(static_cast<float>(height), raw_max.y + outline_padding));
-        double ray_t = 0.0;
-        if (out.hit && intersect_scene_obb(world, bounds_min, bounds_max, render_origin,
-                                           scene_mouse_ray_direction(mouse_local, width, height), ray_t)) {
-            out.depth = ray_t;
-        } else {
-            out.depth = front_depth;
-        }
         return true;
-    }
-
-    void note_scene_pick_candidate(int object_index,
-                                   const std::string& model_path,
-                                   const double world[16],
-                                   const ScenePickBounds& bounds,
-                                   DVec3 render_origin,
-                                   ScenePickCandidate& best) const {
-        if (!scene_object_index_valid(object_index) || !bounds.hit || bounds.depth >= best.depth) return;
-
-        best.object_index = object_index;
-        best.model_path = model_path;
-        best.instance_data = make_instance_data_relative(world, render_origin);
-        best.screen_min = bounds.screen_min;
-        best.screen_max = bounds.screen_max;
-        best.depth = bounds.depth;
     }
 
     bool ensure_pipeline(std::string& error) {
@@ -3337,6 +3486,56 @@ fail:
         return true;
     }
 
+    bool ensure_scene_pick_target(int width, int height, std::string& error) {
+        if (!device || width <= 0 || height <= 0) return false;
+        if (scene_pick_texture && scene_pick_rtv && scene_pick_readback_texture &&
+            render_width == width && render_height == height) {
+            return true;
+        }
+
+        release_com(scene_pick_readback_texture);
+        release_com(scene_pick_rtv);
+        release_com(scene_pick_texture);
+
+        D3D11_TEXTURE2D_DESC tex_desc = {};
+        tex_desc.Width = static_cast<UINT>(width);
+        tex_desc.Height = static_cast<UINT>(height);
+        tex_desc.MipLevels = 1;
+        tex_desc.ArraySize = 1;
+        tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        tex_desc.SampleDesc.Count = 1;
+        tex_desc.Usage = D3D11_USAGE_DEFAULT;
+        tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+        HRESULT hr = device->CreateTexture2D(&tex_desc, nullptr, &scene_pick_texture);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateTexture2D(scene pick)", hr);
+            release_com(scene_pick_texture);
+            return false;
+        }
+        hr = device->CreateRenderTargetView(scene_pick_texture, nullptr, &scene_pick_rtv);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateRenderTargetView(scene pick)", hr);
+            release_com(scene_pick_texture);
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC read_desc = tex_desc;
+        read_desc.Width = 1;
+        read_desc.Height = 1;
+        read_desc.Usage = D3D11_USAGE_STAGING;
+        read_desc.BindFlags = 0;
+        read_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        hr = device->CreateTexture2D(&read_desc, nullptr, &scene_pick_readback_texture);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateTexture2D(scene pick readback)", hr);
+            release_com(scene_pick_rtv);
+            release_com(scene_pick_texture);
+            return false;
+        }
+
+        return true;
+    }
+
     Vec3 scene_forward() const {
         float cp = std::cos(scene_camera_pitch);
         Vec3 forward{cp * std::sin(scene_camera_yaw),
@@ -3509,7 +3708,7 @@ fail:
     void append_visible_model_instance(const std::string& model_path,
                                        const SceneInstanceData& data,
                                        int object_index,
-                                       const ScenePickBounds* bounds,
+                                       const SceneScreenBounds* bounds,
                                        std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
                                        std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs) const {
         auto instance_it = visible_instances.try_emplace(model_path).first;
@@ -3542,11 +3741,9 @@ fail:
                                            const Mat4& view_proj,
                                            int width,
                                            int height,
-                                           ImVec2 mouse_local,
                                            bool can_pick,
                                            std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
-                                           std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs,
-                                           ScenePickCandidate& pick_candidate) const {
+                                           std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs) const {
         double chunk_max = chunk.d_max;
         if (chunk.d_max < scene_data.max_distance) chunk_max -= kSceneRepeaterDistanceEpsilon;
         double range_min = std::max(visible_min, chunk.d_min);
@@ -3569,16 +3766,14 @@ fail:
                 if (!make_repeater_instance_world(repeater, distance, world)) return;
                 SceneInstanceData data = make_instance_data_relative(world, render_origin);
 
-                ScenePickBounds bounds;
-                ScenePickBounds* bounds_ptr = nullptr;
+                SceneScreenBounds bounds;
+                SceneScreenBounds* bounds_ptr = nullptr;
                 if (can_pick && scene_object_index_valid(repeater.object_index)) {
                     auto model_it = scene_models.find(path);
                     if (model_it != scene_models.end() &&
-                        compute_scene_pick_bounds(world, model_it->second, render_origin, view_proj,
-                                                  width, height, mouse_local, bounds)) {
+                        compute_scene_instance_screen_bounds(world, model_it->second, render_origin, view_proj,
+                                                             width, height, bounds)) {
                         bounds_ptr = &bounds;
-                        note_scene_pick_candidate(repeater.object_index, path, world, bounds,
-                                                  render_origin, pick_candidate);
                     }
                 }
                 append_visible_model_instance(path, data, repeater.object_index, bounds_ptr,
@@ -3785,7 +3980,6 @@ fail:
         std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
         std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;
         std::vector<SceneInstanceData> track_instance(1);
-        ScenePickCandidate pick_candidate;
         const bool can_pick = pick_enabled && scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
         for (size_t i = 0; i < scene_chunks.size(); ++i) {
             const SceneChunk& chunk = scene_chunks[i];
@@ -3793,16 +3987,14 @@ fail:
             for (const SceneInstance& instance : chunk.instances) {
                 if (instance.distance < visible_min || instance.distance > visible_max) continue;
                 SceneInstanceData data = make_instance_data_relative(instance.world, render_origin);
-                ScenePickBounds bounds;
-                ScenePickBounds* bounds_ptr = nullptr;
+                SceneScreenBounds bounds;
+                SceneScreenBounds* bounds_ptr = nullptr;
                 if (can_pick && scene_object_index_valid(instance.object_index)) {
                     auto model_it = scene_models.find(instance.model_path);
                     if (model_it != scene_models.end() &&
-                        compute_scene_pick_bounds(instance.world, model_it->second, render_origin, view_proj,
-                                                  width, height, mouse_local, bounds)) {
+                        compute_scene_instance_screen_bounds(instance.world, model_it->second, render_origin, view_proj,
+                                                             width, height, bounds)) {
                         bounds_ptr = &bounds;
-                        note_scene_pick_candidate(instance.object_index, instance.model_path,
-                                                  instance.world, bounds, render_origin, pick_candidate);
                     }
                 }
                 append_visible_model_instance(instance.model_path, data, instance.object_index, bounds_ptr,
@@ -3810,10 +4002,9 @@ fail:
                                               can_pick ? &visible_object_instances : nullptr);
             }
             append_visible_repeater_instances(chunk, visible_min, visible_max, render_origin,
-                                              view_proj, width, height, mouse_local, can_pick,
+                                              view_proj, width, height, can_pick,
                                               visible_instances,
-                                              can_pick ? &visible_object_instances : nullptr,
-                                              pick_candidate);
+                                              can_pick ? &visible_object_instances : nullptr);
         }
 
         for (auto& kv : visible_instances) {
@@ -3824,27 +4015,37 @@ fail:
                 scene_stats_value.drawn_instance_count += kv.second.size();
             }
         }
-        if (pick_candidate.object_index >= 0) {
-            scene_hovered_object_index = pick_candidate.object_index;
+        const int picked_object_index = can_pick
+            ? pick_scene_object_at_mouse(visible_instances, visible_object_instances, view_proj,
+                                         width, height, mouse_local, error)
+            : -1;
+        if (!error.empty() && scene_last_error != error) scene_last_error = error;
+        ID3D11RenderTargetView* scene_target = render_rtv;
+        context->OMSetRenderTargets(1, &scene_target, depth_dsv);
+        context->RSSetViewports(1, &viewport);
+        context->OMSetDepthStencilState(scene_depth_state, 0);
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
+        if (picked_object_index >= 0) {
+            scene_hovered_object_index = picked_object_index;
             scene_highlight_instances.clear();
             scene_highlight_screen_min = ImVec2(static_cast<float>(width), static_cast<float>(height));
             scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
-            auto refs_it = visible_object_instances.find(pick_candidate.object_index);
+            auto refs_it = visible_object_instances.find(picked_object_index);
             if (refs_it != visible_object_instances.end()) {
                 for (const SceneVisibleInstanceRef& ref : refs_it->second) {
                     if (!ref.model_path) continue;
                     auto visible_it = visible_instances.find(*ref.model_path);
                     if (visible_it == visible_instances.end() || ref.instance_index >= visible_it->second.size()) continue;
-                    scene_highlight_instances[*ref.model_path].push_back(visible_it->second[ref.instance_index]);
+                    scene_highlight_instances.push_back(SceneHighlightInstance{
+                        *ref.model_path,
+                        visible_it->second[ref.instance_index],
+                        ref.screen_min,
+                        ref.screen_max
+                    });
                     include_scene_screen_bounds(scene_highlight_screen_min, scene_highlight_screen_max, ref);
                 }
             }
-            if (scene_highlight_instances.empty()) {
-                scene_highlight_instances[pick_candidate.model_path].push_back(pick_candidate.instance_data);
-                scene_highlight_screen_min = pick_candidate.screen_min;
-                scene_highlight_screen_max = pick_candidate.screen_max;
-            }
-            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(pick_candidate.object_index)];
+            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(picked_object_index)];
             scene_highlight_color = scene_highlight_color_for_kind(object.kind);
             scene_has_highlight = true;
         }
@@ -3853,11 +4054,13 @@ fail:
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj, track_instance, error);
         }
         if (scene_has_highlight) {
+            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(scene_hovered_object_index)];
             draw_scene_model_highlight_outlines(scene_highlight_instances,
                                                 view_proj, width, height,
                                                 scene_highlight_screen_min,
                                                 scene_highlight_screen_max,
-                                                scene_highlight_color);
+                                                scene_highlight_color,
+                                                object.kind == Canvas3DSceneObjectKind::Repeater);
         }
 
         ID3D11ShaderResourceView* null_srv = nullptr;
@@ -3997,6 +4200,7 @@ fail:
         ImGui::InvisibleButton("ScenePreview3DCanvas", avail,
                                ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         bool hovered = ImGui::IsItemHovered();
+        const bool context_popup_open = ImGui::IsPopupOpen("ScenePreviewObjectContext");
         const bool loading_before_render = scene_stats().loading;
         if (scene_active && !loading_before_render) handle_scene_input(hovered);
         ImGuiIO& io = ImGui::GetIO();
@@ -4009,7 +4213,7 @@ fail:
         int width = std::max(1, static_cast<int>(std::round(avail.x)));
         int height = std::max(1, static_cast<int>(std::round(avail.y)));
         if (scene_active) {
-            render_scene_preview_target(width, height, mouse_local, hovered);
+            render_scene_preview_target(width, height, mouse_local, hovered || context_popup_open);
         } else {
             std::string error;
             ensure_render_target(width, height, error);
@@ -4214,6 +4418,9 @@ fail:
     }
 
     void release_render_target() {
+        release_com(scene_pick_readback_texture);
+        release_com(scene_pick_rtv);
+        release_com(scene_pick_texture);
         release_com(scene_highlight_mask_srv);
         release_com(scene_highlight_mask_rtv);
         release_com(scene_highlight_mask_texture);
@@ -4233,6 +4440,9 @@ fail:
     ID3D11ShaderResourceView* render_srv = nullptr;
     ID3D11Texture2D* depth_texture = nullptr;
     ID3D11DepthStencilView* depth_dsv = nullptr;
+    ID3D11Texture2D* scene_pick_texture = nullptr;
+    ID3D11RenderTargetView* scene_pick_rtv = nullptr;
+    ID3D11Texture2D* scene_pick_readback_texture = nullptr;
     ID3D11Texture2D* scene_highlight_mask_texture = nullptr;
     ID3D11RenderTargetView* scene_highlight_mask_rtv = nullptr;
     ID3D11ShaderResourceView* scene_highlight_mask_srv = nullptr;
@@ -4247,6 +4457,8 @@ fail:
     ID3D11VertexShader* scene_outline_vertex_shader = nullptr;
     ID3D11PixelShader* scene_outline_pixel_shader = nullptr;
     ID3D11Buffer* scene_outline_constant_buffer = nullptr;
+    ID3D11PixelShader* scene_pick_pixel_shader = nullptr;
+    ID3D11Buffer* scene_pick_constant_buffer = nullptr;
     ID3D11SamplerState* sampler_state = nullptr;
     ID3D11SamplerState* scene_outline_sampler_state = nullptr;
     ID3D11DepthStencilState* depth_state = nullptr;
@@ -4303,7 +4515,7 @@ fail:
     int scene_hovered_object_index = -1;
     int scene_context_object_index = -1;
     bool scene_has_highlight = false;
-    std::map<std::string, std::vector<SceneInstanceData>> scene_highlight_instances;
+    std::vector<SceneHighlightInstance> scene_highlight_instances;
     ImVec4 scene_highlight_color = ImVec4(0.62f, 1.0f, 0.72f, 0.92f);
     ImVec2 scene_highlight_screen_min = ImVec2(0.0f, 0.0f);
     ImVec2 scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
