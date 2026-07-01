@@ -119,6 +119,19 @@ ImVec4 clamp_background_color(ImVec4 color) {
     return color;
 }
 
+ImVec4 scene_highlight_color_for_kind(Canvas3DSceneObjectKind kind) {
+    switch (kind) {
+    case Canvas3DSceneObjectKind::Structure:
+        return ImVec4(1.0f, 216.0f / 255.0f, 48.0f / 255.0f, 0.92f);
+    case Canvas3DSceneObjectKind::Repeater:
+        return ImVec4(1.0f, 105.0f / 255.0f, 190.0f / 255.0f, 0.92f);
+    case Canvas3DSceneObjectKind::Signal:
+        return ImVec4(0.62f, 1.0f, 0.72f, 0.92f);
+    default:
+        return ImVec4(0.62f, 1.0f, 0.72f, 0.92f);
+    }
+}
+
 bool texture_pixels_have_alpha(const std::vector<unsigned char>& pixels) {
     for (size_t i = 3; i < pixels.size(); i += 4) {
         if (pixels[i] < 255) return true;
@@ -439,17 +452,86 @@ DVec3 transform_point_row(const double world[16], Vec3 p) {
     };
 }
 
-double scene_basis_vector_length(const double world[16], int row) {
+DVec3 world_basis_row(const double world[16], int row) {
     const int offset = row * 4;
-    return std::sqrt(world[offset + 0] * world[offset + 0] +
-                     world[offset + 1] * world[offset + 1] +
-                     world[offset + 2] * world[offset + 2]);
+    return {world[offset + 0], world[offset + 1], world[offset + 2]};
 }
 
-double scene_instance_radius_scale(const double world[16]) {
-    return std::max(scene_basis_vector_length(world, 0),
-                    std::max(scene_basis_vector_length(world, 1),
-                             scene_basis_vector_length(world, 2)));
+std::array<Vec3, 8> bounds_corners(Vec3 mn, Vec3 mx) {
+    return {{
+        {mn.x, mn.y, mn.z},
+        {mx.x, mn.y, mn.z},
+        {mn.x, mx.y, mn.z},
+        {mx.x, mx.y, mn.z},
+        {mn.x, mn.y, mx.z},
+        {mx.x, mn.y, mx.z},
+        {mn.x, mx.y, mx.z},
+        {mx.x, mx.y, mx.z}
+    }};
+}
+
+bool scene_bounds_valid(Vec3 mn, Vec3 mx) {
+    return std::isfinite(mn.x) && std::isfinite(mn.y) && std::isfinite(mn.z) &&
+        std::isfinite(mx.x) && std::isfinite(mx.y) && std::isfinite(mx.z) &&
+        mx.x >= mn.x && mx.y >= mn.y && mx.z >= mn.z;
+}
+
+Vec3 scene_bounds_min_or_sphere(Vec3 mn, Vec3 mx, Vec3 center, float radius) {
+    return scene_bounds_valid(mn, mx) ? mn : Vec3{center.x - radius, center.y - radius, center.z - radius};
+}
+
+Vec3 scene_bounds_max_or_sphere(Vec3 mn, Vec3 mx, Vec3 center, float radius) {
+    return scene_bounds_valid(mn, mx) ? mx : Vec3{center.x + radius, center.y + radius, center.z + radius};
+}
+
+bool intersect_scene_obb(const double world[16],
+                         Vec3 bounds_min,
+                         Vec3 bounds_max,
+                         DVec3 ray_origin,
+                         DVec3 ray_dir,
+                         double& out_t) {
+    Vec3 local_center{
+        (bounds_min.x + bounds_max.x) * 0.5f,
+        (bounds_min.y + bounds_max.y) * 0.5f,
+        (bounds_min.z + bounds_max.z) * 0.5f
+    };
+    const double half_extents[3] = {
+        std::max(0.0, static_cast<double>(bounds_max.x - bounds_min.x) * 0.5),
+        std::max(0.0, static_cast<double>(bounds_max.y - bounds_min.y) * 0.5),
+        std::max(0.0, static_cast<double>(bounds_max.z - bounds_min.z) * 0.5)
+    };
+
+    DVec3 center = transform_point_row(world, local_center);
+    DVec3 center_delta = center - ray_origin;
+    double t_min = -std::numeric_limits<double>::infinity();
+    double t_max = std::numeric_limits<double>::infinity();
+    constexpr double eps = 1e-8;
+
+    for (int axis_index = 0; axis_index < 3; ++axis_index) {
+        DVec3 axis = world_basis_row(world, axis_index);
+        const double axis_len = std::sqrt(std::max(dot(axis, axis), 0.0));
+        if (axis_len <= eps) continue;
+        axis = axis * (1.0 / axis_len);
+        const double extent = half_extents[axis_index] * axis_len;
+        const double center_axis = dot(axis, center_delta);
+        const double ray_axis = dot(axis, ray_dir);
+
+        if (std::abs(ray_axis) <= eps) {
+            if (std::abs(center_axis) > extent) return false;
+            continue;
+        }
+
+        double t1 = (center_axis - extent) / ray_axis;
+        double t2 = (center_axis + extent) / ray_axis;
+        if (t1 > t2) std::swap(t1, t2);
+        t_min = std::max(t_min, t1);
+        t_max = std::min(t_max, t2);
+        if (t_min > t_max) return false;
+    }
+
+    if (t_max < 0.0) return false;
+    out_t = t_min >= 0.0 ? t_min : t_max;
+    return std::isfinite(out_t);
 }
 
 struct GpuVertex {
@@ -511,6 +593,8 @@ struct CpuModelData {
     std::vector<unsigned int> indices;
     std::vector<MeshPart> parts;
     std::vector<CpuMaterial> materials;
+    Vec3 bounds_min;
+    Vec3 bounds_max;
     Vec3 center;
     float radius = 1.0f;
     bool ok = false;
@@ -528,6 +612,8 @@ struct SceneModelGpu {
     UINT index_count = 0;
     std::vector<MeshPart> parts;
     std::vector<GpuMaterial> materials;
+    Vec3 bounds_min;
+    Vec3 bounds_max;
     Vec3 center;
     float radius = 1.0f;
     std::string error;
@@ -581,6 +667,20 @@ struct ScenePickCandidate {
     ImVec2 screen_min = ImVec2(0.0f, 0.0f);
     ImVec2 screen_max = ImVec2(0.0f, 0.0f);
     double depth = std::numeric_limits<double>::max();
+};
+
+struct ScenePickBounds {
+    ImVec2 screen_min = ImVec2(0.0f, 0.0f);
+    ImVec2 screen_max = ImVec2(0.0f, 0.0f);
+    double depth = std::numeric_limits<double>::max();
+    bool hit = false;
+};
+
+struct SceneVisibleInstanceRef {
+    const std::string* model_path = nullptr;
+    size_t instance_index = 0;
+    ImVec2 screen_min = ImVec2(0.0f, 0.0f);
+    ImVec2 screen_max = ImVec2(0.0f, 0.0f);
 };
 
 struct SceneRepeaterIndexRange {
@@ -1193,16 +1293,24 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
     scene.min_distance = scene_own.at(0, 0);
     scene.max_distance = scene_own.at(scene_own.rows - 1, 0);
 
-    auto append_structure_instance = [&](const TableRow& row) {
+    auto append_structure_instance = [&](const TableRow& row, size_t source_row) {
         std::string path = model_path_for_key(table_cell(row, "structureKey"));
         if (path.empty()) return;
         double distance = table_cell_number(row, "distance");
         auto point = sample_placement_track(table_cell(row, "trackKey"), distance);
         if (!point) return;
+        Canvas3DSceneObject object;
+        object.kind = Canvas3DSceneObjectKind::Structure;
+        object.source_row = source_row;
+        object.label = table_cell(row, "structureKey");
+        const int object_index = static_cast<int>(scene.objects.size());
+        scene.objects.push_back(std::move(object));
+
         Canvas3DModelInstance instance;
         instance.model_path = path;
         instance.track_key = table_cell(row, "trackKey");
         instance.distance = distance;
+        instance.object_index = object_index;
         instance.follow_track = true;
         instance.x = table_cell_number(row, "x");
         instance.y = table_cell_number(row, "y");
@@ -1214,9 +1322,12 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         instance.span = table_cell_number(row, "span");
         scene.instances.push_back(std::move(instance));
     };
-    for (const TableRow& row : model.structures) append_structure_instance(row);
+    for (size_t row_index = 0; row_index < model.structures.size(); ++row_index) {
+        append_structure_instance(model.structures[row_index], row_index);
+    }
 
-    for (const TableRow& row : model.structures_between) {
+    for (size_t between_index = 0; between_index < model.structures_between.size(); ++between_index) {
+        const TableRow& row = model.structures_between[between_index];
         std::string path = model_path_for_key(table_cell(row, "structureKey"));
         if (path.empty()) continue;
         double distance = table_cell_number(row, "distance");
@@ -1231,9 +1342,17 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         forward = normalize(forward - right * dot(forward, right));
         DVec3 up = cross(right, forward);
         DVec3 origin = (a + b) * 0.5;
+        Canvas3DSceneObject object;
+        object.kind = Canvas3DSceneObjectKind::Structure;
+        object.source_row = model.structures.size() + between_index;
+        object.label = table_cell(row, "structureKey");
+        const int object_index = static_cast<int>(scene.objects.size());
+        scene.objects.push_back(std::move(object));
+
         Canvas3DModelInstance instance;
         instance.model_path = path;
         instance.distance = distance;
+        instance.object_index = object_index;
         store_world(instance.world, right, up, forward, origin);
         scene.instances.push_back(std::move(instance));
     }
@@ -1284,7 +1403,9 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
     }
 
     struct RepeaterBegin {
+        size_t row_index = 0;
         double distance = 0.0;
+        std::string key;
         std::string track_key;
         double x = 0.0;
         double y = 0.0;
@@ -1300,6 +1421,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
     std::vector<TableRow> repeater_events = model.repeaters;
     std::stable_sort(repeater_events.begin(), repeater_events.end(), repeater_event_distance_order_less);
     std::map<std::string, RepeaterBegin> active_repeaters;
+    size_t repeater_row_index = 0;
     auto emit_repeater = [&](const RepeaterBegin& begin, double end_distance) {
         if (end_distance < begin.distance) return;
         Canvas3DRepeaterSegment segment;
@@ -1318,7 +1440,15 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         for (const std::string& path : begin.model_paths) {
             if (!path.empty()) segment.model_paths.push_back(path);
         }
-        if (!segment.model_paths.empty()) scene.repeaters.push_back(std::move(segment));
+        if (segment.model_paths.empty()) return;
+
+        Canvas3DSceneObject object;
+        object.kind = Canvas3DSceneObjectKind::Repeater;
+        object.source_row = begin.row_index;
+        object.label = begin.key;
+        segment.object_index = static_cast<int>(scene.objects.size());
+        scene.objects.push_back(std::move(object));
+        scene.repeaters.push_back(std::move(segment));
     };
     for (const TableRow& row : repeater_events) {
         std::string key = scene_model_key(table_cell(row, "repeaterKey"));
@@ -1332,7 +1462,9 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
                 active_repeaters.erase(existing);
             }
             RepeaterBegin begin;
+            begin.row_index = repeater_row_index++;
             begin.distance = distance;
+            begin.key = key;
             begin.track_key = table_cell(row, "trackKey");
             begin.x = table_cell_number(row, "x");
             begin.y = table_cell_number(row, "y");
@@ -1541,6 +1673,8 @@ struct Canvas3D::Impl {
         }
 
         index_count = static_cast<UINT>(data.index_count);
+        bounds_min = {data.bounds_min[0], data.bounds_min[1], data.bounds_min[2]};
+        bounds_max = {data.bounds_max[0], data.bounds_max[1], data.bounds_max[2]};
         center = {data.center[0], data.center[1], data.center[2]};
         radius = std::max(data.radius, 0.001f);
         model_path_value = path;
@@ -1553,6 +1687,8 @@ struct Canvas3D::Impl {
     void clear_model() {
         release_resources();
         model_path_value.clear();
+        bounds_min = {};
+        bounds_max = {};
         center = {};
         radius = 1.0f;
         yaw = 0.0f;
@@ -2008,6 +2144,8 @@ fail:
             out.error = "model contains no renderable data";
             return out;
         }
+        out.bounds_min = {data.bounds_min[0], data.bounds_min[1], data.bounds_min[2]};
+        out.bounds_max = {data.bounds_max[0], data.bounds_max[1], data.bounds_max[2]};
         out.center = {data.center[0], data.center[1], data.center[2]};
         out.radius = std::max(data.radius, 0.001f);
         out.vertices.resize(data.vertex_count);
@@ -2159,6 +2297,8 @@ fail:
             }
         }
         model.index_count = static_cast<UINT>(cpu.indices.size());
+        model.bounds_min = cpu.bounds_min;
+        model.bounds_max = cpu.bounds_max;
         model.center = cpu.center;
         model.radius = std::max(cpu.radius, 0.001f);
         model.state = SceneModelGpu::State::Ready;
@@ -2515,7 +2655,10 @@ fail:
                         model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj, rasterizer_state);
     }
 
-    void composite_scene_highlight_outline(int width, int height, ImVec2 screen_min, ImVec2 screen_max) {
+    void composite_scene_highlight_outline(int width, int height,
+                                           ImVec2 screen_min,
+                                           ImVec2 screen_max,
+                                           ImVec4 color) {
         if (!render_rtv || !scene_highlight_mask_srv ||
             !scene_outline_vertex_shader || !scene_outline_pixel_shader ||
             !scene_outline_constant_buffer || !scene_outline_sampler_state ||
@@ -2534,10 +2677,10 @@ fail:
         constants.texel_radius[1] = 1.0f / static_cast<float>(height);
         constants.texel_radius[2] = kSceneHighlightOutlineWidthPx * 0.5f;
         constants.texel_radius[3] = 0.0f;
-        constants.color[0] = 0.62f;
-        constants.color[1] = 1.0f;
-        constants.color[2] = 0.72f;
-        constants.color[3] = 0.92f;
+        constants.color[0] = clamp_color_component(color.x);
+        constants.color[1] = clamp_color_component(color.y);
+        constants.color[2] = clamp_color_component(color.z);
+        constants.color[3] = clamp_color_component(color.w);
         context->UpdateSubresource(scene_outline_constant_buffer, 0, nullptr, &constants, 0, 0);
 
         D3D11_VIEWPORT outline_viewport = {};
@@ -2582,23 +2725,17 @@ fail:
         context->RSSetViewports(1, &full_viewport);
     }
 
-    void draw_scene_model_highlight_outline(SceneModelGpu& model,
-                                            const SceneInstanceData& instance,
-                                            const Mat4& view_proj,
-                                            int width,
-                                            int height,
-                                            ImVec2 screen_min,
-                                            ImVec2 screen_max) {
-        if (model.state != SceneModelGpu::State::Ready || !render_rtv || !depth_dsv) return;
+    void draw_scene_model_highlight_outlines(const std::map<std::string, std::vector<SceneInstanceData>>& batches,
+                                             const Mat4& view_proj,
+                                             int width,
+                                             int height,
+                                             ImVec2 screen_min,
+                                             ImVec2 screen_max,
+                                             ImVec4 color) {
+        if (batches.empty() || !render_rtv || !depth_dsv) return;
         std::string error;
         if (!ensure_scene_highlight_mask_target(width, height, error)) {
             if (!error.empty()) scene_last_error = error;
-            return;
-        }
-
-        const std::vector<SceneInstanceData> instances{instance};
-        if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, instances, error)) {
-            scene_last_error = error;
             return;
         }
 
@@ -2608,9 +2745,22 @@ fail:
         context->OMSetRenderTargets(1, &mask_target, depth_dsv);
         const float clear_mask[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         context->ClearRenderTargetView(scene_highlight_mask_rtv, clear_mask);
-        draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
-                        model.parts, model.materials, 1, view_proj, rasterizer_state, true);
-        composite_scene_highlight_outline(width, height, screen_min, screen_max);
+
+        for (const auto& kv : batches) {
+            auto model_it = scene_models.find(kv.first);
+            if (model_it == scene_models.end()) continue;
+            SceneModelGpu& model = model_it->second;
+            if (model.state != SceneModelGpu::State::Ready || kv.second.empty()) continue;
+            if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, kv.second, error)) {
+                scene_last_error = error;
+                continue;
+            }
+            draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
+                            model.parts, model.materials,
+                            static_cast<UINT>(kv.second.size()),
+                            view_proj, rasterizer_state, true);
+        }
+        composite_scene_highlight_outline(width, height, screen_min, screen_max, color);
     }
 
 
@@ -2660,43 +2810,90 @@ fail:
         return true;
     }
 
-    void note_scene_pick_candidate(const SceneInstance& instance,
+    DVec3 scene_mouse_ray_direction(ImVec2 mouse_local, int width, int height) const {
+        const float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
+        const float y_scale = 1.0f / std::tan(kSceneCameraFovY * 0.5f);
+        const float x_scale = y_scale / std::max(aspect, 0.001f);
+        const float ndc_x = (mouse_local.x / std::max(1.0f, static_cast<float>(width))) * 2.0f - 1.0f;
+        const float ndc_y = 1.0f - (mouse_local.y / std::max(1.0f, static_cast<float>(height))) * 2.0f;
+        const double view_x = static_cast<double>(ndc_x / x_scale);
+        const double view_y = static_cast<double>(ndc_y / y_scale);
+
+        Vec3 forward_v = scene_forward();
+        Vec3 right_v = scene_right();
+        Vec3 up_v = normalize(cross(right_v, forward_v));
+        DVec3 direction = dvec3_from_vec3(right_v) * view_x +
+            dvec3_from_vec3(up_v) * view_y +
+            dvec3_from_vec3(forward_v);
+        return normalize(direction);
+    }
+
+    bool compute_scene_pick_bounds(const double world[16],
                                    const SceneModelGpu& model,
                                    DVec3 render_origin,
                                    const Mat4& view_proj,
                                    int width,
                                    int height,
                                    ImVec2 mouse_local,
-                                   ScenePickCandidate& best) const {
-        if (!scene_object_index_valid(instance.object_index) || model.state != SceneModelGpu::State::Ready) return;
+                                   ScenePickBounds& out) const {
+        if (model.state != SceneModelGpu::State::Ready) return false;
 
-        DVec3 center_world = transform_point_row(instance.world, model.center);
-        DVec3 center_relative = center_world - render_origin;
-        const double depth = dot(center_relative, dvec3_from_vec3(scene_forward()));
-        if (!std::isfinite(depth) || depth <= static_cast<double>(kSceneNearZ)) return;
+        const Vec3 bounds_min = scene_bounds_min_or_sphere(model.bounds_min, model.bounds_max,
+                                                           model.center, model.radius);
+        const Vec3 bounds_max = scene_bounds_max_or_sphere(model.bounds_min, model.bounds_max,
+                                                           model.center, model.radius);
+        const DVec3 forward = dvec3_from_vec3(scene_forward());
+        bool projected = false;
+        ImVec2 raw_min(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        ImVec2 raw_max(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
+        double front_depth = std::numeric_limits<double>::max();
+        for (Vec3 corner : bounds_corners(bounds_min, bounds_max)) {
+            DVec3 world_point = transform_point_row(world, corner);
+            DVec3 relative_point = world_point - render_origin;
+            const double view_depth = dot(relative_point, forward);
+            if (!std::isfinite(view_depth) || view_depth <= static_cast<double>(kSceneNearZ)) continue;
+            ImVec2 screen;
+            if (!project_scene_point(relative_point, view_proj, width, height, screen)) continue;
+            raw_min.x = std::min(raw_min.x, screen.x);
+            raw_min.y = std::min(raw_min.y, screen.y);
+            raw_max.x = std::max(raw_max.x, screen.x);
+            raw_max.y = std::max(raw_max.y, screen.y);
+            front_depth = std::min(front_depth, view_depth);
+            projected = true;
+        }
+        if (!projected) return false;
 
-        ImVec2 screen_center;
-        if (!project_scene_point(center_relative, view_proj, width, height, screen_center)) return;
-        const double world_radius = std::max(0.001, static_cast<double>(model.radius) *
-            scene_instance_radius_scale(instance.world));
-        const double focal_y = static_cast<double>(height) * 0.5 / std::tan(static_cast<double>(kSceneCameraFovY) * 0.5);
-        const float screen_radius = std::max(
-            kSceneSelectionMinScreenRadius,
-            static_cast<float>(world_radius * focal_y / depth) + kSceneSelectionHitPadding);
-        const float dx = mouse_local.x - screen_center.x;
-        const float dy = mouse_local.y - screen_center.y;
-        if (dx * dx + dy * dy > screen_radius * screen_radius) return;
-        if (depth >= best.depth) return;
-
-        best.object_index = instance.object_index;
-        best.model_path = instance.model_path;
-        best.instance_data = make_instance_data_relative(instance.world, render_origin);
+        out.hit = mouse_local.x >= raw_min.x && mouse_local.x <= raw_max.x &&
+            mouse_local.y >= raw_min.y && mouse_local.y <= raw_max.y;
         const float outline_padding = kSceneHighlightOutlineWidthPx + 2.0f;
-        best.screen_min = ImVec2(std::max(0.0f, screen_center.x - screen_radius - outline_padding),
-                                 std::max(0.0f, screen_center.y - screen_radius - outline_padding));
-        best.screen_max = ImVec2(std::min(static_cast<float>(width), screen_center.x + screen_radius + outline_padding),
-                                 std::min(static_cast<float>(height), screen_center.y + screen_radius + outline_padding));
-        best.depth = depth;
+        out.screen_min = ImVec2(std::max(0.0f, raw_min.x - outline_padding),
+                                std::max(0.0f, raw_min.y - outline_padding));
+        out.screen_max = ImVec2(std::min(static_cast<float>(width), raw_max.x + outline_padding),
+                                std::min(static_cast<float>(height), raw_max.y + outline_padding));
+        double ray_t = 0.0;
+        if (out.hit && intersect_scene_obb(world, bounds_min, bounds_max, render_origin,
+                                           scene_mouse_ray_direction(mouse_local, width, height), ray_t)) {
+            out.depth = ray_t;
+        } else {
+            out.depth = front_depth;
+        }
+        return true;
+    }
+
+    void note_scene_pick_candidate(int object_index,
+                                   const std::string& model_path,
+                                   const double world[16],
+                                   const ScenePickBounds& bounds,
+                                   DVec3 render_origin,
+                                   ScenePickCandidate& best) const {
+        if (!scene_object_index_valid(object_index) || !bounds.hit || bounds.depth >= best.depth) return;
+
+        best.object_index = object_index;
+        best.model_path = model_path;
+        best.instance_data = make_instance_data_relative(world, render_origin);
+        best.screen_min = bounds.screen_min;
+        best.screen_max = bounds.screen_max;
+        best.depth = bounds.depth;
     }
 
     bool ensure_pipeline(std::string& error) {
@@ -3299,27 +3496,57 @@ fail:
         return true;
     }
 
-    bool make_repeater_instance_data(const Canvas3DRepeaterSegment& repeater,
-                                     double distance,
-                                     DVec3 render_origin,
-                                     SceneInstanceData& out) const {
-        double world[16] = {};
-        if (!make_track_world(repeater.track_key, distance,
-                              repeater.x, repeater.y, repeater.z,
-                              repeater.rx, repeater.ry, repeater.rz,
-                              repeater.tilt, repeater.span,
-                              world)) {
-            return false;
+    bool make_repeater_instance_world(const Canvas3DRepeaterSegment& repeater,
+                                      double distance,
+                                      double out_world[16]) const {
+        return make_track_world(repeater.track_key, distance,
+                                repeater.x, repeater.y, repeater.z,
+                                repeater.rx, repeater.ry, repeater.rz,
+                                repeater.tilt, repeater.span,
+                                out_world);
+    }
+
+    void append_visible_model_instance(const std::string& model_path,
+                                       const SceneInstanceData& data,
+                                       int object_index,
+                                       const ScenePickBounds* bounds,
+                                       std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
+                                       std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs) const {
+        auto instance_it = visible_instances.try_emplace(model_path).first;
+        std::vector<SceneInstanceData>& instances = instance_it->second;
+        const size_t instance_index = instances.size();
+        instances.push_back(data);
+        if (object_refs && object_index >= 0 && bounds) {
+            (*object_refs)[object_index].push_back(SceneVisibleInstanceRef{
+                &instance_it->first,
+                instance_index,
+                bounds->screen_min,
+                bounds->screen_max
+            });
         }
-        out = make_instance_data_relative(world, render_origin);
-        return true;
+    }
+
+    static void include_scene_screen_bounds(ImVec2& screen_min,
+                                            ImVec2& screen_max,
+                                            const SceneVisibleInstanceRef& ref) {
+        screen_min.x = std::min(screen_min.x, ref.screen_min.x);
+        screen_min.y = std::min(screen_min.y, ref.screen_min.y);
+        screen_max.x = std::max(screen_max.x, ref.screen_max.x);
+        screen_max.y = std::max(screen_max.y, ref.screen_max.y);
     }
 
     void append_visible_repeater_instances(const SceneChunk& chunk,
                                            double visible_min,
                                            double visible_max,
                                            DVec3 render_origin,
-                                           std::map<std::string, std::vector<SceneInstanceData>>& visible_instances) const {
+                                           const Mat4& view_proj,
+                                           int width,
+                                           int height,
+                                           ImVec2 mouse_local,
+                                           bool can_pick,
+                                           std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
+                                           std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs,
+                                           ScenePickCandidate& pick_candidate) const {
         double chunk_max = chunk.d_max;
         if (chunk.d_max < scene_data.max_distance) chunk_max -= kSceneRepeaterDistanceEpsilon;
         double range_min = std::max(visible_min, chunk.d_min);
@@ -3338,10 +3565,24 @@ fail:
             auto emit = [&](double distance, size_t model_index) {
                 const std::string& path = repeater.model_paths[model_index % repeater.model_paths.size()];
                 if (path.empty()) return;
-                SceneInstanceData data;
-                if (make_repeater_instance_data(repeater, distance, render_origin, data)) {
-                    visible_instances[path].push_back(data);
+                double world[16] = {};
+                if (!make_repeater_instance_world(repeater, distance, world)) return;
+                SceneInstanceData data = make_instance_data_relative(world, render_origin);
+
+                ScenePickBounds bounds;
+                ScenePickBounds* bounds_ptr = nullptr;
+                if (can_pick && scene_object_index_valid(repeater.object_index)) {
+                    auto model_it = scene_models.find(path);
+                    if (model_it != scene_models.end() &&
+                        compute_scene_pick_bounds(world, model_it->second, render_origin, view_proj,
+                                                  width, height, mouse_local, bounds)) {
+                        bounds_ptr = &bounds;
+                        note_scene_pick_candidate(repeater.object_index, path, world, bounds,
+                                                  render_origin, pick_candidate);
+                    }
                 }
+                append_visible_model_instance(path, data, repeater.object_index, bounds_ptr,
+                                              visible_instances, object_refs);
             };
 
             if (!scene_repeater_has_interval(repeater)) {
@@ -3495,6 +3736,7 @@ fail:
         std::string error;
         scene_hovered_object_index = -1;
         scene_has_highlight = false;
+        scene_highlight_instances.clear();
         if (!ensure_render_target(width, height, error)) {
             if (scene_last_error != error) scene_last_error = error;
             return;
@@ -3541,6 +3783,7 @@ fail:
         double visible_min = scene_camera_distance - scene_window_back_m;
         double visible_max = scene_camera_distance + scene_window_forward_m;
         std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
+        std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;
         std::vector<SceneInstanceData> track_instance(1);
         ScenePickCandidate pick_candidate;
         const bool can_pick = pick_enabled && scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
@@ -3549,16 +3792,28 @@ fail:
             if (!scene_chunk_visible(chunk, visible_min, visible_max)) continue;
             for (const SceneInstance& instance : chunk.instances) {
                 if (instance.distance < visible_min || instance.distance > visible_max) continue;
-                visible_instances[instance.model_path].push_back(make_instance_data_relative(instance.world, render_origin));
-                if (can_pick) {
+                SceneInstanceData data = make_instance_data_relative(instance.world, render_origin);
+                ScenePickBounds bounds;
+                ScenePickBounds* bounds_ptr = nullptr;
+                if (can_pick && scene_object_index_valid(instance.object_index)) {
                     auto model_it = scene_models.find(instance.model_path);
-                    if (model_it != scene_models.end()) {
-                        note_scene_pick_candidate(instance, model_it->second, render_origin, view_proj,
-                                                  width, height, mouse_local, pick_candidate);
+                    if (model_it != scene_models.end() &&
+                        compute_scene_pick_bounds(instance.world, model_it->second, render_origin, view_proj,
+                                                  width, height, mouse_local, bounds)) {
+                        bounds_ptr = &bounds;
+                        note_scene_pick_candidate(instance.object_index, instance.model_path,
+                                                  instance.world, bounds, render_origin, pick_candidate);
                     }
                 }
+                append_visible_model_instance(instance.model_path, data, instance.object_index, bounds_ptr,
+                                              visible_instances,
+                                              can_pick ? &visible_object_instances : nullptr);
             }
-            append_visible_repeater_instances(chunk, visible_min, visible_max, render_origin, visible_instances);
+            append_visible_repeater_instances(chunk, visible_min, visible_max, render_origin,
+                                              view_proj, width, height, mouse_local, can_pick,
+                                              visible_instances,
+                                              can_pick ? &visible_object_instances : nullptr,
+                                              pick_candidate);
         }
 
         for (auto& kv : visible_instances) {
@@ -3571,10 +3826,26 @@ fail:
         }
         if (pick_candidate.object_index >= 0) {
             scene_hovered_object_index = pick_candidate.object_index;
-            scene_highlight_model_path = pick_candidate.model_path;
-            scene_highlight_instance = pick_candidate.instance_data;
-            scene_highlight_screen_min = pick_candidate.screen_min;
-            scene_highlight_screen_max = pick_candidate.screen_max;
+            scene_highlight_instances.clear();
+            scene_highlight_screen_min = ImVec2(static_cast<float>(width), static_cast<float>(height));
+            scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
+            auto refs_it = visible_object_instances.find(pick_candidate.object_index);
+            if (refs_it != visible_object_instances.end()) {
+                for (const SceneVisibleInstanceRef& ref : refs_it->second) {
+                    if (!ref.model_path) continue;
+                    auto visible_it = visible_instances.find(*ref.model_path);
+                    if (visible_it == visible_instances.end() || ref.instance_index >= visible_it->second.size()) continue;
+                    scene_highlight_instances[*ref.model_path].push_back(visible_it->second[ref.instance_index]);
+                    include_scene_screen_bounds(scene_highlight_screen_min, scene_highlight_screen_max, ref);
+                }
+            }
+            if (scene_highlight_instances.empty()) {
+                scene_highlight_instances[pick_candidate.model_path].push_back(pick_candidate.instance_data);
+                scene_highlight_screen_min = pick_candidate.screen_min;
+                scene_highlight_screen_max = pick_candidate.screen_max;
+            }
+            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(pick_candidate.object_index)];
+            scene_highlight_color = scene_highlight_color_for_kind(object.kind);
             scene_has_highlight = true;
         }
         for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
@@ -3582,13 +3853,11 @@ fail:
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj, track_instance, error);
         }
         if (scene_has_highlight) {
-            auto model_it = scene_models.find(scene_highlight_model_path);
-            if (model_it != scene_models.end()) {
-                draw_scene_model_highlight_outline(model_it->second, scene_highlight_instance,
-                                                   view_proj, width, height,
-                                                   scene_highlight_screen_min,
-                                                   scene_highlight_screen_max);
-            }
+            draw_scene_model_highlight_outlines(scene_highlight_instances,
+                                                view_proj, width, height,
+                                                scene_highlight_screen_min,
+                                                scene_highlight_screen_max,
+                                                scene_highlight_color);
         }
 
         ID3D11ShaderResourceView* null_srv = nullptr;
@@ -3681,13 +3950,24 @@ fail:
         draw->AddText(pos, text_color, label);
     }
 
-    void render_scene_context_popup(const Canvas3DSceneUiText& ui_text) {
-        if (!ImGui::BeginPopup("ScenePreviewObjectContext")) return;
+    Canvas3DSceneContextAction render_scene_context_popup(const Canvas3DSceneUiText& ui_text) {
+        Canvas3DSceneContextAction action;
+        if (!ImGui::BeginPopup("ScenePreviewObjectContext")) return action;
 
         if (scene_object_index_valid(scene_context_object_index)) {
             Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(scene_context_object_index)];
-            if (object.kind == Canvas3DSceneObjectKind::Signal &&
-                ImGui::BeginMenu(ui_text.switch_signal_aspect.c_str(), !object.model_options.empty())) {
+            if (object.kind == Canvas3DSceneObjectKind::Structure) {
+                if (ImGui::MenuItem(ui_text.locate_structure_list.c_str())) {
+                    action.kind = Canvas3DSceneContextActionKind::LocateStructure;
+                    action.row_index = object.source_row;
+                }
+            } else if (object.kind == Canvas3DSceneObjectKind::Repeater) {
+                if (ImGui::MenuItem(ui_text.locate_repeater_list.c_str())) {
+                    action.kind = Canvas3DSceneContextActionKind::LocateRepeater;
+                    action.row_index = object.source_row;
+                }
+            } else if (object.kind == Canvas3DSceneObjectKind::Signal &&
+                       ImGui::BeginMenu(ui_text.switch_signal_aspect.c_str(), !object.model_options.empty())) {
                 for (size_t i = 0; i < object.model_options.size(); ++i) {
                     const Canvas3DSceneModelOption& option = object.model_options[i];
                     std::string label = std::to_string(option.structure_key_index) + " - " + option.structure_key;
@@ -3703,9 +3983,11 @@ fail:
         }
 
         ImGui::EndPopup();
+        return action;
     }
 
-    void render_scene_preview(ImVec2 requested_size, const Canvas3DSceneUiText& ui_text) {
+    Canvas3DSceneContextAction render_scene_preview(ImVec2 requested_size, const Canvas3DSceneUiText& ui_text) {
+        Canvas3DSceneContextAction action;
         ImVec2 avail = requested_size;
         if (avail.x <= 0.0f || avail.y <= 0.0f) avail = ImGui::GetContentRegionAvail();
         avail.x = std::max(avail.x, 50.0f);
@@ -3770,7 +4052,8 @@ fail:
             scene_context_object_index = scene_hovered_object_index;
             ImGui::OpenPopup("ScenePreviewObjectContext");
         }
-        render_scene_context_popup(ui_text);
+        action = render_scene_context_popup(ui_text);
+        return action;
     }
 
     void render_scene(int width, int height) {
@@ -3982,6 +4265,8 @@ fail:
     UINT index_count = 0;
     int render_width = 0;
     int render_height = 0;
+    Vec3 bounds_min;
+    Vec3 bounds_max;
     Vec3 center;
     float radius = 1.0f;
     float yaw = 0.0f;
@@ -4018,8 +4303,8 @@ fail:
     int scene_hovered_object_index = -1;
     int scene_context_object_index = -1;
     bool scene_has_highlight = false;
-    std::string scene_highlight_model_path;
-    SceneInstanceData scene_highlight_instance = {};
+    std::map<std::string, std::vector<SceneInstanceData>> scene_highlight_instances;
+    ImVec4 scene_highlight_color = ImVec4(0.62f, 1.0f, 0.72f, 0.92f);
     ImVec2 scene_highlight_screen_min = ImVec2(0.0f, 0.0f);
     ImVec2 scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
     double scene_chunk_m = 100.0;
@@ -4123,6 +4408,6 @@ bool Canvas3D::jump_scene_camera_to_distance(double distance) {
     return impl_->reset_scene_camera_pose_at_distance(distance);
 }
 
-void Canvas3D::render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text) {
-    impl_->render_scene_preview(size, ui_text);
+Canvas3DSceneContextAction Canvas3D::render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text) {
+    return impl_->render_scene_preview(size, ui_text);
 }

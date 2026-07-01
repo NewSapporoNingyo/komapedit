@@ -2357,8 +2357,15 @@ void App::render_scene_preview_window() {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         Canvas3DSceneUiText scene_ui_text;
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect");
+        scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list");
+        scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list");
         scene_ui_text.loading = tr("status.scene_loading");
-        scene_preview_canvas_->render_scene_preview(avail, scene_ui_text);
+        Canvas3DSceneContextAction scene_action = scene_preview_canvas_->render_scene_preview(avail, scene_ui_text);
+        if (scene_action.kind == Canvas3DSceneContextActionKind::LocateStructure) {
+            locate_structure_row_in_list(scene_action.row_index);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::LocateRepeater) {
+            locate_repeater_row_in_list(scene_action.row_index);
+        }
         drain_scene_preview_logs();
     }
     focus_scene_preview_next_ = false;

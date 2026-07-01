@@ -44,6 +44,8 @@ enum class Canvas3DSceneInteractionMode {
 
 enum class Canvas3DSceneObjectKind {
     Generic,
+    Structure,
+    Repeater,
     Signal,
 };
 
@@ -97,6 +99,7 @@ struct Canvas3DRepeaterSegment {
     double rz = 0.0;
     double tilt = 0.0;
     double span = 0.0;
+    int object_index = -1;
 };
 
 struct Canvas3DBackgroundChange {
@@ -167,7 +170,20 @@ struct Canvas3DSceneBuildResult {
 
 struct Canvas3DSceneUiText {
     std::string switch_signal_aspect = "Switch Signal Aspect";
+    std::string locate_structure_list = "Locate in Map Structure List";
+    std::string locate_repeater_list = "Locate in Repeater List";
     std::string loading = "Loading...";
+};
+
+enum class Canvas3DSceneContextActionKind {
+    None,
+    LocateStructure,
+    LocateRepeater,
+};
+
+struct Canvas3DSceneContextAction {
+    Canvas3DSceneContextActionKind kind = Canvas3DSceneContextActionKind::None;
+    size_t row_index = 0;
 };
 
 Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options);
@@ -206,7 +222,7 @@ public:
     std::vector<std::string> drain_scene_load_messages();
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
-    void render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{});
+    Canvas3DSceneContextAction render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{});
 
 private:
     struct Impl;
