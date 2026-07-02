@@ -354,6 +354,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_station_list_window=" << bool_to_string(settings.window_visibility.show_station_list_window) << "\n";
     out << "show_structures_window=" << bool_to_string(settings.window_visibility.show_structures_window) << "\n";
     out << "show_structure_models_window=" << bool_to_string(settings.window_visibility.show_structure_models_window) << "\n";
+    out << "show_other_trains_window=" << bool_to_string(settings.window_visibility.show_other_trains_window) << "\n";
     out << "show_sound_list_window=" << bool_to_string(settings.window_visibility.show_sound_list_window) << "\n";
     out << "show_sound_3d_list_window=" << bool_to_string(settings.window_visibility.show_sound_3d_list_window) << "\n";
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
@@ -510,6 +511,8 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_structures_window = parse_bool(value, settings.window_visibility.show_structures_window);
         } else if (key == "show_structure_models_window") {
             settings.window_visibility.show_structure_models_window = parse_bool(value, settings.window_visibility.show_structure_models_window);
+        } else if (key == "show_other_trains_window" || key == "show_other_train_window") {
+            settings.window_visibility.show_other_trains_window = parse_bool(value, settings.window_visibility.show_other_trains_window);
         } else if (key == "show_sound_list_window" || key == "show_soundlist_window") {
             settings.window_visibility.show_sound_list_window = parse_bool(value, settings.window_visibility.show_sound_list_window);
         } else if (key == "show_sound_3d_list_window" || key == "show_sound3d_list_window") {

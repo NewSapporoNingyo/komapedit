@@ -170,6 +170,7 @@ struct TableUiCache {
     std::vector<CachedTableRow> station_rows;
     std::vector<CachedTableRow> structure_rows;
     std::vector<CachedTableRow> structure_model_rows;
+    std::vector<CachedTableRow> other_train_rows;
     std::vector<CachedTableRow> repeater_rows;
     std::vector<CachedTableRow> signal_aspect_rows;
     std::vector<CachedTableRow> signal_rows;
@@ -188,6 +189,8 @@ struct TableUiCache {
     std::vector<CachedTableRow> sound_3d_list_rows;
     float structure_file_path_width = 200.0f;
     float structure_model_file_path_width = 200.0f;
+    float other_train_distance_width = 110.0f;
+    float other_train_file_path_width = 200.0f;
     float signal_distance_width = 110.0f;
     float signal_file_path_width = 200.0f;
     float beacon_distance_width = 110.0f;
@@ -250,6 +253,9 @@ struct MapModel {
     std::vector<TableRow> station_list_rows;
     std::vector<TableRow> structures;
     std::vector<TableRow> structure_models;
+    std::vector<TableRow> other_trains;
+    std::vector<TableRow> other_train_structure_keys;
+    std::vector<TableRow> other_train_sound_3d_keys;
     std::vector<TableRow> sound_list;
     std::vector<TableRow> structures_between;
     std::vector<TableRow> repeaters;
@@ -623,6 +629,7 @@ struct WindowVisibilitySettings {
     bool show_station_list_window = false;
     bool show_structures_window = false;
     bool show_structure_models_window = false;
+    bool show_other_trains_window = false;
     bool show_sound_list_window = false;
     bool show_sound_3d_list_window = false;
     bool show_repeaters_window = false;
@@ -648,6 +655,7 @@ struct WindowVisibilitySettings {
             show_station_list_window == other.show_station_list_window &&
             show_structures_window == other.show_structures_window &&
             show_structure_models_window == other.show_structure_models_window &&
+            show_other_trains_window == other.show_other_trains_window &&
             show_sound_list_window == other.show_sound_list_window &&
             show_sound_3d_list_window == other.show_sound_3d_list_window &&
             show_repeaters_window == other.show_repeaters_window &&
@@ -958,6 +966,7 @@ private:
     bool show_station_list_window_ = false;
     bool show_structures_window_ = false;
     bool show_structure_models_window_ = false;
+    bool show_other_trains_window_ = false;
     bool show_sound_list_window_ = false;
     bool show_sound_3d_list_window_ = false;
     bool show_repeaters_window_ = false;
@@ -1136,6 +1145,7 @@ private:
     void render_station_list_window();
     void render_structures_window();
     void render_structure_models_window();
+    void render_other_trains_window();
     void render_sound_file_find_panel(bool is_3d);
     void render_sound_list_window();
     void render_sound_3d_list_window();

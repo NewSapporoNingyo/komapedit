@@ -571,6 +571,17 @@ static const TableColumnDef kStructureModelColumns[] = {
 constexpr int kStructureModelKeyColumn = 1;
 constexpr int kStructureModelFilePathColumn = IM_ARRAYSIZE(kStructureModelColumns) - 1;
 
+static const TableColumnDef kOtherTrainColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"trainKey", "trainKey", 120.0f},
+    {"filePath", "filePath", 200.0f},
+    {"trackKey", "trackKey", 90.0f},
+    {"direction", "direction", 80.0f},
+};
+constexpr int kOtherTrainDistanceColumn = 1;
+constexpr int kOtherTrainFilePathColumn = 3;
+
 static const TableColumnDef kSoundListColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"soundKey", "soundKey", 120.0f},
@@ -1256,6 +1267,28 @@ void App::ensure_table_cache() {
         cache.structure_model_rows.push_back(std::move(cached));
     }
 
+    cache.other_train_distance_width = 0.0f;
+    expand_width_for_text(cache.other_train_distance_width, kOtherTrainColumns[kOtherTrainDistanceColumn].header);
+    cache.other_train_rows.reserve(model_.other_trains.size());
+    for (size_t row_index = 0; row_index < model_.other_trains.size(); ++row_index) {
+        const TableRow& row = model_.other_trains[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kOtherTrainColumns));
+        cached.cells[0] = std::to_string(row_index + 1);
+        cached.cells[kOtherTrainDistanceColumn] = table_cell(row, "distance");
+        cached.cells[2] = table_cell(row, "trainKey");
+        cached.cells[kOtherTrainFilePathColumn] = table_cell(row, "filePath");
+        cached.cells[4] = table_cell(row, "trackKey");
+        cached.cells[5] = table_cell(row, "direction");
+        cached.open_path = table_cell(row, "resolvedFilePath");
+        cached.tooltip_text = cached.open_path;
+        expand_width_for_text(cache.other_train_distance_width,
+                              cached.cells[kOtherTrainDistanceColumn]);
+        expand_width_for_text(cache.other_train_file_path_width,
+                              cached.cells[kOtherTrainFilePathColumn]);
+        cache.other_train_rows.push_back(std::move(cached));
+    }
+
     cache.sound_list_buffer_count_width = 0.0f;
     cache.sound_3d_list_buffer_count_width = 0.0f;
     expand_width_for_text(cache.sound_list_buffer_count_width, kSoundListColumns[kSoundListBufferCountColumn].header);
@@ -1579,6 +1612,9 @@ void App::run_unused_structure_model_search() {
                     note_structure_key(row.cells[i]);
                 }
             }
+            for (const TableRow& row : model_.other_train_structure_keys) {
+                note_structure_key(table_cell(row, "key"));
+            }
         },
         [this](const std::string& key) {
             add_log("[WARN]datatable.cpp: Found undefined structureKey:\"" + key + "\"");
@@ -1711,6 +1747,11 @@ void App::run_unused_sound_file_search(bool is_3d) {
             for (const CachedTableRow& row : usage_rows) {
                 if (row.cells.size() > static_cast<size_t>(kMapSoundKeyColumn)) {
                     note_sound_key(row.cells[static_cast<size_t>(kMapSoundKeyColumn)]);
+                }
+            }
+            if (is_3d) {
+                for (const TableRow& row : model_.other_train_sound_3d_keys) {
+                    note_sound_key(table_cell(row, "key"));
                 }
             }
         },
@@ -2059,6 +2100,62 @@ void App::render_structure_models_window() {
                         if (is_preview_model) ImGui::PushStyleColor(ImGuiCol_Text, preview_text_color);
                         ImGui::TextUnformatted(value.c_str());
                         if (is_preview_model) ImGui::PopStyleColor();
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
+void App::render_other_trains_window() {
+    if (!show_other_trains_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    std::string title = tr("frame.other_trains") + "###OtherTrains";
+    if (!ImGui::Begin(title.c_str(), &show_other_trains_window_)) {
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("other_trains", IM_ARRAYSIZE(kOtherTrainColumns),
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainColumns); ++i) {
+            float width = kOtherTrainColumns[i].width;
+            if (i == kOtherTrainDistanceColumn) width = table_cache_.other_train_distance_width;
+            if (i == kOtherTrainFilePathColumn) width = table_cache_.other_train_file_path_width;
+            ImGui::TableSetupColumn(kOtherTrainColumns[i].header,
+                                    width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
+                                    width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(table_cache_.other_train_rows.size());
+        clipper.Begin(row_count);
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row = table_cache_.other_train_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                ImGui::PushID(row_index);
+                for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainColumns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (value.empty()) continue;
+                    if (i == kOtherTrainFilePathColumn) {
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"),
+                                                           row.tooltip_text);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
                     }
                 }
                 ImGui::PopID();

@@ -19,6 +19,8 @@ struct Translation {
     Translation() {
         en = {
             {"app.title", "komapedit"},
+            {"menu.map_info.other_trains", "Other Train"},
+            {"frame.other_trains", "Other Train List"},
             {"frame.map_sounds", "Map Sound List"},
             {"frame.map_sound_3d", "Fixed Sound Source List"},
             {"button.map_sound_list", "Map Sound List"},
@@ -83,6 +85,8 @@ struct Translation {
         };
         zh = {
             {"app.title", "komapedit"},
+            {"menu.map_info.other_trains", "他列车"},
+            {"frame.other_trains", "他列车列表"},
             {"frame.map_sounds", "地图音效列表"},
             {"frame.map_sound_3d", "固定音源音效"},
             {"button.map_sound_list", "地图音效列表"},
@@ -147,6 +151,8 @@ struct Translation {
         };
         ja = {
             {"app.title", "komapedit"},
+            {"menu.map_info.other_trains", "他列車"},
+            {"frame.other_trains", "他列車リスト"},
             {"frame.map_sounds", "マップサウンドリスト"},
             {"frame.map_sound_3d", "固定音源サウンド"},
             {"button.map_sound_list", "マップサウンドリスト"},

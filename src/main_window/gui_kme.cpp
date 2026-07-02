@@ -839,6 +839,10 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     const auto& structure = root.at("structure");
     model.structures = make_table_rows(structure.at("data"));
     model.structure_models = make_table_rows(structure.at("models"));
+    const auto& other_train = root.at("otherTrain");
+    model.other_trains = make_table_rows(other_train.at("definitions"));
+    model.other_train_structure_keys = make_table_rows(other_train.at("structureKeys"));
+    model.other_train_sound_3d_keys = make_table_rows(other_train.at("sound3DKeys"));
     const auto& signal = root.at("signal");
     const auto& signal_aspects = signal.at("aspects");
     if (signal_aspects.is_array()) {
@@ -1264,6 +1268,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("StationList", dock_right);
     ImGui::DockBuilderDockWindow("Structures", dock_right);
     ImGui::DockBuilderDockWindow("StructureModels", dock_right);
+    ImGui::DockBuilderDockWindow("OtherTrains", dock_right);
     ImGui::DockBuilderDockWindow("SoundList", dock_right);
     ImGui::DockBuilderDockWindow("Sound3DList", dock_right);
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
@@ -1297,6 +1302,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_station_list_window = show_station_list_window_;
     visibility.show_structures_window = show_structures_window_;
     visibility.show_structure_models_window = show_structure_models_window_;
+    visibility.show_other_trains_window = show_other_trains_window_;
     visibility.show_sound_list_window = show_sound_list_window_;
     visibility.show_sound_3d_list_window = show_sound_3d_list_window_;
     visibility.show_repeaters_window = show_repeaters_window_;
@@ -1324,6 +1330,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_station_list_window_ = visibility.show_station_list_window;
     show_structures_window_ = visibility.show_structures_window;
     show_structure_models_window_ = visibility.show_structure_models_window;
+    show_other_trains_window_ = visibility.show_other_trains_window;
     show_sound_list_window_ = visibility.show_sound_list_window;
     show_sound_3d_list_window_ = visibility.show_sound_3d_list_window;
     show_repeaters_window_ = visibility.show_repeaters_window;
@@ -1538,13 +1545,14 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 26> kMapInfoMenuEntries = {{
+        static constexpr std::array<MapInfoMenuEntry, 27> kMapInfoMenuEntries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
             {"menu.map_info.structures", &App::show_structures_window_},
             {"menu.map_info.structure_models", &App::show_structure_models_window_},
             {"menu.map_info.repeaters", &App::show_repeaters_window_},
+            {"menu.map_info.other_trains", &App::show_other_trains_window_},
             {"aux.track_geometry", nullptr},
             {"menu.map_info.othertracks", &App::show_othertracks_window_},
             {"menu.map_info.irregularities", &App::show_irregularities_window_},
@@ -2511,6 +2519,7 @@ void App::render() {
     render_scene_preview_window();
     render_structures_window();
     render_structure_models_window();
+    render_other_trains_window();
     render_sound_list_window();
     render_sound_3d_list_window();
     render_repeaters_window();
