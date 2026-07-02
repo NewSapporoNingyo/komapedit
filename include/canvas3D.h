@@ -222,6 +222,7 @@ public:
     std::vector<std::string> drain_scene_load_messages();
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
+    bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row);
     Canvas3DSceneContextAction render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{});
 
 private:

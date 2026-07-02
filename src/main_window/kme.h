@@ -1199,8 +1199,10 @@ private:
     void sync_marker_visibility_sizes();
     void locate_structure_row_on_plan(size_t row_index);
     void locate_structure_row_in_list(size_t row_index);
+    void locate_structure_row_in_scene_preview(size_t row_index);
     void locate_repeater_row_on_plan(size_t row_index);
     void locate_repeater_row_in_list(size_t row_index);
+    void locate_repeater_row_in_scene_preview(size_t row_index);
     void locate_signal_row_on_plan(size_t row_index);
     void locate_signal_row_in_list(size_t row_index);
     void locate_beacon_row_on_plan(size_t row_index);
@@ -1225,6 +1227,7 @@ private:
     void locate_cab_illuminance_row_in_list(size_t row_index);
     void locate_fog_row_on_plan(size_t row_index);
     void locate_fog_row_in_list(size_t row_index);
+    bool can_locate_scene_preview_row() const;
 
     PlanData build_plan_data(bool include_other_tracks = true) const;
     ProfileData build_profile_data() const;

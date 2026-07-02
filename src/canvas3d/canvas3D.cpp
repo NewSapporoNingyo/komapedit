@@ -55,6 +55,8 @@ constexpr float kSceneTrackMarkerAlpha = 0.8f;
 constexpr float kSceneSelectionMinScreenRadius = 6.0f;
 constexpr float kSceneSelectionHitPadding = 4.0f;
 constexpr float kSceneHighlightOutlineWidthPx = 5.0f;
+constexpr double kSceneObjectJumpBackM = 25.0;
+constexpr double kSceneFocusHighlightSeconds = 3.0;
 // The event-driven canvas stops repainting while idle, so preserve the last active FPS across long gaps.
 constexpr double kSceneFpsIdleResetSeconds = 0.25;
 constexpr float kSceneFpsSmoothing = 0.15f;
@@ -1725,6 +1727,7 @@ struct Canvas3D::Impl {
             release_scene_resources();
         }
         scene_data = std::move(scene);
+        clear_scene_focus_highlight();
         std::sort(scene_data.backgrounds.begin(), scene_data.backgrounds.end(),
                   [](const Canvas3DBackgroundChange& a, const Canvas3DBackgroundChange& b) {
                       return a.distance < b.distance;
@@ -1801,6 +1804,8 @@ struct Canvas3D::Impl {
         scene_hovered_object_index = -1;
         scene_context_object_index = -1;
         scene_has_highlight = false;
+        scene_highlight_object_index = -1;
+        clear_scene_focus_highlight();
         scene_stats_value = {};
         reset_scene_fps_counter();
     }
@@ -1970,6 +1975,162 @@ struct Canvas3D::Impl {
             start_scene_model_worker({option.model_path});
         }
         scene_has_highlight = false;
+        return true;
+    }
+
+    struct SceneObjectJumpTarget {
+        int object_index = -1;
+        double distance = 0.0;
+        std::string model_path;
+        double world[16] = {
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0
+        };
+        DVec3 center;
+    };
+
+    bool scene_model_center_world(const std::string& model_path, const double world[16], DVec3& out) const {
+        auto model_it = scene_models.find(model_path);
+        if (model_it == scene_models.end() || model_it->second.state != SceneModelGpu::State::Ready) return false;
+        out = transform_point_row(world, model_it->second.center);
+        return true;
+    }
+
+    bool find_structure_jump_target(size_t source_row, SceneObjectJumpTarget& target) const {
+        for (const SceneChunk& chunk : scene_chunks) {
+            for (const SceneInstance& instance : chunk.instances) {
+                if (!scene_object_index_valid(instance.object_index)) continue;
+                const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(instance.object_index)];
+                if (object.kind != Canvas3DSceneObjectKind::Structure || object.source_row != source_row) continue;
+                if (!scene_model_center_world(instance.model_path, instance.world, target.center)) return false;
+                target.object_index = instance.object_index;
+                target.distance = instance.distance;
+                target.model_path = instance.model_path;
+                std::copy(instance.world, instance.world + 16, target.world);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool find_repeater_jump_target(size_t source_row, SceneObjectJumpTarget& target) const {
+        for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
+            if (!scene_object_index_valid(repeater.object_index) || repeater.model_paths.empty()) continue;
+            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(repeater.object_index)];
+            if (object.kind != Canvas3DSceneObjectKind::Repeater || object.source_row != source_row) continue;
+            const std::string& model_path = repeater.model_paths.front();
+            if (model_path.empty()) return false;
+            double world[16] = {};
+            if (!make_repeater_instance_world(repeater, repeater.begin_distance, world)) return false;
+            if (!scene_model_center_world(model_path, world, target.center)) return false;
+            target.object_index = repeater.object_index;
+            target.distance = repeater.begin_distance;
+            target.model_path = model_path;
+            std::copy(world, world + 16, target.world);
+            return true;
+        }
+        return false;
+    }
+
+    bool find_scene_object_jump_target(Canvas3DSceneObjectKind kind,
+                                       size_t source_row,
+                                       SceneObjectJumpTarget& target) const {
+        if (kind == Canvas3DSceneObjectKind::Structure) return find_structure_jump_target(source_row, target);
+        if (kind == Canvas3DSceneObjectKind::Repeater) return find_repeater_jump_target(source_row, target);
+        return false;
+    }
+
+    void clear_scene_focus_highlight() {
+        scene_focus_highlight_object_index = -1;
+        scene_focus_highlight_model_path.clear();
+        scene_focus_highlight_until = {};
+    }
+
+    void start_scene_focus_highlight(int object_index, const std::string& model_path, const double world[16]) {
+        scene_focus_highlight_object_index = object_index;
+        scene_focus_highlight_model_path = model_path;
+        std::copy(world, world + 16, scene_focus_highlight_world);
+        scene_focus_highlight_until =
+            std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(kSceneFocusHighlightSeconds));
+    }
+
+    bool scene_focus_highlight_active_now() {
+        if (scene_focus_highlight_object_index < 0 || scene_focus_highlight_model_path.empty()) return false;
+        if (std::chrono::steady_clock::now() < scene_focus_highlight_until) return true;
+        clear_scene_focus_highlight();
+        return false;
+    }
+
+    bool apply_scene_focus_highlight(DVec3 render_origin, const Mat4& view_proj, int width, int height) {
+        if (!scene_focus_highlight_active_now() ||
+            !scene_object_index_valid(scene_focus_highlight_object_index)) {
+            return false;
+        }
+        auto model_it = scene_models.find(scene_focus_highlight_model_path);
+        if (model_it == scene_models.end() || model_it->second.state != SceneModelGpu::State::Ready) return false;
+
+        SceneScreenBounds bounds;
+        if (!compute_scene_instance_screen_bounds(scene_focus_highlight_world,
+                                                  model_it->second,
+                                                  render_origin,
+                                                  view_proj,
+                                                  width,
+                                                  height,
+                                                  bounds)) {
+            return false;
+        }
+
+        scene_highlight_instances.clear();
+        scene_highlight_instances.push_back(SceneHighlightInstance{
+            scene_focus_highlight_model_path,
+            make_instance_data_relative(scene_focus_highlight_world, render_origin),
+            bounds.screen_min,
+            bounds.screen_max
+        });
+        scene_highlight_screen_min = bounds.screen_min;
+        scene_highlight_screen_max = bounds.screen_max;
+        const Canvas3DSceneObject& object =
+            scene_data.objects[static_cast<size_t>(scene_focus_highlight_object_index)];
+        scene_highlight_color = scene_highlight_color_for_kind(object.kind);
+        scene_highlight_object_index = scene_focus_highlight_object_index;
+        scene_has_highlight = true;
+        return true;
+    }
+
+    bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row) {
+        if (!scene_active) return false;
+
+        SceneObjectJumpTarget target;
+        if (!find_scene_object_jump_target(kind, source_row, target)) return false;
+
+        scene_camera_distance = std::clamp(target.distance - kSceneObjectJumpBackM,
+                                           scene_data.min_distance,
+                                           scene_data.max_distance);
+        scene_camera_lateral_offset = 0.0;
+        scene_camera_vertical_offset = kDefaultSceneCameraHeight;
+        scene_camera_yaw_offset = 0.0f;
+        scene_camera_pitch = 0.0f;
+        scene_rotating = false;
+        if (!update_scene_camera_from_owntrack()) return false;
+
+        DVec3 to_target = target.center - scene_camera_pos;
+        double len_sq = dot(to_target, to_target);
+        if (len_sq > 1e-12) {
+            double len = std::sqrt(len_sq);
+            scene_camera_yaw = static_cast<float>(std::atan2(to_target.x, -to_target.z));
+            scene_camera_pitch = static_cast<float>(
+                std::clamp(std::asin(std::clamp(to_target.y / len, -1.0, 1.0)), -1.45, 1.45));
+            Canvas3DTrackPoint point;
+            if (sample_own_track(scene_camera_distance, point)) {
+                scene_camera_yaw_offset = scene_camera_yaw - static_cast<float>(point.theta);
+            }
+        }
+
+        start_scene_focus_highlight(target.object_index, target.model_path, target.world);
         return true;
     }
 
@@ -3931,6 +4092,7 @@ fail:
         std::string error;
         scene_hovered_object_index = -1;
         scene_has_highlight = false;
+        scene_highlight_object_index = -1;
         scene_highlight_instances.clear();
         if (!ensure_render_target(width, height, error)) {
             if (scene_last_error != error) scene_last_error = error;
@@ -4047,14 +4209,16 @@ fail:
             }
             const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(picked_object_index)];
             scene_highlight_color = scene_highlight_color_for_kind(object.kind);
+            scene_highlight_object_index = picked_object_index;
             scene_has_highlight = true;
         }
+        apply_scene_focus_highlight(render_origin, view_proj, width, height);
         for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
             if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj, track_instance, error);
         }
-        if (scene_has_highlight) {
-            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(scene_hovered_object_index)];
+        if (scene_has_highlight && scene_object_index_valid(scene_highlight_object_index)) {
+            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(scene_highlight_object_index)];
             draw_scene_model_highlight_outlines(scene_highlight_instances,
                                                 view_proj, width, height,
                                                 scene_highlight_screen_min,
@@ -4515,10 +4679,20 @@ fail:
     int scene_hovered_object_index = -1;
     int scene_context_object_index = -1;
     bool scene_has_highlight = false;
+    int scene_highlight_object_index = -1;
     std::vector<SceneHighlightInstance> scene_highlight_instances;
     ImVec4 scene_highlight_color = ImVec4(0.62f, 1.0f, 0.72f, 0.92f);
     ImVec2 scene_highlight_screen_min = ImVec2(0.0f, 0.0f);
     ImVec2 scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
+    int scene_focus_highlight_object_index = -1;
+    std::string scene_focus_highlight_model_path;
+    double scene_focus_highlight_world[16] = {
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    };
+    std::chrono::steady_clock::time_point scene_focus_highlight_until{};
     double scene_chunk_m = 100.0;
     double scene_window_back_m = 100.0;
     double scene_window_forward_m = 1200.0;
@@ -4618,6 +4792,10 @@ Canvas3DSceneCameraPose Canvas3D::scene_camera_pose() const {
 
 bool Canvas3D::jump_scene_camera_to_distance(double distance) {
     return impl_->reset_scene_camera_pose_at_distance(distance);
+}
+
+bool Canvas3D::jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row) {
+    return impl_->jump_scene_camera_to_object(kind, source_row);
 }
 
 Canvas3DSceneContextAction Canvas3D::render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text) {

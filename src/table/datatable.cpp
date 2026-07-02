@@ -105,6 +105,45 @@ bool render_text_cell_with_context(const std::string& display_text, const std::s
     return selected;
 }
 
+enum class TextCellContextAction {
+    None,
+    Primary,
+    Secondary,
+};
+
+TextCellContextAction render_text_cell_with_context_actions(const std::string& display_text,
+                                                           const std::string& primary_label,
+                                                           bool primary_enabled,
+                                                           const std::string& secondary_label,
+                                                           bool secondary_enabled) {
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
+    ImVec2 item_size(
+        std::max(1.0f, ImGui::GetContentRegionAvail().x),
+        std::max(ImGui::GetTextLineHeight(), text_size.y));
+    ImGui::InvisibleButton("text_cell_context_actions_item", item_size);
+    if (ImGui::IsItemHovered()) {
+        ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y),
+                                                  ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+    }
+    if (!display_text.empty()) {
+        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), display_text.c_str());
+    }
+
+    TextCellContextAction action = TextCellContextAction::None;
+    touch_input::open_popup_on_last_item_long_press("text_cell_context_actions");
+    if (ImGui::BeginPopupContextItem("text_cell_context_actions", ImGuiPopupFlags_MouseButtonRight)) {
+        ImGui::BeginDisabled(!primary_enabled);
+        if (ImGui::MenuItem(primary_label.c_str())) action = TextCellContextAction::Primary;
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!secondary_enabled);
+        if (ImGui::MenuItem(secondary_label.c_str())) action = TextCellContextAction::Secondary;
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    return action;
+}
+
 std::string trim_ascii_copy(const std::string& text) {
     size_t first = text.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) return {};
@@ -1850,6 +1889,7 @@ void App::render_structures_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.structure_rows[static_cast<size_t>(row_index)];
@@ -1878,8 +1918,17 @@ void App::render_structures_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < structure_marker_cache_.size() &&
                             structure_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const bool can_locate_scene = can_locate_scene_preview && !row.invalid_track_key;
+                        TextCellContextAction action = render_text_cell_with_context_actions(
+                            value,
+                            tr("menu.locate_on_plan"),
+                            can_locate,
+                            tr("menu.locate_in_scene_preview"),
+                            can_locate_scene);
+                        if (action == TextCellContextAction::Primary) {
                             locate_structure_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_structure_row_in_scene_preview(marker_index);
                         }
                         continue;
                     }
@@ -2127,6 +2176,7 @@ void App::render_repeaters_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.repeater_rows[static_cast<size_t>(row_index)];
@@ -2155,8 +2205,17 @@ void App::render_repeaters_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < repeater_marker_cache_.size() &&
                             repeater_marker_cache_[marker_index].begin_marker.has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const bool can_locate_scene = can_locate_scene_preview && !row.invalid_track_key;
+                        TextCellContextAction action = render_text_cell_with_context_actions(
+                            value,
+                            tr("menu.locate_on_plan"),
+                            can_locate,
+                            tr("menu.locate_in_scene_preview"),
+                            can_locate_scene);
+                        if (action == TextCellContextAction::Primary) {
                             locate_repeater_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_repeater_row_in_scene_preview(marker_index);
                         }
                         continue;
                     }

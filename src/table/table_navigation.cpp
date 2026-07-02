@@ -7,6 +7,8 @@
 
 #include "kme.h"
 
+#include "canvas3D.h"
+
 #include <algorithm>
 #include <cstddef>
 void App::invalidate_table_cache() {
@@ -89,6 +91,13 @@ void App::locate_structure_row_in_list(size_t row_index) {
     structure_list_highlight_row_ = static_cast<int>(row_index);
 }
 
+void App::locate_structure_row_in_scene_preview(size_t row_index) {
+    if (!can_locate_scene_preview_row()) return;
+    if (!scene_preview_canvas_->jump_scene_camera_to_object(Canvas3DSceneObjectKind::Structure, row_index)) return;
+    show_scene_preview_window_ = true;
+    focus_scene_preview_next_ = true;
+}
+
 void App::locate_repeater_row_on_plan(size_t row_index) {
     sync_marker_visibility_sizes();
     if (row_index >= repeater_marker_cache_.size() || !repeater_marker_cache_[row_index].begin_marker) return;
@@ -104,6 +113,13 @@ void App::locate_repeater_row_in_list(size_t row_index) {
     focus_repeaters_next_ = true;
     repeater_list_scroll_row_ = static_cast<int>(row_index);
     repeater_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_repeater_row_in_scene_preview(size_t row_index) {
+    if (!can_locate_scene_preview_row()) return;
+    if (!scene_preview_canvas_->jump_scene_camera_to_object(Canvas3DSceneObjectKind::Repeater, row_index)) return;
+    show_scene_preview_window_ = true;
+    focus_scene_preview_next_ = true;
 }
 
 void App::locate_signal_row_on_plan(size_t row_index) {
@@ -286,4 +302,9 @@ void App::locate_fog_row_in_list(size_t row_index) {
     focus_fogs_next_ = true;
     fog_list_scroll_row_ = static_cast<int>(row_index);
     fog_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+bool App::can_locate_scene_preview_row() const {
+    if (!scene_preview_started_ || !scene_preview_canvas_ || !scene_preview_canvas_->has_scene()) return false;
+    return !scene_preview_canvas_->scene_stats().loading;
 }
