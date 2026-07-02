@@ -55,6 +55,7 @@ constexpr float kSceneTrackMarkerAlpha = 0.8f;
 constexpr float kSceneSelectionMinScreenRadius = 6.0f;
 constexpr float kSceneSelectionHitPadding = 4.0f;
 constexpr float kSceneHighlightOutlineWidthPx = 5.0f;
+constexpr float kModelPreviewFovY = 0.78539816339f;
 constexpr double kSceneObjectJumpBackM = 25.0;
 constexpr double kSceneFocusHighlightSeconds = 3.0;
 // The event-driven canvas stops repainting while idle, so preserve the last active FPS across long gaps.
@@ -516,12 +517,6 @@ struct GpuVertex {
     float v;
 };
 
-struct SceneConstants {
-    Mat4 mvp;
-    float material_color[4];
-    float use_texture[4];
-};
-
 struct SceneViewConstants {
     Mat4 view_proj;
     float material_color[4];
@@ -933,48 +928,6 @@ std::vector<std::string> scene_split_key_list(const std::string& text) {
     if (!key.empty()) keys.push_back(key);
     return keys;
 }
-
-const char* kShaderSource = R"(
-cbuffer SceneConstants : register(b0)
-{
-    row_major float4x4 mvp;
-    float4 materialColor;
-    float4 useTexture;
-};
-
-Texture2D diffuseTexture : register(t0);
-SamplerState diffuseSampler : register(s0);
-
-struct VSInput
-{
-    float3 position : POSITION;
-    float3 normal : NORMAL;
-    float2 texcoord : TEXCOORD0;
-};
-
-struct VSOutput
-{
-    float4 position : SV_POSITION;
-    float2 texcoord : TEXCOORD0;
-};
-
-VSOutput vs_main(VSInput input)
-{
-    VSOutput output;
-    output.position = mul(float4(input.position, 1.0), mvp);
-    output.texcoord = input.texcoord;
-    return output;
-}
-
-float4 ps_main(VSOutput input) : SV_TARGET
-{
-    float4 color = materialColor;
-    if (useTexture.x > 0.5)
-        color *= diffuseTexture.Sample(diffuseSampler, input.texcoord);
-    clip(color.a - 0.01);
-    return color;
-}
-)";
 
 const char* kSceneShaderSource = R"(
 cbuffer SceneViewConstants : register(b0)
@@ -1543,11 +1496,8 @@ struct Canvas3D::Impl {
         release_com(scene_depth_state);
         release_com(scene_depth_read_state);
         release_com(blend_state);
-        release_com(depth_state);
-        release_com(depth_read_state);
         release_com(alpha_mask_rasterizer_state);
         release_com(track_rasterizer_state);
-        release_com(model_preview_rasterizer_state);
         release_com(rasterizer_state);
         release_com(scene_outline_sampler_state);
         release_com(scene_outline_constant_buffer);
@@ -1555,10 +1505,6 @@ struct Canvas3D::Impl {
         release_com(scene_outline_vertex_shader);
         release_com(scene_pick_constant_buffer);
         release_com(scene_pick_pixel_shader);
-        release_com(input_layout);
-        release_com(vertex_shader);
-        release_com(pixel_shader);
-        release_com(constant_buffer);
         release_com(sampler_state);
         release_com(context);
         release_com(device);
@@ -3211,144 +3157,70 @@ fail:
             error = "Direct3D device is not available";
             return false;
         }
-        if (vertex_shader && pixel_shader && input_layout && constant_buffer && depth_state &&
-            depth_read_state && rasterizer_state && model_preview_rasterizer_state && alpha_mask_rasterizer_state &&
+        if (rasterizer_state && alpha_mask_rasterizer_state &&
             track_rasterizer_state && sampler_state && blend_state) return true;
-
-        ID3DBlob* vs_blob = nullptr;
-        ID3DBlob* ps_blob = nullptr;
-        ID3DBlob* errors = nullptr;
-        HRESULT hr = D3DCompile(kShaderSource, std::strlen(kShaderSource), nullptr, nullptr, nullptr,
-                                "vs_main", "vs_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
-        if (FAILED(hr)) {
-            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(vertex shader)", hr);
-            release_com(errors);
-            return false;
-        }
-        release_com(errors);
-
-        hr = D3DCompile(kShaderSource, std::strlen(kShaderSource), nullptr, nullptr, nullptr,
-                        "ps_main", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
-        if (FAILED(hr)) {
-            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(pixel shader)", hr);
-            release_com(errors);
-            release_com(vs_blob);
-            return false;
-        }
-        release_com(errors);
-
-        hr = device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &vertex_shader);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateVertexShader", hr);
-            release_com(vs_blob);
-            release_com(ps_blob);
-            return false;
-        }
-        hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &pixel_shader);
-        if (FAILED(hr)) {
-            error = hresult_text("CreatePixelShader", hr);
-            release_com(vs_blob);
-            release_com(ps_blob);
-            return false;
-        }
-
-        D3D11_INPUT_ELEMENT_DESC layout[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        };
-        hr = device->CreateInputLayout(layout, 3, vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &input_layout);
-        release_com(vs_blob);
-        release_com(ps_blob);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateInputLayout", hr);
-            return false;
-        }
-
-        D3D11_BUFFER_DESC cb_desc = {};
-        cb_desc.ByteWidth = sizeof(SceneConstants);
-        cb_desc.Usage = D3D11_USAGE_DEFAULT;
-        cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        hr = device->CreateBuffer(&cb_desc, nullptr, &constant_buffer);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateBuffer(constants)", hr);
-            return false;
-        }
-
-        D3D11_DEPTH_STENCIL_DESC ds_desc = {};
-        ds_desc.DepthEnable = TRUE;
-        ds_desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-        ds_desc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-        hr = device->CreateDepthStencilState(&ds_desc, &depth_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateDepthStencilState", hr);
-            return false;
-        }
-        D3D11_DEPTH_STENCIL_DESC ds_read_desc = ds_desc;
-        ds_read_desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-        hr = device->CreateDepthStencilState(&ds_read_desc, &depth_read_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateDepthStencilState(read-only)", hr);
-            return false;
-        }
 
         D3D11_RASTERIZER_DESC rs_desc = {};
         rs_desc.FillMode = D3D11_FILL_SOLID;
         rs_desc.CullMode = D3D11_CULL_BACK;
         rs_desc.FrontCounterClockwise = TRUE;
         rs_desc.DepthClipEnable = TRUE;
-        hr = device->CreateRasterizerState(&rs_desc, &rasterizer_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateRasterizerState", hr);
-            return false;
+        if (!rasterizer_state) {
+            HRESULT hr = device->CreateRasterizerState(&rs_desc, &rasterizer_state);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateRasterizerState", hr);
+                return false;
+            }
         }
-        D3D11_RASTERIZER_DESC model_preview_rs_desc = rs_desc;
-        model_preview_rs_desc.FrontCounterClockwise = FALSE;
-        hr = device->CreateRasterizerState(&model_preview_rs_desc, &model_preview_rasterizer_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateRasterizerState(model preview)", hr);
-            return false;
+        if (!alpha_mask_rasterizer_state) {
+            D3D11_RASTERIZER_DESC alpha_mask_rs_desc = rs_desc;
+            alpha_mask_rs_desc.DepthBias = 8;
+            HRESULT hr = device->CreateRasterizerState(&alpha_mask_rs_desc, &alpha_mask_rasterizer_state);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateRasterizerState(alpha mask)", hr);
+                return false;
+            }
         }
-        D3D11_RASTERIZER_DESC alpha_mask_rs_desc = rs_desc;
-        alpha_mask_rs_desc.DepthBias = 8;
-        hr = device->CreateRasterizerState(&alpha_mask_rs_desc, &alpha_mask_rasterizer_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateRasterizerState(alpha mask)", hr);
-            return false;
+        if (!track_rasterizer_state) {
+            D3D11_RASTERIZER_DESC track_rs_desc = rs_desc;
+            track_rs_desc.CullMode = D3D11_CULL_NONE;
+            HRESULT hr = device->CreateRasterizerState(&track_rs_desc, &track_rasterizer_state);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateRasterizerState(track)", hr);
+                return false;
+            }
         }
-        rs_desc.CullMode = D3D11_CULL_NONE;
-        hr = device->CreateRasterizerState(&rs_desc, &track_rasterizer_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateRasterizerState(track)", hr);
-            return false;
-        }
-        D3D11_SAMPLER_DESC sampler_desc = {};
-        sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-        sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
-        sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
-        sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
-        sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-        sampler_desc.MinLOD = 0.0f;
-        sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
-        hr = device->CreateSamplerState(&sampler_desc, &sampler_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateSamplerState", hr);
-            return false;
+        if (!sampler_state) {
+            D3D11_SAMPLER_DESC sampler_desc = {};
+            sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+            sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+            sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+            sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+            sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+            sampler_desc.MinLOD = 0.0f;
+            sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
+            HRESULT hr = device->CreateSamplerState(&sampler_desc, &sampler_state);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateSamplerState", hr);
+                return false;
+            }
         }
 
-        D3D11_BLEND_DESC blend_desc = {};
-        blend_desc.RenderTarget[0].BlendEnable = TRUE;
-        blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-        blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-        blend_desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-        blend_desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-        blend_desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-        blend_desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-        blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        hr = device->CreateBlendState(&blend_desc, &blend_state);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateBlendState", hr);
-            return false;
+        if (!blend_state) {
+            D3D11_BLEND_DESC blend_desc = {};
+            blend_desc.RenderTarget[0].BlendEnable = TRUE;
+            blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+            blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+            blend_desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+            blend_desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+            blend_desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+            blend_desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            HRESULT hr = device->CreateBlendState(&blend_desc, &blend_state);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateBlendState", hr);
+                return false;
+            }
         }
 
         return true;
@@ -4430,7 +4302,7 @@ fail:
             if (last_error != error) last_error = error;
             return;
         }
-        if (has_model() && !ensure_pipeline(error)) {
+        if (has_model() && !ensure_scene_pipeline(error)) {
             if (last_error != error) last_error = error;
         }
 
@@ -4438,60 +4310,45 @@ fail:
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
 
-        if (has_model() && vertex_shader && pixel_shader && input_layout && constant_buffer && blend_state) {
+        if (has_model() && scene_vertex_shader && scene_pixel_shader &&
+            scene_input_layout && scene_constant_buffer &&
+            scene_depth_state && rasterizer_state && sampler_state && blend_state) {
             D3D11_VIEWPORT viewport = {};
             viewport.Width = static_cast<float>(width);
             viewport.Height = static_cast<float>(height);
             viewport.MinDepth = 0.0f;
             viewport.MaxDepth = 1.0f;
             context->RSSetViewports(1, &viewport);
-            context->RSSetState(model_preview_rasterizer_state);
-            context->OMSetDepthStencilState(depth_state, 0);
+            context->RSSetState(rasterizer_state);
+            context->OMSetDepthStencilState(scene_depth_state, 0);
             const float blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            context->OMSetBlendState(blend_state, blend_factor, 0xffffffff);
+            context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
 
             Mat4 center_transform = translation(-center.x, -center.y, -center.z);
             Mat4 rotation = multiply(rotation_y(yaw), rotation_x(pitch));
-            Mat4 world = multiply(center_transform, rotation);
             float distance = std::max(radius * distance_factor, radius + 0.1f);
-            Mat4 view = look_at_lh({0.0f, 0.0f, distance}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+            Mat4 model_transform = multiply(center_transform, rotation);
+            Mat4 world = multiply(model_transform, translation(0.0f, 0.0f, -distance));
+            Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
             float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
             float near_z = std::max(0.001f, radius * 0.001f);
             float far_z = std::max(distance + radius * 4.0f, radius * 50.0f);
-            Mat4 proj = perspective_fov_lh(0.78539816339f, aspect, near_z, far_z);
-            SceneConstants constants = {};
-            constants.mvp = multiply(multiply(world, view), proj);
+            Mat4 proj = perspective_fov_lh_reverse_z(kModelPreviewFovY, aspect, near_z, far_z);
+            Mat4 view_proj = multiply(view, proj);
 
-            UINT stride = sizeof(GpuVertex);
-            UINT offset = 0;
-            context->IASetInputLayout(input_layout);
-            context->IASetVertexBuffers(0, 1, &vertex_buffer, &stride, &offset);
-            context->IASetIndexBuffer(index_buffer, DXGI_FORMAT_R32_UINT, 0);
-            context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            context->VSSetShader(vertex_shader, nullptr, 0);
-            context->PSSetShader(pixel_shader, nullptr, 0);
-            context->VSSetConstantBuffers(0, 1, &constant_buffer);
-            context->PSSetConstantBuffers(0, 1, &constant_buffer);
-            context->PSSetSamplers(0, 1, &sampler_state);
-
-            for (const MeshPart& part : parts) {
-                const GpuMaterial* material = nullptr;
-                if (part.material_index < materials.size()) material = &materials[part.material_index];
-                constants.material_color[0] = material ? material->diffuse[0] : 1.0f;
-                constants.material_color[1] = material ? material->diffuse[1] : 1.0f;
-                constants.material_color[2] = material ? material->diffuse[2] : 1.0f;
-                constants.material_color[3] = material ? material->diffuse[3] : 1.0f;
-                constants.use_texture[0] = material && material->has_texture ? 1.0f : 0.0f;
-                context->UpdateSubresource(constant_buffer, 0, nullptr, &constants, 0, 0);
-                ID3D11ShaderResourceView* texture = material && material->has_texture ? material->texture : nullptr;
-                context->PSSetShaderResources(0, 1, &texture);
-                context->DrawIndexed(part.index_count, part.start_index, 0);
+            model_preview_instances.resize(1);
+            model_preview_instances[0] = make_instance_data(world);
+            if (!ensure_instance_buffer(model_preview_instance_buffer,
+                                        model_preview_instance_capacity,
+                                        model_preview_instances,
+                                        error)) {
+                if (last_error != error) last_error = error;
+            } else {
+                draw_scene_mesh(vertex_buffer, index_buffer, model_preview_instance_buffer,
+                                parts, materials, 1, view_proj, rasterizer_state);
             }
-            ID3D11ShaderResourceView* null_srv = nullptr;
-            context->PSSetShaderResources(0, 1, &null_srv);
-            context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         }
 
         ID3D11RenderTargetView* null_rtv = nullptr;
@@ -4576,6 +4433,9 @@ fail:
         }
         materials.clear();
         parts.clear();
+        model_preview_instances.clear();
+        release_com(model_preview_instance_buffer);
+        model_preview_instance_capacity = 0;
         release_com(vertex_buffer);
         release_com(index_buffer);
         index_count = 0;
@@ -4610,10 +4470,6 @@ fail:
     ID3D11Texture2D* scene_highlight_mask_texture = nullptr;
     ID3D11RenderTargetView* scene_highlight_mask_rtv = nullptr;
     ID3D11ShaderResourceView* scene_highlight_mask_srv = nullptr;
-    ID3D11VertexShader* vertex_shader = nullptr;
-    ID3D11PixelShader* pixel_shader = nullptr;
-    ID3D11InputLayout* input_layout = nullptr;
-    ID3D11Buffer* constant_buffer = nullptr;
     ID3D11VertexShader* scene_vertex_shader = nullptr;
     ID3D11PixelShader* scene_pixel_shader = nullptr;
     ID3D11InputLayout* scene_input_layout = nullptr;
@@ -4625,19 +4481,19 @@ fail:
     ID3D11Buffer* scene_pick_constant_buffer = nullptr;
     ID3D11SamplerState* sampler_state = nullptr;
     ID3D11SamplerState* scene_outline_sampler_state = nullptr;
-    ID3D11DepthStencilState* depth_state = nullptr;
-    ID3D11DepthStencilState* depth_read_state = nullptr;
     ID3D11DepthStencilState* scene_depth_state = nullptr;
     ID3D11DepthStencilState* scene_depth_read_state = nullptr;
     ID3D11RasterizerState* rasterizer_state = nullptr;
-    ID3D11RasterizerState* model_preview_rasterizer_state = nullptr;
     ID3D11RasterizerState* alpha_mask_rasterizer_state = nullptr;
     ID3D11RasterizerState* track_rasterizer_state = nullptr;
     ID3D11BlendState* blend_state = nullptr;
     ID3D11Buffer* vertex_buffer = nullptr;
     ID3D11Buffer* index_buffer = nullptr;
+    ID3D11Buffer* model_preview_instance_buffer = nullptr;
+    UINT model_preview_instance_capacity = 0;
     std::vector<MeshPart> parts;
     std::vector<GpuMaterial> materials;
+    std::vector<SceneInstanceData> model_preview_instances;
     UINT index_count = 0;
     int render_width = 0;
     int render_height = 0;
