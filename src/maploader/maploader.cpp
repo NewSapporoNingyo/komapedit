@@ -955,10 +955,6 @@ private:
             } else if (starts_with(pos_, "//")) {
                 pos_ += 2;
                 while (!eof() && src_[pos_] != '\n') ++pos_;
-            } else if (starts_with(pos_, "/*")) {
-                pos_ += 2;
-                while (!eof() && !starts_with(pos_, "*/")) ++pos_;
-                if (!eof()) pos_ += 2;
             } else if (starts_with(pos_, "\xC2\xA0")) {
                 pos_ += 2;
             } else if (starts_with(pos_, "\xE3\x80\x80")) {
@@ -1051,10 +1047,6 @@ private:
             } else if (src_.compare(p, 2, "//") == 0) {
                 p += 2;
                 while (p < src_.size() && src_[p] != '\n') ++p;
-            } else if (src_.compare(p, 2, "/*") == 0) {
-                p += 2;
-                while (p < src_.size() && src_.compare(p, 2, "*/") != 0) ++p;
-                if (p < src_.size()) p += 2;
             } else {
                 break;
             }
@@ -1500,18 +1492,12 @@ private:
         if (label == "abs") return Value::num(std::fabs(as_number(args.at(0))));
         if (label == "sin") return Value::num(std::sin(as_number(args.at(0))));
         if (label == "cos") return Value::num(std::cos(as_number(args.at(0))));
-        if (label == "tan") return Value::num(std::tan(as_number(args.at(0))));
-        if (label == "asin") return Value::num(std::asin(as_number(args.at(0))));
-        if (label == "acos") return Value::num(std::acos(as_number(args.at(0))));
-        if (label == "atan") return Value::num(std::atan(as_number(args.at(0))));
         if (label == "atan2") return Value::num(std::atan2(as_number(args.at(0)), as_number(args.at(1))));
         if (label == "sqrt") return Value::num(std::sqrt(as_number(args.at(0))));
         if (label == "exp") return Value::num(std::exp(as_number(args.at(0))));
         if (label == "log") return Value::num(std::log(as_number(args.at(0))));
-        if (label == "log10") return Value::num(std::log10(as_number(args.at(0))));
         if (label == "floor") return Value::num(std::floor(as_number(args.at(0))));
         if (label == "ceil") return Value::num(std::ceil(as_number(args.at(0))));
-        if (label == "round") return Value::num(std::round(as_number(args.at(0))));
         if (label == "pow") return Value::num(std::pow(as_number(args.at(0)), as_number(args.at(1))));
         throw std::runtime_error("Unknown function: " + label);
     }

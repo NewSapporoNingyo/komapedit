@@ -26,7 +26,7 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Handle UTF-8, UTF-8 with BOM, UTF-16LE, UTF-16BE, CP932/Shift_JIS, and related text encodings.
 - [x] Support `Include` references to other map files.
 - [x] Support `$variable = expression;`, the predefined `distance` variable, and basic math functions.
-- [x] Support `#`, `//`, and `/* ... */` comments.
+- [x] Support `#` and `//` comments.
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
 - [ ] Edit elements in map files.
 - [ ] Save modified map files.
