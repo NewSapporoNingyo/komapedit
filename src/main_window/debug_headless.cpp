@@ -799,6 +799,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         app.plot_max_ = app.dmax_;
         app.rebuild_marker_overlay_cache();
         app.reset_marker_visibility();
+        std::fill(app.other_train_path_visible_.begin(), app.other_train_path_visible_.end(), 1);
         std::fill(app.signal_row_visible_.begin(), app.signal_row_visible_.end(), 1);
         std::fill(app.repeater_row_visible_.begin(), app.repeater_row_visible_.end(), 1);
         *out << "stage=overlay-cache-ready\n";
@@ -809,6 +810,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         size_t repeater_begin_marker_count = 0;
         size_t repeater_end_marker_count = 0;
         size_t repeater_segment_count = 0;
+        size_t other_train_stop_marker_count = 0;
+        size_t other_train_path_point_count = 0;
         for (const RepeaterOverlayRow& row : app.repeater_marker_cache_) {
             if (row.begin_marker) ++repeater_begin_marker_count;
             if (row.end_marker) ++repeater_end_marker_count;
@@ -817,6 +820,12 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                 ++chunk_count;
                 segment_point_count += chunk.points.size();
             }
+        }
+        for (const auto& marker : app.other_train_stop_marker_cache_) {
+            if (marker) ++other_train_stop_marker_count;
+        }
+        for (const OtherTrainPathOverlay& path : app.other_train_path_cache_) {
+            other_train_path_point_count += path.points.size();
         }
         size_t visible_other_count = 0;
         size_t visible_other_rows = 0;
@@ -828,6 +837,11 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         *out << "loaded own_rows=" << app.model_.own.rows
              << " visible_othertracks=" << visible_other_count
              << " visible_other_rows=" << visible_other_rows
+             << " other_trains=" << app.model_.other_trains.size()
+             << " other_train_stops=" << app.model_.other_train_stops.size()
+             << " other_train_stop_markers=" << other_train_stop_marker_count
+             << " other_train_paths=" << app.other_train_path_cache_.size()
+             << " other_train_path_points=" << other_train_path_point_count
              << " signal_aspects=" << app.model_.signal_aspects.size()
              << " signals=" << app.model_.signals.size()
              << " signal_markers=" << app.signal_marker_cache_.size()

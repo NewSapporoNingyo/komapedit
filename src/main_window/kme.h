@@ -163,6 +163,11 @@ struct CachedTableRow {
     bool invalid_track_key = false;
 };
 
+struct CachedOtherTrainStopGroup {
+    std::string train_key;
+    std::vector<size_t> row_indices;
+};
+
 struct TableUiCache {
     bool valid = false;
     float font_size = 0.0f;
@@ -171,6 +176,8 @@ struct TableUiCache {
     std::vector<CachedTableRow> structure_rows;
     std::vector<CachedTableRow> structure_model_rows;
     std::vector<CachedTableRow> other_train_rows;
+    std::vector<CachedTableRow> other_train_stop_rows;
+    std::vector<CachedOtherTrainStopGroup> other_train_stop_groups;
     std::vector<CachedTableRow> repeater_rows;
     std::vector<CachedTableRow> signal_aspect_rows;
     std::vector<CachedTableRow> signal_rows;
@@ -191,6 +198,8 @@ struct TableUiCache {
     float structure_model_file_path_width = 200.0f;
     float other_train_distance_width = 110.0f;
     float other_train_file_path_width = 200.0f;
+    float other_train_stop_distance_width = 110.0f;
+    float other_train_stop_file_path_width = 200.0f;
     float signal_distance_width = 110.0f;
     float signal_file_path_width = 200.0f;
     float beacon_distance_width = 110.0f;
@@ -254,6 +263,7 @@ struct MapModel {
     std::vector<TableRow> structures;
     std::vector<TableRow> structure_models;
     std::vector<TableRow> other_trains;
+    std::vector<TableRow> other_train_stops;
     std::vector<TableRow> other_train_structure_keys;
     std::vector<TableRow> other_train_sound_3d_keys;
     std::vector<TableRow> sound_list;
@@ -411,6 +421,17 @@ struct PlanPreTrainMarker {
     size_t row_index = 0;
 };
 
+struct PlanOtherTrainStopMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double theta = 0.0;
+    std::string label;
+    size_t row_index = 0;
+    size_t definition_row_index = 0;
+    bool reverse_direction = false;
+};
+
 struct PlanIrregularityMarker {
     double d = 0.0;
     double x = 0.0;
@@ -498,6 +519,7 @@ enum class PlanMarkerKind {
     Signal,
     Beacon,
     PreTrain,
+    OtherTrainStop,
     Irregularity,
     MapSound,
     MapSound3D,
@@ -552,6 +574,17 @@ struct RepeaterOverlayRow {
     PlanRepeaterSegment segment;
 };
 
+struct OtherTrainPathOverlay {
+    std::vector<TrackPoint> points;
+    std::string label;
+    size_t definition_row_index = 0;
+    size_t first_stop_row_index = 0;
+    size_t last_stop_row_index = 0;
+    double d_min = 0.0;
+    double d_max = 0.0;
+    bool reverse_direction = false;
+};
+
 struct PlanData {
     std::vector<TrackPoint> own;
     std::vector<PlanOther> other;
@@ -562,6 +595,8 @@ struct PlanData {
     std::vector<PlanSignalMarker> signal_markers;
     std::vector<PlanBeaconMarker> beacon_markers;
     std::vector<PlanPreTrainMarker> pretrain_markers;
+    std::vector<PlanOtherTrainStopMarker> other_train_stop_markers;
+    std::vector<OtherTrainPathOverlay> other_train_paths;
     std::vector<PlanIrregularityMarker> irregularity_markers;
     std::vector<PlanMapSoundMarker> map_sound_markers;
     std::vector<PlanMapSound3DMarker> map_sound_3d_markers;
@@ -1029,6 +1064,9 @@ private:
     std::vector<std::optional<PlanSignalMarker>> signal_marker_cache_;
     std::vector<std::optional<PlanBeaconMarker>> beacon_marker_cache_;
     std::vector<std::optional<PlanPreTrainMarker>> pretrain_marker_cache_;
+    std::vector<std::optional<PlanOtherTrainStopMarker>> other_train_stop_marker_cache_;
+    std::vector<OtherTrainPathOverlay> other_train_path_cache_;
+    std::vector<unsigned char> other_train_path_visible_;
     std::vector<std::optional<PlanIrregularityMarker>> irregularity_marker_cache_;
     std::vector<std::optional<PlanMapSoundMarker>> map_sound_marker_cache_;
     std::vector<std::optional<PlanMapSound3DMarker>> map_sound_3d_marker_cache_;
@@ -1048,6 +1086,8 @@ private:
     int repeater_list_highlight_row_ = -1;
     int signal_list_scroll_row_ = -1;
     int signal_list_highlight_row_ = -1;
+    int other_train_stop_list_scroll_row_ = -1;
+    int other_train_stop_list_highlight_row_ = -1;
     int beacon_list_scroll_row_ = -1;
     int beacon_list_highlight_row_ = -1;
     int irregularity_list_scroll_row_ = -1;
@@ -1217,6 +1257,7 @@ private:
     void locate_signal_row_in_list(size_t row_index);
     void locate_beacon_row_on_plan(size_t row_index);
     void locate_beacon_row_in_list(size_t row_index);
+    void locate_other_train_stop_row_on_plan(size_t row_index);
     void locate_irregularity_row_on_plan(size_t row_index);
     void locate_irregularity_row_in_list(size_t row_index);
     void locate_map_sound_row_on_plan(size_t row_index);

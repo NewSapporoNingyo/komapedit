@@ -23,6 +23,8 @@ void App::invalidate_table_cache() {
     repeater_list_highlight_row_ = -1;
     signal_list_scroll_row_ = -1;
     signal_list_highlight_row_ = -1;
+    other_train_stop_list_scroll_row_ = -1;
+    other_train_stop_list_highlight_row_ = -1;
     beacon_list_scroll_row_ = -1;
     beacon_list_highlight_row_ = -1;
     irregularity_list_scroll_row_ = -1;
@@ -66,12 +68,14 @@ void App::reset_marker_visibility() {
     structure_row_visible_.assign(structure_marker_cache_.size(), 0);
     repeater_row_visible_.assign(repeater_marker_cache_.size(), 0);
     signal_row_visible_.assign(signal_marker_cache_.size(), 0);
+    other_train_path_visible_.assign(model_.other_trains.size(), 0);
 }
 
 void App::sync_marker_visibility_sizes() {
     structure_row_visible_.resize(structure_marker_cache_.size(), 0);
     repeater_row_visible_.resize(repeater_marker_cache_.size(), 0);
     signal_row_visible_.resize(signal_marker_cache_.size(), 0);
+    other_train_path_visible_.resize(model_.other_trains.size(), 0);
 }
 
 void App::locate_structure_row_on_plan(size_t row_index) {
@@ -152,6 +156,17 @@ void App::locate_beacon_row_in_list(size_t row_index) {
     focus_beacons_next_ = true;
     beacon_list_scroll_row_ = static_cast<int>(row_index);
     beacon_list_highlight_row_ = static_cast<int>(row_index);
+}
+
+void App::locate_other_train_stop_row_on_plan(size_t row_index) {
+    sync_marker_visibility_sizes();
+    if (row_index >= other_train_stop_marker_cache_.size() || !other_train_stop_marker_cache_[row_index]) return;
+    const PlanOtherTrainStopMarker& marker = *other_train_stop_marker_cache_[row_index];
+    if (marker.definition_row_index < other_train_path_visible_.size()) {
+        other_train_path_visible_[marker.definition_row_index] = 1;
+    }
+    plan_marker_selection_ = PlanMarkerSelection{PlanMarkerKind::OtherTrainStop, row_index};
+    focus_plan_at_model_point(marker.x, marker.y);
 }
 
 void App::locate_irregularity_row_on_plan(size_t row_index) {

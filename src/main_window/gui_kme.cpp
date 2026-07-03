@@ -841,6 +841,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
     model.structure_models = make_table_rows(structure.at("models"));
     const auto& other_train = root.at("otherTrain");
     model.other_trains = make_table_rows(other_train.at("definitions"));
+    model.other_train_stops = make_table_rows(other_train.at("stop"));
     model.other_train_structure_keys = make_table_rows(other_train.at("structureKeys"));
     model.other_train_sound_3d_keys = make_table_rows(other_train.at("sound3DKeys"));
     const auto& signal = root.at("signal");

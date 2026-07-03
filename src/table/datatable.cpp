@@ -35,6 +35,15 @@ bool blank_ascii(const std::string& text) {
     return text.find_first_not_of(" \t\r\n") == std::string::npos;
 }
 
+float scroll_x_table_height_for_rows(int row_count) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float text_row_height = ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f;
+    const float row_height = std::ceil(std::max(text_row_height, ImGui::GetFrameHeight()));
+    const int rows_with_header = std::max(0, row_count) + 1;
+    return row_height * static_cast<float>(rows_with_header) +
+        style.ScrollbarSize + style.CellPadding.y * 3.0f;
+}
+
 void open_parent_directory_in_explorer(const std::string& file_path) {
     if (blank_ascii(file_path)) return;
     try {
@@ -581,6 +590,19 @@ static const TableColumnDef kOtherTrainColumns[] = {
 };
 constexpr int kOtherTrainDistanceColumn = 1;
 constexpr int kOtherTrainFilePathColumn = 3;
+
+static const TableColumnDef kOtherTrainStopColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"trainKey", "trainKey", 120.0f},
+    {"decelerate", "decelerate", 90.0f},
+    {"stopTime", "stopTime", 90.0f},
+    {"accelerate", "accelerate", 90.0f},
+    {"speed", "speed", 80.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kOtherTrainStopDistanceColumn = 1;
+constexpr int kOtherTrainStopFilePathColumn = IM_ARRAYSIZE(kOtherTrainStopColumns) - 1;
 
 static const TableColumnDef kSoundListColumns[] = {
     {"rowNumber", "#", 40.0f},
@@ -1269,6 +1291,8 @@ void App::ensure_table_cache() {
 
     cache.other_train_distance_width = 0.0f;
     expand_width_for_text(cache.other_train_distance_width, kOtherTrainColumns[kOtherTrainDistanceColumn].header);
+    std::vector<std::pair<std::string, std::string>> definition_train_keys;
+    std::unordered_set<std::string> seen_definition_train_keys;
     cache.other_train_rows.reserve(model_.other_trains.size());
     for (size_t row_index = 0; row_index < model_.other_trains.size(); ++row_index) {
         const TableRow& row = model_.other_trains[row_index];
@@ -1277,6 +1301,10 @@ void App::ensure_table_cache() {
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[kOtherTrainDistanceColumn] = table_cell(row, "distance");
         cached.cells[2] = table_cell(row, "trainKey");
+        std::string normalized_train_key = normalize_track_lookup_key(cached.cells[2]);
+        if (seen_definition_train_keys.insert(normalized_train_key).second) {
+            definition_train_keys.emplace_back(std::move(normalized_train_key), cached.cells[2]);
+        }
         cached.cells[kOtherTrainFilePathColumn] = table_cell(row, "filePath");
         cached.cells[4] = table_cell(row, "trackKey");
         cached.cells[5] = table_cell(row, "direction");
@@ -1287,6 +1315,61 @@ void App::ensure_table_cache() {
         expand_width_for_text(cache.other_train_file_path_width,
                               cached.cells[kOtherTrainFilePathColumn]);
         cache.other_train_rows.push_back(std::move(cached));
+    }
+
+    cache.other_train_stop_distance_width = 0.0f;
+    cache.other_train_stop_file_path_width = 0.0f;
+    expand_width_for_text(cache.other_train_stop_distance_width,
+                          kOtherTrainStopColumns[kOtherTrainStopDistanceColumn].header);
+    expand_width_for_text(cache.other_train_stop_file_path_width,
+                          kOtherTrainStopColumns[kOtherTrainStopFilePathColumn].header);
+    std::vector<CachedOtherTrainStopGroup> stop_groups;
+    std::unordered_map<std::string, size_t> stop_group_index_by_train_key;
+    cache.other_train_stop_rows.reserve(model_.other_train_stops.size());
+    for (size_t row_index = 0; row_index < model_.other_train_stops.size(); ++row_index) {
+        const TableRow& row = model_.other_train_stops[row_index];
+        CachedTableRow cached;
+        cached.cells.resize(IM_ARRAYSIZE(kOtherTrainStopColumns));
+        cached.cells[0] = std::to_string(row_index + 1);
+        cached.cells[kOtherTrainStopDistanceColumn] = table_cell(row, "distance");
+        cached.cells[2] = table_cell(row, "trainKey");
+        std::string normalized_train_key = normalize_track_lookup_key(cached.cells[2]);
+        auto group_it = stop_group_index_by_train_key.find(normalized_train_key);
+        if (group_it == stop_group_index_by_train_key.end()) {
+            const size_t group_index = stop_groups.size();
+            CachedOtherTrainStopGroup group;
+            group.train_key = cached.cells[2];
+            stop_groups.push_back(std::move(group));
+            group_it = stop_group_index_by_train_key.emplace(std::move(normalized_train_key), group_index).first;
+        }
+        stop_groups[group_it->second].row_indices.push_back(row_index);
+        cached.cells[3] = table_cell(row, "decelerate");
+        cached.cells[4] = table_cell(row, "stopTime");
+        cached.cells[5] = table_cell(row, "accelerate");
+        cached.cells[6] = table_cell(row, "speed");
+        cached.open_path = table_cell(row, "filePath");
+        cached.cells[kOtherTrainStopFilePathColumn] = display_name_from_path(cached.open_path);
+        cached.tooltip_text = cached.open_path;
+        expand_width_for_text(cache.other_train_stop_distance_width,
+                              cached.cells[kOtherTrainStopDistanceColumn]);
+        expand_width_for_text(cache.other_train_stop_file_path_width,
+                              cached.cells[kOtherTrainStopFilePathColumn]);
+        cache.other_train_stop_rows.push_back(std::move(cached));
+    }
+    cache.other_train_stop_groups.reserve(stop_groups.size());
+    std::unordered_set<std::string> appended_stop_group_keys;
+    for (const auto& definition_key : definition_train_keys) {
+        auto group_it = stop_group_index_by_train_key.find(definition_key.first);
+        if (group_it == stop_group_index_by_train_key.end()) continue;
+        CachedOtherTrainStopGroup group = stop_groups[group_it->second];
+        group.train_key = definition_key.second;
+        cache.other_train_stop_groups.push_back(std::move(group));
+        appended_stop_group_keys.insert(definition_key.first);
+    }
+    for (auto& group : stop_groups) {
+        std::string normalized_train_key = normalize_track_lookup_key(group.train_key);
+        if (appended_stop_group_keys.find(normalized_train_key) != appended_stop_group_keys.end()) continue;
+        cache.other_train_stop_groups.push_back(std::move(group));
     }
 
     cache.sound_list_buffer_count_width = 0.0f;
@@ -2123,11 +2206,25 @@ void App::render_other_trains_window() {
         ImGui::End();
         return;
     }
+    sync_marker_visibility_sizes();
+    bool all_visible = all_flags_set(other_train_path_visible_);
+    ImGui::BeginDisabled(other_train_path_visible_.empty());
+    if (ImGui::Checkbox(tr("chk.select_all").c_str(), &all_visible)) {
+        set_all_flags(other_train_path_visible_, all_visible);
+    }
+    ImGui::EndDisabled();
     ensure_table_cache();
-    if (ImGui::BeginTable("other_trains", IM_ARRAYSIZE(kOtherTrainColumns),
+    const bool has_stop_rows = !table_cache_.other_train_stop_rows.empty();
+    if (has_stop_rows) {
+        ImGui::TextUnformatted(tr("frame.other_train_definitions").c_str());
+    }
+    const int definition_row_count = static_cast<int>(table_cache_.other_train_rows.size());
+    ImVec2 definition_table_size(0.0f, scroll_x_table_height_for_rows(definition_row_count));
+    if (ImGui::BeginTable("other_trains", IM_ARRAYSIZE(kOtherTrainColumns) + 1,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX,
+                          definition_table_size)) {
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
         for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainColumns); ++i) {
             float width = kOtherTrainColumns[i].width;
             if (i == kOtherTrainDistanceColumn) width = table_cache_.other_train_distance_width;
@@ -2139,15 +2236,21 @@ void App::render_other_trains_window() {
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.other_train_rows.size());
-        clipper.Begin(row_count);
+        clipper.Begin(definition_row_count);
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.other_train_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
                 ImGui::PushID(row_index);
+                ImGui::TableSetColumnIndex(0);
+                bool row_visible = static_cast<size_t>(row_index) < other_train_path_visible_.size() &&
+                    other_train_path_visible_[static_cast<size_t>(row_index)] != 0;
+                if (ImGui::Checkbox("##show", &row_visible) &&
+                    static_cast<size_t>(row_index) < other_train_path_visible_.size()) {
+                    other_train_path_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
+                }
                 for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainColumns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
+                    ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
                     if (value.empty()) continue;
                     if (i == kOtherTrainFilePathColumn) {
@@ -2162,6 +2265,100 @@ void App::render_other_trains_window() {
             }
         }
         ImGui::EndTable();
+    }
+    if (has_stop_rows) {
+        const int total_stop_rows = static_cast<int>(table_cache_.other_train_stop_rows.size());
+        if (other_train_stop_list_scroll_row_ >= total_stop_rows) other_train_stop_list_scroll_row_ = -1;
+        if (other_train_stop_list_highlight_row_ >= total_stop_rows) other_train_stop_list_highlight_row_ = -1;
+        const int scroll_target_row = other_train_stop_list_scroll_row_;
+        for (size_t group_index = 0; group_index < table_cache_.other_train_stop_groups.size(); ++group_index) {
+            const CachedOtherTrainStopGroup& group = table_cache_.other_train_stop_groups[group_index];
+            if (group.row_indices.empty()) continue;
+
+            ImGui::Separator();
+            std::string stop_title = tr("frame.other_train_stops") + " - [" + group.train_key + "]";
+            ImGui::TextUnformatted(stop_title.c_str());
+
+            const int row_count = static_cast<int>(group.row_indices.size());
+            ImVec2 table_size(0.0f, scroll_x_table_height_for_rows(row_count));
+            int scroll_target_group_row = -1;
+            if (scroll_target_row >= 0) {
+                for (size_t row_position = 0; row_position < group.row_indices.size(); ++row_position) {
+                    if (group.row_indices[row_position] == static_cast<size_t>(scroll_target_row)) {
+                        scroll_target_group_row = static_cast<int>(row_position);
+                        break;
+                    }
+                }
+            }
+
+            std::string table_id = "other_train_stops_" + std::to_string(group_index);
+            if (!ImGui::BeginTable(table_id.c_str(), IM_ARRAYSIZE(kOtherTrainStopColumns),
+                                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX,
+                                   table_size)) {
+                continue;
+            }
+            for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainStopColumns); ++i) {
+                float width = kOtherTrainStopColumns[i].width;
+                if (i == kOtherTrainStopDistanceColumn) width = table_cache_.other_train_stop_distance_width;
+                if (i == kOtherTrainStopFilePathColumn) width = table_cache_.other_train_stop_file_path_width;
+                ImGui::TableSetupColumn(kOtherTrainStopColumns[i].header,
+                                        width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
+                                        width);
+            }
+            setup_fixed_table_header();
+            ImGui::TableHeadersRow();
+            ImGuiListClipper clipper;
+            clipper.Begin(row_count);
+            if (scroll_target_group_row >= 0 && scroll_target_group_row < row_count) {
+                clipper.IncludeItemByIndex(scroll_target_group_row);
+            }
+            while (clipper.Step()) {
+                for (int group_row_index = clipper.DisplayStart; group_row_index < clipper.DisplayEnd; ++group_row_index) {
+                    const size_t stop_row_index = group.row_indices[static_cast<size_t>(group_row_index)];
+                    if (stop_row_index >= table_cache_.other_train_stop_rows.size()) continue;
+                    const CachedTableRow& row = table_cache_.other_train_stop_rows[stop_row_index];
+                    ImGui::TableNextRow();
+                    if (other_train_stop_list_highlight_row_ >= 0 &&
+                        stop_row_index == static_cast<size_t>(other_train_stop_list_highlight_row_)) {
+                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                    }
+                    if (group_row_index == scroll_target_group_row) {
+                        ImGui::SetScrollHereY(0.5f);
+                        other_train_stop_list_scroll_row_ = -1;
+                    }
+                    ImGui::PushID(static_cast<int>(stop_row_index));
+                    for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainStopColumns); ++i) {
+                        ImGui::TableSetColumnIndex(i);
+                        const std::string& value = row.cells[static_cast<size_t>(i)];
+                        if (i == kOtherTrainStopDistanceColumn) {
+                            const size_t marker_index = stop_row_index;
+                            const bool can_locate = marker_index < other_train_stop_marker_cache_.size() &&
+                                other_train_stop_marker_cache_[marker_index].has_value();
+                            ImGui::PushID(i);
+                            const bool should_locate =
+                                render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate);
+                            ImGui::PopID();
+                            if (should_locate) {
+                                locate_other_train_stop_row_on_plan(marker_index);
+                                other_train_stop_list_highlight_row_ = static_cast<int>(stop_row_index);
+                            }
+                            continue;
+                        }
+                        if (value.empty()) continue;
+                        if (i == kOtherTrainStopFilePathColumn) {
+                            render_file_path_cell_with_context(value, row.open_path,
+                                                               tr("menu.open_in_explorer"),
+                                                               row.tooltip_text);
+                        } else {
+                            ImGui::TextUnformatted(value.c_str());
+                        }
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndTable();
+        }
     }
     ImGui::End();
 }

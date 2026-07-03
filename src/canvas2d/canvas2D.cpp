@@ -234,6 +234,8 @@ void App::rebuild_marker_overlay_cache() {
     signal_marker_cache_.clear();
     beacon_marker_cache_.clear();
     pretrain_marker_cache_.clear();
+    other_train_stop_marker_cache_.clear();
+    other_train_path_cache_.clear();
     irregularity_marker_cache_.clear();
     map_sound_marker_cache_.clear();
     map_sound_3d_marker_cache_.clear();
@@ -371,6 +373,153 @@ void App::rebuild_marker_overlay_cache() {
         } else {
             pretrain_marker_cache_.push_back(std::nullopt);
         }
+    }
+
+    auto build_other_train_path_points = [&](const std::string& key, double start, double end) {
+        std::vector<TrackPoint> points;
+        if (end < start) std::swap(start, end);
+        std::string normalized_key = normalize_track_lookup_key(key);
+        auto source = find_track_source(normalized_key);
+        if (!source && is_own_track_lookup_alias(normalized_key)) source = own_source;
+        if (!source || !source->points || source->points->empty() || source->points->cols < 3) return points;
+
+        auto append_sample = [&](double distance) {
+            auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+            if (!sampled) return;
+            if (!points.empty() && std::abs(points.back().d - sampled->d) < 1e-6) {
+                points.back() = *sampled;
+                return;
+            }
+            points.push_back(*sampled);
+        };
+
+        append_sample(start);
+        size_t first = matrix_upper_bound_distance(*source->points, start);
+        size_t last = matrix_lower_bound_distance(*source->points, end);
+        for (size_t row_index = first; row_index < last; ++row_index) {
+            append_sample(source->points->at(row_index, 0));
+        }
+        append_sample(end);
+        return points;
+    };
+
+    struct OtherTrainDefinitionState {
+        size_t row_index = 0;
+        double distance = 0.0;
+        double order = 0.0;
+        std::string train_key;
+        std::string normalized_train_key;
+        std::string track_key;
+        bool reverse_direction = false;
+        std::vector<size_t> stop_rows;
+    };
+
+    std::vector<OtherTrainDefinitionState> other_train_definitions;
+    other_train_definitions.reserve(model_.other_trains.size());
+    std::map<std::string, std::vector<size_t>> definitions_by_train_key;
+    for (size_t row_index = 0; row_index < model_.other_trains.size(); ++row_index) {
+        const TableRow& row = model_.other_trains[row_index];
+        OtherTrainDefinitionState state;
+        state.row_index = row_index;
+        state.distance = table_cell_number(row, "distance");
+        state.order = table_cell_number(row, "order");
+        state.train_key = table_cell(row, "trainKey");
+        state.normalized_train_key = normalize_track_lookup_key(state.train_key);
+        state.track_key = table_cell(row, "trackKey");
+        state.reverse_direction = table_cell_number(row, "direction") < 0.0;
+        definitions_by_train_key[state.normalized_train_key].push_back(other_train_definitions.size());
+        other_train_definitions.push_back(std::move(state));
+    }
+    auto by_distance_order = [&](size_t lhs, size_t rhs) {
+        const auto& a = other_train_definitions[lhs];
+        const auto& b = other_train_definitions[rhs];
+        if (a.distance < b.distance) return true;
+        if (a.distance > b.distance) return false;
+        if (a.order < b.order) return true;
+        if (a.order > b.order) return false;
+        return a.row_index < b.row_index;
+    };
+    for (auto& kv : definitions_by_train_key) {
+        std::stable_sort(kv.second.begin(), kv.second.end(), by_distance_order);
+    }
+
+    for (size_t stop_row_index = 0; stop_row_index < model_.other_train_stops.size(); ++stop_row_index) {
+        const TableRow& row = model_.other_train_stops[stop_row_index];
+        std::string normalized_train_key = normalize_track_lookup_key(table_cell(row, "trainKey"));
+        auto definitions_it = definitions_by_train_key.find(normalized_train_key);
+        if (definitions_it == definitions_by_train_key.end() || definitions_it->second.empty()) continue;
+        const double stop_distance = table_cell_number(row, "distance");
+        const double stop_order = table_cell_number(row, "order");
+        size_t chosen_definition = definitions_it->second.front();
+        for (size_t definition_index : definitions_it->second) {
+            const auto& definition = other_train_definitions[definition_index];
+            if (definition.distance < stop_distance - 1e-6 ||
+                (std::abs(definition.distance - stop_distance) <= 1e-6 && definition.order <= stop_order)) {
+                chosen_definition = definition_index;
+                continue;
+            }
+            break;
+        }
+        other_train_definitions[chosen_definition].stop_rows.push_back(stop_row_index);
+    }
+
+    other_train_stop_marker_cache_.assign(model_.other_train_stops.size(), std::nullopt);
+    for (auto& definition : other_train_definitions) {
+        std::stable_sort(definition.stop_rows.begin(), definition.stop_rows.end(),
+            [&](size_t lhs, size_t rhs) {
+                const TableRow& a = model_.other_train_stops[lhs];
+                const TableRow& b = model_.other_train_stops[rhs];
+                double ad = table_cell_number(a, "distance");
+                double bd = table_cell_number(b, "distance");
+                if (ad < bd) return true;
+                if (ad > bd) return false;
+                double ao = table_cell_number(a, "order");
+                double bo = table_cell_number(b, "order");
+                if (ao < bo) return true;
+                if (ao > bo) return false;
+                return lhs < rhs;
+            });
+
+        std::vector<size_t> valid_stop_rows;
+        for (size_t stop_row_index : definition.stop_rows) {
+            const TableRow& stop_row = model_.other_train_stops[stop_row_index];
+            double distance = table_cell_number(stop_row, "distance");
+            auto p = sample_track_base(definition.track_key, distance);
+            if (!p) continue;
+
+            PlanOtherTrainStopMarker marker;
+            marker.d = distance;
+            marker.x = p->x;
+            marker.y = p->y;
+            marker.theta = p->theta;
+            marker.label = definition.train_key.empty()
+                ? "#" + std::to_string(definition.row_index + 1)
+                : definition.train_key;
+            marker.row_index = stop_row_index;
+            marker.definition_row_index = definition.row_index;
+            marker.reverse_direction = definition.reverse_direction;
+            other_train_stop_marker_cache_[stop_row_index] = marker;
+            valid_stop_rows.push_back(stop_row_index);
+        }
+
+        if (valid_stop_rows.size() < 2) continue;
+        double start = table_cell_number(model_.other_train_stops[valid_stop_rows.front()], "distance");
+        double end = table_cell_number(model_.other_train_stops[valid_stop_rows.back()], "distance");
+        std::vector<TrackPoint> points = build_other_train_path_points(definition.track_key, start, end);
+        if (points.size() < 2) continue;
+
+        OtherTrainPathOverlay path;
+        path.points = std::move(points);
+        path.label = definition.train_key.empty()
+            ? "#" + std::to_string(definition.row_index + 1)
+            : definition.train_key;
+        path.definition_row_index = definition.row_index;
+        path.first_stop_row_index = valid_stop_rows.front();
+        path.last_stop_row_index = valid_stop_rows.back();
+        path.d_min = std::min(start, end);
+        path.d_max = std::max(start, end);
+        path.reverse_direction = definition.reverse_direction;
+        other_train_path_cache_.push_back(std::move(path));
     }
 
     irregularity_marker_cache_.reserve(model_.irregularities.size());
@@ -895,6 +1044,47 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             marker.y = p.y;
             marker.row_index = i;
             out.pretrain_markers.push_back(std::move(marker));
+            append_marker_bounds(p.x, p.y);
+        }
+    }
+
+    auto is_other_train_path_visible = [this](size_t definition_row_index) {
+        return definition_row_index < other_train_path_visible_.size() &&
+            other_train_path_visible_[definition_row_index] != 0;
+    };
+    if (!other_train_path_visible_.empty()) {
+        out.other_train_paths.reserve(other_train_path_cache_.size());
+        for (const OtherTrainPathOverlay& source : other_train_path_cache_) {
+            if (!is_other_train_path_visible(source.definition_row_index)) continue;
+            if (source.d_max < dmin_ || source.d_min > dmax_ || source.points.empty()) continue;
+            OtherTrainPathOverlay path = source;
+            path.points.clear();
+            path.points.reserve(source.points.size());
+            for (TrackPoint p : source.points) {
+                p = rotate_point(p);
+                path.points.push_back(p);
+                append_marker_bounds(p.x, p.y);
+            }
+            out.other_train_paths.push_back(std::move(path));
+        }
+
+        out.other_train_stop_markers.reserve(other_train_stop_marker_cache_.size());
+        for (size_t i = 0; i < other_train_stop_marker_cache_.size(); ++i) {
+            if (!other_train_stop_marker_cache_[i]) continue;
+            const PlanOtherTrainStopMarker& source = *other_train_stop_marker_cache_[i];
+            if (!is_other_train_path_visible(source.definition_row_index)) continue;
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            TrackPoint p;
+            p.x = source.x;
+            p.y = source.y;
+            p.theta = source.theta;
+            p = rotate_point(p);
+            PlanOtherTrainStopMarker marker = source;
+            marker.x = p.x;
+            marker.y = p.y;
+            marker.theta = p.theta;
+            marker.row_index = i;
+            out.other_train_stop_markers.push_back(std::move(marker));
             append_marker_bounds(p.x, p.y);
         }
     }
@@ -2129,6 +2319,27 @@ static void draw_plan_current_position_arrow(ImDrawList* draw, ImVec2 center, Im
     draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(255, 255, 255, 255), ImDrawFlags_Closed, 3.0f * scale);
 }
 
+static void draw_plan_direction_arrow(ImDrawList* draw, ImVec2 center, ImVec2 direction,
+                                      ImU32 fill, ImU32 outline, float scale = 1.0f) {
+    float len = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+    if (len < 1e-3f) return;
+    ImVec2 forward(direction.x / len, direction.y / len);
+    ImVec2 normal(-forward.y, forward.x);
+    const float tip_len = 14.0f * scale;
+    const float tail_back = 8.0f * scale;
+    const float half_width = 6.0f * scale;
+    ImVec2 pts[3] = {
+        ImVec2(center.x + forward.x * tip_len,
+               center.y + forward.y * tip_len),
+        ImVec2(center.x - forward.x * tail_back + normal.x * half_width,
+               center.y - forward.y * tail_back + normal.y * half_width),
+        ImVec2(center.x - forward.x * tail_back - normal.x * half_width,
+               center.y - forward.y * tail_back - normal.y * half_width),
+    };
+    draw->AddTriangleFilled(pts[0], pts[1], pts[2], fill);
+    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), outline, ImDrawFlags_Closed, 2.0f * scale);
+}
+
 static void draw_plan_small_text(ImDrawList* draw, ImVec2 p, ImU32 color, const std::string& text) {
     if (text.empty()) return;
     draw->AddText(nullptr, ImGui::GetFontSize() * 0.78f, ImVec2(p.x + 8.0f, p.y - 9.0f), color, text.c_str());
@@ -2903,6 +3114,53 @@ void App::render_plan_canvas(ImVec2 size) {
         draw_matrix_plan_polyline(draw, t.points, rmin, rmax, transform, origin, avail, color_u32(t.color), line_widths.other_track_px);
     }
     debug_plan_stage("tracks");
+
+    {
+        const ImU32 other_train_line_color = IM_COL32(255, 64, 64, 235);
+        const ImU32 other_train_stop_color = IM_COL32(255, 51, 51, 255);
+        const ImU32 other_train_outline_color = IM_COL32(96, 0, 0, 255);
+        const float path_width = std::max(2.0f, line_widths.other_track_px + 0.75f);
+        for (const OtherTrainPathOverlay& path : data.other_train_paths) {
+            draw_polyline(draw, path.points, transform, origin, avail, other_train_line_color, path_width);
+            if (path.points.size() >= 2) {
+                size_t segment_index = std::min(path.points.size() / 2, path.points.size() - 2);
+                ImVec2 a = transform.plan_to_screen(path.points[segment_index].x, path.points[segment_index].y);
+                ImVec2 b = transform.plan_to_screen(path.points[segment_index + 1].x, path.points[segment_index + 1].y);
+                ImVec2 center((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+                ImVec2 direction(b.x - a.x, b.y - a.y);
+                if (path.reverse_direction) {
+                    direction.x = -direction.x;
+                    direction.y = -direction.y;
+                }
+                if (point_near_canvas(center, origin, avail)) {
+                    draw_plan_direction_arrow(draw, center, direction, other_train_stop_color,
+                                              other_train_outline_color, marker_size_scale);
+                }
+            }
+        }
+        for (const PlanOtherTrainStopMarker& marker : data.other_train_stop_markers) {
+            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            bool marker_active = marker_emphasized(PlanMarkerKind::OtherTrainStop, marker.row_index, false);
+            draw_selected_marker_ring(p, PlanMarkerKind::OtherTrainStop, marker.row_index, other_train_stop_color);
+            float radius = 4.4f * marker_size_scale * (marker_active ? 1.25f : 1.0f);
+            draw->AddCircleFilled(p, radius, other_train_stop_color, 16);
+            draw->AddCircle(p, radius + 1.5f * marker_size_scale, other_train_outline_color, 16, 1.4f * marker_size_scale);
+            ImVec2 direction(std::cos(marker.theta), std::sin(marker.theta));
+            if (marker.reverse_direction) {
+                direction.x = -direction.x;
+                direction.y = -direction.y;
+            }
+            ImVec2 q = transform.plan_to_screen(marker.x + direction.x, marker.y + direction.y);
+            if (marker_active) {
+                draw_plan_direction_arrow(draw, p, ImVec2(q.x - p.x, q.y - p.y),
+                                          other_train_stop_color, other_train_outline_color,
+                                          marker_size_scale * 0.9f);
+                draw_plan_small_text(draw, p, other_train_stop_color, marker.label);
+            }
+        }
+    }
+    debug_plan_stage("other_train_paths");
 
     if (show_stations_) {
         const float station_marker_radius = kDefaultStationMarkerSize * marker_size_scale;
