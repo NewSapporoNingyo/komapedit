@@ -1330,7 +1330,6 @@ void App::ensure_table_cache() {
         const TableRow& row = model_.other_train_stops[row_index];
         CachedTableRow cached;
         cached.cells.resize(IM_ARRAYSIZE(kOtherTrainStopColumns));
-        cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[kOtherTrainStopDistanceColumn] = table_cell(row, "distance");
         cached.cells[2] = table_cell(row, "trainKey");
         std::string normalized_train_key = normalize_track_lookup_key(cached.cells[2]);
@@ -1342,6 +1341,7 @@ void App::ensure_table_cache() {
             stop_groups.push_back(std::move(group));
             group_it = stop_group_index_by_train_key.emplace(std::move(normalized_train_key), group_index).first;
         }
+        cached.cells[0] = std::to_string(stop_groups[group_it->second].row_indices.size() + 1);
         stop_groups[group_it->second].row_indices.push_back(row_index);
         cached.cells[3] = table_cell(row, "decelerate");
         cached.cells[4] = table_cell(row, "stopTime");
