@@ -118,6 +118,41 @@ std::string format_double(double value, int precision) {
     return s;
 }
 
+float distance_jump_input_width() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    return ImGui::CalcTextSize("0000000000").x + style.FramePadding.x * 2.0f;
+}
+
+float distance_jump_control_width(const char* label, const char* button_label) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    return ImGui::CalcTextSize(label).x +
+        ImGui::CalcTextSize(button_label).x + style.FramePadding.x * 2.0f +
+        distance_jump_input_width() + style.ItemSpacing.x * 2.0f;
+}
+
+int distance_jump_input_filter(ImGuiInputTextCallbackData* data) {
+    const unsigned int ch = data->EventChar;
+    if (ch >= '0' && ch <= '9') return 0;
+    if (ch == '.') return std::strchr(data->Buf, '.') == nullptr ? 0 : 1;
+    return 1;
+}
+
+bool parse_distance_jump_input(const char* text, double& distance) {
+    if (!text) return false;
+    const char* begin = text;
+    while (*begin && std::isspace(static_cast<unsigned char>(*begin))) ++begin;
+    if (*begin == '\0') return false;
+
+    char* end = nullptr;
+    double value = std::strtod(begin, &end);
+    if (end == begin) return false;
+    while (*end && std::isspace(static_cast<unsigned char>(*end))) ++end;
+    if (*end != '\0' || !std::isfinite(value) || value < 0.0) return false;
+
+    distance = value;
+    return true;
+}
+
 double round_to_100(double value) {
     return std::round(value / 100.0) * 100.0;
 }
@@ -1739,6 +1774,8 @@ void App::render_toolbar() {
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
         render_station_jump_combo();
+        ImGui::SameLine(0.0f, style.ItemSpacing.x);
+        render_distance_jump_control();
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -1760,7 +1797,17 @@ void App::render_station_jump_combo() {
     }
 
     ImGui::BeginDisabled(!can_jump);
-    ImGui::SetNextItemWidth(std::max(1.0f, std::min(360.0f, ImGui::GetContentRegionAvail().x)));
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float reserved_width =
+        distance_jump_control_width(tr("label.distance_jump").c_str(), tr("button.jump").c_str()) + style.ItemSpacing.x;
+    const float available_width = ImGui::GetContentRegionAvail().x;
+    float combo_width = std::min(360.0f, available_width);
+    if (available_width > reserved_width + 120.0f) {
+        combo_width = std::min(360.0f, available_width - reserved_width);
+    } else {
+        combo_width = std::min(240.0f, std::max(80.0f, available_width * 0.5f));
+    }
+    ImGui::SetNextItemWidth(std::max(1.0f, combo_width));
     if (ImGui::BeginCombo("##toolbar_station", preview_text)) {
         for (int i = 0; i < static_cast<int>(model_.stations.size()); ++i) {
             std::string label = model_.stations[i].key + ", " + model_.stations[i].name;
@@ -1768,14 +1815,37 @@ void App::render_station_jump_combo() {
             if (ImGui::Selectable(label.c_str(), selected)) {
                 station_jump_index_ = i;
                 const double distance = model_.stations[i].distance;
-                focus_station(distance);
-                if (scene_preview_canvas_) {
-                    scene_preview_canvas_->jump_scene_camera_to_distance(distance);
-                }
+                jump_to_distance(distance);
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+}
+
+void App::render_distance_jump_control() {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(tr("label.distance_jump").c_str());
+    ImGui::SameLine();
+
+    const bool has_track = has_model_ && !model_.own.empty();
+    double distance = 0.0;
+
+    ImGui::BeginDisabled(!has_track);
+    ImGui::SetNextItemWidth(distance_jump_input_width());
+    const bool enter_pressed = ImGui::InputText(
+        "##toolbar_distance_jump", distance_jump_input_, sizeof(distance_jump_input_),
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCharFilter,
+        distance_jump_input_filter);
+    ImGui::EndDisabled();
+
+    const bool valid_distance = parse_distance_jump_input(distance_jump_input_, distance);
+    ImGui::SameLine();
+    const bool can_jump = has_track && valid_distance;
+    ImGui::BeginDisabled(!can_jump);
+    if (ImGui::Button(tr("button.jump").c_str()) || (enter_pressed && can_jump)) {
+        jump_to_distance(distance);
     }
     ImGui::EndDisabled();
 }

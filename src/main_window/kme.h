@@ -1152,6 +1152,7 @@ private:
     double pending_bg_rotation_deg_ = 0.0;
     double pending_bg_brightness_ = 100.0;
     int station_jump_index_ = 0;
+    char distance_jump_input_[32] = {};
     int align_station1_ = 0;
     int align_station2_ = 1;
     std::optional<ImVec2> align_pick1_;
@@ -1178,6 +1179,7 @@ private:
     void render_toolbar();
     void render_mode_grid_controls();
     void render_station_jump_combo();
+    void render_distance_jump_control();
     void render_console();
     void render_plots();
     void render_plan_canvas(ImVec2 size);
@@ -1283,6 +1285,7 @@ private:
     void locate_fog_row_in_list(size_t row_index);
     bool can_locate_scene_preview_row() const;
 
+    double current_plan_origin_angle() const;
     PlanData build_plan_data(bool include_other_tracks = true) const;
     ProfileData build_profile_data() const;
     std::vector<Section> curve_sections(bool transition) const;
@@ -1297,7 +1300,7 @@ private:
     void focus_plan_at_model_point(double x, double y);
     void request_plot_focus(double distance, bool include_profile, bool include_radius);
     void handle_measure_plot_double_click(bool include_profile, bool include_radius);
-    void focus_station(double distance);
+    void jump_to_distance(double distance);
     void export_csv();
     void save_history();
     void touch_recent_map(const std::string& path);

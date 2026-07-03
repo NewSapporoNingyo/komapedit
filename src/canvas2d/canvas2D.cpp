@@ -875,6 +875,15 @@ static ImVec2 rotate_xy(double x, double y, double angle) {
     return ImVec2(static_cast<float>(c * x - s * y), static_cast<float>(s * x + c * y));
 }
 
+double App::current_plan_origin_angle() const {
+    if (!has_model_ || model_.own.empty()) return model_.origin_angle;
+    size_t row = matrix_lower_bound_distance(model_.own, dmin_);
+    if (row < model_.own.rows && model_.own.at(row, 0) <= dmax_) {
+        return model_.own.at(row, 4);
+    }
+    return model_.origin_angle;
+}
+
 PlanData App::build_plan_data(bool include_other_tracks) const {
     PlanData out;
     if (!has_model_ || model_.own.empty()) return out;
@@ -903,7 +912,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         last_own_d = d;
     }
     if (out.own.empty()) return out;
-    out.origin_angle = out.own.front().theta;
+    out.origin_angle = current_plan_origin_angle();
     double angle = -out.origin_angle;
     auto rotate_point = [angle](TrackPoint p) {
         ImVec2 q = rotate_xy(p.x, p.y, angle);
@@ -1444,31 +1453,23 @@ void App::update_measure(double distance) {
 }
 
 void App::center_plan_at_distance(double distance) {
-    PlanData pd = build_plan_data(false);
-    if (pd.own.empty()) return;
-    auto it = std::lower_bound(pd.own.begin(), pd.own.end(), distance, [](const TrackPoint& p, double d) { return p.d < d; });
-    if (it == pd.own.end()) {
-        --it;
-    } else if (it != pd.own.begin() && std::abs((it - 1)->d - distance) < std::abs(it->d - distance)) {
-        --it;
-    }
-    plan_view_.cx = it->x;
-    plan_view_.cy = it->y;
+    if (!has_model_ || model_.own.empty()) return;
+    const double first = model_.own.at(0, 0);
+    const double last = model_.own.at(model_.own.rows - 1, 0);
+    const double clamped_distance = std::clamp(distance, first, last);
+    auto point = sample_matrix_track_point(model_.own, clamped_distance, true);
+    if (!point) return;
+
+    ImVec2 rotated = rotate_xy(point->x, point->y, -current_plan_origin_angle());
+    plan_view_.cx = rotated.x;
+    plan_view_.cy = rotated.y;
     plan_view_.fitted = true;
     keep_plan_view_ = true;
 }
 
 std::optional<ImVec2> App::plan_point_from_model_xy(double x, double y) const {
     if (!has_model_ || model_.own.empty()) return std::nullopt;
-    double origin_angle = model_.origin_angle;
-    for (size_t row = 0; row < model_.own.rows; ++row) {
-        double distance = model_.own.at(row, 0);
-        if (distance >= dmin_ && distance <= dmax_) {
-            origin_angle = model_.own.at(row, 4);
-            break;
-        }
-    }
-    return rotate_xy(x, y, -origin_angle);
+    return rotate_xy(x, y, -current_plan_origin_angle());
 }
 
 void App::focus_plan_at_model_point(double x, double y) {
@@ -1504,18 +1505,12 @@ void App::handle_measure_plot_double_click(bool include_profile, bool include_ra
     request_plot_focus(p.x, include_profile, include_radius);
 }
 
-void App::focus_station(double distance) {
-    PlanData pd = build_plan_data(false);
-    for (const auto& s : pd.stations) {
-        if (std::abs(s.station.distance - distance) < 1e-6) {
-            plan_view_.cx = s.x;
-            plan_view_.cy = s.y;
-            plan_view_.fitted = true;
-            keep_plan_view_ = true;
-            break;
-        }
-    }
+void App::jump_to_distance(double distance) {
+    center_plan_at_distance(distance);
     request_plot_focus(distance, true, true);
+    if (scene_preview_canvas_) {
+        scene_preview_canvas_->jump_scene_camera_to_distance(distance);
+    }
 }
 
 std::optional<ImVec2> App::background_uv_from_world(ImVec2 world) const {

@@ -496,6 +496,59 @@ void render_find_panel_border(ImVec2 min, ImVec2 max) {
                                         ImGui::GetStyle().FrameRounding, 0, 1.0f);
 }
 
+float button_width_for_label(const std::string& label) {
+    return ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+float radio_button_width_for_label(const std::string& label) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float width = ImGui::GetFrameHeight();
+    if (!label.empty()) width += style.ItemInnerSpacing.x + ImGui::CalcTextSize(label.c_str()).x;
+    return width;
+}
+
+float width_after_previous_item(std::initializer_list<float> item_widths) {
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float width = 0.0f;
+    for (float item_width : item_widths) width += spacing + item_width;
+    return width;
+}
+
+float find_panel_line_right_x(float right_padding) {
+    return ImGui::GetCursorScreenPos().x +
+        std::max(1.0f, ImGui::GetContentRegionAvail().x - right_padding);
+}
+
+bool same_line_if_next_item_fits(float next_item_width, float right_padding) {
+    const float next_item_right_x =
+        ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_item_width;
+    if (next_item_right_x > find_panel_line_right_x(right_padding)) return false;
+    ImGui::SameLine();
+    return true;
+}
+
+float available_width_after_current_item(float right_padding) {
+    return std::max(0.0f,
+                    find_panel_line_right_x(right_padding) - ImGui::GetItemRectMax().x -
+                        ImGui::GetStyle().ItemSpacing.x);
+}
+
+constexpr float kFindInputMinWidth = 80.0f;
+constexpr float kFindInputMaxWidth = 280.0f;
+
+float find_input_width(float available_width,
+                       float all_controls_width,
+                       float step_controls_width) {
+    available_width = std::max(1.0f, available_width);
+    float width = available_width;
+    if (available_width >= kFindInputMinWidth + all_controls_width) {
+        width = available_width - all_controls_width;
+    } else if (available_width >= kFindInputMinWidth + step_controls_width) {
+        width = available_width - step_controls_width;
+    }
+    return std::max(1.0f, std::min(kFindInputMaxWidth, width));
+}
+
 template <typename RunFindFn, typename RunUnusedFn, typename StepFn, typename StatusTextFn>
 void render_table_find_panel(TableFindState& state,
                              const char* id,
@@ -521,38 +574,59 @@ void render_table_find_panel(TableFindState& state,
     if (state.panel_expanded) {
         const float indent = ImGui::GetStyle().FramePadding.x;
         const float right_padding = ImGui::GetStyle().FramePadding.x;
+        const float arrow_button_width = ImGui::GetFrameHeight();
+        const float partial_width = radio_button_width_for_label(partial_label);
+        const float exact_width = radio_button_width_for_label(exact_label);
+        const float unused_width = button_width_for_label(unused_label);
+        const float step_controls_width = width_after_previous_item({
+            arrow_button_width,
+            arrow_button_width,
+        });
+        const float all_controls_width = width_after_previous_item({
+            arrow_button_width,
+            arrow_button_width,
+            partial_width,
+            exact_width,
+            unused_width,
+        });
         ImGui::Spacing();
         ImGui::Indent(indent);
         if (ImGui::Button(find_label.c_str())) run_find();
-        ImGui::SameLine();
-        const float arrow_button_width = ImGui::GetFrameHeight();
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float input_width = std::max(80.0f, ImGui::GetContentRegionAvail().x -
-            arrow_button_width * 2.0f - spacing * 2.0f - right_padding);
+        float input_available_width = ImGui::GetContentRegionAvail().x - right_padding;
+        const float available_after_find = available_width_after_current_item(right_padding);
+        if (available_after_find >= kFindInputMinWidth) {
+            input_available_width = available_after_find;
+            ImGui::SameLine();
+        }
+        const float input_width = find_input_width(input_available_width,
+                                                  all_controls_width,
+                                                  step_controls_width);
         ImGui::SetNextItemWidth(input_width);
         if (ImGui::InputText(input_id.c_str(), state.query, IM_ARRAYSIZE(state.query),
                              ImGuiInputTextFlags_EnterReturnsTrue)) {
             run_find();
         }
-        ImGui::SameLine();
+        same_line_if_next_item_fits(arrow_button_width, right_padding);
         ImGui::BeginDisabled(state.matches.empty());
         if (ImGui::Button(prev_id.c_str(), ImVec2(arrow_button_width, 0.0f))) {
             step(-1);
         }
-        ImGui::SameLine();
+        same_line_if_next_item_fits(arrow_button_width, right_padding);
         if (ImGui::Button(next_id.c_str(), ImVec2(arrow_button_width, 0.0f))) {
             step(1);
         }
         ImGui::EndDisabled();
+        same_line_if_next_item_fits(partial_width, right_padding);
         if (ImGui::RadioButton(partial_id.c_str(), !state.exact)) {
             state.exact = false;
             if (state.has_run || !blank_ascii(state.query)) run_find();
         }
-        ImGui::SameLine();
+        same_line_if_next_item_fits(exact_width, right_padding);
         if (ImGui::RadioButton(exact_id.c_str(), state.exact)) {
             state.exact = true;
             if (state.has_run || !blank_ascii(state.query)) run_find();
         }
+        same_line_if_next_item_fits(unused_width, right_padding);
         if (ImGui::Button(unused_label.c_str())) run_unused();
         render_status_line(status_text());
         ImGui::Unindent(indent);
