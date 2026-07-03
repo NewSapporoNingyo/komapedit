@@ -51,6 +51,7 @@ void App::invalidate_table_cache() {
     plan_repeater_popup_row_ = -1;
     plan_signal_popup_row_ = -1;
     plan_beacon_popup_row_ = -1;
+    plan_other_train_stop_popup_row_ = -1;
     plan_irregularity_popup_row_ = -1;
     plan_map_sound_popup_row_ = -1;
     plan_map_sound_3d_popup_row_ = -1;
@@ -167,6 +168,14 @@ void App::locate_other_train_stop_row_on_plan(size_t row_index) {
     }
     plan_marker_selection_ = PlanMarkerSelection{PlanMarkerKind::OtherTrainStop, row_index};
     focus_plan_at_model_point(marker.x, marker.y);
+}
+
+void App::locate_other_train_stop_row_in_list(size_t row_index) {
+    if (row_index >= other_train_stop_marker_cache_.size() || !other_train_stop_marker_cache_[row_index]) return;
+    show_other_trains_window_ = true;
+    focus_other_trains_next_ = true;
+    other_train_stop_list_scroll_row_ = static_cast<int>(row_index);
+    other_train_stop_list_highlight_row_ = static_cast<int>(row_index);
 }
 
 void App::locate_irregularity_row_on_plan(size_t row_index) {

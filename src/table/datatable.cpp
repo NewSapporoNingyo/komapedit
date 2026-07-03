@@ -2196,12 +2196,15 @@ void App::render_structure_models_window() {
 void App::render_other_trains_window() {
     if (!show_other_trains_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_other_trains_next_) ImGui::SetNextWindowFocus();
     std::string title = tr("frame.other_trains") + "###OtherTrains";
     if (!ImGui::Begin(title.c_str(), &show_other_trains_window_)) {
+        focus_other_trains_next_ = false;
         ImGui::End();
         return;
     }
     if (!has_model_) {
+        focus_other_trains_next_ = false;
         ImGui::TextDisabled("-");
         ImGui::End();
         return;
@@ -2360,6 +2363,7 @@ void App::render_other_trains_window() {
             ImGui::EndTable();
         }
     }
+    focus_other_trains_next_ = false;
     ImGui::End();
 }
 

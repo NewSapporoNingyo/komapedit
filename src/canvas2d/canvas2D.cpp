@@ -2525,6 +2525,23 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         return best_hit;
     };
+    auto nearest_other_train_stop_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
+        double best = marker_hover_radius_sq;
+        std::optional<MarkerHit> best_hit;
+        for (const auto& marker : data.other_train_stop_markers) {
+            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
+            double dx = static_cast<double>(p.x - mouse.x);
+            double dy = static_cast<double>(p.y - mouse.y);
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                best_hit = MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+        return best_hit;
+    };
     auto nearest_irregularity_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
         if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
         double best = marker_hover_radius_sq;
@@ -2701,6 +2718,7 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<MarkerHit> hovered_signal_hit = nearest_signal_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_beacon_hit = nearest_beacon_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_pretrain_hit = nearest_pretrain_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_other_train_stop_hit = nearest_other_train_stop_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_rolling_noise_hit = nearest_rolling_noise_marker_hit(hit_transform);
     std::optional<MarkerHit> hovered_map_sound_hit = nearest_map_sound_marker_hit(hit_transform);
@@ -2726,6 +2744,9 @@ void App::render_plan_canvas(ImVec2 size) {
         : std::nullopt;
     std::optional<size_t> hovered_pretrain_row = hovered_pretrain_hit
         ? std::optional<size_t>(hovered_pretrain_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_other_train_stop_row = hovered_other_train_stop_hit
+        ? std::optional<size_t>(hovered_other_train_stop_hit->row_index)
         : std::nullopt;
     std::optional<size_t> hovered_irregularity_row = hovered_irregularity_hit
         ? std::optional<size_t>(hovered_irregularity_hit->row_index)
@@ -2761,6 +2782,26 @@ void App::render_plan_canvas(ImVec2 size) {
     auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
         return hit && (!other || hit->dist_sq <= other->dist_sq);
     };
+    auto closer_than_all_marker_context_hits = [&](const std::optional<MarkerHit>& hit) {
+        if (!hit) return false;
+        auto closer_than = [&](const std::optional<MarkerHit>& other) {
+            return !other || hit->dist_sq < other->dist_sq;
+        };
+        return closer_than(hovered_signal_hit) &&
+               closer_than(hovered_beacon_hit) &&
+               closer_than(hovered_adhesion_hit) &&
+               closer_than(hovered_irregularity_hit) &&
+               closer_than(hovered_background_hit) &&
+               closer_than(hovered_repeater_hit) &&
+               closer_than(hovered_structure_hit) &&
+               closer_than(hovered_cab_illuminance_hit) &&
+               closer_than(hovered_rolling_noise_hit) &&
+               closer_than(hovered_map_sound_hit) &&
+               closer_than(hovered_map_sound_3d_hit) &&
+               closer_than(hovered_flange_noise_hit) &&
+               closer_than(hovered_joint_noise_hit) &&
+               closer_than(hovered_fog_hit);
+    };
     auto select_nearest_touch_marker = [&]() {
         std::optional<PlanMarkerSelection> best;
         double best_dist_sq = std::numeric_limits<double>::max();
@@ -2772,6 +2813,7 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_signal_hit, PlanMarkerKind::Signal);
         note(hovered_beacon_hit, PlanMarkerKind::Beacon);
         note(hovered_pretrain_hit, PlanMarkerKind::PreTrain);
+        note(hovered_other_train_stop_hit, PlanMarkerKind::OtherTrainStop);
         note(hovered_adhesion_hit, PlanMarkerKind::Adhesion);
         note(hovered_irregularity_hit, PlanMarkerKind::Irregularity);
         note(hovered_background_hit, PlanMarkerKind::Background);
@@ -2798,7 +2840,11 @@ void App::render_plan_canvas(ImVec2 size) {
                                                 &touch_long_press_pos);
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
-        if (hovered_signal_hit &&
+        if (hovered_other_train_stop_hit &&
+            closer_than_all_marker_context_hits(hovered_other_train_stop_hit)) {
+            plan_other_train_stop_popup_row_ = static_cast<int>(hovered_other_train_stop_hit->row_index);
+            ImGui::OpenPopup("plan_other_train_stop_marker_context");
+        } else if (hovered_signal_hit &&
             closer_or_equal(hovered_signal_hit, hovered_beacon_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_adhesion_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_irregularity_hit) &&
@@ -3141,7 +3187,8 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const PlanOtherTrainStopMarker& marker : data.other_train_stop_markers) {
             ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
-            bool marker_active = marker_emphasized(PlanMarkerKind::OtherTrainStop, marker.row_index, false);
+            bool marker_hovered = hovered_other_train_stop_row && marker.row_index == *hovered_other_train_stop_row;
+            bool marker_active = marker_emphasized(PlanMarkerKind::OtherTrainStop, marker.row_index, marker_hovered);
             draw_selected_marker_ring(p, PlanMarkerKind::OtherTrainStop, marker.row_index, other_train_stop_color);
             float radius = 4.4f * marker_size_scale * (marker_active ? 1.25f : 1.0f);
             draw->AddCircleFilled(p, radius, other_train_stop_color, 16);
@@ -3537,6 +3584,17 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_beacon_list").c_str()) && can_locate) {
             locate_beacon_row_in_list(static_cast<size_t>(plan_beacon_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_other_train_stop_marker_context")) {
+        bool can_locate = plan_other_train_stop_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_other_train_stop_popup_row_) < other_train_stop_marker_cache_.size() &&
+            other_train_stop_marker_cache_[static_cast<size_t>(plan_other_train_stop_popup_row_)].has_value();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_other_train_stop_list").c_str()) && can_locate) {
+            locate_other_train_stop_row_in_list(static_cast<size_t>(plan_other_train_stop_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();

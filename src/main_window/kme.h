@@ -1022,6 +1022,7 @@ private:
     bool show_model_preview_window_ = true;
     bool show_scene_preview_window_ = true;
     bool focus_structures_next_ = false;
+    bool focus_other_trains_next_ = false;
     bool focus_repeaters_next_ = false;
     bool focus_signal_aspects_next_ = false;
     bool focus_signals_next_ = false;
@@ -1114,6 +1115,7 @@ private:
     int plan_repeater_popup_row_ = -1;
     int plan_signal_popup_row_ = -1;
     int plan_beacon_popup_row_ = -1;
+    int plan_other_train_stop_popup_row_ = -1;
     int plan_irregularity_popup_row_ = -1;
     int plan_map_sound_popup_row_ = -1;
     int plan_map_sound_3d_popup_row_ = -1;
@@ -1258,6 +1260,7 @@ private:
     void locate_beacon_row_on_plan(size_t row_index);
     void locate_beacon_row_in_list(size_t row_index);
     void locate_other_train_stop_row_on_plan(size_t row_index);
+    void locate_other_train_stop_row_in_list(size_t row_index);
     void locate_irregularity_row_on_plan(size_t row_index);
     void locate_irregularity_row_in_list(size_t row_index);
     void locate_map_sound_row_on_plan(size_t row_index);
