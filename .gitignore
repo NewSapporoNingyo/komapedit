@@ -4,3 +4,4 @@ third_party/imgui/
 /build
 /build_release
 install_Assimp(local).bat
+/local_docs
