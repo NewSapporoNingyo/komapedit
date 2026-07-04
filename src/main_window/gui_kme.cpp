@@ -625,9 +625,15 @@ void App::apply_load_result(LoadResult result) {
     profile_x_zoom_pending_ = false;
     profile_y_zoom_pending_ = false;
     radius_x_zoom_pending_ = false;
-    std::ostringstream buffer_copy_elapsed;
-    buffer_copy_elapsed << std::fixed << std::setprecision(3) << model_.buffer_copy_seconds;
-    add_log("Load timing: buffer copy=" + buffer_copy_elapsed.str() + "s");
+    std::ostringstream timing;
+    timing << std::fixed << std::setprecision(3)
+           << "maploader=" << result.maploader_seconds << "s"
+           << ", model=" << result.model_build_seconds << "s"
+           << ", ir_json=" << model_.ir_json_seconds << "s"
+           << ", json_parse=" << model_.json_parse_seconds << "s"
+           << ", hydrate=" << model_.model_hydrate_seconds << "s"
+           << ", buffer copy=" << model_.buffer_copy_seconds << "s";
+    add_log("Load timing: " + timing.str());
     for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
     add_log("Map loaded: " + result.path);
     if (result.background_to_restore) {
@@ -699,13 +705,21 @@ void App::regenerate_geometry() {
 }
 
 App::LoadResult App::load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step) {
+    return load_map_worker(std::move(path), unit_distance, has_cp, cp_start, cp_end, cp_step, LoadModelOptions{});
+}
+
+App::LoadResult App::load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step,
+                                      LoadModelOptions options) {
     auto started_at = std::chrono::steady_clock::now();
     auto elapsed_seconds = [&]() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
     };
     LoadResult out;
     out.path = path;
+    auto maploader_started_at = std::chrono::steady_clock::now();
     void* handle = kv_load_map(path.c_str(), unit_distance);
+    auto maploader_finished_at = std::chrono::steady_clock::now();
+    out.maploader_seconds = std::chrono::duration<double>(maploader_finished_at - maploader_started_at).count();
     if (!handle) {
         const char* err = kv_get_last_error();
         out.error = err ? err : "maploader failed";
@@ -713,6 +727,7 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
         return out;
     }
     if (has_cp) {
+        auto geometry_started_at = std::chrono::steady_clock::now();
         if (!kv_generate_geometry(handle, unit_distance, 1, cp_start, cp_end, cp_step)) {
             const char* err = kv_get_last_error();
             out.error = err ? err : "geometry failed";
@@ -720,9 +735,14 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
             kv_free(handle);
             return out;
         }
+        out.geometry_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - geometry_started_at).count();
     }
     try {
-        out.model = build_model_from_handle(handle, path);
+        auto model_started_at = std::chrono::steady_clock::now();
+        out.model = build_model_from_handle(handle, path, options);
+        out.model_build_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - model_started_at).count();
         if (has_cp) {
             out.model.has_cp_arb = true;
             out.model.cp_arb[0] = cp_start;
@@ -741,12 +761,28 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
 }
 
 MapModel App::build_model_from_handle(void* handle, const std::string& path) {
-    const char* raw = kv_get_ir_json(handle);
-    if (!raw) throw std::runtime_error("kv_get_ir_json failed");
+    return build_model_from_handle(handle, path, LoadModelOptions{});
+}
+
+MapModel App::build_model_from_handle(void* handle, const std::string& path,
+                                      LoadModelOptions options) {
+    auto json_started_at = std::chrono::steady_clock::now();
+    unsigned ir_flags = options.full_edit_registry
+        ? (KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE)
+        : KV_IR_JSON_COMPACT;
+    const char* raw = kv_get_ir_json_ex(handle, ir_flags);
+    if (!raw) throw std::runtime_error("kv_get_ir_json_ex failed");
     std::string json(raw);
     kv_free_string(raw);
-    auto root = mini_json::Parser(json).parse();
+    double ir_json_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - json_started_at).count();
 
+    auto parse_started_at = std::chrono::steady_clock::now();
+    auto root = mini_json::Parser(json).parse();
+    double json_parse_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - parse_started_at).count();
+
+    auto hydrate_started_at = std::chrono::steady_clock::now();
     MapModel model;
     model.path = path;
     const auto& edit = root.at("edit");
@@ -1059,6 +1095,10 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
         model.default_max = model.own.at(model.own.rows - 1, 0);
     }
     model.buffer_copy_seconds = buffer_copy_seconds;
+    model.ir_json_seconds = ir_json_seconds;
+    model.json_parse_seconds = json_parse_seconds;
+    model.model_hydrate_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - hydrate_started_at).count();
     annotate_scene_track_key_warnings(model);
     return model;
 }
@@ -2860,7 +2900,8 @@ int main(int, char**) {
         if (!headless.error.empty()) {
             std::cerr << headless.error << "\n"
                       << "usage: komapedit.exe --headless-load-map <map-path> "
-                      << "[--repeat N] [--unit-distance M] [--headless-output FILE]\n";
+                      << "[--repeat N] [--unit-distance M] [--ir-json-mode compact|full] "
+                      << "[--headless-output FILE]\n";
             return 1;
         }
         return run_headless_load_map(headless);

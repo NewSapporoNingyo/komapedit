@@ -64,6 +64,7 @@ struct HeadlessLoadOptions {
     std::string output_path;
     int repeat = 1;
     double unit_distance = 25.0;
+    bool full_ir_json = false;
     std::string error;
 };
 
@@ -178,6 +179,20 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
                 return options;
             }
             options.unit_distance = parsed;
+        } else if (arg == "--ir-json-mode") {
+            if (i + 1 >= args.size()) {
+                options.error = "--ir-json-mode requires compact or full";
+                return options;
+            }
+            std::string mode = args[++i];
+            if (mode == "compact") {
+                options.full_ir_json = false;
+            } else if (mode == "full") {
+                options.full_ir_json = true;
+            } else {
+                options.error = "--ir-json-mode must be compact or full";
+                return options;
+            }
         } else if (arg == "--headless-output") {
             if (i + 1 >= args.size()) {
                 options.error = "--headless-output requires a path";
@@ -533,7 +548,8 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
 
     *out << "komapedit headless-load-map path=\"" << options.path
          << "\" repeat=" << options.repeat
-         << " unit_distance=" << format_double(options.unit_distance, 3) << "\n";
+         << " unit_distance=" << format_double(options.unit_distance, 3)
+         << " ir_json_mode=" << (options.full_ir_json ? "full" : "compact") << "\n";
 
     for (int run = 1; run <= options.repeat; ++run) {
         auto started_at = std::chrono::steady_clock::now();
@@ -546,7 +562,10 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
             return 2;
         }
 
-        const char* json = kv_get_ir_json(handle);
+        unsigned ir_flags = options.full_ir_json
+            ? (KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE)
+            : KV_IR_JSON_COMPACT;
+        const char* json = kv_get_ir_json_ex(handle, ir_flags);
         const size_t json_bytes = json ? std::strlen(json) : 0;
         if (json) kv_free_string(json);
         auto json_at = std::chrono::steady_clock::now();
@@ -802,7 +821,8 @@ int App::run_debug_headless_source_anchors(const std::string& path, double unit_
 
     *out << "komapedit debug-headless-source-anchors path=\"" << path
          << "\" unit_distance=" << format_double(unit_distance, 3) << "\n";
-    LoadResult result = load_map_worker(path, unit_distance, false, 0.0, 0.0, 25.0);
+    LoadResult result = load_map_worker(path, unit_distance, false, 0.0, 0.0, 25.0,
+                                        LoadModelOptions{true});
     if (!result.ok) {
         std::cerr << "debug headless source anchors load failed: " << result.error << "\n";
         return 2;

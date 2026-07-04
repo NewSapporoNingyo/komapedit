@@ -64,6 +64,15 @@ KV_API const char* kv_get_othertrack_key(void* handle, size_t index);
 KV_API KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key);
 KV_API KvDoubleBuffer kv_get_structure_puts(void* handle);
 
+#define KV_IR_JSON_COMPACT 0u
+#define KV_IR_JSON_FULL_EDIT (1u << 0)
+#define KV_IR_JSON_FULL_STATEMENT_SOURCE (1u << 1)
+
+/* Returns a newly allocated UTF-8 JSON string owned by the caller.
+   KV_IR_JSON_COMPACT keeps row-level edit/source metadata but skips the full
+   edit statements/elements registry. Release it with kv_free_string(). */
+KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags);
+
 /* Returns a newly allocated UTF-8 JSON string owned by the caller.
    Release it with kv_free_string(). */
 KV_API const char* kv_get_ir_json(void* handle);

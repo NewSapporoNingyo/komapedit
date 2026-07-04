@@ -16,6 +16,7 @@ struct HeadlessLoadOptions {
     std::string output_path;
     int repeat = 1;
     double unit_distance = 25.0;
+    bool full_ir_json = false;
     std::string error;
 };
 

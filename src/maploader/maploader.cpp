@@ -31,6 +31,7 @@
 #include <iomanip>
 #include <iostream>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -41,6 +42,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -167,8 +169,7 @@ bool ascii_ieq(const std::string& a, const std::string& b) {
     return ascii_lower(a) == ascii_lower(b);
 }
 
-std::string json_escape(const std::string& s) {
-    std::ostringstream out;
+void append_json_escaped(std::ostringstream& out, const std::string& s) {
     for (unsigned char c : s) {
         switch (c) {
             case '\\': out << "\\\\"; break;
@@ -187,6 +188,17 @@ std::string json_escape(const std::string& s) {
                 }
         }
     }
+}
+
+void append_json_string(std::ostringstream& out, const std::string& s) {
+    out << "\"";
+    append_json_escaped(out, s);
+    out << "\"";
+}
+
+std::string json_escape(const std::string& s) {
+    std::ostringstream out;
+    append_json_escaped(out, s);
     return out.str();
 }
 
@@ -249,12 +261,28 @@ std::string declared_encoding_from_header(const std::string& header) {
     return enc;
 }
 
+std::string normalized_source_path(const std::filesystem::path& path);
+std::string normalized_source_key(std::string path);
+
+std::vector<size_t> build_line_starts(const std::string& text) {
+    std::vector<size_t> starts;
+    starts.reserve(std::count(text.begin(), text.end(), '\n') + 1);
+    starts.push_back(0);
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\n' && i + 1 <= text.size()) starts.push_back(i + 1);
+    }
+    return starts;
+}
+
 struct LoadedText {
     std::string body;
     std::filesystem::path path;
     std::filesystem::path root;
+    std::string normalized_path;
+    std::string normalized_key;
     std::string encoding;
     std::string newline;
+    std::vector<size_t> line_starts;
     size_t byte_length = 0;
     size_t body_offset = 0;
     int body_start_line = 1;
@@ -319,8 +347,12 @@ LoadedText load_header_text(const std::filesystem::path& path,
     }
     size_t body_offset = line_end == std::string::npos ? text.size() : line_end + 1;
     std::string body = line_end == std::string::npos ? std::string() : text.substr(body_offset);
-    return {body, path, std::filesystem::absolute(path).parent_path(), encoding,
-            detect_newline(text), bytes.size(), body_offset, line_end == std::string::npos ? 1 : 2};
+    std::string normalized_path = normalized_source_path(path);
+    std::string normalized_key = normalized_source_key(normalized_path);
+    std::vector<size_t> line_starts = build_line_starts(body);
+    return {body, path, std::filesystem::absolute(path).parent_path(), normalized_path,
+            normalized_key, encoding, detect_newline(text), std::move(line_starts),
+            bytes.size(), body_offset, line_end == std::string::npos ? 1 : 2};
 }
 
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file) {
@@ -476,6 +508,7 @@ constexpr size_t kNoSourceRef = std::numeric_limits<size_t>::max();
 
 struct SourceFileRecord {
     std::string file_path;
+    std::string source_key;
     std::string display_path;
     std::string encoding;
     std::string newline;
@@ -483,10 +516,8 @@ struct SourceFileRecord {
 };
 
 struct SourceSpan {
-    std::string file_path;
-    std::vector<std::string> include_stack;
-    std::string encoding;
-    std::string newline;
+    size_t source_file_index = kNoSourceRef;
+    size_t include_stack_index = kNoSourceRef;
     size_t byte_start = 0;
     size_t byte_end = 0;
     int line = 1;
@@ -500,6 +531,7 @@ struct ParsedStatement {
     std::string statement_kind;
     SourceSpan source;
     std::string raw_text;
+    std::string raw_text_preview;
     std::string raw_arguments;
     std::vector<Value> evaluated_values;
     std::string distance_expression;
@@ -907,10 +939,14 @@ struct MapContext {
     std::array<double, 3> cp_arbdistribution_default{0.0, 0.0, 0.0};
     std::array<double, 2> cp_defaultrange{0.0, 0.0};
     bool has_cp_arbdistribution = false;
-    std::string ir_json_cache;
+    std::map<unsigned, std::string> ir_json_cache_by_flags;
     LoadTiming timing;
     bool load_timing_logged = false;
     std::vector<SourceFileRecord> source_files;
+    std::unordered_map<std::string, size_t> source_file_indices;
+    std::vector<std::vector<std::string>> include_stacks;
+    std::unordered_map<std::string, size_t> include_stack_indices;
+    mutable std::unordered_map<std::string, std::string> element_edit_id_cache;
     std::vector<ParsedStatement> parsed_statements;
     size_t active_statement_index = kNoSourceRef;
     int active_statement_next_element_index = 0;
@@ -936,18 +972,79 @@ std::string normalized_source_key(std::string path) {
     return ascii_lower(std::move(path));
 }
 
-void register_source_file(MapContext& ctx, const LoadedText& loaded) {
+size_t register_source_file_index(MapContext& ctx, const LoadedText& loaded) {
+    auto existing = ctx.source_file_indices.find(loaded.normalized_key);
+    if (existing != ctx.source_file_indices.end()) return existing->second;
+
     SourceFileRecord record;
-    record.file_path = normalized_source_path(loaded.path);
+    record.file_path = loaded.normalized_path;
+    record.source_key = loaded.normalized_key;
     record.display_path = record.file_path;
     record.encoding = loaded.encoding;
     record.newline = loaded.newline;
     record.byte_length = loaded.byte_length;
-    std::string key = normalized_source_key(record.file_path);
-    for (const SourceFileRecord& existing : ctx.source_files) {
-        if (normalized_source_key(existing.file_path) == key) return;
-    }
+    size_t index = ctx.source_files.size();
+    ctx.source_file_indices[record.source_key] = index;
     ctx.source_files.push_back(std::move(record));
+    return index;
+}
+
+void register_source_file(MapContext& ctx, const LoadedText& loaded) {
+    register_source_file_index(ctx, loaded);
+}
+
+std::string include_stack_key(const std::vector<std::string>& stack) {
+    std::string key;
+    for (const std::string& item : stack) {
+        key += item;
+        key.push_back('\n');
+    }
+    return key;
+}
+
+size_t intern_include_stack(MapContext& ctx, const std::vector<std::string>& stack) {
+    std::string key = include_stack_key(stack);
+    auto existing = ctx.include_stack_indices.find(key);
+    if (existing != ctx.include_stack_indices.end()) return existing->second;
+    size_t index = ctx.include_stacks.size();
+    ctx.include_stack_indices[std::move(key)] = index;
+    ctx.include_stacks.push_back(stack);
+    return index;
+}
+
+const SourceFileRecord* source_file_record(const MapContext& ctx, const SourceSpan& span) {
+    if (span.source_file_index >= ctx.source_files.size()) return nullptr;
+    return &ctx.source_files[span.source_file_index];
+}
+
+const std::string& source_file_path(const MapContext& ctx, const SourceSpan& span) {
+    static const std::string empty;
+    const SourceFileRecord* record = source_file_record(ctx, span);
+    return record ? record->file_path : empty;
+}
+
+const std::string& source_file_key(const MapContext& ctx, const SourceSpan& span) {
+    static const std::string empty;
+    const SourceFileRecord* record = source_file_record(ctx, span);
+    return record ? record->source_key : empty;
+}
+
+const std::string& source_file_encoding(const MapContext& ctx, const SourceSpan& span) {
+    static const std::string empty;
+    const SourceFileRecord* record = source_file_record(ctx, span);
+    return record ? record->encoding : empty;
+}
+
+const std::string& source_file_newline(const MapContext& ctx, const SourceSpan& span) {
+    static const std::string empty;
+    const SourceFileRecord* record = source_file_record(ctx, span);
+    return record ? record->newline : empty;
+}
+
+const std::vector<std::string>& source_include_stack(const MapContext& ctx, const SourceSpan& span) {
+    static const std::vector<std::string> empty;
+    if (span.include_stack_index >= ctx.include_stacks.size()) return empty;
+    return ctx.include_stacks[span.include_stack_index];
 }
 
 int utf8_column_count(const std::string& text, size_t begin, size_t end) {
@@ -961,28 +1058,25 @@ int utf8_column_count(const std::string& text, size_t begin, size_t end) {
 }
 
 std::pair<int, int> line_column_for_body_pos(const LoadedText& loaded, size_t body_pos) {
-    int line = loaded.body_start_line;
-    size_t line_start = 0;
     size_t limit = std::min(body_pos, loaded.body.size());
-    for (size_t i = 0; i < limit; ++i) {
-        if (loaded.body[i] == '\n') {
-            ++line;
-            line_start = i + 1;
-        }
-    }
+    auto it = std::upper_bound(loaded.line_starts.begin(), loaded.line_starts.end(), limit);
+    size_t line_index = it == loaded.line_starts.begin()
+        ? 0
+        : static_cast<size_t>(std::distance(loaded.line_starts.begin(), it) - 1);
+    size_t line_start = loaded.line_starts.empty() ? 0 : loaded.line_starts[line_index];
+    int line = loaded.body_start_line + static_cast<int>(line_index);
     int column = utf8_column_count(loaded.body, line_start, limit) + 1;
     return {line, column};
 }
 
-SourceSpan make_source_span(const LoadedText& loaded,
+SourceSpan make_source_span(MapContext& ctx,
+                            const LoadedText& loaded,
                             size_t body_start,
                             size_t body_end,
                             const std::vector<std::string>& include_stack) {
     SourceSpan span;
-    span.file_path = normalized_source_path(loaded.path);
-    span.include_stack = include_stack;
-    span.encoding = loaded.encoding;
-    span.newline = loaded.newline;
+    span.source_file_index = register_source_file_index(ctx, loaded);
+    span.include_stack_index = intern_include_stack(ctx, include_stack);
     span.byte_start = loaded.body_offset + body_start;
     span.byte_end = loaded.body_offset + body_end;
     auto start = line_column_for_body_pos(loaded, body_start);
@@ -1003,6 +1097,17 @@ std::vector<std::string> include_stack_for_file(const MapContext& ctx, const std
     return stack;
 }
 
+std::string raw_text_preview(std::string text) {
+    for (char& ch : text) {
+        if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+    }
+    if (text.size() > 120) text = text.substr(0, 117) + "...";
+    return text;
+}
+
+std::string make_edit_id(const std::string& source_key, int global_order,
+                         const std::string& kind, int element_index);
+
 size_t add_parsed_statement(MapContext& ctx,
                             std::string kind,
                             SourceSpan source,
@@ -1015,11 +1120,16 @@ size_t add_parsed_statement(MapContext& ctx,
     statement.statement_kind = std::move(kind);
     statement.source = std::move(source);
     statement.raw_text = std::move(raw_text);
+    statement.raw_text_preview = raw_text_preview(statement.raw_text);
     statement.raw_arguments = std::move(raw_arguments);
     statement.evaluated_values = std::move(evaluated_values);
     statement.distance_expression = std::move(distance_expression);
     statement.distance_value = distance_value;
     statement.global_order = ctx.next_edit_order();
+    statement.edit_id = make_edit_id(source_file_key(ctx, statement.source),
+                                     statement.global_order,
+                                     "statement." + statement.statement_kind,
+                                     0);
     ctx.parsed_statements.push_back(std::move(statement));
     return ctx.parsed_statements.size() - 1;
 }
@@ -1055,18 +1165,29 @@ struct ActiveStatementScope {
     }
 };
 
-void merge_source_file_records(MapContext& dest, const MapContext& child) {
-    for (const SourceFileRecord& record : child.source_files) {
-        std::string key = normalized_source_key(record.file_path);
-        bool exists = false;
-        for (const SourceFileRecord& existing : dest.source_files) {
-            if (normalized_source_key(existing.file_path) == key) {
-                exists = true;
-                break;
-            }
+std::vector<size_t> merge_source_file_records(MapContext& dest, const MapContext& child) {
+    std::vector<size_t> index_map(child.source_files.size(), kNoSourceRef);
+    for (size_t i = 0; i < child.source_files.size(); ++i) {
+        const SourceFileRecord& record = child.source_files[i];
+        auto existing = dest.source_file_indices.find(record.source_key);
+        if (existing != dest.source_file_indices.end()) {
+            index_map[i] = existing->second;
+            continue;
         }
-        if (!exists) dest.source_files.push_back(record);
+        size_t dest_index = dest.source_files.size();
+        dest.source_file_indices[record.source_key] = dest_index;
+        dest.source_files.push_back(record);
+        index_map[i] = dest_index;
     }
+    return index_map;
+}
+
+std::vector<size_t> merge_include_stacks(MapContext& dest, const MapContext& child) {
+    std::vector<size_t> index_map(child.include_stacks.size(), kNoSourceRef);
+    for (size_t i = 0; i < child.include_stacks.size(); ++i) {
+        index_map[i] = intern_include_stack(dest, child.include_stacks[i]);
+    }
+    return index_map;
 }
 
 void offset_edit_ref(EditSourceRef& ref, size_t statement_index_base) {
@@ -1115,7 +1236,7 @@ EditSourceRef add_loaded_line_statement(MapContext& ctx,
                                         const std::vector<std::string>& fields) {
     size_t statement_index = add_parsed_statement(
         ctx, kind,
-        make_source_span(loaded, line_start, line_end, include_stack),
+        make_source_span(ctx, loaded, line_start, line_end, include_stack),
         line,
         line,
         values_from_fields(fields),
@@ -1242,7 +1363,7 @@ public:
     Parser(MapContext& context, LoadedText loaded)
         : ctx_(context), loaded_(std::move(loaded)), src_(loaded_.body), file_path_(loaded_.path) {
         register_source_file(ctx_, loaded_);
-        ctx_.current_file_path = normalized_source_path(file_path_);
+        ctx_.current_file_path = loaded_.normalized_path;
         if (ctx_.include_stack.empty()) {
             ctx_.include_stack.push_back(ctx_.current_file_path);
         }
@@ -1414,7 +1535,7 @@ private:
             size_t args_end = pos_;
             expect(';');
             add_parsed_statement(ctx_, "Variable.Assign",
-                                 make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                                 make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
                                  src_.substr(statement_start, pos_ - statement_start),
                                  trim_field_copy(src_.substr(args_start, args_end - args_start)),
                                  {value}, ctx_.distance_expression, ctx_.distance);
@@ -1436,7 +1557,7 @@ private:
                 size_t args_end = pos_;
                 expect(';');
                 add_parsed_statement(ctx_, "Include",
-                                     make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                                     make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
                                      src_.substr(statement_start, pos_ - statement_start),
                                      trim_field_copy(src_.substr(args_start, args_end - args_start)),
                                      {path}, ctx_.distance_expression, ctx_.distance);
@@ -1449,7 +1570,7 @@ private:
                 expect(';');
                 size_t statement_index = add_parsed_statement(
                     ctx_, map_statement_kind(element.objects, element.function),
-                    make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                    make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
                     src_.substr(statement_start, pos_ - statement_start),
                     element.function.raw_arguments,
                     element.function.args,
@@ -1469,7 +1590,7 @@ private:
         std::string raw_distance = trim_field_copy(src_.substr(args_start, args_end - args_start));
         double distance_value = as_number(distance);
         add_parsed_statement(ctx_, "Distance.Set",
-                             make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                             make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
                              src_.substr(statement_start, pos_ - statement_start),
                              raw_distance,
                              {distance}, raw_distance, distance_value);
@@ -1512,7 +1633,7 @@ private:
         try {
             ActiveTimingScope active(result.context.timing);
             LoadedText loaded = load_header_text(child, "BveTs Map ", 2.0);
-            result.context.current_file_path = normalized_source_path(child);
+            result.context.current_file_path = loaded.normalized_path;
             Parser nested(result.context, std::move(loaded));
             nested.parse();
         } catch (const std::exception& e) {
@@ -1560,11 +1681,21 @@ private:
         }
         ctx_.variable_writes.insert(child.variable_writes.begin(), child.variable_writes.end());
 
-        merge_source_file_records(ctx_, child);
+        std::vector<size_t> source_file_index_map = merge_source_file_records(ctx_, child);
+        std::vector<size_t> include_stack_index_map = merge_include_stacks(ctx_, child);
         size_t statement_index_base = ctx_.parsed_statements.size();
         int edit_order_base = ctx_.edit_order;
         for (auto& statement : child.parsed_statements) {
-            if (statement.global_order > 0) statement.global_order += edit_order_base;
+            if (statement.global_order > 0) {
+                statement.global_order += edit_order_base;
+                statement.edit_id.clear();
+            }
+            if (statement.source.source_file_index < source_file_index_map.size()) {
+                statement.source.source_file_index = source_file_index_map[statement.source.source_file_index];
+            }
+            if (statement.source.include_stack_index < include_stack_index_map.size()) {
+                statement.source.include_stack_index = include_stack_index_map[statement.source.include_stack_index];
+            }
         }
         ctx_.edit_order += child.edit_order;
         offset_row_edit_refs(child.own_track, statement_index_base);
@@ -3802,7 +3933,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
         }
     }
     build_structure_put_buffer(ctx);
-    ctx.ir_json_cache.clear();
+    ctx.ir_json_cache_by_flags.clear();
 }
 
 std::uint64_t stable_hash64(const std::string& text) {
@@ -3833,9 +3964,9 @@ std::string edit_kind_token(std::string kind) {
     return kind.empty() ? "row" : kind;
 }
 
-std::string make_edit_id(const std::string& source_path, int global_order,
+std::string make_edit_id(const std::string& source_key, int global_order,
                          const std::string& kind, int element_index) {
-    std::string key = normalized_source_key(source_path) + "|" +
+    std::string key = source_key + "|" +
                       std::to_string(global_order) + "|" +
                       ascii_lower(kind) + "|" +
                       std::to_string(element_index);
@@ -3844,45 +3975,50 @@ std::string make_edit_id(const std::string& source_path, int global_order,
            edit_kind_token(kind) + "-" + std::to_string(element_index);
 }
 
-std::string statement_edit_id(ParsedStatement& statement) {
-    statement.edit_id = make_edit_id(statement.source.file_path,
-                                     statement.global_order,
-                                     "statement." + statement.statement_kind,
-                                     0);
+std::string statement_edit_id(MapContext& ctx, ParsedStatement& statement) {
+    if (statement.edit_id.empty()) {
+        statement.edit_id = make_edit_id(source_file_key(ctx, statement.source),
+                                         statement.global_order,
+                                         "statement." + statement.statement_kind,
+                                         0);
+    }
     return statement.edit_id;
 }
 
 std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
                             const std::string& row_kind) {
     if (!ref.valid() || ref.statement_index >= ctx.parsed_statements.size()) return {};
+    std::string cache_key = std::to_string(ref.statement_index) + "|" +
+                            std::to_string(ref.element_index) + "|" + row_kind;
+    auto cached = ctx.element_edit_id_cache.find(cache_key);
+    if (cached != ctx.element_edit_id_cache.end()) return cached->second;
     const ParsedStatement& statement = ctx.parsed_statements[ref.statement_index];
-    return make_edit_id(statement.source.file_path,
-                        statement.global_order,
-                        row_kind,
-                        ref.element_index);
+    std::string edit_id = make_edit_id(source_file_key(ctx, statement.source),
+                                       statement.global_order,
+                                       row_kind,
+                                       ref.element_index);
+    auto inserted = ctx.element_edit_id_cache.emplace(std::move(cache_key), std::move(edit_id));
+    return inserted.first->second;
 }
 
-std::string raw_text_preview(std::string text) {
-    for (char& ch : text) {
-        if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
-    }
-    if (text.size() > 120) text = text.substr(0, 117) + "...";
-    return text;
-}
-
-void append_source_span_json(std::ostringstream& out, const SourceSpan& span, bool include_full) {
-    out << "{\"filePath\":\"" << json_escape(span.file_path)
-        << "\",\"line\":" << span.line
+void append_source_span_json(std::ostringstream& out, const MapContext& ctx,
+                             const SourceSpan& span, bool include_full) {
+    out << "{\"filePath\":";
+    append_json_string(out, source_file_path(ctx, span));
+    out << ",\"line\":" << span.line
         << ",\"column\":" << span.column;
     if (include_full) {
+        const std::vector<std::string>& include_stack = source_include_stack(ctx, span);
         out << ",\"includeStack\":[";
-        for (size_t i = 0; i < span.include_stack.size(); ++i) {
+        for (size_t i = 0; i < include_stack.size(); ++i) {
             if (i) out << ",";
-            out << "\"" << json_escape(span.include_stack[i]) << "\"";
+            append_json_string(out, include_stack[i]);
         }
-        out << "],\"encoding\":\"" << json_escape(span.encoding)
-            << "\",\"newline\":\"" << json_escape(span.newline)
-            << "\",\"byteStart\":" << span.byte_start
+        out << "],\"encoding\":";
+        append_json_string(out, source_file_encoding(ctx, span));
+        out << ",\"newline\":";
+        append_json_string(out, source_file_newline(ctx, span));
+        out << ",\"byteStart\":" << span.byte_start
             << ",\"byteEnd\":" << span.byte_end
             << ",\"lineEnd\":" << span.line_end
             << ",\"columnEnd\":" << span.column_end;
@@ -3894,12 +4030,15 @@ void append_edit_fields(std::ostringstream& out, const MapContext& ctx,
                         const EditSourceRef& ref, const std::string& row_kind) {
     if (!ref.valid() || ref.statement_index >= ctx.parsed_statements.size()) return;
     const ParsedStatement& statement = ctx.parsed_statements[ref.statement_index];
-    out << ",\"editId\":\"" << json_escape(element_edit_id(ctx, ref, row_kind))
-        << "\",\"source\":{\"filePath\":\"" << json_escape(statement.source.file_path)
-        << "\",\"line\":" << statement.source.line
+    out << ",\"editId\":";
+    append_json_string(out, element_edit_id(ctx, ref, row_kind));
+    out << ",\"source\":{\"filePath\":";
+    append_json_string(out, source_file_path(ctx, statement.source));
+    out << ",\"line\":" << statement.source.line
         << ",\"column\":" << statement.source.column
-        << ",\"rawTextPreview\":\"" << json_escape(raw_text_preview(statement.raw_text))
-        << "\"}";
+        << ",\"rawTextPreview\":";
+    append_json_string(out, statement.raw_text_preview);
+    out << "}";
 }
 
 void append_event_json(std::ostringstream& out, const MapContext& ctx, const OwnTrackEvent& e) {
@@ -4076,16 +4215,19 @@ void append_element_ref_json(std::ostringstream& out, const MapContext& ctx, boo
     element.edit_id = element_edit_id(ctx, ref, row_kind);
     element.row_kind = row_kind;
     element.row_index = row_index;
-    element.source_file_path = statement.source.file_path;
+    element.source_file_path = source_file_path(ctx, statement.source);
     element.global_order = statement.global_order;
     if (element.edit_id.empty()) return;
     if (!first) out << ",";
     first = false;
-    out << "{\"editId\":\"" << json_escape(element.edit_id)
-        << "\",\"rowKind\":\"" << json_escape(element.row_kind)
-        << "\",\"rowIndex\":" << element.row_index
-        << ",\"sourceFilePath\":\"" << json_escape(element.source_file_path)
-        << "\",\"globalOrder\":" << element.global_order << "}";
+    out << "{\"editId\":";
+    append_json_string(out, element.edit_id);
+    out << ",\"rowKind\":";
+    append_json_string(out, element.row_kind);
+    out << ",\"rowIndex\":" << element.row_index
+        << ",\"sourceFilePath\":";
+    append_json_string(out, element.source_file_path);
+    out << ",\"globalOrder\":" << element.global_order << "}";
 }
 
 template <typename Rows>
@@ -4096,35 +4238,59 @@ void append_row_element_refs(std::ostringstream& out, const MapContext& ctx, boo
     }
 }
 
-void append_edit_registry_json(std::ostringstream& out, MapContext& ctx) {
+unsigned normalize_ir_json_flags(unsigned flags) {
+    flags &= (KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE);
+    if (flags & KV_IR_JSON_FULL_STATEMENT_SOURCE) flags |= KV_IR_JSON_FULL_EDIT;
+    return flags;
+}
+
+void append_edit_registry_json(std::ostringstream& out, MapContext& ctx, unsigned flags) {
     out << ",\"edit\":{\"files\":[";
     for (size_t i = 0; i < ctx.source_files.size(); ++i) {
         if (i) out << ",";
         const SourceFileRecord& file = ctx.source_files[i];
-        out << "{\"filePath\":\"" << json_escape(file.file_path)
-            << "\",\"displayPath\":\"" << json_escape(file.display_path)
-            << "\",\"encoding\":\"" << json_escape(file.encoding)
-            << "\",\"newline\":\"" << json_escape(file.newline)
-            << "\",\"byteLength\":" << file.byte_length << "}";
+        out << "{\"filePath\":";
+        append_json_string(out, file.file_path);
+        out << ",\"displayPath\":";
+        append_json_string(out, file.display_path);
+        out << ",\"encoding\":";
+        append_json_string(out, file.encoding);
+        out << ",\"newline\":";
+        append_json_string(out, file.newline);
+        out << ",\"byteLength\":" << file.byte_length << "}";
     }
-    out << "],\"statements\":[";
+    out << "]";
+    if (!(flags & KV_IR_JSON_FULL_EDIT)) {
+        out << "}";
+        return;
+    }
+
+    const bool include_full_statement_source = (flags & KV_IR_JSON_FULL_STATEMENT_SOURCE) != 0;
+    out << ",\"statements\":[";
     for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
         if (i) out << ",";
         ParsedStatement& statement = ctx.parsed_statements[i];
-        out << "{\"editId\":\"" << json_escape(statement_edit_id(statement))
-            << "\",\"statementKind\":\"" << json_escape(statement.statement_kind)
-            << "\",\"source\":";
-        append_source_span_json(out, statement.source, true);
-        out << ",\"rawText\":\"" << json_escape(statement.raw_text)
-            << "\",\"rawArguments\":\"" << json_escape(statement.raw_arguments)
-            << "\",\"evaluatedValues\":[";
-        for (size_t j = 0; j < statement.evaluated_values.size(); ++j) {
-            if (j) out << ",";
-            out << json_value(statement.evaluated_values[j]);
+        out << "{\"editId\":";
+        append_json_string(out, statement_edit_id(ctx, statement));
+        out << ",\"statementKind\":";
+        append_json_string(out, statement.statement_kind);
+        out << ",\"source\":";
+        append_source_span_json(out, ctx, statement.source, include_full_statement_source);
+        if (include_full_statement_source) {
+            out << ",\"rawText\":";
+            append_json_string(out, statement.raw_text);
+            out << ",\"rawArguments\":";
+            append_json_string(out, statement.raw_arguments);
+            out << ",\"evaluatedValues\":[";
+            for (size_t j = 0; j < statement.evaluated_values.size(); ++j) {
+                if (j) out << ",";
+                out << json_value(statement.evaluated_values[j]);
+            }
+            out << "],\"distanceExpression\":";
+            append_json_string(out, statement.distance_expression);
+            out << ",\"distanceValue\":" << json_number(statement.distance_value);
         }
-        out << "],\"distanceExpression\":\"" << json_escape(statement.distance_expression)
-            << "\",\"distanceValue\":" << json_number(statement.distance_value)
-            << ",\"globalOrder\":" << statement.global_order << "}";
+        out << ",\"globalOrder\":" << statement.global_order << "}";
     }
     out << "],\"elements\":[";
     bool first = true;
@@ -4175,7 +4341,8 @@ void append_edit_registry_json(std::ostringstream& out, MapContext& ctx) {
     out << "]}";
 }
 
-std::string build_ir_json(MapContext& ctx) {
+std::string build_ir_json(MapContext& ctx, unsigned flags) {
+    flags = normalize_ir_json_flags(flags);
     std::ostringstream out;
     out << "{\"rootpath\":\"" << json_escape(ctx.rootpath_utf8) << "\"";
     out << ",\"controlpoints\":[";
@@ -4574,7 +4741,7 @@ std::string build_ir_json(MapContext& ctx) {
         out << "}";
     }
     out << "]";
-    append_edit_registry_json(out, ctx);
+    append_edit_registry_json(out, ctx, flags);
     out << "}";
     return out.str();
 }
@@ -4601,7 +4768,7 @@ KV_API void* kv_load_map(const char* path, double unit_distance) {
         LoadedText loaded = load_header_text(map_path, "BveTs Map ", 2.0);
         ctx->rootpath = loaded.root;
         ctx->rootpath_utf8 = path_to_utf8(loaded.root);
-        ctx->current_file_path = normalized_source_path(map_path);
+        ctx->current_file_path = loaded.normalized_path;
         ctx->include_stack.push_back(ctx->current_file_path);
 
         log_info("parsing syntax tree");
@@ -4705,23 +4872,29 @@ KV_API KvDoubleBuffer kv_get_structure_puts(void* handle) {
     return make_buffer(static_cast<MapContext*>(handle)->structure_put_buffer);
 }
 
-KV_API const char* kv_get_ir_json(void* handle) {
+KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
-        if (ctx->ir_json_cache.empty()) {
+        flags = normalize_ir_json_flags(flags);
+        auto& cache = ctx->ir_json_cache_by_flags[flags];
+        if (cache.empty()) {
             ScopedTimer timer(&ctx->timing.json_seconds);
-            ctx->ir_json_cache = build_ir_json(*ctx);
+            cache = build_ir_json(*ctx, flags);
         }
         if (!ctx->load_timing_logged) {
             log_load_timing(*ctx);
             ctx->load_timing_logged = true;
         }
-        return copy_c_string(ctx->ir_json_cache);
+        return copy_c_string(cache);
     } catch (const std::exception& e) {
         set_last_error(e.what());
         return nullptr;
     }
+}
+
+KV_API const char* kv_get_ir_json(void* handle) {
+    return kv_get_ir_json_ex(handle, KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE);
 }
 
 KV_API const char* kv_get_last_error(void) {

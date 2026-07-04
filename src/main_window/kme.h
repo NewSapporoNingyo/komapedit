@@ -336,6 +336,9 @@ struct MapModel {
     double cp_default_max = 0.0;
     double cp_arb[3] = {0.0, 0.0, 25.0};
     double buffer_copy_seconds = 0.0;
+    double ir_json_seconds = 0.0;
+    double json_parse_seconds = 0.0;
+    double model_hydrate_seconds = 0.0;
     bool has_cp_arb = false;
 };
 
@@ -984,6 +987,12 @@ private:
         std::string error;
         std::chrono::steady_clock::time_point started_at;
         double elapsed_seconds = 0.0;
+        double maploader_seconds = 0.0;
+        double geometry_seconds = 0.0;
+        double model_build_seconds = 0.0;
+    };
+    struct LoadModelOptions {
+        bool full_edit_registry = false;
     };
     struct AsyncLoadState {
         std::thread worker;
@@ -1240,7 +1249,11 @@ private:
     void apply_load_result(LoadResult result);
     void regenerate_geometry();
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step);
+    static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step,
+                                      LoadModelOptions options);
     static MapModel build_model_from_handle(void* handle, const std::string& path);
+    static MapModel build_model_from_handle(void* handle, const std::string& path,
+                                            LoadModelOptions options);
 
     void handle_shortcuts();
     void render_menu();
