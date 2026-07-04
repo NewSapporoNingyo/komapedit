@@ -281,12 +281,14 @@ void App::rebuild_marker_overlay_cache() {
         return offset_track_point(*sampled, lateral, forward);
     };
 
-    auto make_marker = [](double distance, const TrackPoint& p, const std::string& label, size_t row_index) {
+    auto make_marker = [](double distance, const TrackPoint& p, const std::string& label,
+                          const std::string& edit_id, size_t row_index) {
         PlanStructureMarker marker;
         marker.d = distance;
         marker.x = p.x;
         marker.y = p.y;
         marker.label = label;
+        marker.edit_id = edit_id;
         marker.row_index = row_index;
         return marker;
     };
@@ -298,6 +300,7 @@ void App::rebuild_marker_overlay_cache() {
         double forward = table_cell_number(row, "z");
         if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
             structure_marker_cache_.push_back(make_marker(distance, *p, table_cell(row, "structureKey"),
+                                                          row.edit_id,
                                                           structure_marker_cache_.size()));
         } else {
             structure_marker_cache_.push_back(std::nullopt);
@@ -319,6 +322,7 @@ void App::rebuild_marker_overlay_cache() {
             p.theta = angle_lerp(p1->theta, p2->theta, 0.5);
         }
         structure_marker_cache_.push_back(make_marker(distance, p, table_cell(row, "structureKey"),
+                                                      row.edit_id,
                                                       structure_marker_cache_.size()));
     }
 
@@ -334,6 +338,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.y = p->y;
             marker.label = table_cell(row, "signalAspectKey");
             if (marker.label.empty()) marker.label = "#" + std::to_string(signal_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = signal_marker_cache_.size();
             signal_marker_cache_.push_back(std::move(marker));
         } else {
@@ -351,6 +356,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.y = p->y;
             marker.label = table_cell(row, "type");
             if (marker.label.empty()) marker.label = "#" + std::to_string(beacon_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = beacon_marker_cache_.size();
             beacon_marker_cache_.push_back(std::move(marker));
         } else {
@@ -368,6 +374,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.y = p->y;
             marker.label = table_cell(row, "passTime");
             if (marker.label.empty()) marker.label = "#" + std::to_string(pretrain_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = pretrain_marker_cache_.size();
             pretrain_marker_cache_.push_back(std::move(marker));
         } else {
@@ -495,6 +502,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.label = definition.train_key.empty()
                 ? "#" + std::to_string(definition.row_index + 1)
                 : definition.train_key;
+            marker.edit_id = stop_row.edit_id;
             marker.row_index = stop_row_index;
             marker.definition_row_index = definition.row_index;
             marker.reverse_direction = definition.reverse_direction;
@@ -531,6 +539,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.x = p->x;
             marker.y = p->y;
             marker.label = "#" + std::to_string(irregularity_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = irregularity_marker_cache_.size();
             irregularity_marker_cache_.push_back(std::move(marker));
         } else {
@@ -548,6 +557,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.y = p->y;
             marker.label = table_cell(row, "soundKey");
             if (marker.label.empty()) marker.label = "#" + std::to_string(map_sound_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = map_sound_marker_cache_.size();
             map_sound_marker_cache_.push_back(std::move(marker));
         } else {
@@ -565,6 +575,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.y = p->y;
             marker.label = table_cell(row, "soundKey");
             if (marker.label.empty()) marker.label = "#" + std::to_string(map_sound_3d_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = map_sound_3d_marker_cache_.size();
             map_sound_3d_marker_cache_.push_back(std::move(marker));
         } else {
@@ -581,6 +592,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.x = p->x;
             marker.y = p->y;
             marker.label = "#" + std::to_string(rolling_noise_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = rolling_noise_marker_cache_.size();
             rolling_noise_marker_cache_.push_back(std::move(marker));
         } else {
@@ -597,6 +609,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.x = p->x;
             marker.y = p->y;
             marker.label = "#" + std::to_string(flange_noise_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = flange_noise_marker_cache_.size();
             flange_noise_marker_cache_.push_back(std::move(marker));
         } else {
@@ -613,6 +626,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.x = p->x;
             marker.y = p->y;
             marker.label = "#" + std::to_string(joint_noise_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = joint_noise_marker_cache_.size();
             joint_noise_marker_cache_.push_back(std::move(marker));
         } else {
@@ -630,6 +644,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.y = p->y;
             marker.label = table_cell(row, "structureKey");
             if (marker.label.empty()) marker.label = "#" + std::to_string(background_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = background_marker_cache_.size();
             background_marker_cache_.push_back(std::move(marker));
         } else {
@@ -646,6 +661,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.x = p->x;
             marker.y = p->y;
             marker.label = "#" + std::to_string(adhesion_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = adhesion_marker_cache_.size();
             adhesion_marker_cache_.push_back(std::move(marker));
         } else {
@@ -662,6 +678,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.x = p->x;
             marker.y = p->y;
             marker.label = "#" + std::to_string(cab_illuminance_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = cab_illuminance_marker_cache_.size();
             cab_illuminance_marker_cache_.push_back(std::move(marker));
         } else {
@@ -678,6 +695,7 @@ void App::rebuild_marker_overlay_cache() {
             marker.x = p->x;
             marker.y = p->y;
             marker.label = "#" + std::to_string(fog_marker_cache_.size() + 1);
+            marker.edit_id = row.edit_id;
             marker.row_index = fog_marker_cache_.size();
             fog_marker_cache_.push_back(std::move(marker));
         } else {
@@ -720,15 +738,18 @@ void App::rebuild_marker_overlay_cache() {
         size_t row_index = 0;
         double distance = 0.0;
         std::string track_key;
+        std::string edit_id;
         double lateral = 0.0;
         double forward = 0.0;
     };
-    auto make_repeater_marker = [](double distance, const TrackPoint& p, const std::string& label, size_t row_index) {
+    auto make_repeater_marker = [](double distance, const TrackPoint& p, const std::string& label,
+                                   const std::string& edit_id, size_t row_index) {
         PlanRepeaterMarker marker;
         marker.d = distance;
         marker.x = p.x;
         marker.y = p.y;
         marker.label = label;
+        marker.edit_id = edit_id;
         marker.row_index = row_index;
         return marker;
     };
@@ -736,7 +757,7 @@ void App::rebuild_marker_overlay_cache() {
         if (begin.row_index >= repeater_marker_cache_.size()) return;
         RepeaterOverlayRow& overlay = repeater_marker_cache_[begin.row_index];
         if (auto p = sample_track(begin.track_key, end_distance, begin.lateral, begin.forward)) {
-            overlay.end_marker = make_repeater_marker(end_distance, *p, label, begin.row_index);
+            overlay.end_marker = make_repeater_marker(end_distance, *p, label, begin.edit_id, begin.row_index);
         }
         overlay.segment = build_repeater_segment(begin.track_key, begin.distance, end_distance,
                                                  begin.lateral, begin.forward);
@@ -762,12 +783,13 @@ void App::rebuild_marker_overlay_cache() {
             next.row_index = repeater_marker_cache_.size();
             next.distance = distance;
             next.track_key = table_cell(row, "trackKey");
+            next.edit_id = row.edit_id;
             next.lateral = table_cell_number(row, "x");
             next.forward = table_cell_number(row, "z");
 
             RepeaterOverlayRow overlay;
             if (auto p = sample_track(next.track_key, distance, next.lateral, next.forward)) {
-                overlay.begin_marker = make_repeater_marker(distance, *p, key, next.row_index);
+                overlay.begin_marker = make_repeater_marker(distance, *p, key, next.edit_id, next.row_index);
             }
             repeater_marker_cache_.push_back(std::move(overlay));
             active_repeaters[key] = std::move(next);

@@ -146,8 +146,44 @@ struct SpeedLimit {
     double speed = 0.0;
 };
 
+struct EditSourceInfo {
+    std::string file_path;
+    int line = 0;
+    int column = 0;
+    std::string raw_text_preview;
+};
+
+struct EditSourceFileInfo {
+    std::string file_path;
+    std::string display_path;
+    std::string encoding;
+    std::string newline;
+    size_t byte_length = 0;
+};
+
+struct EditStatementInfo {
+    std::string edit_id;
+    std::string statement_kind;
+    EditSourceInfo source;
+    std::string raw_text;
+    std::string raw_arguments;
+    std::string distance_expression;
+    double distance_value = 0.0;
+    int global_order = 0;
+};
+
+struct EditElementInfo {
+    std::string edit_id;
+    std::string row_kind;
+    size_t row_index = 0;
+    std::string source_file_path;
+    int global_order = 0;
+};
+
 struct TableRow {
     std::map<std::string, std::string> cells;
+    std::string edit_id;
+    EditSourceInfo source;
 };
 
 struct TableColumnDef {
@@ -158,6 +194,8 @@ struct TableColumnDef {
 
 struct CachedTableRow {
     std::vector<std::string> cells;
+    std::string edit_id;
+    EditSourceInfo source;
     std::string open_path;
     std::string tooltip_text;
     bool invalid_track_key = false;
@@ -254,6 +292,9 @@ inline bool repeater_event_distance_order_less(const TableRow& a, const TableRow
 
 struct MapModel {
     std::string path;
+    std::vector<EditSourceFileInfo> edit_files;
+    std::vector<EditStatementInfo> edit_statements;
+    std::vector<EditElementInfo> edit_elements;
     Matrix own;
     Matrix curve;
     std::vector<OtherTrack> other_tracks;
@@ -388,6 +429,7 @@ struct PlanStructureMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -396,6 +438,7 @@ struct PlanRepeaterMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -404,6 +447,7 @@ struct PlanSignalMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -412,6 +456,7 @@ struct PlanBeaconMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -420,6 +465,7 @@ struct PlanPreTrainMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -429,6 +475,7 @@ struct PlanOtherTrainStopMarker {
     double y = 0.0;
     double theta = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
     size_t definition_row_index = 0;
     bool reverse_direction = false;
@@ -439,6 +486,7 @@ struct PlanIrregularityMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -447,6 +495,7 @@ struct PlanMapSoundMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -455,6 +504,7 @@ struct PlanMapSound3DMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -463,6 +513,7 @@ struct PlanRollingNoiseMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -471,6 +522,7 @@ struct PlanFlangeNoiseMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -479,6 +531,7 @@ struct PlanJointNoiseMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -487,6 +540,7 @@ struct PlanBackgroundMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -495,6 +549,7 @@ struct PlanAdhesionMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -503,6 +558,7 @@ struct PlanCabIlluminanceMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -511,6 +567,7 @@ struct PlanFogMarker {
     double x = 0.0;
     double y = 0.0;
     std::string label;
+    std::string edit_id;
     size_t row_index = 0;
 };
 
@@ -867,6 +924,8 @@ public:
     static int run_debug_headless_scene_camera_transfer(const std::string& path, double unit_distance,
                                                         bool has_camera_distance, double camera_distance,
                                                         const std::string& output_path);
+    static int run_debug_headless_source_anchors(const std::string& path, double unit_distance,
+                                                 const std::string& output_path);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 

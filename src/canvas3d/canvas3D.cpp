@@ -1254,6 +1254,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         object.kind = Canvas3DSceneObjectKind::Structure;
         object.source_row = source_row;
         object.label = table_cell(row, "structureKey");
+        object.edit_id = row.edit_id;
         const int object_index = static_cast<int>(scene.objects.size());
         scene.objects.push_back(std::move(object));
 
@@ -1298,6 +1299,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         object.source_row = model.structures.size() + between_index;
         object.structure_put_between = true;
         object.label = table_cell(row, "structureKey");
+        object.edit_id = row.edit_id;
         const int object_index = static_cast<int>(scene.objects.size());
         scene.objects.push_back(std::move(object));
 
@@ -1328,6 +1330,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         object.kind = Canvas3DSceneObjectKind::Signal;
         object.source_row = row_index;
         object.label = table_cell(row, "signalAspectKey");
+        object.edit_id = row.edit_id;
         object.model_options = options;
         object.selected_model_option = static_cast<size_t>(selected_it - options.begin());
 
@@ -1359,6 +1362,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         double distance = 0.0;
         std::string key;
         std::string track_key;
+        std::string edit_id;
         double x = 0.0;
         double y = 0.0;
         double z = 0.0;
@@ -1398,6 +1402,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         object.kind = Canvas3DSceneObjectKind::Repeater;
         object.source_row = begin.row_index;
         object.label = begin.key;
+        object.edit_id = begin.edit_id;
         segment.object_index = static_cast<int>(scene.objects.size());
         scene.objects.push_back(std::move(object));
         scene.repeaters.push_back(std::move(segment));
@@ -1418,6 +1423,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
             begin.distance = distance;
             begin.key = key;
             begin.track_key = table_cell(row, "trackKey");
+            begin.edit_id = row.edit_id;
             begin.x = table_cell_number(row, "x");
             begin.y = table_cell_number(row, "y");
             begin.z = table_cell_number(row, "z");

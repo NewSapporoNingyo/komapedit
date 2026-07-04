@@ -383,6 +383,22 @@ std::string table_cell_text(const mini_json::Value& value) {
     return value.scalar_text();
 }
 
+EditSourceInfo edit_source_from_json(const mini_json::Value& value) {
+    EditSourceInfo source;
+    if (!value.is_object()) return source;
+    source.file_path = value.at("filePath").scalar_text();
+    source.line = static_cast<int>(value.at("line").number);
+    source.column = static_cast<int>(value.at("column").number);
+    source.raw_text_preview = value.at("rawTextPreview").scalar_text();
+    return source;
+}
+
+void apply_table_row_edit_metadata(TableRow& row, const mini_json::Value& value) {
+    if (!value.is_object()) return;
+    row.edit_id = value.at("editId").scalar_text();
+    row.source = edit_source_from_json(value.at("source"));
+}
+
 Matrix copy_buffer(KvDoubleBuffer buffer) {
     Matrix m;
     m.rows = buffer.rows;
@@ -733,6 +749,52 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
 
     MapModel model;
     model.path = path;
+    const auto& edit = root.at("edit");
+    const auto& edit_files = edit.at("files");
+    if (edit_files.is_array()) {
+        model.edit_files.reserve(edit_files.array.size());
+        for (const auto& item : edit_files.array) {
+            if (!item.is_object()) continue;
+            EditSourceFileInfo file;
+            file.file_path = item.at("filePath").scalar_text();
+            file.display_path = item.at("displayPath").scalar_text();
+            file.encoding = item.at("encoding").scalar_text();
+            file.newline = item.at("newline").scalar_text();
+            file.byte_length = static_cast<size_t>(std::max(0.0, item.at("byteLength").number));
+            model.edit_files.push_back(std::move(file));
+        }
+    }
+    const auto& edit_statements = edit.at("statements");
+    if (edit_statements.is_array()) {
+        model.edit_statements.reserve(edit_statements.array.size());
+        for (const auto& item : edit_statements.array) {
+            if (!item.is_object()) continue;
+            EditStatementInfo statement;
+            statement.edit_id = item.at("editId").scalar_text();
+            statement.statement_kind = item.at("statementKind").scalar_text();
+            statement.source = edit_source_from_json(item.at("source"));
+            statement.raw_text = item.at("rawText").scalar_text();
+            statement.raw_arguments = item.at("rawArguments").scalar_text();
+            statement.distance_expression = item.at("distanceExpression").scalar_text();
+            statement.distance_value = item.at("distanceValue").number;
+            statement.global_order = static_cast<int>(item.at("globalOrder").number);
+            model.edit_statements.push_back(std::move(statement));
+        }
+    }
+    const auto& edit_elements = edit.at("elements");
+    if (edit_elements.is_array()) {
+        model.edit_elements.reserve(edit_elements.array.size());
+        for (const auto& item : edit_elements.array) {
+            if (!item.is_object()) continue;
+            EditElementInfo element;
+            element.edit_id = item.at("editId").scalar_text();
+            element.row_kind = item.at("rowKind").scalar_text();
+            element.row_index = static_cast<size_t>(std::max(0.0, item.at("rowIndex").number));
+            element.source_file_path = item.at("sourceFilePath").scalar_text();
+            element.global_order = static_cast<int>(item.at("globalOrder").number);
+            model.edit_elements.push_back(std::move(element));
+        }
+    }
     double buffer_copy_seconds = 0.0;
     auto copy_buffer_timed = [&buffer_copy_seconds](KvDoubleBuffer buffer) {
         auto started_at = std::chrono::steady_clock::now();
@@ -866,6 +928,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
             TableRow r;
             if (v.is_object()) {
                 for (const auto& kv : v.object) r.cells[kv.first] = table_cell_text(kv.second);
+                apply_table_row_edit_metadata(r, v);
             }
             rows.push_back(std::move(r));
         }
@@ -896,6 +959,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
                 }
             }
             row.cells["_structureKeyCount"] = std::to_string(structure_key_count);
+            apply_table_row_edit_metadata(row, item);
             model.signal_aspects.push_back(std::move(row));
         }
     }
@@ -923,6 +987,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
             TableRow row;
             if (kv.second.is_object()) {
                 for (const auto& cell : kv.second.object) row.cells[cell.first] = table_cell_text(cell.second);
+                apply_table_row_edit_metadata(row, kv.second);
             }
             if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = kv.first;
             station_rows_by_key[ascii_lower(kv.first)] = std::move(row);
@@ -949,6 +1014,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
             row.cells["door"] = item.at("door").scalar_text();
             row.cells["margin1"] = item.at("margin1").scalar_text();
             row.cells["margin2"] = item.at("margin2").scalar_text();
+            apply_table_row_edit_metadata(row, item);
             append_station_table_row(std::move(row), key);
         }
     } else if (positions.is_array()) {
@@ -2759,6 +2825,19 @@ int main(int, char**) {
                                                              scene_camera_transfer.has_camera_distance,
                                                              scene_camera_transfer.camera_distance,
                                                              scene_camera_transfer.output_path);
+    }
+
+    HeadlessSourceAnchorOptions source_anchors = parse_headless_source_anchor_options(args);
+    if (source_anchors.requested) {
+        if (!source_anchors.error.empty()) {
+            std::cerr << source_anchors.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-source-anchors <map-path> "
+                      << "[--unit-distance M] [--headless-output FILE]\n";
+            return 1;
+        }
+        return App::run_debug_headless_source_anchors(source_anchors.path,
+                                                      source_anchors.unit_distance,
+                                                      source_anchors.output_path);
     }
 
     HeadlessPlanBenchmarkOptions plan_bench = parse_headless_plan_benchmark_options(args);

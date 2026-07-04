@@ -254,7 +254,18 @@ struct LoadedText {
     std::filesystem::path path;
     std::filesystem::path root;
     std::string encoding;
+    std::string newline;
+    size_t byte_length = 0;
+    size_t body_offset = 0;
+    int body_start_line = 1;
 };
+
+std::string detect_newline(const std::string& text) {
+    if (text.find("\r\n") != std::string::npos) return "crlf";
+    if (text.find('\n') != std::string::npos) return "lf";
+    if (text.find('\r') != std::string::npos) return "cr";
+    return "none";
+}
 
 LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
@@ -306,8 +317,10 @@ LoadedText load_header_text(const std::filesystem::path& path,
     if (parse_first_version(header) < min_version) {
         throw std::runtime_error(path_to_utf8(path) + " is under Ver." + json_number(min_version));
     }
-    std::string body = line_end == std::string::npos ? std::string() : text.substr(line_end + 1);
-    return {body, path, std::filesystem::absolute(path).parent_path(), encoding};
+    size_t body_offset = line_end == std::string::npos ? text.size() : line_end + 1;
+    std::string body = line_end == std::string::npos ? std::string() : text.substr(body_offset);
+    return {body, path, std::filesystem::absolute(path).parent_path(), encoding,
+            detect_newline(text), bytes.size(), body_offset, line_end == std::string::npos ? 1 : 2};
 }
 
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file) {
@@ -459,11 +472,64 @@ int parse_sound_buffer_count(const std::string& text) {
     return static_cast<int>(std::min<long>(value, std::numeric_limits<int>::max()));
 }
 
+constexpr size_t kNoSourceRef = std::numeric_limits<size_t>::max();
+
+struct SourceFileRecord {
+    std::string file_path;
+    std::string display_path;
+    std::string encoding;
+    std::string newline;
+    size_t byte_length = 0;
+};
+
+struct SourceSpan {
+    std::string file_path;
+    std::vector<std::string> include_stack;
+    std::string encoding;
+    std::string newline;
+    size_t byte_start = 0;
+    size_t byte_end = 0;
+    int line = 1;
+    int column = 1;
+    int line_end = 1;
+    int column_end = 1;
+};
+
+struct ParsedStatement {
+    std::string edit_id;
+    std::string statement_kind;
+    SourceSpan source;
+    std::string raw_text;
+    std::string raw_arguments;
+    std::vector<Value> evaluated_values;
+    std::string distance_expression;
+    double distance_value = 0.0;
+    int global_order = 0;
+};
+
+struct MapElementRef {
+    std::string edit_id;
+    std::string row_kind;
+    size_t row_index = 0;
+    std::string source_file_path;
+    int global_order = 0;
+};
+
+struct EditSourceRef {
+    size_t statement_index = kNoSourceRef;
+    int element_index = 0;
+
+    bool valid() const {
+        return statement_index != kNoSourceRef;
+    }
+};
+
 struct OwnTrackEvent {
     double distance = 0.0;
     std::string key;
     Value value;
     std::string flag;
+    EditSourceRef edit_ref;
 };
 
 struct OtherTrackEvent {
@@ -472,6 +538,7 @@ struct OtherTrackEvent {
     std::string key;
     Value value;
     std::string flag;
+    EditSourceRef edit_ref;
 };
 
 struct StructureLoad {
@@ -480,11 +547,13 @@ struct StructureLoad {
     Value load_file_path;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct StructureModel {
     std::string structure_key;
     std::string file_path;
+    EditSourceRef edit_ref;
 };
 
 struct SoundListEntry {
@@ -492,6 +561,7 @@ struct SoundListEntry {
     std::string file_path;
     int buffer_count = 1;
     bool is_3d = false;
+    EditSourceRef edit_ref;
 };
 
 struct OtherTrainDefinition {
@@ -504,6 +574,7 @@ struct OtherTrainDefinition {
     Value direction;
     std::string source_file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct OtherTrainEnable {
@@ -512,6 +583,7 @@ struct OtherTrainEnable {
     Value time;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct OtherTrainStop {
@@ -523,11 +595,13 @@ struct OtherTrainStop {
     Value speed;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct OtherTrainReferencedKey {
     std::string key;
     std::string file_path;
+    EditSourceRef edit_ref;
 };
 
 struct MapSoundPlay {
@@ -535,6 +609,7 @@ struct MapSoundPlay {
     Value sound_key;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct MapSound3DPut {
@@ -544,6 +619,7 @@ struct MapSound3DPut {
     double y = 0.0;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct SectionBegin {
@@ -551,6 +627,7 @@ struct SectionBegin {
     std::vector<Value> signal_indices;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct SectionSpeedLimit {
@@ -558,11 +635,13 @@ struct SectionSpeedLimit {
     std::vector<Value> speeds;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct SignalAspect {
     std::string signal_aspect_key;
     std::vector<std::string> structure_keys;
+    EditSourceRef edit_ref;
 };
 
 struct SignalPut {
@@ -580,6 +659,7 @@ struct SignalPut {
     double span = 0.0;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct BeaconPut {
@@ -589,6 +669,7 @@ struct BeaconPut {
     Value send_data;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct PreTrainPass {
@@ -596,6 +677,7 @@ struct PreTrainPass {
     Value pass_time;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct RollingNoiseChange {
@@ -603,6 +685,7 @@ struct RollingNoiseChange {
     Value index;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct FlangeNoiseChange {
@@ -610,6 +693,7 @@ struct FlangeNoiseChange {
     Value index;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct JointNoisePlay {
@@ -617,6 +701,7 @@ struct JointNoisePlay {
     Value index;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct StructurePut {
@@ -637,6 +722,7 @@ struct StructurePut {
     double flag = 0.0;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct RepeaterEvent {
@@ -656,6 +742,7 @@ struct RepeaterEvent {
     std::vector<Value> structure_keys;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct IrregularityChange {
@@ -668,6 +755,7 @@ struct IrregularityChange {
     double lr = 0.0;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct BackgroundChange {
@@ -675,6 +763,7 @@ struct BackgroundChange {
     Value structure_key;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct AdhesionChange {
@@ -684,6 +773,7 @@ struct AdhesionChange {
     Value c;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct CabIlluminanceChange {
@@ -691,6 +781,7 @@ struct CabIlluminanceChange {
     Value value;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct FogChange {
@@ -701,11 +792,15 @@ struct FogChange {
     Value blue;
     std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct SpeedLimitEvent {
     double distance = 0.0;
     Value speed;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
 };
 
 struct StationPut {
@@ -714,7 +809,14 @@ struct StationPut {
     Value door;
     Value margin1;
     Value margin2;
+    std::string file_path;
     int order = 0;
+    EditSourceRef edit_ref;
+};
+
+struct StationListEntry {
+    std::array<std::string, 13> fields{};
+    EditSourceRef edit_ref;
 };
 
 struct Matrix {
@@ -749,8 +851,11 @@ struct MapContext {
     std::filesystem::path rootpath;
     std::string rootpath_utf8;
     std::string current_file_path;
+    std::vector<std::string> include_stack;
     double distance = 0.0;
+    std::string distance_expression;
     int parse_order = 0;
+    int edit_order = 0;
     std::unordered_map<std::string, Value> variables;
     std::set<std::string> external_variable_reads;
     std::set<std::string> variable_writes;
@@ -761,7 +866,7 @@ struct MapContext {
     std::map<double, std::string> station_position;
     std::map<std::string, std::string> station_key;
     std::vector<StationPut> station_puts;
-    std::map<std::string, std::array<std::string, 13>> station_list;
+    std::map<std::string, StationListEntry> station_list;
     std::map<std::string, std::vector<OtherTrackEvent>> othertrack;
     std::vector<std::string> othertrack_order;
     std::map<std::string, std::pair<double, double>> othertrack_range;
@@ -805,11 +910,219 @@ struct MapContext {
     std::string ir_json_cache;
     LoadTiming timing;
     bool load_timing_logged = false;
+    std::vector<SourceFileRecord> source_files;
+    std::vector<ParsedStatement> parsed_statements;
+    size_t active_statement_index = kNoSourceRef;
+    int active_statement_next_element_index = 0;
 
     int next_parse_order() {
         return ++parse_order;
     }
+
+    int next_edit_order() {
+        return ++edit_order;
+    }
 };
+
+std::string normalized_source_path(const std::filesystem::path& path) {
+    std::error_code ec;
+    std::filesystem::path abs = std::filesystem::absolute(path, ec);
+    if (ec) abs = path;
+    return path_to_utf8(abs.lexically_normal());
+}
+
+std::string normalized_source_key(std::string path) {
+    std::replace(path.begin(), path.end(), '\\', '/');
+    return ascii_lower(std::move(path));
+}
+
+void register_source_file(MapContext& ctx, const LoadedText& loaded) {
+    SourceFileRecord record;
+    record.file_path = normalized_source_path(loaded.path);
+    record.display_path = record.file_path;
+    record.encoding = loaded.encoding;
+    record.newline = loaded.newline;
+    record.byte_length = loaded.byte_length;
+    std::string key = normalized_source_key(record.file_path);
+    for (const SourceFileRecord& existing : ctx.source_files) {
+        if (normalized_source_key(existing.file_path) == key) return;
+    }
+    ctx.source_files.push_back(std::move(record));
+}
+
+int utf8_column_count(const std::string& text, size_t begin, size_t end) {
+    int count = 0;
+    for (size_t i = begin; i < end && i < text.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c == '\r') continue;
+        if ((c & 0xc0) != 0x80) ++count;
+    }
+    return count;
+}
+
+std::pair<int, int> line_column_for_body_pos(const LoadedText& loaded, size_t body_pos) {
+    int line = loaded.body_start_line;
+    size_t line_start = 0;
+    size_t limit = std::min(body_pos, loaded.body.size());
+    for (size_t i = 0; i < limit; ++i) {
+        if (loaded.body[i] == '\n') {
+            ++line;
+            line_start = i + 1;
+        }
+    }
+    int column = utf8_column_count(loaded.body, line_start, limit) + 1;
+    return {line, column};
+}
+
+SourceSpan make_source_span(const LoadedText& loaded,
+                            size_t body_start,
+                            size_t body_end,
+                            const std::vector<std::string>& include_stack) {
+    SourceSpan span;
+    span.file_path = normalized_source_path(loaded.path);
+    span.include_stack = include_stack;
+    span.encoding = loaded.encoding;
+    span.newline = loaded.newline;
+    span.byte_start = loaded.body_offset + body_start;
+    span.byte_end = loaded.body_offset + body_end;
+    auto start = line_column_for_body_pos(loaded, body_start);
+    auto end = line_column_for_body_pos(loaded, body_end);
+    span.line = start.first;
+    span.column = start.second;
+    span.line_end = end.first;
+    span.column_end = end.second;
+    return span;
+}
+
+std::vector<std::string> include_stack_for_file(const MapContext& ctx, const std::filesystem::path& path) {
+    std::vector<std::string> stack = ctx.include_stack;
+    std::string file_path = normalized_source_path(path);
+    if (stack.empty() || normalized_source_key(stack.back()) != normalized_source_key(file_path)) {
+        stack.push_back(std::move(file_path));
+    }
+    return stack;
+}
+
+size_t add_parsed_statement(MapContext& ctx,
+                            std::string kind,
+                            SourceSpan source,
+                            std::string raw_text,
+                            std::string raw_arguments,
+                            std::vector<Value> evaluated_values,
+                            std::string distance_expression,
+                            double distance_value) {
+    ParsedStatement statement;
+    statement.statement_kind = std::move(kind);
+    statement.source = std::move(source);
+    statement.raw_text = std::move(raw_text);
+    statement.raw_arguments = std::move(raw_arguments);
+    statement.evaluated_values = std::move(evaluated_values);
+    statement.distance_expression = std::move(distance_expression);
+    statement.distance_value = distance_value;
+    statement.global_order = ctx.next_edit_order();
+    ctx.parsed_statements.push_back(std::move(statement));
+    return ctx.parsed_statements.size() - 1;
+}
+
+EditSourceRef next_active_edit_ref(MapContext& ctx) {
+    if (ctx.active_statement_index == kNoSourceRef) return {};
+    EditSourceRef ref;
+    ref.statement_index = ctx.active_statement_index;
+    ref.element_index = ctx.active_statement_next_element_index++;
+    return ref;
+}
+
+template <typename Row>
+void attach_active_edit_ref(MapContext& ctx, Row& row) {
+    row.edit_ref = next_active_edit_ref(ctx);
+}
+
+struct ActiveStatementScope {
+    MapContext& ctx;
+    size_t old_index = kNoSourceRef;
+    int old_next_element = 0;
+
+    ActiveStatementScope(MapContext& context, size_t statement_index)
+        : ctx(context), old_index(context.active_statement_index),
+          old_next_element(context.active_statement_next_element_index) {
+        ctx.active_statement_index = statement_index;
+        ctx.active_statement_next_element_index = 0;
+    }
+
+    ~ActiveStatementScope() {
+        ctx.active_statement_index = old_index;
+        ctx.active_statement_next_element_index = old_next_element;
+    }
+};
+
+void merge_source_file_records(MapContext& dest, const MapContext& child) {
+    for (const SourceFileRecord& record : child.source_files) {
+        std::string key = normalized_source_key(record.file_path);
+        bool exists = false;
+        for (const SourceFileRecord& existing : dest.source_files) {
+            if (normalized_source_key(existing.file_path) == key) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) dest.source_files.push_back(record);
+    }
+}
+
+void offset_edit_ref(EditSourceRef& ref, size_t statement_index_base) {
+    if (ref.valid()) ref.statement_index += statement_index_base;
+}
+
+template <typename Row>
+void offset_row_edit_ref(Row& row, size_t statement_index_base) {
+    offset_edit_ref(row.edit_ref, statement_index_base);
+}
+
+template <typename Rows>
+void offset_row_edit_refs(Rows& rows, size_t statement_index_base) {
+    for (auto& row : rows) offset_row_edit_ref(row, statement_index_base);
+}
+
+template <typename Fn>
+void for_each_loaded_body_line(const LoadedText& loaded, Fn&& fn) {
+    size_t pos = 0;
+    int line_number = loaded.body_start_line;
+    while (pos <= loaded.body.size()) {
+        size_t line_end = loaded.body.find('\n', pos);
+        size_t content_end = line_end == std::string::npos ? loaded.body.size() : line_end;
+        if (content_end > pos && loaded.body[content_end - 1] == '\r') --content_end;
+        fn(loaded.body.substr(pos, content_end - pos), pos, content_end, line_number);
+        if (line_end == std::string::npos) break;
+        pos = line_end + 1;
+        ++line_number;
+    }
+}
+
+std::vector<Value> values_from_fields(const std::vector<std::string>& fields) {
+    std::vector<Value> values;
+    values.reserve(fields.size());
+    for (const std::string& field : fields) values.push_back(Value::str(field));
+    return values;
+}
+
+EditSourceRef add_loaded_line_statement(MapContext& ctx,
+                                        const LoadedText& loaded,
+                                        const std::vector<std::string>& include_stack,
+                                        const std::string& kind,
+                                        size_t line_start,
+                                        size_t line_end,
+                                        const std::string& line,
+                                        const std::vector<std::string>& fields) {
+    size_t statement_index = add_parsed_statement(
+        ctx, kind,
+        make_source_span(loaded, line_start, line_end, include_stack),
+        line,
+        line,
+        values_from_fields(fields),
+        ctx.distance_expression,
+        ctx.distance);
+    return EditSourceRef{statement_index, 0};
+}
 
 bool value_equal(const Value& a, const Value& b) {
     if (a.kind != b.kind) return false;
@@ -875,7 +1188,13 @@ void set_distance(MapContext& ctx, double value) {
 void put_own(MapContext& ctx, const std::string& key, const Value& value, const std::string& flag = "") {
     note_distance_use(ctx);
     Value stored = value.is_null() ? Value::cont() : value;
-    ctx.own_track.push_back({ctx.distance, key, stored, flag});
+    OwnTrackEvent row;
+    row.distance = ctx.distance;
+    row.key = key;
+    row.value = stored;
+    row.flag = flag;
+    attach_active_edit_ref(ctx, row);
+    ctx.own_track.push_back(std::move(row));
 }
 
 void ensure_othertrack(MapContext& ctx, const std::string& key) {
@@ -891,7 +1210,14 @@ void put_other(MapContext& ctx, const Value& track_key, const std::string& eleme
     std::string key = key_text(track_key);
     ensure_othertrack(ctx, key);
     Value stored = value.is_null() ? Value::cont() : value;
-    ctx.othertrack[key].push_back({ctx.distance, key, element_key, stored, flag});
+    OtherTrackEvent row;
+    row.distance = ctx.distance;
+    row.track_key = key;
+    row.key = element_key;
+    row.value = stored;
+    row.flag = flag;
+    attach_active_edit_ref(ctx, row);
+    ctx.othertrack[key].push_back(std::move(row));
 }
 
 struct MapObject {
@@ -903,12 +1229,24 @@ struct MapObject {
 struct MapFunction {
     std::string label;
     std::vector<Value> args;
+    std::string raw_arguments;
+};
+
+struct ParsedMapElement {
+    std::vector<MapObject> objects;
+    MapFunction function;
 };
 
 class Parser {
 public:
-    Parser(MapContext& context, std::string source, std::filesystem::path file_path)
-        : ctx_(context), src_(std::move(source)), file_path_(std::move(file_path)) {}
+    Parser(MapContext& context, LoadedText loaded)
+        : ctx_(context), loaded_(std::move(loaded)), src_(loaded_.body), file_path_(loaded_.path) {
+        register_source_file(ctx_, loaded_);
+        ctx_.current_file_path = normalized_source_path(file_path_);
+        if (ctx_.include_stack.empty()) {
+            ctx_.include_stack.push_back(ctx_.current_file_path);
+        }
+    }
 
     void parse() {
         while (true) {
@@ -933,6 +1271,7 @@ private:
     };
 
     MapContext& ctx_;
+    LoadedText loaded_;
     std::string src_;
     std::filesystem::path file_path_;
     size_t pos_ = 0;
@@ -1063,14 +1402,22 @@ private:
     void parse_statement() {
         skip();
         if (accept(';')) return;
+        size_t statement_start = pos_;
 
         if (peek() == '$' && next_is_variable_assignment()) {
             flush_pending_includes();
             ++pos_;
             std::string name = ascii_lower(parse_variable_name());
             expect('=');
+            size_t args_start = pos_;
             Value value = parse_expression();
+            size_t args_end = pos_;
             expect(';');
+            add_parsed_statement(ctx_, "Variable.Assign",
+                                 make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                                 src_.substr(statement_start, pos_ - statement_start),
+                                 trim_field_copy(src_.substr(args_start, args_end - args_start)),
+                                 {value}, ctx_.distance_expression, ctx_.distance);
             ctx_.variables[name] = value;
             note_variable_write(ctx_, name);
             return;
@@ -1084,23 +1431,50 @@ private:
             if (first_l == "include" && !current_starts_map_element()) {
                 if (!include_path_is_simple_string(save)) flush_pending_includes();
                 parse_label();
+                size_t args_start = pos_;
                 Value path = parse_expression();
+                size_t args_end = pos_;
                 expect(';');
+                add_parsed_statement(ctx_, "Include",
+                                     make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                                     src_.substr(statement_start, pos_ - statement_start),
+                                     trim_field_copy(src_.substr(args_start, args_end - args_start)),
+                                     {path}, ctx_.distance_expression, ctx_.distance);
                 queue_include(as_text(path));
                 return;
             }
             if (current_starts_map_element()) {
                 flush_pending_includes();
-                parse_map_element();
+                ParsedMapElement element = parse_map_element();
                 expect(';');
+                size_t statement_index = add_parsed_statement(
+                    ctx_, map_statement_kind(element.objects, element.function),
+                    make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                    src_.substr(statement_start, pos_ - statement_start),
+                    element.function.raw_arguments,
+                    element.function.args,
+                    ctx_.distance_expression,
+                    ctx_.distance);
+                ActiveStatementScope active(ctx_, statement_index);
+                dispatch(element.objects, element.function);
                 return;
             }
         }
 
         flush_pending_includes();
+        size_t args_start = pos_;
         Value distance = parse_expression();
+        size_t args_end = pos_;
         expect(';');
-        set_distance(ctx_, as_number(distance));
+        std::string raw_distance = trim_field_copy(src_.substr(args_start, args_end - args_start));
+        double distance_value = as_number(distance);
+        add_parsed_statement(ctx_, "Distance.Set",
+                             make_source_span(loaded_, statement_start, pos_, ctx_.include_stack),
+                             src_.substr(statement_start, pos_ - statement_start),
+                             raw_distance,
+                             {distance}, raw_distance, distance_value);
+        ctx_.distance_expression = raw_distance;
+        set_distance(ctx_, distance_value);
     }
 
     bool include_path_is_simple_string(size_t include_pos) const {
@@ -1119,8 +1493,15 @@ private:
         MapContext seed;
         seed.rootpath = ctx_.rootpath;
         seed.rootpath_utf8 = ctx_.rootpath_utf8;
-        seed.current_file_path = path_to_utf8(std::filesystem::absolute(child));
+        seed.current_file_path = normalized_source_path(child);
+        seed.include_stack = ctx_.include_stack;
+        std::string child_path = normalized_source_path(child);
+        if (seed.include_stack.empty() ||
+            normalized_source_key(seed.include_stack.back()) != normalized_source_key(child_path)) {
+            seed.include_stack.push_back(std::move(child_path));
+        }
         seed.distance = ctx_.distance;
+        seed.distance_expression = ctx_.distance_expression;
         seed.variables = ctx_.variables;
         return seed;
     }
@@ -1131,8 +1512,8 @@ private:
         try {
             ActiveTimingScope active(result.context.timing);
             LoadedText loaded = load_header_text(child, "BveTs Map ", 2.0);
-            result.context.current_file_path = path_to_utf8(std::filesystem::absolute(child));
-            Parser nested(result.context, loaded.body, child);
+            result.context.current_file_path = normalized_source_path(child);
+            Parser nested(result.context, std::move(loaded));
             nested.parse();
         } catch (const std::exception& e) {
             result.error = e.what();
@@ -1179,6 +1560,46 @@ private:
         }
         ctx_.variable_writes.insert(child.variable_writes.begin(), child.variable_writes.end());
 
+        merge_source_file_records(ctx_, child);
+        size_t statement_index_base = ctx_.parsed_statements.size();
+        int edit_order_base = ctx_.edit_order;
+        for (auto& statement : child.parsed_statements) {
+            if (statement.global_order > 0) statement.global_order += edit_order_base;
+        }
+        ctx_.edit_order += child.edit_order;
+        offset_row_edit_refs(child.own_track, statement_index_base);
+        for (auto& kv : child.station_list) offset_edit_ref(kv.second.edit_ref, statement_index_base);
+        for (auto& row : child.station_puts) offset_row_edit_ref(row, statement_index_base);
+        for (auto& kv : child.othertrack) offset_row_edit_refs(kv.second, statement_index_base);
+        offset_row_edit_refs(child.structure_loads, statement_index_base);
+        offset_row_edit_refs(child.structure_models, statement_index_base);
+        offset_row_edit_refs(child.sound_list, statement_index_base);
+        offset_row_edit_refs(child.other_trains, statement_index_base);
+        offset_row_edit_refs(child.other_train_enables, statement_index_base);
+        offset_row_edit_refs(child.other_train_stops, statement_index_base);
+        offset_row_edit_refs(child.other_train_structure_keys, statement_index_base);
+        offset_row_edit_refs(child.other_train_sound_3d_keys, statement_index_base);
+        offset_row_edit_refs(child.map_sounds, statement_index_base);
+        offset_row_edit_refs(child.map_sound_3d, statement_index_base);
+        offset_row_edit_refs(child.rolling_noises, statement_index_base);
+        offset_row_edit_refs(child.flange_noises, statement_index_base);
+        offset_row_edit_refs(child.joint_noises, statement_index_base);
+        offset_row_edit_refs(child.structure_puts, statement_index_base);
+        offset_row_edit_refs(child.structure_betweens, statement_index_base);
+        offset_row_edit_refs(child.repeaters, statement_index_base);
+        offset_row_edit_refs(child.section_begins, statement_index_base);
+        offset_row_edit_refs(child.section_speed_limits, statement_index_base);
+        offset_row_edit_refs(child.signal_aspects, statement_index_base);
+        offset_row_edit_refs(child.signal_puts, statement_index_base);
+        offset_row_edit_refs(child.beacons, statement_index_base);
+        offset_row_edit_refs(child.pretrains, statement_index_base);
+        offset_row_edit_refs(child.irregularities, statement_index_base);
+        offset_row_edit_refs(child.backgrounds, statement_index_base);
+        offset_row_edit_refs(child.adhesions, statement_index_base);
+        offset_row_edit_refs(child.cab_illuminance, statement_index_base);
+        offset_row_edit_refs(child.fogs, statement_index_base);
+        offset_row_edit_refs(child.speedlimits, statement_index_base);
+
         int order_base = ctx_.parse_order;
         auto offset_order = [order_base](int& order) {
             if (order > 0) order += order_base;
@@ -1206,10 +1627,12 @@ private:
         for (auto& row : child.adhesions) offset_order(row.order);
         for (auto& row : child.cab_illuminance) offset_order(row.order);
         for (auto& row : child.fogs) offset_order(row.order);
+        for (auto& row : child.speedlimits) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
         if (child.has_distance_assignment) {
             ctx_.distance = child.distance;
+            ctx_.distance_expression = child.distance_expression;
             ctx_.has_distance_assignment = true;
         }
         for (const std::string& key : child.variable_writes) {
@@ -1219,6 +1642,9 @@ private:
             }
         }
 
+        for (auto& statement : child.parsed_statements) {
+            ctx_.parsed_statements.push_back(std::move(statement));
+        }
         ctx_.controlpoints.insert(ctx_.controlpoints.end(), child.controlpoints.begin(), child.controlpoints.end());
         for (auto& row : child.own_track) ctx_.own_track.push_back(std::move(row));
         for (auto& kv : child.station_position) ctx_.station_position[kv.first] = std::move(kv.second);
@@ -1290,14 +1716,26 @@ private:
         pending_includes_.clear();
     }
 
-    void parse_map_element() {
-        std::vector<MapObject> objects;
+    std::string map_statement_kind(const std::vector<MapObject>& objects,
+                                   const MapFunction& function) const {
+        std::string kind;
+        for (const MapObject& object : objects) {
+            if (!kind.empty()) kind += ".";
+            kind += object.label;
+        }
+        if (!kind.empty()) kind += ".";
+        kind += function.label;
+        return kind;
+    }
+
+    ParsedMapElement parse_map_element() {
+        ParsedMapElement element;
         do {
-            objects.push_back(parse_map_object());
+            element.objects.push_back(parse_map_object());
             expect('.');
         } while (!next_is_function());
-        MapFunction function = parse_map_function();
-        dispatch(objects, function);
+        element.function = parse_map_function();
+        return element;
     }
 
     bool next_is_function() {
@@ -1324,7 +1762,10 @@ private:
         MapFunction function;
         function.label = parse_label();
         expect('(');
+        size_t args_start = pos_;
         parse_map_args(function.args);
+        size_t args_end = pos_ > args_start ? pos_ - 1 : args_start;
+        function.raw_arguments = src_.substr(args_start, args_end - args_start);
         return function;
     }
 
@@ -1615,94 +2056,109 @@ private:
             row.door = arg_or_null(a, 1);
             row.margin1 = arg_or_null(a, 2);
             row.margin2 = arg_or_null(a, 3);
+            row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.station_puts.push_back(std::move(row));
         } else if (fn == "load" && !a.empty()) {
             std::filesystem::path path = join_path(ctx_.rootpath, as_text(a.at(0)));
             LoadedText loaded = load_header_text(path, "BveTs Station List ", 0.04);
-            parse_station_list(loaded.body);
+            parse_station_list(loaded);
         }
     }
 
-    void parse_station_list(const std::string& body) {
-        std::istringstream input(body);
-        std::string line;
-        while (std::getline(input, line)) {
+    void parse_station_list(const LoadedText& loaded) {
+        register_source_file(ctx_, loaded);
+        std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
+        for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
+                                              size_t line_end, int) {
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
-            if (fields.empty() || fields[0].empty()) continue;
+            if (fields.empty() || fields[0].empty()) return;
 
-            std::array<std::string, 13> row{};
-            for (size_t i = 0; i < row.size() && i < fields.size(); ++i) row[i] = fields[i];
-            std::string key = ascii_lower(row[0]);
-            ctx_.station_key[key] = row[1];
+            StationListEntry row;
+            for (size_t i = 0; i < row.fields.size() && i < fields.size(); ++i) row.fields[i] = fields[i];
+            row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StationList.Row",
+                                                     line_start, line_end, line, fields);
+            std::string key = ascii_lower(row.fields[0]);
+            ctx_.station_key[key] = row.fields[1];
             ctx_.station_list[key] = std::move(row);
-        }
+        });
     }
 
-    void parse_structure_list(const std::string& body, const std::filesystem::path& root) {
-        std::istringstream input(body);
-        std::string line;
-        while (std::getline(input, line)) {
+    void parse_structure_list(const LoadedText& loaded) {
+        register_source_file(ctx_, loaded);
+        std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
+        for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
+                                              size_t line_end, int) {
             std::string trimmed = trim_field_copy(line);
-            if (trimmed.empty() || trimmed[0] == '#') continue;
+            if (trimmed.empty() || trimmed[0] == '#') return;
 
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
-            if (fields.empty() || fields[0].empty()) continue;
+            if (fields.empty() || fields[0].empty()) return;
 
             StructureModel row;
             row.structure_key = fields[0];
             if (fields.size() > 1 && !fields[1].empty()) {
-                std::filesystem::path model_path = join_path(root, fields[1]);
+                std::filesystem::path model_path = join_path(loaded.root, fields[1]);
                 std::error_code ec;
                 std::filesystem::path abs = std::filesystem::absolute(model_path, ec);
                 if (!ec) model_path = abs;
                 row.file_path = path_to_utf8(model_path.lexically_normal());
             }
+            row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StructureList.Row",
+                                                     line_start, line_end, line, fields);
             ctx_.structure_models.push_back(std::move(row));
-        }
+        });
     }
 
-    void parse_signal_aspect_list(const std::string& body) {
-        std::istringstream input(body);
-        std::string line;
+    void parse_signal_aspect_list(const LoadedText& loaded) {
+        register_source_file(ctx_, loaded);
+        std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         SignalAspect* current_aspect = nullptr;
-        while (std::getline(input, line)) {
+        for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
+                                              size_t line_end, int) {
             std::string trimmed = trim_field_copy(line);
-            if (trimmed.empty() || trimmed[0] == '#') continue;
+            if (trimmed.empty() || trimmed[0] == '#') return;
 
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
             trim_trailing_empty_fields(fields);
-            if (fields.empty()) continue;
+            if (fields.empty()) return;
             const bool starts_glare_row = fields[0].empty();
-            if (starts_glare_row && !current_aspect) continue;
+            if (starts_glare_row && !current_aspect) return;
 
             if (!starts_glare_row) {
                 SignalAspect row;
                 row.signal_aspect_key = fields[0];
+                row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "SignalList.Row",
+                                                         line_start, line_end, line, fields);
                 ctx_.signal_aspects.push_back(std::move(row));
                 current_aspect = &ctx_.signal_aspects.back();
+            } else if (current_aspect && !current_aspect->edit_ref.valid()) {
+                current_aspect->edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "SignalList.Row",
+                                                                     line_start, line_end, line, fields);
             }
             for (size_t i = 1; i < fields.size(); ++i) {
                 current_aspect->structure_keys.push_back(fields[i]);
             }
-        }
+        });
     }
 
-    void parse_sound_list(const std::string& body, const std::filesystem::path& root, bool is_3d) {
-        std::istringstream input(body);
-        std::string line;
-        while (std::getline(input, line)) {
+    void parse_sound_list(const LoadedText& loaded, bool is_3d) {
+        register_source_file(ctx_, loaded);
+        std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
+        for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
+                                              size_t line_end, int) {
             std::string trimmed = trim_field_copy(line);
-            if (trimmed.empty() || trimmed[0] == '#') continue;
+            if (trimmed.empty() || trimmed[0] == '#') return;
 
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
-            if (fields.empty() || fields[0].empty()) continue;
+            if (fields.empty() || fields[0].empty()) return;
 
             SoundListEntry row;
             row.sound_key = fields[0];
             row.is_3d = is_3d;
             if (fields.size() > 1 && !fields[1].empty()) {
-                std::filesystem::path sound_path = join_path(root, fields[1]);
+                std::filesystem::path sound_path = join_path(loaded.root, fields[1]);
                 std::error_code ec;
                 std::filesystem::path abs = std::filesystem::absolute(sound_path, ec);
                 if (!ec) sound_path = abs;
@@ -1711,8 +2167,11 @@ private:
             if (fields.size() > 2) {
                 row.buffer_count = parse_sound_buffer_count(fields[2]);
             }
+            row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack,
+                                                     is_3d ? "Sound3DList.Row" : "SoundList.Row",
+                                                     line_start, line_end, line, fields);
             ctx_.sound_list.push_back(std::move(row));
-        }
+        });
     }
 
     void parse_other_train_file(const std::filesystem::path& path) {
@@ -1724,30 +2183,34 @@ private:
         if (!ctx_.parsed_other_train_files.insert(path_key).second) return;
 
         LoadedText loaded = load_header_text(abs, "BveTs Train ", 0.0);
-        std::istringstream input(loaded.body);
-        std::string line;
+        register_source_file(ctx_, loaded);
+        std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         std::string section;
-        while (std::getline(input, line)) {
+        for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
+                                              size_t line_end, int) {
             std::string trimmed = trim_field_copy(strip_ini_comment_copy(line));
-            if (trimmed.empty()) continue;
+            if (trimmed.empty()) return;
             if (trimmed.front() == '[' && trimmed.back() == ']' && trimmed.size() >= 2) {
                 section = ascii_lower(trim_field_copy(trimmed.substr(1, trimmed.size() - 2)));
-                continue;
+                return;
             }
 
             size_t eq = trimmed.find('=');
-            if (eq == std::string::npos) continue;
+            if (eq == std::string::npos) return;
             std::string key = ascii_lower(trim_field_copy(trimmed.substr(0, eq)));
-            if (key != "key") continue;
+            if (key != "key") return;
 
             std::string value = trim_matching_quotes(trimmed.substr(eq + 1));
-            if (value.empty()) continue;
+            if (value.empty()) return;
+            std::vector<std::string> fields{key, value};
+            EditSourceRef ref = add_loaded_line_statement(ctx_, loaded, stack, "OtherTrainFile.Row",
+                                                          line_start, line_end, line, fields);
             if (section == "structure") {
-                ctx_.other_train_structure_keys.push_back({value, path_key});
+                ctx_.other_train_structure_keys.push_back({value, path_key, ref});
             } else if (section == "sound3d") {
-                ctx_.other_train_sound_3d_keys.push_back({value, path_key});
+                ctx_.other_train_sound_3d_keys.push_back({value, path_key, ref});
             }
-        }
+        });
     }
 
     void dispatch_track(const Value& track_key, const std::vector<std::string>& labels,
@@ -1811,10 +2274,22 @@ private:
     void dispatch_speedlimit(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "begin") {
             note_distance_use(ctx_);
-            ctx_.speedlimits.push_back({ctx_.distance, a.empty() ? Value::num(0.0) : a[0]});
+            SpeedLimitEvent row;
+            row.distance = ctx_.distance;
+            row.speed = a.empty() ? Value::num(0.0) : a[0];
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
+            ctx_.speedlimits.push_back(std::move(row));
         } else if (fn == "end") {
             note_distance_use(ctx_);
-            ctx_.speedlimits.push_back({ctx_.distance, Value::null()});
+            SpeedLimitEvent row;
+            row.distance = ctx_.distance;
+            row.speed = Value::null();
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
+            ctx_.speedlimits.push_back(std::move(row));
         }
     }
 
@@ -1826,6 +2301,7 @@ private:
             row.signal_indices = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.section_begins.push_back(std::move(row));
         } else if (fn == "setspeedlimit") {
             note_distance_use(ctx_);
@@ -1834,6 +2310,7 @@ private:
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
         }
     }
@@ -1845,7 +2322,7 @@ private:
             try {
                 std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
                 LoadedText loaded = load_header_text(path, "BveTs Signal Aspects List ", 2.0);
-                parse_signal_aspect_list(loaded.body);
+                parse_signal_aspect_list(loaded);
             } catch (const std::exception& e) {
                 log_warn(e.what());
             }
@@ -1856,6 +2333,7 @@ private:
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
         } else if (fn == "put" && has_signal_key && a.size() >= 4) {
             note_distance_use(ctx_);
@@ -1876,6 +2354,7 @@ private:
             }
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.signal_puts.push_back(std::move(row));
         }
     }
@@ -1890,6 +2369,7 @@ private:
         row.send_data = a[2];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.beacons.push_back(std::move(row));
     }
 
@@ -1901,6 +2381,7 @@ private:
         row.pass_time = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.pretrains.push_back(std::move(row));
     }
 
@@ -1913,13 +2394,14 @@ private:
             row.load_file_path = a.empty() ? Value::str("") : a[0];
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.structure_loads.push_back(row);
             std::string list_path_text = as_text(row.load_file_path);
             if (!list_path_text.empty()) {
                 try {
                     std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
                     LoadedText loaded = load_header_text(path, "BveTs Structure List ", 1.0);
-                    parse_structure_list(loaded.body, loaded.root);
+                    parse_structure_list(loaded);
                 } catch (const std::exception& e) {
                     log_warn(e.what());
                 }
@@ -1936,6 +2418,7 @@ private:
             row.tilt = as_number(a[8]); row.span = as_number(a[9]);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.structure_puts.push_back(row);
         } else if (fn == "put0" && a.size() >= 4) {
             note_distance_use(ctx_);
@@ -1947,6 +2430,7 @@ private:
             row.tilt = as_number(a[2]); row.span = as_number(a[3]);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.structure_puts.push_back(row);
         } else if (fn == "putbetween" && a.size() >= 3) {
             note_distance_use(ctx_);
@@ -1959,6 +2443,7 @@ private:
             row.flag = a.size() > 3 ? as_number(a[3]) : 0.0;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.structure_betweens.push_back(row);
         }
     }
@@ -1971,7 +2456,7 @@ private:
             try {
                 std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
                 LoadedText loaded = load_header_text(path, "BveTs Sound List ", 2.0);
-                parse_sound_list(loaded.body, loaded.root, is_3d);
+                parse_sound_list(loaded, is_3d);
             } catch (const std::exception& e) {
                 log_warn(e.what());
             }
@@ -1982,6 +2467,7 @@ private:
             row.sound_key = sound_key;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.map_sounds.push_back(std::move(row));
         } else if (is_3d && fn == "put" && has_key && a.size() >= 2) {
             note_distance_use(ctx_);
@@ -1992,6 +2478,7 @@ private:
             row.y = as_number(a[1]);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.map_sound_3d.push_back(std::move(row));
         }
     }
@@ -2011,6 +2498,7 @@ private:
         row.direction = direction;
         row.source_file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
 
         std::string path_text = as_text(file_path);
         if (!path_text.empty()) {
@@ -2043,6 +2531,7 @@ private:
             row.time = a[1];
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.other_train_enables.push_back(std::move(row));
         } else if (fn == "stop" && has_train_key && a.size() >= 5) {
             note_distance_use(ctx_);
@@ -2055,6 +2544,7 @@ private:
             row.speed = a[4];
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.other_train_stops.push_back(std::move(row));
         }
     }
@@ -2067,6 +2557,7 @@ private:
         row.index = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.rolling_noises.push_back(std::move(row));
     }
 
@@ -2078,6 +2569,7 @@ private:
         row.index = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.flange_noises.push_back(std::move(row));
     }
 
@@ -2089,6 +2581,7 @@ private:
         row.index = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.joint_noises.push_back(std::move(row));
     }
 
@@ -2105,6 +2598,7 @@ private:
             row.structure_keys.assign(a.begin() + 11, a.end());
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.repeaters.push_back(row);
         } else if (fn == "begin0" && a.size() >= 5) {
             note_distance_use(ctx_);
@@ -2116,6 +2610,7 @@ private:
             row.structure_keys.assign(a.begin() + 5, a.end());
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.repeaters.push_back(row);
         } else if (fn == "end" && !a.empty()) {
             note_distance_use(ctx_);
@@ -2126,6 +2621,7 @@ private:
             row.track_key = Value::str("");
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
             ctx_.repeaters.push_back(row);
         }
     }
@@ -2143,6 +2639,7 @@ private:
         row.lr = as_number(a[5]);
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.irregularities.push_back(row);
     }
 
@@ -2154,6 +2651,7 @@ private:
         row.structure_key = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.backgrounds.push_back(std::move(row));
     }
 
@@ -2169,6 +2667,7 @@ private:
         }
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.adhesions.push_back(std::move(row));
     }
 
@@ -2180,6 +2679,7 @@ private:
         row.value = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.cab_illuminance.push_back(std::move(row));
     }
 
@@ -2194,6 +2694,7 @@ private:
         if (a.size() > 3) row.blue = a[3];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
         ctx_.fogs.push_back(std::move(row));
     }
 };
@@ -3304,21 +3805,123 @@ void generate_geometry(MapContext& ctx, double unitdist,
     ctx.ir_json_cache.clear();
 }
 
-void append_event_json(std::ostringstream& out, const OwnTrackEvent& e) {
+std::uint64_t stable_hash64(const std::string& text) {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (unsigned char ch : text) {
+        hash ^= static_cast<std::uint64_t>(ch);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+std::string hex64(std::uint64_t value) {
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << value;
+    return out.str();
+}
+
+std::string edit_kind_token(std::string kind) {
+    for (char& ch : kind) {
+        unsigned char c = static_cast<unsigned char>(ch);
+        if (std::isalnum(c)) {
+            ch = static_cast<char>(std::tolower(c));
+        } else {
+            ch = '_';
+        }
+    }
+    while (!kind.empty() && kind.back() == '_') kind.pop_back();
+    return kind.empty() ? "row" : kind;
+}
+
+std::string make_edit_id(const std::string& source_path, int global_order,
+                         const std::string& kind, int element_index) {
+    std::string key = normalized_source_key(source_path) + "|" +
+                      std::to_string(global_order) + "|" +
+                      ascii_lower(kind) + "|" +
+                      std::to_string(element_index);
+    return "edit-" + hex64(stable_hash64(key)) + "-" +
+           std::to_string(global_order) + "-" +
+           edit_kind_token(kind) + "-" + std::to_string(element_index);
+}
+
+std::string statement_edit_id(ParsedStatement& statement) {
+    statement.edit_id = make_edit_id(statement.source.file_path,
+                                     statement.global_order,
+                                     "statement." + statement.statement_kind,
+                                     0);
+    return statement.edit_id;
+}
+
+std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
+                            const std::string& row_kind) {
+    if (!ref.valid() || ref.statement_index >= ctx.parsed_statements.size()) return {};
+    const ParsedStatement& statement = ctx.parsed_statements[ref.statement_index];
+    return make_edit_id(statement.source.file_path,
+                        statement.global_order,
+                        row_kind,
+                        ref.element_index);
+}
+
+std::string raw_text_preview(std::string text) {
+    for (char& ch : text) {
+        if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+    }
+    if (text.size() > 120) text = text.substr(0, 117) + "...";
+    return text;
+}
+
+void append_source_span_json(std::ostringstream& out, const SourceSpan& span, bool include_full) {
+    out << "{\"filePath\":\"" << json_escape(span.file_path)
+        << "\",\"line\":" << span.line
+        << ",\"column\":" << span.column;
+    if (include_full) {
+        out << ",\"includeStack\":[";
+        for (size_t i = 0; i < span.include_stack.size(); ++i) {
+            if (i) out << ",";
+            out << "\"" << json_escape(span.include_stack[i]) << "\"";
+        }
+        out << "],\"encoding\":\"" << json_escape(span.encoding)
+            << "\",\"newline\":\"" << json_escape(span.newline)
+            << "\",\"byteStart\":" << span.byte_start
+            << ",\"byteEnd\":" << span.byte_end
+            << ",\"lineEnd\":" << span.line_end
+            << ",\"columnEnd\":" << span.column_end;
+    }
+    out << "}";
+}
+
+void append_edit_fields(std::ostringstream& out, const MapContext& ctx,
+                        const EditSourceRef& ref, const std::string& row_kind) {
+    if (!ref.valid() || ref.statement_index >= ctx.parsed_statements.size()) return;
+    const ParsedStatement& statement = ctx.parsed_statements[ref.statement_index];
+    out << ",\"editId\":\"" << json_escape(element_edit_id(ctx, ref, row_kind))
+        << "\",\"source\":{\"filePath\":\"" << json_escape(statement.source.file_path)
+        << "\",\"line\":" << statement.source.line
+        << ",\"column\":" << statement.source.column
+        << ",\"rawTextPreview\":\"" << json_escape(raw_text_preview(statement.raw_text))
+        << "\"}";
+}
+
+void append_event_json(std::ostringstream& out, const MapContext& ctx, const OwnTrackEvent& e) {
     out << "{\"distance\":" << json_number(e.distance)
         << ",\"key\":\"" << json_escape(e.key)
         << "\",\"value\":" << json_value(e.value)
-        << ",\"flag\":\"" << json_escape(e.flag) << "\"}";
+        << ",\"flag\":\"" << json_escape(e.flag) << "\"";
+    append_edit_fields(out, ctx, e.edit_ref, "own_track");
+    out << "}";
 }
 
-void append_other_json(std::ostringstream& out, const OtherTrackEvent& e) {
+void append_other_json(std::ostringstream& out, const MapContext& ctx, const OtherTrackEvent& e) {
     out << "{\"distance\":" << json_number(e.distance)
         << ",\"key\":\"" << json_escape(e.key)
         << "\",\"value\":" << json_value(e.value)
-        << ",\"flag\":\"" << json_escape(e.flag) << "\"}";
+        << ",\"flag\":\"" << json_escape(e.flag) << "\"";
+    append_edit_fields(out, ctx, e.edit_ref, "othertrack");
+    out << "}";
 }
 
-void append_structure_put_json(std::ostringstream& out, const StructurePut& row, bool between) {
+void append_structure_put_json(std::ostringstream& out, const MapContext& ctx,
+                               const StructurePut& row, bool between) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"method\":\"" << json_escape(row.method) << "\""
         << ",\"structureKey\":" << json_value(row.structure_key);
@@ -3338,7 +3941,9 @@ void append_structure_put_json(std::ostringstream& out, const StructurePut& row,
             << ",\"span\":" << json_number(row.span);
     }
     out << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, between ? "structure.between" : "structure.put");
+    out << "}";
 }
 
 void append_value_array_json(std::ostringstream& out, const std::vector<Value>& values) {
@@ -3350,23 +3955,27 @@ void append_value_array_json(std::ostringstream& out, const std::vector<Value>& 
     out << "]";
 }
 
-void append_section_begin_json(std::ostringstream& out, const SectionBegin& row) {
+void append_section_begin_json(std::ostringstream& out, const MapContext& ctx, const SectionBegin& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"signalIndices\":";
     append_value_array_json(out, row.signal_indices);
     out << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "section.begin");
+    out << "}";
 }
 
-void append_section_speed_limit_json(std::ostringstream& out, const SectionSpeedLimit& row) {
+void append_section_speed_limit_json(std::ostringstream& out, const MapContext& ctx, const SectionSpeedLimit& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"speeds\":";
     append_value_array_json(out, row.speeds);
     out << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "section.speedLimit");
+    out << "}";
 }
 
-void append_signal_put_json(std::ostringstream& out, const SignalPut& row) {
+void append_signal_put_json(std::ostringstream& out, const MapContext& ctx, const SignalPut& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"signalAspectKey\":" << json_value(row.signal_aspect_key)
         << ",\"section\":" << json_value(row.section)
@@ -3380,65 +3989,190 @@ void append_signal_put_json(std::ostringstream& out, const SignalPut& row) {
         << ",\"tilt\":" << json_number(row.tilt)
         << ",\"span\":" << json_number(row.span)
         << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "signal.put");
+    out << "}";
 }
 
-void append_beacon_json(std::ostringstream& out, const BeaconPut& row) {
+void append_beacon_json(std::ostringstream& out, const MapContext& ctx, const BeaconPut& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"type\":" << json_value(row.type)
         << ",\"section\":" << json_value(row.section)
         << ",\"sendData\":" << json_value(row.send_data)
         << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "beacon.put");
+    out << "}";
 }
 
-void append_pretrain_json(std::ostringstream& out, const PreTrainPass& row) {
+void append_pretrain_json(std::ostringstream& out, const MapContext& ctx, const PreTrainPass& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"passTime\":" << json_value(row.pass_time)
         << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "preTrain.pass");
+    out << "}";
 }
 
-void append_station_put_json(std::ostringstream& out, const StationPut& row) {
+void append_station_put_json(std::ostringstream& out, const MapContext& ctx, const StationPut& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"stationKey\":" << json_value(row.station_key)
         << ",\"door\":" << json_value(row.door)
         << ",\"margin1\":" << json_value(row.margin1)
         << ",\"margin2\":" << json_value(row.margin2)
-        << ",\"order\":" << row.order << "}";
+        << ",\"filePath\":\"" << json_escape(row.file_path)
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "station.put");
+    out << "}";
 }
 
-void append_adhesion_json(std::ostringstream& out, const AdhesionChange& row) {
+void append_adhesion_json(std::ostringstream& out, const MapContext& ctx, const AdhesionChange& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"a\":" << json_value(row.a)
         << ",\"b\":" << json_value(row.b)
         << ",\"c\":" << json_value(row.c)
         << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "adhesion.change");
+    out << "}";
 }
 
-void append_background_json(std::ostringstream& out, const BackgroundChange& row) {
+void append_background_json(std::ostringstream& out, const MapContext& ctx, const BackgroundChange& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"structureKey\":" << json_value(row.structure_key)
         << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "background.change");
+    out << "}";
 }
 
-void append_cab_illuminance_json(std::ostringstream& out, const CabIlluminanceChange& row) {
+void append_cab_illuminance_json(std::ostringstream& out, const MapContext& ctx, const CabIlluminanceChange& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"value\":" << json_value(row.value)
         << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "cabIlluminance.change");
+    out << "}";
 }
 
-void append_fog_json(std::ostringstream& out, const FogChange& row) {
+void append_fog_json(std::ostringstream& out, const MapContext& ctx, const FogChange& row) {
     out << "{\"distance\":" << json_number(row.distance)
         << ",\"density\":" << json_value(row.density)
         << ",\"red\":" << json_value(row.red)
         << ",\"green\":" << json_value(row.green)
         << ",\"blue\":" << json_value(row.blue)
         << ",\"filePath\":\"" << json_escape(row.file_path)
-        << "\",\"order\":" << row.order << "}";
+        << "\",\"order\":" << row.order;
+    append_edit_fields(out, ctx, row.edit_ref, "fog.change");
+    out << "}";
+}
+
+void append_element_ref_json(std::ostringstream& out, const MapContext& ctx, bool& first,
+                             const std::string& row_kind, size_t row_index,
+                             const EditSourceRef& ref) {
+    if (!ref.valid() || ref.statement_index >= ctx.parsed_statements.size()) return;
+    const ParsedStatement& statement = ctx.parsed_statements[ref.statement_index];
+    MapElementRef element;
+    element.edit_id = element_edit_id(ctx, ref, row_kind);
+    element.row_kind = row_kind;
+    element.row_index = row_index;
+    element.source_file_path = statement.source.file_path;
+    element.global_order = statement.global_order;
+    if (element.edit_id.empty()) return;
+    if (!first) out << ",";
+    first = false;
+    out << "{\"editId\":\"" << json_escape(element.edit_id)
+        << "\",\"rowKind\":\"" << json_escape(element.row_kind)
+        << "\",\"rowIndex\":" << element.row_index
+        << ",\"sourceFilePath\":\"" << json_escape(element.source_file_path)
+        << "\",\"globalOrder\":" << element.global_order << "}";
+}
+
+template <typename Rows>
+void append_row_element_refs(std::ostringstream& out, const MapContext& ctx, bool& first,
+                             const std::string& row_kind, const Rows& rows) {
+    for (size_t i = 0; i < rows.size(); ++i) {
+        append_element_ref_json(out, ctx, first, row_kind, i, rows[i].edit_ref);
+    }
+}
+
+void append_edit_registry_json(std::ostringstream& out, MapContext& ctx) {
+    out << ",\"edit\":{\"files\":[";
+    for (size_t i = 0; i < ctx.source_files.size(); ++i) {
+        if (i) out << ",";
+        const SourceFileRecord& file = ctx.source_files[i];
+        out << "{\"filePath\":\"" << json_escape(file.file_path)
+            << "\",\"displayPath\":\"" << json_escape(file.display_path)
+            << "\",\"encoding\":\"" << json_escape(file.encoding)
+            << "\",\"newline\":\"" << json_escape(file.newline)
+            << "\",\"byteLength\":" << file.byte_length << "}";
+    }
+    out << "],\"statements\":[";
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        if (i) out << ",";
+        ParsedStatement& statement = ctx.parsed_statements[i];
+        out << "{\"editId\":\"" << json_escape(statement_edit_id(statement))
+            << "\",\"statementKind\":\"" << json_escape(statement.statement_kind)
+            << "\",\"source\":";
+        append_source_span_json(out, statement.source, true);
+        out << ",\"rawText\":\"" << json_escape(statement.raw_text)
+            << "\",\"rawArguments\":\"" << json_escape(statement.raw_arguments)
+            << "\",\"evaluatedValues\":[";
+        for (size_t j = 0; j < statement.evaluated_values.size(); ++j) {
+            if (j) out << ",";
+            out << json_value(statement.evaluated_values[j]);
+        }
+        out << "],\"distanceExpression\":\"" << json_escape(statement.distance_expression)
+            << "\",\"distanceValue\":" << json_number(statement.distance_value)
+            << ",\"globalOrder\":" << statement.global_order << "}";
+    }
+    out << "],\"elements\":[";
+    bool first = true;
+    append_row_element_refs(out, ctx, first, "own_track", ctx.own_track);
+    for (const std::string& key : ctx.othertrack_order) {
+        auto it = ctx.othertrack.find(key);
+        if (it != ctx.othertrack.end()) {
+            append_row_element_refs(out, ctx, first, "othertrack." + key, it->second);
+        }
+    }
+    append_row_element_refs(out, ctx, first, "station.put", ctx.station_puts);
+    size_t station_list_index = 0;
+    for (const auto& kv : ctx.station_list) {
+        append_element_ref_json(out, ctx, first, "station.list", station_list_index++, kv.second.edit_ref);
+    }
+    append_row_element_refs(out, ctx, first, "structure.load", ctx.structure_loads);
+    append_row_element_refs(out, ctx, first, "structure.put", ctx.structure_puts);
+    append_row_element_refs(out, ctx, first, "structure.between", ctx.structure_betweens);
+    append_row_element_refs(out, ctx, first, "structure.model", ctx.structure_models);
+    append_row_element_refs(out, ctx, first, "otherTrain.definition", ctx.other_trains);
+    append_row_element_refs(out, ctx, first, "otherTrain.structureKey", ctx.other_train_structure_keys);
+    append_row_element_refs(out, ctx, first, "otherTrain.sound3DKey", ctx.other_train_sound_3d_keys);
+    append_row_element_refs(out, ctx, first, "otherTrain.enable", ctx.other_train_enables);
+    append_row_element_refs(out, ctx, first, "otherTrain.stop", ctx.other_train_stops);
+    append_row_element_refs(out, ctx, first, "section.begin", ctx.section_begins);
+    append_row_element_refs(out, ctx, first, "section.speedLimit", ctx.section_speed_limits);
+    append_row_element_refs(out, ctx, first, "signal.aspect", ctx.signal_aspects);
+    append_row_element_refs(out, ctx, first, "signal.put", ctx.signal_puts);
+    append_row_element_refs(out, ctx, first, "beacon.put", ctx.beacons);
+    append_row_element_refs(out, ctx, first, "preTrain.pass", ctx.pretrains);
+    for (size_t i = 0; i < ctx.sound_list.size(); ++i) {
+        append_element_ref_json(out, ctx, first,
+                                ctx.sound_list[i].is_3d ? "sound3D.list" : "sound.list",
+                                i, ctx.sound_list[i].edit_ref);
+    }
+    append_row_element_refs(out, ctx, first, "mapSound.play", ctx.map_sounds);
+    append_row_element_refs(out, ctx, first, "mapSound3D.put", ctx.map_sound_3d);
+    append_row_element_refs(out, ctx, first, "rollingNoise.change", ctx.rolling_noises);
+    append_row_element_refs(out, ctx, first, "flangeNoise.change", ctx.flange_noises);
+    append_row_element_refs(out, ctx, first, "jointNoise.play", ctx.joint_noises);
+    append_row_element_refs(out, ctx, first, "repeater", ctx.repeaters);
+    append_row_element_refs(out, ctx, first, "irregularity.change", ctx.irregularities);
+    append_row_element_refs(out, ctx, first, "background.change", ctx.backgrounds);
+    append_row_element_refs(out, ctx, first, "adhesion.change", ctx.adhesions);
+    append_row_element_refs(out, ctx, first, "cabIlluminance.change", ctx.cab_illuminance);
+    append_row_element_refs(out, ctx, first, "fog.change", ctx.fogs);
+    append_row_element_refs(out, ctx, first, "speedlimit", ctx.speedlimits);
+    out << "]}";
 }
 
 std::string build_ir_json(MapContext& ctx) {
@@ -3460,7 +4194,7 @@ std::string build_ir_json(MapContext& ctx) {
     out << ",\"own_track\":[";
     for (size_t i = 0; i < ctx.own_track.size(); ++i) {
         if (i) out << ",";
-        append_event_json(out, ctx.own_track[i]);
+        append_event_json(out, ctx, ctx.own_track[i]);
     }
     out << "]";
 
@@ -3474,7 +4208,7 @@ std::string build_ir_json(MapContext& ctx) {
     out << "],\"put\":[";
     for (size_t i = 0; i < ctx.station_puts.size(); ++i) {
         if (i) out << ",";
-        append_station_put_json(out, ctx.station_puts[i]);
+        append_station_put_json(out, ctx, ctx.station_puts[i]);
     }
     out << "],\"stationkey\":{";
     first = true;
@@ -3494,10 +4228,11 @@ std::string build_ir_json(MapContext& ctx) {
         if (!first) out << ",";
         first = false;
         out << "\"" << json_escape(kv.first) << "\":{";
-        for (size_t i = 0; i < kv.second.size(); ++i) {
+        for (size_t i = 0; i < kv.second.fields.size(); ++i) {
             if (i) out << ",";
-            out << "\"" << station_list_keys[i] << "\":\"" << json_escape(kv.second[i]) << "\"";
+            out << "\"" << station_list_keys[i] << "\":\"" << json_escape(kv.second.fields[i]) << "\"";
         }
+        append_edit_fields(out, ctx, kv.second.edit_ref, "station.list");
         out << "}";
     }
     out << "}}";
@@ -3516,7 +4251,7 @@ std::string build_ir_json(MapContext& ctx) {
         const auto& rows = ctx.othertrack[key];
         for (size_t i = 0; i < rows.size(); ++i) {
             if (i) out << ",";
-            append_other_json(out, rows[i]);
+            append_other_json(out, ctx, rows[i]);
         }
         out << "]";
     }
@@ -3537,24 +4272,28 @@ std::string build_ir_json(MapContext& ctx) {
         out << "{\"distance\":" << json_number(row.distance)
             << ",\"method\":\"Load\",\"loadFilePath\":" << json_value(row.load_file_path)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "structure.load");
+        out << "}";
     }
     out << "],\"data\":[";
     for (size_t i = 0; i < ctx.structure_puts.size(); ++i) {
         if (i) out << ",";
-        append_structure_put_json(out, ctx.structure_puts[i], false);
+        append_structure_put_json(out, ctx, ctx.structure_puts[i], false);
     }
     out << "],\"between_data\":[";
     for (size_t i = 0; i < ctx.structure_betweens.size(); ++i) {
         if (i) out << ",";
-        append_structure_put_json(out, ctx.structure_betweens[i], true);
+        append_structure_put_json(out, ctx, ctx.structure_betweens[i], true);
     }
     out << "],\"models\":[";
     for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
         if (i) out << ",";
         const auto& row = ctx.structure_models[i];
         out << "{\"structureKey\":\"" << json_escape(row.structure_key)
-            << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"}";
+            << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"";
+        append_edit_fields(out, ctx, row.edit_ref, "structure.model");
+        out << "}";
     }
     out << "]}";
 
@@ -3570,21 +4309,27 @@ std::string build_ir_json(MapContext& ctx) {
             << "\",\"trackKey\":" << json_value(row.track_key)
             << ",\"direction\":" << json_value(row.direction)
             << ",\"sourceFilePath\":\"" << json_escape(row.source_file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "otherTrain.definition");
+        out << "}";
     }
     out << "],\"structureKeys\":[";
     for (size_t i = 0; i < ctx.other_train_structure_keys.size(); ++i) {
         if (i) out << ",";
         const auto& row = ctx.other_train_structure_keys[i];
         out << "{\"key\":\"" << json_escape(row.key)
-            << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"}";
+            << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"";
+        append_edit_fields(out, ctx, row.edit_ref, "otherTrain.structureKey");
+        out << "}";
     }
     out << "],\"sound3DKeys\":[";
     for (size_t i = 0; i < ctx.other_train_sound_3d_keys.size(); ++i) {
         if (i) out << ",";
         const auto& row = ctx.other_train_sound_3d_keys[i];
         out << "{\"key\":\"" << json_escape(row.key)
-            << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"}";
+            << "\",\"filePath\":\"" << json_escape(row.file_path) << "\"";
+        append_edit_fields(out, ctx, row.edit_ref, "otherTrain.sound3DKey");
+        out << "}";
     }
     out << "],\"enable\":[";
     for (size_t i = 0; i < ctx.other_train_enables.size(); ++i) {
@@ -3594,7 +4339,9 @@ std::string build_ir_json(MapContext& ctx) {
             << ",\"trainKey\":" << json_value(row.train_key)
             << ",\"time\":" << json_value(row.time)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "otherTrain.enable");
+        out << "}";
     }
     out << "],\"stop\":[";
     for (size_t i = 0; i < ctx.other_train_stops.size(); ++i) {
@@ -3607,19 +4354,21 @@ std::string build_ir_json(MapContext& ctx) {
             << ",\"accelerate\":" << json_value(row.accelerate)
             << ",\"speed\":" << json_value(row.speed)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "otherTrain.stop");
+        out << "}";
     }
     out << "]}";
 
     out << ",\"section\":{\"begin\":[";
     for (size_t i = 0; i < ctx.section_begins.size(); ++i) {
         if (i) out << ",";
-        append_section_begin_json(out, ctx.section_begins[i]);
+        append_section_begin_json(out, ctx, ctx.section_begins[i]);
     }
     out << "],\"speedLimit\":[";
     for (size_t i = 0; i < ctx.section_speed_limits.size(); ++i) {
         if (i) out << ",";
-        append_section_speed_limit_json(out, ctx.section_speed_limits[i]);
+        append_section_speed_limit_json(out, ctx, ctx.section_speed_limits[i]);
     }
     out << "]}";
 
@@ -3633,26 +4382,28 @@ std::string build_ir_json(MapContext& ctx) {
             if (j) out << ",";
             out << "\"" << json_escape(row.structure_keys[j]) << "\"";
         }
-        out << "]}";
+        out << "]";
+        append_edit_fields(out, ctx, row.edit_ref, "signal.aspect");
+        out << "}";
     }
     out << "],\"data\":[";
     for (size_t i = 0; i < ctx.signal_puts.size(); ++i) {
         if (i) out << ",";
-        append_signal_put_json(out, ctx.signal_puts[i]);
+        append_signal_put_json(out, ctx, ctx.signal_puts[i]);
     }
     out << "]}";
 
     out << ",\"beacon\":[";
     for (size_t i = 0; i < ctx.beacons.size(); ++i) {
         if (i) out << ",";
-        append_beacon_json(out, ctx.beacons[i]);
+        append_beacon_json(out, ctx, ctx.beacons[i]);
     }
     out << "]";
 
     out << ",\"preTrain\":[";
     for (size_t i = 0; i < ctx.pretrains.size(); ++i) {
         if (i) out << ",";
-        append_pretrain_json(out, ctx.pretrains[i]);
+        append_pretrain_json(out, ctx, ctx.pretrains[i]);
     }
     out << "]";
 
@@ -3663,7 +4414,9 @@ std::string build_ir_json(MapContext& ctx) {
         out << "{\"soundKey\":\"" << json_escape(row.sound_key)
             << "\",\"filePath\":\"" << json_escape(row.file_path)
             << "\",\"bufferCount\":" << row.buffer_count
-            << ",\"is3D\":" << (row.is_3d ? "true" : "false") << "}";
+            << ",\"is3D\":" << (row.is_3d ? "true" : "false");
+        append_edit_fields(out, ctx, row.edit_ref, row.is_3d ? "sound3D.list" : "sound.list");
+        out << "}";
     }
     out << "]";
 
@@ -3674,7 +4427,9 @@ std::string build_ir_json(MapContext& ctx) {
         out << "{\"distance\":" << json_number(row.distance)
             << ",\"soundKey\":" << json_value(row.sound_key)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "mapSound.play");
+        out << "}";
     }
     out << "]";
 
@@ -3687,7 +4442,9 @@ std::string build_ir_json(MapContext& ctx) {
             << ",\"x\":" << json_number(row.x)
             << ",\"y\":" << json_number(row.y)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "mapSound3D.put");
+        out << "}";
     }
     out << "]";
 
@@ -3698,7 +4455,9 @@ std::string build_ir_json(MapContext& ctx) {
         out << "{\"distance\":" << json_number(row.distance)
             << ",\"index\":" << json_value(row.index)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "rollingNoise.change");
+        out << "}";
     }
     out << "]";
 
@@ -3709,7 +4468,9 @@ std::string build_ir_json(MapContext& ctx) {
         out << "{\"distance\":" << json_number(row.distance)
             << ",\"index\":" << json_value(row.index)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "flangeNoise.change");
+        out << "}";
     }
     out << "]";
 
@@ -3720,7 +4481,9 @@ std::string build_ir_json(MapContext& ctx) {
         out << "{\"distance\":" << json_number(row.distance)
             << ",\"index\":" << json_value(row.index)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "jointNoise.play");
+        out << "}";
     }
     out << "]";
 
@@ -3747,7 +4510,9 @@ std::string build_ir_json(MapContext& ctx) {
             out << json_value(row.structure_keys[j]);
         }
         out << "],\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "repeater");
+        out << "}";
     }
     out << "]";
 
@@ -3763,45 +4528,54 @@ std::string build_ir_json(MapContext& ctx) {
             << ",\"ly\":" << json_number(row.ly)
             << ",\"lr\":" << json_number(row.lr)
             << ",\"filePath\":\"" << json_escape(row.file_path)
-            << "\",\"order\":" << row.order << "}";
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "irregularity.change");
+        out << "}";
     }
     out << "]";
 
     out << ",\"background\":[";
     for (size_t i = 0; i < ctx.backgrounds.size(); ++i) {
         if (i) out << ",";
-        append_background_json(out, ctx.backgrounds[i]);
+        append_background_json(out, ctx, ctx.backgrounds[i]);
     }
     out << "]";
 
     out << ",\"adhesion\":[";
     for (size_t i = 0; i < ctx.adhesions.size(); ++i) {
         if (i) out << ",";
-        append_adhesion_json(out, ctx.adhesions[i]);
+        append_adhesion_json(out, ctx, ctx.adhesions[i]);
     }
     out << "]";
 
     out << ",\"cabIlluminance\":[";
     for (size_t i = 0; i < ctx.cab_illuminance.size(); ++i) {
         if (i) out << ",";
-        append_cab_illuminance_json(out, ctx.cab_illuminance[i]);
+        append_cab_illuminance_json(out, ctx, ctx.cab_illuminance[i]);
     }
     out << "]";
 
     out << ",\"fog\":[";
     for (size_t i = 0; i < ctx.fogs.size(); ++i) {
         if (i) out << ",";
-        append_fog_json(out, ctx.fogs[i]);
+        append_fog_json(out, ctx, ctx.fogs[i]);
     }
     out << "]";
 
     out << ",\"speedlimit\":[";
     for (size_t i = 0; i < ctx.speedlimits.size(); ++i) {
         if (i) out << ",";
-        out << "{\"distance\":" << json_number(ctx.speedlimits[i].distance)
-            << ",\"speed\":" << json_value(ctx.speedlimits[i].speed) << "}";
+        const auto& row = ctx.speedlimits[i];
+        out << "{\"distance\":" << json_number(row.distance)
+            << ",\"speed\":" << json_value(row.speed)
+            << ",\"filePath\":\"" << json_escape(row.file_path)
+            << "\",\"order\":" << row.order;
+        append_edit_fields(out, ctx, row.edit_ref, "speedlimit");
+        out << "}";
     }
-    out << "]}";
+    out << "]";
+    append_edit_registry_json(out, ctx);
+    out << "}";
     return out.str();
 }
 
@@ -3827,12 +4601,13 @@ KV_API void* kv_load_map(const char* path, double unit_distance) {
         LoadedText loaded = load_header_text(map_path, "BveTs Map ", 2.0);
         ctx->rootpath = loaded.root;
         ctx->rootpath_utf8 = path_to_utf8(loaded.root);
-        ctx->current_file_path = path_to_utf8(std::filesystem::absolute(map_path));
+        ctx->current_file_path = normalized_source_path(map_path);
+        ctx->include_stack.push_back(ctx->current_file_path);
 
         log_info("parsing syntax tree");
         {
             ScopedTimer timer(&ctx->timing.parse_seconds);
-            Parser parser(*ctx, loaded.body, map_path);
+            Parser parser(*ctx, std::move(loaded));
             parser.parse();
         }
 

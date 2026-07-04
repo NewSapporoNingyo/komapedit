@@ -1016,6 +1016,11 @@ void annotate_scene_track_key_warnings(MapModel& model) {
     }
 }
 
+void copy_table_row_metadata(const TableRow& source, CachedTableRow& dest) {
+    dest.edit_id = source.edit_id;
+    dest.source = source.source;
+}
+
 template <size_t N>
 void append_change_point_rows(const std::vector<TableRow>& source_rows,
                               const TableColumnDef (&columns)[N],
@@ -1030,6 +1035,7 @@ void append_change_point_rows(const std::vector<TableRow>& source_rows,
     for (size_t row_index = 0; row_index < source_rows.size(); ++row_index) {
         const TableRow& row = source_rows[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(N);
         cached.open_path = table_cell(row, "filePath");
         cached.tooltip_text = cached.open_path;
@@ -1056,6 +1062,7 @@ void append_structure_table_rows(const std::vector<TableRow>& source_rows,
     cached_rows.reserve(source_rows.size());
     for (const TableRow& row : source_rows) {
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(N);
         cached.invalid_track_key = is_invalid_track_key_row(row);
         for (size_t i = 0; i < N; ++i) {
@@ -1409,6 +1416,7 @@ void App::ensure_table_cache() {
     cache.station_rows.reserve(model_.station_list_rows.size());
     for (const auto& row : model_.station_list_rows) {
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kStationListColumns));
         for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
             cached.cells[i] = table_cell(row, kStationListColumns[i].key);
@@ -1420,6 +1428,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.structure_models.size(); ++row_index) {
         const TableRow& row = model_.structure_models[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kStructureModelColumns));
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[1] = table_cell(row, "structureKey");
@@ -1437,6 +1446,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.other_trains.size(); ++row_index) {
         const TableRow& row = model_.other_trains[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kOtherTrainColumns));
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[kOtherTrainDistanceColumn] = table_cell(row, "distance");
@@ -1469,6 +1479,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.other_train_stops.size(); ++row_index) {
         const TableRow& row = model_.other_train_stops[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kOtherTrainStopColumns));
         cached.cells[kOtherTrainStopDistanceColumn] = table_cell(row, "distance");
         cached.cells[2] = table_cell(row, "trainKey");
@@ -1523,6 +1534,7 @@ void App::ensure_table_cache() {
                                      float& file_path_width,
                                      float& buffer_count_width) {
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kSoundListColumns));
         cached.cells[0] = std::to_string(rows.size() + 1);
         cached.cells[1] = table_cell(row, "soundKey");
@@ -1563,6 +1575,7 @@ void App::ensure_table_cache() {
     cache.repeater_rows.reserve(repeater_rows.size());
     for (const auto& row : repeater_rows) {
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kRepeaterColumns));
         cached.invalid_track_key = is_invalid_track_key_row(row);
         cached.open_path = table_cell(row, "_openFilePath");
@@ -1589,6 +1602,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.signal_aspects.size(); ++row_index) {
         const TableRow& row = model_.signal_aspects[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(kSignalAspectStructureKeyColumnOffset + cache.signal_aspect_structure_key_columns);
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[1] = table_cell(row, "signalAspectKey");
@@ -1607,6 +1621,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.signals.size(); ++row_index) {
         const TableRow& row = model_.signals[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kSignalColumns));
         cached.open_path = table_cell(row, "filePath");
         cached.tooltip_text = cached.open_path;
@@ -1629,6 +1644,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.beacons.size(); ++row_index) {
         const TableRow& row = model_.beacons[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kBeaconColumns));
         cached.open_path = table_cell(row, "filePath");
         cached.tooltip_text = cached.open_path;
@@ -1651,6 +1667,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.irregularities.size(); ++row_index) {
         const TableRow& row = model_.irregularities[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kIrregularityColumns));
         cached.open_path = table_cell(row, "filePath");
         for (int i = 0; i < IM_ARRAYSIZE(kIrregularityColumns); ++i) {
@@ -1699,6 +1716,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.backgrounds.size(); ++row_index) {
         const TableRow& row = model_.backgrounds[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kBackgroundColumns));
         cached.open_path = table_cell(row, "filePath");
         for (int i = 0; i < IM_ARRAYSIZE(kBackgroundColumns); ++i) {
@@ -1720,6 +1738,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.adhesions.size(); ++row_index) {
         const TableRow& row = model_.adhesions[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kAdhesionColumns));
         cached.open_path = table_cell(row, "filePath");
         for (int i = 0; i < IM_ARRAYSIZE(kAdhesionColumns); ++i) {
@@ -1741,6 +1760,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.cab_illuminance.size(); ++row_index) {
         const TableRow& row = model_.cab_illuminance[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kCabIlluminanceColumns));
         cached.open_path = table_cell(row, "filePath");
         for (int i = 0; i < IM_ARRAYSIZE(kCabIlluminanceColumns); ++i) {
@@ -1762,6 +1782,7 @@ void App::ensure_table_cache() {
     for (size_t row_index = 0; row_index < model_.fogs.size(); ++row_index) {
         const TableRow& row = model_.fogs[row_index];
         CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(kFogColumns));
         cached.open_path = table_cell(row, "filePath");
         for (int i = 0; i < IM_ARRAYSIZE(kFogColumns); ++i) {

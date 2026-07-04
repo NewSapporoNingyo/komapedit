@@ -32,6 +32,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <sstream>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -97,6 +98,14 @@ struct HeadlessSceneCameraTransferOptions {
     double unit_distance = 25.0;
     bool has_camera_distance = false;
     double camera_distance = 0.0;
+    std::string error;
+};
+
+struct HeadlessSourceAnchorOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
     std::string error;
 };
 
@@ -389,6 +398,43 @@ HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
         options.error = "--debug-headless-scene-camera-transfer requires a map path";
+    }
+    return options;
+}
+
+HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vector<std::string>& args) {
+    HeadlessSourceAnchorOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-source-anchors") {
+            options.requested = true;
+            if (i + 1 >= args.size()) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
+        } else if (arg == "--unit-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--unit-distance requires a number";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
+                options.error = "--unit-distance must be a positive number";
+                return options;
+            }
+            options.unit_distance = parsed;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-source-anchors requires a map path";
     }
     return options;
 }
@@ -738,6 +784,105 @@ int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options) {
     *out << "result=" << (exit_code == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();
     return exit_code;
+}
+
+int App::run_debug_headless_source_anchors(const std::string& path, double unit_distance,
+                                           const std::string& output_path) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-source-anchors path=\"" << path
+         << "\" unit_distance=" << format_double(unit_distance, 3) << "\n";
+    LoadResult result = load_map_worker(path, unit_distance, false, 0.0, 0.0, 25.0);
+    if (!result.ok) {
+        std::cerr << "debug headless source anchors load failed: " << result.error << "\n";
+        return 2;
+    }
+
+    const MapModel& model = result.model;
+    std::set<std::string> seen_edit_ids;
+    size_t duplicate_edit_id_count = 0;
+    auto note_edit_id = [&](const std::string& edit_id) {
+        if (edit_id.empty()) return;
+        if (!seen_edit_ids.insert(edit_id).second) ++duplicate_edit_id_count;
+    };
+    for (const EditStatementInfo& statement : model.edit_statements) note_edit_id(statement.edit_id);
+    for (const EditElementInfo& element : model.edit_elements) note_edit_id(element.edit_id);
+
+    size_t invalid_source_span_count = 0;
+    for (const EditStatementInfo& statement : model.edit_statements) {
+        if (statement.source.file_path.empty() || statement.source.line <= 0 || statement.source.column <= 0 ||
+            statement.raw_text.empty()) {
+            ++invalid_source_span_count;
+        }
+    }
+
+    size_t missing_edit_id_count = 0;
+    auto count_missing_rows = [&](const std::vector<TableRow>& rows) {
+        for (const TableRow& row : rows) {
+            if (row.edit_id.empty()) ++missing_edit_id_count;
+        }
+    };
+    count_missing_rows(model.station_list_rows);
+    count_missing_rows(model.structures);
+    count_missing_rows(model.structure_models);
+    count_missing_rows(model.other_trains);
+    count_missing_rows(model.other_train_stops);
+    count_missing_rows(model.other_train_structure_keys);
+    count_missing_rows(model.other_train_sound_3d_keys);
+    count_missing_rows(model.sound_list);
+    count_missing_rows(model.structures_between);
+    count_missing_rows(model.repeaters);
+    count_missing_rows(model.signal_aspects);
+    count_missing_rows(model.signals);
+    count_missing_rows(model.beacons);
+    count_missing_rows(model.pretrains);
+    count_missing_rows(model.irregularities);
+    count_missing_rows(model.map_sounds);
+    count_missing_rows(model.map_sound_3d);
+    count_missing_rows(model.rolling_noises);
+    count_missing_rows(model.flange_noises);
+    count_missing_rows(model.joint_noises);
+    count_missing_rows(model.backgrounds);
+    count_missing_rows(model.adhesions);
+    count_missing_rows(model.cab_illuminance);
+    count_missing_rows(model.fogs);
+
+    std::set<std::string> map_files;
+    std::set<std::string> list_files;
+    for (const EditStatementInfo& statement : model.edit_statements) {
+        const bool list_statement =
+            statement.statement_kind.find("List.Row") != std::string::npos ||
+            statement.statement_kind == "OtherTrainFile.Row";
+        if (list_statement) {
+            list_files.insert(statement.source.file_path);
+        } else if (!statement.source.file_path.empty()) {
+            map_files.insert(statement.source.file_path);
+        }
+    }
+
+    *out << "file_count=" << model.edit_files.size() << "\n";
+    *out << "map_file_count=" << map_files.size() << "\n";
+    *out << "list_file_count=" << list_files.size() << "\n";
+    *out << "statement_count=" << model.edit_statements.size() << "\n";
+    *out << "element_count=" << model.edit_elements.size() << "\n";
+    *out << "missing_editId_count=" << missing_edit_id_count << "\n";
+    *out << "duplicate_editId_count=" << duplicate_edit_id_count << "\n";
+    *out << "invalid_source_span_count=" << invalid_source_span_count << "\n";
+    *out << "result=" << (duplicate_edit_id_count == 0 && invalid_source_span_count == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+
+    if (result.handle) kv_free(result.handle);
+    return duplicate_edit_id_count == 0 && invalid_source_span_count == 0 ? 0 : 3;
 }
 
 int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,

@@ -60,6 +60,7 @@ struct Canvas3DSceneObject {
     size_t source_row = 0;
     bool structure_put_between = false;
     std::string label;
+    std::string edit_id;
     std::vector<Canvas3DSceneModelOption> model_options;
     size_t selected_model_option = 0;
 };
