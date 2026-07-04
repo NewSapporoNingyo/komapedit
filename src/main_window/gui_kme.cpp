@@ -1357,6 +1357,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
     visibility.show_fogs_window = show_fogs_window_;
+    visibility.show_console_window = show_console_window_;
     visibility.show_plots_window = show_plots_window_;
     visibility.show_model_preview_window = show_model_preview_window_;
     visibility.show_scene_preview_window = show_scene_preview_window_;
@@ -1386,6 +1387,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_adhesions_window_ = visibility.show_adhesions_window;
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
     show_fogs_window_ = visibility.show_fogs_window;
+    show_console_window_ = visibility.show_console_window;
     show_plots_window_ = visibility.show_plots_window;
     show_model_preview_window_ = visibility.show_model_preview_window;
     show_scene_preview_window_ = visibility.show_scene_preview_window;
@@ -1661,6 +1663,9 @@ void App::render_menu() {
         }
         ImGui::MenuItem(tr("chk.scene_current_position_on_plan").c_str(), nullptr,
                         &show_scene_current_position_on_plan_, scene_preview_started_);
+        ImGui::Separator();
+        ImGui::MenuItem(tr("aux.other").c_str(), nullptr, false, false);
+        ImGui::MenuItem(tr("chk.console_window").c_str(), nullptr, &show_console_window_);
     };
 
     if (ImGui::BeginMenu(tr("menu.view_2d").c_str())) {
@@ -1855,8 +1860,12 @@ void App::render_distance_jump_control() {
 }
 
 void App::render_console() {
+    if (!show_console_window_) return;
     std::string title = tr("frame.console") + "###Console";
-    ImGui::Begin(title.c_str());
+    if (!ImGui::Begin(title.c_str(), &show_console_window_)) {
+        ImGui::End();
+        return;
+    }
     if (ImGui::Button(tr("button.clear").c_str())) {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();

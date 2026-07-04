@@ -684,6 +684,7 @@ struct WindowVisibilitySettings {
     bool show_adhesions_window = false;
     bool show_cab_illuminance_window = false;
     bool show_fogs_window = false;
+    bool show_console_window = true;
     bool show_plots_window = true;
     bool show_model_preview_window = true;
     bool show_scene_preview_window = true;
@@ -711,6 +712,7 @@ struct WindowVisibilitySettings {
             show_adhesions_window == other.show_adhesions_window &&
             show_cab_illuminance_window == other.show_cab_illuminance_window &&
             show_fogs_window == other.show_fogs_window &&
+            show_console_window == other.show_console_window &&
             show_plots_window == other.show_plots_window &&
             show_model_preview_window == other.show_model_preview_window &&
             show_scene_preview_window == other.show_scene_preview_window;
@@ -1023,6 +1025,7 @@ private:
     bool show_adhesions_window_ = false;
     bool show_cab_illuminance_window_ = false;
     bool show_fogs_window_ = false;
+    bool show_console_window_ = true;
     bool show_plots_window_ = true;
     bool show_model_preview_window_ = true;
     bool show_scene_preview_window_ = true;
