@@ -127,6 +127,12 @@ bool parse_gui_edit_number(const std::string& text) {
     return end != begin && errno != ERANGE && end && *end == '\0';
 }
 
+void render_inline_wrapped_text(const char* label, const std::string& value) {
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine();
+    ImGui::TextWrapped("%s", value.c_str());
+}
+
 std::wstring utf8_to_wide(const std::string& text) {
     if (text.empty()) return {};
     int n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
@@ -1246,6 +1252,16 @@ const EditStatementInfo* find_model_statement_for_element(const MapModel& model,
     return nullptr;
 }
 
+bool row_kind_has_source_distance_string(const std::string& row_kind) {
+    static constexpr std::array<const char*, 3> kDistanceRowKinds = {
+        "station.put",
+        "structure.put",
+        "structure.between",
+    };
+    return std::any_of(kDistanceRowKinds.begin(), kDistanceRowKinds.end(),
+                       [&](const char* value) { return row_kind == value; });
+}
+
 template <typename Rows>
 const TableRow* find_model_row_by_edit_id(const Rows& rows, const std::string& edit_id) {
     for (const TableRow& row : rows) {
@@ -1287,6 +1303,9 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
     next.source_hash = source_file ? source_file->source_hash : std::string{};
     next.line = source.line;
     next.column = source.column;
+    if (statement && row_kind_has_source_distance_string(row_kind)) {
+        next.source_distance_string = statement->distance_expression;
+    }
     next.raw_statement = statement && !statement->raw_text.empty()
         ? statement->raw_text
         : source.raw_text_preview;
@@ -1498,10 +1517,12 @@ void App::render_element_inspector() {
             ? "status.edit.pending_delete"
             : "status.edit.pending").c_str());
     }
-    ImGui::TextUnformatted(tr("label.source_file").c_str());
-    ImGui::SameLine();
-    ImGui::TextUnformatted(inspector_.source_file.c_str());
+    render_inline_wrapped_text(tr("label.source_file").c_str(), inspector_.source_file);
     ImGui::Text("%s %d:%d", tr("label.source_position").c_str(), inspector_.line, inspector_.column);
+    if (!inspector_.source_distance_string.empty()) {
+        render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
+                                   inspector_.source_distance_string);
+    }
     if (!inspector_.raw_statement.empty()) {
         ImGui::Separator();
         ImGui::TextUnformatted(tr("label.raw_statement").c_str());
@@ -1529,10 +1550,6 @@ void App::render_element_inspector() {
     ImGui::SameLine();
     ImGui::BeginDisabled(!inspector_.delete_supported);
     if (ImGui::Button(tr("button.delete").c_str())) delete_inspector_target();
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(pending_edit_changes_.empty() || load_state_.running);
-    if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) inspector_.open = false;
@@ -3057,6 +3074,10 @@ void App::reload_current_map_geometry() {
 void App::handle_shortcuts() {
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
         reload_current_map_and_model_preview();
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        save_pending_edits();
     }
 }
 
