@@ -62,6 +62,7 @@ namespace {
 using kme::maploader::copy_c_string;
 using kme::maploader::decode_codepage;
 using kme::maploader::decode_utf16;
+using kme::maploader::encode_text_for_writeback;
 using kme::maploader::first_line_ascii;
 using kme::maploader::has_utf8_bom;
 using kme::maploader::last_error_c_str;
@@ -219,6 +220,9 @@ std::string json_number(double value) {
     return out.str();
 }
 
+std::uint64_t stable_hash64(const std::string& text);
+std::string hex64(std::uint64_t value);
+
 double parse_first_version(const std::string& header) {
     for (size_t i = 0; i < header.size(); ++i) {
         if (!std::isdigit(static_cast<unsigned char>(header[i]))) continue;
@@ -282,6 +286,7 @@ struct LoadedText {
     std::string normalized_key;
     std::string encoding;
     std::string newline;
+    std::string source_hash;
     std::vector<size_t> line_starts;
     size_t byte_length = 0;
     size_t body_offset = 0;
@@ -351,7 +356,8 @@ LoadedText load_header_text(const std::filesystem::path& path,
     std::string normalized_key = normalized_source_key(normalized_path);
     std::vector<size_t> line_starts = build_line_starts(body);
     return {body, path, std::filesystem::absolute(path).parent_path(), normalized_path,
-            normalized_key, encoding, detect_newline(text), std::move(line_starts),
+            normalized_key, encoding, detect_newline(text), hex64(stable_hash64(bytes)),
+            std::move(line_starts),
             bytes.size(), body_offset, line_end == std::string::npos ? 1 : 2};
 }
 
@@ -512,6 +518,7 @@ struct SourceFileRecord {
     std::string display_path;
     std::string encoding;
     std::string newline;
+    std::string source_hash;
     size_t byte_length = 0;
 };
 
@@ -982,6 +989,7 @@ size_t register_source_file_index(MapContext& ctx, const LoadedText& loaded) {
     record.display_path = record.file_path;
     record.encoding = loaded.encoding;
     record.newline = loaded.newline;
+    record.source_hash = loaded.source_hash;
     record.byte_length = loaded.byte_length;
     size_t index = ctx.source_files.size();
     ctx.source_file_indices[record.source_key] = index;
@@ -4257,6 +4265,8 @@ void append_edit_registry_json(std::ostringstream& out, MapContext& ctx, unsigne
         append_json_string(out, file.encoding);
         out << ",\"newline\":";
         append_json_string(out, file.newline);
+        out << ",\"sourceHash\":";
+        append_json_string(out, file.source_hash);
         out << ",\"byteLength\":" << file.byte_length << "}";
     }
     out << "]";
@@ -4339,6 +4349,767 @@ void append_edit_registry_json(std::ostringstream& out, MapContext& ctx, unsigne
     append_row_element_refs(out, ctx, first, "fog.change", ctx.fogs);
     append_row_element_refs(out, ctx, first, "speedlimit", ctx.speedlimits);
     out << "]}";
+}
+
+namespace edit_json {
+
+struct Value {
+    enum class Type { Null, Bool, Number, String, Array, Object };
+    Type type = Type::Null;
+    bool boolean = false;
+    double number = 0.0;
+    std::string string;
+    std::vector<Value> array;
+    std::map<std::string, Value> object;
+
+    bool is_object() const { return type == Type::Object; }
+    bool is_array() const { return type == Type::Array; }
+    bool is_string() const { return type == Type::String; }
+    bool is_number() const { return type == Type::Number; }
+    bool is_bool() const { return type == Type::Bool; }
+
+    const Value& at(const std::string& key) const {
+        static const Value empty;
+        auto it = object.find(key);
+        return it == object.end() ? empty : it->second;
+    }
+
+    std::string scalar_text() const {
+        if (is_string()) return string;
+        if (is_number()) return json_number(number);
+        if (is_bool()) return boolean ? "true" : "false";
+        return {};
+    }
+};
+
+class Parser {
+public:
+    explicit Parser(const std::string& source) : source_(source) {}
+
+    Value parse() {
+        Value value = parse_value();
+        skip_ws();
+        if (pos_ != source_.size()) throw std::runtime_error("trailing JSON text");
+        return value;
+    }
+
+private:
+    const std::string& source_;
+    size_t pos_ = 0;
+
+    void skip_ws() {
+        while (pos_ < source_.size() &&
+               std::isspace(static_cast<unsigned char>(source_[pos_]))) {
+            ++pos_;
+        }
+    }
+
+    char peek() const {
+        return pos_ < source_.size() ? source_[pos_] : '\0';
+    }
+
+    char get() {
+        if (pos_ >= source_.size()) throw std::runtime_error("unexpected JSON EOF");
+        return source_[pos_++];
+    }
+
+    void expect(char expected) {
+        if (get() != expected) throw std::runtime_error("unexpected JSON token");
+    }
+
+    Value parse_value() {
+        skip_ws();
+        char ch = peek();
+        if (ch == '{') return parse_object();
+        if (ch == '[') return parse_array();
+        if (ch == '"') {
+            Value value;
+            value.type = Value::Type::String;
+            value.string = parse_string();
+            return value;
+        }
+        if (ch == '-' || std::isdigit(static_cast<unsigned char>(ch))) return parse_number();
+        if (source_.compare(pos_, 4, "true") == 0) {
+            pos_ += 4;
+            Value value;
+            value.type = Value::Type::Bool;
+            value.boolean = true;
+            return value;
+        }
+        if (source_.compare(pos_, 5, "false") == 0) {
+            pos_ += 5;
+            Value value;
+            value.type = Value::Type::Bool;
+            value.boolean = false;
+            return value;
+        }
+        if (source_.compare(pos_, 4, "null") == 0) {
+            pos_ += 4;
+            return {};
+        }
+        throw std::runtime_error("invalid JSON value");
+    }
+
+    Value parse_object() {
+        Value value;
+        value.type = Value::Type::Object;
+        expect('{');
+        skip_ws();
+        if (peek() == '}') {
+            ++pos_;
+            return value;
+        }
+        while (true) {
+            skip_ws();
+            std::string key = parse_string();
+            skip_ws();
+            expect(':');
+            value.object[std::move(key)] = parse_value();
+            skip_ws();
+            char ch = get();
+            if (ch == '}') break;
+            if (ch != ',') throw std::runtime_error("expected JSON object comma");
+        }
+        return value;
+    }
+
+    Value parse_array() {
+        Value value;
+        value.type = Value::Type::Array;
+        expect('[');
+        skip_ws();
+        if (peek() == ']') {
+            ++pos_;
+            return value;
+        }
+        while (true) {
+            value.array.push_back(parse_value());
+            skip_ws();
+            char ch = get();
+            if (ch == ']') break;
+            if (ch != ',') throw std::runtime_error("expected JSON array comma");
+        }
+        return value;
+    }
+
+    std::string parse_string() {
+        expect('"');
+        std::string out;
+        while (true) {
+            char ch = get();
+            if (ch == '"') break;
+            if (ch != '\\') {
+                out.push_back(ch);
+                continue;
+            }
+            char escaped = get();
+            switch (escaped) {
+                case '"': out.push_back('"'); break;
+                case '\\': out.push_back('\\'); break;
+                case '/': out.push_back('/'); break;
+                case 'b': out.push_back('\b'); break;
+                case 'f': out.push_back('\f'); break;
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                case 'u':
+                    throw std::runtime_error("JSON unicode escapes are not supported in edit changes");
+                default:
+                    throw std::runtime_error("invalid JSON string escape");
+            }
+        }
+        return out;
+    }
+
+    Value parse_number() {
+        size_t start = pos_;
+        if (peek() == '-') ++pos_;
+        while (std::isdigit(static_cast<unsigned char>(peek()))) ++pos_;
+        if (peek() == '.') {
+            ++pos_;
+            while (std::isdigit(static_cast<unsigned char>(peek()))) ++pos_;
+        }
+        if (peek() == 'e' || peek() == 'E') {
+            ++pos_;
+            if (peek() == '+' || peek() == '-') ++pos_;
+            while (std::isdigit(static_cast<unsigned char>(peek()))) ++pos_;
+        }
+        Value value;
+        value.type = Value::Type::Number;
+        value.number = std::stod(source_.substr(start, pos_ - start));
+        return value;
+    }
+};
+
+} // namespace edit_json
+
+struct MapEditChange {
+    std::string change_id;
+    std::string edit_id;
+    std::string operation;
+    std::map<std::string, std::string> field_changes;
+    std::string replacement_statement;
+    std::string target_file_path;
+    std::string insert_before_edit_id;
+    std::string expected_source_hash;
+};
+
+struct MapEditPreview {
+    std::string file_path;
+    std::string before;
+    std::string after;
+};
+
+struct MapEditReport {
+    std::vector<std::string> changed_files;
+    std::vector<std::string> warnings;
+    std::vector<std::string> blocking_errors;
+    std::vector<MapEditPreview> previews;
+    int update_count = 0;
+    int insert_count = 0;
+    int delete_count = 0;
+
+    bool ok() const {
+        return blocking_errors.empty();
+    }
+};
+
+struct EditableTarget {
+    size_t statement_index = kNoSourceRef;
+    std::string row_kind;
+    size_t row_index = 0;
+    const StructureModel* structure_model = nullptr;
+    const StructurePut* structure_put = nullptr;
+    const StationPut* station_put = nullptr;
+    int elements_for_statement = 0;
+};
+
+struct TextReplacement {
+    size_t begin = 0;
+    size_t end = 0;
+    std::string text;
+    std::string edit_id;
+};
+
+struct SourcePatch {
+    const SourceFileRecord* record = nullptr;
+    std::string text;
+    std::string current_hash;
+    bool utf8_bom = false;
+    std::vector<TextReplacement> replacements;
+};
+
+std::vector<MapEditChange> parse_edit_changes_json(const char* changes_json) {
+    if (!changes_json) throw std::runtime_error("changes_json is null");
+    edit_json::Value root = edit_json::Parser(changes_json).parse();
+    const edit_json::Value& changes_value = root.is_array() ? root : root.at("changes");
+    if (!changes_value.is_array()) throw std::runtime_error("edit changes JSON must contain a changes array");
+
+    std::vector<MapEditChange> changes;
+    changes.reserve(changes_value.array.size());
+    for (const edit_json::Value& item : changes_value.array) {
+        if (!item.is_object()) continue;
+        MapEditChange change;
+        change.change_id = item.at("changeId").scalar_text();
+        change.edit_id = item.at("editId").scalar_text();
+        change.operation = item.at("operation").scalar_text();
+        change.replacement_statement = item.at("replacementStatement").scalar_text();
+        change.target_file_path = item.at("targetFilePath").scalar_text();
+        change.insert_before_edit_id = item.at("insertBeforeEditId").scalar_text();
+        change.expected_source_hash = item.at("expectedSourceHash").scalar_text();
+        const edit_json::Value& fields = item.at("fieldChanges");
+        if (fields.is_object()) {
+            for (const auto& kv : fields.object) {
+                change.field_changes[kv.first] = kv.second.scalar_text();
+            }
+        }
+        changes.push_back(std::move(change));
+    }
+    return changes;
+}
+
+std::string newline_text(const std::string& newline) {
+    if (newline == "crlf") return "\r\n";
+    if (newline == "cr") return "\r";
+    return "\n";
+}
+
+std::string decode_source_text_for_edit(const std::string& bytes,
+                                        const std::string& encoding) {
+    std::string lower = ascii_lower(encoding);
+    if (lower == "utf-16le") return decode_utf16(bytes, true);
+    if (lower == "utf-16be") return decode_utf16(bytes, false);
+    if (lower == "cp932" || lower == "shift_jis" || lower == "sjis") {
+        return decode_codepage(bytes, 932, false);
+    }
+    if (has_utf8_bom(bytes)) return decode_codepage(bytes.substr(3), CP_UTF8, true);
+    return decode_codepage(bytes, CP_UTF8, true);
+}
+
+SourcePatch load_source_patch(const SourceFileRecord& record) {
+    SourcePatch patch;
+    patch.record = &record;
+    std::filesystem::path path = path_from_utf8(record.file_path);
+    std::string bytes = read_binary_file(path);
+    patch.current_hash = hex64(stable_hash64(bytes));
+    patch.utf8_bom = has_utf8_bom(bytes);
+    patch.text = decode_source_text_for_edit(bytes, record.encoding);
+    return patch;
+}
+
+size_t utf8_next_offset(const std::string& text, size_t offset) {
+    if (offset >= text.size()) return text.size();
+    ++offset;
+    while (offset < text.size() &&
+           (static_cast<unsigned char>(text[offset]) & 0xc0) == 0x80) {
+        ++offset;
+    }
+    return offset;
+}
+
+size_t offset_from_line_column(const std::string& text, int line, int column) {
+    if (line <= 0 || column <= 0) return std::string::npos;
+    size_t line_start = 0;
+    int current_line = 1;
+    while (current_line < line) {
+        size_t next = text.find('\n', line_start);
+        if (next == std::string::npos) return std::string::npos;
+        line_start = next + 1;
+        ++current_line;
+    }
+
+    size_t line_end = text.find('\n', line_start);
+    if (line_end == std::string::npos) line_end = text.size();
+    size_t offset = line_start;
+    int current_column = 1;
+    while (offset < line_end && current_column < column) {
+        if (text[offset] == '\r') {
+            ++offset;
+            continue;
+        }
+        offset = utf8_next_offset(text, offset);
+        ++current_column;
+    }
+    return offset;
+}
+
+std::pair<size_t, size_t> source_range_in_text(const SourcePatch& patch,
+                                               const SourceSpan& source) {
+    size_t begin = offset_from_line_column(patch.text, source.line, source.column);
+    size_t end = offset_from_line_column(patch.text, source.line_end, source.column_end);
+    if (begin == std::string::npos || end == std::string::npos || end < begin) {
+        throw std::runtime_error("invalid source span for edit");
+    }
+    return {begin, end};
+}
+
+std::string preview_fragment(const std::string& text, size_t begin, size_t end) {
+    const size_t context = 80;
+    size_t preview_begin = begin > context ? begin - context : 0;
+    size_t preview_end = std::min(text.size(), end + context);
+    std::string out = text.substr(preview_begin, preview_end - preview_begin);
+    if (preview_begin > 0) out = "..." + out;
+    if (preview_end < text.size()) out += "...";
+    return out;
+}
+
+bool parse_edit_number(const std::string& text, double& value) {
+    std::string trimmed = trim_field_copy(text);
+    if (trimmed.empty()) return false;
+    const char* begin = trimmed.c_str();
+    char* end = nullptr;
+    errno = 0;
+    value = std::strtod(begin, &end);
+    return end != begin && errno != ERANGE && end && *end == '\0' && std::isfinite(value);
+}
+
+std::string normalized_number_arg(const std::string& text) {
+    double value = 0.0;
+    if (!parse_edit_number(text, value)) {
+        throw std::runtime_error("invalid numeric edit value: " + text);
+    }
+    return json_number(value);
+}
+
+std::string quoted_bve_string(const std::string& text) {
+    if (text.find_first_of("'\r\n") != std::string::npos) {
+        throw std::runtime_error("single quotes and line breaks are not supported in edited string values");
+    }
+    return "'" + text + "'";
+}
+
+std::string value_to_edit_text(const Value& value) {
+    if (value.is_null()) return {};
+    return as_text(value);
+}
+
+std::string value_to_bve_arg(const Value& value) {
+    switch (value.kind) {
+        case ValueKind::Null: return {};
+        case ValueKind::ContinueValue: return "c";
+        case ValueKind::Number: return json_number(value.number);
+        case ValueKind::String: return quoted_bve_string(value.text);
+    }
+    return {};
+}
+
+bool has_field_change(const MapEditChange& change, const std::string& key) {
+    return change.field_changes.find(key) != change.field_changes.end();
+}
+
+std::string field_text_or(const MapEditChange& change, const std::string& key,
+                          const std::string& fallback) {
+    auto it = change.field_changes.find(key);
+    return it == change.field_changes.end() ? fallback : it->second;
+}
+
+std::string required_string_field(const MapEditChange& change, const std::string& key,
+                                  const std::string& fallback) {
+    std::string value = trim_field_copy(field_text_or(change, key, fallback));
+    if (value.empty()) throw std::runtime_error("required edit field is empty: " + key);
+    return value;
+}
+
+std::string numeric_field(const MapEditChange& change, const std::string& key,
+                          double fallback) {
+    return normalized_number_arg(field_text_or(change, key, json_number(fallback)));
+}
+
+std::string value_field_as_bve_arg(const MapEditChange& change, const std::string& key,
+                                   const Value& fallback) {
+    auto it = change.field_changes.find(key);
+    if (it == change.field_changes.end()) return value_to_bve_arg(fallback);
+    return quoted_bve_string(trim_field_copy(it->second));
+}
+
+std::string csv_field(const std::string& text) {
+    if (text.find_first_of(",#\"\r\n") == std::string::npos) return text;
+    std::string out = "\"";
+    for (char ch : text) {
+        if (ch == '"') out += "\"\"";
+        else out.push_back(ch);
+    }
+    out += "\"";
+    return out;
+}
+
+std::string build_structure_model_statement(const MapEditChange& change,
+                                            const ParsedStatement& statement) {
+    std::vector<std::string> fields = parse_comma_separated_fields(statement.raw_arguments, false);
+    if (fields.size() < 2) fields.resize(2);
+    std::string structure_key = required_string_field(change, "structureKey", fields[0]);
+    std::string file_path = required_string_field(change, "filePath", fields.size() > 1 ? fields[1] : "");
+    return csv_field(structure_key) + "," + csv_field(file_path);
+}
+
+std::string build_station_put_statement(const MapEditChange& change,
+                                        const StationPut& row) {
+    std::string station_key = required_string_field(change, "stationKey", value_to_edit_text(row.station_key));
+    std::ostringstream out;
+    out << "Station[" << quoted_bve_string(station_key) << "].Put("
+        << value_to_bve_arg(row.door) << ","
+        << value_to_bve_arg(row.margin1) << ","
+        << value_to_bve_arg(row.margin2) << ");";
+    return out.str();
+}
+
+std::string build_structure_put_statement(const MapEditChange& change,
+                                          const StructurePut& row,
+                                          bool between) {
+    std::string structure_key = required_string_field(change, "structureKey", value_to_edit_text(row.structure_key));
+    std::ostringstream out;
+    out << "Structure[" << quoted_bve_string(structure_key) << "]." << row.method << "(";
+    if (between) {
+        out << value_field_as_bve_arg(change, "trackKey1", row.track_key1) << ","
+            << value_field_as_bve_arg(change, "trackKey2", row.track_key2) << ","
+            << numeric_field(change, "flag", row.flag);
+    } else if (ascii_lower(row.method) == "put0") {
+        out << value_field_as_bve_arg(change, "trackKey", row.track_key) << ","
+            << numeric_field(change, "tilt", row.tilt) << ","
+            << numeric_field(change, "span", row.span);
+    } else {
+        out << value_field_as_bve_arg(change, "trackKey", row.track_key) << ","
+            << numeric_field(change, "x", row.x) << ","
+            << numeric_field(change, "y", row.y) << ","
+            << numeric_field(change, "z", row.z) << ","
+            << numeric_field(change, "rx", row.rx) << ","
+            << numeric_field(change, "ry", row.ry) << ","
+            << numeric_field(change, "rz", row.rz) << ","
+            << numeric_field(change, "tilt", row.tilt) << ","
+            << numeric_field(change, "span", row.span);
+    }
+    out << ");";
+    return out.str();
+}
+
+void count_statement_ref(const EditSourceRef& ref, size_t statement_index, int& count) {
+    if (ref.valid() && ref.statement_index == statement_index) ++count;
+}
+
+int count_elements_for_statement(const MapContext& ctx, size_t statement_index) {
+    int count = 0;
+    for (const auto& row : ctx.station_puts) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.structure_models) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.structure_puts) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.structure_betweens) count_statement_ref(row.edit_ref, statement_index, count);
+    return count;
+}
+
+template <typename Row>
+bool match_edit_ref(MapContext& ctx, const Row& row, const std::string& row_kind,
+                    size_t row_index, const std::string& edit_id, EditableTarget& target) {
+    if (!row.edit_ref.valid() || row.edit_ref.statement_index >= ctx.parsed_statements.size()) return false;
+    if (element_edit_id(ctx, row.edit_ref, row_kind) != edit_id) return false;
+    target.statement_index = row.edit_ref.statement_index;
+    target.row_kind = row_kind;
+    target.row_index = row_index;
+    target.elements_for_statement = count_elements_for_statement(ctx, target.statement_index);
+    return true;
+}
+
+EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id) {
+    EditableTarget target;
+    for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
+        const StructureModel& row = ctx.structure_models[i];
+        if (match_edit_ref(ctx, row, "structure.model", i, edit_id, target)) {
+            target.structure_model = &row;
+            return target;
+        }
+    }
+    for (size_t i = 0; i < ctx.structure_puts.size(); ++i) {
+        const StructurePut& row = ctx.structure_puts[i];
+        if (match_edit_ref(ctx, row, "structure.put", i, edit_id, target)) {
+            target.structure_put = &row;
+            return target;
+        }
+    }
+    for (size_t i = 0; i < ctx.structure_betweens.size(); ++i) {
+        const StructurePut& row = ctx.structure_betweens[i];
+        if (match_edit_ref(ctx, row, "structure.between", i, edit_id, target)) {
+            target.structure_put = &row;
+            return target;
+        }
+    }
+    for (size_t i = 0; i < ctx.station_puts.size(); ++i) {
+        const StationPut& row = ctx.station_puts[i];
+        if (match_edit_ref(ctx, row, "station.put", i, edit_id, target)) {
+            target.station_put = &row;
+            return target;
+        }
+    }
+    return target;
+}
+
+std::string build_replacement_statement(const MapEditChange& change,
+                                        const ParsedStatement& statement,
+                                        const EditableTarget& target) {
+    if (!change.replacement_statement.empty()) return change.replacement_statement;
+    if (target.row_kind == "structure.model") {
+        return build_structure_model_statement(change, statement);
+    }
+    if (target.row_kind == "structure.put" && target.structure_put) {
+        return build_structure_put_statement(change, *target.structure_put, false);
+    }
+    if (target.row_kind == "structure.between" && target.structure_put) {
+        return build_structure_put_statement(change, *target.structure_put, true);
+    }
+    if (target.row_kind == "station.put" && target.station_put) {
+        return build_station_put_statement(change, *target.station_put);
+    }
+    throw std::runtime_error("unsupported editable target: " + target.row_kind);
+}
+
+std::string wrap_distance_edit_if_needed(const MapEditChange& change,
+                                         const ParsedStatement& statement,
+                                         const SourceFileRecord& file,
+                                         std::string replacement,
+                                         MapEditReport& report) {
+    if (!has_field_change(change, "distance")) return replacement;
+    std::string new_distance = normalized_number_arg(field_text_or(change, "distance", json_number(statement.distance_value)));
+    std::string old_distance = trim_field_copy(statement.distance_expression);
+    if (old_distance.empty()) old_distance = json_number(statement.distance_value);
+    std::string nl = newline_text(file.newline);
+    ++report.insert_count;
+    report.warnings.push_back("distance edit inserts a fixed distance statement before the target and restores the previous distance after it");
+    return new_distance + ";" + nl + replacement + nl + old_distance + ";";
+}
+
+std::string report_json(const MapEditReport& report) {
+    std::ostringstream out;
+    out << "{\"ok\":" << (report.ok() ? "true" : "false")
+        << ",\"updateCount\":" << report.update_count
+        << ",\"insertCount\":" << report.insert_count
+        << ",\"deleteCount\":" << report.delete_count
+        << ",\"changedFiles\":[";
+    for (size_t i = 0; i < report.changed_files.size(); ++i) {
+        if (i) out << ",";
+        append_json_string(out, report.changed_files[i]);
+    }
+    out << "],\"warnings\":[";
+    for (size_t i = 0; i < report.warnings.size(); ++i) {
+        if (i) out << ",";
+        append_json_string(out, report.warnings[i]);
+    }
+    out << "],\"blockingErrors\":[";
+    for (size_t i = 0; i < report.blocking_errors.size(); ++i) {
+        if (i) out << ",";
+        append_json_string(out, report.blocking_errors[i]);
+    }
+    out << "],\"previewSnippets\":[";
+    for (size_t i = 0; i < report.previews.size(); ++i) {
+        if (i) out << ",";
+        out << "{\"filePath\":";
+        append_json_string(out, report.previews[i].file_path);
+        out << ",\"before\":";
+        append_json_string(out, report.previews[i].before);
+        out << ",\"after\":";
+        append_json_string(out, report.previews[i].after);
+        out << "}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+void write_binary_file_for_edit(const std::filesystem::path& path, const std::string& bytes) {
+#if defined(_WIN32)
+    FILE* output = _wfopen(path.wstring().c_str(), L"wb");
+    if (!output) throw std::runtime_error("File open error: " + path_to_utf8(path));
+    if (!bytes.empty() && std::fwrite(bytes.data(), 1, bytes.size(), output) != bytes.size()) {
+        std::fclose(output);
+        throw std::runtime_error("File write error: " + path_to_utf8(path));
+    }
+    std::fclose(output);
+#else
+    std::ofstream output(path, std::ios::binary);
+    if (!output) throw std::runtime_error("File open error: " + path_to_utf8(path));
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    if (!output) throw std::runtime_error("File write error: " + path_to_utf8(path));
+#endif
+}
+
+MapEditReport build_edit_report(MapContext& ctx,
+                                const std::vector<MapEditChange>& changes,
+                                bool write_files) {
+    MapEditReport report;
+    std::map<size_t, SourcePatch> patches;
+
+    for (const MapEditChange& change : changes) {
+        if (change.edit_id.empty()) {
+            report.blocking_errors.push_back("edit change is missing editId");
+            continue;
+        }
+        std::string operation = ascii_lower(change.operation.empty() ? "update" : change.operation);
+        EditableTarget target = find_editable_target(ctx, change.edit_id);
+        if (target.statement_index == kNoSourceRef ||
+            target.statement_index >= ctx.parsed_statements.size()) {
+            report.blocking_errors.push_back("unsupported or unknown editId: " + change.edit_id);
+            continue;
+        }
+
+        const ParsedStatement& statement = ctx.parsed_statements[target.statement_index];
+        if (statement.source.source_file_index >= ctx.source_files.size()) {
+            report.blocking_errors.push_back("edit target has no source file: " + change.edit_id);
+            continue;
+        }
+        const SourceFileRecord& file = ctx.source_files[statement.source.source_file_index];
+        SourcePatch& patch = patches[statement.source.source_file_index];
+        if (!patch.record) {
+            try {
+                patch = load_source_patch(file);
+            } catch (const std::exception& e) {
+                report.blocking_errors.push_back(e.what());
+                continue;
+            }
+        }
+        const std::string& expected_hash = change.expected_source_hash.empty()
+            ? file.source_hash
+            : change.expected_source_hash;
+        if (!expected_hash.empty() && patch.current_hash != expected_hash) {
+            report.blocking_errors.push_back("source file changed externally: " + file.file_path);
+            continue;
+        }
+
+        TextReplacement replacement;
+        replacement.edit_id = change.edit_id;
+        try {
+            auto range = source_range_in_text(patch, statement.source);
+            replacement.begin = range.first;
+            replacement.end = range.second;
+            if (operation == "delete") {
+                if (target.elements_for_statement != 1) {
+                    report.blocking_errors.push_back("delete is blocked because the source statement maps to multiple elements: " + change.edit_id);
+                    continue;
+                }
+                replacement.text.clear();
+                ++report.delete_count;
+            } else if (operation == "update") {
+                if (target.elements_for_statement != 1) {
+                    report.blocking_errors.push_back("update is blocked because the source statement maps to multiple elements: " + change.edit_id);
+                    continue;
+                }
+                replacement.text = build_replacement_statement(change, statement, target);
+                replacement.text = wrap_distance_edit_if_needed(change, statement, file, std::move(replacement.text), report);
+                ++report.update_count;
+            } else if (operation == "insert") {
+                report.blocking_errors.push_back("insert edits are not implemented for this target yet: " + change.edit_id);
+                continue;
+            } else {
+                report.blocking_errors.push_back("unknown edit operation: " + change.operation);
+                continue;
+            }
+            patch.replacements.push_back(std::move(replacement));
+        } catch (const std::exception& e) {
+            report.blocking_errors.push_back(std::string("edit change failed for ") + change.edit_id + ": " + e.what());
+        }
+    }
+
+    for (auto& patch_entry : patches) {
+        SourcePatch& patch = patch_entry.second;
+        if (!patch.record || patch.replacements.empty()) continue;
+        std::sort(patch.replacements.begin(), patch.replacements.end(),
+                  [](const TextReplacement& a, const TextReplacement& b) {
+                      if (a.begin != b.begin) return a.begin > b.begin;
+                      return a.end > b.end;
+                  });
+        for (size_t i = 1; i < patch.replacements.size(); ++i) {
+            const TextReplacement& previous = patch.replacements[i - 1];
+            const TextReplacement& current = patch.replacements[i];
+            if (current.end > previous.begin) {
+                report.blocking_errors.push_back("overlapping edits in source file: " + patch.record->file_path);
+                break;
+            }
+        }
+    }
+
+    if (!report.ok()) return report;
+
+    for (auto& patch_entry : patches) {
+        SourcePatch& patch = patch_entry.second;
+        if (!patch.record || patch.replacements.empty()) continue;
+        std::string patched_text = patch.text;
+        for (const TextReplacement& replacement : patch.replacements) {
+            report.previews.push_back({
+                patch.record->file_path,
+                preview_fragment(patched_text, replacement.begin, replacement.end),
+                preview_fragment(replacement.text, 0, replacement.text.size())
+            });
+            patched_text.replace(replacement.begin,
+                                 replacement.end - replacement.begin,
+                                 replacement.text);
+        }
+        std::string bytes;
+        try {
+            bytes = encode_text_for_writeback(patched_text, patch.record->encoding, patch.utf8_bom);
+        } catch (const std::exception& e) {
+            report.blocking_errors.push_back(e.what());
+            continue;
+        }
+        report.changed_files.push_back(patch.record->file_path);
+        if (write_files) {
+            write_binary_file_for_edit(path_from_utf8(patch.record->file_path), bytes);
+        }
+    }
+    return report;
 }
 
 std::string build_ir_json(MapContext& ctx, unsigned flags) {
@@ -4895,6 +5666,32 @@ KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags) {
 
 KV_API const char* kv_get_ir_json(void* handle) {
     return kv_get_ir_json_ex(handle, KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE);
+}
+
+KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        std::vector<MapEditChange> changes = parse_edit_changes_json(changes_json);
+        MapEditReport report = build_edit_report(*ctx, changes, false);
+        return copy_c_string(report_json(report));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
+}
+
+KV_API const char* kv_edit_apply(void* handle, const char* changes_json) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        std::vector<MapEditChange> changes = parse_edit_changes_json(changes_json);
+        MapEditReport report = build_edit_report(*ctx, changes, true);
+        return copy_c_string(report_json(report));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
 }
 
 KV_API const char* kv_get_last_error(void) {

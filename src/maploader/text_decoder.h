@@ -18,5 +18,8 @@ std::string decode_codepage(const std::string& bytes, unsigned int codepage, boo
 std::string decode_utf16(const std::string& bytes, bool little_endian);
 std::string first_line_ascii(const std::string& bytes);
 bool has_utf8_bom(const std::string& bytes);
+std::string encode_text_for_writeback(const std::string& utf8_text,
+                                      const std::string& encoding,
+                                      bool utf8_bom);
 
 } // namespace kme::maploader

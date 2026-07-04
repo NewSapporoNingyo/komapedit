@@ -158,6 +158,7 @@ struct EditSourceFileInfo {
     std::string display_path;
     std::string encoding;
     std::string newline;
+    std::string source_hash;
     size_t byte_length = 0;
 };
 
@@ -891,6 +892,44 @@ struct TableFindState {
     bool unused_has_run = false;
 };
 
+struct MapElementEditFieldState {
+    std::string key;
+    std::string label;
+    std::string original_value;
+    char value[256] = {};
+    bool numeric = false;
+    bool required = true;
+};
+
+struct MapElementPendingChange {
+    std::string change_id;
+    std::string edit_id;
+    std::string operation = "update";
+    std::map<std::string, std::string> field_changes;
+    std::string expected_source_hash;
+};
+
+struct MapElementInspectorState {
+    bool open = false;
+    std::string edit_id;
+    std::string row_kind;
+    std::string title;
+    std::string source_file;
+    std::string source_hash;
+    int line = 0;
+    int column = 0;
+    std::string raw_statement;
+    std::string status_message;
+    bool delete_supported = false;
+    bool pending_delete = false;
+    std::vector<MapElementEditFieldState> fields;
+};
+
+struct MapElementInspectorRequest {
+    std::string edit_id;
+    std::string row_kind;
+};
+
 struct BackgroundHistory {
     bool has_image = false;
     std::string image_path;
@@ -928,6 +967,8 @@ public:
                                                         bool has_camera_distance, double camera_distance,
                                                         const std::string& output_path);
     static int run_debug_headless_source_anchors(const std::string& path, double unit_distance,
+                                                 const std::string& output_path);
+    static int run_debug_headless_edit_roundtrip(const std::string& path, double unit_distance,
                                                  const std::string& output_path);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
@@ -967,6 +1008,11 @@ private:
     MapModel model_;
     bool has_model_ = false;
     std::string file_path_;
+    bool edit_registry_loaded_ = false;
+    bool clear_pending_edits_after_load_ = false;
+    std::map<std::string, MapElementPendingChange> pending_edit_changes_;
+    MapElementInspectorState inspector_;
+    std::optional<MapElementInspectorRequest> pending_inspector_request_;
 
     std::vector<LogLine> logs_;
     std::mutex log_mutex_;
@@ -978,6 +1024,7 @@ private:
         bool ok = false;
         bool preserve_settings = false;
         bool record_history = false;
+        bool full_edit_registry = false;
         bool preserve_scene_preview_models = false;
         bool preserve_scene_preview_camera = false;
         std::optional<BackgroundHistory> background_to_restore;
@@ -1254,6 +1301,19 @@ private:
     static MapModel build_model_from_handle(void* handle, const std::string& path);
     static MapModel build_model_from_handle(void* handle, const std::string& path,
                                             LoadModelOptions options);
+    bool ensure_full_edit_registry();
+    void clear_pending_edit_state();
+    void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
+    void process_pending_element_inspector();
+    bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);
+    bool row_has_pending_edit(const std::string& edit_id) const;
+    bool row_is_pending_delete(const std::string& edit_id) const;
+    void apply_inspector_changes();
+    void revert_inspector_changes();
+    void delete_inspector_target();
+    void save_pending_edits();
+    std::string pending_changes_json() const;
+    void render_element_inspector();
 
     void handle_shortcuts();
     void render_menu();

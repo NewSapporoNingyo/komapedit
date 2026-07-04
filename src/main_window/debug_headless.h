@@ -62,6 +62,14 @@ struct HeadlessSourceAnchorOptions {
     std::string error;
 };
 
+struct HeadlessEditRoundtripOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessTableFindOptions {
     bool requested = false;
     std::string output_path;
@@ -80,6 +88,7 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args);
 HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(const std::vector<std::string>& args);
 HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vector<std::string>& args);
+HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::vector<std::string>& args);
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args);
 HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<std::string>& args);
 int run_headless_load_map(const HeadlessLoadOptions& options);

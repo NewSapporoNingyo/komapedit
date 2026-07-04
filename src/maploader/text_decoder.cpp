@@ -7,6 +7,8 @@
 #include "text_decoder.h"
 
 #include <algorithm>
+#include <cctype>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -194,6 +196,95 @@ bool has_utf8_bom(const std::string& bytes) {
            static_cast<unsigned char>(bytes[0]) == 0xef &&
            static_cast<unsigned char>(bytes[1]) == 0xbb &&
            static_cast<unsigned char>(bytes[2]) == 0xbf;
+}
+
+std::string append_utf16_bytes(const std::wstring& wide, bool little_endian) {
+    std::string out;
+    out.reserve(2 + wide.size() * 2);
+    if (little_endian) {
+        out.push_back(static_cast<char>(0xff));
+        out.push_back(static_cast<char>(0xfe));
+    } else {
+        out.push_back(static_cast<char>(0xfe));
+        out.push_back(static_cast<char>(0xff));
+    }
+    for (wchar_t wc : wide) {
+        uint32_t cp = static_cast<uint32_t>(wc);
+#if WCHAR_MAX > 0xffff
+        if (cp > 0xffff) {
+            cp -= 0x10000;
+            uint16_t high = static_cast<uint16_t>(0xd800 + ((cp >> 10) & 0x3ff));
+            uint16_t low = static_cast<uint16_t>(0xdc00 + (cp & 0x3ff));
+            uint16_t units[] = {high, low};
+            for (uint16_t unit : units) {
+                if (little_endian) {
+                    out.push_back(static_cast<char>(unit & 0xff));
+                    out.push_back(static_cast<char>((unit >> 8) & 0xff));
+                } else {
+                    out.push_back(static_cast<char>((unit >> 8) & 0xff));
+                    out.push_back(static_cast<char>(unit & 0xff));
+                }
+            }
+            continue;
+        }
+#endif
+        uint16_t unit = static_cast<uint16_t>(cp);
+        if (little_endian) {
+            out.push_back(static_cast<char>(unit & 0xff));
+            out.push_back(static_cast<char>((unit >> 8) & 0xff));
+        } else {
+            out.push_back(static_cast<char>((unit >> 8) & 0xff));
+            out.push_back(static_cast<char>(unit & 0xff));
+        }
+    }
+    return out;
+}
+
+std::string encode_text_for_writeback(const std::string& utf8_text,
+                                      const std::string& encoding,
+                                      bool utf8_bom) {
+    std::string lower = encoding;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (lower == "utf-8" || lower == "utf8" || lower.empty()) {
+        return utf8_bom ? std::string("\xef\xbb\xbf") + utf8_text : utf8_text;
+    }
+
+#if defined(_WIN32)
+    std::wstring wide = utf8_to_wide(utf8_text);
+    if (lower == "utf-16le") return append_utf16_bytes(wide, true);
+    if (lower == "utf-16be") return append_utf16_bytes(wide, false);
+    if (lower == "cp932" || lower == "shift_jis" || lower == "sjis") {
+        if (wide.empty()) return {};
+        BOOL used_default = FALSE;
+        int bytes = WideCharToMultiByte(932, WC_NO_BEST_FIT_CHARS,
+                                        wide.data(), static_cast<int>(wide.size()),
+                                        nullptr, 0, nullptr, &used_default);
+        if (bytes <= 0 || used_default) {
+            throw std::runtime_error("text cannot be represented as CP932");
+        }
+        std::string out(bytes, '\0');
+        used_default = FALSE;
+        WideCharToMultiByte(932, WC_NO_BEST_FIT_CHARS,
+                            wide.data(), static_cast<int>(wide.size()),
+                            out.data(), bytes, nullptr, &used_default);
+        if (used_default) throw std::runtime_error("text cannot be represented as CP932");
+        return out;
+    }
+#else
+    if (lower == "cp932" || lower == "shift_jis" || lower == "sjis") {
+        if (std::any_of(utf8_text.begin(), utf8_text.end(), [](unsigned char ch) { return ch >= 0x80; })) {
+            throw std::runtime_error("CP932 writeback is only supported on Windows");
+        }
+        return utf8_text;
+    }
+    if (lower == "utf-16le" || lower == "utf-16be") {
+        throw std::runtime_error("UTF-16 writeback is only supported on Windows");
+    }
+#endif
+
+    throw std::runtime_error("unsupported source encoding for writeback: " + encoding);
 }
 
 } // namespace kme::maploader

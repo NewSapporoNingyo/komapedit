@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cctype>
@@ -76,6 +77,54 @@ void set_crosshair_cursor() {
 void set_move_cursor() {
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
     ::SetCursor(::LoadCursor(nullptr, IDC_SIZEALL));
+}
+
+void append_gui_json_string(std::ostringstream& out, const std::string& text) {
+    out << '"';
+    for (unsigned char ch : text) {
+        switch (ch) {
+            case '\\': out << "\\\\"; break;
+            case '"': out << "\\\""; break;
+            case '\b': out << "\\b"; break;
+            case '\f': out << "\\f"; break;
+            case '\n': out << "\\n"; break;
+            case '\r': out << "\\r"; break;
+            case '\t': out << "\\t"; break;
+            default:
+                if (ch < 0x20) {
+                    out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                        << static_cast<int>(ch) << std::dec << std::setfill(' ');
+                } else {
+                    out << static_cast<char>(ch);
+                }
+        }
+    }
+    out << '"';
+}
+
+std::string edit_field_buffer_text(const MapElementEditFieldState& field) {
+    return std::string(field.value);
+}
+
+std::string trim_gui_ascii_copy(const std::string& text) {
+    size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    size_t last = text.find_last_not_of(" \t\r\n");
+    return text.substr(first, last - first + 1);
+}
+
+void set_edit_field_buffer(MapElementEditFieldState& field, const std::string& value) {
+    std::snprintf(field.value, sizeof(field.value), "%s", value.c_str());
+}
+
+bool parse_gui_edit_number(const std::string& text) {
+    std::string trimmed = trim_gui_ascii_copy(text);
+    if (trimmed.empty()) return false;
+    const char* begin = trimmed.c_str();
+    char* end = nullptr;
+    errno = 0;
+    std::strtod(begin, &end);
+    return end != begin && errno != ERANGE && end && *end == '\0';
 }
 
 std::wstring utf8_to_wide(const std::string& text) {
@@ -589,9 +638,15 @@ void App::apply_load_result(LoadResult result) {
         if (result.handle) kv_free(result.handle);
         return;
     }
+    const bool loaded_different_file = result.path != file_path_;
     if (handle_) kv_free(handle_);
     handle_ = result.handle;
     model_ = std::move(result.model);
+    edit_registry_loaded_ = result.full_edit_registry;
+    if (clear_pending_edits_after_load_ || loaded_different_file || !pending_edit_changes_.empty()) {
+        clear_pending_edit_state();
+        clear_pending_edits_after_load_ = false;
+    }
     invalidate_table_cache();
     has_model_ = true;
     rebuild_marker_overlay_cache();
@@ -669,7 +724,9 @@ void App::regenerate_geometry() {
     std::map<std::string, OtherTrack> old_other;
     for (const auto& t : model_.other_tracks) old_other[t.key] = t;
     try {
-        MapModel updated = build_model_from_handle(handle_, file_path_);
+        LoadModelOptions options;
+        options.full_edit_registry = edit_registry_loaded_ || inspector_.open || !pending_edit_changes_.empty();
+        MapModel updated = build_model_from_handle(handle_, file_path_, options);
         for (auto& t : updated.other_tracks) {
             auto it = old_other.find(t.key);
             if (it != old_other.end()) {
@@ -680,6 +737,7 @@ void App::regenerate_geometry() {
             }
         }
         model_ = std::move(updated);
+        edit_registry_loaded_ = options.full_edit_registry;
         invalidate_table_cache();
         rebuild_marker_overlay_cache();
         sync_marker_visibility_sizes();
@@ -741,6 +799,7 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
     try {
         auto model_started_at = std::chrono::steady_clock::now();
         out.model = build_model_from_handle(handle, path, options);
+        out.full_edit_registry = options.full_edit_registry;
         out.model_build_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - model_started_at).count();
         if (has_cp) {
@@ -796,6 +855,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
             file.display_path = item.at("displayPath").scalar_text();
             file.encoding = item.at("encoding").scalar_text();
             file.newline = item.at("newline").scalar_text();
+            file.source_hash = item.at("sourceHash").scalar_text();
             file.byte_length = static_cast<size_t>(std::max(0.0, item.at("byteLength").number));
             model.edit_files.push_back(std::move(file));
         }
@@ -1101,6 +1161,383 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         std::chrono::steady_clock::now() - hydrate_started_at).count();
     annotate_scene_track_key_warnings(model);
     return model;
+}
+
+bool App::ensure_full_edit_registry() {
+    if (!handle_ || !has_model_) return false;
+    if (edit_registry_loaded_ && !model_.edit_statements.empty()) return true;
+    try {
+        std::map<std::string, OtherTrack> old_other;
+        for (const auto& track : model_.other_tracks) old_other[track.key] = track;
+        MapModel full = build_model_from_handle(handle_, file_path_, LoadModelOptions{true});
+        for (auto& track : full.other_tracks) {
+            auto it = old_other.find(track.key);
+            if (it != old_other.end()) {
+                track.visible = it->second.visible;
+                track.color = it->second.color;
+                track.range_min = it->second.range_min;
+                track.range_max = it->second.range_max;
+            }
+        }
+        full.has_cp_arb = model_.has_cp_arb;
+        std::copy(std::begin(model_.cp_arb), std::end(model_.cp_arb), std::begin(full.cp_arb));
+        model_ = std::move(full);
+        edit_registry_loaded_ = true;
+        invalidate_table_cache();
+        rebuild_marker_overlay_cache();
+        sync_marker_visibility_sizes();
+        scene_preview_dirty_ = true;
+        add_log("[info]gui_kme.cpp: full edit registry loaded");
+        return true;
+    } catch (const std::exception& e) {
+        add_log(std::string("[error]gui_kme.cpp: failed to load edit registry: ") + e.what());
+        return false;
+    }
+}
+
+void App::clear_pending_edit_state() {
+    pending_edit_changes_.clear();
+    inspector_ = MapElementInspectorState{};
+}
+
+bool App::row_has_pending_edit(const std::string& edit_id) const {
+    return !edit_id.empty() && pending_edit_changes_.find(edit_id) != pending_edit_changes_.end();
+}
+
+bool App::row_is_pending_delete(const std::string& edit_id) const {
+    auto it = pending_edit_changes_.find(edit_id);
+    return it != pending_edit_changes_.end() && it->second.operation == "delete";
+}
+
+void App::request_element_inspector(const std::string& edit_id, const std::string& row_kind) {
+    if (edit_id.empty()) return;
+    pending_inspector_request_ = MapElementInspectorRequest{edit_id, row_kind};
+}
+
+void App::process_pending_element_inspector() {
+    if (!pending_inspector_request_) return;
+    MapElementInspectorRequest request = std::move(*pending_inspector_request_);
+    pending_inspector_request_.reset();
+    open_element_inspector(request.edit_id, request.row_kind);
+}
+
+const EditSourceFileInfo* find_model_source_file(const MapModel& model, const std::string& path) {
+    for (const EditSourceFileInfo& file : model.edit_files) {
+        if (file.file_path == path) return &file;
+    }
+    return nullptr;
+}
+
+const EditElementInfo* find_model_edit_element(const MapModel& model, const std::string& edit_id) {
+    for (const EditElementInfo& element : model.edit_elements) {
+        if (element.edit_id == edit_id) return &element;
+    }
+    return nullptr;
+}
+
+const EditStatementInfo* find_model_statement_for_element(const MapModel& model,
+                                                          const EditElementInfo& element) {
+    for (const EditStatementInfo& statement : model.edit_statements) {
+        if (statement.global_order == element.global_order &&
+            statement.source.file_path == element.source_file_path) {
+            return &statement;
+        }
+    }
+    return nullptr;
+}
+
+template <typename Rows>
+const TableRow* find_model_row_by_edit_id(const Rows& rows, const std::string& edit_id) {
+    for (const TableRow& row : rows) {
+        if (row.edit_id == edit_id) return &row;
+    }
+    return nullptr;
+}
+
+bool App::open_element_inspector(const std::string& edit_id, const std::string& row_kind) {
+    if (edit_id.empty()) return false;
+    if (!ensure_full_edit_registry()) return false;
+
+    const TableRow* row = nullptr;
+    if (row_kind == "structure.model") {
+        row = find_model_row_by_edit_id(model_.structure_models, edit_id);
+    } else if (row_kind == "structure.put") {
+        row = find_model_row_by_edit_id(model_.structures, edit_id);
+    } else if (row_kind == "structure.between") {
+        row = find_model_row_by_edit_id(model_.structures_between, edit_id);
+    } else if (row_kind == "station.put") {
+        row = find_model_row_by_edit_id(model_.station_list_rows, edit_id);
+    }
+    if (!row) {
+        add_log("[warn]gui_kme.cpp: edit target row not found: " + edit_id);
+        return false;
+    }
+
+    const EditElementInfo* element = find_model_edit_element(model_, edit_id);
+    const EditStatementInfo* statement = element ? find_model_statement_for_element(model_, *element) : nullptr;
+    const EditSourceInfo& source = statement ? statement->source : row->source;
+    const EditSourceFileInfo* source_file = find_model_source_file(model_, source.file_path);
+
+    MapElementInspectorState next;
+    next.open = true;
+    next.edit_id = edit_id;
+    next.row_kind = row_kind;
+    next.title = tr("dialog.element_properties");
+    next.source_file = source.file_path;
+    next.source_hash = source_file ? source_file->source_hash : std::string{};
+    next.line = source.line;
+    next.column = source.column;
+    next.raw_statement = statement && !statement->raw_text.empty()
+        ? statement->raw_text
+        : source.raw_text_preview;
+    next.delete_supported = true;
+
+    auto add_field = [&](const std::string& key, const std::string& label,
+                         const std::string& value, bool numeric, bool required) {
+        MapElementEditFieldState field;
+        field.key = key;
+        field.label = label;
+        field.original_value = value;
+        field.numeric = numeric;
+        field.required = required;
+        set_edit_field_buffer(field, value);
+        next.fields.push_back(field);
+    };
+
+    if (row_kind == "structure.model") {
+        add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
+        add_field("filePath", "filePath", table_cell(*row, "filePath"), false, true);
+    } else if (row_kind == "structure.put") {
+        const std::string method = table_cell(*row, "method");
+        add_field("distance", "distance", table_cell(*row, "distance"), true, true);
+        add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
+        add_field("trackKey", "trackKey", table_cell(*row, "trackKey"), false, true);
+        if (ascii_lower(method) != "put0") {
+            add_field("x", "x", table_cell(*row, "x"), true, true);
+            add_field("y", "y", table_cell(*row, "y"), true, true);
+            add_field("z", "z", table_cell(*row, "z"), true, true);
+            add_field("rx", "rx", table_cell(*row, "rx"), true, true);
+            add_field("ry", "ry", table_cell(*row, "ry"), true, true);
+            add_field("rz", "rz", table_cell(*row, "rz"), true, true);
+        }
+        add_field("tilt", "tilt", table_cell(*row, "tilt"), true, true);
+        add_field("span", "span", table_cell(*row, "span"), true, true);
+    } else if (row_kind == "structure.between") {
+        add_field("distance", "distance", table_cell(*row, "distance"), true, true);
+        add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
+        add_field("trackKey1", "trackKey1", table_cell(*row, "trackKey1"), false, true);
+        add_field("trackKey2", "trackKey2", table_cell(*row, "trackKey2"), false, true);
+        add_field("flag", "flag", table_cell(*row, "flag"), true, true);
+    } else if (row_kind == "station.put") {
+        add_field("distance", "distance", table_cell(*row, "_distance"), true, true);
+        add_field("stationKey", "stationKey", table_cell(*row, "posKey"), false, true);
+    }
+
+    auto pending = pending_edit_changes_.find(edit_id);
+    if (pending != pending_edit_changes_.end()) {
+        next.pending_delete = pending->second.operation == "delete";
+        for (MapElementEditFieldState& field : next.fields) {
+            auto field_it = pending->second.field_changes.find(field.key);
+            if (field_it != pending->second.field_changes.end()) {
+                set_edit_field_buffer(field, field_it->second);
+            }
+        }
+    }
+
+    inspector_ = std::move(next);
+    return true;
+}
+
+void App::apply_inspector_changes() {
+    if (!inspector_.open || inspector_.edit_id.empty()) return;
+    if (inspector_.pending_delete) {
+        delete_inspector_target();
+        return;
+    }
+
+    MapElementPendingChange change;
+    change.change_id = "change-" + inspector_.edit_id;
+    change.edit_id = inspector_.edit_id;
+    change.operation = "update";
+    change.expected_source_hash = inspector_.source_hash;
+
+    for (const MapElementEditFieldState& field : inspector_.fields) {
+        std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+        if (field.required && value.empty()) {
+            inspector_.status_message = tr("status.edit.required_field");
+            return;
+        }
+        if (field.numeric && !parse_gui_edit_number(value)) {
+            inspector_.status_message = tr("status.edit.invalid_number");
+            return;
+        }
+        if (value != field.original_value) {
+            change.field_changes[field.key] = value;
+        }
+    }
+
+    if (change.field_changes.empty()) {
+        pending_edit_changes_.erase(inspector_.edit_id);
+        inspector_.status_message = tr("status.edit.no_changes");
+        return;
+    }
+
+    pending_edit_changes_[change.edit_id] = std::move(change);
+    inspector_.status_message = tr("status.edit.pending");
+}
+
+void App::revert_inspector_changes() {
+    if (!inspector_.open || inspector_.edit_id.empty()) return;
+    pending_edit_changes_.erase(inspector_.edit_id);
+    inspector_.pending_delete = false;
+    for (MapElementEditFieldState& field : inspector_.fields) {
+        set_edit_field_buffer(field, field.original_value);
+    }
+    inspector_.status_message = tr("status.edit.reverted");
+}
+
+void App::delete_inspector_target() {
+    if (!inspector_.open || inspector_.edit_id.empty() || !inspector_.delete_supported) return;
+    MapElementPendingChange change;
+    change.change_id = "delete-" + inspector_.edit_id;
+    change.edit_id = inspector_.edit_id;
+    change.operation = "delete";
+    change.expected_source_hash = inspector_.source_hash;
+    pending_edit_changes_[change.edit_id] = std::move(change);
+    inspector_.pending_delete = true;
+    inspector_.status_message = tr("status.edit.pending_delete");
+}
+
+std::string App::pending_changes_json() const {
+    std::ostringstream out;
+    out << "{\"changes\":[";
+    bool first_change = true;
+    for (const auto& kv : pending_edit_changes_) {
+        const MapElementPendingChange& change = kv.second;
+        if (!first_change) out << ",";
+        first_change = false;
+        out << "{\"changeId\":";
+        append_gui_json_string(out, change.change_id);
+        out << ",\"editId\":";
+        append_gui_json_string(out, change.edit_id);
+        out << ",\"operation\":";
+        append_gui_json_string(out, change.operation);
+        out << ",\"expectedSourceHash\":";
+        append_gui_json_string(out, change.expected_source_hash);
+        out << ",\"fieldChanges\":{";
+        bool first_field = true;
+        for (const auto& field : change.field_changes) {
+            if (!first_field) out << ",";
+            first_field = false;
+            append_gui_json_string(out, field.first);
+            out << ":";
+            append_gui_json_string(out, field.second);
+        }
+        out << "}}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+void App::save_pending_edits() {
+    if (!handle_ || pending_edit_changes_.empty() || load_state_.running) return;
+    std::string json = pending_changes_json();
+    const char* raw = kv_edit_apply(handle_, json.c_str());
+    if (!raw) {
+        const char* err = kv_get_last_error();
+        add_log(std::string("[error]gui_kme.cpp: edit save failed: ") + (err ? err : "unknown error"));
+        return;
+    }
+    std::string report_text(raw);
+    kv_free_string(raw);
+
+    bool ok = false;
+    try {
+        auto report = mini_json::Parser(report_text).parse();
+        ok = report.at("ok").boolean;
+        const auto& warnings = report.at("warnings");
+        if (warnings.is_array()) {
+            for (const auto& item : warnings.array) {
+                add_log("[warn]gui_kme.cpp: " + item.scalar_text());
+            }
+        }
+        const auto& errors = report.at("blockingErrors");
+        if (errors.is_array()) {
+            for (const auto& item : errors.array) {
+                add_log("[error]gui_kme.cpp: " + item.scalar_text());
+            }
+        }
+        if (ok) {
+            int update_count = static_cast<int>(report.at("updateCount").number);
+            int delete_count = static_cast<int>(report.at("deleteCount").number);
+            add_log("[info]gui_kme.cpp: edit save applied: updates=" +
+                    std::to_string(update_count) + ", deletes=" + std::to_string(delete_count));
+        }
+    } catch (const std::exception& e) {
+        add_log(std::string("[error]gui_kme.cpp: failed to parse edit report: ") + e.what());
+        add_log(report_text);
+        return;
+    }
+
+    if (!ok) return;
+    clear_pending_edits_after_load_ = true;
+    begin_load(file_path_, true, false, std::nullopt, true, true);
+}
+
+void App::render_element_inspector() {
+    if (!inspector_.open) return;
+    std::string title = tr("dialog.element_properties") + "###ElementInspector";
+    if (!ImGui::Begin(title.c_str(), &inspector_.open)) {
+        ImGui::End();
+        return;
+    }
+
+    const bool dirty = row_has_pending_edit(inspector_.edit_id);
+    if (dirty) {
+        ImGui::TextUnformatted(tr(row_is_pending_delete(inspector_.edit_id)
+            ? "status.edit.pending_delete"
+            : "status.edit.pending").c_str());
+    }
+    ImGui::TextUnformatted(tr("label.source_file").c_str());
+    ImGui::SameLine();
+    ImGui::TextUnformatted(inspector_.source_file.c_str());
+    ImGui::Text("%s %d:%d", tr("label.source_position").c_str(), inspector_.line, inspector_.column);
+    if (!inspector_.raw_statement.empty()) {
+        ImGui::Separator();
+        ImGui::TextUnformatted(tr("label.raw_statement").c_str());
+        ImGui::TextWrapped("%s", inspector_.raw_statement.c_str());
+    }
+
+    ImGui::Separator();
+    ImGui::BeginDisabled(inspector_.pending_delete);
+    for (MapElementEditFieldState& field : inspector_.fields) {
+        const bool changed = edit_field_buffer_text(field) != field.original_value;
+        if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
+        ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
+        ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
+        if (changed) ImGui::PopStyleColor();
+    }
+    ImGui::EndDisabled();
+
+    if (!inspector_.status_message.empty()) {
+        ImGui::TextUnformatted(inspector_.status_message.c_str());
+    }
+
+    if (ImGui::Button(tr("button.apply").c_str())) apply_inspector_changes();
+    ImGui::SameLine();
+    if (ImGui::Button(tr("button.revert").c_str())) revert_inspector_changes();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!inspector_.delete_supported);
+    if (ImGui::Button(tr("button.delete").c_str())) delete_inspector_target();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(pending_edit_changes_.empty() || load_state_.running);
+    if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(tr("button.close").c_str())) inspector_.open = false;
+
+    ImGui::End();
 }
 
 std::string App::open_map_dialog() {
@@ -1883,6 +2320,11 @@ void App::render_toolbar() {
         const bool can_reload_geometry = !load_state_.running && has_model_ && !file_path_.empty();
         ImGui::BeginDisabled(!can_reload_geometry);
         if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(pending_edit_changes_.empty() || load_state_.running);
+        if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
         ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
@@ -2728,6 +3170,8 @@ void App::render() {
     render_adhesions_window();
     render_cab_illuminance_window();
     render_fogs_window();
+    process_pending_element_inspector();
+    render_element_inspector();
     render_popups();
     touch_input::apply_touch_scroll_to_hovered_window();
     save_runtime_settings_if_changed();
@@ -2878,6 +3322,19 @@ int main(int, char**) {
         return App::run_debug_headless_source_anchors(source_anchors.path,
                                                       source_anchors.unit_distance,
                                                       source_anchors.output_path);
+    }
+
+    HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);
+    if (edit_roundtrip.requested) {
+        if (!edit_roundtrip.error.empty()) {
+            std::cerr << edit_roundtrip.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-edit-roundtrip <map-path> "
+                      << "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_edit_roundtrip(edit_roundtrip.path,
+                                                      edit_roundtrip.unit_distance,
+                                                      edit_roundtrip.output_path);
     }
 
     HeadlessPlanBenchmarkOptions plan_bench = parse_headless_plan_benchmark_options(args);

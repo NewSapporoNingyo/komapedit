@@ -77,6 +77,14 @@ KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags);
    Release it with kv_free_string(). */
 KV_API const char* kv_get_ir_json(void* handle);
 
+/* Validates edit changes and returns a newly allocated UTF-8 JSON report.
+   Does not write source files. Release it with kv_free_string(). */
+KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json);
+
+/* Validates and writes edit changes, then returns a newly allocated UTF-8 JSON
+   report. Release it with kv_free_string(). */
+KV_API const char* kv_edit_apply(void* handle, const char* changes_json);
+
 /* Returns a thread-local error string owned by maploader.dll. Do not free it. */
 KV_API const char* kv_get_last_error(void);
 

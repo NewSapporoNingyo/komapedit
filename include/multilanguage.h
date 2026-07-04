@@ -57,7 +57,7 @@ struct Translation {
             {"menu.view_3d", "3D View"}, {"menu.structure_model_preview", "Structure Model Preview"}, {"menu.scene_preview", "3D Scene Preview"}, {"menu.preview_model", "Preview Model"}, {"menu.switch_signal_aspect", "Switch Signal Aspect"}, {"menu.find_in_structure_models", "Find in Structure Model List"}, {"menu.find_in_signal_aspects", "Find in Signal Aspect List"}, {"menu.find_in_sound_files", "Find in Sound File List"}, {"menu.find_in_sound_3d_files", "Find in 3D Sound File List"},
             {"button.open", "Open"}, {"button.reload", "Reload"}, {"button.reload_geometry", "Reload Track Geometry"}, {"button.reload_scene_models", "Reload (Models)"}, {"button.export_csv", "Export CSV"},
             {"button.structure_list", "Map Structure List"}, {"button.repeater_list", "Repeater List"},
-            {"button.apply", "Apply"}, {"button.reset", "Reset"}, {"button.ok", "OK"}, {"button.cancel", "Cancel"}, {"button.clear", "Clear"}, {"button.copy", "Copy"}, {"button.close", "Close"},
+            {"button.apply", "Apply"}, {"button.reset", "Reset"}, {"button.revert", "Revert"}, {"button.save", "Save"}, {"button.delete", "Delete"}, {"button.ok", "OK"}, {"button.cancel", "Cancel"}, {"button.clear", "Clear"}, {"button.copy", "Copy"}, {"button.close", "Close"},
             {"button.model_list", "Model List"}, {"button.start_scene_preview", "Start 3D Scene Preview"}, {"button.background_color", "Background Color"}, {"button.find", "Find"}, {"button.find_unused_structure_models", "Search unused structure models"}, {"button.find_unused_signal_aspects", "Search unused signal aspects"}, {"button.find_unused_sound_files", "Search unused sounds"}, {"button.find_unused_sound_3d_files", "Search unused 3D sounds"},
             {"button.import_bg", "Import"}, {"button.adjust_bg", "Adjust"}, {"button.align_to_station", "Align to Station"}, {"button.jump", "Jump"},
             {"frame.controls", "Controls"}, {"frame.console", "Console"}, {"frame.plots", "2D View"}, {"frame.othertracks", "Other Tracks"}, {"frame.station_list", "Station List"},
@@ -72,7 +72,7 @@ struct Translation {
             {"chk.view_2d_window", "2D View Window"}, {"chk.select_all", "Select All"},
             {"chk.gradient_graph", "Profile"}, {"chk.curve_graph", "Radius"}, {"chk.bgimg_show", "Show"},
             {"grid.fixed", "Fixed"}, {"grid.movable", "Movable"}, {"grid.none", "None"},
-            {"mode.pan", "Move"}, {"mode.select", "Select"}, {"mode.measure", "Measure"}, {"label.station_jump", "Station Jump"}, {"label.distance_jump", "Jump to distance(m)"},
+            {"mode.pan", "Move"}, {"mode.select", "Select"}, {"mode.measure", "Measure"}, {"label.station_jump", "Station Jump"}, {"label.distance_jump", "Jump to distance(m)"}, {"label.source_file", "Source"}, {"label.source_position", "Position"}, {"label.raw_statement", "Raw statement"},
             {"canvas.plan", "Plan"}, {"canvas.profile", "Gradient / Height"}, {"canvas.radius", "Curve Radius"},
             {"plot.profile", "Profile"}, {"plot.radius", "Curve Radius"}, {"plot.level", "Level"}, {"unit.m", "m"},
             {"info.mileage", "Mileage"}, {"info.elevation", "Elevation"}, {"info.gradient", "Gradient"}, {"info.radius", "Curve Radius"},
@@ -83,9 +83,9 @@ struct Translation {
             {"label.font_size", "Text size"}, {"label.ui_component_size", "UI component size"}, {"label.station_marker_size", "Marker size"}, {"label.own_track_line_width", "Own track line width"}, {"label.other_track_line_width", "Other track line width"}, {"label.chart_marker_line_width", "Chart marker line width"}, {"label.background_grid_line_width", "Background grid line width"}, {"label.scene_draw_distance", "Draw distance"}, {"label.ui_theme_color", "Interface theme color"},
             {"label.font_size_current", "Text size:"}, {"label.ui_component_size_current", "Component size:"}, {"label.ui_theme_color_current", "Theme color:"}, {"label.font_size_preview", "Preview text"},
             {"label.quick_colors", "Quick colors"}, {"color.white", "White"}, {"color.black", "Black"}, {"color.gray", "Gray"}, {"color.blue", "Blue"}, {"color.green", "Green"},
-            {"status.no_map", "No map loaded"}, {"status.loading", "Loading..."}, {"status.scene_loading", "Loading..."}, {"status.ready", "Ready"},
+            {"status.no_map", "No map loaded"}, {"status.loading", "Loading..."}, {"status.scene_loading", "Loading..."}, {"status.ready", "Ready"}, {"status.edit.pending", "Pending change"}, {"status.edit.pending_delete", "Pending delete"}, {"status.edit.reverted", "Reverted"}, {"status.edit.no_changes", "No changes"}, {"status.edit.required_field", "Required field is empty"}, {"status.edit.invalid_number", "Invalid number"},
             {"status.find.no_match", "No matching text found"}, {"status.find.match", "Found ({current}/{total})"}, {"status.unused_structure_models.match", "Found unused models ({unused}/{total})"}, {"status.unused_structure_models.no_match", "No unused models found"}, {"status.unused_signal_aspects.match", "Found unused signal aspects ({unused}/{total})"}, {"status.unused_signal_aspects.no_match", "No unused signal aspects found"}, {"status.unused_sound_files.match", "Found unused sounds ({unused}/{total})"}, {"status.unused_sound_files.no_match", "No unused sounds found"}, {"status.unused_sound_3d_files.match", "Found unused 3D sounds ({unused}/{total})"}, {"status.unused_sound_3d_files.no_match", "No unused 3D sounds found"},
-            {"dialog.ui_settings", "UI Settings"}, {"dialog.canvas_element_sizes", "Canvas Element Sizes"}, {"dialog.canvas_3d_settings", "3D Canvas Settings"}, {"dialog.bgimage_adjust", "Adjust Background Image"}, {"dialog.align_to_station", "Align Background to Stations"}, {"button.pick_on_bg", "Pick station on Plan"}, {"button.pick_on_bg_ok", "Picked"},
+            {"dialog.ui_settings", "UI Settings"}, {"dialog.canvas_element_sizes", "Canvas Element Sizes"}, {"dialog.canvas_3d_settings", "3D Canvas Settings"}, {"dialog.element_properties", "Properties/Edit"}, {"dialog.bgimage_adjust", "Adjust Background Image"}, {"dialog.align_to_station", "Align Background to Stations"}, {"button.pick_on_bg", "Pick station on Plan"}, {"button.pick_on_bg_ok", "Picked"},
             {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
         zh = {
@@ -128,7 +128,7 @@ struct Translation {
             {"menu.view_3d", "3D视图"}, {"menu.structure_model_preview", "布景模型预览"}, {"menu.scene_preview", "3D场景预览"}, {"menu.preview_model", "预览模型"}, {"menu.switch_signal_aspect", "切换信号现示"}, {"menu.find_in_structure_models", "在布景模型列表中查找"}, {"menu.find_in_signal_aspects", "在信号现示列表中查找"}, {"menu.find_in_sound_files", "在音效文件列表中查找"}, {"menu.find_in_sound_3d_files", "在3D音效文件列表中查找"},
             {"button.open", "打开"}, {"button.reload", "重新加载"}, {"button.reload_geometry", "重新加载线形"}, {"button.reload_scene_models", "重新加载（模型）"}, {"button.export_csv", "导出 CSV"},
             {"button.structure_list", "地图布景列表"}, {"button.repeater_list", "连续布景列表"},
-            {"button.apply", "应用"}, {"button.reset", "重置"}, {"button.ok", "确定"}, {"button.cancel", "取消"}, {"button.clear", "清除"}, {"button.copy", "复制"}, {"button.close", "关闭"},
+            {"button.apply", "应用"}, {"button.reset", "重置"}, {"button.revert", "撤销"}, {"button.save", "保存"}, {"button.delete", "删除"}, {"button.ok", "确定"}, {"button.cancel", "取消"}, {"button.clear", "清除"}, {"button.copy", "复制"}, {"button.close", "关闭"},
             {"button.model_list", "模型列表"}, {"button.start_scene_preview", "启动3D场景预览"}, {"button.background_color", "背景颜色"}, {"button.find", "查找"}, {"button.find_unused_structure_models", "查找未使用布景模型"}, {"button.find_unused_signal_aspects", "查找未使用信号现示"}, {"button.find_unused_sound_files", "查找未使用音效"}, {"button.find_unused_sound_3d_files", "查找未使用3D音效"},
             {"button.import_bg", "导入"}, {"button.adjust_bg", "调整"}, {"button.align_to_station", "按车站对齐"}, {"button.jump", "跳转"},
             {"frame.controls", "控制"}, {"frame.console", "控制台"}, {"frame.plots", "2D视图"}, {"frame.othertracks", "其他轨道"}, {"frame.station_list", "车站列表"},
@@ -143,7 +143,7 @@ struct Translation {
             {"chk.view_2d_window", "2D视图窗口"}, {"chk.select_all", "全选"},
             {"chk.gradient_graph", "纵断面图"}, {"chk.curve_graph", "曲线半径图"}, {"chk.bgimg_show", "显示"},
             {"grid.fixed", "固定"}, {"grid.movable", "可移动"}, {"grid.none", "无"},
-            {"mode.pan", "移动"}, {"mode.select", "选择"}, {"mode.measure", "测量"}, {"label.station_jump", "车站跳转"}, {"label.distance_jump", "跳转到里程(m)"},
+            {"mode.pan", "移动"}, {"mode.select", "选择"}, {"mode.measure", "测量"}, {"label.station_jump", "车站跳转"}, {"label.distance_jump", "跳转到里程(m)"}, {"label.source_file", "源文件"}, {"label.source_position", "位置"}, {"label.raw_statement", "原始语句"},
             {"canvas.plan", "平面图"}, {"canvas.profile", "纵断面 / 标高"}, {"canvas.radius", "曲线半径"},
             {"plot.profile", "纵断面"}, {"plot.radius", "曲线半径"}, {"plot.level", "水平"}, {"unit.m", "m"},
             {"info.mileage", "里程"}, {"info.elevation", "标高"}, {"info.gradient", "坡度"}, {"info.radius", "曲线半径"},
@@ -154,9 +154,9 @@ struct Translation {
             {"label.font_size", "文字大小"}, {"label.ui_component_size", "界面组件大小"}, {"label.station_marker_size", "标记尺寸"}, {"label.own_track_line_width", "自轨道标线宽度"}, {"label.other_track_line_width", "他轨道标线宽度"}, {"label.chart_marker_line_width", "图表标线宽度"}, {"label.background_grid_line_width", "背景网格线宽度"}, {"label.scene_draw_distance", "绘制距离"}, {"label.ui_theme_color", "界面主题色"},
             {"label.font_size_current", "文字大小："}, {"label.ui_component_size_current", "组件大小："}, {"label.ui_theme_color_current", "主题色："}, {"label.font_size_preview", "预览文字"},
             {"label.quick_colors", "快捷颜色"}, {"color.white", "纯白"}, {"color.black", "纯黑"}, {"color.gray", "灰色"}, {"color.blue", "纯蓝色"}, {"color.green", "纯绿色"},
-            {"status.no_map", "未加载地图"}, {"status.loading", "加载中..."}, {"status.scene_loading", "正在加载……"}, {"status.ready", "就绪"},
+            {"status.no_map", "未加载地图"}, {"status.loading", "加载中..."}, {"status.scene_loading", "正在加载……"}, {"status.ready", "就绪"}, {"status.edit.pending", "待保存更改"}, {"status.edit.pending_delete", "待删除"}, {"status.edit.reverted", "已撤销"}, {"status.edit.no_changes", "没有更改"}, {"status.edit.required_field", "必填项为空"}, {"status.edit.invalid_number", "数字无效"},
             {"status.find.no_match", "未找到匹配的字符"}, {"status.find.match", "查找到（{current}/{total}）"}, {"status.unused_structure_models.match", "找到未使用模型（{unused}/{total}）"}, {"status.unused_structure_models.no_match", "没有找到未使用模型"}, {"status.unused_signal_aspects.match", "找到未使用信号现示（{unused}/{total}）"}, {"status.unused_signal_aspects.no_match", "没有找到未使用信号现示"}, {"status.unused_sound_files.match", "找到未使用音效（{unused}/{total}）"}, {"status.unused_sound_files.no_match", "没有找到未使用音效"}, {"status.unused_sound_3d_files.match", "找到未使用3D音效（{unused}/{total}）"}, {"status.unused_sound_3d_files.no_match", "没有找到未使用3D音效"},
-            {"dialog.ui_settings", "用户界面设置"}, {"dialog.canvas_element_sizes", "画布元素尺寸"}, {"dialog.canvas_3d_settings", "3D画布设置"}, {"dialog.bgimage_adjust", "调整背景图"}, {"dialog.align_to_station", "按车站对齐背景图"}, {"button.pick_on_bg", "在平面图选点"}, {"button.pick_on_bg_ok", "已选点"},
+            {"dialog.ui_settings", "用户界面设置"}, {"dialog.canvas_element_sizes", "画布元素尺寸"}, {"dialog.canvas_3d_settings", "3D画布设置"}, {"dialog.element_properties", "属性/编辑"}, {"dialog.bgimage_adjust", "调整背景图"}, {"dialog.align_to_station", "按车站对齐背景图"}, {"button.pick_on_bg", "在平面图选点"}, {"button.pick_on_bg_ok", "已选点"},
             {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
         ja = {
@@ -199,7 +199,7 @@ struct Translation {
             {"menu.view_3d", "3Dビュー"}, {"menu.structure_model_preview", "ストラクチャーモデルプレビュー"}, {"menu.scene_preview", "3Dシーンプレビュー"}, {"menu.preview_model", "モデルをプレビュー"}, {"menu.switch_signal_aspect", "信号現示を切替"}, {"menu.find_in_structure_models", "ストラクチャーモデルリストで検索"}, {"menu.find_in_signal_aspects", "信号現示リストで検索"}, {"menu.find_in_sound_files", "サウンドファイルリストで検索"}, {"menu.find_in_sound_3d_files", "3Dサウンドファイルリストで検索"},
             {"button.open", "開く"}, {"button.reload", "再読込"}, {"button.reload_geometry", "線形を再読込"}, {"button.reload_scene_models", "再読込（モデル）"}, {"button.export_csv", "CSV 出力"},
             {"button.structure_list", "マップストラクチャーリスト"}, {"button.repeater_list", "連続ストラクチャーリスト"},
-            {"button.apply", "適用"}, {"button.reset", "リセット"}, {"button.ok", "OK"}, {"button.cancel", "キャンセル"}, {"button.clear", "クリア"}, {"button.copy", "コピー"}, {"button.close", "閉じる"},
+            {"button.apply", "適用"}, {"button.reset", "リセット"}, {"button.revert", "元に戻す"}, {"button.save", "保存"}, {"button.delete", "削除"}, {"button.ok", "OK"}, {"button.cancel", "キャンセル"}, {"button.clear", "クリア"}, {"button.copy", "コピー"}, {"button.close", "閉じる"},
             {"button.model_list", "モデルリスト"}, {"button.start_scene_preview", "3Dシーンプレビューを開始"}, {"button.background_color", "背景色"}, {"button.find", "検索"}, {"button.find_unused_structure_models", "未使用モデルを検索"}, {"button.find_unused_signal_aspects", "未使用信号現示を検索"}, {"button.find_unused_sound_files", "未使用サウンドを検索"}, {"button.find_unused_sound_3d_files", "未使用3Dサウンドを検索"},
             {"button.import_bg", "インポート"}, {"button.adjust_bg", "調整"}, {"button.align_to_station", "駅に合わせる"}, {"button.jump", "ジャンプ"},
             {"frame.controls", "コントロール"}, {"frame.console", "コンソール"}, {"frame.plots", "2Dビュー"}, {"frame.othertracks", "他軌道"}, {"frame.station_list", "停車場リスト"},
@@ -214,7 +214,7 @@ struct Translation {
             {"chk.view_2d_window", "2Dビューウィンドウ"}, {"chk.select_all", "すべて選択"},
             {"chk.gradient_graph", "縦断面図"}, {"chk.curve_graph", "曲線半径図"}, {"chk.bgimg_show", "表示"},
             {"grid.fixed", "固定"}, {"grid.movable", "可動"}, {"grid.none", "なし"},
-            {"mode.pan", "移動"}, {"mode.select", "選択"}, {"mode.measure", "測定"}, {"label.station_jump", "駅ジャンプ"}, {"label.distance_jump", "距離へジャンプ(m)"},
+            {"mode.pan", "移動"}, {"mode.select", "選択"}, {"mode.measure", "測定"}, {"label.station_jump", "駅ジャンプ"}, {"label.distance_jump", "距離へジャンプ(m)"}, {"label.source_file", "ソース"}, {"label.source_position", "位置"}, {"label.raw_statement", "元の文"},
             {"canvas.plan", "平面図"}, {"canvas.profile", "縦断面 / 標高"}, {"canvas.radius", "曲線半径"},
             {"plot.profile", "縦断面"}, {"plot.radius", "曲線半径"}, {"plot.level", "水平"}, {"unit.m", "m"},
             {"info.mileage", "キロ程"}, {"info.elevation", "標高"}, {"info.gradient", "勾配"}, {"info.radius", "曲線半径"},
@@ -225,9 +225,9 @@ struct Translation {
             {"label.font_size", "文字サイズ"}, {"label.ui_component_size", "UI部品サイズ"}, {"label.station_marker_size", "マーカーサイズ"}, {"label.own_track_line_width", "自軌道ライン幅"}, {"label.other_track_line_width", "他軌道ライン幅"}, {"label.chart_marker_line_width", "チャートマーカー線幅"}, {"label.background_grid_line_width", "背景グリッド線幅"}, {"label.scene_draw_distance", "描画距離"}, {"label.ui_theme_color", "UIテーマカラー"},
             {"label.font_size_current", "文字サイズ："}, {"label.ui_component_size_current", "部品サイズ："}, {"label.ui_theme_color_current", "テーマカラー："}, {"label.font_size_preview", "プレビューテキスト"},
             {"label.quick_colors", "クイック色"}, {"color.white", "白"}, {"color.black", "黒"}, {"color.gray", "グレー"}, {"color.blue", "青"}, {"color.green", "緑"},
-            {"status.no_map", "地図が読み込まれていません"}, {"status.loading", "読込中..."}, {"status.scene_loading", "読み込み中..."}, {"status.ready", "準備完了"},
+            {"status.no_map", "地図が読み込まれていません"}, {"status.loading", "読込中..."}, {"status.scene_loading", "読み込み中..."}, {"status.ready", "準備完了"}, {"status.edit.pending", "未保存の変更"}, {"status.edit.pending_delete", "削除待ち"}, {"status.edit.reverted", "元に戻しました"}, {"status.edit.no_changes", "変更なし"}, {"status.edit.required_field", "必須項目が空です"}, {"status.edit.invalid_number", "数値が不正です"},
             {"status.find.no_match", "一致する文字が見つかりません"}, {"status.find.match", "検索結果（{current}/{total}）"}, {"status.unused_structure_models.match", "未使用モデルを検出（{unused}/{total}）"}, {"status.unused_structure_models.no_match", "未使用モデルは見つかりません"}, {"status.unused_signal_aspects.match", "未使用信号現示を検出（{unused}/{total}）"}, {"status.unused_signal_aspects.no_match", "未使用信号現示は見つかりません"}, {"status.unused_sound_files.match", "未使用サウンドを検出（{unused}/{total}）"}, {"status.unused_sound_files.no_match", "未使用サウンドは見つかりません"}, {"status.unused_sound_3d_files.match", "未使用3Dサウンドを検出（{unused}/{total}）"}, {"status.unused_sound_3d_files.no_match", "未使用3Dサウンドは見つかりません"},
-            {"dialog.ui_settings", "UI設定"}, {"dialog.canvas_element_sizes", "キャンバス要素サイズ"}, {"dialog.canvas_3d_settings", "3Dキャンバス設定"}, {"dialog.bgimage_adjust", "背景画像の調整"}, {"dialog.align_to_station", "背景画像を駅に合わせる"}, {"button.pick_on_bg", "平面図で駅を選択"}, {"button.pick_on_bg_ok", "選択済み"},
+            {"dialog.ui_settings", "UI設定"}, {"dialog.canvas_element_sizes", "キャンバス要素サイズ"}, {"dialog.canvas_3d_settings", "3Dキャンバス設定"}, {"dialog.element_properties", "プロパティ/編集"}, {"dialog.bgimage_adjust", "背景画像の調整"}, {"dialog.align_to_station", "背景画像を駅に合わせる"}, {"button.pick_on_bg", "平面図で駅を選択"}, {"button.pick_on_bg_ok", "選択済み"},
             {"about.text", "komapedit\nVersion 0.6.0\nCopyright © 2026 Sapporo_ningyo\nkobushi-trackviewer に基づく\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
     }

@@ -119,13 +119,16 @@ enum class TextCellContextAction {
     None,
     Primary,
     Secondary,
+    Tertiary,
 };
 
 TextCellContextAction render_text_cell_with_context_actions(const std::string& display_text,
                                                            const std::string& primary_label,
                                                            bool primary_enabled,
                                                            const std::string& secondary_label,
-                                                           bool secondary_enabled) {
+                                                           bool secondary_enabled,
+                                                           const std::string& tertiary_label = {},
+                                                           bool tertiary_enabled = false) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
     ImVec2 item_size(
@@ -149,6 +152,12 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
         ImGui::BeginDisabled(!secondary_enabled);
         if (ImGui::MenuItem(secondary_label.c_str())) action = TextCellContextAction::Secondary;
         ImGui::EndDisabled();
+        if (!tertiary_label.empty()) {
+            ImGui::Separator();
+            ImGui::BeginDisabled(!tertiary_enabled);
+            if (ImGui::MenuItem(tertiary_label.c_str())) action = TextCellContextAction::Tertiary;
+            ImGui::EndDisabled();
+        }
         ImGui::EndPopup();
     }
     return action;
@@ -662,6 +671,8 @@ constexpr float kShowColumnWidth = 56.0f;
 constexpr ImU32 kFindMatchRowColor = IM_COL32(104, 184, 255, 96);
 constexpr ImU32 kUnusedStructureModelRowColor = IM_COL32(72, 196, 112, 120);
 constexpr ImU32 kInvalidTrackKeyRowColor = IM_COL32(255, 72, 72, 130);
+constexpr ImU32 kPendingEditRowColor = IM_COL32(255, 196, 64, 92);
+constexpr ImU32 kPendingDeleteRowColor = IM_COL32(255, 96, 64, 118);
 constexpr const char* kInvalidTrackKeyCell = "_invalidTrackKey";
 
 static const TableColumnDef kStructureModelColumns[] = {
@@ -2117,11 +2128,26 @@ void App::render_station_list_window() {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.station_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
+                if (row_is_pending_delete(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingDeleteRowColor);
+                } else if (row_has_pending_edit(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingEditRowColor);
+                }
+                ImGui::PushID(row_index);
                 for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (!value.empty()) ImGui::TextUnformatted(value.c_str());
+                    if (value.empty()) continue;
+                    ImGui::PushID(i);
+                    if (render_text_cell_with_context(value, tr("dialog.element_properties"), !row.edit_id.empty())) {
+                        request_element_inspector(row.edit_id, "station.put");
+                    }
+                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        request_element_inspector(row.edit_id, "station.put");
+                    }
+                    ImGui::PopID();
                 }
+                ImGui::PopID();
             }
         }
         ImGui::EndTable();
@@ -2212,7 +2238,11 @@ void App::render_structure_rows_window(bool put_between) {
                 const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
                 const size_t marker_index = source_row_base + static_cast<size_t>(row_index);
                 ImGui::TableNextRow();
-                if (row.invalid_track_key) {
+                if (row_is_pending_delete(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingDeleteRowColor);
+                } else if (row_has_pending_edit(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingEditRowColor);
+                } else if (row.invalid_track_key) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kInvalidTrackKeyRowColor);
                 } else if (structure_list_highlight_row_ >= 0 &&
                            marker_index == static_cast<size_t>(structure_list_highlight_row_)) {
@@ -2243,11 +2273,18 @@ void App::render_structure_rows_window(bool put_between) {
                             tr("menu.locate_on_plan"),
                             can_locate,
                             tr("menu.locate_in_scene_preview"),
-                            can_locate_scene);
+                            can_locate_scene,
+                            tr("dialog.element_properties"),
+                            !row.edit_id.empty());
                         if (action == TextCellContextAction::Primary) {
                             locate_structure_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_structure_row_in_scene_preview(marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(row.edit_id, put_between ? "structure.between" : "structure.put");
+                        }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                            request_element_inspector(row.edit_id, put_between ? "structure.between" : "structure.put");
                         }
                         continue;
                     }
@@ -2341,7 +2378,11 @@ void App::render_structure_models_window() {
                     ? ImGui::GetColorU32(preview_text_color)
                     : ImGui::GetColorU32(ImGuiCol_Text);
                 ImGui::TableNextRow();
-                if (is_unused_model) {
+                if (row_is_pending_delete(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingDeleteRowColor);
+                } else if (row_has_pending_edit(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingEditRowColor);
+                } else if (is_unused_model) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kUnusedStructureModelRowColor);
                 } else if (is_find_match) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
@@ -2369,12 +2410,21 @@ void App::render_structure_models_window() {
                         if (!value.empty()) {
                             ImGui::GetWindowDrawList()->AddText(pos, row_text_color, value.c_str());
                         }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                            request_element_inspector(row.edit_id, "structure.model");
+                        }
                         touch_input::open_popup_on_last_item_long_press("structure_key_context");
                         if (ImGui::BeginPopupContextItem("structure_key_context", ImGuiPopupFlags_MouseButtonRight)) {
                             bool can_preview = !blank_ascii(row.open_path);
                             ImGui::BeginDisabled(!can_preview);
                             if (ImGui::MenuItem(tr("menu.preview_model").c_str())) {
                                 preview_structure_model(row.open_path);
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::Separator();
+                            ImGui::BeginDisabled(row.edit_id.empty());
+                            if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                                request_element_inspector(row.edit_id, "structure.model");
                             }
                             ImGui::EndDisabled();
                             ImGui::EndPopup();

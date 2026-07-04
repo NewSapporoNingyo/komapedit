@@ -110,6 +110,14 @@ struct HeadlessSourceAnchorOptions {
     std::string error;
 };
 
+struct HeadlessEditRoundtripOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessTableFindOptions {
     bool requested = false;
     std::string output_path;
@@ -450,6 +458,43 @@ HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vect
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
         options.error = "--debug-headless-source-anchors requires a map path";
+    }
+    return options;
+}
+
+HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::vector<std::string>& args) {
+    HeadlessEditRoundtripOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-edit-roundtrip") {
+            options.requested = true;
+            if (i + 1 >= args.size()) {
+                options.error = arg + " requires a map path";
+                return options;
+            }
+            options.path = args[++i];
+        } else if (arg == "--unit-distance") {
+            if (i + 1 >= args.size()) {
+                options.error = "--unit-distance requires a value";
+                return options;
+            }
+            char* end = nullptr;
+            double parsed = std::strtod(args[++i].c_str(), &end);
+            if (!end || *end != '\0' || parsed <= 0.0) {
+                options.error = "--unit-distance must be positive";
+                return options;
+            }
+            options.unit_distance = parsed;
+        } else if (arg == "--headless-output") {
+            if (i + 1 >= args.size()) {
+                options.error = "--headless-output requires a path";
+                return options;
+            }
+            options.output_path = args[++i];
+        }
+    }
+    if (options.requested && options.path.empty()) {
+        options.error = "--debug-headless-edit-roundtrip requires a map path";
     }
     return options;
 }
@@ -903,6 +948,180 @@ int App::run_debug_headless_source_anchors(const std::string& path, double unit_
 
     if (result.handle) kv_free(result.handle);
     return duplicate_edit_id_count == 0 && invalid_source_span_count == 0 ? 0 : 3;
+}
+
+int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_distance,
+                                           const std::string& output_path) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    auto append_json_string = [](std::ostringstream& json, const std::string& text) {
+        json << '"';
+        for (unsigned char ch : text) {
+            switch (ch) {
+                case '\\': json << "\\\\"; break;
+                case '"': json << "\\\""; break;
+                case '\n': json << "\\n"; break;
+                case '\r': json << "\\r"; break;
+                case '\t': json << "\\t"; break;
+                default: json << static_cast<char>(ch); break;
+            }
+        }
+        json << '"';
+    };
+    auto source_hash_for_path = [](const MapModel& model, const std::string& file_path) {
+        for (const EditSourceFileInfo& file : model.edit_files) {
+            if (file.file_path == file_path) return file.source_hash;
+        }
+        return std::string{};
+    };
+    auto make_update_json = [&](const TableRow& row, const MapModel& model,
+                                const std::map<std::string, std::string>& fields,
+                                const std::string& expected_hash_override = {}) {
+        std::string expected_hash = expected_hash_override.empty()
+            ? source_hash_for_path(model, row.source.file_path)
+            : expected_hash_override;
+        std::ostringstream json;
+        json << "{\"changes\":[{\"changeId\":\"headless-update\",\"editId\":";
+        append_json_string(json, row.edit_id);
+        json << ",\"operation\":\"update\",\"expectedSourceHash\":";
+        append_json_string(json, expected_hash);
+        json << ",\"fieldChanges\":{";
+        bool first = true;
+        for (const auto& field : fields) {
+            if (!first) json << ",";
+            first = false;
+            append_json_string(json, field.first);
+            json << ":";
+            append_json_string(json, field.second);
+        }
+        json << "}}]}";
+        return json.str();
+    };
+    auto report_ok = [](const std::string& report) {
+        return report.find("\"ok\":true") != std::string::npos;
+    };
+    auto call_edit_api = [](void* handle, const std::string& changes, bool apply) {
+        const char* raw = apply
+            ? kv_edit_apply(handle, changes.c_str())
+            : kv_edit_dry_run(handle, changes.c_str());
+        std::string text = raw ? raw : "";
+        if (raw) kv_free_string(raw);
+        return text;
+    };
+
+    *out << "komapedit debug-headless-edit-roundtrip source_path=\"" << path
+         << "\" unit_distance=" << format_double(unit_distance, 3) << "\n";
+
+    std::filesystem::path temp_root = std::filesystem::temp_directory_path() /
+        ("komapedit-edit-roundtrip-" + std::to_string(GetCurrentProcessId()) + "-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(temp_root);
+    std::filesystem::path temp_map = temp_root / "map.txt";
+    std::filesystem::path temp_structures = temp_root / "structures.csv";
+    {
+        std::ofstream map_file(temp_map, std::ios::out | std::ios::trunc | std::ios::binary);
+        map_file << "BveTs Map 2.02:utf-8\n"
+                 << "0;\n"
+                 << "Structure.Load('structures.csv');\n"
+                 << "100;\n"
+                 << "Station['STA'].Put();\n"
+                 << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n"
+                 << "Structure['bridge'].PutBetween('0','1',0);\n";
+    }
+    {
+        std::ofstream structure_file(temp_structures, std::ios::out | std::ios::trunc | std::ios::binary);
+        structure_file << "BveTs Structure List 1.00:utf-8\n"
+                       << "pole,pole.csv\n"
+                       << "bridge,bridge.csv\n";
+    }
+    *out << "temp_map=\"" << wide_to_utf8(temp_map.wstring()) << "\"\n";
+
+    int exit_code = 0;
+    LoadResult load = load_map_worker(wide_to_utf8(temp_map.wstring()), unit_distance,
+                                      false, 0.0, 0.0, 25.0, LoadModelOptions{true});
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        std::filesystem::remove_all(temp_root);
+        return 2;
+    }
+    if (load.model.structures.empty()) {
+        *out << "missing_structure_rows=1\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        std::filesystem::remove_all(temp_root);
+        return 3;
+    }
+
+    const TableRow& structure_row = load.model.structures.front();
+    std::string changes = make_update_json(structure_row, load.model, {
+        {"distance", "125"},
+        {"x", "9"},
+        {"y", "2"},
+        {"z", "3"}
+    });
+    std::string dry_report = call_edit_api(load.handle, changes, false);
+    const bool dry_ok = report_ok(dry_report);
+    *out << "dry_run_ok=" << (dry_ok ? 1 : 0) << "\n";
+    if (!dry_ok) {
+        *out << "dry_run_report=" << dry_report << "\n";
+        exit_code = 4;
+    }
+
+    std::string stale_changes = make_update_json(structure_row, load.model, {{"x", "11"}}, "bad-hash");
+    std::string stale_report = call_edit_api(load.handle, stale_changes, false);
+    const bool stale_blocked = !report_ok(stale_report) &&
+        stale_report.find("source file changed externally") != std::string::npos;
+    *out << "stale_hash_blocked=" << (stale_blocked ? 1 : 0) << "\n";
+    if (!stale_blocked) {
+        *out << "stale_hash_report=" << stale_report << "\n";
+        exit_code = 5;
+    }
+
+    std::string apply_report;
+    if (exit_code == 0) {
+        apply_report = call_edit_api(load.handle, changes, true);
+        const bool apply_ok = report_ok(apply_report);
+        *out << "apply_ok=" << (apply_ok ? 1 : 0) << "\n";
+        if (!apply_ok) {
+            *out << "apply_report=" << apply_report << "\n";
+            exit_code = 6;
+        }
+    }
+    if (load.handle) kv_free(load.handle);
+
+    if (exit_code == 0) {
+        LoadResult reload = load_map_worker(wide_to_utf8(temp_map.wstring()), unit_distance,
+                                            false, 0.0, 0.0, 25.0, LoadModelOptions{true});
+        if (!reload.ok || reload.model.structures.empty()) {
+            *out << "reload_error=" << reload.error << "\n";
+            exit_code = 7;
+        } else {
+            const TableRow& updated = reload.model.structures.front();
+            const double distance = table_cell_number(updated, "distance");
+            const double x = table_cell_number(updated, "x");
+            const bool reload_matches = std::abs(distance - 125.0) < 1e-6 &&
+                                        std::abs(x - 9.0) < 1e-6;
+            *out << "reload_distance=" << format_double(distance, 3) << "\n";
+            *out << "reload_x=" << format_double(x, 3) << "\n";
+            *out << "save_reload_match=" << (reload_matches ? 1 : 0) << "\n";
+            if (!reload_matches) exit_code = 8;
+        }
+        if (reload.handle) kv_free(reload.handle);
+    }
+
+    std::filesystem::remove_all(temp_root);
+    *out << "result=" << (exit_code == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return exit_code;
 }
 
 int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
