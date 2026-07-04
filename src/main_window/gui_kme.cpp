@@ -1303,6 +1303,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("OtherTracks", dock_right);
     ImGui::DockBuilderDockWindow("StationList", dock_right);
     ImGui::DockBuilderDockWindow("Structures", dock_right);
+    ImGui::DockBuilderDockWindow("StructuresPutBetween", dock_right);
     ImGui::DockBuilderDockWindow("StructureModels", dock_right);
     ImGui::DockBuilderDockWindow("OtherTrains", dock_right);
     ImGui::DockBuilderDockWindow("SoundList", dock_right);
@@ -1337,6 +1338,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_othertracks_window = show_othertracks_window_;
     visibility.show_station_list_window = show_station_list_window_;
     visibility.show_structures_window = show_structures_window_;
+    visibility.show_structures_between_window = show_structures_between_window_;
     visibility.show_structure_models_window = show_structure_models_window_;
     visibility.show_other_trains_window = show_other_trains_window_;
     visibility.show_sound_list_window = show_sound_list_window_;
@@ -1365,6 +1367,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_othertracks_window_ = visibility.show_othertracks_window;
     show_station_list_window_ = visibility.show_station_list_window;
     show_structures_window_ = visibility.show_structures_window;
+    show_structures_between_window_ = visibility.show_structures_between_window;
     show_structure_models_window_ = visibility.show_structure_models_window;
     show_other_trains_window_ = visibility.show_other_trains_window;
     show_sound_list_window_ = visibility.show_sound_list_window;
@@ -1581,11 +1584,12 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 27> kMapInfoMenuEntries = {{
+        static constexpr std::array<MapInfoMenuEntry, 28> kMapInfoMenuEntries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
             {"menu.map_info.structures", &App::show_structures_window_},
+            {"menu.map_info.structures_put_between", &App::show_structures_between_window_},
             {"menu.map_info.structure_models", &App::show_structure_models_window_},
             {"menu.map_info.repeaters", &App::show_repeaters_window_},
             {"menu.map_info.other_trains", &App::show_other_trains_window_},
@@ -2437,6 +2441,7 @@ void App::render_scene_preview_window() {
         Canvas3DSceneUiText scene_ui_text;
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect");
         scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list");
+        scene_ui_text.locate_structure_put_between_list = tr("menu.locate_in_structure_put_between_list");
         scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list");
         scene_ui_text.loading = tr("status.scene_loading");
         Canvas3DSceneContextAction scene_action = scene_preview_canvas_->render_scene_preview(avail, scene_ui_text);
@@ -2589,6 +2594,7 @@ void App::render() {
     render_model_preview_window();
     render_scene_preview_window();
     render_structures_window();
+    render_structures_between_window();
     render_structure_models_window();
     render_other_trains_window();
     render_sound_list_window();

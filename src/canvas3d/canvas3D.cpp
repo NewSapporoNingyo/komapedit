@@ -1296,6 +1296,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         Canvas3DSceneObject object;
         object.kind = Canvas3DSceneObjectKind::Structure;
         object.source_row = model.structures.size() + between_index;
+        object.structure_put_between = true;
         object.label = table_cell(row, "structureKey");
         const int object_index = static_cast<int>(scene.objects.size());
         scene.objects.push_back(std::move(object));
@@ -4196,7 +4197,10 @@ fail:
         if (scene_object_index_valid(scene_context_object_index)) {
             Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(scene_context_object_index)];
             if (object.kind == Canvas3DSceneObjectKind::Structure) {
-                if (ImGui::MenuItem(ui_text.locate_structure_list.c_str())) {
+                const std::string& locate_label = object.structure_put_between
+                    ? ui_text.locate_structure_put_between_list
+                    : ui_text.locate_structure_list;
+                if (ImGui::MenuItem(locate_label.c_str())) {
                     action.kind = Canvas3DSceneContextActionKind::LocateStructure;
                     action.row_index = object.source_row;
                 }

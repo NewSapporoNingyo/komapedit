@@ -90,8 +90,14 @@ void App::locate_structure_row_on_plan(size_t row_index) {
 void App::locate_structure_row_in_list(size_t row_index) {
     sync_marker_visibility_sizes();
     if (row_index >= structure_marker_cache_.size() || !structure_marker_cache_[row_index]) return;
-    show_structures_window_ = true;
-    focus_structures_next_ = true;
+    const bool put_between = row_index >= model_.structures.size();
+    if (put_between) {
+        show_structures_between_window_ = true;
+        focus_structures_between_next_ = true;
+    } else {
+        show_structures_window_ = true;
+        focus_structures_next_ = true;
+    }
     structure_list_scroll_row_ = static_cast<int>(row_index);
     structure_list_highlight_row_ = static_cast<int>(row_index);
 }

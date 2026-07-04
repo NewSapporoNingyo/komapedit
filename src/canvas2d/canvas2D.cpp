@@ -3546,8 +3546,12 @@ void App::render_plan_canvas(ImVec2 size) {
     if (ImGui::BeginPopup("plan_structure_marker_context")) {
         bool can_locate = plan_structure_popup_row_ >= 0 &&
             static_cast<size_t>(plan_structure_popup_row_) < structure_marker_cache_.size();
+        const bool put_between = can_locate &&
+            static_cast<size_t>(plan_structure_popup_row_) >= model_.structures.size();
+        const char* locate_label_key =
+            put_between ? "menu.locate_in_structure_put_between_list" : "menu.locate_in_structure_list";
         ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_structure_list").c_str()) && can_locate) {
+        if (ImGui::MenuItem(tr(locate_label_key).c_str()) && can_locate) {
             locate_structure_row_in_list(static_cast<size_t>(plan_structure_popup_row_));
         }
         ImGui::EndDisabled();

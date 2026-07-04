@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
@@ -432,8 +433,25 @@ bool all_flags_set(const std::vector<unsigned char>& flags) {
     return !flags.empty() && std::all_of(flags.begin(), flags.end(), [](unsigned char value) { return value != 0; });
 }
 
+bool all_flags_set_in_range(const std::vector<unsigned char>& flags, size_t begin, size_t count) {
+    if (count == 0 || begin >= flags.size()) return false;
+    const size_t end = std::min(flags.size(), begin + count);
+    if (end - begin != count) return false;
+    return std::all_of(flags.begin() + static_cast<std::ptrdiff_t>(begin),
+                       flags.begin() + static_cast<std::ptrdiff_t>(end),
+                       [](unsigned char value) { return value != 0; });
+}
+
 void set_all_flags(std::vector<unsigned char>& flags, bool value) {
     std::fill(flags.begin(), flags.end(), value ? 1 : 0);
+}
+
+void set_flags_in_range(std::vector<unsigned char>& flags, size_t begin, size_t count, bool value) {
+    if (count == 0 || begin >= flags.size()) return;
+    const size_t end = std::min(flags.size(), begin + count);
+    std::fill(flags.begin() + static_cast<std::ptrdiff_t>(begin),
+              flags.begin() + static_cast<std::ptrdiff_t>(end),
+              value ? 1 : 0);
 }
 
 ImU32 table_row_highlight_color(ImVec4 theme_color) {
@@ -688,13 +706,35 @@ constexpr int kSoundListKeyColumn = 1;
 constexpr int kSoundListFilePathColumn = 2;
 constexpr int kSoundListBufferCountColumn = 3;
 
-static const char* kStructureColumns[] = {
-    "distance", "method", "structureKey", "trackKey", "x", "y", "z", "rx", "ry", "rz",
-    "tilt", "span", "trackKey1", "trackKey2", "flag", "filePath"
+static const TableColumnDef kStructurePutColumns[] = {
+    {"distance", "distance", 0.0f},
+    {"method", "method", 0.0f},
+    {"structureKey", "structureKey", 0.0f},
+    {"trackKey", "trackKey", 0.0f},
+    {"x", "x", 0.0f},
+    {"y", "y", 0.0f},
+    {"z", "z", 0.0f},
+    {"rx", "rx", 0.0f},
+    {"ry", "ry", 0.0f},
+    {"rz", "rz", 0.0f},
+    {"tilt", "tilt", 0.0f},
+    {"span", "span", 0.0f},
+    {"filePath", "filePath", 200.0f},
+};
+
+static const TableColumnDef kStructureBetweenColumns[] = {
+    {"distance", "distance", 0.0f},
+    {"method", "method", 0.0f},
+    {"structureKey", "structureKey", 0.0f},
+    {"trackKey1", "trackKey1", 0.0f},
+    {"trackKey2", "trackKey2", 0.0f},
+    {"flag", "flag", 0.0f},
+    {"filePath", "filePath", 200.0f},
 };
 constexpr int kStructureDistanceColumn = 0;
 constexpr int kStructureKeyColumn = 2;
-constexpr int kStructureFilePathColumn = IM_ARRAYSIZE(kStructureColumns) - 1;
+constexpr int kStructurePutFilePathColumn = IM_ARRAYSIZE(kStructurePutColumns) - 1;
+constexpr int kStructureBetweenFilePathColumn = IM_ARRAYSIZE(kStructureBetweenColumns) - 1;
 
 static const TableColumnDef kRepeaterColumns[] = {
     {"rowNumber", "#", 40.0f},
@@ -1003,6 +1043,32 @@ void append_change_point_rows(const std::vector<TableRow>& source_rows,
         }
         cached.cells[0] = std::to_string(row_index + 1);
         expand_width_for_text(distance_width, cached.cells[static_cast<size_t>(distance_column)]);
+        cached_rows.push_back(std::move(cached));
+    }
+}
+
+template <size_t N>
+void append_structure_table_rows(const std::vector<TableRow>& source_rows,
+                                 const TableColumnDef (&columns)[N],
+                                 int file_path_column,
+                                 std::vector<CachedTableRow>& cached_rows,
+                                 float& file_path_width) {
+    cached_rows.reserve(source_rows.size());
+    for (const TableRow& row : source_rows) {
+        CachedTableRow cached;
+        cached.cells.resize(N);
+        cached.invalid_track_key = is_invalid_track_key_row(row);
+        for (size_t i = 0; i < N; ++i) {
+            const std::string& value = table_cell(row, columns[i].key);
+            if (static_cast<int>(i) == file_path_column) {
+                cached.open_path = value;
+                cached.tooltip_text = value;
+                cached.cells[i] = display_name_from_path(value);
+                expand_width_for_text(file_path_width, cached.cells[i]);
+            } else {
+                cached.cells[i] = value;
+            }
+        }
         cached_rows.push_back(std::move(cached));
     }
 }
@@ -1480,28 +1546,16 @@ void App::ensure_table_cache() {
         }
     }
 
-    auto append_structure_rows = [&](const std::vector<TableRow>& rows) {
-        cache.structure_rows.reserve(cache.structure_rows.size() + rows.size());
-        for (const auto& row : rows) {
-            CachedTableRow cached;
-            cached.cells.resize(IM_ARRAYSIZE(kStructureColumns));
-            cached.invalid_track_key = is_invalid_track_key_row(row);
-            for (int i = 0; i < IM_ARRAYSIZE(kStructureColumns); ++i) {
-                const std::string& value = table_cell(row, kStructureColumns[i]);
-                if (i == kStructureFilePathColumn) {
-                    cached.open_path = value;
-                    cached.tooltip_text = value;
-                    cached.cells[i] = display_name_from_path(value);
-                    expand_width_for_text(cache.structure_file_path_width, cached.cells[i]);
-                } else {
-                    cached.cells[i] = value;
-                }
-            }
-            cache.structure_rows.push_back(std::move(cached));
-        }
-    };
-    append_structure_rows(model_.structures);
-    append_structure_rows(model_.structures_between);
+    append_structure_table_rows(model_.structures,
+                                kStructurePutColumns,
+                                kStructurePutFilePathColumn,
+                                cache.structure_rows,
+                                cache.structure_file_path_width);
+    append_structure_table_rows(model_.structures_between,
+                                kStructureBetweenColumns,
+                                kStructureBetweenFilePathColumn,
+                                cache.structure_between_rows,
+                                cache.structure_between_file_path_width);
 
     cache.repeater_interval_width = 0.0f;
     expand_width_for_text(cache.repeater_interval_width, kRepeaterColumns[kRepeaterIntervalColumn].header);
@@ -1747,11 +1801,15 @@ void App::run_unused_structure_model_search() {
         table_cache_.structure_model_rows,
         static_cast<size_t>(kStructureModelKeyColumn),
         [this](auto& note_structure_key) {
-            for (const CachedTableRow& row : table_cache_.structure_rows) {
-                if (row.cells.size() > static_cast<size_t>(kStructureKeyColumn)) {
-                    note_structure_key(row.cells[static_cast<size_t>(kStructureKeyColumn)]);
+            auto note_structure_rows = [&](const std::vector<CachedTableRow>& rows) {
+                for (const CachedTableRow& row : rows) {
+                    if (row.cells.size() > static_cast<size_t>(kStructureKeyColumn)) {
+                        note_structure_key(row.cells[static_cast<size_t>(kStructureKeyColumn)]);
+                    }
                 }
-            }
+            };
+            note_structure_rows(table_cache_.structure_rows);
+            note_structure_rows(table_cache_.structure_between_rows);
             for (const CachedTableRow& row : table_cache_.repeater_rows) {
                 if (row.cells.size() <= static_cast<size_t>(kRepeaterStructureKeysColumn)) continue;
                 for (const std::string& key :
@@ -2050,70 +2108,112 @@ void App::render_station_list_window() {
     ImGui::End();
 }
 
-void App::render_structures_window() {
-    if (!show_structures_window_) return;
+void App::render_structure_rows_window(bool put_between) {
+    bool& show_window = put_between ? show_structures_between_window_ : show_structures_window_;
+    if (!show_window) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
-    if (focus_structures_next_) ImGui::SetNextWindowFocus();
-    std::string title = tr("frame.structures") + "###Structures";
-    if (!ImGui::Begin(title.c_str(), &show_structures_window_)) {
-        focus_structures_next_ = false;
+    bool& focus_next = put_between ? focus_structures_between_next_ : focus_structures_next_;
+    if (focus_next) ImGui::SetNextWindowFocus();
+    std::string title = tr(put_between ? "frame.structures_put_between" : "frame.structures") +
+        (put_between ? "###StructuresPutBetween" : "###Structures");
+    if (!ImGui::Begin(title.c_str(), &show_window)) {
+        focus_next = false;
         ImGui::End();
         return;
     }
+
     sync_marker_visibility_sizes();
-    bool all_visible = all_flags_set(structure_row_visible_);
-    ImGui::BeginDisabled(structure_row_visible_.empty());
+    ensure_table_cache();
+
+    const TableColumnDef* columns = put_between ? kStructureBetweenColumns : kStructurePutColumns;
+    const int column_count =
+        put_between ? IM_ARRAYSIZE(kStructureBetweenColumns) : IM_ARRAYSIZE(kStructurePutColumns);
+    const int file_path_column = put_between ? kStructureBetweenFilePathColumn : kStructurePutFilePathColumn;
+    const std::vector<CachedTableRow>& rows =
+        put_between ? table_cache_.structure_between_rows : table_cache_.structure_rows;
+    const float file_path_width =
+        put_between ? table_cache_.structure_between_file_path_width : table_cache_.structure_file_path_width;
+    const size_t source_row_base = put_between ? table_cache_.structure_rows.size() : 0;
+    const size_t source_row_end = source_row_base + rows.size();
+
+    const size_t total_structure_rows =
+        table_cache_.structure_rows.size() + table_cache_.structure_between_rows.size();
+    if (structure_list_scroll_row_ >= 0 &&
+        static_cast<size_t>(structure_list_scroll_row_) >= total_structure_rows) {
+        structure_list_scroll_row_ = -1;
+    }
+    if (structure_list_highlight_row_ >= 0 &&
+        static_cast<size_t>(structure_list_highlight_row_) >= total_structure_rows) {
+        structure_list_highlight_row_ = -1;
+    }
+
+    bool all_visible = all_flags_set_in_range(structure_row_visible_, source_row_base, rows.size());
+    ImGui::BeginDisabled(rows.empty());
     if (ImGui::Checkbox(tr("chk.select_all").c_str(), &all_visible)) {
-        set_all_flags(structure_row_visible_, all_visible);
+        set_flags_in_range(structure_row_visible_, source_row_base, rows.size(), all_visible);
     }
     ImGui::EndDisabled();
-    ensure_table_cache();
-    if (ImGui::BeginTable("structures", IM_ARRAYSIZE(kStructureColumns) + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+
+    const int row_count = static_cast<int>(rows.size());
+    int scroll_target_row = -1;
+    if (structure_list_scroll_row_ >= 0) {
+        const size_t source_row = static_cast<size_t>(structure_list_scroll_row_);
+        if (source_row >= source_row_base && source_row < source_row_end) {
+            scroll_target_row = static_cast<int>(source_row - source_row_base);
+        }
+    }
+
+    const char* table_id = put_between ? "structures_put_between" : "structures_put";
+    if (ImGui::BeginTable(table_id, column_count + 1,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
         ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
-        for (int i = 0; i < IM_ARRAYSIZE(kStructureColumns); ++i) {
-            ImGui::TableSetupColumn(kStructureColumns[i],
-                                    i == kStructureFilePathColumn ? ImGuiTableColumnFlags_WidthFixed : 0,
-                                    i == kStructureFilePathColumn ? table_cache_.structure_file_path_width : 0.0f);
+        for (int i = 0; i < column_count; ++i) {
+            float width = columns[i].width;
+            if (i == file_path_column) width = file_path_width;
+            ImGui::TableSetupColumn(columns[i].header,
+                                    width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
+                                    width);
         }
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
+
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.structure_rows.size());
-        if (structure_list_scroll_row_ >= row_count) structure_list_scroll_row_ = -1;
-        if (structure_list_highlight_row_ >= row_count) structure_list_highlight_row_ = -1;
-        const int scroll_target_row = structure_list_scroll_row_;
         clipper.Begin(row_count);
         if (scroll_target_row >= 0 && scroll_target_row < row_count) {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.structure_rows[static_cast<size_t>(row_index)];
+                const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
+                const size_t marker_index = source_row_base + static_cast<size_t>(row_index);
                 ImGui::TableNextRow();
                 if (row.invalid_track_key) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kInvalidTrackKeyRowColor);
-                } else if (row_index == structure_list_highlight_row_) {
+                } else if (structure_list_highlight_row_ >= 0 &&
+                           marker_index == static_cast<size_t>(structure_list_highlight_row_)) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
                 }
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.5f);
                     structure_list_scroll_row_ = -1;
                 }
-                ImGui::PushID(row_index);
+
+                ImGui::PushID(static_cast<int>(marker_index));
                 ImGui::TableSetColumnIndex(0);
-                bool row_visible = static_cast<size_t>(row_index) < structure_row_visible_.size() &&
-                    structure_row_visible_[static_cast<size_t>(row_index)] != 0;
+                bool row_visible = marker_index < structure_row_visible_.size() &&
+                    structure_row_visible_[marker_index] != 0;
                 if (ImGui::Checkbox("##show", &row_visible) &&
-                    static_cast<size_t>(row_index) < structure_row_visible_.size()) {
-                    structure_row_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
+                    marker_index < structure_row_visible_.size()) {
+                    structure_row_visible_[marker_index] = row_visible ? 1 : 0;
                 }
-                for (int i = 0; i < IM_ARRAYSIZE(kStructureColumns); ++i) {
+                for (int i = 0; i < column_count; ++i) {
                     ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
                     if (i == kStructureDistanceColumn) {
-                        size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < structure_marker_cache_.size() &&
                             structure_marker_cache_[marker_index].has_value();
                         const bool can_locate_scene = can_locate_scene_preview && !row.invalid_track_key;
@@ -2137,7 +2237,7 @@ void App::render_structures_window() {
                             find_structure_model_for_structure_key(value);
                         }
                         ImGui::PopID();
-                    } else if (i == kStructureFilePathColumn) {
+                    } else if (i == file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.tooltip_text);
                     } else {
@@ -2149,8 +2249,17 @@ void App::render_structures_window() {
         }
         ImGui::EndTable();
     }
-    focus_structures_next_ = false;
+
+    focus_next = false;
     ImGui::End();
+}
+
+void App::render_structures_window() {
+    render_structure_rows_window(false);
+}
+
+void App::render_structures_between_window() {
+    render_structure_rows_window(true);
 }
 
 void App::render_structure_models_window() {

@@ -174,6 +174,7 @@ struct TableUiCache {
     float cell_padding_x = 0.0f;
     std::vector<CachedTableRow> station_rows;
     std::vector<CachedTableRow> structure_rows;
+    std::vector<CachedTableRow> structure_between_rows;
     std::vector<CachedTableRow> structure_model_rows;
     std::vector<CachedTableRow> other_train_rows;
     std::vector<CachedTableRow> other_train_stop_rows;
@@ -195,6 +196,7 @@ struct TableUiCache {
     std::vector<CachedTableRow> sound_list_rows;
     std::vector<CachedTableRow> sound_3d_list_rows;
     float structure_file_path_width = 200.0f;
+    float structure_between_file_path_width = 200.0f;
     float structure_model_file_path_width = 200.0f;
     float other_train_distance_width = 110.0f;
     float other_train_file_path_width = 200.0f;
@@ -663,6 +665,7 @@ struct WindowVisibilitySettings {
     bool show_othertracks_window = true;
     bool show_station_list_window = false;
     bool show_structures_window = false;
+    bool show_structures_between_window = false;
     bool show_structure_models_window = false;
     bool show_other_trains_window = false;
     bool show_sound_list_window = false;
@@ -689,6 +692,7 @@ struct WindowVisibilitySettings {
         return show_othertracks_window == other.show_othertracks_window &&
             show_station_list_window == other.show_station_list_window &&
             show_structures_window == other.show_structures_window &&
+            show_structures_between_window == other.show_structures_between_window &&
             show_structure_models_window == other.show_structure_models_window &&
             show_other_trains_window == other.show_other_trains_window &&
             show_sound_list_window == other.show_sound_list_window &&
@@ -1000,6 +1004,7 @@ private:
 
     bool show_station_list_window_ = false;
     bool show_structures_window_ = false;
+    bool show_structures_between_window_ = false;
     bool show_structure_models_window_ = false;
     bool show_other_trains_window_ = false;
     bool show_sound_list_window_ = false;
@@ -1022,6 +1027,7 @@ private:
     bool show_model_preview_window_ = true;
     bool show_scene_preview_window_ = true;
     bool focus_structures_next_ = false;
+    bool focus_structures_between_next_ = false;
     bool focus_other_trains_next_ = false;
     bool focus_repeaters_next_ = false;
     bool focus_signal_aspects_next_ = false;
@@ -1187,7 +1193,9 @@ private:
     void render_radius_plot(const ProfileData& data, ImVec2 size);
     void render_othertracks_window();
     void render_station_list_window();
+    void render_structure_rows_window(bool put_between);
     void render_structures_window();
+    void render_structures_between_window();
     void render_structure_models_window();
     void render_other_trains_window();
     void render_sound_file_find_panel(bool is_3d);

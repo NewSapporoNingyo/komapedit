@@ -58,6 +58,7 @@ struct Canvas3DSceneModelOption {
 struct Canvas3DSceneObject {
     Canvas3DSceneObjectKind kind = Canvas3DSceneObjectKind::Generic;
     size_t source_row = 0;
+    bool structure_put_between = false;
     std::string label;
     std::vector<Canvas3DSceneModelOption> model_options;
     size_t selected_model_option = 0;
@@ -171,6 +172,7 @@ struct Canvas3DSceneBuildResult {
 struct Canvas3DSceneUiText {
     std::string switch_signal_aspect = "Switch Signal Aspect";
     std::string locate_structure_list = "Locate in Map Structure List";
+    std::string locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
     std::string locate_repeater_list = "Locate in Repeater List";
     std::string loading = "Loading...";
 };
