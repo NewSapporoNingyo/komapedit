@@ -28,8 +28,8 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Support `$variable = expression;`, the predefined `distance` variable, and basic math functions.
 - [x] Support `#` and `//` comments.
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
-- [ ] Edit elements in map files.
-- [ ] Save modified map files.
+- [ ] Add source anchors and stable edit metadata for editable map/list statements while keeping `kv_get_ir_json()` compatible.
+- [ ] Edit, delete, insert, and save elements in source map/include/list files while preserving include structure, distance expressions, original encodings, and line endings where possible.
 
 ### Own-Track and Other-Track Geometry
 
@@ -54,48 +54,56 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Support panning, mouse-wheel zooming, rotation, and double-click fit-to-view in the plan view.
 - [x] Support fixed grid, movable grid, and no-grid modes.
 - [x] Support measurement mode, showing mileage, elevation, gradient, curve radius, and speed limit.
-- [x] Support jumping to stations.
+- [x] Support jumping to stations and numeric map distances.
 - [x] Import a background image and adjust its position, size, rotation, and brightness.
 - [x] Align a background image using two station positions.
 - [x] Structure and repeater placement markers on the plan view.
 - [x] Display signal position markers on the plan view.
 - [x] Display beacon position markers on the plan view.
 - [x] Display PreTrain pass-point markers on the plan view.
+- [x] Display other-train paths and stop-point markers on the plan view.
 - [x] Display track-irregularity and adhesion change-point markers on the plan view.
 - [x] Display map sound, fixed sound source, rolling-noise, flange-noise, and joint-noise markers on the plan view.
 - [x] Display background change-point markers on the plan view.
 - [x] Display cab-illuminance change-point markers on the plan view.
 - [x] Display fog-effect change-point markers on the plan view.
+- [ ] Split 2D canvas internals into view state, marker cache, hit testing/context menus, background image handling, and drawing primitives without changing current behavior.
 
 ### Map Data Tables
 
 - [x] Load the station list specified by `Station.Load`.
 - [x] Display the station list alongside `Station.Put` placement data from the map.
 - [x] Display the other-track list, with controls for visibility, range, and color.
+- [x] Display other-train definitions and stop-point lists, with plan-path visibility and stop-point location.
 - [x] Display map Structure placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
 - [x] Load and display Structure model lists referenced by `Structure.Load` (`.txt` or `.csv`).
 - [x] Display `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` data, with Begin/End distances merged for readability.
+- [x] Provide shared find and unused-entry search panels for Structure models, signal aspects, and sound lists.
 - [ ] Edit Structure model lists.
 - [ ] Edit station lists and station positions.
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, and `Fog Change Point List`.
 - [ ] Edit signal and beacon lists.
+- [ ] Add a source-backed property inspector for Map Info rows, 2D markers, and 3D scene objects.
 
 ### 3D Canvas
 
 - [x] 3D preview for Structure models.
 - [x] Load model geometry, materials, and diffuse textures through `model_loader.dll`/Assimp.
 - [x] Rotate and zoom the Structure model preview.
-- [x] 3D scene preview canvas for track paths, Structures, repeaters, and background changes.
-- [x] Jump the 3D scene camera from station selections and show the current 3D position on the plan view.
+- [x] 3D scene preview canvas for track paths, Structures, repeaters, signals, and background changes.
+- [x] Jump the 3D scene camera from station selections and numeric distance jumps, and show the current 3D position on the plan view.
+- [x] Locate Structure and Repeater table rows in the 3D scene preview, and locate picked scene objects back in their tables.
+- [ ] 3D scene quality settings for render scale, MSAA, texture filtering, and outline quality.
+- [ ] 3D camera information for current curve radius, gradient, and distance to previous/next station.
 - [ ] Structure position editing tools in the 3D canvas.
-- [ ] Jump to structure elements between 3D preview & tables.
+- [ ] Repeater editing with synchronized rebuilds of generated scene instances.
 
 ### Environmental Effects
 
 - [x] Display `Sound File List`, `3D Sound File List`, `Map Sound List`, and `Map 3D Sound List`.
-- [ ] Edit rolling-noises, joint-noises, station announcement sounds, and 3D sounds.
+- [ ] Edit Sound/Sound3D file lists, map sounds, rolling-noises, joint-noises, station announcement sound fields, and 3D sounds.
 - [ ] Edit cab-illuminance setting positions.
 - [ ] Edit fog effects.
 
@@ -108,6 +116,8 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Save background-image parameters with recent-map entries in `history.ini`.
 - [x] Save settings to `settings.ini` next to the executable.
 - [x] Export own-track and other-track geometry to CSV.
+- [ ] Element preset groups stored as ordinary BVE map/list statements through `element_presets.json`.
+- [ ] Route release export that expands includes, optionally constantizes distance/variable expressions, copies only used resources, writes a report, and protects development route directories from overwrite.
 
 ## Installation and Startup
 
@@ -130,11 +140,11 @@ On startup, the application creates or reads the following files next to the exe
    - Use the mouse wheel to zoom.
    - Hold `Shift` while using the mouse wheel to rotate, or drag with the right mouse button / `Ctrl + left mouse button`.
    - Double-click the plan view to fit the map to the current viewport.
-4. Use `Station Jump` on the toolbar to jump to a station by mileage.
+4. Use `Station Jump` or `Jump to distance(m)` on the toolbar to jump to a station or numeric map distance.
 5. Use the `2D View` menu to show or hide the 2D view window, profile chart, curve-radius chart, gradient overlays, profile other-track display, and background-image controls.
-6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, signals, sounds, effects, and 3D scene helpers. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
+6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
 7. Switch `Mode` to `Measure`, then move near the track or double-click to view mileage, elevation, gradient, curve radius, and speed limit.
-8. Use the `Map Info` menu to open the data tables for stations, tracks, Structures, repeaters, signals, beacons, sounds, irregularity/adhesion data, backgrounds, cab-illuminance, and fog. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
+8. Use the `Map Info` menu to open the data tables for stations, tracks, other trains, Structures, repeaters, signals, beacons, sounds, irregularity/adhesion data, backgrounds, cab-illuminance, and fog. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
    - `Signal Aspect List`: view signal aspect definitions.
    - `Map Signal List`: view signal positions and use the row `Show` checkboxes to toggle markers on the plan.
    - `Beacon List`: view beacon positions.
@@ -142,13 +152,14 @@ On startup, the application creates or reads the following files next to the exe
    - `Map Sound List`, `Map 3D Sound List`, `Rolling Noise Change Point List`, `Flange Noise Change Point List`, and `Joint Noise Play Point List`: view sound playback/change positions and locate them on the plan.
    - `Track Irregularity List`, `Adhesion Change Point List`, `Background Change Point List`, `Cab Illuminance Change Point List`, and `Fog Change Point List`: view the corresponding change-point tables.
    - `Other Tracks`: toggle other-track display and adjust visible range and color.
+   - `Other Train List`: view other-train definitions and stop points, toggle path visibility, and locate stop points on the plan.
    - `Station List`: view the station list and `Station.Put` placement data.
-   - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map.
+   - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map, and locate rendered objects in the 3D scene preview when it is loaded.
    - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. Right-click a structure key and choose `Preview Model` to open the 3D model preview.
-   - `Repeater List`: view `Repeater.Begin/End` data.
+   - `Repeater List`: view `Repeater.Begin/End` data, and locate generated repeaters in the 3D scene preview when it is loaded.
 9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
-11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station jump also moves the scene camera when a scene is loaded.
+11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. In select mode, scene objects can be located back in their Structure or Repeater tables.
 12. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
 13. Press `F5` or use `File -> Reload` to reload the current map.
 
@@ -158,6 +169,7 @@ On startup, the application creates or reads the following files next to the exe
 komapedit/
 ├─ CMakeLists.txt                  # CMake build configuration
 ├─ README.md                       # Project documentation
+├─ README_zhcn.md                  # Simplified Chinese project documentation
 ├─ LICENSE                         # Apache License 2.0
 ├─ NOTICE                          # Project copyright and Apache attribution notices
 ├─ THIRD_PARTY_NOTICES.md          # Third-party library and reference-project notices
