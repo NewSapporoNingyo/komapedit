@@ -23,6 +23,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1016,6 +1017,8 @@ private:
     bool edit_registry_loaded_ = false;
     bool clear_pending_edits_after_load_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
+    std::set<std::string> applied_unsaved_edit_ids_;
+    bool has_unsaved_edits_ = false;
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
 
@@ -1178,8 +1181,11 @@ private:
         bool ui_settings = false;
         bool canvas_element_sizes = false;
         bool canvas_3d_settings = false;
+        bool reload_unsaved_confirm = false;
     };
+    enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
     PopupState popups_;
+    PendingReloadAction pending_reload_action_ = PendingReloadAction::None;
     bool has_saved_layout_ = false;
     bool initial_dockspace_done_ = false;
     ImGuiID dock_right_id_ = 0;
@@ -1306,8 +1312,15 @@ private:
     static MapModel build_model_from_handle(void* handle, const std::string& path);
     static MapModel build_model_from_handle(void* handle, const std::string& path,
                                             LoadModelOptions options);
+    bool rehydrate_model_from_current_handle(LoadModelOptions options);
     bool ensure_full_edit_registry();
     void clear_pending_edit_state();
+    bool parse_and_log_edit_report(const std::string& report_text,
+                                   const std::string& success_prefix,
+                                   int* update_count = nullptr,
+                                   int* delete_count = nullptr,
+                                   int* changed_file_count = nullptr);
+    bool apply_pending_edits_to_memory();
     void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
     void process_pending_element_inspector();
     bool open_element_inspector(const MapElementInspectorRequest& request);
@@ -1365,6 +1378,10 @@ private:
     void rebuild_scene_preview(bool preserve_loaded_models = false, bool preserve_camera = false);
     void reload_scene_preview_models();
     void sync_scene_preview_track_visibility();
+    void perform_reload_current_map_and_model_preview();
+    void perform_reload_current_map_geometry();
+    bool confirm_reload_if_unsaved(PendingReloadAction action);
+    void execute_pending_reload_action();
     void reload_current_map_and_model_preview();
     void reload_current_map_geometry();
     void render_popups();

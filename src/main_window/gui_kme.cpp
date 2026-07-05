@@ -649,7 +649,8 @@ void App::apply_load_result(LoadResult result) {
     handle_ = result.handle;
     model_ = std::move(result.model);
     edit_registry_loaded_ = result.full_edit_registry;
-    if (clear_pending_edits_after_load_ || loaded_different_file || !pending_edit_changes_.empty()) {
+    if (clear_pending_edits_after_load_ || loaded_different_file ||
+        !pending_edit_changes_.empty() || has_unsaved_edits_) {
         clear_pending_edit_state();
         clear_pending_edits_after_load_ = false;
     }
@@ -1172,11 +1173,21 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
 bool App::ensure_full_edit_registry() {
     if (!handle_ || !has_model_) return false;
     if (edit_registry_loaded_ && !model_.edit_statements.empty()) return true;
+    if (!rehydrate_model_from_current_handle(LoadModelOptions{true})) return false;
+    add_log("[info]gui_kme.cpp: full edit registry loaded");
+    return true;
+}
+
+bool App::rehydrate_model_from_current_handle(LoadModelOptions options) {
+    if (!handle_ || !has_model_) return false;
     try {
         std::map<std::string, OtherTrack> old_other;
         for (const auto& track : model_.other_tracks) old_other[track.key] = track;
-        MapModel full = build_model_from_handle(handle_, file_path_, LoadModelOptions{true});
-        for (auto& track : full.other_tracks) {
+        const bool had_cp_arb = model_.has_cp_arb;
+        std::array<double, 3> old_cp{model_.cp_arb[0], model_.cp_arb[1], model_.cp_arb[2]};
+
+        MapModel updated = build_model_from_handle(handle_, file_path_, options);
+        for (auto& track : updated.other_tracks) {
             auto it = old_other.find(track.key);
             if (it != old_other.end()) {
                 track.visible = it->second.visible;
@@ -1185,10 +1196,10 @@ bool App::ensure_full_edit_registry() {
                 track.range_max = it->second.range_max;
             }
         }
-        full.has_cp_arb = model_.has_cp_arb;
-        std::copy(std::begin(model_.cp_arb), std::end(model_.cp_arb), std::begin(full.cp_arb));
-        model_ = std::move(full);
-        edit_registry_loaded_ = true;
+        updated.has_cp_arb = had_cp_arb;
+        std::copy(std::begin(old_cp), std::end(old_cp), std::begin(updated.cp_arb));
+        model_ = std::move(updated);
+        edit_registry_loaded_ = options.full_edit_registry;
         invalidate_table_cache();
         rebuild_marker_overlay_cache();
         sync_marker_visibility_sizes();
@@ -1197,21 +1208,25 @@ bool App::ensure_full_edit_registry() {
             scene_preview_preserve_models_on_rebuild_ = true;
             scene_preview_preserve_camera_on_rebuild_ = true;
         }
-        add_log("[info]gui_kme.cpp: full edit registry loaded");
+        for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
         return true;
     } catch (const std::exception& e) {
-        add_log(std::string("[error]gui_kme.cpp: failed to load edit registry: ") + e.what());
+        add_log(std::string("[error]gui_kme.cpp: failed to refresh map cache: ") + e.what());
         return false;
     }
 }
 
 void App::clear_pending_edit_state() {
     pending_edit_changes_.clear();
+    applied_unsaved_edit_ids_.clear();
+    has_unsaved_edits_ = false;
     inspector_ = MapElementInspectorState{};
 }
 
 bool App::row_has_pending_edit(const std::string& edit_id) const {
-    return !edit_id.empty() && pending_edit_changes_.find(edit_id) != pending_edit_changes_.end();
+    return !edit_id.empty() &&
+        (pending_edit_changes_.find(edit_id) != pending_edit_changes_.end() ||
+         applied_unsaved_edit_ids_.find(edit_id) != applied_unsaved_edit_ids_.end());
 }
 
 bool App::row_is_pending_delete(const std::string& edit_id) const {
@@ -1468,7 +1483,7 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
 void App::apply_inspector_changes() {
     if (!inspector_.open || inspector_.edit_id.empty()) return;
     if (inspector_.pending_delete) {
-        delete_inspector_target();
+        apply_pending_edits_to_memory();
         return;
     }
 
@@ -1500,7 +1515,9 @@ void App::apply_inspector_changes() {
     }
 
     pending_edit_changes_[change.edit_id] = std::move(change);
-    inspector_.status_message = tr("status.edit.pending");
+    if (!apply_pending_edits_to_memory()) {
+        inspector_.status_message = tr("status.edit.pending");
+    }
 }
 
 void App::revert_inspector_changes() {
@@ -1523,6 +1540,94 @@ void App::delete_inspector_target() {
     pending_edit_changes_[change.edit_id] = std::move(change);
     inspector_.pending_delete = true;
     inspector_.status_message = tr("status.edit.pending_delete");
+}
+
+bool App::parse_and_log_edit_report(const std::string& report_text,
+                                    const std::string& success_prefix,
+                                    int* update_count,
+                                    int* delete_count,
+                                    int* changed_file_count) {
+    bool ok = false;
+    try {
+        auto report = mini_json::Parser(report_text).parse();
+        ok = report.at("ok").boolean;
+        const auto& warnings = report.at("warnings");
+        if (warnings.is_array()) {
+            for (const auto& item : warnings.array) {
+                add_log("[warn]gui_kme.cpp: " + item.scalar_text());
+            }
+        }
+        const auto& errors = report.at("blockingErrors");
+        if (errors.is_array()) {
+            for (const auto& item : errors.array) {
+                add_log("[error]gui_kme.cpp: " + item.scalar_text());
+            }
+        }
+        const int updates = static_cast<int>(report.at("updateCount").number);
+        const int deletes = static_cast<int>(report.at("deleteCount").number);
+        const auto& changed_files = report.at("changedFiles");
+        const int files = changed_files.is_array()
+            ? static_cast<int>(changed_files.array.size())
+            : 0;
+        if (update_count) *update_count = updates;
+        if (delete_count) *delete_count = deletes;
+        if (changed_file_count) *changed_file_count = files;
+        if (ok && !success_prefix.empty()) {
+            add_log(success_prefix + ": updates=" + std::to_string(updates) +
+                    ", deletes=" + std::to_string(deletes) +
+                    ", files=" + std::to_string(files));
+        }
+    } catch (const std::exception& e) {
+        add_log(std::string("[error]gui_kme.cpp: failed to parse edit report: ") + e.what());
+        add_log(report_text);
+        return false;
+    }
+    return ok;
+}
+
+bool App::apply_pending_edits_to_memory() {
+    if (!handle_ || pending_edit_changes_.empty() || load_state_.running) return false;
+
+    std::vector<std::string> applied_ids;
+    applied_ids.reserve(pending_edit_changes_.size());
+    bool applying_delete = false;
+    for (const auto& kv : pending_edit_changes_) {
+        applied_ids.push_back(kv.first);
+        applying_delete = applying_delete || kv.second.operation == "delete";
+    }
+    std::optional<MapElementInspectorRequest> reload_request;
+    if (inspector_.open && !inspector_.edit_id.empty() && !applying_delete) {
+        reload_request = make_inspector_reload_request(inspector_);
+    }
+
+    std::string json = pending_changes_json();
+    const char* raw = kv_edit_apply_to_memory(handle_, json.c_str());
+    if (!raw) {
+        const char* err = kv_get_last_error();
+        add_log(std::string("[error]gui_kme.cpp: edit apply failed: ") + (err ? err : "unknown error"));
+        return false;
+    }
+    std::string report_text(raw);
+    kv_free_string(raw);
+
+    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit applied to preview")) {
+        return false;
+    }
+    if (!rehydrate_model_from_current_handle(LoadModelOptions{true})) return false;
+
+    for (const std::string& edit_id : applied_ids) {
+        applied_unsaved_edit_ids_.insert(edit_id);
+    }
+    pending_edit_changes_.clear();
+    has_unsaved_edits_ = true;
+    if (reload_request) {
+        pending_inspector_request_ = std::move(reload_request);
+    } else if (applying_delete) {
+        inspector_ = MapElementInspectorState{};
+    } else {
+        inspector_.status_message = tr("status.edit.applied_to_preview");
+    }
+    return true;
 }
 
 std::string App::pending_changes_json() const {
@@ -1557,9 +1662,8 @@ std::string App::pending_changes_json() const {
 }
 
 void App::save_pending_edits() {
-    if (!handle_ || pending_edit_changes_.empty() || load_state_.running) return;
-    std::string json = pending_changes_json();
-    const char* raw = kv_edit_apply(handle_, json.c_str());
+    if (!handle_ || !has_unsaved_edits_ || load_state_.running) return;
+    const char* raw = kv_edit_commit(handle_);
     if (!raw) {
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit save failed: ") + (err ? err : "unknown error"));
@@ -1568,40 +1672,14 @@ void App::save_pending_edits() {
     std::string report_text(raw);
     kv_free_string(raw);
 
-    bool ok = false;
-    try {
-        auto report = mini_json::Parser(report_text).parse();
-        ok = report.at("ok").boolean;
-        const auto& warnings = report.at("warnings");
-        if (warnings.is_array()) {
-            for (const auto& item : warnings.array) {
-                add_log("[warn]gui_kme.cpp: " + item.scalar_text());
-            }
-        }
-        const auto& errors = report.at("blockingErrors");
-        if (errors.is_array()) {
-            for (const auto& item : errors.array) {
-                add_log("[error]gui_kme.cpp: " + item.scalar_text());
-            }
-        }
-        if (ok) {
-            int update_count = static_cast<int>(report.at("updateCount").number);
-            int delete_count = static_cast<int>(report.at("deleteCount").number);
-            add_log("[info]gui_kme.cpp: edit save applied: updates=" +
-                    std::to_string(update_count) + ", deletes=" + std::to_string(delete_count));
-        }
-    } catch (const std::exception& e) {
-        add_log(std::string("[error]gui_kme.cpp: failed to parse edit report: ") + e.what());
-        add_log(report_text);
+    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit save committed",
+                                   nullptr, nullptr, nullptr)) {
         return;
     }
-
-    if (!ok) return;
-    if (inspector_.open && !inspector_.edit_id.empty() && !row_is_pending_delete(inspector_.edit_id)) {
-        pending_inspector_request_ = make_inspector_reload_request(inspector_);
-    }
-    clear_pending_edits_after_load_ = true;
-    begin_load(file_path_, true, false, std::nullopt, true, true);
+    pending_edit_changes_.clear();
+    applied_unsaved_edit_ids_.clear();
+    has_unsaved_edits_ = false;
+    if (inspector_.open) inspector_.status_message = tr("status.edit.saved");
 }
 
 void App::render_element_inspector() {
@@ -2441,7 +2519,7 @@ void App::render_toolbar() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(pending_edit_changes_.empty() || load_state_.running);
+        ImGui::BeginDisabled(!has_unsaved_edits_ || load_state_.running);
         if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
         ImGui::EndDisabled();
 
@@ -2938,6 +3016,27 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
+    if (popups_.reload_unsaved_confirm) {
+        ImGui::OpenPopup(tr("dialog.reload_unsaved_title").c_str());
+        popups_.reload_unsaved_confirm = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.reload_unsaved_title").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
+        ImGui::TextUnformatted(tr("dialog.reload_unsaved_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            execute_pending_reload_action();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            pending_reload_action_ = PendingReloadAction::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     if (popups_.about) {
         ImGui::OpenPopup(tr("menu.about").c_str());
         popups_.about = false;
@@ -3158,18 +3257,46 @@ void App::reload_model_preview() {
     add_log("[INFO]model preview reloaded: " + path);
 }
 
-void App::reload_current_map_and_model_preview() {
-    if (load_state_.running) return;
+void App::perform_reload_current_map_and_model_preview() {
     if (has_model_ && !file_path_.empty()) {
         begin_load(file_path_, true, false, std::nullopt, false, true);
     }
     reload_model_preview();
 }
 
-void App::reload_current_map_geometry() {
-    if (load_state_.running || !has_model_ || file_path_.empty()) return;
+void App::perform_reload_current_map_geometry() {
     add_log("[info]gui_kme.cpp: reloading map geometry with existing 3D models preserved");
     begin_load(file_path_, true, false, std::nullopt, true, true);
+}
+
+bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
+    if ((!has_unsaved_edits_ && pending_edit_changes_.empty()) || !has_model_ || file_path_.empty()) return false;
+    pending_reload_action_ = action;
+    popups_.reload_unsaved_confirm = true;
+    return true;
+}
+
+void App::execute_pending_reload_action() {
+    PendingReloadAction action = pending_reload_action_;
+    pending_reload_action_ = PendingReloadAction::None;
+    clear_pending_edits_after_load_ = true;
+    if (action == PendingReloadAction::MapAndModelPreview) {
+        perform_reload_current_map_and_model_preview();
+    } else if (action == PendingReloadAction::GeometryOnly) {
+        perform_reload_current_map_geometry();
+    }
+}
+
+void App::reload_current_map_and_model_preview() {
+    if (load_state_.running) return;
+    if (confirm_reload_if_unsaved(PendingReloadAction::MapAndModelPreview)) return;
+    perform_reload_current_map_and_model_preview();
+}
+
+void App::reload_current_map_geometry() {
+    if (load_state_.running || !has_model_ || file_path_.empty()) return;
+    if (confirm_reload_if_unsaved(PendingReloadAction::GeometryOnly)) return;
+    perform_reload_current_map_geometry();
 }
 
 void App::handle_shortcuts() {

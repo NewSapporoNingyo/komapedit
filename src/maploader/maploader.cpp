@@ -293,6 +293,21 @@ struct LoadedText {
     int body_start_line = 1;
 };
 
+struct SourceTextOverride {
+    std::string file_path;
+    std::string source_key;
+    std::string text;
+    std::string encoding;
+    std::string newline;
+    std::string base_hash;
+    std::string current_hash;
+    size_t byte_length = 0;
+    bool utf8_bom = false;
+    bool dirty = false;
+};
+
+using SourceTextOverrides = std::map<std::string, SourceTextOverride>;
+
 std::string detect_newline(const std::string& text) {
     if (text.find("\r\n") != std::string::npos) return "crlf";
     if (text.find('\n') != std::string::npos) return "lf";
@@ -300,9 +315,49 @@ std::string detect_newline(const std::string& text) {
     return "none";
 }
 
+LoadedText make_loaded_header_text(const std::filesystem::path& path,
+                                   std::string text,
+                                   std::string encoding,
+                                   std::string newline,
+                                   std::string source_hash,
+                                   size_t byte_length,
+                                   const std::string& head_str,
+                                   double min_version) {
+    size_t line_end = text.find('\n');
+    std::string header = line_end == std::string::npos ? text : text.substr(0, line_end);
+    if (ascii_lower(header).find(ascii_lower(head_str)) == std::string::npos) {
+        throw std::runtime_error(path_to_utf8(path) + " is not " + head_str);
+    }
+    if (parse_first_version(header) < min_version) {
+        throw std::runtime_error(path_to_utf8(path) + " is under Ver." + json_number(min_version));
+    }
+    size_t body_offset = line_end == std::string::npos ? text.size() : line_end + 1;
+    std::string body = line_end == std::string::npos ? std::string() : text.substr(body_offset);
+    std::string normalized_path = normalized_source_path(path);
+    std::string normalized_key = normalized_source_key(normalized_path);
+    std::vector<size_t> line_starts = build_line_starts(body);
+    return {std::move(body), path, std::filesystem::absolute(path).parent_path(), normalized_path,
+            normalized_key, std::move(encoding), std::move(newline), std::move(source_hash),
+            std::move(line_starts),
+            byte_length, body_offset, line_end == std::string::npos ? 1 : 2};
+}
+
 LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
-                            double min_version) {
+                            double min_version,
+                            const SourceTextOverrides* overrides = nullptr) {
+    std::string normalized_path = normalized_source_path(path);
+    std::string normalized_key = normalized_source_key(normalized_path);
+    if (overrides) {
+        auto override_it = overrides->find(normalized_key);
+        if (override_it != overrides->end()) {
+            const SourceTextOverride& source = override_it->second;
+            return make_loaded_header_text(path, source.text, source.encoding, source.newline,
+                                           source.current_hash, source.byte_length,
+                                           head_str, min_version);
+        }
+    }
+
     ScopedTimer timer(g_active_timing ? &g_active_timing->read_decode_seconds : nullptr);
     std::string bytes = read_binary_file(path);
     std::string text;
@@ -342,23 +397,10 @@ LoadedText load_header_text(const std::filesystem::path& path,
         }
     }
 
-    size_t line_end = text.find('\n');
-    std::string header = line_end == std::string::npos ? text : text.substr(0, line_end);
-    if (ascii_lower(header).find(ascii_lower(head_str)) == std::string::npos) {
-        throw std::runtime_error(path_to_utf8(path) + " is not " + head_str);
-    }
-    if (parse_first_version(header) < min_version) {
-        throw std::runtime_error(path_to_utf8(path) + " is under Ver." + json_number(min_version));
-    }
-    size_t body_offset = line_end == std::string::npos ? text.size() : line_end + 1;
-    std::string body = line_end == std::string::npos ? std::string() : text.substr(body_offset);
-    std::string normalized_path = normalized_source_path(path);
-    std::string normalized_key = normalized_source_key(normalized_path);
-    std::vector<size_t> line_starts = build_line_starts(body);
-    return {body, path, std::filesystem::absolute(path).parent_path(), normalized_path,
-            normalized_key, encoding, detect_newline(text), hex64(stable_hash64(bytes)),
-            std::move(line_starts),
-            bytes.size(), body_offset, line_end == std::string::npos ? 1 : 2};
+    std::string newline = detect_newline(text);
+    return make_loaded_header_text(path, std::move(text), std::move(encoding), std::move(newline),
+                                   hex64(stable_hash64(bytes)), bytes.size(),
+                                   head_str, min_version);
 }
 
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file) {
@@ -889,8 +931,11 @@ struct Matrix {
 struct MapContext {
     std::filesystem::path rootpath;
     std::string rootpath_utf8;
+    std::string entry_file_path;
     std::string current_file_path;
     std::vector<std::string> include_stack;
+    SourceTextOverrides source_overrides;
+    double unit_distance = 25.0;
     double distance = 0.0;
     std::string distance_expression;
     int parse_order = 0;
@@ -966,6 +1011,13 @@ struct MapContext {
         return ++edit_order;
     }
 };
+
+LoadedText load_header_text(const MapContext& ctx,
+                            const std::filesystem::path& path,
+                            const std::string& head_str,
+                            double min_version) {
+    return load_header_text(path, head_str, min_version, &ctx.source_overrides);
+}
 
 std::string normalized_source_path(const std::filesystem::path& path) {
     std::error_code ec;
@@ -1622,8 +1674,11 @@ private:
         MapContext seed;
         seed.rootpath = ctx_.rootpath;
         seed.rootpath_utf8 = ctx_.rootpath_utf8;
+        seed.entry_file_path = ctx_.entry_file_path;
         seed.current_file_path = normalized_source_path(child);
         seed.include_stack = ctx_.include_stack;
+        seed.source_overrides = ctx_.source_overrides;
+        seed.unit_distance = ctx_.unit_distance;
         std::string child_path = normalized_source_path(child);
         if (seed.include_stack.empty() ||
             normalized_source_key(seed.include_stack.back()) != normalized_source_key(child_path)) {
@@ -1640,7 +1695,7 @@ private:
         result.context = std::move(seed);
         try {
             ActiveTimingScope active(result.context.timing);
-            LoadedText loaded = load_header_text(child, "BveTs Map ", 2.0);
+            LoadedText loaded = load_header_text(result.context, child, "BveTs Map ", 2.0);
             result.context.current_file_path = loaded.normalized_path;
             Parser nested(result.context, std::move(loaded));
             nested.parse();
@@ -2201,7 +2256,7 @@ private:
             ctx_.station_puts.push_back(std::move(row));
         } else if (fn == "load" && !a.empty()) {
             std::filesystem::path path = join_path(ctx_.rootpath, as_text(a.at(0)));
-            LoadedText loaded = load_header_text(path, "BveTs Station List ", 0.04);
+            LoadedText loaded = load_header_text(ctx_, path, "BveTs Station List ", 0.04);
             parse_station_list(loaded);
         }
     }
@@ -2321,7 +2376,7 @@ private:
         std::string path_key = path_to_utf8(abs);
         if (!ctx_.parsed_other_train_files.insert(path_key).second) return;
 
-        LoadedText loaded = load_header_text(abs, "BveTs Train ", 0.0);
+        LoadedText loaded = load_header_text(ctx_, abs, "BveTs Train ", 0.0);
         register_source_file(ctx_, loaded);
         std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         std::string section;
@@ -2460,7 +2515,7 @@ private:
             if (list_path_text.empty()) return;
             try {
                 std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
-                LoadedText loaded = load_header_text(path, "BveTs Signal Aspects List ", 2.0);
+                LoadedText loaded = load_header_text(ctx_, path, "BveTs Signal Aspects List ", 2.0);
                 parse_signal_aspect_list(loaded);
             } catch (const std::exception& e) {
                 log_warn(e.what());
@@ -2539,7 +2594,7 @@ private:
             if (!list_path_text.empty()) {
                 try {
                     std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
-                    LoadedText loaded = load_header_text(path, "BveTs Structure List ", 1.0);
+                    LoadedText loaded = load_header_text(ctx_, path, "BveTs Structure List ", 1.0);
                     parse_structure_list(loaded);
                 } catch (const std::exception& e) {
                     log_warn(e.what());
@@ -2594,7 +2649,7 @@ private:
             if (list_path_text.empty()) return;
             try {
                 std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
-                LoadedText loaded = load_header_text(path, "BveTs Sound List ", 2.0);
+                LoadedText loaded = load_header_text(ctx_, path, "BveTs Sound List ", 2.0);
                 parse_sound_list(loaded, is_3d);
             } catch (const std::exception& e) {
                 log_warn(e.what());
@@ -3911,6 +3966,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
                        bool has_arb, double arb_start, double arb_end, double arb_step,
                        const std::vector<double>* extra_controlpoints = nullptr) {
     log_info("calculating track geometry");
+    ctx.unit_distance = unitdist;
     ctx.othertrack_buffers.clear();
     ctx.timing.owntrack_seconds = 0.0;
     ctx.timing.othertrack_seconds.clear();
@@ -4560,11 +4616,25 @@ struct MapEditPreview {
     std::string after;
 };
 
+struct MapEditPatchedFile {
+    std::string file_path;
+    std::string source_key;
+    std::string text;
+    std::string bytes;
+    std::string encoding;
+    std::string newline;
+    std::string base_hash;
+    std::string current_hash;
+    size_t byte_length = 0;
+    bool utf8_bom = false;
+};
+
 struct MapEditReport {
     std::vector<std::string> changed_files;
     std::vector<std::string> warnings;
     std::vector<std::string> blocking_errors;
     std::vector<MapEditPreview> previews;
+    std::vector<MapEditPatchedFile> patched_files;
     int update_count = 0;
     int insert_count = 0;
     int delete_count = 0;
@@ -4595,6 +4665,7 @@ struct SourcePatch {
     const SourceFileRecord* record = nullptr;
     std::string text;
     std::string current_hash;
+    std::string base_hash;
     bool utf8_bom = false;
     std::vector<TextReplacement> replacements;
 };
@@ -4646,12 +4717,23 @@ std::string decode_source_text_for_edit(const std::string& bytes,
     return decode_codepage(bytes, CP_UTF8, true);
 }
 
-SourcePatch load_source_patch(const SourceFileRecord& record) {
+SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& record) {
     SourcePatch patch;
     patch.record = &record;
+    auto override_it = ctx.source_overrides.find(record.source_key);
+    if (override_it != ctx.source_overrides.end()) {
+        const SourceTextOverride& source = override_it->second;
+        patch.text = source.text;
+        patch.current_hash = source.current_hash;
+        patch.base_hash = source.base_hash.empty() ? source.current_hash : source.base_hash;
+        patch.utf8_bom = source.utf8_bom;
+        return patch;
+    }
+
     std::filesystem::path path = path_from_utf8(record.file_path);
     std::string bytes = read_binary_file(path);
     patch.current_hash = hex64(stable_hash64(bytes));
+    patch.base_hash = patch.current_hash;
     patch.utf8_bom = has_utf8_bom(bytes);
     patch.text = decode_source_text_for_edit(bytes, record.encoding);
     return patch;
@@ -5071,7 +5153,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         SourcePatch& patch = patches[statement.source.source_file_index];
         if (!patch.record) {
             try {
-                patch = load_source_patch(file);
+                patch = load_source_patch(ctx, file);
             } catch (const std::exception& e) {
                 report.blocking_errors.push_back(e.what());
                 continue;
@@ -5160,7 +5242,20 @@ MapEditReport build_edit_report(MapContext& ctx,
             report.blocking_errors.push_back(e.what());
             continue;
         }
+        std::string current_hash = hex64(stable_hash64(bytes));
         report.changed_files.push_back(patch.record->file_path);
+        report.patched_files.push_back({
+            patch.record->file_path,
+            patch.record->source_key,
+            std::move(patched_text),
+            bytes,
+            patch.record->encoding,
+            patch.record->newline,
+            patch.base_hash.empty() ? patch.current_hash : patch.base_hash,
+            current_hash,
+            bytes.size(),
+            patch.utf8_bom
+        });
         if (write_files) {
             write_binary_file_for_edit(path_from_utf8(patch.record->file_path), bytes);
         }
@@ -5573,6 +5668,139 @@ std::string build_ir_json(MapContext& ctx, unsigned flags) {
     return out.str();
 }
 
+std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
+                                              double unit_distance,
+                                              SourceTextOverrides overrides,
+                                              bool has_arbitrary_distribution,
+                                              const std::array<double, 3>& arbitrary_distribution) {
+    auto ctx = std::make_unique<MapContext>();
+    ctx->source_overrides = std::move(overrides);
+    ActiveTimingScope active(ctx->timing);
+    log_info("loading map " + path_to_utf8(map_path));
+    LoadedText loaded = load_header_text(*ctx, map_path, "BveTs Map ", 2.0);
+    ctx->rootpath = loaded.root;
+    ctx->rootpath_utf8 = path_to_utf8(loaded.root);
+    ctx->entry_file_path = loaded.normalized_path;
+    ctx->current_file_path = loaded.normalized_path;
+    ctx->include_stack.push_back(ctx->current_file_path);
+
+    log_info("parsing syntax tree");
+    {
+        ScopedTimer timer(&ctx->timing.parse_seconds);
+        Parser parser(*ctx, std::move(loaded));
+        parser.parse();
+    }
+
+    log_info("sorting parsed IR");
+    {
+        ScopedTimer timer(&ctx->timing.relocate_seconds);
+        relocate(*ctx);
+    }
+    generate_geometry(*ctx, unit_distance, has_arbitrary_distribution,
+                      arbitrary_distribution[0], arbitrary_distribution[1],
+                      arbitrary_distribution[2]);
+    return ctx;
+}
+
+void apply_patched_files_to_overrides(SourceTextOverrides& overrides,
+                                      const MapEditReport& report) {
+    for (const MapEditPatchedFile& file : report.patched_files) {
+        SourceTextOverride source;
+        source.file_path = file.file_path;
+        source.source_key = file.source_key;
+        source.text = file.text;
+        source.encoding = file.encoding;
+        source.newline = file.newline;
+        source.base_hash = file.base_hash;
+        source.current_hash = file.current_hash;
+        source.byte_length = file.byte_length;
+        source.utf8_bom = file.utf8_bom;
+        source.dirty = true;
+        overrides[source.source_key] = std::move(source);
+    }
+}
+
+void reparse_context_with_overrides(MapContext& ctx,
+                                    SourceTextOverrides overrides,
+                                    bool has_arbitrary_distribution,
+                                    const std::array<double, 3>& arbitrary_distribution) {
+    std::string entry_file_path = ctx.entry_file_path;
+    if (entry_file_path.empty()) {
+        if (!ctx.include_stack.empty()) entry_file_path = ctx.include_stack.front();
+        else if (!ctx.source_files.empty()) entry_file_path = ctx.source_files.front().file_path;
+    }
+    if (entry_file_path.empty()) throw std::runtime_error("map entry file is not known");
+    double unit_distance = ctx.unit_distance;
+    auto next = parse_map_context(path_from_utf8(entry_file_path), unit_distance, std::move(overrides),
+                                  has_arbitrary_distribution, arbitrary_distribution);
+    ctx = std::move(*next);
+}
+
+void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report) {
+    SourceTextOverrides overrides = ctx.source_overrides;
+    apply_patched_files_to_overrides(overrides, report);
+    bool has_arbitrary_distribution = ctx.has_cp_arbdistribution;
+    std::array<double, 3> arbitrary_distribution = ctx.cp_arbdistribution;
+    reparse_context_with_overrides(ctx, std::move(overrides),
+                                   has_arbitrary_distribution,
+                                   arbitrary_distribution);
+}
+
+MapEditReport commit_memory_edits(MapContext& ctx) {
+    MapEditReport report;
+    struct PendingWrite {
+        std::string source_key;
+        std::filesystem::path path;
+        std::string bytes;
+        std::string hash;
+    };
+    std::vector<PendingWrite> writes;
+
+    for (const auto& entry : ctx.source_overrides) {
+        const SourceTextOverride& source = entry.second;
+        if (!source.dirty) continue;
+        std::filesystem::path path = path_from_utf8(source.file_path);
+        std::string disk_bytes;
+        try {
+            disk_bytes = read_binary_file(path);
+        } catch (const std::exception& e) {
+            report.blocking_errors.push_back(e.what());
+            continue;
+        }
+        std::string disk_hash = hex64(stable_hash64(disk_bytes));
+        if (!source.base_hash.empty() && disk_hash != source.base_hash) {
+            report.blocking_errors.push_back("source file changed externally: " + source.file_path);
+            continue;
+        }
+
+        try {
+            std::string bytes = encode_text_for_writeback(source.text, source.encoding, source.utf8_bom);
+            std::string hash = hex64(stable_hash64(bytes));
+            writes.push_back({source.source_key, std::move(path), std::move(bytes), std::move(hash)});
+            report.changed_files.push_back(source.file_path);
+        } catch (const std::exception& e) {
+            report.blocking_errors.push_back(e.what());
+        }
+    }
+
+    if (!report.ok()) return report;
+
+    for (const PendingWrite& write : writes) {
+        write_binary_file_for_edit(write.path, write.bytes);
+    }
+    for (const PendingWrite& write : writes) {
+        for (SourceFileRecord& source_file : ctx.source_files) {
+            if (source_file.source_key == write.source_key) {
+                source_file.source_hash = write.hash;
+                source_file.byte_length = write.bytes.size();
+                break;
+            }
+        }
+        ctx.source_overrides.erase(write.source_key);
+    }
+    return report;
+}
+
 KvDoubleBuffer make_buffer(const Matrix& m) {
     return {m.data.empty() ? nullptr : m.data.data(), m.rows, m.cols};
 }
@@ -5588,29 +5816,8 @@ KV_API void kv_set_log_callback(KvLogCallback callback) {
 KV_API void* kv_load_map(const char* path, double unit_distance) {
     try {
         if (!path) throw std::runtime_error("path is null");
-        auto ctx = std::make_unique<MapContext>();
-        ActiveTimingScope active(ctx->timing);
         std::filesystem::path map_path = path_from_utf8(path);
-        log_info("loading map " + path_to_utf8(map_path));
-        LoadedText loaded = load_header_text(map_path, "BveTs Map ", 2.0);
-        ctx->rootpath = loaded.root;
-        ctx->rootpath_utf8 = path_to_utf8(loaded.root);
-        ctx->current_file_path = loaded.normalized_path;
-        ctx->include_stack.push_back(ctx->current_file_path);
-
-        log_info("parsing syntax tree");
-        {
-            ScopedTimer timer(&ctx->timing.parse_seconds);
-            Parser parser(*ctx, std::move(loaded));
-            parser.parse();
-        }
-
-        log_info("sorting parsed IR");
-        {
-            ScopedTimer timer(&ctx->timing.relocate_seconds);
-            relocate(*ctx);
-        }
-        generate_geometry(*ctx, unit_distance, false, 0.0, 0.0, 0.0);
+        auto ctx = parse_map_context(map_path, unit_distance, SourceTextOverrides{}, false, {0.0, 0.0, 0.0});
         log_info(path_to_utf8(map_path.filename()) + " loaded");
         return ctx.release();
     } catch (const std::exception& e) {
@@ -5737,12 +5944,44 @@ KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json) {
     }
 }
 
+KV_API const char* kv_edit_apply_to_memory(void* handle, const char* changes_json) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        std::vector<MapEditChange> changes = parse_edit_changes_json(changes_json);
+        MapEditReport report = build_edit_report(*ctx, changes, false);
+        if (report.ok()) {
+            try {
+                apply_edit_report_to_memory(*ctx, report);
+            } catch (const std::exception& e) {
+                report.blocking_errors.push_back(std::string("edited cache reload failed: ") + e.what());
+            }
+        }
+        return copy_c_string(report_json(report));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
+}
+
 KV_API const char* kv_edit_apply(void* handle, const char* changes_json) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
         std::vector<MapEditChange> changes = parse_edit_changes_json(changes_json);
         MapEditReport report = build_edit_report(*ctx, changes, true);
+        return copy_c_string(report_json(report));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
+}
+
+KV_API const char* kv_edit_commit(void* handle) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        MapEditReport report = commit_memory_edits(*ctx);
         return copy_c_string(report_json(report));
     } catch (const std::exception& e) {
         set_last_error(e.what());

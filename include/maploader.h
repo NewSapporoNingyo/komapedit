@@ -81,9 +81,18 @@ KV_API const char* kv_get_ir_json(void* handle);
    Does not write source files. Release it with kv_free_string(). */
 KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json);
 
+/* Validates edit changes, reparses the active handle from an in-memory patched
+   source cache, and returns a newly allocated UTF-8 JSON report. Does not write
+   source files. Release it with kv_free_string(). */
+KV_API const char* kv_edit_apply_to_memory(void* handle, const char* changes_json);
+
 /* Validates and writes edit changes, then returns a newly allocated UTF-8 JSON
    report. Release it with kv_free_string(). */
 KV_API const char* kv_edit_apply(void* handle, const char* changes_json);
+
+/* Writes in-memory edited source cache entries back to their source files, then
+   returns a newly allocated UTF-8 JSON report. Release it with kv_free_string(). */
+KV_API const char* kv_edit_commit(void* handle);
 
 /* Returns a thread-local error string owned by maploader.dll. Do not free it. */
 KV_API const char* kv_get_last_error(void);
