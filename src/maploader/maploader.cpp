@@ -4825,6 +4825,229 @@ std::string normalized_number_arg(const std::string& text) {
     return trimmed == "-0" ? "0" : trimmed;
 }
 
+bool edit_expr_ident_start(unsigned char c) {
+    return std::isalpha(c) || c == '_' || c >= 0x80;
+}
+
+bool edit_expr_ident_part(unsigned char c) {
+    return std::isalnum(c) || c == '_' || c >= 0x80;
+}
+
+size_t previous_nonspace_pos(const std::string& text, size_t pos) {
+    while (pos > 0) {
+        --pos;
+        if (!std::isspace(static_cast<unsigned char>(text[pos]))) return pos;
+    }
+    return std::string::npos;
+}
+
+bool expression_references_predefined_distance(const std::string& expression) {
+    bool single_quoted = false;
+    bool double_quoted = false;
+    for (size_t i = 0; i < expression.size();) {
+        char ch = expression[i];
+        if (ch == '\'' && !double_quoted) {
+            single_quoted = !single_quoted;
+            ++i;
+            continue;
+        }
+        if (ch == '"' && !single_quoted) {
+            double_quoted = !double_quoted;
+            ++i;
+            continue;
+        }
+        if (single_quoted || double_quoted) {
+            ++i;
+            continue;
+        }
+        if (!edit_expr_ident_start(static_cast<unsigned char>(ch))) {
+            ++i;
+            continue;
+        }
+
+        const size_t begin = i;
+        ++i;
+        while (i < expression.size() &&
+               edit_expr_ident_part(static_cast<unsigned char>(expression[i]))) {
+            ++i;
+        }
+        if (ascii_lower(expression.substr(begin, i - begin)) != "distance") continue;
+
+        const size_t prev = previous_nonspace_pos(expression, begin);
+        if (prev == std::string::npos || expression[prev] != '$') return true;
+    }
+    return false;
+}
+
+bool sign_is_exponent_part(const std::string& expression, size_t pos) {
+    if (pos == 0 || pos + 1 >= expression.size()) return false;
+    char previous = expression[pos - 1];
+    if (previous != 'e' && previous != 'E') return false;
+    return std::isdigit(static_cast<unsigned char>(expression[pos + 1]));
+}
+
+bool is_unary_additive_sign(const std::string& expression, size_t pos) {
+    const size_t previous = previous_nonspace_pos(expression, pos);
+    if (previous == std::string::npos) return true;
+    char ch = expression[previous];
+    return ch == '+' || ch == '-' || ch == '*' || ch == '/' ||
+           ch == '%' || ch == '(' || ch == ',';
+}
+
+std::vector<size_t> top_level_additive_separator_positions(const std::string& expression) {
+    std::vector<size_t> separators;
+    bool single_quoted = false;
+    bool double_quoted = false;
+    int paren_depth = 0;
+    for (size_t i = 0; i < expression.size(); ++i) {
+        char ch = expression[i];
+        if (ch == '\'' && !double_quoted) {
+            single_quoted = !single_quoted;
+            continue;
+        }
+        if (ch == '"' && !single_quoted) {
+            double_quoted = !double_quoted;
+            continue;
+        }
+        if (single_quoted || double_quoted) continue;
+        if (ch == '(') {
+            ++paren_depth;
+            continue;
+        }
+        if (ch == ')' && paren_depth > 0) {
+            --paren_depth;
+            continue;
+        }
+        if (paren_depth != 0 || (ch != '+' && ch != '-')) continue;
+        if (sign_is_exponent_part(expression, i) || is_unary_additive_sign(expression, i)) continue;
+        separators.push_back(i);
+    }
+    return separators;
+}
+
+struct SafeDistanceAddend {
+    size_t operator_pos = std::string::npos;
+    size_t unary_sign_pos = std::string::npos;
+    size_t number_begin = 0;
+    size_t number_end = 0;
+    int contribution_sign = 1;
+    double literal_value = 0.0;
+};
+
+bool find_safe_numeric_distance_addend(const std::string& expression,
+                                       SafeDistanceAddend& addend) {
+    std::vector<size_t> separators = top_level_additive_separator_positions(expression);
+    size_t term_begin = 0;
+    for (size_t term_index = 0; term_index <= separators.size(); ++term_index) {
+        const size_t term_end = term_index < separators.size()
+            ? separators[term_index]
+            : expression.size();
+        const size_t operator_pos = term_index == 0
+            ? std::string::npos
+            : separators[term_index - 1];
+        int sign = 1;
+        size_t pos = term_begin;
+        size_t unary_sign_pos = std::string::npos;
+        if (operator_pos != std::string::npos) {
+            sign = expression[operator_pos] == '-' ? -1 : 1;
+            pos = operator_pos + 1;
+        }
+        while (pos < term_end && std::isspace(static_cast<unsigned char>(expression[pos]))) ++pos;
+        while (pos < term_end && (expression[pos] == '+' || expression[pos] == '-')) {
+            if (unary_sign_pos == std::string::npos) unary_sign_pos = pos;
+            if (expression[pos] == '-') sign = -sign;
+            ++pos;
+            while (pos < term_end && std::isspace(static_cast<unsigned char>(expression[pos]))) ++pos;
+        }
+        if (pos >= term_end ||
+            (!std::isdigit(static_cast<unsigned char>(expression[pos])) && expression[pos] != '.')) {
+            term_begin = term_end + 1;
+            continue;
+        }
+
+        const char* begin = expression.c_str() + pos;
+        char* end = nullptr;
+        errno = 0;
+        double value = std::strtod(begin, &end);
+        if (end == begin || errno == ERANGE || !std::isfinite(value)) {
+            term_begin = term_end + 1;
+            continue;
+        }
+        const size_t number_end = pos + static_cast<size_t>(end - begin);
+        size_t trailing = number_end;
+        while (trailing < term_end &&
+               std::isspace(static_cast<unsigned char>(expression[trailing]))) {
+            ++trailing;
+        }
+        if (trailing != term_end) {
+            term_begin = term_end + 1;
+            continue;
+        }
+
+        addend.operator_pos = operator_pos;
+        addend.unary_sign_pos = unary_sign_pos;
+        addend.number_begin = pos;
+        addend.number_end = number_end;
+        addend.contribution_sign = sign;
+        addend.literal_value = value;
+        return true;
+    }
+    return false;
+}
+
+std::string apply_delta_to_distance_addend(std::string expression,
+                                           const SafeDistanceAddend& addend,
+                                           double delta) {
+    const double current_contribution =
+        static_cast<double>(addend.contribution_sign) * addend.literal_value;
+    const double next_contribution = current_contribution + delta;
+    const int next_sign = next_contribution < 0.0 ? -1 : 1;
+    const std::string next_number = fallback_edit_number(std::fabs(next_contribution));
+
+    if (next_sign == addend.contribution_sign) {
+        expression.replace(addend.number_begin,
+                           addend.number_end - addend.number_begin,
+                           next_number);
+        return expression;
+    }
+
+    if (addend.operator_pos != std::string::npos) {
+        expression.replace(addend.operator_pos,
+                           addend.number_end - addend.operator_pos,
+                           std::string(next_sign < 0 ? "-" : "+") + next_number);
+        return expression;
+    }
+
+    const size_t replace_begin = addend.unary_sign_pos == std::string::npos
+        ? addend.number_begin
+        : addend.unary_sign_pos;
+    expression.replace(replace_begin,
+                       addend.number_end - replace_begin,
+                       (next_sign < 0 ? "-" : "") + next_number);
+    return expression;
+}
+
+std::string append_delta_to_distance_expression(const std::string& expression, double delta) {
+    if (delta < 0.0) return expression + "-" + fallback_edit_number(-delta);
+    return expression + "+" + fallback_edit_number(delta);
+}
+
+std::string adjust_distance_expression_by_delta(const std::string& expression, double delta) {
+    std::string trimmed = trim_field_copy(expression);
+    if (trimmed.empty()) {
+        throw std::runtime_error("distance edit target has no source distance expression");
+    }
+    if (expression_references_predefined_distance(trimmed)) {
+        throw std::runtime_error("distance edit is blocked because the source distance expression references predefined distance");
+    }
+
+    SafeDistanceAddend addend;
+    if (find_safe_numeric_distance_addend(trimmed, addend)) {
+        return apply_delta_to_distance_addend(std::move(trimmed), addend, delta);
+    }
+    return append_delta_to_distance_expression(trimmed, delta);
+}
+
 std::vector<std::string> parse_bve_argument_fields(const std::string& line) {
     std::vector<std::string> fields;
     if (line.empty()) return fields;
@@ -4993,6 +5216,208 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     return count;
 }
 
+bool source_context_equal(const SourceSpan& a, const SourceSpan& b) {
+    return a.source_file_index == b.source_file_index &&
+           a.include_stack_index == b.include_stack_index;
+}
+
+bool source_start_less(const SourceSpan& a, const SourceSpan& b) {
+    if (a.line != b.line) return a.line < b.line;
+    if (a.column != b.column) return a.column < b.column;
+    if (a.line_end != b.line_end) return a.line_end < b.line_end;
+    return a.column_end < b.column_end;
+}
+
+bool source_start_greater(const SourceSpan& a, const SourceSpan& b) {
+    return source_start_less(b, a);
+}
+
+bool is_distance_statement(const ParsedStatement& statement) {
+    return statement.statement_kind == "Distance.Set";
+}
+
+bool distance_value_matches(double a, double b) {
+    const double scale = std::max({1.0, std::fabs(a), std::fabs(b)});
+    return std::fabs(a - b) <= 1e-8 * scale;
+}
+
+bool distance_statement_matches(const ParsedStatement& statement,
+                                const std::string& expression,
+                                double value) {
+    return is_distance_statement(statement) &&
+           trim_field_copy(statement.distance_expression) == expression &&
+           distance_value_matches(statement.distance_value, value);
+}
+
+size_t nearest_source_statement_before(const MapContext& ctx, size_t statement_index) {
+    if (statement_index >= ctx.parsed_statements.size()) return kNoSourceRef;
+    const ParsedStatement& target = ctx.parsed_statements[statement_index];
+    size_t best = kNoSourceRef;
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        if (i == statement_index) continue;
+        const ParsedStatement& candidate = ctx.parsed_statements[i];
+        if (!source_context_equal(candidate.source, target.source)) continue;
+        if (!source_start_less(candidate.source, target.source)) continue;
+        if (best == kNoSourceRef ||
+            source_start_less(ctx.parsed_statements[best].source, candidate.source)) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+size_t nearest_source_statement_after(const MapContext& ctx, size_t statement_index) {
+    if (statement_index >= ctx.parsed_statements.size()) return kNoSourceRef;
+    const ParsedStatement& target = ctx.parsed_statements[statement_index];
+    size_t best = kNoSourceRef;
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        if (i == statement_index) continue;
+        const ParsedStatement& candidate = ctx.parsed_statements[i];
+        if (!source_context_equal(candidate.source, target.source)) continue;
+        if (!source_start_greater(candidate.source, target.source)) continue;
+        if (best == kNoSourceRef ||
+            source_start_less(candidate.source, ctx.parsed_statements[best].source)) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+size_t nearest_distance_statement_before(const MapContext& ctx, size_t statement_index) {
+    if (statement_index >= ctx.parsed_statements.size()) return kNoSourceRef;
+    const ParsedStatement& target = ctx.parsed_statements[statement_index];
+    size_t best = kNoSourceRef;
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        if (i == statement_index) continue;
+        const ParsedStatement& candidate = ctx.parsed_statements[i];
+        if (!is_distance_statement(candidate)) continue;
+        if (!source_context_equal(candidate.source, target.source)) continue;
+        if (!source_start_less(candidate.source, target.source)) continue;
+        if (best == kNoSourceRef ||
+            source_start_less(ctx.parsed_statements[best].source, candidate.source)) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+size_t nearest_distance_statement_after(const MapContext& ctx, size_t statement_index) {
+    if (statement_index >= ctx.parsed_statements.size()) return kNoSourceRef;
+    const ParsedStatement& target = ctx.parsed_statements[statement_index];
+    size_t best = kNoSourceRef;
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        if (i == statement_index) continue;
+        const ParsedStatement& candidate = ctx.parsed_statements[i];
+        if (!is_distance_statement(candidate)) continue;
+        if (!source_context_equal(candidate.source, target.source)) continue;
+        if (!source_start_greater(candidate.source, target.source)) continue;
+        if (best == kNoSourceRef ||
+            source_start_less(candidate.source, ctx.parsed_statements[best].source)) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+struct AdjacentDistanceWrapper {
+    size_t before_index = kNoSourceRef;
+    size_t after_index = kNoSourceRef;
+
+    bool valid() const {
+        return before_index != kNoSourceRef && after_index != kNoSourceRef;
+    }
+};
+
+AdjacentDistanceWrapper find_isolated_adjacent_distance_wrapper(const MapContext& ctx,
+                                                               size_t statement_index) {
+    AdjacentDistanceWrapper wrapper;
+    if (statement_index >= ctx.parsed_statements.size()) return wrapper;
+
+    size_t before = nearest_source_statement_before(ctx, statement_index);
+    size_t after = nearest_source_statement_after(ctx, statement_index);
+    if (before == kNoSourceRef || after == kNoSourceRef) return wrapper;
+    if (!is_distance_statement(ctx.parsed_statements[before]) ||
+        !is_distance_statement(ctx.parsed_statements[after])) {
+        return wrapper;
+    }
+    if (nearest_source_statement_after(ctx, before) != statement_index ||
+        nearest_source_statement_before(ctx, after) != statement_index) {
+        return wrapper;
+    }
+    if (count_elements_for_statement(ctx, before) != 0 ||
+        count_elements_for_statement(ctx, after) != 0) {
+        return wrapper;
+    }
+    size_t previous_distance = nearest_distance_statement_before(ctx, before);
+    if (previous_distance == kNoSourceRef) return wrapper;
+    const ParsedStatement& previous = ctx.parsed_statements[previous_distance];
+    const ParsedStatement& restore = ctx.parsed_statements[after];
+    if (trim_field_copy(previous.distance_expression) != trim_field_copy(restore.distance_expression) ||
+        !distance_value_matches(previous.distance_value, restore.distance_value)) {
+        return wrapper;
+    }
+
+    wrapper.before_index = before;
+    wrapper.after_index = after;
+    return wrapper;
+}
+
+bool can_remove_restore_distance_statement(const MapContext& ctx,
+                                           const AdjacentDistanceWrapper& wrapper) {
+    if (!wrapper.valid()) return false;
+    size_t previous_distance = nearest_distance_statement_before(ctx, wrapper.before_index);
+    if (previous_distance == kNoSourceRef) return false;
+    const ParsedStatement& previous = ctx.parsed_statements[previous_distance];
+    const ParsedStatement& restore = ctx.parsed_statements[wrapper.after_index];
+    return trim_field_copy(previous.distance_expression) == trim_field_copy(restore.distance_expression) &&
+           distance_value_matches(previous.distance_value, restore.distance_value);
+}
+
+size_t find_matching_distance_anchor(const MapContext& ctx,
+                                     const ParsedStatement& target,
+                                     const std::string& expression,
+                                     double value,
+                                     const std::set<size_t>& excluded) {
+    size_t best = kNoSourceRef;
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        if (excluded.find(i) != excluded.end()) continue;
+        const ParsedStatement& candidate = ctx.parsed_statements[i];
+        if (!source_context_equal(candidate.source, target.source)) continue;
+        if (!distance_statement_matches(candidate, expression, value)) continue;
+        if (best == kNoSourceRef ||
+            source_start_less(candidate.source, ctx.parsed_statements[best].source)) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+size_t distance_anchor_insert_offset(const MapContext& ctx,
+                                     const SourcePatch& patch,
+                                     size_t anchor_index) {
+    if (anchor_index >= ctx.parsed_statements.size()) return std::string::npos;
+    size_t next_distance = nearest_distance_statement_after(ctx, anchor_index);
+    if (next_distance != kNoSourceRef) {
+        return source_range_in_text(patch, ctx.parsed_statements[next_distance].source).first;
+    }
+    return patch.text.size();
+}
+
+std::string statement_insertion_text(const std::string& source,
+                                     size_t offset,
+                                     const std::string& statement,
+                                     const SourceFileRecord& file) {
+    std::string nl = newline_text(file.newline);
+    std::string text;
+    if (offset > 0 && offset <= source.size()) {
+        char previous = source[offset - 1];
+        if (previous != '\n' && previous != '\r') text += nl;
+    }
+    text += statement;
+    text += nl;
+    return text;
+}
+
 template <typename Row>
 bool match_edit_ref(MapContext& ctx, const Row& row, const std::string& row_kind,
                     size_t row_index, const std::string& edit_id, EditableTarget& target) {
@@ -5113,13 +5538,101 @@ std::string wrap_distance_edit_if_needed(const MapEditChange& change,
                                          std::string replacement,
                                          MapEditReport& report) {
     if (!has_field_change(change, "distance")) return replacement;
-    std::string new_distance = normalized_number_arg(field_text_or(change, "distance", fallback_edit_number(statement.distance_value)));
+    const std::string new_distance_text =
+        normalized_number_arg(field_text_or(change, "distance", fallback_edit_number(statement.distance_value)));
+    double new_distance_value = 0.0;
+    if (!parse_edit_number(new_distance_text, new_distance_value)) {
+        throw std::runtime_error("invalid numeric edit value: " + new_distance_text);
+    }
+    const double delta = new_distance_value - statement.distance_value;
+    if (delta == 0.0) return replacement;
     std::string old_distance = trim_field_copy(statement.distance_expression);
     if (old_distance.empty()) old_distance = fallback_edit_number(statement.distance_value);
+    std::string adjusted_distance = adjust_distance_expression_by_delta(old_distance, delta);
     std::string nl = newline_text(file.newline);
     ++report.insert_count;
-    report.warnings.push_back("distance edit inserts a fixed distance statement before the target and restores the previous distance after it");
-    return new_distance + ";" + nl + replacement + nl + old_distance + ";";
+    report.warnings.push_back("distance edit preserves the original distance expression by applying a delta around the target statement");
+    return adjusted_distance + ";" + nl + replacement + nl + old_distance + ";";
+}
+
+bool append_distance_anchor_move_replacements(MapContext& ctx,
+                                              const MapEditChange& change,
+                                              size_t statement_index,
+                                              const ParsedStatement& statement,
+                                              const SourceFileRecord& file,
+                                              const SourcePatch& patch,
+                                              const std::pair<size_t, size_t>& statement_range,
+                                              const std::string& replacement_statement,
+                                              MapEditReport& report,
+                                              std::vector<TextReplacement>& replacements) {
+    if (!has_field_change(change, "distance")) return false;
+
+    const std::string new_distance_text =
+        normalized_number_arg(field_text_or(change, "distance", fallback_edit_number(statement.distance_value)));
+    double new_distance_value = 0.0;
+    if (!parse_edit_number(new_distance_text, new_distance_value)) {
+        throw std::runtime_error("invalid numeric edit value: " + new_distance_text);
+    }
+    const double delta = new_distance_value - statement.distance_value;
+    if (delta == 0.0) return false;
+
+    std::string old_distance = trim_field_copy(statement.distance_expression);
+    if (old_distance.empty()) old_distance = fallback_edit_number(statement.distance_value);
+    const std::string adjusted_distance = adjust_distance_expression_by_delta(old_distance, delta);
+
+    AdjacentDistanceWrapper wrapper = find_isolated_adjacent_distance_wrapper(ctx, statement_index);
+    std::set<size_t> excluded_anchors;
+    if (wrapper.before_index != kNoSourceRef) excluded_anchors.insert(wrapper.before_index);
+    if (wrapper.after_index != kNoSourceRef) excluded_anchors.insert(wrapper.after_index);
+
+    size_t anchor_index = find_matching_distance_anchor(ctx, statement, adjusted_distance,
+                                                        new_distance_value, excluded_anchors);
+    bool anchor_is_restore_wrapper = false;
+    if (anchor_index == kNoSourceRef && wrapper.after_index != kNoSourceRef) {
+        const ParsedStatement& restore = ctx.parsed_statements[wrapper.after_index];
+        if (distance_statement_matches(restore, adjusted_distance, new_distance_value)) {
+            anchor_index = wrapper.after_index;
+            anchor_is_restore_wrapper = true;
+        }
+    }
+    if (anchor_index == kNoSourceRef) return false;
+
+    const size_t insert_offset = distance_anchor_insert_offset(ctx, patch, anchor_index);
+    if (insert_offset == std::string::npos) return false;
+
+    TextReplacement insert;
+    insert.begin = insert_offset;
+    insert.end = insert_offset;
+    insert.text = statement_insertion_text(patch.text, insert_offset, replacement_statement, file);
+    insert.edit_id = change.edit_id;
+    replacements.push_back(std::move(insert));
+
+    TextReplacement remove_target;
+    remove_target.begin = statement_range.first;
+    remove_target.end = statement_range.second;
+    remove_target.edit_id = change.edit_id;
+    replacements.push_back(std::move(remove_target));
+
+    if (wrapper.before_index != kNoSourceRef) {
+        auto range = source_range_in_text(patch, ctx.parsed_statements[wrapper.before_index].source);
+        TextReplacement remove_wrapper_begin;
+        remove_wrapper_begin.begin = range.first;
+        remove_wrapper_begin.end = range.second;
+        remove_wrapper_begin.edit_id = change.edit_id;
+        replacements.push_back(std::move(remove_wrapper_begin));
+    }
+    if (wrapper.after_index != kNoSourceRef && !anchor_is_restore_wrapper &&
+        can_remove_restore_distance_statement(ctx, wrapper)) {
+        auto range = source_range_in_text(patch, ctx.parsed_statements[wrapper.after_index].source);
+        TextReplacement remove_wrapper_end;
+        remove_wrapper_end.begin = range.first;
+        remove_wrapper_end.end = range.second;
+        remove_wrapper_end.edit_id = change.edit_id;
+        replacements.push_back(std::move(remove_wrapper_end));
+    }
+
+    report.warnings.push_back("distance edit reuses an existing matching distance expression instead of inserting a new distance statement");
+    return true;
 }
 
 std::string report_json(const MapEditReport& report) {
@@ -5235,8 +5748,17 @@ MapEditReport build_edit_report(MapContext& ctx,
                     report.blocking_errors.push_back("update is blocked because the source statement maps to multiple elements: " + change.edit_id);
                     continue;
                 }
-                replacement.text = build_replacement_statement(change, statement, target);
-                replacement.text = wrap_distance_edit_if_needed(change, statement, file, std::move(replacement.text), report);
+                std::string replacement_statement = build_replacement_statement(change, statement, target);
+                if (append_distance_anchor_move_replacements(ctx, change, target.statement_index,
+                                                             statement, file, patch, range,
+                                                             replacement_statement, report,
+                                                             patch.replacements)) {
+                    ++report.update_count;
+                    continue;
+                }
+                replacement.text = wrap_distance_edit_if_needed(change, statement, file,
+                                                                std::move(replacement_statement),
+                                                                report);
                 ++report.update_count;
             } else if (operation == "insert") {
                 report.blocking_errors.push_back("insert edits are not implemented for this target yet: " + change.edit_id);
