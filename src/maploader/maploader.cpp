@@ -5038,6 +5038,56 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
     return target;
 }
 
+std::string edit_target_info_json(MapContext& ctx, const std::string& edit_id) {
+    auto error_json = [](const std::string& error) {
+        std::ostringstream out;
+        out << "{\"ok\":false,\"error\":";
+        append_json_string(out, error);
+        out << "}";
+        return out.str();
+    };
+
+    if (edit_id.empty()) return error_json("editId is empty");
+
+    EditableTarget target = find_editable_target(ctx, edit_id);
+    if (target.statement_index == kNoSourceRef ||
+        target.statement_index >= ctx.parsed_statements.size()) {
+        return error_json("unsupported or unknown editId: " + edit_id);
+    }
+
+    const ParsedStatement& statement = ctx.parsed_statements[target.statement_index];
+    const SourceFileRecord* file = nullptr;
+    if (statement.source.source_file_index < ctx.source_files.size()) {
+        file = &ctx.source_files[statement.source.source_file_index];
+    }
+
+    std::ostringstream out;
+    out << "{\"ok\":true,\"editId\":";
+    append_json_string(out, edit_id);
+    out << ",\"rowKind\":";
+    append_json_string(out, target.row_kind);
+    out << ",\"rowIndex\":" << target.row_index
+        << ",\"elementsForStatement\":" << target.elements_for_statement
+        << ",\"statementKind\":";
+    append_json_string(out, statement.statement_kind);
+    out << ",\"sourceHash\":";
+    append_json_string(out, file ? file->source_hash : std::string{});
+    out << ",\"source\":{\"filePath\":";
+    append_json_string(out, source_file_path(ctx, statement.source));
+    out << ",\"line\":" << statement.source.line
+        << ",\"column\":" << statement.source.column
+        << ",\"rawTextPreview\":";
+    append_json_string(out, statement.raw_text_preview);
+    out << "},\"rawText\":";
+    append_json_string(out, statement.raw_text);
+    out << ",\"rawArguments\":";
+    append_json_string(out, statement.raw_arguments);
+    out << ",\"distanceExpression\":";
+    append_json_string(out, statement.distance_expression);
+    out << ",\"distanceValue\":" << json_number(statement.distance_value) << "}";
+    return out.str();
+}
+
 std::string build_replacement_statement(const MapEditChange& change,
                                         const ParsedStatement& statement,
                                         const EditableTarget& target) {
@@ -5929,6 +5979,17 @@ KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags) {
 
 KV_API const char* kv_get_ir_json(void* handle) {
     return kv_get_ir_json_ex(handle, KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE);
+}
+
+KV_API const char* kv_get_edit_target_info(void* handle, const char* edit_id) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        return copy_c_string(edit_target_info_json(*ctx, edit_id ? edit_id : ""));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
 }
 
 KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json) {

@@ -77,6 +77,10 @@ KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags);
    Release it with kv_free_string(). */
 KV_API const char* kv_get_ir_json(void* handle);
 
+/* Returns source/edit metadata for one editable element as newly allocated
+   UTF-8 JSON owned by the caller. Release it with kv_free_string(). */
+KV_API const char* kv_get_edit_target_info(void* handle, const char* edit_id);
+
 /* Validates edit changes and returns a newly allocated UTF-8 JSON report.
    Does not write source files. Release it with kv_free_string(). */
 KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json);

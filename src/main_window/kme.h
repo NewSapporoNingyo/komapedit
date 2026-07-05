@@ -905,9 +905,16 @@ struct MapElementEditFieldState {
 struct MapElementPendingChange {
     std::string change_id;
     std::string edit_id;
+    std::string row_kind;
     std::string operation = "update";
     std::map<std::string, std::string> field_changes;
     std::string expected_source_hash;
+};
+
+struct MapElementPreviewSnapshot {
+    std::string row_kind;
+    TableRow row;
+    size_t row_index = 0;
 };
 
 struct MapElementInspectorState {
@@ -1017,7 +1024,7 @@ private:
     bool edit_registry_loaded_ = false;
     bool clear_pending_edits_after_load_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
-    std::set<std::string> applied_unsaved_edit_ids_;
+    std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
     bool has_unsaved_edits_ = false;
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
@@ -1313,14 +1320,17 @@ private:
     static MapModel build_model_from_handle(void* handle, const std::string& path,
                                             LoadModelOptions options);
     bool rehydrate_model_from_current_handle(LoadModelOptions options);
-    bool ensure_full_edit_registry();
     void clear_pending_edit_state();
     bool parse_and_log_edit_report(const std::string& report_text,
                                    const std::string& success_prefix,
                                    int* update_count = nullptr,
                                    int* delete_count = nullptr,
                                    int* changed_file_count = nullptr);
-    bool apply_pending_edits_to_memory();
+    bool apply_pending_edits_to_preview();
+    bool apply_local_preview_change(const MapElementPendingChange& change);
+    bool restore_local_preview_change(const std::string& edit_id, const std::string& row_kind);
+    bool snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind);
+    void refresh_local_preview_after_edit(const std::string& row_kind);
     void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
     void process_pending_element_inspector();
     bool open_element_inspector(const MapElementInspectorRequest& request);

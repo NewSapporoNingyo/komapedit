@@ -448,6 +448,60 @@ EditSourceInfo edit_source_from_json(const mini_json::Value& value) {
     return source;
 }
 
+struct EditTargetInfo {
+    std::string row_kind;
+    size_t row_index = 0;
+    int elements_for_statement = 0;
+    std::string statement_kind;
+    std::string source_hash;
+    EditSourceInfo source;
+    std::string raw_text;
+    std::string raw_arguments;
+    std::string distance_expression;
+    double distance_value = 0.0;
+};
+
+std::optional<EditTargetInfo> fetch_edit_target_info(void* handle,
+                                                     const std::string& edit_id,
+                                                     std::string* error_message = nullptr) {
+    if (error_message) error_message->clear();
+    if (!handle || edit_id.empty()) return std::nullopt;
+
+    const char* raw = kv_get_edit_target_info(handle, edit_id.c_str());
+    if (!raw) {
+        if (error_message) {
+            const char* err = kv_get_last_error();
+            *error_message = err ? err : "kv_get_edit_target_info failed";
+        }
+        return std::nullopt;
+    }
+
+    std::string json(raw);
+    kv_free_string(raw);
+    try {
+        auto root = mini_json::Parser(json).parse();
+        if (!root.at("ok").boolean) {
+            if (error_message) *error_message = root.at("error").scalar_text();
+            return std::nullopt;
+        }
+        EditTargetInfo info;
+        info.row_kind = root.at("rowKind").scalar_text();
+        info.row_index = static_cast<size_t>(std::max(0.0, root.at("rowIndex").number));
+        info.elements_for_statement = static_cast<int>(root.at("elementsForStatement").number);
+        info.statement_kind = root.at("statementKind").scalar_text();
+        info.source_hash = root.at("sourceHash").scalar_text();
+        info.source = edit_source_from_json(root.at("source"));
+        info.raw_text = root.at("rawText").scalar_text();
+        info.raw_arguments = root.at("rawArguments").scalar_text();
+        info.distance_expression = root.at("distanceExpression").scalar_text();
+        info.distance_value = root.at("distanceValue").number;
+        return info;
+    } catch (const std::exception& e) {
+        if (error_message) *error_message = e.what();
+        return std::nullopt;
+    }
+}
+
 void apply_table_row_edit_metadata(TableRow& row, const mini_json::Value& value) {
     if (!value.is_object()) return;
     row.edit_id = value.at("editId").scalar_text();
@@ -732,7 +786,7 @@ void App::regenerate_geometry() {
     for (const auto& t : model_.other_tracks) old_other[t.key] = t;
     try {
         LoadModelOptions options;
-        options.full_edit_registry = edit_registry_loaded_ || inspector_.open || !pending_edit_changes_.empty();
+        options.full_edit_registry = edit_registry_loaded_;
         MapModel updated = build_model_from_handle(handle_, file_path_, options);
         for (auto& t : updated.other_tracks) {
             auto it = old_other.find(t.key);
@@ -1170,14 +1224,6 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     return model;
 }
 
-bool App::ensure_full_edit_registry() {
-    if (!handle_ || !has_model_) return false;
-    if (edit_registry_loaded_ && !model_.edit_statements.empty()) return true;
-    if (!rehydrate_model_from_current_handle(LoadModelOptions{true})) return false;
-    add_log("[info]gui_kme.cpp: full edit registry loaded");
-    return true;
-}
-
 bool App::rehydrate_model_from_current_handle(LoadModelOptions options) {
     if (!handle_ || !has_model_) return false;
     try {
@@ -1216,22 +1262,111 @@ bool App::rehydrate_model_from_current_handle(LoadModelOptions options) {
     }
 }
 
+std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
+                                                       const std::string& row_kind);
+bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
+                               const std::string& edit_id,
+                               size_t& row_index);
+void set_inspector_row_field_value(TableRow& row,
+                                   const std::string& row_kind,
+                                   const std::string& field_key,
+                                   const std::string& value,
+                                   double distance_origin);
+void normalize_station_preview_rows(MapModel& model);
+
 void App::clear_pending_edit_state() {
     pending_edit_changes_.clear();
-    applied_unsaved_edit_ids_.clear();
+    original_edit_rows_.clear();
     has_unsaved_edits_ = false;
     inspector_ = MapElementInspectorState{};
 }
 
 bool App::row_has_pending_edit(const std::string& edit_id) const {
-    return !edit_id.empty() &&
-        (pending_edit_changes_.find(edit_id) != pending_edit_changes_.end() ||
-         applied_unsaved_edit_ids_.find(edit_id) != applied_unsaved_edit_ids_.end());
+    return !edit_id.empty() && pending_edit_changes_.find(edit_id) != pending_edit_changes_.end();
 }
 
 bool App::row_is_pending_delete(const std::string& edit_id) const {
     auto it = pending_edit_changes_.find(edit_id);
     return it != pending_edit_changes_.end() && it->second.operation == "delete";
+}
+
+bool App::snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind) {
+    if (edit_id.empty() || row_kind.empty()) return false;
+    if (original_edit_rows_.find(edit_id) != original_edit_rows_.end()) return true;
+    std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, row_kind);
+    if (!rows) return false;
+    size_t row_index = 0;
+    if (!find_row_index_by_edit_id(*rows, edit_id, row_index)) return false;
+    original_edit_rows_[edit_id] = MapElementPreviewSnapshot{row_kind, (*rows)[row_index], row_index};
+    return true;
+}
+
+bool App::restore_local_preview_change(const std::string& edit_id, const std::string& row_kind) {
+    auto snapshot = original_edit_rows_.find(edit_id);
+    if (snapshot == original_edit_rows_.end()) return true;
+    const std::string effective_row_kind = row_kind.empty() ? snapshot->second.row_kind : row_kind;
+    std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, effective_row_kind);
+    if (!rows) return false;
+
+    size_t row_index = 0;
+    if (find_row_index_by_edit_id(*rows, edit_id, row_index)) {
+        (*rows)[row_index] = snapshot->second.row;
+    } else {
+        size_t insert_index = std::min(snapshot->second.row_index, rows->size());
+        rows->insert(rows->begin() + static_cast<std::ptrdiff_t>(insert_index), snapshot->second.row);
+    }
+    original_edit_rows_.erase(snapshot);
+    refresh_local_preview_after_edit(effective_row_kind);
+    return true;
+}
+
+bool App::apply_local_preview_change(const MapElementPendingChange& change) {
+    if (change.edit_id.empty() || change.row_kind.empty()) return false;
+    std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, change.row_kind);
+    if (!rows) return false;
+
+    size_t row_index = 0;
+    const bool row_found = find_row_index_by_edit_id(*rows, change.edit_id, row_index);
+    if (!row_found && change.operation != "delete") return false;
+    if (row_found && !snapshot_local_preview_row(change.edit_id, change.row_kind)) return false;
+
+    if (change.operation == "delete") {
+        if (row_found) rows->erase(rows->begin() + static_cast<std::ptrdiff_t>(row_index));
+        refresh_local_preview_after_edit(change.row_kind);
+        return true;
+    }
+
+    if (change.operation != "update" || !row_found) return false;
+    TableRow& row = (*rows)[row_index];
+    for (const auto& field : change.field_changes) {
+        set_inspector_row_field_value(row, change.row_kind, field.first, field.second, model_.distance_origin);
+    }
+    refresh_local_preview_after_edit(change.row_kind);
+    return true;
+}
+
+void App::refresh_local_preview_after_edit(const std::string& row_kind) {
+    if (row_kind == "station.put") {
+        normalize_station_preview_rows(model_);
+    }
+    invalidate_table_cache();
+    rebuild_marker_overlay_cache();
+    sync_marker_visibility_sizes();
+
+    const bool affects_scene_dynamic =
+        row_kind == "structure.put" ||
+        row_kind == "structure.between" ||
+        row_kind == "structure.model";
+    if (affects_scene_dynamic && scene_preview_started_ && scene_preview_canvas_) {
+        std::string error;
+        if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, error)) {
+            add_log("[warn]gui_kme.cpp: 3D scene dynamic refresh failed, scheduling full rebuild: " +
+                    (error.empty() ? std::string("unknown error") : error));
+            scene_preview_dirty_ = true;
+            scene_preview_preserve_models_on_rebuild_ = true;
+            scene_preview_preserve_camera_on_rebuild_ = true;
+        }
+    }
 }
 
 void App::request_element_inspector(const std::string& edit_id, const std::string& row_kind) {
@@ -1253,24 +1388,6 @@ const EditSourceFileInfo* find_model_source_file(const MapModel& model, const st
     return nullptr;
 }
 
-const EditElementInfo* find_model_edit_element(const MapModel& model, const std::string& edit_id) {
-    for (const EditElementInfo& element : model.edit_elements) {
-        if (element.edit_id == edit_id) return &element;
-    }
-    return nullptr;
-}
-
-const EditStatementInfo* find_model_statement_for_element(const MapModel& model,
-                                                          const EditElementInfo& element) {
-    for (const EditStatementInfo& statement : model.edit_statements) {
-        if (statement.global_order == element.global_order &&
-            statement.source.file_path == element.source_file_path) {
-            return &statement;
-        }
-    }
-    return nullptr;
-}
-
 const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
                                                      const std::string& row_kind) {
     if (row_kind == "structure.model") return &model.structure_models;
@@ -1278,6 +1395,28 @@ const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
     return nullptr;
+}
+
+std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
+                                                       const std::string& row_kind) {
+    if (row_kind == "structure.model") return &model.structure_models;
+    if (row_kind == "structure.put") return &model.structures;
+    if (row_kind == "structure.between") return &model.structures_between;
+    if (row_kind == "station.put") return &model.station_list_rows;
+    return nullptr;
+}
+
+bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
+                               const std::string& edit_id,
+                               size_t& row_index) {
+    if (edit_id.empty()) return false;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].edit_id == edit_id) {
+            row_index = i;
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string inspector_row_field_value(const TableRow& row,
@@ -1288,6 +1427,64 @@ std::string inspector_row_field_value(const TableRow& row,
         if (field_key == "stationKey") return table_cell(row, "posKey");
     }
     return table_cell(row, field_key);
+}
+
+void set_inspector_row_field_value(TableRow& row,
+                                   const std::string& row_kind,
+                                   const std::string& field_key,
+                                   const std::string& value,
+                                   double distance_origin) {
+    if (row_kind == "station.put") {
+        if (field_key == "distance") {
+            row.cells["_distance"] = value;
+            double absolute_distance = table_cell_number(row, "_distance");
+            row.cells["dist"] = format_double(absolute_distance - distance_origin, 0);
+            return;
+        }
+        if (field_key == "stationKey") {
+            row.cells["posKey"] = value;
+            return;
+        }
+    }
+    row.cells[field_key] = value;
+}
+
+void normalize_station_preview_rows(MapModel& model) {
+    std::stable_sort(model.station_list_rows.begin(), model.station_list_rows.end(),
+                     [](const TableRow& a, const TableRow& b) {
+                         double da = table_cell_number(a, "_distance");
+                         double db = table_cell_number(b, "_distance");
+                         if (da != db) return da < db;
+                         return table_cell_number(a, "_order") < table_cell_number(b, "_order");
+                     });
+
+    model.stations.clear();
+    std::set<std::string> seen;
+    size_t own_row = 0;
+    for (size_t i = 0; i < model.station_list_rows.size(); ++i) {
+        TableRow& row = model.station_list_rows[i];
+        double distance = table_cell_number(row, "_distance");
+        row.cells["rowNumber"] = std::to_string(i + 1);
+        row.cells["dist"] = format_double(distance - model.distance_origin, 0);
+
+        std::string key = table_cell(row, "posKey");
+        if (key.empty() || !seen.insert(key).second) continue;
+
+        Station station;
+        station.key = key;
+        station.name = table_cell(row, "stationName");
+        if (station.name.empty()) station.name = key;
+        station.distance = distance;
+        station.mileage = distance - model.distance_origin;
+        if (!model.own.empty()) {
+            while (own_row + 1 < model.own.rows && model.own.at(own_row, 0) < distance) ++own_row;
+            if (own_row >= model.own.rows) own_row = model.own.rows - 1;
+            station.x = model.own.at(own_row, 1);
+            station.y = model.own.at(own_row, 2);
+            station.z = model.own.at(own_row, 3);
+        }
+        model.stations.push_back(std::move(station));
+    }
 }
 
 int inspector_request_match_score(const TableRow& row,
@@ -1389,7 +1586,6 @@ MapElementInspectorRequest make_inspector_reload_request(const MapElementInspect
 
 bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     if (request.edit_id.empty() && request.field_values.empty()) return false;
-    if (!ensure_full_edit_registry()) return false;
 
     std::string edit_id = request.edit_id;
     const TableRow* row = find_model_row_for_inspector_request(model_, request, edit_id);
@@ -1398,9 +1594,29 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         return false;
     }
 
-    const EditElementInfo* element = find_model_edit_element(model_, edit_id);
-    const EditStatementInfo* statement = element ? find_model_statement_for_element(model_, *element) : nullptr;
-    const EditSourceInfo& source = statement ? statement->source : row->source;
+    if (!request.edit_id.empty() && request.edit_id != edit_id) {
+        auto pending = pending_edit_changes_.extract(request.edit_id);
+        if (!pending.empty()) {
+            pending.key() = edit_id;
+            pending.mapped().edit_id = edit_id;
+            pending_edit_changes_.insert(std::move(pending));
+        }
+        auto snapshot = original_edit_rows_.extract(request.edit_id);
+        if (!snapshot.empty()) {
+            snapshot.key() = edit_id;
+            snapshot.mapped().row.edit_id = edit_id;
+            original_edit_rows_.insert(std::move(snapshot));
+        }
+    }
+
+    std::string info_error;
+    std::optional<EditTargetInfo> target_info = fetch_edit_target_info(handle_, edit_id, &info_error);
+    if (!target_info && !info_error.empty()) {
+        add_log("[warn]gui_kme.cpp: edit target metadata fallback: " + info_error);
+    }
+
+    EditSourceInfo source = target_info ? target_info->source : row->source;
+    if (source.file_path.empty()) source = row->source;
     const EditSourceFileInfo* source_file = find_model_source_file(model_, source.file_path);
 
     MapElementInspectorState next;
@@ -1409,56 +1625,72 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.row_kind = request.row_kind;
     next.title = tr("dialog.element_properties");
     next.source_file = source.file_path;
-    next.source_hash = source_file ? source_file->source_hash : std::string{};
+    next.source_hash = target_info && !target_info->source_hash.empty()
+        ? target_info->source_hash
+        : (source_file ? source_file->source_hash : std::string{});
     next.line = source.line;
     next.column = source.column;
-    if (statement && row_kind_has_source_distance_string(request.row_kind)) {
-        next.source_distance_string = statement->distance_expression;
+    if (target_info && row_kind_has_source_distance_string(request.row_kind)) {
+        next.source_distance_string = target_info->distance_expression;
     }
-    next.raw_statement = statement && !statement->raw_text.empty()
-        ? statement->raw_text
+    next.raw_statement = target_info && !target_info->raw_text.empty()
+        ? target_info->raw_text
         : source.raw_text_preview;
     next.delete_supported = true;
 
+    const TableRow* original_row = row;
+    auto snapshot = original_edit_rows_.find(edit_id);
+    if (snapshot != original_edit_rows_.end()) {
+        original_row = &snapshot->second.row;
+    }
+
     auto add_field = [&](const std::string& key, const std::string& label,
-                         const std::string& value, bool numeric, bool required) {
+                         const std::string& value, const std::string& original_value,
+                         bool numeric, bool required) {
         MapElementEditFieldState field;
         field.key = key;
         field.label = label;
-        field.original_value = value;
+        field.original_value = original_value;
         field.numeric = numeric;
         field.required = required;
         set_edit_field_buffer(field, value);
         next.fields.push_back(field);
     };
+    auto add_row_field = [&](const std::string& key, const std::string& label,
+                             bool numeric, bool required) {
+        add_field(key, label,
+                  inspector_row_field_value(*row, request.row_kind, key),
+                  inspector_row_field_value(*original_row, request.row_kind, key),
+                  numeric, required);
+    };
 
     if (request.row_kind == "structure.model") {
-        add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
-        add_field("filePath", "filePath", table_cell(*row, "filePath"), false, true);
+        add_row_field("structureKey", "structureKey", false, true);
+        add_row_field("filePath", "filePath", false, true);
     } else if (request.row_kind == "structure.put") {
         const std::string method = table_cell(*row, "method");
-        add_field("distance", "distance", table_cell(*row, "distance"), true, true);
-        add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
-        add_field("trackKey", "trackKey", table_cell(*row, "trackKey"), false, true);
+        add_row_field("distance", "distance", true, true);
+        add_row_field("structureKey", "structureKey", false, true);
+        add_row_field("trackKey", "trackKey", false, true);
         if (ascii_lower(method) != "put0") {
-            add_field("x", "x", table_cell(*row, "x"), true, true);
-            add_field("y", "y", table_cell(*row, "y"), true, true);
-            add_field("z", "z", table_cell(*row, "z"), true, true);
-            add_field("rx", "rx", table_cell(*row, "rx"), true, true);
-            add_field("ry", "ry", table_cell(*row, "ry"), true, true);
-            add_field("rz", "rz", table_cell(*row, "rz"), true, true);
+            add_row_field("x", "x", true, true);
+            add_row_field("y", "y", true, true);
+            add_row_field("z", "z", true, true);
+            add_row_field("rx", "rx", true, true);
+            add_row_field("ry", "ry", true, true);
+            add_row_field("rz", "rz", true, true);
         }
-        add_field("tilt", "tilt", table_cell(*row, "tilt"), true, true);
-        add_field("span", "span", table_cell(*row, "span"), true, true);
+        add_row_field("tilt", "tilt", true, true);
+        add_row_field("span", "span", true, true);
     } else if (request.row_kind == "structure.between") {
-        add_field("distance", "distance", table_cell(*row, "distance"), true, true);
-        add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
-        add_field("trackKey1", "trackKey1", table_cell(*row, "trackKey1"), false, true);
-        add_field("trackKey2", "trackKey2", table_cell(*row, "trackKey2"), false, true);
-        add_field("flag", "flag", table_cell(*row, "flag"), true, true);
+        add_row_field("distance", "distance", true, true);
+        add_row_field("structureKey", "structureKey", false, true);
+        add_row_field("trackKey1", "trackKey1", false, true);
+        add_row_field("trackKey2", "trackKey2", false, true);
+        add_row_field("flag", "flag", true, true);
     } else if (request.row_kind == "station.put") {
-        add_field("distance", "distance", table_cell(*row, "_distance"), true, true);
-        add_field("stationKey", "stationKey", table_cell(*row, "posKey"), false, true);
+        add_row_field("distance", "distance", true, true);
+        add_row_field("stationKey", "stationKey", false, true);
     }
 
     auto pending = pending_edit_changes_.find(edit_id);
@@ -1483,13 +1715,14 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
 void App::apply_inspector_changes() {
     if (!inspector_.open || inspector_.edit_id.empty()) return;
     if (inspector_.pending_delete) {
-        apply_pending_edits_to_memory();
+        apply_pending_edits_to_preview();
         return;
     }
 
     MapElementPendingChange change;
     change.change_id = "change-" + inspector_.edit_id;
     change.edit_id = inspector_.edit_id;
+    change.row_kind = inspector_.row_kind;
     change.operation = "update";
     change.expected_source_hash = inspector_.source_hash;
 
@@ -1510,19 +1743,24 @@ void App::apply_inspector_changes() {
 
     if (change.field_changes.empty()) {
         pending_edit_changes_.erase(inspector_.edit_id);
+        restore_local_preview_change(inspector_.edit_id, inspector_.row_kind);
+        has_unsaved_edits_ = !pending_edit_changes_.empty();
         inspector_.status_message = tr("status.edit.no_changes");
         return;
     }
 
     pending_edit_changes_[change.edit_id] = std::move(change);
-    if (!apply_pending_edits_to_memory()) {
+    if (!apply_pending_edits_to_preview()) {
         inspector_.status_message = tr("status.edit.pending");
     }
 }
 
 void App::revert_inspector_changes() {
     if (!inspector_.open || inspector_.edit_id.empty()) return;
+    restore_local_preview_change(inspector_.edit_id, inspector_.row_kind);
     pending_edit_changes_.erase(inspector_.edit_id);
+    original_edit_rows_.erase(inspector_.edit_id);
+    has_unsaved_edits_ = !pending_edit_changes_.empty();
     inspector_.pending_delete = false;
     for (MapElementEditFieldState& field : inspector_.fields) {
         set_edit_field_buffer(field, field.original_value);
@@ -1535,6 +1773,7 @@ void App::delete_inspector_target() {
     MapElementPendingChange change;
     change.change_id = "delete-" + inspector_.edit_id;
     change.edit_id = inspector_.edit_id;
+    change.row_kind = inspector_.row_kind;
     change.operation = "delete";
     change.expected_source_hash = inspector_.source_hash;
     pending_edit_changes_[change.edit_id] = std::move(change);
@@ -1585,14 +1824,11 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
     return ok;
 }
 
-bool App::apply_pending_edits_to_memory() {
+bool App::apply_pending_edits_to_preview() {
     if (!handle_ || pending_edit_changes_.empty() || load_state_.running) return false;
 
-    std::vector<std::string> applied_ids;
-    applied_ids.reserve(pending_edit_changes_.size());
     bool applying_delete = false;
     for (const auto& kv : pending_edit_changes_) {
-        applied_ids.push_back(kv.first);
         applying_delete = applying_delete || kv.second.operation == "delete";
     }
     std::optional<MapElementInspectorRequest> reload_request;
@@ -1601,29 +1837,30 @@ bool App::apply_pending_edits_to_memory() {
     }
 
     std::string json = pending_changes_json();
-    const char* raw = kv_edit_apply_to_memory(handle_, json.c_str());
+    const char* raw = kv_edit_dry_run(handle_, json.c_str());
     if (!raw) {
         const char* err = kv_get_last_error();
-        add_log(std::string("[error]gui_kme.cpp: edit apply failed: ") + (err ? err : "unknown error"));
+        add_log(std::string("[error]gui_kme.cpp: edit preview validation failed: ") + (err ? err : "unknown error"));
         return false;
     }
     std::string report_text(raw);
     kv_free_string(raw);
 
-    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit applied to preview")) {
+    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit preview validated")) {
         return false;
     }
-    if (!rehydrate_model_from_current_handle(LoadModelOptions{true})) return false;
 
-    for (const std::string& edit_id : applied_ids) {
-        applied_unsaved_edit_ids_.insert(edit_id);
+    for (const auto& kv : pending_edit_changes_) {
+        if (!apply_local_preview_change(kv.second)) {
+            add_log("[error]gui_kme.cpp: failed to apply local edit preview: " + kv.first);
+            return false;
+        }
     }
-    pending_edit_changes_.clear();
     has_unsaved_edits_ = true;
     if (reload_request) {
         pending_inspector_request_ = std::move(reload_request);
-    } else if (applying_delete) {
-        inspector_ = MapElementInspectorState{};
+    } else if (applying_delete && inspector_.open) {
+        inspector_.status_message = tr("status.edit.pending_delete");
     } else {
         inspector_.status_message = tr("status.edit.applied_to_preview");
     }
@@ -1663,7 +1900,8 @@ std::string App::pending_changes_json() const {
 
 void App::save_pending_edits() {
     if (!handle_ || !has_unsaved_edits_ || load_state_.running) return;
-    const char* raw = kv_edit_commit(handle_);
+    std::string json = pending_changes_json();
+    const char* raw = kv_edit_apply(handle_, json.c_str());
     if (!raw) {
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit save failed: ") + (err ? err : "unknown error"));
@@ -1677,9 +1915,11 @@ void App::save_pending_edits() {
         return;
     }
     pending_edit_changes_.clear();
-    applied_unsaved_edit_ids_.clear();
+    original_edit_rows_.clear();
     has_unsaved_edits_ = false;
     if (inspector_.open) inspector_.status_message = tr("status.edit.saved");
+    clear_pending_edits_after_load_ = true;
+    begin_load(file_path_, true, false, std::nullopt, true, true);
 }
 
 void App::render_element_inspector() {

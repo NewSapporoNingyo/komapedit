@@ -214,6 +214,7 @@ public:
     bool load_scene(Canvas3DScene scene, std::string& error,
                     bool preserve_loaded_models = false,
                     bool preserve_camera = false);
+    bool refresh_scene_dynamic_content(const MapModel& model, int station_index, std::string& error);
     void clear_scene();
     bool has_scene() const;
     bool reload_scene_models(std::string& error);
