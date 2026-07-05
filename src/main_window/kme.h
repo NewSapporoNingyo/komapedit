@@ -929,6 +929,10 @@ struct MapElementInspectorState {
 struct MapElementInspectorRequest {
     std::string edit_id;
     std::string row_kind;
+    std::string source_file;
+    int line = 0;
+    int column = 0;
+    std::map<std::string, std::string> field_values;
 };
 
 struct BackgroundHistory {
@@ -1306,6 +1310,7 @@ private:
     void clear_pending_edit_state();
     void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
     void process_pending_element_inspector();
+    bool open_element_inspector(const MapElementInspectorRequest& request);
     bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);
     bool row_has_pending_edit(const std::string& edit_id) const;
     bool row_is_pending_delete(const std::string& edit_id) const;

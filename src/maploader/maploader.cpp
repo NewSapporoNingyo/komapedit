@@ -4723,12 +4723,56 @@ bool parse_edit_number(const std::string& text, double& value) {
     return end != begin && errno != ERANGE && end && *end == '\0' && std::isfinite(value);
 }
 
+std::string fallback_edit_number(double value) {
+    if (!std::isfinite(value)) {
+        throw std::runtime_error("invalid numeric edit fallback");
+    }
+    std::ostringstream out;
+    out << std::setprecision(15) << value;
+    std::string text = out.str();
+    if (text == "-0") return "0";
+    return text;
+}
+
 std::string normalized_number_arg(const std::string& text) {
     double value = 0.0;
-    if (!parse_edit_number(text, value)) {
+    std::string trimmed = trim_field_copy(text);
+    if (!parse_edit_number(trimmed, value)) {
         throw std::runtime_error("invalid numeric edit value: " + text);
     }
-    return json_number(value);
+    return trimmed == "-0" ? "0" : trimmed;
+}
+
+std::vector<std::string> parse_bve_argument_fields(const std::string& line) {
+    std::vector<std::string> fields;
+    if (line.empty()) return fields;
+
+    std::string field;
+    bool single_quoted = false;
+    bool double_quoted = false;
+    int paren_depth = 0;
+    for (char ch : line) {
+        if (ch == '\'' && !double_quoted) {
+            single_quoted = !single_quoted;
+            field.push_back(ch);
+        } else if (ch == '"' && !single_quoted) {
+            double_quoted = !double_quoted;
+            field.push_back(ch);
+        } else if (ch == '(' && !single_quoted && !double_quoted) {
+            ++paren_depth;
+            field.push_back(ch);
+        } else if (ch == ')' && !single_quoted && !double_quoted && paren_depth > 0) {
+            --paren_depth;
+            field.push_back(ch);
+        } else if (ch == ',' && !single_quoted && !double_quoted && paren_depth == 0) {
+            fields.push_back(trim_field_copy(field));
+            field.clear();
+        } else {
+            field.push_back(ch);
+        }
+    }
+    fields.push_back(trim_field_copy(field));
+    return fields;
 }
 
 std::string quoted_bve_string(const std::string& text) {
@@ -4763,6 +4807,10 @@ std::string field_text_or(const MapEditChange& change, const std::string& key,
     return it == change.field_changes.end() ? fallback : it->second;
 }
 
+const std::string* raw_arg_at(const std::vector<std::string>& raw_args, size_t index) {
+    return index < raw_args.size() ? &raw_args[index] : nullptr;
+}
+
 std::string required_string_field(const MapEditChange& change, const std::string& key,
                                   const std::string& fallback) {
     std::string value = trim_field_copy(field_text_or(change, key, fallback));
@@ -4771,13 +4819,19 @@ std::string required_string_field(const MapEditChange& change, const std::string
 }
 
 std::string numeric_field(const MapEditChange& change, const std::string& key,
-                          double fallback) {
-    return normalized_number_arg(field_text_or(change, key, json_number(fallback)));
+                          double fallback, const std::string* raw_fallback = nullptr) {
+    auto it = change.field_changes.find(key);
+    if (it != change.field_changes.end()) return normalized_number_arg(it->second);
+    if (raw_fallback) return trim_field_copy(*raw_fallback);
+    return fallback_edit_number(fallback);
 }
 
 std::string value_field_as_bve_arg(const MapEditChange& change, const std::string& key,
-                                   const Value& fallback) {
+                                   const Value& fallback, const std::string* raw_fallback = nullptr) {
     auto it = change.field_changes.find(key);
+    if (it == change.field_changes.end()) {
+        if (raw_fallback) return trim_field_copy(*raw_fallback);
+    }
     if (it == change.field_changes.end()) return value_to_bve_arg(fallback);
     return quoted_bve_string(trim_field_copy(it->second));
 }
@@ -4803,40 +4857,42 @@ std::string build_structure_model_statement(const MapEditChange& change,
 }
 
 std::string build_station_put_statement(const MapEditChange& change,
+                                        const ParsedStatement& statement,
                                         const StationPut& row) {
     std::string station_key = required_string_field(change, "stationKey", value_to_edit_text(row.station_key));
+    std::string raw_args = trim_field_copy(statement.raw_arguments);
     std::ostringstream out;
     out << "Station[" << quoted_bve_string(station_key) << "].Put("
-        << value_to_bve_arg(row.door) << ","
-        << value_to_bve_arg(row.margin1) << ","
-        << value_to_bve_arg(row.margin2) << ");";
+        << raw_args << ");";
     return out.str();
 }
 
 std::string build_structure_put_statement(const MapEditChange& change,
+                                          const ParsedStatement& statement,
                                           const StructurePut& row,
                                           bool between) {
     std::string structure_key = required_string_field(change, "structureKey", value_to_edit_text(row.structure_key));
+    std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
     std::ostringstream out;
     out << "Structure[" << quoted_bve_string(structure_key) << "]." << row.method << "(";
     if (between) {
-        out << value_field_as_bve_arg(change, "trackKey1", row.track_key1) << ","
-            << value_field_as_bve_arg(change, "trackKey2", row.track_key2) << ","
-            << numeric_field(change, "flag", row.flag);
+        out << value_field_as_bve_arg(change, "trackKey1", row.track_key1, raw_arg_at(raw_args, 0)) << ","
+            << value_field_as_bve_arg(change, "trackKey2", row.track_key2, raw_arg_at(raw_args, 1)) << ","
+            << numeric_field(change, "flag", row.flag, raw_arg_at(raw_args, 2));
     } else if (ascii_lower(row.method) == "put0") {
-        out << value_field_as_bve_arg(change, "trackKey", row.track_key) << ","
-            << numeric_field(change, "tilt", row.tilt) << ","
-            << numeric_field(change, "span", row.span);
+        out << value_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
+            << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1)) << ","
+            << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2));
     } else {
-        out << value_field_as_bve_arg(change, "trackKey", row.track_key) << ","
-            << numeric_field(change, "x", row.x) << ","
-            << numeric_field(change, "y", row.y) << ","
-            << numeric_field(change, "z", row.z) << ","
-            << numeric_field(change, "rx", row.rx) << ","
-            << numeric_field(change, "ry", row.ry) << ","
-            << numeric_field(change, "rz", row.rz) << ","
-            << numeric_field(change, "tilt", row.tilt) << ","
-            << numeric_field(change, "span", row.span);
+        out << value_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
+            << numeric_field(change, "x", row.x, raw_arg_at(raw_args, 1)) << ","
+            << numeric_field(change, "y", row.y, raw_arg_at(raw_args, 2)) << ","
+            << numeric_field(change, "z", row.z, raw_arg_at(raw_args, 3)) << ","
+            << numeric_field(change, "rx", row.rx, raw_arg_at(raw_args, 4)) << ","
+            << numeric_field(change, "ry", row.ry, raw_arg_at(raw_args, 5)) << ","
+            << numeric_field(change, "rz", row.rz, raw_arg_at(raw_args, 6)) << ","
+            << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 7)) << ","
+            << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 8));
     }
     out << ");";
     return out.str();
@@ -4908,13 +4964,13 @@ std::string build_replacement_statement(const MapEditChange& change,
         return build_structure_model_statement(change, statement);
     }
     if (target.row_kind == "structure.put" && target.structure_put) {
-        return build_structure_put_statement(change, *target.structure_put, false);
+        return build_structure_put_statement(change, statement, *target.structure_put, false);
     }
     if (target.row_kind == "structure.between" && target.structure_put) {
-        return build_structure_put_statement(change, *target.structure_put, true);
+        return build_structure_put_statement(change, statement, *target.structure_put, true);
     }
     if (target.row_kind == "station.put" && target.station_put) {
-        return build_station_put_statement(change, *target.station_put);
+        return build_station_put_statement(change, statement, *target.station_put);
     }
     throw std::runtime_error("unsupported editable target: " + target.row_kind);
 }
@@ -4925,9 +4981,9 @@ std::string wrap_distance_edit_if_needed(const MapEditChange& change,
                                          std::string replacement,
                                          MapEditReport& report) {
     if (!has_field_change(change, "distance")) return replacement;
-    std::string new_distance = normalized_number_arg(field_text_or(change, "distance", json_number(statement.distance_value)));
+    std::string new_distance = normalized_number_arg(field_text_or(change, "distance", fallback_edit_number(statement.distance_value)));
     std::string old_distance = trim_field_copy(statement.distance_expression);
-    if (old_distance.empty()) old_distance = json_number(statement.distance_value);
+    if (old_distance.empty()) old_distance = fallback_edit_number(statement.distance_value);
     std::string nl = newline_text(file.newline);
     ++report.insert_count;
     report.warnings.push_back("distance edit inserts a fixed distance statement before the target and restores the previous distance after it");

@@ -1193,6 +1193,10 @@ bool App::ensure_full_edit_registry() {
         rebuild_marker_overlay_cache();
         sync_marker_visibility_sizes();
         scene_preview_dirty_ = true;
+        if (scene_preview_started_) {
+            scene_preview_preserve_models_on_rebuild_ = true;
+            scene_preview_preserve_camera_on_rebuild_ = true;
+        }
         add_log("[info]gui_kme.cpp: full edit registry loaded");
         return true;
     } catch (const std::exception& e) {
@@ -1224,7 +1228,7 @@ void App::process_pending_element_inspector() {
     if (!pending_inspector_request_) return;
     MapElementInspectorRequest request = std::move(*pending_inspector_request_);
     pending_inspector_request_.reset();
-    open_element_inspector(request.edit_id, request.row_kind);
+    open_element_inspector(request);
 }
 
 const EditSourceFileInfo* find_model_source_file(const MapModel& model, const std::string& path) {
@@ -1252,6 +1256,99 @@ const EditStatementInfo* find_model_statement_for_element(const MapModel& model,
     return nullptr;
 }
 
+const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
+                                                     const std::string& row_kind) {
+    if (row_kind == "structure.model") return &model.structure_models;
+    if (row_kind == "structure.put") return &model.structures;
+    if (row_kind == "structure.between") return &model.structures_between;
+    if (row_kind == "station.put") return &model.station_list_rows;
+    return nullptr;
+}
+
+std::string inspector_row_field_value(const TableRow& row,
+                                      const std::string& row_kind,
+                                      const std::string& field_key) {
+    if (row_kind == "station.put") {
+        if (field_key == "distance") return table_cell(row, "_distance");
+        if (field_key == "stationKey") return table_cell(row, "posKey");
+    }
+    return table_cell(row, field_key);
+}
+
+int inspector_request_match_score(const TableRow& row,
+                                  const MapElementInspectorRequest& request) {
+    int score = 0;
+    bool source_matched = false;
+    if (!request.source_file.empty() && row.source.file_path == request.source_file) {
+        source_matched = true;
+        score += 100;
+        if (request.line > 0 && row.source.line > 0) {
+            int line_delta = std::abs(row.source.line - request.line);
+            if (line_delta == 0) {
+                score += 40;
+            } else if (line_delta == 1) {
+                score += 30;
+            } else if (line_delta <= 3) {
+                score += 10;
+            } else {
+                score -= std::min(line_delta, 30);
+            }
+        }
+        if (request.column > 0 && row.source.column == request.column) score += 5;
+    }
+
+    int matched_fields = 0;
+    for (const auto& field : request.field_values) {
+        const std::string row_value = trim_gui_ascii_copy(
+            inspector_row_field_value(row, request.row_kind, field.first));
+        if (row_value == field.second) {
+            score += 8;
+            ++matched_fields;
+        } else {
+            score -= 3;
+        }
+    }
+
+    const int required_field_matches = request.field_values.size() <= 1 ? 1 : 2;
+    if (!source_matched && matched_fields < required_field_matches) return std::numeric_limits<int>::min();
+    return score;
+}
+
+const TableRow* find_model_row_for_inspector_request(const MapModel& model,
+                                                     const MapElementInspectorRequest& request,
+                                                     std::string& resolved_edit_id) {
+    const std::vector<TableRow>* rows = inspector_rows_for_kind(model, request.row_kind);
+    if (!rows) return nullptr;
+
+    for (const TableRow& row : *rows) {
+        if (!request.edit_id.empty() && row.edit_id == request.edit_id) {
+            resolved_edit_id = request.edit_id;
+            return &row;
+        }
+    }
+
+    if (request.source_file.empty() && request.field_values.empty()) return nullptr;
+
+    const TableRow* best = nullptr;
+    int best_score = std::numeric_limits<int>::min();
+    bool ambiguous = false;
+    for (const TableRow& row : *rows) {
+        if (row.edit_id.empty()) continue;
+        int score = inspector_request_match_score(row, request);
+        if (score > best_score) {
+            best = &row;
+            best_score = score;
+            ambiguous = false;
+        } else if (score == best_score) {
+            ambiguous = true;
+        }
+    }
+
+    if (!best || ambiguous || best_score == std::numeric_limits<int>::min()) return nullptr;
+    resolved_edit_id = best->edit_id;
+    return best;
+}
+
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
     static constexpr std::array<const char*, 3> kDistanceRowKinds = {
         "station.put",
@@ -1262,30 +1359,27 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
                        [&](const char* value) { return row_kind == value; });
 }
 
-template <typename Rows>
-const TableRow* find_model_row_by_edit_id(const Rows& rows, const std::string& edit_id) {
-    for (const TableRow& row : rows) {
-        if (row.edit_id == edit_id) return &row;
+MapElementInspectorRequest make_inspector_reload_request(const MapElementInspectorState& inspector) {
+    MapElementInspectorRequest request;
+    request.edit_id = inspector.edit_id;
+    request.row_kind = inspector.row_kind;
+    request.source_file = inspector.source_file;
+    request.line = inspector.line;
+    request.column = inspector.column;
+    for (const MapElementEditFieldState& field : inspector.fields) {
+        request.field_values[field.key] = trim_gui_ascii_copy(edit_field_buffer_text(field));
     }
-    return nullptr;
+    return request;
 }
 
-bool App::open_element_inspector(const std::string& edit_id, const std::string& row_kind) {
-    if (edit_id.empty()) return false;
+bool App::open_element_inspector(const MapElementInspectorRequest& request) {
+    if (request.edit_id.empty() && request.field_values.empty()) return false;
     if (!ensure_full_edit_registry()) return false;
 
-    const TableRow* row = nullptr;
-    if (row_kind == "structure.model") {
-        row = find_model_row_by_edit_id(model_.structure_models, edit_id);
-    } else if (row_kind == "structure.put") {
-        row = find_model_row_by_edit_id(model_.structures, edit_id);
-    } else if (row_kind == "structure.between") {
-        row = find_model_row_by_edit_id(model_.structures_between, edit_id);
-    } else if (row_kind == "station.put") {
-        row = find_model_row_by_edit_id(model_.station_list_rows, edit_id);
-    }
+    std::string edit_id = request.edit_id;
+    const TableRow* row = find_model_row_for_inspector_request(model_, request, edit_id);
     if (!row) {
-        add_log("[warn]gui_kme.cpp: edit target row not found: " + edit_id);
+        add_log("[warn]gui_kme.cpp: edit target row not found: " + request.edit_id);
         return false;
     }
 
@@ -1297,13 +1391,13 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
     MapElementInspectorState next;
     next.open = true;
     next.edit_id = edit_id;
-    next.row_kind = row_kind;
+    next.row_kind = request.row_kind;
     next.title = tr("dialog.element_properties");
     next.source_file = source.file_path;
     next.source_hash = source_file ? source_file->source_hash : std::string{};
     next.line = source.line;
     next.column = source.column;
-    if (statement && row_kind_has_source_distance_string(row_kind)) {
+    if (statement && row_kind_has_source_distance_string(request.row_kind)) {
         next.source_distance_string = statement->distance_expression;
     }
     next.raw_statement = statement && !statement->raw_text.empty()
@@ -1323,10 +1417,10 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
         next.fields.push_back(field);
     };
 
-    if (row_kind == "structure.model") {
+    if (request.row_kind == "structure.model") {
         add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
         add_field("filePath", "filePath", table_cell(*row, "filePath"), false, true);
-    } else if (row_kind == "structure.put") {
+    } else if (request.row_kind == "structure.put") {
         const std::string method = table_cell(*row, "method");
         add_field("distance", "distance", table_cell(*row, "distance"), true, true);
         add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
@@ -1341,13 +1435,13 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
         }
         add_field("tilt", "tilt", table_cell(*row, "tilt"), true, true);
         add_field("span", "span", table_cell(*row, "span"), true, true);
-    } else if (row_kind == "structure.between") {
+    } else if (request.row_kind == "structure.between") {
         add_field("distance", "distance", table_cell(*row, "distance"), true, true);
         add_field("structureKey", "structureKey", table_cell(*row, "structureKey"), false, true);
         add_field("trackKey1", "trackKey1", table_cell(*row, "trackKey1"), false, true);
         add_field("trackKey2", "trackKey2", table_cell(*row, "trackKey2"), false, true);
         add_field("flag", "flag", table_cell(*row, "flag"), true, true);
-    } else if (row_kind == "station.put") {
+    } else if (request.row_kind == "station.put") {
         add_field("distance", "distance", table_cell(*row, "_distance"), true, true);
         add_field("stationKey", "stationKey", table_cell(*row, "posKey"), false, true);
     }
@@ -1365,6 +1459,10 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
 
     inspector_ = std::move(next);
     return true;
+}
+
+bool App::open_element_inspector(const std::string& edit_id, const std::string& row_kind) {
+    return open_element_inspector(MapElementInspectorRequest{edit_id, row_kind});
 }
 
 void App::apply_inspector_changes() {
@@ -1499,6 +1597,9 @@ void App::save_pending_edits() {
     }
 
     if (!ok) return;
+    if (inspector_.open && !inspector_.edit_id.empty() && !row_is_pending_delete(inspector_.edit_id)) {
+        pending_inspector_request_ = make_inspector_reload_request(inspector_);
+    }
     clear_pending_edits_after_load_ = true;
     begin_load(file_path_, true, false, std::nullopt, true, true);
 }
