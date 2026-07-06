@@ -10,6 +10,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(maploader SHARED
     src/maploader/maploader.cpp
+    src/maploader/maploader_core.cpp
+    src/maploader/maploader_parser.cpp
+    src/maploader/maploader_geometry.cpp
+    src/maploader/maploader_ir_json.cpp
+    src/maploader/maploader_edits.cpp
     src/maploader/diagnostics.cpp
     src/maploader/text_decoder.cpp
     src/maploader/c_api.cpp
