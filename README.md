@@ -198,7 +198,13 @@ komapedit/
 │  ├─ canvas3d/
 │  │  └─ canvas3D.cpp              # DirectX 11 model and scene preview canvas rendering
 │  ├─ maploader/
-│  │  ├─ maploader.cpp             # BVE Map parsing, IR assembly, JSON export, and geometry generation
+│  │  ├─ maploader.cpp             # Public C ABI entry points and map handle lifecycle
+│  │  ├─ maploader_internal.h      # Shared maploader state, row records, source anchors, and helpers
+│  │  ├─ maploader_core.cpp        # Common parsing/value/source-span utilities and MapContext helpers
+│  │  ├─ maploader_parser.cpp      # BVE Map/list parsing, Include handling, variables, and source anchors
+│  │  ├─ maploader_geometry.cpp    # Own/other-track geometry, relocation, curves, and scene control points
+│  │  ├─ maploader_ir_json.cpp     # IR JSON serialization plus edit/source metadata fields
+│  │  ├─ maploader_edits.cpp       # Edit dry-run, in-memory apply, source patching, and commit/writeback
 │  │  ├─ text_decoder.cpp/.h       # File reading, UTF-8 paths, and text decoding
 │  │  ├─ diagnostics.cpp/.h        # Loader logs and last-error state
 │  │  └─ c_api.cpp/.h              # C ABI allocation helpers

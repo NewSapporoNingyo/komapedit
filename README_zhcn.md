@@ -192,7 +192,13 @@ komapedit/
 │  ├─ canvas3d/
 │  │  └─ canvas3D.cpp              # DirectX 11 模型和场景预览画布渲染
 │  ├─ maploader/
-│  │  ├─ maploader.cpp             # BVE Map 解析、IR 组装、JSON 导出和几何生成
+│  │  ├─ maploader.cpp             # Public C ABI 入口和 map handle 生命周期管理
+│  │  ├─ maploader_internal.h      # maploader 共享状态、行记录、源锚点和辅助声明
+│  │  ├─ maploader_core.cpp        # 通用解析/value/source-span 工具和 MapContext 辅助逻辑
+│  │  ├─ maploader_parser.cpp      # BVE Map/list 解析、Include、变量表达式和源锚点收集
+│  │  ├─ maploader_geometry.cpp    # 自轨道/他轨道几何、relocate、曲线和场景控制点
+│  │  ├─ maploader_ir_json.cpp     # IR JSON 序列化和 edit/source metadata 字段
+│  │  ├─ maploader_edits.cpp       # edit dry-run、内存应用、源文件 patch 和 commit/writeback
 │  │  ├─ text_decoder.cpp/.h       # 文件读取、UTF-8 路径和文本解码
 │  │  ├─ diagnostics.cpp/.h        # 加载器日志与最后错误状态
 │  │  └─ c_api.cpp/.h              # C ABI 分配辅助代码
