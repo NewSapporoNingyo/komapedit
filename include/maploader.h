@@ -39,6 +39,17 @@ KV_API void kv_set_log_callback(KvLogCallback callback);
    with kv_free(), even after retrieving buffers or IR JSON from it. */
 KV_API void* kv_load_map(const char* path, double unit_distance);
 
+#define KV_LOAD_PREVIEW (1u << 0)
+#define KV_LOAD_EDIT_METADATA (1u << 1)
+#define KV_LOAD_USE_PREVIEW_CACHE (1u << 2)
+#define KV_LOAD_REBUILD_PREVIEW_CACHE (1u << 3)
+
+/* Extended loader entry point. KV_LOAD_PREVIEW skips source/edit metadata when
+   KV_LOAD_EDIT_METADATA is not also set. KV_LOAD_USE_PREVIEW_CACHE enables the
+   preview cache. KV_LOAD_REBUILD_PREVIEW_CACHE skips reading an existing preview
+   cache entry and rewrites it after parsing. */
+KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned flags);
+
 /* Regenerates geometry in-place for an existing handle and invalidates any
    KvDoubleBuffer views previously obtained from that handle. */
 KV_API int kv_generate_geometry(
@@ -63,6 +74,7 @@ KV_API size_t kv_get_othertrack_count(void* handle);
 KV_API const char* kv_get_othertrack_key(void* handle, size_t index);
 KV_API KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key);
 KV_API KvDoubleBuffer kv_get_structure_puts(void* handle);
+KV_API int kv_get_preview_cache_hit(void* handle);
 
 #define KV_IR_JSON_COMPACT 0u
 #define KV_IR_JSON_FULL_EDIT (1u << 0)

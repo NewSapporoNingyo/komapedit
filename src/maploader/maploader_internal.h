@@ -41,6 +41,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -132,6 +133,12 @@ struct LoadedText {
     int body_start_line = 1;
 };
 
+struct MapParseOptions {
+    bool collect_edit_metadata = true;
+    bool use_preview_cache = false;
+    bool rebuild_preview_cache = false;
+};
+
 struct SourceTextOverride {
     std::string file_path;
     std::string source_key;
@@ -154,11 +161,13 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
                                    std::string source_hash,
                                    size_t byte_length,
                                    const std::string& head_str,
-                                   double min_version);
+                                   double min_version,
+                                   bool collect_source_metadata);
 LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
                             double min_version,
-                            const SourceTextOverrides* overrides = nullptr);
+                            const SourceTextOverrides* overrides = nullptr,
+                            bool collect_source_metadata = true);
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file);
 enum class ValueKind {
     Null,
@@ -635,6 +644,9 @@ struct MapContext {
     std::map<unsigned, std::string> ir_json_cache_by_flags;
     LoadTiming timing;
     bool load_timing_logged = false;
+    MapParseOptions parse_options;
+    bool preview_cache_hit = false;
+    bool preview_snapshot_only = false;
     std::vector<SourceFileRecord> source_files;
     std::unordered_map<std::string, size_t> source_file_indices;
     std::vector<std::vector<std::string>> include_stacks;
@@ -848,6 +860,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
                                               double unit_distance,
                                               SourceTextOverrides overrides,
                                               bool has_arbitrary_distribution,
-                                              const std::array<double, 3>& arbitrary_distribution);
+                                              const std::array<double, 3>& arbitrary_distribution,
+                                              MapParseOptions options = {});
 
 } // namespace kme::maploader::detail

@@ -209,11 +209,13 @@ private:
             Value value = parse_expression();
             size_t args_end = pos_;
             expect(';');
-            add_parsed_statement(ctx_, "Variable.Assign",
-                                 make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
-                                 src_.substr(statement_start, pos_ - statement_start),
-                                 trim_field_copy(src_.substr(args_start, args_end - args_start)),
-                                 {value}, ctx_.distance_expression, ctx_.distance);
+            if (ctx_.parse_options.collect_edit_metadata) {
+                add_parsed_statement(ctx_, "Variable.Assign",
+                                     make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
+                                     src_.substr(statement_start, pos_ - statement_start),
+                                     trim_field_copy(src_.substr(args_start, args_end - args_start)),
+                                     {value}, ctx_.distance_expression, ctx_.distance);
+            }
             ctx_.variables[name] = value;
             note_variable_write(ctx_, name);
             return;
@@ -231,11 +233,13 @@ private:
                 Value path = parse_expression();
                 size_t args_end = pos_;
                 expect(';');
-                add_parsed_statement(ctx_, "Include",
-                                     make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
-                                     src_.substr(statement_start, pos_ - statement_start),
-                                     trim_field_copy(src_.substr(args_start, args_end - args_start)),
-                                     {path}, ctx_.distance_expression, ctx_.distance);
+                if (ctx_.parse_options.collect_edit_metadata) {
+                    add_parsed_statement(ctx_, "Include",
+                                         make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
+                                         src_.substr(statement_start, pos_ - statement_start),
+                                         trim_field_copy(src_.substr(args_start, args_end - args_start)),
+                                         {path}, ctx_.distance_expression, ctx_.distance);
+                }
                 queue_include(as_text(path));
                 return;
             }
@@ -243,14 +247,17 @@ private:
                 flush_pending_includes();
                 ParsedMapElement element = parse_map_element();
                 expect(';');
-                size_t statement_index = add_parsed_statement(
-                    ctx_, map_statement_kind(element.objects, element.function),
-                    make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
-                    src_.substr(statement_start, pos_ - statement_start),
-                    element.function.raw_arguments,
-                    element.function.args,
-                    ctx_.distance_expression,
-                    ctx_.distance);
+                size_t statement_index = kNoSourceRef;
+                if (ctx_.parse_options.collect_edit_metadata) {
+                    statement_index = add_parsed_statement(
+                        ctx_, map_statement_kind(element.objects, element.function),
+                        make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
+                        src_.substr(statement_start, pos_ - statement_start),
+                        element.function.raw_arguments,
+                        element.function.args,
+                        ctx_.distance_expression,
+                        ctx_.distance);
+                }
                 ActiveStatementScope active(ctx_, statement_index);
                 dispatch(element.objects, element.function);
                 return;
@@ -264,11 +271,13 @@ private:
         expect(';');
         std::string raw_distance = trim_field_copy(src_.substr(args_start, args_end - args_start));
         double distance_value = as_number(distance);
-        add_parsed_statement(ctx_, "Distance.Set",
-                             make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
-                             src_.substr(statement_start, pos_ - statement_start),
-                             raw_distance,
-                             {distance}, raw_distance, distance_value);
+        if (ctx_.parse_options.collect_edit_metadata) {
+            add_parsed_statement(ctx_, "Distance.Set",
+                                 make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
+                                 src_.substr(statement_start, pos_ - statement_start),
+                                 raw_distance,
+                                 {distance}, raw_distance, distance_value);
+        }
         ctx_.distance_expression = raw_distance;
         set_distance(ctx_, distance_value);
     }
@@ -293,6 +302,7 @@ private:
         seed.current_file_path = normalized_source_path(child);
         seed.include_stack = ctx_.include_stack;
         seed.source_overrides = ctx_.source_overrides;
+        seed.parse_options = ctx_.parse_options;
         seed.unit_distance = ctx_.unit_distance;
         std::string child_path = normalized_source_path(child);
         if (seed.include_stack.empty() ||
@@ -311,6 +321,7 @@ private:
         try {
             ActiveTimingScope active(result.context.timing);
             LoadedText loaded = load_header_text(result.context, child, "BveTs Map ", 2.0);
+            register_source_file(result.context, loaded);
             result.context.current_file_path = loaded.normalized_path;
             Parser nested(result.context, std::move(loaded));
             nested.parse();
@@ -1513,12 +1524,15 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
                                               double unit_distance,
                                               SourceTextOverrides overrides,
                                               bool has_arbitrary_distribution,
-                                              const std::array<double, 3>& arbitrary_distribution) {
+                                              const std::array<double, 3>& arbitrary_distribution,
+                                              MapParseOptions options) {
     auto ctx = std::make_unique<MapContext>();
     ctx->source_overrides = std::move(overrides);
+    ctx->parse_options = options;
     ActiveTimingScope active(ctx->timing);
     log_info("loading map " + path_to_utf8(map_path));
     LoadedText loaded = load_header_text(*ctx, map_path, "BveTs Map ", 2.0);
+    register_source_file(*ctx, loaded);
     ctx->rootpath = loaded.root;
     ctx->rootpath_utf8 = path_to_utf8(loaded.root);
     ctx->entry_file_path = loaded.normalized_path;

@@ -12,6 +12,7 @@
 #include "touch_input.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "implot.h"
 
 #include <windows.h>
@@ -141,6 +142,19 @@ size_t matrix_upper_bound_distance(const Matrix& points, double distance) {
 }
 
 constexpr size_t kRepeaterSegmentChunkPointLimit = 192;
+constexpr size_t kDenseRepeaterOverlayThreshold = 1200;
+constexpr double kDenseRepeaterOverviewScale = 0.04;
+constexpr double kDenseRepeaterSegmentScale = 0.05;
+
+bool dense_repeater_overview_lod(size_t visible_repeater_count, double scale) {
+    return visible_repeater_count > kDenseRepeaterOverlayThreshold &&
+        scale < kDenseRepeaterOverviewScale;
+}
+
+bool dense_repeater_segment_lod(size_t visible_repeater_count, double scale) {
+    return visible_repeater_count > kDenseRepeaterOverlayThreshold &&
+        scale < kDenseRepeaterSegmentScale;
+}
 
 void include_repeater_chunk_bounds(PlanRepeaterSegment::Chunk& chunk, const TrackPoint& p) {
     if (!chunk.bounds_valid) {
@@ -174,6 +188,20 @@ void include_repeater_segment_bounds(PlanRepeaterSegment& segment, const TrackPo
     segment.y_max = std::max(segment.y_max, p.y);
 }
 
+void include_repeater_segment_endpoint(PlanRepeaterSegment& segment, const TrackPoint& p) {
+    if (!segment.endpoints_valid) {
+        segment.first_point = p;
+        segment.last_point = p;
+        segment.endpoints_valid = true;
+        return;
+    }
+    if (std::abs(segment.first_point.d - p.d) < 1e-6 &&
+        std::abs(segment.last_point.d - p.d) < 1e-6) {
+        segment.first_point = p;
+    }
+    segment.last_point = p;
+}
+
 void append_repeater_segment_point(PlanRepeaterSegment& segment, const TrackPoint& p) {
     if (!segment.chunks.empty()) {
         PlanRepeaterSegment::Chunk& tail_chunk = segment.chunks.back();
@@ -181,6 +209,7 @@ void append_repeater_segment_point(PlanRepeaterSegment& segment, const TrackPoin
             tail_chunk.points.back() = p;
             include_repeater_chunk_bounds(tail_chunk, p);
             include_repeater_segment_bounds(segment, p);
+            include_repeater_segment_endpoint(segment, p);
             return;
         }
     }
@@ -202,6 +231,7 @@ void append_repeater_segment_point(PlanRepeaterSegment& segment, const TrackPoin
     chunk.points.push_back(p);
     include_repeater_chunk_bounds(chunk, p);
     include_repeater_segment_bounds(segment, p);
+    include_repeater_segment_endpoint(segment, p);
 }
 
 #ifndef NDEBUG
@@ -1003,7 +1033,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         repeater_row_visible_.begin(), repeater_row_visible_.end(),
         [](unsigned char visible) { return visible != 0; }));
     bool skip_dense_repeater_markers = !include_other_tracks && plan_view_.fitted &&
-        visible_repeater_count > 1200 && plan_view_.scale < 0.025;
+        dense_repeater_overview_lod(visible_repeater_count, plan_view_.scale);
     out.structure_markers.reserve(std::min(structure_marker_cache_.size(), structure_row_visible_.size()));
     if (!skip_dense_repeater_markers) {
         out.repeater_markers.reserve(std::min(repeater_marker_cache_.size(), repeater_row_visible_.size()) * 2);
@@ -1862,6 +1892,140 @@ static bool screen_bounds_overlap_canvas(const PlanScreenTransform& transform,
              max_y < origin.y - margin || min_y > origin.y + size.y + margin);
 }
 
+static const TrackPoint* first_repeater_segment_point_in_range(const PlanRepeaterSegment& segment,
+                                                               double dmin, double dmax) {
+    if (!segment.bounds_valid || !distance_ranges_overlap(segment.d_min, segment.d_max, dmin, dmax)) {
+        return nullptr;
+    }
+    if (segment.d_min >= dmin && segment.d_max <= dmax) {
+        for (const PlanRepeaterSegment::Chunk& chunk : segment.chunks) {
+            if (!chunk.points.empty()) return &chunk.points.front();
+        }
+        return nullptr;
+    }
+    for (const PlanRepeaterSegment::Chunk& chunk : segment.chunks) {
+        if (!chunk.bounds_valid || !distance_ranges_overlap(chunk.d_min, chunk.d_max, dmin, dmax)) continue;
+        auto it = std::lower_bound(chunk.points.begin(), chunk.points.end(), dmin,
+                                   [](const TrackPoint& point, double distance) {
+                                       return point.d < distance;
+                                   });
+        if (it != chunk.points.end() && it->d <= dmax) return &*it;
+    }
+    return nullptr;
+}
+
+static const TrackPoint* last_repeater_segment_point_in_range(const PlanRepeaterSegment& segment,
+                                                              double dmin, double dmax) {
+    if (!segment.bounds_valid || !distance_ranges_overlap(segment.d_min, segment.d_max, dmin, dmax)) {
+        return nullptr;
+    }
+    if (segment.d_min >= dmin && segment.d_max <= dmax) {
+        for (auto chunk_it = segment.chunks.rbegin(); chunk_it != segment.chunks.rend(); ++chunk_it) {
+            if (!chunk_it->points.empty()) return &chunk_it->points.back();
+        }
+        return nullptr;
+    }
+    for (auto chunk_it = segment.chunks.rbegin(); chunk_it != segment.chunks.rend(); ++chunk_it) {
+        const PlanRepeaterSegment::Chunk& chunk = *chunk_it;
+        if (!chunk.bounds_valid || !distance_ranges_overlap(chunk.d_min, chunk.d_max, dmin, dmax)) continue;
+        auto it = std::upper_bound(chunk.points.begin(), chunk.points.end(), dmax,
+                                   [](double distance, const TrackPoint& point) {
+                                       return distance < point.d;
+                                   });
+        if (it == chunk.points.begin()) continue;
+        --it;
+        if (it->d >= dmin) return &*it;
+    }
+    return nullptr;
+}
+
+static void write_overview_line_quad(ImDrawList* draw, ImVec2 a, ImVec2 b,
+                                     ImU32 color, float half_thickness, const ImVec2& uv) {
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    float len_sq = dx * dx + dy * dy;
+    if (len_sq <= 1e-4f) return;
+    float inv_len = 1.0f / std::sqrt(len_sq);
+    dx *= inv_len * half_thickness;
+    dy *= inv_len * half_thickness;
+    ImVec2 normal(dy, -dx);
+
+    draw->_VtxWritePtr[0].pos = ImVec2(a.x + normal.x, a.y + normal.y);
+    draw->_VtxWritePtr[0].uv = uv;
+    draw->_VtxWritePtr[0].col = color;
+    draw->_VtxWritePtr[1].pos = ImVec2(b.x + normal.x, b.y + normal.y);
+    draw->_VtxWritePtr[1].uv = uv;
+    draw->_VtxWritePtr[1].col = color;
+    draw->_VtxWritePtr[2].pos = ImVec2(b.x - normal.x, b.y - normal.y);
+    draw->_VtxWritePtr[2].uv = uv;
+    draw->_VtxWritePtr[2].col = color;
+    draw->_VtxWritePtr[3].pos = ImVec2(a.x - normal.x, a.y - normal.y);
+    draw->_VtxWritePtr[3].uv = uv;
+    draw->_VtxWritePtr[3].col = color;
+    draw->_VtxWritePtr += 4;
+
+    draw->_IdxWritePtr[0] = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx);
+    draw->_IdxWritePtr[1] = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx + 1);
+    draw->_IdxWritePtr[2] = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx + 2);
+    draw->_IdxWritePtr[3] = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx);
+    draw->_IdxWritePtr[4] = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx + 2);
+    draw->_IdxWritePtr[5] = static_cast<ImDrawIdx>(draw->_VtxCurrentIdx + 3);
+    draw->_IdxWritePtr += 6;
+    draw->_VtxCurrentIdx += 4;
+}
+
+static bool screen_line_overlaps_canvas(ImVec2 a, ImVec2 b, ImVec2 origin, ImVec2 size, float margin) {
+    float min_x = std::min(a.x, b.x);
+    float max_x = std::max(a.x, b.x);
+    float min_y = std::min(a.y, b.y);
+    float max_y = std::max(a.y, b.y);
+    return !(max_x < origin.x - margin || min_x > origin.x + size.x + margin ||
+             max_y < origin.y - margin || min_y > origin.y + size.y + margin);
+}
+
+static void draw_repeater_segment_overview(ImDrawList* draw,
+                                           const std::vector<RepeaterOverlayRow>& rows,
+                                           const std::vector<unsigned char>& visible,
+                                           double dmin, double dmax,
+                                           const PlanScreenTransform& transform,
+                                           ImVec2 origin, ImVec2 size,
+                                           ImU32 color, float thickness) {
+    const size_t row_count = std::min(rows.size(), visible.size());
+    if (row_count == 0) return;
+
+    constexpr float coarse_margin = 96.0f;
+    const float half_thickness = std::max(0.5f, thickness * 0.5f);
+    const ImVec2 uv = draw->_Data->TexUvWhitePixel;
+    const int reserved_lines = static_cast<int>(std::min<size_t>(row_count, static_cast<size_t>(std::numeric_limits<int>::max() / 6)));
+    if (reserved_lines <= 0) return;
+    draw->PrimReserve(reserved_lines * 6, reserved_lines * 4);
+    int emitted_lines = 0;
+    for (size_t row = 0; row < row_count; ++row) {
+        if (!visible[row]) continue;
+        const PlanRepeaterSegment& segment = rows[row].segment;
+        if (!segment.bounds_valid || !distance_ranges_overlap(segment.d_min, segment.d_max, dmin, dmax)) continue;
+        const bool full_segment_visible = segment.endpoints_valid && segment.d_min >= dmin && segment.d_max <= dmax;
+        const TrackPoint* first = full_segment_visible
+            ? &segment.first_point
+            : first_repeater_segment_point_in_range(segment, dmin, dmax);
+        const TrackPoint* last = full_segment_visible
+            ? &segment.last_point
+            : last_repeater_segment_point_in_range(segment, dmin, dmax);
+        if (!first || !last || first == last) continue;
+        ImVec2 a = transform.model_to_screen(first->x, first->y);
+        ImVec2 b = transform.model_to_screen(last->x, last->y);
+        if (!finite_screen_point(a) || !finite_screen_point(b)) continue;
+        float dx = b.x - a.x;
+        float dy = b.y - a.y;
+        if (dx * dx + dy * dy < 4.0f) continue;
+        if (!screen_line_overlaps_canvas(a, b, origin, size, coarse_margin)) continue;
+        write_overview_line_quad(draw, a, b, color, half_thickness, uv);
+        ++emitted_lines;
+    }
+    int unused_lines = reserved_lines - emitted_lines;
+    if (unused_lines > 0) draw->PrimUnreserve(unused_lines * 6, unused_lines * 4);
+}
+
 static void draw_repeater_segment_chunks(ImDrawList* draw,
                                          const std::vector<RepeaterOverlayRow>& rows,
                                          const std::vector<unsigned char>& visible,
@@ -1878,9 +2042,15 @@ static void draw_repeater_segment_chunks(ImDrawList* draw,
     if (visible_row_count == 0) return;
 
     constexpr float coarse_margin = 96.0f;
-    bool dense_overlay = visible_row_count > 1200 && transform.scale < 0.05;
+    if (dense_repeater_overview_lod(visible_row_count, transform.scale)) {
+        draw_repeater_segment_overview(draw, rows, visible, dmin, dmax, transform,
+                                       origin, size, color, thickness);
+        return;
+    }
+
+    bool dense_overlay = dense_repeater_segment_lod(visible_row_count, transform.scale);
     double detail_pixel_step = 0.45;
-    if (visible_row_count > 1200 && transform.scale < 0.025) {
+    if (dense_repeater_overview_lod(visible_row_count, transform.scale)) {
         detail_pixel_step = 32.0;
     } else if (dense_overlay) {
         detail_pixel_step = 4.0;
@@ -2452,7 +2622,8 @@ void App::render_plan_canvas(ImVec2 size) {
     size_t selected_repeater_count = static_cast<size_t>(std::count_if(
         repeater_row_visible_.begin(), repeater_row_visible_.end(),
         [](unsigned char visible) { return visible != 0; }));
-    bool dense_repeater_marker_lod = selected_repeater_count > 1200 && plan_view_.scale < 0.025;
+    bool dense_repeater_marker_lod = dense_repeater_overview_lod(selected_repeater_count, plan_view_.scale);
+    bool overview_marker_lod = dense_repeater_marker_lod;
     const float marker_size_scale = marker_size_scale_from_percent(marker_size_percent_);
     const float marker_canvas_margin = std::max(12.0f, 12.0f * marker_size_scale);
     const double marker_hover_radius = static_cast<double>(marker_canvas_margin);
@@ -3232,8 +3403,12 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& st : data.stations) {
             ImVec2 p = transform.plan_to_screen(st.x, st.y);
             draw->AddCircleFilled(p, station_marker_radius, IM_COL32(255, 255, 255, 255));
-            if (show_station_names_) draw->AddText(ImVec2(p.x + station_label_offset, p.y - 16), IM_COL32(255, 255, 255, 255), st.station.name.c_str());
-            if (show_station_mileage_) draw->AddText(ImVec2(p.x + station_label_offset, p.y + 4), IM_COL32(255, 216, 77, 255), (format_double(st.station.mileage, 0) + "m").c_str());
+            if (!overview_marker_lod && show_station_names_) {
+                draw->AddText(ImVec2(p.x + station_label_offset, p.y - 16), IM_COL32(255, 255, 255, 255), st.station.name.c_str());
+            }
+            if (!overview_marker_lod && show_station_mileage_) {
+                draw->AddText(ImVec2(p.x + station_label_offset, p.y + 4), IM_COL32(255, 216, 77, 255), (format_double(st.station.mileage, 0) + "m").c_str());
+            }
         }
     }
 
@@ -3248,8 +3423,10 @@ void App::render_plan_canvas(ImVec2 size) {
             d.x = d.x / len * (8.0f * marker_size_scale);
             d.y = d.y / len * (8.0f * marker_size_scale);
             draw->AddLine(ImVec2(p.x - d.x, p.y - d.y), ImVec2(p.x + d.x, p.y + d.y), IM_COL32(136, 204, 255, 255), std::max(1.0f, marker_size_scale));
-            std::string label = sp.has_speed ? format_double(sp.speed, 0) : "x";
-            draw->AddText(ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15), IM_COL32(136, 204, 255, 255), label.c_str());
+            if (!overview_marker_lod) {
+                std::string label = sp.has_speed ? format_double(sp.speed, 0) : "x";
+                draw->AddText(ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15), IM_COL32(136, 204, 255, 255), label.c_str());
+            }
         }
     }
 
@@ -3263,6 +3440,11 @@ void App::render_plan_canvas(ImVec2 size) {
             bool marker_hovered = hovered_signal_row && *hovered_signal_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
             bool marker_active = marker_emphasized(PlanMarkerKind::Signal, marker.row_index, marker_hovered);
+            if (overview_marker_lod && !marker_active) {
+                float half = std::max(2.0f, 2.8f * marker_size_scale);
+                draw->AddRectFilled(ImVec2(p.x - half, p.y - half), ImVec2(p.x + half, p.y + half), signal_color);
+                continue;
+            }
             draw_selected_marker_ring(p, PlanMarkerKind::Signal, marker.row_index, signal_color);
             draw_plan_signal_marker(draw, p, signal_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
             if (marker_active) draw_plan_small_text(draw, p, signal_color, marker.label);
@@ -3477,7 +3659,8 @@ void App::render_plan_canvas(ImVec2 size) {
                                      dmin_, dmax_, transform, origin, avail, repeater_color, 1.25f * marker_size_scale);
         debug_plan_stage("repeater_segments");
         if (!dense_repeater_marker_lod) {
-            bool draw_repeater_labels = plan_view_.scale >= 0.025 || data.repeater_markers.size() <= 600;
+            bool draw_repeater_labels = plan_view_.scale >= kDenseRepeaterOverviewScale ||
+                data.repeater_markers.size() <= 600;
             for (const auto& marker : data.repeater_markers) {
                 ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
                 if (!point_near_canvas(p, origin, avail)) continue;

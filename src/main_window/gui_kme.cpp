@@ -547,6 +547,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     settings_.marker_size_percent = marker_size_percent_;
     settings_.canvas_line_widths = canvas_line_widths_;
     settings_.theme_color = theme_color_;
+    edit_mode_enabled_ = settings_.edit_mode_enabled;
+    settings_.edit_mode_enabled = edit_mode_enabled_;
     pending_font_size_ = font_size_;
     font_size_before_dialog_ = font_size_;
     pending_ui_component_size_ = ui_component_size_;
@@ -633,7 +635,8 @@ void App::poll_loader() {
 void App::begin_load(std::string path, bool preserve_settings, bool record_history,
                      std::optional<BackgroundHistory> background_to_restore,
                      bool preserve_scene_preview_models,
-                     bool preserve_scene_preview_camera) {
+                     bool preserve_scene_preview_camera,
+                     bool use_preview_cache) {
     if (path.empty() || load_state_.running) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
@@ -658,12 +661,16 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     double cp0 = has_cp ? model_.cp_arb[0] : 0.0;
     double cp1 = has_cp ? model_.cp_arb[1] : 0.0;
     double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
+    LoadModelOptions load_options;
+    load_options.full_edit_registry = edit_mode_enabled_;
+    load_options.load_profile = edit_mode_enabled_ ? "edit" : "preview";
+    load_options.use_preview_cache = use_preview_cache;
 
     load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
                            record_history, background_to_restore, load_started_at,
                            preserve_scene_preview_models,
-                           preserve_scene_preview_camera]() mutable {
-        LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2);
+                           preserve_scene_preview_camera, load_options]() mutable {
+        LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
         result.started_at = load_started_at;
         result.preserve_settings = preserve_settings;
         result.record_history = record_history;
@@ -703,6 +710,7 @@ void App::apply_load_result(LoadResult result) {
     handle_ = result.handle;
     model_ = std::move(result.model);
     edit_registry_loaded_ = result.full_edit_registry;
+    preview_cache_handle_ = result.preview_cache_hit;
     if (clear_pending_edits_after_load_ || loaded_different_file ||
         !pending_edit_changes_.empty() || has_unsaved_edits_) {
         clear_pending_edit_state();
@@ -743,7 +751,9 @@ void App::apply_load_result(LoadResult result) {
     radius_x_zoom_pending_ = false;
     std::ostringstream timing;
     timing << std::fixed << std::setprecision(3)
-           << "maploader=" << result.maploader_seconds << "s"
+           << "profile=" << result.load_profile
+           << ", preview_cache=" << (result.preview_cache_hit ? "hit" : "miss")
+           << ", maploader=" << result.maploader_seconds << "s"
            << ", model=" << result.model_build_seconds << "s"
            << ", ir_json=" << model_.ir_json_seconds << "s"
            << ", json_parse=" << model_.json_parse_seconds << "s"
@@ -760,6 +770,11 @@ void App::apply_load_result(LoadResult result) {
     if (result.record_history) touch_recent_map(result.path);
     load_state_.pending_started_at = result.started_at;
     plan_canvas_rendered_this_frame_ = false;
+    if (edit_mode_enabled_ && has_model_ && !file_path_.empty() &&
+        !edit_registry_loaded_ && !load_state_.running) {
+        add_log("[info]gui_kme.cpp: loading edit metadata");
+        begin_load(file_path_, true, false, std::nullopt, true, true);
+    }
 }
 
 void App::after_frame_presented() {
@@ -829,14 +844,22 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
 
 App::LoadResult App::load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step,
                                       LoadModelOptions options) {
+    if (options.full_edit_registry) options.load_profile = "edit";
+    if (options.load_profile.empty()) options.load_profile = "preview";
     auto started_at = std::chrono::steady_clock::now();
     auto elapsed_seconds = [&]() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
     };
     LoadResult out;
     out.path = path;
+    out.full_edit_registry = options.full_edit_registry;
+    out.load_profile = options.load_profile;
     auto maploader_started_at = std::chrono::steady_clock::now();
-    void* handle = kv_load_map(path.c_str(), unit_distance);
+    unsigned load_flags = options.full_edit_registry
+        ? KV_LOAD_EDIT_METADATA
+        : (KV_LOAD_PREVIEW | KV_LOAD_USE_PREVIEW_CACHE);
+    if (!options.use_preview_cache) load_flags &= ~KV_LOAD_USE_PREVIEW_CACHE;
+    void* handle = kv_load_map_ex(path.c_str(), unit_distance, load_flags);
     auto maploader_finished_at = std::chrono::steady_clock::now();
     out.maploader_seconds = std::chrono::duration<double>(maploader_finished_at - maploader_started_at).count();
     if (!handle) {
@@ -845,6 +868,7 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
         out.elapsed_seconds = elapsed_seconds();
         return out;
     }
+    out.preview_cache_hit = kv_get_preview_cache_hit(handle) != 0;
     if (has_cp) {
         auto geometry_started_at = std::chrono::steady_clock::now();
         if (!kv_generate_geometry(handle, unit_distance, 1, cp_start, cp_end, cp_step)) {
@@ -860,7 +884,6 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
     try {
         auto model_started_at = std::chrono::steady_clock::now();
         out.model = build_model_from_handle(handle, path, options);
-        out.full_edit_registry = options.full_edit_registry;
         out.model_build_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - model_started_at).count();
         if (has_cp) {
@@ -1290,6 +1313,35 @@ bool App::row_is_pending_delete(const std::string& edit_id) const {
     return it != pending_edit_changes_.end() && it->second.operation == "delete";
 }
 
+bool App::edit_actions_available() const {
+    return edit_mode_enabled_ && edit_registry_loaded_ && handle_ && has_model_ && !load_state_.running;
+}
+
+void App::set_edit_mode_enabled(bool enabled) {
+    if (enabled == edit_mode_enabled_) return;
+    if (!enabled && has_unsaved_edits_) {
+        add_log("[warn]gui_kme.cpp: " + tr("status.edit.disable_blocked_unsaved"));
+        return;
+    }
+
+    edit_mode_enabled_ = enabled;
+    settings_.edit_mode_enabled = edit_mode_enabled_;
+    save_user_settings(settings_);
+
+    if (!edit_mode_enabled_) {
+        inspector_.open = false;
+        pending_inspector_request_.reset();
+        add_log("[info]gui_kme.cpp: edit mode disabled");
+        return;
+    }
+
+    add_log("[info]gui_kme.cpp: edit mode enabled");
+    if (has_model_ && !file_path_.empty() && !edit_registry_loaded_ && !load_state_.running) {
+        add_log("[info]gui_kme.cpp: loading edit metadata");
+        begin_load(file_path_, true, false, std::nullopt, true, true);
+    }
+}
+
 bool App::snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind) {
     if (edit_id.empty() || row_kind.empty()) return false;
     if (original_edit_rows_.find(edit_id) != original_edit_rows_.end()) return true;
@@ -1370,6 +1422,12 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind) {
 }
 
 void App::request_element_inspector(const std::string& edit_id, const std::string& row_kind) {
+    if (!edit_actions_available()) {
+        if (edit_mode_enabled_ && !edit_registry_loaded_) {
+            add_log("[info]gui_kme.cpp: " + tr("status.edit.loading_metadata"));
+        }
+        return;
+    }
     if (edit_id.empty()) return;
     pending_inspector_request_ = MapElementInspectorRequest{edit_id, row_kind};
 }
@@ -1585,6 +1643,7 @@ MapElementInspectorRequest make_inspector_reload_request(const MapElementInspect
 }
 
 bool App::open_element_inspector(const MapElementInspectorRequest& request) {
+    if (!edit_actions_available()) return false;
     if (request.edit_id.empty() && request.field_values.empty()) return false;
 
     std::string edit_id = request.edit_id;
@@ -1713,6 +1772,7 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
 }
 
 void App::apply_inspector_changes() {
+    if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
     if (inspector_.pending_delete) {
         apply_pending_edits_to_preview();
@@ -1756,6 +1816,7 @@ void App::apply_inspector_changes() {
 }
 
 void App::revert_inspector_changes() {
+    if (!edit_mode_enabled_) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
     restore_local_preview_change(inspector_.edit_id, inspector_.row_kind);
     pending_edit_changes_.erase(inspector_.edit_id);
@@ -1769,6 +1830,7 @@ void App::revert_inspector_changes() {
 }
 
 void App::delete_inspector_target() {
+    if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty() || !inspector_.delete_supported) return;
     MapElementPendingChange change;
     change.change_id = "delete-" + inspector_.edit_id;
@@ -1825,6 +1887,7 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
 }
 
 bool App::apply_pending_edits_to_preview() {
+    if (!edit_actions_available()) return false;
     if (!handle_ || pending_edit_changes_.empty() || load_state_.running) return false;
 
     bool applying_delete = false;
@@ -1899,6 +1962,7 @@ std::string App::pending_changes_json() const {
 }
 
 void App::save_pending_edits() {
+    if (!edit_actions_available()) return;
     if (!handle_ || !has_unsaved_edits_ || load_state_.running) return;
     std::string json = pending_changes_json();
     const char* raw = kv_edit_apply(handle_, json.c_str());
@@ -1923,6 +1987,10 @@ void App::save_pending_edits() {
 }
 
 void App::render_element_inspector() {
+    if (!edit_mode_enabled_) {
+        inspector_.open = false;
+        return;
+    }
     if (!inspector_.open) return;
     std::string title = tr("dialog.element_properties") + "###ElementInspector";
     if (!ImGui::Begin(title.c_str(), &inspector_.open)) {
@@ -2753,15 +2821,26 @@ void App::render_toolbar() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        const bool can_reload_geometry = !load_state_.running && has_model_ && !file_path_.empty();
+        const bool can_reload_geometry = !load_state_.running && has_model_ && !file_path_.empty() &&
+            !preview_cache_handle_;
         ImGui::BeginDisabled(!can_reload_geometry);
         if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!has_unsaved_edits_ || load_state_.running);
+        ImGui::BeginDisabled(!edit_actions_available() || !has_unsaved_edits_);
         if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
         ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        bool requested_edit_mode = edit_mode_enabled_;
+        if (ImGui::Checkbox(tr("chk.edit_mode").c_str(), &requested_edit_mode)) {
+            set_edit_mode_enabled(requested_edit_mode);
+        }
+        if (edit_mode_enabled_ && has_model_ && !edit_registry_loaded_) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", tr("status.edit.loading_metadata").c_str());
+        }
 
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
@@ -3320,6 +3399,11 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
         add_log("[warn]gui_kme.cpp: 3D scene preview has no map geometry loaded");
         return;
     }
+    if (preview_cache_handle_) {
+        add_log("[info]gui_kme.cpp: hydrating loader state for 3D scene preview");
+        begin_load(file_path_, true, false, std::nullopt, true, true, false);
+        return;
+    }
     add_log(preserve_loaded_models
                 ? "[info]gui_kme.cpp: reloading 3D scene preview track geometry with preserved models"
                 : "[info]gui_kme.cpp: generating 3D scene preview track geometry");
@@ -3506,7 +3590,7 @@ void App::perform_reload_current_map_and_model_preview() {
 
 void App::perform_reload_current_map_geometry() {
     add_log("[info]gui_kme.cpp: reloading map geometry with existing 3D models preserved");
-    begin_load(file_path_, true, false, std::nullopt, true, true);
+    begin_load(file_path_, true, false, std::nullopt, true, true, false);
 }
 
 bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
@@ -3846,7 +3930,8 @@ int main(int, char**) {
         if (!headless.error.empty()) {
             std::cerr << headless.error << "\n"
                       << "usage: komapedit.exe --headless-load-map <map-path> "
-                      << "[--repeat N] [--unit-distance M] [--ir-json-mode compact|full] "
+                      << "[--repeat N] [--unit-distance M] [--load-profile preview|edit] "
+                      << "[--cache-mode off|read|rebuild] [--ir-json-mode compact|full] "
                       << "[--headless-output FILE]\n";
             return 1;
         }

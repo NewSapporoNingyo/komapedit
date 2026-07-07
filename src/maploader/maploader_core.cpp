@@ -200,7 +200,8 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
                                    std::string source_hash,
                                    size_t byte_length,
                                    const std::string& head_str,
-                                   double min_version) {
+                                   double min_version,
+                                   bool collect_source_metadata) {
     size_t line_end = text.find('\n');
     std::string header = line_end == std::string::npos ? text : text.substr(0, line_end);
     if (ascii_lower(header).find(ascii_lower(head_str)) == std::string::npos) {
@@ -213,7 +214,8 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
     std::string body = line_end == std::string::npos ? std::string() : text.substr(body_offset);
     std::string normalized_path = normalized_source_path(path);
     std::string normalized_key = normalized_source_key(normalized_path);
-    std::vector<size_t> line_starts = build_line_starts(body);
+    std::vector<size_t> line_starts;
+    if (collect_source_metadata) line_starts = build_line_starts(body);
     return {std::move(body), path, std::filesystem::absolute(path).parent_path(), normalized_path,
             normalized_key, std::move(encoding), std::move(newline), std::move(source_hash),
             std::move(line_starts),
@@ -223,7 +225,8 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
 LoadedText load_header_text(const std::filesystem::path& path,
                             const std::string& head_str,
                             double min_version,
-                            const SourceTextOverrides* overrides) {
+                            const SourceTextOverrides* overrides,
+                            bool collect_source_metadata) {
     std::string normalized_path = normalized_source_path(path);
     std::string normalized_key = normalized_source_key(normalized_path);
     if (overrides) {
@@ -231,8 +234,10 @@ LoadedText load_header_text(const std::filesystem::path& path,
         if (override_it != overrides->end()) {
             const SourceTextOverride& source = override_it->second;
             return make_loaded_header_text(path, source.text, source.encoding, source.newline,
-                                           source.current_hash, source.byte_length,
-                                           head_str, min_version);
+                                           collect_source_metadata ? source.current_hash : std::string{},
+                                           source.byte_length,
+                                           head_str, min_version,
+                                           collect_source_metadata);
         }
     }
 
@@ -276,9 +281,12 @@ LoadedText load_header_text(const std::filesystem::path& path,
     }
 
     std::string newline = detect_newline(text);
+    std::string source_hash;
+    if (collect_source_metadata) source_hash = hex64(stable_hash64(bytes));
     return make_loaded_header_text(path, std::move(text), std::move(encoding), std::move(newline),
-                                   hex64(stable_hash64(bytes)), bytes.size(),
-                                   head_str, min_version);
+                                   std::move(source_hash), bytes.size(),
+                                   head_str, min_version,
+                                   collect_source_metadata);
 }
 
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file) {
@@ -411,7 +419,8 @@ LoadedText load_header_text(const MapContext& ctx,
                             const std::filesystem::path& path,
                             const std::string& head_str,
                             double min_version) {
-    return load_header_text(path, head_str, min_version, &ctx.source_overrides);
+    return load_header_text(path, head_str, min_version, &ctx.source_overrides,
+                            ctx.parse_options.collect_edit_metadata);
 }
 
 std::string normalized_source_path(const std::filesystem::path& path) {
@@ -530,6 +539,7 @@ SourceSpan make_source_span(MapContext& ctx,
                             size_t body_end,
                             const std::vector<std::string>& include_stack) {
     SourceSpan span;
+    if (!ctx.parse_options.collect_edit_metadata) return span;
     span.source_file_index = register_source_file_index(ctx, loaded);
     span.include_stack_index = intern_include_stack(ctx, include_stack);
     span.byte_start = loaded.body_offset + body_start;
@@ -571,6 +581,7 @@ size_t add_parsed_statement(MapContext& ctx,
                             std::vector<Value> evaluated_values,
                             std::string distance_expression,
                             double distance_value) {
+    if (!ctx.parse_options.collect_edit_metadata) return kNoSourceRef;
     ParsedStatement statement;
     statement.statement_kind = std::move(kind);
     statement.source = std::move(source);
@@ -590,6 +601,7 @@ size_t add_parsed_statement(MapContext& ctx,
 }
 
 EditSourceRef next_active_edit_ref(MapContext& ctx) {
+    if (!ctx.parse_options.collect_edit_metadata) return {};
     if (ctx.active_statement_index == kNoSourceRef) return {};
     EditSourceRef ref;
     ref.statement_index = ctx.active_statement_index;
@@ -642,6 +654,7 @@ EditSourceRef add_loaded_line_statement(MapContext& ctx,
                                         size_t line_end,
                                         const std::string& line,
                                         const std::vector<std::string>& fields) {
+    if (!ctx.parse_options.collect_edit_metadata) return {};
     size_t statement_index = add_parsed_statement(
         ctx, kind,
         make_source_span(ctx, loaded, line_start, line_end, include_stack),

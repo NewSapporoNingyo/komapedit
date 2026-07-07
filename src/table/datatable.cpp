@@ -2139,7 +2139,8 @@ void App::render_station_list_window() {
                     const std::string& value = row.cells[static_cast<size_t>(i)];
                     if (value.empty()) continue;
                     ImGui::PushID(i);
-                    if (render_text_cell_with_context(value, tr("dialog.element_properties"), !row.edit_id.empty())) {
+                    if (render_text_cell_with_context(value, tr("dialog.element_properties"),
+                                                      edit_actions_available() && !row.edit_id.empty())) {
                         request_element_inspector(row.edit_id, "station.put");
                     }
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -2275,7 +2276,7 @@ void App::render_structure_rows_window(bool put_between) {
                             tr("menu.locate_in_scene_preview"),
                             can_locate_scene,
                             tr("dialog.element_properties"),
-                            !row.edit_id.empty());
+                            edit_actions_available() && !row.edit_id.empty());
                         if (action == TextCellContextAction::Primary) {
                             locate_structure_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
@@ -2422,7 +2423,7 @@ void App::render_structure_models_window() {
                             }
                             ImGui::EndDisabled();
                             ImGui::Separator();
-                            ImGui::BeginDisabled(row.edit_id.empty());
+                        ImGui::BeginDisabled(!edit_actions_available() || row.edit_id.empty());
                             if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
                                 request_element_inspector(row.edit_id, "structure.model");
                             }

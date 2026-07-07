@@ -65,6 +65,8 @@ struct HeadlessLoadOptions {
     int repeat = 1;
     double unit_distance = 25.0;
     bool full_ir_json = false;
+    std::string load_profile = "preview";
+    std::string cache_mode = "read";
     std::string error;
 };
 
@@ -199,6 +201,30 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
                 options.full_ir_json = true;
             } else {
                 options.error = "--ir-json-mode must be compact or full";
+                return options;
+            }
+        } else if (arg == "--load-profile") {
+            if (i + 1 >= args.size()) {
+                options.error = "--load-profile requires preview or edit";
+                return options;
+            }
+            std::string profile = args[++i];
+            if (profile == "preview" || profile == "edit") {
+                options.load_profile = profile;
+            } else {
+                options.error = "--load-profile must be preview or edit";
+                return options;
+            }
+        } else if (arg == "--cache-mode") {
+            if (i + 1 >= args.size()) {
+                options.error = "--cache-mode requires off, read, or rebuild";
+                return options;
+            }
+            std::string mode = args[++i];
+            if (mode == "off" || mode == "read" || mode == "rebuild") {
+                options.cache_mode = mode;
+            } else {
+                options.error = "--cache-mode must be off, read, or rebuild";
                 return options;
             }
         } else if (arg == "--headless-output") {
@@ -594,11 +620,17 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
     *out << "komapedit headless-load-map path=\"" << options.path
          << "\" repeat=" << options.repeat
          << " unit_distance=" << format_double(options.unit_distance, 3)
+         << " load_profile=" << options.load_profile
+         << " cache_mode=" << options.cache_mode
          << " ir_json_mode=" << (options.full_ir_json ? "full" : "compact") << "\n";
 
     for (int run = 1; run <= options.repeat; ++run) {
         auto started_at = std::chrono::steady_clock::now();
-        void* handle = kv_load_map(options.path.c_str(), options.unit_distance);
+        const bool edit_profile = options.load_profile == "edit";
+        unsigned load_flags = edit_profile ? KV_LOAD_EDIT_METADATA : KV_LOAD_PREVIEW;
+        if (!edit_profile && options.cache_mode != "off") load_flags |= KV_LOAD_USE_PREVIEW_CACHE;
+        if (!edit_profile && options.cache_mode == "rebuild") load_flags |= KV_LOAD_REBUILD_PREVIEW_CACHE;
+        void* handle = kv_load_map_ex(options.path.c_str(), options.unit_distance, load_flags);
         auto loaded_at = std::chrono::steady_clock::now();
         if (!handle) {
             const char* err = kv_get_last_error();
@@ -606,6 +638,7 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
                       << (err ? err : "maploader failed") << "\n";
             return 2;
         }
+        const bool preview_cache_hit = kv_get_preview_cache_hit(handle) != 0;
 
         unsigned ir_flags = options.full_ir_json
             ? (KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE)
@@ -639,6 +672,7 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
              << " load=" << std::fixed << std::setprecision(3) << load_seconds << "s"
              << " json=" << json_seconds << "s"
              << " total=" << total_seconds << "s"
+             << " preview_cache=" << (preview_cache_hit ? "hit" : "miss")
              << " json_bytes=" << json_bytes
              << " othertracks=" << other_count;
         print_headless_buffer_summary(*out, "own", own);

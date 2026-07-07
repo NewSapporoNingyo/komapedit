@@ -17,6 +17,8 @@ struct HeadlessLoadOptions {
     int repeat = 1;
     double unit_distance = 25.0;
     bool full_ir_json = false;
+    std::string load_profile = "preview";
+    std::string cache_mode = "read";
     std::string error;
 };
 

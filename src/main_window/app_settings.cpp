@@ -349,6 +349,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "chart_marker_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.chart_marker_px << "\n";
     out << "background_grid_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.background_grid_px << "\n";
     out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
+    out << "edit_mode_enabled=" << bool_to_string(settings.edit_mode_enabled) << "\n";
     out << "\n[WindowVisibility]\n";
     out << "show_othertracks_window=" << bool_to_string(settings.window_visibility.show_othertracks_window) << "\n";
     out << "show_station_list_window=" << bool_to_string(settings.window_visibility.show_station_list_window) << "\n";
@@ -426,6 +427,7 @@ UserSettings load_user_settings() {
     std::string line;
     std::set<std::string> view_2d_keys_seen;
     std::set<std::string> view_3d_keys_seen;
+    bool edit_mode_key_seen = false;
     auto parse_line_width = [](const std::string& value, float fallback) {
         try {
             return clamp_canvas_line_width(std::stof(value), fallback);
@@ -505,6 +507,9 @@ UserSettings load_user_settings() {
             } else {
                 settings.theme_color = default_theme_color();
             }
+        } else if (key == "edit_mode_enabled" || key == "enable_edit" || key == "edit_mode") {
+            edit_mode_key_seen = true;
+            settings.edit_mode_enabled = parse_bool(value, settings.edit_mode_enabled);
         } else if (key == "show_othertracks_window") {
             settings.window_visibility.show_othertracks_window = parse_bool(value, settings.window_visibility.show_othertracks_window);
         } else if (key == "show_station_list_window") {
@@ -665,7 +670,9 @@ UserSettings load_user_settings() {
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
     settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m);
-    if (view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 3) save_user_settings(settings);
+    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 3) {
+        save_user_settings(settings);
+    }
     return settings;
 }
 

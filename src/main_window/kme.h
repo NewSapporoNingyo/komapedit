@@ -623,12 +623,15 @@ struct PlanRepeaterSegment {
     };
 
     std::vector<Chunk> chunks;
+    TrackPoint first_point;
+    TrackPoint last_point;
     double d_min = 0.0;
     double d_max = 0.0;
     double x_min = 0.0;
     double y_min = 0.0;
     double x_max = 0.0;
     double y_max = 0.0;
+    bool endpoints_valid = false;
     bool bounds_valid = false;
 };
 
@@ -871,6 +874,7 @@ struct UserSettings {
     float marker_size_percent = kDefaultMarkerSizePercent;
     CanvasLineWidthSettings canvas_line_widths;
     ImVec4 theme_color = default_theme_color();
+    bool edit_mode_enabled = false;
     WindowVisibilitySettings window_visibility;
     View2DSettings view_2d;
     View3DSettings view_3d;
@@ -1021,7 +1025,9 @@ private:
     MapModel model_;
     bool has_model_ = false;
     std::string file_path_;
+    bool edit_mode_enabled_ = false;
     bool edit_registry_loaded_ = false;
+    bool preview_cache_handle_ = false;
     bool clear_pending_edits_after_load_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
     std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
@@ -1040,6 +1046,8 @@ private:
         bool preserve_settings = false;
         bool record_history = false;
         bool full_edit_registry = false;
+        std::string load_profile = "preview";
+        bool preview_cache_hit = false;
         bool preserve_scene_preview_models = false;
         bool preserve_scene_preview_camera = false;
         std::optional<BackgroundHistory> background_to_restore;
@@ -1052,9 +1060,13 @@ private:
         double maploader_seconds = 0.0;
         double geometry_seconds = 0.0;
         double model_build_seconds = 0.0;
+        double snapshot_seconds = 0.0;
+        double overlay_seconds = 0.0;
     };
     struct LoadModelOptions {
         bool full_edit_registry = false;
+        std::string load_profile = "preview";
+        bool use_preview_cache = true;
     };
     struct AsyncLoadState {
         std::thread worker;
@@ -1310,7 +1322,8 @@ private:
     void begin_load(std::string path, bool preserve_settings, bool record_history = false,
                     std::optional<BackgroundHistory> background_to_restore = std::nullopt,
                     bool preserve_scene_preview_models = false,
-                    bool preserve_scene_preview_camera = false);
+                    bool preserve_scene_preview_camera = false,
+                    bool use_preview_cache = true);
     void apply_load_result(LoadResult result);
     void regenerate_geometry();
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step);
@@ -1337,6 +1350,8 @@ private:
     bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);
     bool row_has_pending_edit(const std::string& edit_id) const;
     bool row_is_pending_delete(const std::string& edit_id) const;
+    bool edit_actions_available() const;
+    void set_edit_mode_enabled(bool enabled);
     void apply_inspector_changes();
     void revert_inspector_changes();
     void delete_inspector_target();
