@@ -1288,6 +1288,7 @@ private:
     bool scene_preview_dirty_ = true;
     bool scene_preview_preserve_models_on_rebuild_ = false;
     bool scene_preview_preserve_camera_on_rebuild_ = false;
+    std::optional<std::chrono::steady_clock::time_point> pending_scene_preview_started_at_;
 
     TextureImage bg_image_;
     bool bg_show_ = true;
@@ -1401,6 +1402,7 @@ private:
     void start_scene_preview();
     void stop_scene_preview();
     void rebuild_scene_preview(bool preserve_loaded_models = false, bool preserve_camera = false);
+    void finish_pending_scene_preview_load_timing();
     void reload_scene_preview_models();
     void sync_scene_preview_track_visibility();
     void perform_reload_current_map_and_model_preview();

@@ -699,6 +699,7 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
 void App::apply_load_result(LoadResult result) {
     if (!result.ok) {
         load_state_.pending_started_at.reset();
+        pending_scene_preview_started_at_.reset();
         add_log("Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
@@ -3373,6 +3374,7 @@ void App::start_scene_preview() {
     focus_scene_preview_next_ = true;
     scene_preview_preserve_models_on_rebuild_ = false;
     scene_preview_preserve_camera_on_rebuild_ = false;
+    pending_scene_preview_started_at_ = std::chrono::steady_clock::now();
     add_log("[info]gui_kme.cpp: starting 3D scene preview");
     rebuild_scene_preview(false, false);
 }
@@ -3382,17 +3384,22 @@ void App::stop_scene_preview() {
     scene_preview_dirty_ = true;
     scene_preview_preserve_models_on_rebuild_ = false;
     scene_preview_preserve_camera_on_rebuild_ = false;
+    pending_scene_preview_started_at_.reset();
     if (scene_preview_canvas_) scene_preview_canvas_->clear_scene();
     add_log("[INFO]3D scene preview stopped");
 }
 
 void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camera) {
-    if (!scene_preview_canvas_ || !scene_preview_started_) return;
+    if (!scene_preview_canvas_ || !scene_preview_started_) {
+        pending_scene_preview_started_at_.reset();
+        return;
+    }
     if (!has_model_ || model_.own.empty()) {
         scene_preview_canvas_->clear_scene();
         scene_preview_dirty_ = true;
         scene_preview_preserve_models_on_rebuild_ = false;
         scene_preview_preserve_camera_on_rebuild_ = false;
+        pending_scene_preview_started_at_.reset();
         add_log("[warn]gui_kme.cpp: 3D scene preview has no map geometry loaded");
         return;
     }
@@ -3433,6 +3440,7 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
         scene_preview_dirty_ = true;
         scene_preview_preserve_models_on_rebuild_ = false;
         scene_preview_preserve_camera_on_rebuild_ = false;
+        pending_scene_preview_started_at_.reset();
         return;
     }
     scene_preview_dirty_ = false;
@@ -3450,6 +3458,20 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
     add_log("[info]gui_kme.cpp: 3D scene preview started: chunks=" + std::to_string(stats.chunk_count) +
             " instances=" + std::to_string(stats.instance_count) +
             " models=" + std::to_string(stats.model_path_count));
+}
+
+void App::finish_pending_scene_preview_load_timing() {
+    if (!pending_scene_preview_started_at_ || !scene_preview_canvas_) return;
+    const Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
+    if (!stats.active || stats.loading) return;
+
+    const double elapsed_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - *pending_scene_preview_started_at_).count();
+    pending_scene_preview_started_at_.reset();
+
+    std::ostringstream elapsed;
+    elapsed << std::fixed << std::setprecision(2) << elapsed_seconds;
+    add_log("3D preview loaded in " + elapsed.str() + " s");
 }
 
 void App::reload_scene_preview_models() {
@@ -3546,6 +3568,7 @@ void App::render_scene_preview_window() {
             locate_repeater_row_in_list(scene_action.row_index);
         }
         drain_scene_preview_logs();
+        finish_pending_scene_preview_load_timing();
     }
     focus_scene_preview_next_ = false;
     ImGui::End();
