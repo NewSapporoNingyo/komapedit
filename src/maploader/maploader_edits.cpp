@@ -1446,6 +1446,14 @@ void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report) {
                                    arbitrary_distribution);
 }
 
+void reset_memory_edits(MapContext& ctx) {
+    bool has_arbitrary_distribution = ctx.has_cp_arbdistribution;
+    std::array<double, 3> arbitrary_distribution = ctx.cp_arbdistribution;
+    reparse_context_with_overrides(ctx, SourceTextOverrides{},
+                                   has_arbitrary_distribution,
+                                   arbitrary_distribution);
+}
+
 MapEditReport commit_memory_edits(MapContext& ctx) {
     MapEditReport report;
     struct PendingWrite {

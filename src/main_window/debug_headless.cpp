@@ -1044,13 +1044,38 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     auto report_ok = [](const std::string& report) {
         return report.find("\"ok\":true") != std::string::npos;
     };
-    auto call_edit_api = [](void* handle, const std::string& changes, bool apply) {
-        const char* raw = apply
-            ? kv_edit_apply(handle, changes.c_str())
-            : kv_edit_dry_run(handle, changes.c_str());
+    auto call_dry_run = [](void* handle, const std::string& changes) {
+        const char* raw = kv_edit_dry_run(handle, changes.c_str());
         std::string text = raw ? raw : "";
         if (raw) kv_free_string(raw);
         return text;
+    };
+    auto call_apply_to_memory = [](void* handle, const std::string& changes) {
+        const char* raw = kv_edit_apply_to_memory(handle, changes.c_str());
+        std::string text = raw ? raw : "";
+        if (raw) kv_free_string(raw);
+        return text;
+    };
+    auto call_direct_apply = [](void* handle, const std::string& changes) {
+        const char* raw = kv_edit_apply(handle, changes.c_str());
+        std::string text = raw ? raw : "";
+        if (raw) kv_free_string(raw);
+        return text;
+    };
+    auto call_commit = [](void* handle) {
+        const char* raw = kv_edit_commit(handle);
+        std::string text = raw ? raw : "";
+        if (raw) kv_free_string(raw);
+        return text;
+    };
+    auto first_structure_values = [&](void* handle, const std::string& map_path,
+                                      double& distance, double& x) {
+        MapModel model = build_model_from_handle(handle, map_path, LoadModelOptions{true});
+        if (model.structures.empty()) return false;
+        const TableRow& row = model.structures.front();
+        distance = table_cell_number(row, "distance");
+        x = table_cell_number(row, "x");
+        return true;
     };
 
     *out << "komapedit debug-headless-edit-roundtrip source_path=\"" << path
@@ -1061,9 +1086,10 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
          std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(temp_root);
     std::filesystem::path temp_map = temp_root / "map.txt";
+    std::filesystem::path temp_direct_map = temp_root / "direct_map.txt";
     std::filesystem::path temp_structures = temp_root / "structures.csv";
-    {
-        std::ofstream map_file(temp_map, std::ios::out | std::ios::trunc | std::ios::binary);
+    auto write_map_fixture = [](const std::filesystem::path& map_path) {
+        std::ofstream map_file(map_path, std::ios::out | std::ios::trunc | std::ios::binary);
         map_file << "BveTs Map 2.02:utf-8\n"
                  << "0;\n"
                  << "Structure.Load('structures.csv');\n"
@@ -1071,7 +1097,9 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
                  << "Station['STA'].Put();\n"
                  << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n"
                  << "Structure['bridge'].PutBetween('0','1',0);\n";
-    }
+    };
+    write_map_fixture(temp_map);
+    write_map_fixture(temp_direct_map);
     {
         std::ofstream structure_file(temp_structures, std::ios::out | std::ios::trunc | std::ios::binary);
         structure_file << "BveTs Structure List 1.00:utf-8\n"
@@ -1102,7 +1130,7 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         {"y", "2"},
         {"z", "3"}
     });
-    std::string dry_report = call_edit_api(load.handle, changes, false);
+    std::string dry_report = call_dry_run(load.handle, changes);
     const bool dry_ok = report_ok(dry_report);
     *out << "dry_run_ok=" << (dry_ok ? 1 : 0) << "\n";
     if (!dry_ok) {
@@ -1111,7 +1139,7 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     }
 
     std::string stale_changes = make_update_json(structure_row, load.model, {{"x", "11"}}, "bad-hash");
-    std::string stale_report = call_edit_api(load.handle, stale_changes, false);
+    std::string stale_report = call_dry_run(load.handle, stale_changes);
     const bool stale_blocked = !report_ok(stale_report) &&
         stale_report.find("source file changed externally") != std::string::npos;
     *out << "stale_hash_blocked=" << (stale_blocked ? 1 : 0) << "\n";
@@ -1120,14 +1148,58 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         exit_code = 5;
     }
 
-    std::string apply_report;
+    std::string apply_memory_report;
     if (exit_code == 0) {
-        apply_report = call_edit_api(load.handle, changes, true);
-        const bool apply_ok = report_ok(apply_report);
-        *out << "apply_ok=" << (apply_ok ? 1 : 0) << "\n";
-        if (!apply_ok) {
-            *out << "apply_report=" << apply_report << "\n";
+        apply_memory_report = call_apply_to_memory(load.handle, changes);
+        const bool apply_memory_ok = report_ok(apply_memory_report);
+        *out << "apply_to_memory_ok=" << (apply_memory_ok ? 1 : 0) << "\n";
+        if (!apply_memory_ok) {
+            *out << "apply_to_memory_report=" << apply_memory_report << "\n";
             exit_code = 6;
+        } else {
+            double memory_distance = 0.0;
+            double memory_x = 0.0;
+            const bool memory_matches =
+                first_structure_values(load.handle, wide_to_utf8(temp_map.wstring()), memory_distance, memory_x) &&
+                std::abs(memory_distance - 125.0) < 1e-6 &&
+                std::abs(memory_x - 9.0) < 1e-6;
+            *out << "memory_distance=" << format_double(memory_distance, 3) << "\n";
+            *out << "memory_x=" << format_double(memory_x, 3) << "\n";
+            *out << "apply_to_memory_match=" << (memory_matches ? 1 : 0) << "\n";
+            if (!memory_matches) exit_code = 6;
+        }
+    }
+
+    if (exit_code == 0) {
+        const bool reset_ok = kv_edit_reset_memory(load.handle) != 0;
+        double reset_distance = 0.0;
+        double reset_x = 0.0;
+        const bool reset_matches = reset_ok &&
+            first_structure_values(load.handle, wide_to_utf8(temp_map.wstring()), reset_distance, reset_x) &&
+            std::abs(reset_distance - 100.0) < 1e-6 &&
+            std::abs(reset_x - 1.0) < 1e-6;
+        *out << "reset_memory_ok=" << (reset_ok ? 1 : 0) << "\n";
+        *out << "reset_revert_match=" << (reset_matches ? 1 : 0) << "\n";
+        if (!reset_matches) exit_code = 7;
+    }
+
+    if (exit_code == 0) {
+        std::string reapply_report = call_apply_to_memory(load.handle, changes);
+        const bool reapply_ok = report_ok(reapply_report);
+        *out << "reapply_to_memory_ok=" << (reapply_ok ? 1 : 0) << "\n";
+        if (!reapply_ok) {
+            *out << "reapply_report=" << reapply_report << "\n";
+            exit_code = 8;
+        }
+    }
+
+    if (exit_code == 0) {
+        std::string commit_report = call_commit(load.handle);
+        const bool commit_ok = report_ok(commit_report);
+        *out << "commit_ok=" << (commit_ok ? 1 : 0) << "\n";
+        if (!commit_ok) {
+            *out << "commit_report=" << commit_report << "\n";
+            exit_code = 9;
         }
     }
     if (load.handle) kv_free(load.handle);
@@ -1137,7 +1209,7 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
                                             false, 0.0, 0.0, 25.0, LoadModelOptions{true});
         if (!reload.ok || reload.model.structures.empty()) {
             *out << "reload_error=" << reload.error << "\n";
-            exit_code = 7;
+            exit_code = 10;
         } else {
             const TableRow& updated = reload.model.structures.front();
             const double distance = table_cell_number(updated, "distance");
@@ -1147,9 +1219,45 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             *out << "reload_distance=" << format_double(distance, 3) << "\n";
             *out << "reload_x=" << format_double(x, 3) << "\n";
             *out << "save_reload_match=" << (reload_matches ? 1 : 0) << "\n";
-            if (!reload_matches) exit_code = 8;
+            if (!reload_matches) exit_code = 11;
         }
         if (reload.handle) kv_free(reload.handle);
+    }
+
+    if (exit_code == 0) {
+        LoadResult direct_load = load_map_worker(wide_to_utf8(temp_direct_map.wstring()), unit_distance,
+                                                 false, 0.0, 0.0, 25.0, LoadModelOptions{true});
+        if (!direct_load.ok || direct_load.model.structures.empty()) {
+            *out << "direct_load_error=" << direct_load.error << "\n";
+            exit_code = 12;
+        } else {
+            std::string direct_changes = make_update_json(direct_load.model.structures.front(),
+                                                          direct_load.model, {{"x", "12"}});
+            std::string direct_report = call_direct_apply(direct_load.handle, direct_changes);
+            const bool direct_ok = report_ok(direct_report);
+            *out << "direct_apply_ok=" << (direct_ok ? 1 : 0) << "\n";
+            if (!direct_ok) {
+                *out << "direct_apply_report=" << direct_report << "\n";
+                exit_code = 13;
+            }
+        }
+        if (direct_load.handle) kv_free(direct_load.handle);
+    }
+
+    if (exit_code == 0) {
+        LoadResult direct_reload = load_map_worker(wide_to_utf8(temp_direct_map.wstring()), unit_distance,
+                                                   false, 0.0, 0.0, 25.0, LoadModelOptions{true});
+        if (!direct_reload.ok || direct_reload.model.structures.empty()) {
+            *out << "direct_reload_error=" << direct_reload.error << "\n";
+            exit_code = 14;
+        } else {
+            const double direct_x = table_cell_number(direct_reload.model.structures.front(), "x");
+            const bool direct_matches = std::abs(direct_x - 12.0) < 1e-6;
+            *out << "direct_reload_x=" << format_double(direct_x, 3) << "\n";
+            *out << "direct_apply_reload_match=" << (direct_matches ? 1 : 0) << "\n";
+            if (!direct_matches) exit_code = 15;
+        }
+        if (direct_reload.handle) kv_free(direct_reload.handle);
     }
 
     std::filesystem::remove_all(temp_root);

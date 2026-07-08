@@ -102,6 +102,11 @@ KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json);
    source files. Release it with kv_free_string(). */
 KV_API const char* kv_edit_apply_to_memory(void* handle, const char* changes_json);
 
+/* Discards in-memory edited source overrides and reparses the active handle from
+   the current source files. Does not write source files. Returns nonzero on
+   success. */
+KV_API int kv_edit_reset_memory(void* handle);
+
 /* Validates and writes edit changes, then returns a newly allocated UTF-8 JSON
    report. Release it with kv_free_string(). */
 KV_API const char* kv_edit_apply(void* handle, const char* changes_json);

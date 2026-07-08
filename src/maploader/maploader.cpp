@@ -534,6 +534,18 @@ KV_API const char* kv_edit_apply_to_memory(void* handle, const char* changes_jso
     }
 }
 
+KV_API int kv_edit_reset_memory(void* handle) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        kme::maploader::detail::reset_memory_edits(*ctx);
+        return 1;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return 0;
+    }
+}
+
 KV_API const char* kv_edit_apply(void* handle, const char* changes_json) {
     try {
         if (!handle) throw std::runtime_error("handle is null");

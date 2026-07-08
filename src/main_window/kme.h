@@ -921,6 +921,12 @@ struct MapElementPreviewSnapshot {
     size_t row_index = 0;
 };
 
+enum class PreviewCachePolicy {
+    Disabled,
+    Read,
+    Rebuild,
+};
+
 struct MapElementInspectorState {
     bool open = false;
     std::string edit_id;
@@ -1049,6 +1055,7 @@ private:
         bool preview_cache_hit = false;
         bool preserve_scene_preview_models = false;
         bool preserve_scene_preview_camera = false;
+        bool edit_metadata_only = false;
         std::optional<BackgroundHistory> background_to_restore;
         void* handle = nullptr;
         MapModel model;
@@ -1059,13 +1066,11 @@ private:
         double maploader_seconds = 0.0;
         double geometry_seconds = 0.0;
         double model_build_seconds = 0.0;
-        double snapshot_seconds = 0.0;
-        double overlay_seconds = 0.0;
     };
     struct LoadModelOptions {
         bool full_edit_registry = false;
         std::string load_profile = "preview";
-        bool use_preview_cache = true;
+        PreviewCachePolicy preview_cache_policy = PreviewCachePolicy::Read;
     };
     struct AsyncLoadState {
         std::thread worker;
@@ -1324,8 +1329,10 @@ private:
                     std::optional<BackgroundHistory> background_to_restore = std::nullopt,
                     bool preserve_scene_preview_models = false,
                     bool preserve_scene_preview_camera = false,
-                    bool use_preview_cache = true);
+                    PreviewCachePolicy preview_cache_policy = PreviewCachePolicy::Read);
     void apply_load_result(LoadResult result);
+    void begin_edit_metadata_load();
+    void apply_edit_metadata_result(LoadResult result);
     void regenerate_geometry();
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step);
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step,
@@ -1340,6 +1347,10 @@ private:
                                    int* update_count = nullptr,
                                    int* delete_count = nullptr,
                                    int* changed_file_count = nullptr);
+    bool sync_edit_memory_with_ledger(const std::map<std::string, MapElementPendingChange>& changes);
+    bool apply_edit_ledger_to_preview(const std::map<std::string, MapElementPendingChange>& changes,
+                                      std::optional<MapElementInspectorRequest> reload_request,
+                                      bool applying_delete);
     bool apply_pending_edits_to_preview();
     bool apply_local_preview_change(const MapElementPendingChange& change);
     bool restore_local_preview_change(const std::string& edit_id, const std::string& row_kind);

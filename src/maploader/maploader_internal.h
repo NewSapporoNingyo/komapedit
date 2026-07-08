@@ -854,6 +854,7 @@ void reparse_context_with_overrides(MapContext& ctx,
                                     bool has_arbitrary_distribution,
                                     const std::array<double, 3>& arbitrary_distribution);
 void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report);
+void reset_memory_edits(MapContext& ctx);
 MapEditReport commit_memory_edits(MapContext& ctx);
 
 std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,

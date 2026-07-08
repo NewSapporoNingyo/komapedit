@@ -636,7 +636,7 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
                      std::optional<BackgroundHistory> background_to_restore,
                      bool preserve_scene_preview_models,
                      bool preserve_scene_preview_camera,
-                     bool use_preview_cache) {
+                     PreviewCachePolicy preview_cache_policy) {
     if (path.empty() || load_state_.running) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
@@ -661,9 +661,9 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     double cp1 = has_cp ? model_.cp_arb[1] : 0.0;
     double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
     LoadModelOptions load_options;
-    load_options.full_edit_registry = edit_mode_enabled_;
-    load_options.load_profile = edit_mode_enabled_ ? "edit" : "preview";
-    load_options.use_preview_cache = use_preview_cache;
+    load_options.full_edit_registry = false;
+    load_options.load_profile = "preview";
+    load_options.preview_cache_policy = preview_cache_policy;
 
     load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
                            record_history, background_to_restore, load_started_at,
@@ -696,7 +696,43 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     });
 }
 
+void App::begin_edit_metadata_load() {
+    if (!has_model_ || file_path_.empty() || edit_registry_loaded_ || load_state_.running) return;
+    auto load_started_at = std::chrono::steady_clock::now();
+    const bool has_cp = model_.has_cp_arb;
+    const double cp0 = has_cp ? model_.cp_arb[0] : 0.0;
+    const double cp1 = has_cp ? model_.cp_arb[1] : 0.0;
+    const double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
+
+    stop_loader();
+    load_state_.running = true;
+    load_state_.pending_started_at.reset();
+    add_log("[info]gui_kme.cpp: loading edit metadata");
+
+    LoadModelOptions load_options;
+    load_options.full_edit_registry = true;
+    load_options.load_profile = "edit";
+    load_options.preview_cache_policy = PreviewCachePolicy::Disabled;
+    std::string path = file_path_;
+
+    load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, load_started_at, load_options]() mutable {
+        LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
+        result.started_at = load_started_at;
+        result.edit_metadata_only = true;
+        {
+            std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+            load_state_.pending_result = std::move(result);
+        }
+        load_state_.running = false;
+        wake_main_window();
+    });
+}
+
 void App::apply_load_result(LoadResult result) {
+    if (result.edit_metadata_only) {
+        apply_edit_metadata_result(std::move(result));
+        return;
+    }
     if (!result.ok) {
         load_state_.pending_started_at.reset();
         pending_scene_preview_started_at_.reset();
@@ -771,9 +807,148 @@ void App::apply_load_result(LoadResult result) {
     if (!show_plots_window_) finish_pending_load_timing_after_plan_data_ready();
     if (edit_mode_enabled_ && has_model_ && !file_path_.empty() &&
         !edit_registry_loaded_ && !load_state_.running) {
-        add_log("[info]gui_kme.cpp: loading edit metadata");
-        begin_load(file_path_, true, false, std::nullopt, true, true);
+        begin_edit_metadata_load();
     }
+}
+
+bool source_file_hashes_match(const MapModel& current, const MapModel& edit_model,
+                              std::string& error) {
+    std::map<std::string, std::string> current_hashes;
+    for (const EditSourceFileInfo& file : current.edit_files) {
+        current_hashes[file.file_path] = file.source_hash;
+    }
+    for (const EditSourceFileInfo& file : edit_model.edit_files) {
+        auto it = current_hashes.find(file.file_path);
+        if (it == current_hashes.end()) {
+            error = "edit metadata includes a source file that is not in the current preview: " + file.file_path;
+            return false;
+        }
+        if (!it->second.empty() && !file.source_hash.empty() && it->second != file.source_hash) {
+            error = "source file changed since preview load: " + file.file_path;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool table_row_count_matches(const char* label,
+                             const std::vector<TableRow>& current,
+                             const std::vector<TableRow>& edit_rows,
+                             std::string& error) {
+    if (current.size() == edit_rows.size()) return true;
+    error = std::string("edit metadata row count mismatch for ") + label +
+        ": preview=" + std::to_string(current.size()) +
+        ", edit=" + std::to_string(edit_rows.size());
+    return false;
+}
+
+bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edit_model,
+                                    std::string& error) {
+    return table_row_count_matches("station.put", current.station_list_rows, edit_model.station_list_rows, error) &&
+        table_row_count_matches("structure.put", current.structures, edit_model.structures, error) &&
+        table_row_count_matches("structure.between", current.structures_between, edit_model.structures_between, error) &&
+        table_row_count_matches("structure.model", current.structure_models, edit_model.structure_models, error) &&
+        table_row_count_matches("otherTrain.definition", current.other_trains, edit_model.other_trains, error) &&
+        table_row_count_matches("otherTrain.stop", current.other_train_stops, edit_model.other_train_stops, error) &&
+        table_row_count_matches("otherTrain.structureKey", current.other_train_structure_keys, edit_model.other_train_structure_keys, error) &&
+        table_row_count_matches("otherTrain.sound3DKey", current.other_train_sound_3d_keys, edit_model.other_train_sound_3d_keys, error) &&
+        table_row_count_matches("signal.aspect", current.signal_aspects, edit_model.signal_aspects, error) &&
+        table_row_count_matches("signal.put", current.signals, edit_model.signals, error) &&
+        table_row_count_matches("beacon.put", current.beacons, edit_model.beacons, error) &&
+        table_row_count_matches("preTrain.pass", current.pretrains, edit_model.pretrains, error) &&
+        table_row_count_matches("sound.list", current.sound_list, edit_model.sound_list, error) &&
+        table_row_count_matches("repeater", current.repeaters, edit_model.repeaters, error) &&
+        table_row_count_matches("irregularity.change", current.irregularities, edit_model.irregularities, error) &&
+        table_row_count_matches("mapSound.play", current.map_sounds, edit_model.map_sounds, error) &&
+        table_row_count_matches("mapSound3D.put", current.map_sound_3d, edit_model.map_sound_3d, error) &&
+        table_row_count_matches("rollingNoise.change", current.rolling_noises, edit_model.rolling_noises, error) &&
+        table_row_count_matches("flangeNoise.change", current.flange_noises, edit_model.flange_noises, error) &&
+        table_row_count_matches("jointNoise.play", current.joint_noises, edit_model.joint_noises, error) &&
+        table_row_count_matches("background.change", current.backgrounds, edit_model.backgrounds, error) &&
+        table_row_count_matches("adhesion.change", current.adhesions, edit_model.adhesions, error) &&
+        table_row_count_matches("cabIlluminance.change", current.cab_illuminance, edit_model.cab_illuminance, error) &&
+        table_row_count_matches("fog.change", current.fogs, edit_model.fogs, error);
+}
+
+void merge_table_row_edit_metadata(std::vector<TableRow>& current,
+                                   const std::vector<TableRow>& edit_rows) {
+    for (size_t i = 0; i < current.size(); ++i) {
+        current[i].edit_id = edit_rows[i].edit_id;
+        current[i].source = edit_rows[i].source;
+    }
+}
+
+void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
+    current.edit_files = std::move(edit_model.edit_files);
+    current.edit_statements = std::move(edit_model.edit_statements);
+    current.edit_elements = std::move(edit_model.edit_elements);
+    merge_table_row_edit_metadata(current.station_list_rows, edit_model.station_list_rows);
+    merge_table_row_edit_metadata(current.structures, edit_model.structures);
+    merge_table_row_edit_metadata(current.structures_between, edit_model.structures_between);
+    merge_table_row_edit_metadata(current.structure_models, edit_model.structure_models);
+    merge_table_row_edit_metadata(current.other_trains, edit_model.other_trains);
+    merge_table_row_edit_metadata(current.other_train_stops, edit_model.other_train_stops);
+    merge_table_row_edit_metadata(current.other_train_structure_keys, edit_model.other_train_structure_keys);
+    merge_table_row_edit_metadata(current.other_train_sound_3d_keys, edit_model.other_train_sound_3d_keys);
+    merge_table_row_edit_metadata(current.signal_aspects, edit_model.signal_aspects);
+    merge_table_row_edit_metadata(current.signals, edit_model.signals);
+    merge_table_row_edit_metadata(current.beacons, edit_model.beacons);
+    merge_table_row_edit_metadata(current.pretrains, edit_model.pretrains);
+    merge_table_row_edit_metadata(current.sound_list, edit_model.sound_list);
+    merge_table_row_edit_metadata(current.repeaters, edit_model.repeaters);
+    merge_table_row_edit_metadata(current.irregularities, edit_model.irregularities);
+    merge_table_row_edit_metadata(current.map_sounds, edit_model.map_sounds);
+    merge_table_row_edit_metadata(current.map_sound_3d, edit_model.map_sound_3d);
+    merge_table_row_edit_metadata(current.rolling_noises, edit_model.rolling_noises);
+    merge_table_row_edit_metadata(current.flange_noises, edit_model.flange_noises);
+    merge_table_row_edit_metadata(current.joint_noises, edit_model.joint_noises);
+    merge_table_row_edit_metadata(current.backgrounds, edit_model.backgrounds);
+    merge_table_row_edit_metadata(current.adhesions, edit_model.adhesions);
+    merge_table_row_edit_metadata(current.cab_illuminance, edit_model.cab_illuminance);
+    merge_table_row_edit_metadata(current.fogs, edit_model.fogs);
+}
+
+void App::apply_edit_metadata_result(LoadResult result) {
+    if (!result.ok) {
+        add_log("[error]gui_kme.cpp: edit metadata load failed: " + result.error);
+        if (result.handle) kv_free(result.handle);
+        return;
+    }
+    std::string error;
+    if (!has_model_ || result.path != file_path_) {
+        error = "edit metadata entry path no longer matches the current preview";
+    } else if (!source_file_hashes_match(model_, result.model, error)) {
+        // error set by helper
+    } else if (!edit_metadata_row_counts_match(model_, result.model, error)) {
+        // error set by helper
+    }
+    if (!error.empty()) {
+        add_log("[warn]gui_kme.cpp: edit metadata discarded: " + error);
+        add_log("[warn]gui_kme.cpp: reload from disk before editing this map");
+        if (result.handle) kv_free(result.handle);
+        return;
+    }
+
+    if (handle_) kv_free(handle_);
+    handle_ = result.handle;
+    result.handle = nullptr;
+    merge_edit_metadata(model_, std::move(result.model));
+    edit_registry_loaded_ = true;
+    preview_cache_handle_ = false;
+    invalidate_table_cache();
+    rebuild_marker_overlay_cache();
+    sync_marker_visibility_sizes();
+    if (scene_preview_started_ && scene_preview_canvas_) {
+        std::string scene_error;
+        if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, scene_error)) {
+            add_log("[warn]gui_kme.cpp: 3D scene dynamic metadata refresh failed, scheduling full rebuild: " +
+                    (scene_error.empty() ? std::string("unknown error") : scene_error));
+            scene_preview_dirty_ = true;
+            scene_preview_preserve_models_on_rebuild_ = true;
+            scene_preview_preserve_camera_on_rebuild_ = true;
+        }
+    }
+    add_log("[info]gui_kme.cpp: edit metadata loaded");
 }
 
 void App::finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at) {
@@ -844,6 +1019,7 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
                                       LoadModelOptions options) {
     if (options.full_edit_registry) options.load_profile = "edit";
     if (options.load_profile.empty()) options.load_profile = "preview";
+    if (options.full_edit_registry) options.preview_cache_policy = PreviewCachePolicy::Disabled;
     auto started_at = std::chrono::steady_clock::now();
     auto elapsed_seconds = [&]() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
@@ -853,10 +1029,13 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
     out.full_edit_registry = options.full_edit_registry;
     out.load_profile = options.load_profile;
     auto maploader_started_at = std::chrono::steady_clock::now();
-    unsigned load_flags = options.full_edit_registry
-        ? KV_LOAD_EDIT_METADATA
-        : (KV_LOAD_PREVIEW | KV_LOAD_USE_PREVIEW_CACHE);
-    if (!options.use_preview_cache) load_flags &= ~KV_LOAD_USE_PREVIEW_CACHE;
+    unsigned load_flags = options.full_edit_registry ? KV_LOAD_EDIT_METADATA : KV_LOAD_PREVIEW;
+    if (!options.full_edit_registry && options.preview_cache_policy != PreviewCachePolicy::Disabled) {
+        load_flags |= KV_LOAD_USE_PREVIEW_CACHE;
+        if (options.preview_cache_policy == PreviewCachePolicy::Rebuild) {
+            load_flags |= KV_LOAD_REBUILD_PREVIEW_CACHE;
+        }
+    }
     void* handle = kv_load_map_ex(path.c_str(), unit_distance, load_flags);
     auto maploader_finished_at = std::chrono::steady_clock::now();
     out.maploader_seconds = std::chrono::duration<double>(maploader_finished_at - maploader_started_at).count();
@@ -1335,8 +1514,7 @@ void App::set_edit_mode_enabled(bool enabled) {
 
     add_log("[info]gui_kme.cpp: edit mode enabled");
     if (has_model_ && !file_path_.empty() && !edit_registry_loaded_ && !load_state_.running) {
-        add_log("[info]gui_kme.cpp: loading edit metadata");
-        begin_load(file_path_, true, false, std::nullopt, true, true);
+        begin_edit_metadata_load();
     }
 }
 
@@ -1800,31 +1978,36 @@ void App::apply_inspector_changes() {
     }
 
     if (change.field_changes.empty()) {
-        pending_edit_changes_.erase(inspector_.edit_id);
-        restore_local_preview_change(inspector_.edit_id, inspector_.row_kind);
-        has_unsaved_edits_ = !pending_edit_changes_.empty();
-        inspector_.status_message = tr("status.edit.no_changes");
+        std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+        candidate.erase(inspector_.edit_id);
+        if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+            inspector_.status_message = tr("status.edit.no_changes");
+        }
         return;
     }
 
-    pending_edit_changes_[change.edit_id] = std::move(change);
-    if (!apply_pending_edits_to_preview()) {
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    candidate[change.edit_id] = std::move(change);
+    std::optional<MapElementInspectorRequest> reload_request =
+        make_inspector_reload_request(inspector_);
+    if (!apply_edit_ledger_to_preview(candidate, std::move(reload_request), false)) {
         inspector_.status_message = tr("status.edit.pending");
     }
 }
 
 void App::revert_inspector_changes() {
-    if (!edit_mode_enabled_) return;
+    if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
-    restore_local_preview_change(inspector_.edit_id, inspector_.row_kind);
-    pending_edit_changes_.erase(inspector_.edit_id);
-    original_edit_rows_.erase(inspector_.edit_id);
-    has_unsaved_edits_ = !pending_edit_changes_.empty();
-    inspector_.pending_delete = false;
-    for (MapElementEditFieldState& field : inspector_.fields) {
-        set_edit_field_buffer(field, field.original_value);
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    candidate.erase(inspector_.edit_id);
+    if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+        original_edit_rows_.erase(inspector_.edit_id);
+        inspector_.pending_delete = false;
+        for (MapElementEditFieldState& field : inspector_.fields) {
+            set_edit_field_buffer(field, field.original_value);
+        }
+        inspector_.status_message = tr("status.edit.reverted");
     }
-    inspector_.status_message = tr("status.edit.reverted");
 }
 
 void App::delete_inspector_target() {
@@ -1836,9 +2019,12 @@ void App::delete_inspector_target() {
     change.row_kind = inspector_.row_kind;
     change.operation = "delete";
     change.expected_source_hash = inspector_.source_hash;
-    pending_edit_changes_[change.edit_id] = std::move(change);
-    inspector_.pending_delete = true;
-    inspector_.status_message = tr("status.edit.pending_delete");
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    candidate[change.edit_id] = std::move(change);
+    if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
+        inspector_.pending_delete = true;
+        inspector_.status_message = tr("status.edit.pending_delete");
+    }
 }
 
 bool App::parse_and_log_edit_report(const std::string& report_text,
@@ -1884,10 +2070,78 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
     return ok;
 }
 
-bool App::apply_pending_edits_to_preview() {
-    if (!edit_actions_available()) return false;
-    if (!handle_ || pending_edit_changes_.empty() || load_state_.running) return false;
+std::string edit_changes_json(const std::map<std::string, MapElementPendingChange>& changes);
 
+bool App::sync_edit_memory_with_ledger(const std::map<std::string, MapElementPendingChange>& changes) {
+    if (!edit_actions_available()) return false;
+    if (!handle_ || load_state_.running) return false;
+
+    if (!kv_edit_reset_memory(handle_)) {
+        const char* err = kv_get_last_error();
+        add_log(std::string("[error]gui_kme.cpp: edit memory reset failed: ") +
+                (err ? err : "unknown error"));
+        return false;
+    }
+    if (changes.empty()) {
+        add_log("[info]gui_kme.cpp: edit memory reset to disk baseline");
+        return true;
+    }
+
+    std::string json = edit_changes_json(changes);
+    const char* raw = kv_edit_apply_to_memory(handle_, json.c_str());
+    if (!raw) {
+        const char* err = kv_get_last_error();
+        add_log(std::string("[error]gui_kme.cpp: edit memory apply failed: ") +
+                (err ? err : "unknown error"));
+        return false;
+    }
+    std::string report_text(raw);
+    kv_free_string(raw);
+
+    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit memory updated")) {
+        return false;
+    }
+    return true;
+}
+
+bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPendingChange>& changes,
+                                       std::optional<MapElementInspectorRequest> reload_request,
+                                       bool applying_delete) {
+    if (!edit_actions_available()) return false;
+    if (!sync_edit_memory_with_ledger(changes)) {
+        if (!pending_edit_changes_.empty()) {
+            sync_edit_memory_with_ledger(pending_edit_changes_);
+        }
+        return false;
+    }
+
+    for (const auto& kv : pending_edit_changes_) {
+        if (changes.find(kv.first) != changes.end()) continue;
+        if (!restore_local_preview_change(kv.first, kv.second.row_kind)) {
+            add_log("[error]gui_kme.cpp: failed to restore local edit preview: " + kv.first);
+            return false;
+        }
+    }
+
+    for (const auto& kv : changes) {
+        if (!apply_local_preview_change(kv.second)) {
+            add_log("[error]gui_kme.cpp: failed to apply local edit preview: " + kv.first);
+            return false;
+        }
+    }
+    pending_edit_changes_ = changes;
+    has_unsaved_edits_ = !pending_edit_changes_.empty();
+    if (reload_request) {
+        pending_inspector_request_ = std::move(reload_request);
+    } else if (applying_delete && inspector_.open) {
+        inspector_.status_message = tr("status.edit.pending_delete");
+    } else if (!pending_edit_changes_.empty() && inspector_.open) {
+        inspector_.status_message = tr("status.edit.applied_to_preview");
+    }
+    return true;
+}
+
+bool App::apply_pending_edits_to_preview() {
     bool applying_delete = false;
     for (const auto& kv : pending_edit_changes_) {
         applying_delete = applying_delete || kv.second.operation == "delete";
@@ -1896,43 +2150,14 @@ bool App::apply_pending_edits_to_preview() {
     if (inspector_.open && !inspector_.edit_id.empty() && !applying_delete) {
         reload_request = make_inspector_reload_request(inspector_);
     }
-
-    std::string json = pending_changes_json();
-    const char* raw = kv_edit_dry_run(handle_, json.c_str());
-    if (!raw) {
-        const char* err = kv_get_last_error();
-        add_log(std::string("[error]gui_kme.cpp: edit preview validation failed: ") + (err ? err : "unknown error"));
-        return false;
-    }
-    std::string report_text(raw);
-    kv_free_string(raw);
-
-    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit preview validated")) {
-        return false;
-    }
-
-    for (const auto& kv : pending_edit_changes_) {
-        if (!apply_local_preview_change(kv.second)) {
-            add_log("[error]gui_kme.cpp: failed to apply local edit preview: " + kv.first);
-            return false;
-        }
-    }
-    has_unsaved_edits_ = true;
-    if (reload_request) {
-        pending_inspector_request_ = std::move(reload_request);
-    } else if (applying_delete && inspector_.open) {
-        inspector_.status_message = tr("status.edit.pending_delete");
-    } else {
-        inspector_.status_message = tr("status.edit.applied_to_preview");
-    }
-    return true;
+    return apply_edit_ledger_to_preview(pending_edit_changes_, std::move(reload_request), applying_delete);
 }
 
-std::string App::pending_changes_json() const {
+std::string edit_changes_json(const std::map<std::string, MapElementPendingChange>& changes) {
     std::ostringstream out;
     out << "{\"changes\":[";
     bool first_change = true;
-    for (const auto& kv : pending_edit_changes_) {
+    for (const auto& kv : changes) {
         const MapElementPendingChange& change = kv.second;
         if (!first_change) out << ",";
         first_change = false;
@@ -1959,11 +2184,16 @@ std::string App::pending_changes_json() const {
     return out.str();
 }
 
+std::string App::pending_changes_json() const {
+    return edit_changes_json(pending_edit_changes_);
+}
+
 void App::save_pending_edits() {
     if (!edit_actions_available()) return;
     if (!handle_ || !has_unsaved_edits_ || load_state_.running) return;
-    std::string json = pending_changes_json();
-    const char* raw = kv_edit_apply(handle_, json.c_str());
+    if (!sync_edit_memory_with_ledger(pending_edit_changes_)) return;
+
+    const char* raw = kv_edit_commit(handle_);
     if (!raw) {
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit save failed: ") + (err ? err : "unknown error"));
@@ -1980,8 +2210,13 @@ void App::save_pending_edits() {
     original_edit_rows_.clear();
     has_unsaved_edits_ = false;
     if (inspector_.open) inspector_.status_message = tr("status.edit.saved");
-    clear_pending_edits_after_load_ = true;
-    begin_load(file_path_, true, false, std::nullopt, true, true);
+    LoadModelOptions options;
+    options.full_edit_registry = edit_mode_enabled_;
+    options.load_profile = edit_mode_enabled_ ? "edit" : "preview";
+    options.preview_cache_policy = PreviewCachePolicy::Disabled;
+    if (!rehydrate_model_from_current_handle(options)) {
+        add_log("[warn]gui_kme.cpp: saved edits, but preview refresh failed; reload from disk if the view looks stale");
+    }
 }
 
 void App::render_element_inspector() {
@@ -3405,7 +3640,8 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
     }
     if (preview_cache_handle_) {
         add_log("[info]gui_kme.cpp: hydrating loader state for 3D scene preview");
-        begin_load(file_path_, true, false, std::nullopt, true, true, false);
+        begin_load(file_path_, true, false, std::nullopt, true, true,
+                   PreviewCachePolicy::Disabled);
         return;
     }
     add_log(preserve_loaded_models
@@ -3603,14 +3839,16 @@ void App::reload_model_preview() {
 
 void App::perform_reload_current_map_and_model_preview() {
     if (has_model_ && !file_path_.empty()) {
-        begin_load(file_path_, true, false, std::nullopt, false, true);
+        begin_load(file_path_, true, false, std::nullopt, false, true,
+                   PreviewCachePolicy::Disabled);
     }
     reload_model_preview();
 }
 
 void App::perform_reload_current_map_geometry() {
     add_log("[info]gui_kme.cpp: reloading map geometry with existing 3D models preserved");
-    begin_load(file_path_, true, false, std::nullopt, true, true, false);
+    begin_load(file_path_, true, false, std::nullopt, true, true,
+               PreviewCachePolicy::Disabled);
 }
 
 bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
