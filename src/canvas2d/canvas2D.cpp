@@ -2537,6 +2537,12 @@ static bool point_near_canvas(ImVec2 p, ImVec2 origin, ImVec2 size, float margin
            p.y >= origin.y - margin && p.y <= origin.y + size.y + margin;
 }
 
+void App::finish_pending_load_timing_after_plan_data_ready() {
+    if (!load_state_.pending_started_at) return;
+    PlanData data = build_plan_data(false);
+    if (!data.own.empty()) finish_pending_load_timing(std::chrono::steady_clock::now());
+}
+
 void App::render_plan_canvas(ImVec2 size) {
     debug_plan_stage("start");
     PlanData data = build_plan_data(false);
@@ -3745,8 +3751,8 @@ void App::render_plan_canvas(ImVec2 size) {
 
     draw->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(255, 255, 255, 255), tr("canvas.plan").c_str());
     draw_scalebar(draw, plan_view_, origin, avail);
-    if (!data.own.empty()) plan_canvas_rendered_this_frame_ = true;
     draw->PopClipRect();
+    if (!data.own.empty()) finish_pending_load_timing(std::chrono::steady_clock::now());
     debug_plan_stage("overlays_done");
     if (ImGui::BeginPopup("plan_structure_marker_context")) {
         bool can_locate = plan_structure_popup_row_ >= 0 &&

@@ -477,12 +477,16 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
 }
 
 void App::render_plots() {
-    if (!show_plots_window_) return;
+    if (!show_plots_window_) {
+        finish_pending_load_timing_after_plan_data_ready();
+        return;
+    }
     std::string title = tr("frame.plots") + "###Plots";
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_plots_next_) ImGui::SetNextWindowFocus();
     if (!ImGui::Begin(title.c_str(), &show_plots_window_)) {
         focus_plots_next_ = false;
+        finish_pending_load_timing_after_plan_data_ready();
         ImGui::End();
         return;
     }

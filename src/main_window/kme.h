@@ -969,7 +969,6 @@ public:
     ~App();
 
     void render();
-    void after_frame_presented();
     void add_log(std::string text);
 #ifndef NDEBUG
     static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
@@ -1085,7 +1084,6 @@ private:
     double cp_end_ = 0.0;
     double cp_interval_ = 25.0;
     double unit_distance_ = 25.0;
-    bool plan_canvas_rendered_this_frame_ = false;
 
     bool show_stations_ = kDefaultStationAuxInfoVisible;
     bool show_station_names_ = kDefaultStationAuxInfoVisible;
@@ -1319,6 +1317,8 @@ private:
 
     void stop_loader();
     void poll_loader();
+    void finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at);
+    void finish_pending_load_timing_after_plan_data_ready();
     void begin_load(std::string path, bool preserve_settings, bool record_history = false,
                     std::optional<BackgroundHistory> background_to_restore = std::nullopt,
                     bool preserve_scene_preview_models = false,

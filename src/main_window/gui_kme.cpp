@@ -654,7 +654,6 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     }
     load_state_.running = true;
     load_state_.pending_started_at.reset();
-    plan_canvas_rendered_this_frame_ = false;
     add_log(std::string("Start loading file: ") + path);
 
     bool has_cp = preserve_settings && has_model_ && model_.has_cp_arb;
@@ -700,7 +699,6 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
 void App::apply_load_result(LoadResult result) {
     if (!result.ok) {
         load_state_.pending_started_at.reset();
-        plan_canvas_rendered_this_frame_ = false;
         add_log("Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
@@ -769,7 +767,7 @@ void App::apply_load_result(LoadResult result) {
     }
     if (result.record_history) touch_recent_map(result.path);
     load_state_.pending_started_at = result.started_at;
-    plan_canvas_rendered_this_frame_ = false;
+    if (!show_plots_window_) finish_pending_load_timing_after_plan_data_ready();
     if (edit_mode_enabled_ && has_model_ && !file_path_.empty() &&
         !edit_registry_loaded_ && !load_state_.running) {
         add_log("[info]gui_kme.cpp: loading edit metadata");
@@ -777,13 +775,12 @@ void App::apply_load_result(LoadResult result) {
     }
 }
 
-void App::after_frame_presented() {
-    if (!load_state_.pending_started_at || !plan_canvas_rendered_this_frame_) return;
+void App::finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at) {
+    if (!load_state_.pending_started_at) return;
 
     double elapsed_seconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - *load_state_.pending_started_at).count();
+        finished_at - *load_state_.pending_started_at).count();
     load_state_.pending_started_at.reset();
-    plan_canvas_rendered_this_frame_ = false;
 
     std::ostringstream elapsed;
     elapsed << std::fixed << std::setprecision(2) << elapsed_seconds;
@@ -3711,7 +3708,6 @@ void App::render_model_preview_window() {
 void App::render() {
     touch_input::new_frame();
     poll_loader();
-    plan_canvas_rendered_this_frame_ = false;
     handle_shortcuts();
     render_menu();
     render_toolbar();
@@ -4068,7 +4064,6 @@ int main(int, char**) {
 
         HRESULT hr = g_pSwapChain->Present(1, 0);
         g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
-        if (SUCCEEDED(hr) && !g_SwapChainOccluded) app.after_frame_presented();
         if (warmup_frames > 0) {
             --warmup_frames;
             needs_render = true;
