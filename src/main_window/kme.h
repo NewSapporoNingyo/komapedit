@@ -933,7 +933,7 @@ struct MapElementInspectorState {
     std::string row_kind;
     std::string title;
     std::string source_file;
-    std::string source_hash;
+    std::string expected_source_hash;
     std::string source_distance_string;
     int line = 0;
     int column = 0;

@@ -1051,6 +1051,15 @@ std::string edit_target_info_json(MapContext& ctx, const std::string& edit_id) {
     if (statement.source.source_file_index < ctx.source_files.size()) {
         file = &ctx.source_files[statement.source.source_file_index];
     }
+    std::string expected_source_hash;
+    if (file) {
+        expected_source_hash = file->source_hash;
+        auto override_it = ctx.source_overrides.find(file->source_key);
+        if (override_it != ctx.source_overrides.end() &&
+            !override_it->second.base_hash.empty()) {
+            expected_source_hash = override_it->second.base_hash;
+        }
+    }
 
     std::ostringstream out;
     out << "{\"ok\":true,\"editId\":";
@@ -1063,6 +1072,8 @@ std::string edit_target_info_json(MapContext& ctx, const std::string& edit_id) {
     append_json_string(out, statement.statement_kind);
     out << ",\"sourceHash\":";
     append_json_string(out, file ? file->source_hash : std::string{});
+    out << ",\"expectedSourceHash\":";
+    append_json_string(out, expected_source_hash);
     out << ",\"source\":{\"filePath\":";
     append_json_string(out, source_file_path(ctx, statement.source));
     out << ",\"line\":" << statement.source.line

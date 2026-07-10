@@ -454,6 +454,7 @@ struct EditTargetInfo {
     int elements_for_statement = 0;
     std::string statement_kind;
     std::string source_hash;
+    std::string expected_source_hash;
     EditSourceInfo source;
     std::string raw_text;
     std::string raw_arguments;
@@ -490,6 +491,7 @@ std::optional<EditTargetInfo> fetch_edit_target_info(void* handle,
         info.elements_for_statement = static_cast<int>(root.at("elementsForStatement").number);
         info.statement_kind = root.at("statementKind").scalar_text();
         info.source_hash = root.at("sourceHash").scalar_text();
+        info.expected_source_hash = root.at("expectedSourceHash").scalar_text();
         info.source = edit_source_from_json(root.at("source"));
         info.raw_text = root.at("rawText").scalar_text();
         info.raw_arguments = root.at("rawArguments").scalar_text();
@@ -1622,6 +1624,24 @@ const EditSourceFileInfo* find_model_source_file(const MapModel& model, const st
     return nullptr;
 }
 
+std::string inspector_expected_source_hash(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& pending_changes,
+    const MapElementInspectorState& inspector) {
+    auto pending = pending_changes.find(inspector.edit_id);
+    if (pending != pending_changes.end() && !pending->second.expected_source_hash.empty()) {
+        return pending->second.expected_source_hash;
+    }
+
+    // The complete pending ledger is replayed from disk on every Apply. Keep
+    // its optimistic-concurrency hash pinned to that disk baseline even while
+    // the active maploader handle represents a dirty in-memory working copy.
+    if (!inspector.expected_source_hash.empty()) return inspector.expected_source_hash;
+    const EditSourceFileInfo* source_file = find_model_source_file(model, inspector.source_file);
+    if (source_file && !source_file->source_hash.empty()) return source_file->source_hash;
+    return {};
+}
+
 const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
                                                      const std::string& row_kind) {
     if (row_kind == "structure.model") return &model.structure_models;
@@ -1852,7 +1872,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
 
     EditSourceInfo source = target_info ? target_info->source : row->source;
     if (source.file_path.empty()) source = row->source;
-    const EditSourceFileInfo* source_file = find_model_source_file(model_, source.file_path);
 
     MapElementInspectorState next;
     next.open = true;
@@ -1860,9 +1879,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.row_kind = request.row_kind;
     next.title = tr("dialog.element_properties");
     next.source_file = source.file_path;
-    next.source_hash = target_info && !target_info->source_hash.empty()
-        ? target_info->source_hash
-        : (source_file ? source_file->source_hash : std::string{});
+    if (target_info) next.expected_source_hash = target_info->expected_source_hash;
     next.line = source.line;
     next.column = source.column;
     if (target_info && row_kind_has_source_distance_string(request.row_kind)) {
@@ -1940,6 +1957,11 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     }
 
     inspector_ = std::move(next);
+    inspector_.expected_source_hash =
+        inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
+    if (inspector_.expected_source_hash.empty() && target_info) {
+        inspector_.expected_source_hash = target_info->source_hash;
+    }
     return true;
 }
 
@@ -1960,7 +1982,8 @@ void App::apply_inspector_changes() {
     change.edit_id = inspector_.edit_id;
     change.row_kind = inspector_.row_kind;
     change.operation = "update";
-    change.expected_source_hash = inspector_.source_hash;
+    change.expected_source_hash =
+        inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
 
     for (const MapElementEditFieldState& field : inspector_.fields) {
         std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
@@ -2018,7 +2041,8 @@ void App::delete_inspector_target() {
     change.edit_id = inspector_.edit_id;
     change.row_kind = inspector_.row_kind;
     change.operation = "delete";
-    change.expected_source_hash = inspector_.source_hash;
+    change.expected_source_hash =
+        inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     candidate[change.edit_id] = std::move(change);
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
@@ -2216,6 +2240,10 @@ void App::save_pending_edits() {
     options.preview_cache_policy = PreviewCachePolicy::Disabled;
     if (!rehydrate_model_from_current_handle(options)) {
         add_log("[warn]gui_kme.cpp: saved edits, but preview refresh failed; reload from disk if the view looks stale");
+    } else if (inspector_.open) {
+        inspector_.expected_source_hash.clear();
+        inspector_.expected_source_hash =
+            inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
     }
 }
 
