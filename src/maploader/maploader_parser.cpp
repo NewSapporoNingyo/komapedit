@@ -61,6 +61,7 @@ private:
 
     struct PendingInclude {
         std::filesystem::path path;
+        std::string include_path;
         double seed_distance = 0.0;
         std::unordered_map<std::string, Value> seed_variables;
         std::future<IncludeResult> future;
@@ -294,7 +295,8 @@ private:
         return p < src_.size() && src_[p] == ';';
     }
 
-    MapContext make_child_seed(const std::filesystem::path& child) const {
+    MapContext make_child_seed(const std::filesystem::path& child,
+                               const std::string& include_path) const {
         MapContext seed;
         seed.rootpath = ctx_.rootpath;
         seed.rootpath_utf8 = ctx_.rootpath_utf8;
@@ -305,9 +307,10 @@ private:
         seed.parse_options = ctx_.parse_options;
         seed.unit_distance = ctx_.unit_distance;
         std::string child_path = normalized_source_path(child);
+        seed.file_structure.push_back({kNoSourceRef, include_path, child_path});
         if (seed.include_stack.empty() ||
             normalized_source_key(seed.include_stack.back()) != normalized_source_key(child_path)) {
-            seed.include_stack.push_back(std::move(child_path));
+            seed.include_stack.push_back(child_path);
         }
         seed.distance = ctx_.distance;
         seed.distance_expression = ctx_.distance_expression;
@@ -323,6 +326,9 @@ private:
             LoadedText loaded = load_header_text(result.context, child, "BveTs Map ", 2.0);
             register_source_file(result.context, loaded);
             result.context.current_file_path = loaded.normalized_path;
+            if (!result.context.file_structure.empty()) {
+                result.context.file_structure.front().absolute_path = loaded.normalized_path;
+            }
             Parser nested(result.context, std::move(loaded));
             nested.parse();
         } catch (const std::exception& e) {
@@ -334,9 +340,10 @@ private:
     void queue_include(const std::string& path_text) {
         std::filesystem::path child = join_path(ctx_.rootpath, path_text);
         log_info("including " + path_to_utf8(child));
-        MapContext seed = make_child_seed(child);
+        MapContext seed = make_child_seed(child, path_text);
         PendingInclude pending;
         pending.path = child;
+        pending.include_path = path_text;
         pending.seed_distance = seed.distance;
         pending.seed_variables = seed.variables;
         pending.future = std::async(std::launch::async,
@@ -358,6 +365,26 @@ private:
         return false;
     }
 
+    void merge_file_structure(MapContext& child) {
+        if (child.file_structure.empty()) return;
+        if (ctx_.file_structure.empty()) {
+            ctx_.file_structure.push_back({kNoSourceRef, {}, ctx_.current_file_path});
+        }
+
+        const size_t child_root_index = ctx_.file_structure.size();
+        for (size_t i = 0; i < child.file_structure.size(); ++i) {
+            FileStructureRecord& record = child.file_structure[i];
+            if (i == 0) {
+                record.parent_index = 0;
+            } else if (record.parent_index == kNoSourceRef || record.parent_index >= i) {
+                record.parent_index = child_root_index;
+            } else {
+                record.parent_index += child_root_index;
+            }
+            ctx_.file_structure.push_back(std::move(record));
+        }
+    }
+
     void merge_include_context(MapContext& child) {
         ctx_.timing.read_decode_seconds += child.timing.read_decode_seconds;
         if (child.depends_on_initial_distance && !ctx_.has_distance_assignment) {
@@ -370,6 +397,7 @@ private:
         }
         ctx_.variable_writes.insert(child.variable_writes.begin(), child.variable_writes.end());
 
+        merge_file_structure(child);
         std::vector<size_t> source_file_index_map = merge_source_file_records(ctx_, child);
         std::vector<size_t> include_stack_index_map = merge_include_stacks(ctx_, child);
         size_t statement_index_base = ctx_.parsed_statements.size();
@@ -519,13 +547,15 @@ private:
                 result.error = e.what();
             }
             if (!result.error.empty()) {
-                result = parse_include_context(make_child_seed(pending.path), pending.path);
+                result = parse_include_context(
+                    make_child_seed(pending.path, pending.include_path), pending.path);
                 if (!result.error.empty()) {
                     log_warn(result.error);
                     continue;
                 }
             } else if (include_result_is_stale(pending, result.context)) {
-                result = parse_include_context(make_child_seed(pending.path), pending.path);
+                result = parse_include_context(
+                    make_child_seed(pending.path, pending.include_path), pending.path);
                 if (!result.error.empty()) {
                     log_warn(result.error);
                     continue;
@@ -1538,6 +1568,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     ctx->entry_file_path = loaded.normalized_path;
     ctx->current_file_path = loaded.normalized_path;
     ctx->include_stack.push_back(ctx->current_file_path);
+    ctx->file_structure.push_back({kNoSourceRef, {}, ctx->entry_file_path});
 
     log_info("parsing syntax tree");
     {

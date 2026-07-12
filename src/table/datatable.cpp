@@ -14,13 +14,11 @@
 #include "imgui.h"
 
 #include <windows.h>
-#include <shellapi.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
-#include <filesystem>
 #include <initializer_list>
 #include <map>
 #include <string>
@@ -43,20 +41,6 @@ float scroll_x_table_height_for_rows(int row_count) {
     const int rows_with_header = std::max(0, row_count) + 1;
     return row_height * static_cast<float>(rows_with_header) +
         style.ScrollbarSize + style.CellPadding.y * 3.0f;
-}
-
-void open_parent_directory_in_explorer(const std::string& file_path) {
-    if (blank_ascii(file_path)) return;
-    try {
-        std::filesystem::path path = utf8_to_wide(file_path);
-        std::error_code ec;
-        std::filesystem::path abs = std::filesystem::absolute(path, ec);
-        if (!ec) path = abs;
-        std::filesystem::path dir = path.parent_path();
-        if (dir.empty()) return;
-        ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    } catch (...) {
-    }
 }
 
 void render_file_path_cell_with_context(const std::string& display_text, const std::string& open_path,

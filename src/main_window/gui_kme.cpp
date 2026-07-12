@@ -448,6 +448,65 @@ EditSourceInfo edit_source_from_json(const mini_json::Value& value) {
     return source;
 }
 
+std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& nodes) {
+    std::uint64_t hash = 1469598103934665603ull;
+    auto mix_byte = [&hash](unsigned char byte) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    };
+    auto mix_string = [&mix_byte](const std::string& text) {
+        for (unsigned char ch : text) mix_byte(ch);
+        mix_byte(0xff);
+    };
+
+    for (const FileStructureNode& node : nodes) {
+        const std::uint64_t parent = node.parent_index == kNoFileStructureParent
+            ? std::numeric_limits<std::uint64_t>::max()
+            : static_cast<std::uint64_t>(node.parent_index);
+        for (unsigned shift = 0; shift < 64; shift += 8) {
+            mix_byte(static_cast<unsigned char>((parent >> shift) & 0xffu));
+        }
+        mix_string(node.include_path);
+        mix_string(node.absolute_path);
+    }
+    return hash;
+}
+
+void hydrate_file_structure(MapModel& model, const mini_json::Value& value,
+                            const std::string& fallback_entry_path) {
+    if (value.is_array()) {
+        model.file_structure.reserve(value.array.size());
+        for (const mini_json::Value& item : value.array) {
+            if (!item.is_object()) continue;
+            FileStructureNode node;
+            node.include_path = item.at("includePath").scalar_text();
+            node.absolute_path = item.at("absolutePath").scalar_text();
+            node.display_name = display_name_from_path(node.absolute_path);
+            if (node.display_name.empty()) node.display_name = node.include_path;
+
+            if (!model.file_structure.empty()) {
+                const mini_json::Value& parent = item.at("parentIndex");
+                if (parent.is_number() && std::isfinite(parent.number) && parent.number >= 0.0 &&
+                    parent.number < static_cast<double>(model.file_structure.size())) {
+                    node.parent_index = static_cast<size_t>(parent.number);
+                } else {
+                    node.parent_index = 0;
+                }
+            }
+
+            model.file_structure.push_back(std::move(node));
+        }
+    }
+
+    if (model.file_structure.empty() && !fallback_entry_path.empty()) {
+        FileStructureNode root;
+        root.absolute_path = fallback_entry_path;
+        root.display_name = display_name_from_path(fallback_entry_path);
+        model.file_structure.push_back(std::move(root));
+    }
+    model.file_structure_revision = file_structure_revision(model.file_structure);
+}
+
 struct EditTargetInfo {
     std::string row_kind;
     size_t row_index = 0;
@@ -1107,6 +1166,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     auto hydrate_started_at = std::chrono::steady_clock::now();
     MapModel model;
     model.path = path;
+    hydrate_file_structure(model, root.at("fileStructure"), path);
     const auto& edit = root.at("edit");
     const auto& edit_files = edit.at("files");
     if (edit_files.is_array()) {
@@ -2631,6 +2691,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("CabIlluminance", dock_right);
     ImGui::DockBuilderDockWindow("Fogs", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
+    ImGui::DockBuilderDockWindow("FileStructureDiagram", dock_main);
     ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
     ImGui::DockBuilderDockWindow("ScenePreview3D", dock_main);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
@@ -2665,6 +2726,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
     visibility.show_fogs_window = show_fogs_window_;
+    visibility.show_file_structure_window = show_file_structure_window_;
     visibility.show_console_window = show_console_window_;
     visibility.show_plots_window = show_plots_window_;
     visibility.show_model_preview_window = show_model_preview_window_;
@@ -2695,6 +2757,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_adhesions_window_ = visibility.show_adhesions_window;
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
     show_fogs_window_ = visibility.show_fogs_window;
+    show_file_structure_window_ = visibility.show_file_structure_window;
     show_console_window_ = visibility.show_console_window;
     show_plots_window_ = visibility.show_plots_window;
     show_model_preview_window_ = visibility.show_model_preview_window;
@@ -2973,6 +3036,10 @@ void App::render_menu() {
                         &show_scene_current_position_on_plan_, scene_preview_started_);
         ImGui::Separator();
         ImGui::MenuItem(tr("aux.other").c_str(), nullptr, false, false);
+        if (ImGui::MenuItem(tr("frame.file_structure_diagram").c_str(), nullptr,
+                            &show_file_structure_window_) && show_file_structure_window_) {
+            focus_file_structure_next_ = true;
+        }
         ImGui::MenuItem(tr("chk.console_window").c_str(), nullptr, &show_console_window_);
     };
 
@@ -4012,6 +4079,7 @@ void App::render() {
     render_station_list_window();
     render_console();
     render_plots();
+    render_file_structure_window();
     render_model_preview_window();
     render_scene_preview_window();
     render_structures_window();

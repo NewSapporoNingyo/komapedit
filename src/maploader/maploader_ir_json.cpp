@@ -419,11 +419,29 @@ void append_edit_registry_json(std::ostringstream& out, MapContext& ctx, unsigne
     out << "]}";
 }
 
+void append_file_structure_json(std::ostringstream& out, const MapContext& ctx) {
+    out << ",\"fileStructure\":[";
+    for (size_t i = 0; i < ctx.file_structure.size(); ++i) {
+        if (i) out << ",";
+        const FileStructureRecord& file = ctx.file_structure[i];
+        out << "{\"parentIndex\":";
+        if (file.parent_index == kNoSourceRef) out << -1;
+        else out << file.parent_index;
+        out << ",\"includePath\":";
+        append_json_string(out, file.include_path);
+        out << ",\"absolutePath\":";
+        append_json_string(out, file.absolute_path);
+        out << "}";
+    }
+    out << "]";
+}
+
 
 std::string build_ir_json(MapContext& ctx, unsigned flags) {
     flags = normalize_ir_json_flags(flags);
     std::ostringstream out;
     out << "{\"rootpath\":\"" << json_escape(ctx.rootpath_utf8) << "\"";
+    append_file_structure_json(out, ctx);
     out << ",\"controlpoints\":[";
     for (size_t i = 0; i < ctx.controlpoints.size(); ++i) {
         if (i) out << ",";

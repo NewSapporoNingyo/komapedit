@@ -373,6 +373,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
     out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
     out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
+    out << "show_file_structure_window=" << bool_to_string(settings.window_visibility.show_file_structure_window) << "\n";
     out << "show_console_window=" << bool_to_string(settings.window_visibility.show_console_window) << "\n";
     out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
     out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
@@ -554,6 +555,9 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_cab_illuminance_window = parse_bool(value, settings.window_visibility.show_cab_illuminance_window);
         } else if (key == "show_fogs_window" || key == "show_fog_window") {
             settings.window_visibility.show_fogs_window = parse_bool(value, settings.window_visibility.show_fogs_window);
+        } else if (key == "show_file_structure_window" || key == "show_file_structure_diagram_window") {
+            settings.window_visibility.show_file_structure_window =
+                parse_bool(value, settings.window_visibility.show_file_structure_window);
         } else if (key == "show_console_window" || key == "show_console") {
             settings.window_visibility.show_console_window = parse_bool(value, settings.window_visibility.show_console_window);
         } else if (key == "show_plots_window") {

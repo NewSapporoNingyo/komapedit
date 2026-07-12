@@ -42,6 +42,11 @@ struct PreviewCacheEntry {
     std::int64_t mtime = 0;
 };
 
+constexpr char kPreviewCacheMagic[] = "KMPVC002";
+constexpr std::uint32_t kPreviewCacheVersion = 2;
+constexpr const char* kPreviewCacheDirectory = "preview-v2";
+constexpr const char* kPreviewCacheKeyVersion = "loader-preview-cache-v2";
+
 MapParseOptions parse_options_from_load_flags(unsigned flags) {
     MapParseOptions options;
     const bool preview = (flags & KV_LOAD_PREVIEW) != 0;
@@ -134,7 +139,7 @@ std::filesystem::path preview_cache_root() {
     const char* local = std::getenv("LOCALAPPDATA");
     std::filesystem::path base = local && *local ? local : std::filesystem::temp_directory_path();
 #endif
-    return base / "komapedit" / "cache" / "preview-v1";
+    return base / "komapedit" / "cache" / kPreviewCacheDirectory;
 }
 
 std::filesystem::path preview_cache_path(const std::filesystem::path& map_path, double unit_distance) {
@@ -142,7 +147,7 @@ std::filesystem::path preview_cache_path(const std::filesystem::path& map_path, 
     key << kme::maploader::detail::normalized_source_key(
                kme::maploader::detail::normalized_source_path(map_path))
         << "|" << std::setprecision(17) << unit_distance
-        << "|loader-preview-cache-v1";
+        << "|" << kPreviewCacheKeyVersion;
     std::string name = kme::maploader::detail::hex64(
         kme::maploader::detail::stable_hash64(key.str())) + ".kmpv";
     return preview_cache_root() / name;
@@ -225,11 +230,11 @@ std::unique_ptr<MapContext> try_load_preview_cache(const std::filesystem::path& 
     std::ifstream in(preview_cache_path(map_path, unit_distance), std::ios::binary);
     if (!in) return nullptr;
     try {
-        char magic[8] = {};
+        char magic[sizeof(kPreviewCacheMagic) - 1] = {};
         in.read(magic, sizeof(magic));
-        if (!in || std::memcmp(magic, "KMPVC001", sizeof(magic)) != 0) return nullptr;
+        if (!in || std::memcmp(magic, kPreviewCacheMagic, sizeof(magic)) != 0) return nullptr;
         std::uint32_t version = read_pod<std::uint32_t>(in);
-        if (version != 1) return nullptr;
+        if (version != kPreviewCacheVersion) return nullptr;
         double cached_unit_distance = read_pod<double>(in);
         if (cached_unit_distance != unit_distance) return nullptr;
 
@@ -294,8 +299,8 @@ void write_preview_cache(const MapContext& ctx, const std::filesystem::path& map
         std::ofstream out(temp, std::ios::binary | std::ios::trunc);
         if (!out) throw std::runtime_error("cannot open preview cache for writing");
 
-        out.write("KMPVC001", 8);
-        write_pod(out, static_cast<std::uint32_t>(1));
+        out.write(kPreviewCacheMagic, sizeof(kPreviewCacheMagic) - 1);
+        write_pod(out, kPreviewCacheVersion);
         write_pod(out, unit_distance);
         write_pod(out, static_cast<std::uint64_t>(manifest.size()));
         for (const PreviewCacheEntry& entry : manifest) {

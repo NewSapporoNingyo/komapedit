@@ -142,7 +142,7 @@ On startup, the application creates or reads the following files next to the exe
    - Double-click the plan view to fit the map to the current viewport.
 4. Use `Station Jump` or `Jump to distance(m)` on the toolbar to jump to a station or numeric map distance.
 5. Use the `2D View` menu to show or hide the 2D view window, profile chart, curve-radius chart, gradient overlays, profile other-track display, and background-image controls.
-6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
+6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
 7. Switch `Mode` to `Measure`, then move near the track or double-click to view mileage, elevation, gradient, curve radius, and speed limit.
 8. Use the `Map Info` menu to open the data tables for stations, tracks, other trains, Structures, repeaters, signals, beacons, sounds, irregularity/adhesion data, backgrounds, cab-illuminance, and fog. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
    - `Signal Aspect List`: view signal aspect definitions.

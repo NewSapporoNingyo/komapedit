@@ -17,6 +17,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
@@ -98,6 +99,7 @@ ImVec4 default_theme_color();
 ImVec4 clamp_theme_color(ImVec4 color);
 std::string theme_color_to_string(const ImVec4& color);
 std::string display_name_from_path(const std::string& path);
+void open_parent_directory_in_explorer(const std::string& file_path);
 
 struct Matrix {
     std::vector<double> data;
@@ -152,6 +154,29 @@ struct EditSourceInfo {
     int line = 0;
     int column = 0;
     std::string raw_text_preview;
+};
+
+inline constexpr size_t kNoFileStructureParent = static_cast<size_t>(-1);
+
+struct FileStructureNode {
+    size_t parent_index = kNoFileStructureParent;
+    std::string include_path;
+    std::string absolute_path;
+    std::string display_name;
+};
+
+struct FileStructureDiagramLayoutCache {
+    std::uint64_t source_revision = 0;
+    size_t node_count = 0;
+    float font_size = 0.0f;
+    ImVec2 frame_padding;
+    ImVec2 item_spacing;
+    ImVec2 window_padding;
+    float node_height = 0.0f;
+    std::vector<ImVec2> text_sizes;
+    std::vector<float> node_widths;
+    std::vector<ImVec2> node_positions;
+    ImVec2 content_size;
 };
 
 struct EditSourceFileInfo {
@@ -294,6 +319,8 @@ inline bool repeater_event_distance_order_less(const TableRow& a, const TableRow
 
 struct MapModel {
     std::string path;
+    std::vector<FileStructureNode> file_structure;
+    std::uint64_t file_structure_revision = 0;
     std::vector<EditSourceFileInfo> edit_files;
     std::vector<EditStatementInfo> edit_statements;
     std::vector<EditElementInfo> edit_elements;
@@ -749,6 +776,7 @@ struct WindowVisibilitySettings {
     bool show_adhesions_window = false;
     bool show_cab_illuminance_window = false;
     bool show_fogs_window = false;
+    bool show_file_structure_window = false;
     bool show_console_window = true;
     bool show_plots_window = true;
     bool show_model_preview_window = true;
@@ -777,6 +805,7 @@ struct WindowVisibilitySettings {
             show_adhesions_window == other.show_adhesions_window &&
             show_cab_illuminance_window == other.show_cab_illuminance_window &&
             show_fogs_window == other.show_fogs_window &&
+            show_file_structure_window == other.show_file_structure_window &&
             show_console_window == other.show_console_window &&
             show_plots_window == other.show_plots_window &&
             show_model_preview_window == other.show_model_preview_window &&
@@ -1170,6 +1199,7 @@ private:
     bool show_adhesions_window_ = false;
     bool show_cab_illuminance_window_ = false;
     bool show_fogs_window_ = false;
+    bool show_file_structure_window_ = false;
     bool show_console_window_ = true;
     bool show_plots_window_ = true;
     bool show_model_preview_window_ = true;
@@ -1191,6 +1221,7 @@ private:
     bool focus_adhesions_next_ = false;
     bool focus_cab_illuminance_next_ = false;
     bool focus_fogs_next_ = false;
+    bool focus_file_structure_next_ = false;
     bool focus_model_preview_next_ = false;
     bool focus_scene_preview_next_ = false;
     bool focus_plots_next_ = true;
@@ -1213,6 +1244,7 @@ private:
     ImGuiID dock_right_id_ = 0;
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
+    FileStructureDiagramLayoutCache file_structure_layout_cache_;
     TableFindState structure_model_find_;
     TableFindState signal_aspect_find_;
     TableFindState sound_file_find_;
@@ -1406,6 +1438,7 @@ private:
     void render_adhesions_window();
     void render_cab_illuminance_window();
     void render_fogs_window();
+    void render_file_structure_window();
     void render_model_preview_window();
     void render_scene_preview_window();
     void preview_structure_model(const std::string& path);

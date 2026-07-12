@@ -135,6 +135,7 @@ target_link_libraries(implot PUBLIC imgui)
 add_executable(komapedit
     src/main_window/gui_kme.cpp
     src/main_window/app_settings.cpp
+    src/main_window/file_structure_diagram.cpp
     src/main_window/debug_headless.cpp
     src/main_window/touch_input.cpp
     src/canvas2d/canvas2D.cpp

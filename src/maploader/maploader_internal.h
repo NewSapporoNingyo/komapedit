@@ -214,6 +214,12 @@ struct SourceFileRecord {
     size_t byte_length = 0;
 };
 
+struct FileStructureRecord {
+    size_t parent_index = kNoSourceRef;
+    std::string include_path;
+    std::string absolute_path;
+};
+
 struct SourceSpan {
     size_t source_file_index = kNoSourceRef;
     size_t include_stack_index = kNoSourceRef;
@@ -647,6 +653,7 @@ struct MapContext {
     MapParseOptions parse_options;
     bool preview_cache_hit = false;
     bool preview_snapshot_only = false;
+    std::vector<FileStructureRecord> file_structure;
     std::vector<SourceFileRecord> source_files;
     std::unordered_map<std::string, size_t> source_file_indices;
     std::vector<std::vector<std::string>> include_stacks;
