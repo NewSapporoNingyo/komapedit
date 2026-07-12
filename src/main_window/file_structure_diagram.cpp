@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -28,6 +29,14 @@ bool blank_ascii(const std::string& text) {
 bool same_vec2(const ImVec2& a, const ImVec2& b) {
     return a.x == b.x && a.y == b.y;
 }
+
+struct FileStructureLevelGroup {
+    size_t parent_index = kNoFileStructureParent;
+    std::vector<size_t> node_indices;
+    float inner_width = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+};
 
 bool file_structure_layout_is_current(const MapModel& model,
                                       const FileStructureDiagramLayoutCache& cache,
@@ -46,6 +55,9 @@ void rebuild_file_structure_layout(const MapModel& model,
     const float font_size = ImGui::GetFontSize();
     const float horizontal_gap = std::max(font_size * 2.0f, style.ItemSpacing.x * 6.0f);
     const float vertical_gap = std::max(font_size * 0.75f, style.ItemSpacing.y * 2.0f);
+    const float group_gap = std::max(font_size, style.ItemSpacing.y * 3.0f);
+    const float group_padding_x = std::max(font_size * 0.5f, style.FramePadding.x * 2.0f);
+    const float group_padding_y = std::max(font_size * 0.4f, style.FramePadding.y * 2.0f);
     const float margin_x = std::max(font_size, style.WindowPadding.x * 2.0f);
     const float margin_y = std::max(font_size, style.WindowPadding.y * 2.0f);
 
@@ -59,6 +71,7 @@ void rebuild_file_structure_layout(const MapModel& model,
     cache.text_sizes.resize(cache.node_count);
     cache.node_widths.resize(cache.node_count);
     cache.node_positions.assign(cache.node_count, ImVec2());
+    cache.groups.clear();
     cache.content_size = ImVec2();
 
     for (size_t i = 0; i < cache.node_count; ++i) {
@@ -70,38 +83,78 @@ void rebuild_file_structure_layout(const MapModel& model,
     if (cache.node_count == 0) return;
 
     std::vector<size_t> node_depths(cache.node_count, 0);
+    std::vector<size_t> effective_parents(cache.node_count, kNoFileStructureParent);
     size_t max_depth = 0;
     for (size_t i = 1; i < cache.node_count; ++i) {
-        const size_t parent_index = model.file_structure[i].parent_index;
-        node_depths[i] = parent_index < i ? node_depths[parent_index] + 1 : 1;
+        size_t parent_index = model.file_structure[i].parent_index;
+        if (parent_index >= i) parent_index = 0;
+        effective_parents[i] = parent_index;
+        node_depths[i] = node_depths[parent_index] + 1;
         max_depth = std::max(max_depth, node_depths[i]);
     }
 
-    std::vector<std::vector<size_t>> levels(max_depth + 1);
-    for (size_t i = 0; i < cache.node_count; ++i) {
-        levels[node_depths[i]].push_back(i);
+    std::vector<std::vector<FileStructureLevelGroup>> level_groups(max_depth + 1);
+    std::vector<size_t> group_index_by_parent(cache.node_count, kNoFileStructureParent);
+    for (size_t i = 1; i < cache.node_count; ++i) {
+        const size_t depth = node_depths[i];
+        const size_t parent_index = effective_parents[i];
+        size_t group_index = group_index_by_parent[parent_index];
+        if (group_index == kNoFileStructureParent) {
+            group_index = level_groups[depth].size();
+            group_index_by_parent[parent_index] = group_index;
+            FileStructureLevelGroup group;
+            group.parent_index = parent_index;
+            level_groups[depth].push_back(std::move(group));
+        }
+        level_groups[depth][group_index].node_indices.push_back(i);
     }
 
-    std::vector<float> level_widths(levels.size(), 0.0f);
-    float max_level_height = 0.0f;
-    for (size_t depth = 0; depth < levels.size(); ++depth) {
-        for (size_t node_index : levels[depth]) {
-            level_widths[depth] = std::max(level_widths[depth], cache.node_widths[node_index]);
+    std::vector<float> level_widths(max_depth + 1, 0.0f);
+    level_widths[0] = cache.node_widths[0];
+    float max_level_height = cache.node_height;
+    for (size_t depth = 1; depth < level_groups.size(); ++depth) {
+        float level_height = 0.0f;
+        for (size_t group_index = 0; group_index < level_groups[depth].size(); ++group_index) {
+            FileStructureLevelGroup& group = level_groups[depth][group_index];
+            for (size_t node_index : group.node_indices) {
+                group.inner_width = std::max(group.inner_width, cache.node_widths[node_index]);
+            }
+            const bool draw_border = group.node_indices.size() > 1;
+            group.width = group.inner_width + (draw_border ? group_padding_x * 2.0f : 0.0f);
+            group.height = (draw_border ? group_padding_y * 2.0f : 0.0f) +
+                static_cast<float>(group.node_indices.size()) * cache.node_height +
+                static_cast<float>(group.node_indices.size() - 1) * vertical_gap;
+            level_widths[depth] = std::max(level_widths[depth], group.width);
+            if (group_index) level_height += group_gap;
+            level_height += group.height;
         }
-        const size_t count = levels[depth].size();
-        const float level_height = count == 0 ? 0.0f :
-            static_cast<float>(count) * cache.node_height +
-                static_cast<float>(count - 1) * vertical_gap;
         max_level_height = std::max(max_level_height, level_height);
     }
 
+    cache.groups.reserve(cache.node_count - 1);
     float level_x = margin_x;
-    for (size_t depth = 0; depth < levels.size(); ++depth) {
-        for (size_t row = 0; row < levels[depth].size(); ++row) {
-            const size_t node_index = levels[depth][row];
-            cache.node_positions[node_index] = ImVec2(
-                level_x + (level_widths[depth] - cache.node_widths[node_index]) * 0.5f,
-                margin_y + static_cast<float>(row) * (cache.node_height + vertical_gap));
+    cache.node_positions[0] = ImVec2(level_x, margin_y);
+    level_x += level_widths[0] + horizontal_gap;
+    for (size_t depth = 1; depth < level_groups.size(); ++depth) {
+        float group_y = margin_y;
+        for (FileStructureLevelGroup& group : level_groups[depth]) {
+            const bool draw_border = group.node_indices.size() > 1;
+            const float group_x = level_x + (level_widths[depth] - group.width) * 0.5f;
+            cache.groups.push_back({
+                group.parent_index,
+                draw_border,
+                ImVec2(group_x, group_y),
+                ImVec2(group_x + group.width, group_y + group.height)});
+
+            float node_y = group_y + (draw_border ? group_padding_y : 0.0f);
+            for (size_t node_index : group.node_indices) {
+                cache.node_positions[node_index] = ImVec2(
+                    group_x + (draw_border ? group_padding_x : 0.0f) +
+                        (group.inner_width - cache.node_widths[node_index]) * 0.5f,
+                    node_y);
+                node_y += cache.node_height + vertical_gap;
+            }
+            group_y += group.height + group_gap;
         }
         level_x += level_widths[depth] + horizontal_gap;
     }
@@ -157,25 +210,35 @@ void App::render_file_structure_window() {
 
         ImGui::Dummy(file_structure_layout_cache_.content_size);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        const ImU32 connector_color = ImGui::GetColorU32(ImGuiCol_Separator);
+        const ImU32 relationship_color = IM_COL32(255, 255, 255, 255);
 
-        for (size_t i = 1; i < model_.file_structure.size(); ++i) {
-            const FileStructureNode& node = model_.file_structure[i];
-            if (node.parent_index >= model_.file_structure.size()) continue;
-            const size_t parent_index = node.parent_index;
+        for (const FileStructureDiagramGroupLayout& group : file_structure_layout_cache_.groups) {
+            if (group.parent_index >= model_.file_structure.size()) continue;
+            const size_t parent_index = group.parent_index;
             const ImVec2 parent_pos = file_structure_layout_cache_.node_positions[parent_index];
-            const ImVec2 child_pos = file_structure_layout_cache_.node_positions[i];
             const ImVec2 parent_right(
                 draw_origin.x + parent_pos.x + file_structure_layout_cache_.node_widths[parent_index],
                 draw_origin.y + parent_pos.y + file_structure_layout_cache_.node_height * 0.5f);
-            const ImVec2 child_left(
-                draw_origin.x + child_pos.x,
-                draw_origin.y + child_pos.y + file_structure_layout_cache_.node_height * 0.5f);
-            const float middle_x = (parent_right.x + child_left.x) * 0.5f;
-            draw_list->AddLine(parent_right, ImVec2(middle_x, parent_right.y), connector_color);
+            const float child_endpoint_ratio = group.draw_border ? 0.25f : 0.5f;
+            const ImVec2 child_endpoint(
+                draw_origin.x + group.min.x,
+                draw_origin.y + group.min.y +
+                    (group.max.y - group.min.y) * child_endpoint_ratio);
+            const float middle_x = (parent_right.x + child_endpoint.x) * 0.5f;
+            draw_list->AddLine(parent_right,
+                               ImVec2(middle_x, parent_right.y), relationship_color);
             draw_list->AddLine(ImVec2(middle_x, parent_right.y),
-                               ImVec2(middle_x, child_left.y), connector_color);
-            draw_list->AddLine(ImVec2(middle_x, child_left.y), child_left, connector_color);
+                               ImVec2(middle_x, child_endpoint.y), relationship_color);
+            draw_list->AddLine(ImVec2(middle_x, child_endpoint.y),
+                               child_endpoint, relationship_color);
+        }
+
+        for (const FileStructureDiagramGroupLayout& group : file_structure_layout_cache_.groups) {
+            if (!group.draw_border) continue;
+            const ImVec2 group_min(draw_origin.x + group.min.x, draw_origin.y + group.min.y);
+            const ImVec2 group_max(draw_origin.x + group.max.x, draw_origin.y + group.max.y);
+            draw_list->AddRect(group_min, group_max, relationship_color,
+                               style.FrameRounding, 0, 1.0f);
         }
 
         for (size_t i = 0; i < model_.file_structure.size(); ++i) {

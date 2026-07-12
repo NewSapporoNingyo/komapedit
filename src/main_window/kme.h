@@ -165,6 +165,13 @@ struct FileStructureNode {
     std::string display_name;
 };
 
+struct FileStructureDiagramGroupLayout {
+    size_t parent_index = kNoFileStructureParent;
+    bool draw_border = false;
+    ImVec2 min;
+    ImVec2 max;
+};
+
 struct FileStructureDiagramLayoutCache {
     std::uint64_t source_revision = 0;
     size_t node_count = 0;
@@ -176,6 +183,7 @@ struct FileStructureDiagramLayoutCache {
     std::vector<ImVec2> text_sizes;
     std::vector<float> node_widths;
     std::vector<ImVec2> node_positions;
+    std::vector<FileStructureDiagramGroupLayout> groups;
     ImVec2 content_size;
 };
 
