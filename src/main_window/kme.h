@@ -1013,6 +1013,7 @@ public:
 
     void render();
     void add_log(std::string text);
+    void request_exit();
 #ifndef NDEBUG
     static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                                  double unit_distance, double pan_pixels,
@@ -1073,7 +1074,7 @@ private:
     bool clear_pending_edits_after_load_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
     std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
-    bool has_unsaved_edits_ = false;
+    std::map<std::string, std::string> committed_edit_id_remaps_;
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
 
@@ -1243,10 +1244,13 @@ private:
         bool canvas_element_sizes = false;
         bool canvas_3d_settings = false;
         bool reload_unsaved_confirm = false;
+        bool close_unsaved_confirm = false;
     };
     enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
+    enum class PendingCloseAction { None, DisableEditMode, ExitApplication };
     PopupState popups_;
     PendingReloadAction pending_reload_action_ = PendingReloadAction::None;
+    PendingCloseAction pending_close_action_ = PendingCloseAction::None;
     bool has_saved_layout_ = false;
     bool initial_dockspace_done_ = false;
     ImGuiID dock_right_id_ = 0;
@@ -1380,8 +1384,8 @@ private:
     static MapModel build_model_from_handle(void* handle, const std::string& path);
     static MapModel build_model_from_handle(void* handle, const std::string& path,
                                             LoadModelOptions options);
-    bool rehydrate_model_from_current_handle(LoadModelOptions options);
     void clear_pending_edit_state();
+    bool has_pending_edits() const;
     bool parse_and_log_edit_report(const std::string& report_text,
                                    const std::string& success_prefix,
                                    int* update_count = nullptr,
@@ -1402,12 +1406,17 @@ private:
     bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);
     bool row_has_pending_edit(const std::string& edit_id) const;
     bool row_is_pending_delete(const std::string& edit_id) const;
+    std::string current_edit_id(const std::string& edit_id) const;
     bool edit_actions_available() const;
     void set_edit_mode_enabled(bool enabled);
+    void apply_edit_mode_enabled(bool enabled);
+    void request_close_action(PendingCloseAction action);
+    bool resolve_pending_close_action(bool save_changes);
+    bool discard_pending_edits();
     void apply_inspector_changes();
     void revert_inspector_changes();
     void delete_inspector_target();
-    void save_pending_edits();
+    bool save_pending_edits(bool refresh_inspector = true);
     std::string pending_changes_json() const;
     void render_element_inspector();
 

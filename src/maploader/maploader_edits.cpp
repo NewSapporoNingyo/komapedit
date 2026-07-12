@@ -1223,6 +1223,33 @@ std::string report_json(const MapEditReport& report) {
         if (i) out << ",";
         append_json_string(out, report.changed_files[i]);
     }
+    out << "],\"committedFiles\":[";
+    for (size_t i = 0; i < report.committed_files.size(); ++i) {
+        if (i) out << ",";
+        const MapEditCommittedFile& file = report.committed_files[i];
+        out << "{\"filePath\":";
+        append_json_string(out, file.file_path);
+        out << ",\"sourceHash\":";
+        append_json_string(out, file.source_hash);
+        out << ",\"byteLength\":" << file.byte_length << "}";
+    }
+    out << "],\"committedRows\":[";
+    for (size_t i = 0; i < report.committed_rows.size(); ++i) {
+        if (i) out << ",";
+        const MapEditCommittedRow& row = report.committed_rows[i];
+        out << "{\"rowKind\":";
+        append_json_string(out, row.row_kind);
+        out << ",\"rowIndex\":" << row.row_index
+            << ",\"editId\":";
+        append_json_string(out, row.edit_id);
+        out << ",\"source\":{\"filePath\":";
+        append_json_string(out, row.file_path);
+        out << ",\"line\":" << row.line
+            << ",\"column\":" << row.column
+            << ",\"rawTextPreview\":";
+        append_json_string(out, row.raw_text_preview);
+        out << "}}";
+    }
     out << "],\"warnings\":[";
     for (size_t i = 0; i < report.warnings.size(); ++i) {
         if (i) out << ",";
@@ -1465,6 +1492,56 @@ void reset_memory_edits(MapContext& ctx) {
                                    arbitrary_distribution);
 }
 
+void append_committed_row(MapContext& ctx, MapEditReport& report,
+                          const std::string& row_kind, size_t row_index,
+                          const EditSourceRef& ref) {
+    MapEditCommittedRow row;
+    row.row_kind = row_kind;
+    row.row_index = row_index;
+    if (ref.valid() && ref.statement_index < ctx.parsed_statements.size()) {
+        const ParsedStatement& statement = ctx.parsed_statements[ref.statement_index];
+        row.edit_id = element_edit_id(ctx, ref, row_kind);
+        row.file_path = source_file_path(ctx, statement.source);
+        row.line = statement.source.line;
+        row.column = statement.source.column;
+        row.raw_text_preview = statement.raw_text_preview;
+    }
+    report.committed_rows.push_back(std::move(row));
+}
+
+template <typename Rows>
+void append_committed_rows(MapContext& ctx, MapEditReport& report,
+                           const std::string& row_kind, const Rows& rows) {
+    for (size_t i = 0; i < rows.size(); ++i) {
+        append_committed_row(ctx, report, row_kind, i, rows[i].edit_ref);
+    }
+}
+
+void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
+    report.committed_files.reserve(ctx.source_files.size());
+    for (const SourceFileRecord& file : ctx.source_files) {
+        report.committed_files.push_back({file.file_path, file.source_hash, file.byte_length});
+    }
+
+    append_committed_rows(ctx, report, "structure.model", ctx.structure_models);
+    append_committed_rows(ctx, report, "structure.put", ctx.structure_puts);
+    append_committed_rows(ctx, report, "structure.between", ctx.structure_betweens);
+
+    std::vector<size_t> station_order;
+    station_order.reserve(ctx.station_puts.size());
+    for (size_t i = 0; i < ctx.station_puts.size(); ++i) station_order.push_back(i);
+    std::stable_sort(station_order.begin(), station_order.end(), [&](size_t lhs, size_t rhs) {
+        const StationPut& a = ctx.station_puts[lhs];
+        const StationPut& b = ctx.station_puts[rhs];
+        if (a.distance != b.distance) return a.distance < b.distance;
+        return a.order < b.order;
+    });
+    for (size_t row_index = 0; row_index < station_order.size(); ++row_index) {
+        append_committed_row(ctx, report, "station.put", row_index,
+                             ctx.station_puts[station_order[row_index]].edit_ref);
+    }
+}
+
 MapEditReport commit_memory_edits(MapContext& ctx) {
     MapEditReport report;
     struct PendingWrite {
@@ -1517,6 +1594,7 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         }
         ctx.source_overrides.erase(write.source_key);
     }
+    if (!writes.empty()) populate_committed_edit_state(ctx, report);
     return report;
 }
 

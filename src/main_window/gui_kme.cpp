@@ -805,10 +805,10 @@ void App::apply_load_result(LoadResult result) {
     if (handle_) kv_free(handle_);
     handle_ = result.handle;
     model_ = std::move(result.model);
+    committed_edit_id_remaps_.clear();
     edit_registry_loaded_ = result.full_edit_registry;
     preview_cache_handle_ = result.preview_cache_hit;
-    if (clear_pending_edits_after_load_ || loaded_different_file ||
-        !pending_edit_changes_.empty() || has_unsaved_edits_) {
+    if (clear_pending_edits_after_load_ || loaded_different_file || has_pending_edits()) {
         clear_pending_edit_state();
         clear_pending_edits_after_load_ = false;
     }
@@ -1486,44 +1486,6 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     return model;
 }
 
-bool App::rehydrate_model_from_current_handle(LoadModelOptions options) {
-    if (!handle_ || !has_model_) return false;
-    try {
-        std::map<std::string, OtherTrack> old_other;
-        for (const auto& track : model_.other_tracks) old_other[track.key] = track;
-        const bool had_cp_arb = model_.has_cp_arb;
-        std::array<double, 3> old_cp{model_.cp_arb[0], model_.cp_arb[1], model_.cp_arb[2]};
-
-        MapModel updated = build_model_from_handle(handle_, file_path_, options);
-        for (auto& track : updated.other_tracks) {
-            auto it = old_other.find(track.key);
-            if (it != old_other.end()) {
-                track.visible = it->second.visible;
-                track.color = it->second.color;
-                track.range_min = it->second.range_min;
-                track.range_max = it->second.range_max;
-            }
-        }
-        updated.has_cp_arb = had_cp_arb;
-        std::copy(std::begin(old_cp), std::end(old_cp), std::begin(updated.cp_arb));
-        model_ = std::move(updated);
-        edit_registry_loaded_ = options.full_edit_registry;
-        invalidate_table_cache();
-        rebuild_marker_overlay_cache();
-        sync_marker_visibility_sizes();
-        scene_preview_dirty_ = true;
-        if (scene_preview_started_) {
-            scene_preview_preserve_models_on_rebuild_ = true;
-            scene_preview_preserve_camera_on_rebuild_ = true;
-        }
-        for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
-        return true;
-    } catch (const std::exception& e) {
-        add_log(std::string("[error]gui_kme.cpp: failed to refresh map cache: ") + e.what());
-        return false;
-    }
-}
-
 std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
                                                        const std::string& row_kind);
 bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
@@ -1539,8 +1501,11 @@ void normalize_station_preview_rows(MapModel& model);
 void App::clear_pending_edit_state() {
     pending_edit_changes_.clear();
     original_edit_rows_.clear();
-    has_unsaved_edits_ = false;
     inspector_ = MapElementInspectorState{};
+}
+
+bool App::has_pending_edits() const {
+    return !pending_edit_changes_.empty();
 }
 
 bool App::row_has_pending_edit(const std::string& edit_id) const {
@@ -1552,17 +1517,32 @@ bool App::row_is_pending_delete(const std::string& edit_id) const {
     return it != pending_edit_changes_.end() && it->second.operation == "delete";
 }
 
+std::string App::current_edit_id(const std::string& edit_id) const {
+    std::string current = edit_id;
+    std::set<std::string> visited;
+    while (!current.empty() && visited.insert(current).second) {
+        auto remap = committed_edit_id_remaps_.find(current);
+        if (remap == committed_edit_id_remaps_.end() || remap->second.empty()) break;
+        current = remap->second;
+    }
+    return current;
+}
+
 bool App::edit_actions_available() const {
     return edit_mode_enabled_ && edit_registry_loaded_ && handle_ && has_model_ && !load_state_.running;
 }
 
 void App::set_edit_mode_enabled(bool enabled) {
     if (enabled == edit_mode_enabled_) return;
-    if (!enabled && has_unsaved_edits_) {
-        add_log("[warn]gui_kme.cpp: save or revert pending edits before disabling edit mode");
+    if (!enabled && has_pending_edits()) {
+        request_close_action(PendingCloseAction::DisableEditMode);
         return;
     }
 
+    apply_edit_mode_enabled(enabled);
+}
+
+void App::apply_edit_mode_enabled(bool enabled) {
     edit_mode_enabled_ = enabled;
     settings_.edit_mode_enabled = edit_mode_enabled_;
     save_user_settings(settings_);
@@ -1578,6 +1558,26 @@ void App::set_edit_mode_enabled(bool enabled) {
     if (has_model_ && !file_path_.empty() && !edit_registry_loaded_ && !load_state_.running) {
         begin_edit_metadata_load();
     }
+}
+
+void App::request_close_action(PendingCloseAction action) {
+    if (action == PendingCloseAction::None) return;
+    if (has_pending_edits()) {
+        pending_close_action_ = action;
+        popups_.close_unsaved_confirm = true;
+        wake_main_window();
+        return;
+    }
+
+    if (action == PendingCloseAction::DisableEditMode) {
+        apply_edit_mode_enabled(false);
+    } else if (action == PendingCloseAction::ExitApplication) {
+        PostQuitMessage(0);
+    }
+}
+
+void App::request_exit() {
+    request_close_action(PendingCloseAction::ExitApplication);
 }
 
 bool App::snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind) {
@@ -1667,7 +1667,7 @@ void App::request_element_inspector(const std::string& edit_id, const std::strin
         return;
     }
     if (edit_id.empty()) return;
-    pending_inspector_request_ = MapElementInspectorRequest{edit_id, row_kind};
+    pending_inspector_request_ = MapElementInspectorRequest{current_edit_id(edit_id), row_kind};
 }
 
 void App::process_pending_element_inspector() {
@@ -2111,6 +2111,102 @@ void App::delete_inspector_target() {
     }
 }
 
+struct CommittedEditFileState {
+    std::string file_path;
+    std::string source_hash;
+    size_t byte_length = 0;
+};
+
+struct CommittedEditRowState {
+    std::string row_kind;
+    size_t row_index = 0;
+    std::string edit_id;
+    EditSourceInfo source;
+};
+
+bool apply_committed_edit_state(MapModel& model, const mini_json::Value& report,
+                                std::map<std::string, std::string>& edit_id_remaps,
+                                std::string& error) {
+    const mini_json::Value& files = report.at("committedFiles");
+    if (!files.is_array() || files.array.empty()) return true;
+
+    std::vector<CommittedEditFileState> file_states;
+    file_states.reserve(files.array.size());
+    for (const mini_json::Value& item : files.array) {
+        if (!item.is_object()) continue;
+        CommittedEditFileState state;
+        state.file_path = item.at("filePath").scalar_text();
+        state.source_hash = item.at("sourceHash").scalar_text();
+        state.byte_length = static_cast<size_t>(std::max(0.0, item.at("byteLength").number));
+        file_states.push_back(std::move(state));
+    }
+
+    const mini_json::Value& rows = report.at("committedRows");
+    if (!rows.is_array()) {
+        error = "edit commit report is missing committed row metadata";
+        return false;
+    }
+    std::map<std::string, std::vector<CommittedEditRowState>> rows_by_kind;
+    for (const mini_json::Value& item : rows.array) {
+        if (!item.is_object()) continue;
+        CommittedEditRowState state;
+        state.row_kind = item.at("rowKind").scalar_text();
+        const mini_json::Value& row_index = item.at("rowIndex");
+        if (!row_index.is_number() || !std::isfinite(row_index.number) || row_index.number < 0.0) {
+            error = "edit commit report contains an invalid row index";
+            return false;
+        }
+        state.row_index = static_cast<size_t>(row_index.number);
+        state.edit_id = item.at("editId").scalar_text();
+        state.source = edit_source_from_json(item.at("source"));
+        if (mutable_inspector_rows_for_kind(model, state.row_kind)) {
+            rows_by_kind[state.row_kind].push_back(std::move(state));
+        }
+    }
+
+    static constexpr std::array<const char*, 4> kCommittedRowKinds = {
+        "structure.model", "structure.put", "structure.between", "station.put",
+    };
+    for (const char* row_kind : kCommittedRowKinds) {
+        std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
+        const std::vector<CommittedEditRowState>& states = rows_by_kind[row_kind];
+        if (!target_rows || states.size() != target_rows->size()) {
+            error = std::string("edit commit row count mismatch for ") + row_kind;
+            return false;
+        }
+        std::vector<bool> seen(target_rows->size(), false);
+        for (const CommittedEditRowState& state : states) {
+            if (state.row_index >= target_rows->size() || seen[state.row_index]) {
+                error = std::string("edit commit row mapping is invalid for ") + row_kind;
+                return false;
+            }
+            seen[state.row_index] = true;
+        }
+    }
+
+    for (const CommittedEditFileState& state : file_states) {
+        auto file = std::find_if(model.edit_files.begin(), model.edit_files.end(),
+                                 [&](const EditSourceFileInfo& candidate) {
+                                     return candidate.file_path == state.file_path;
+                                 });
+        if (file == model.edit_files.end()) continue;
+        file->source_hash = state.source_hash;
+        file->byte_length = state.byte_length;
+    }
+    for (const char* row_kind : kCommittedRowKinds) {
+        std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
+        for (const CommittedEditRowState& state : rows_by_kind[row_kind]) {
+            TableRow& row = (*target_rows)[state.row_index];
+            if (!row.edit_id.empty() && !state.edit_id.empty() && row.edit_id != state.edit_id) {
+                edit_id_remaps[row.edit_id] = state.edit_id;
+            }
+            row.edit_id = state.edit_id;
+            row.source = state.source;
+        }
+    }
+    return true;
+}
+
 bool App::parse_and_log_edit_report(const std::string& report_text,
                                     const std::string& success_prefix,
                                     int* update_count,
@@ -2141,6 +2237,18 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
         if (update_count) *update_count = updates;
         if (delete_count) *delete_count = deletes;
         if (changed_file_count) *changed_file_count = files;
+        if (ok) {
+            std::map<std::string, std::string> edit_id_remaps;
+            std::string committed_state_error;
+            if (!apply_committed_edit_state(model_, report, edit_id_remaps,
+                                            committed_state_error)) {
+                add_log("[warn]gui_kme.cpp: saved edit metadata refresh failed: " + committed_state_error);
+            } else {
+                for (const auto& remap : edit_id_remaps) {
+                    committed_edit_id_remaps_[remap.first] = remap.second;
+                }
+            }
+        }
         if (ok && !success_prefix.empty()) {
             add_log(success_prefix + ": updates=" + std::to_string(updates) +
                     ", deletes=" + std::to_string(deletes) +
@@ -2214,7 +2322,6 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
     }
     pending_edit_changes_ = changes;
-    has_unsaved_edits_ = !pending_edit_changes_.empty();
     if (reload_request) {
         pending_inspector_request_ = std::move(reload_request);
     } else if (applying_delete && inspector_.open) {
@@ -2272,39 +2379,69 @@ std::string App::pending_changes_json() const {
     return edit_changes_json(pending_edit_changes_);
 }
 
-void App::save_pending_edits() {
-    if (!edit_actions_available()) return;
-    if (!handle_ || !has_unsaved_edits_ || load_state_.running) return;
-    if (!sync_edit_memory_with_ledger(pending_edit_changes_)) return;
+bool App::save_pending_edits(bool refresh_inspector) {
+    if (!edit_actions_available()) return false;
+    if (!handle_ || !has_pending_edits() || load_state_.running) return false;
 
+    const bool inspector_target_deleted = inspector_.open && row_is_pending_delete(inspector_.edit_id);
+    std::optional<MapElementInspectorRequest> inspector_request;
+    if (refresh_inspector && inspector_.open && !inspector_target_deleted) {
+        inspector_request = make_inspector_reload_request(inspector_);
+    }
+
+    // Apply/Revert/Delete keep the maploader working copy synchronized with the
+    // pending ledger. Save is only the disk-write boundary; resetting, replaying,
+    // or rebuilding the GUI model here would parse the same map state again.
     const char* raw = kv_edit_commit(handle_);
     if (!raw) {
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit save failed: ") + (err ? err : "unknown error"));
-        return;
+        return false;
     }
     std::string report_text(raw);
     kv_free_string(raw);
 
     if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit save committed",
                                    nullptr, nullptr, nullptr)) {
-        return;
+        return false;
     }
     pending_edit_changes_.clear();
     original_edit_rows_.clear();
-    has_unsaved_edits_ = false;
-    if (inspector_.open) inspector_.status_message = tr("status.edit.saved");
-    LoadModelOptions options;
-    options.full_edit_registry = edit_mode_enabled_;
-    options.load_profile = edit_mode_enabled_ ? "edit" : "preview";
-    options.preview_cache_policy = PreviewCachePolicy::Disabled;
-    if (!rehydrate_model_from_current_handle(options)) {
-        add_log("[warn]gui_kme.cpp: saved edits, but preview refresh failed; reload from disk if the view looks stale");
+    if (refresh_inspector && inspector_target_deleted) {
+        inspector_.open = false;
+    } else if (inspector_request) {
+        inspector_request->edit_id = current_edit_id(inspector_request->edit_id);
+        if (open_element_inspector(*inspector_request)) {
+            inspector_.status_message = tr("status.edit.saved");
+        }
     } else if (inspector_.open) {
-        inspector_.expected_source_hash.clear();
-        inspector_.expected_source_hash =
-            inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
+        inspector_.status_message = tr("status.edit.saved");
     }
+    return true;
+}
+
+bool App::discard_pending_edits() {
+    if (!has_pending_edits()) return true;
+    return apply_edit_ledger_to_preview({}, std::nullopt, false);
+}
+
+bool App::resolve_pending_close_action(bool save_changes) {
+    const PendingCloseAction action = pending_close_action_;
+    if (action == PendingCloseAction::None) return true;
+
+    if (save_changes) {
+        if (!save_pending_edits(false)) return false;
+    } else if (action == PendingCloseAction::DisableEditMode && !discard_pending_edits()) {
+        return false;
+    }
+
+    pending_close_action_ = PendingCloseAction::None;
+    if (action == PendingCloseAction::DisableEditMode) {
+        apply_edit_mode_enabled(false);
+    } else if (action == PendingCloseAction::ExitApplication) {
+        PostQuitMessage(0);
+    }
+    return true;
 }
 
 void App::render_element_inspector() {
@@ -2910,7 +3047,7 @@ void App::render_menu() {
             reload_current_map_and_model_preview();
         }
         if (ImGui::MenuItem(tr("menu.export_csv").c_str(), nullptr, false, has_model_)) export_csv();
-        if (ImGui::MenuItem(tr("menu.exit").c_str())) PostQuitMessage(0);
+        if (ImGui::MenuItem(tr("menu.exit").c_str())) request_exit();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.options").c_str())) {
@@ -3156,7 +3293,7 @@ void App::render_toolbar() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available() || !has_unsaved_edits_);
+        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits());
         if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
         ImGui::EndDisabled();
 
@@ -3680,6 +3817,38 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
+    if (popups_.close_unsaved_confirm) {
+        ImGui::OpenPopup(tr("dialog.unsaved_changes_title").c_str());
+        popups_.close_unsaved_confirm = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.unsaved_changes_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool exiting = pending_close_action_ == PendingCloseAction::ExitApplication;
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+        ImGui::TextUnformatted(tr(exiting
+            ? "dialog.unsaved_exit_message"
+            : "dialog.unsaved_close_edit_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            pending_close_action_ = PendingCloseAction::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr(exiting
+                ? "button.save_changes_and_exit"
+                : "button.save_changes_and_close_edit").c_str())) {
+            if (resolve_pending_close_action(true)) ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr(exiting
+                ? "button.discard_changes_and_exit"
+                : "button.discard_changes_and_close_edit").c_str())) {
+            if (resolve_pending_close_action(false)) ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     if (popups_.about) {
         ImGui::OpenPopup(tr("menu.about").c_str());
         popups_.about = false;
@@ -3949,7 +4118,7 @@ void App::perform_reload_current_map_geometry() {
 }
 
 bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
-    if ((!has_unsaved_edits_ && pending_edit_changes_.empty()) || !has_model_ || file_path_.empty()) return false;
+    if (!has_pending_edits() || !has_model_ || file_path_.empty()) return false;
     pending_reload_action_ = action;
     popups_.reload_unsaved_confirm = true;
     return true;
@@ -4176,6 +4345,12 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_SYSCOMMAND:
             if ((wParam & 0xfff0) == SC_KEYMENU) return 0;
+            break;
+        case WM_CLOSE:
+            if (g_app) {
+                g_app->request_exit();
+                return 0;
+            }
             break;
         case WM_DESTROY:
             PostQuitMessage(0);

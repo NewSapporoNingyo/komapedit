@@ -833,8 +833,26 @@ struct MapEditPatchedFile {
     bool utf8_bom = false;
 };
 
+struct MapEditCommittedFile {
+    std::string file_path;
+    std::string source_hash;
+    size_t byte_length = 0;
+};
+
+struct MapEditCommittedRow {
+    std::string row_kind;
+    size_t row_index = 0;
+    std::string edit_id;
+    std::string file_path;
+    int line = 0;
+    int column = 0;
+    std::string raw_text_preview;
+};
+
 struct MapEditReport {
     std::vector<std::string> changed_files;
+    std::vector<MapEditCommittedFile> committed_files;
+    std::vector<MapEditCommittedRow> committed_rows;
     std::vector<std::string> warnings;
     std::vector<std::string> blocking_errors;
     std::vector<MapEditPreview> previews;
