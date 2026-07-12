@@ -1559,7 +1559,7 @@ bool App::edit_actions_available() const {
 void App::set_edit_mode_enabled(bool enabled) {
     if (enabled == edit_mode_enabled_) return;
     if (!enabled && has_unsaved_edits_) {
-        add_log("[warn]gui_kme.cpp: " + tr("status.edit.disable_blocked_unsaved"));
+        add_log("[warn]gui_kme.cpp: save or revert pending edits before disabling edit mode");
         return;
     }
 
@@ -1662,7 +1662,7 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind) {
 void App::request_element_inspector(const std::string& edit_id, const std::string& row_kind) {
     if (!edit_actions_available()) {
         if (edit_mode_enabled_ && !edit_registry_loaded_) {
-            add_log("[info]gui_kme.cpp: " + tr("status.edit.loading_metadata"));
+            add_log("[info]gui_kme.cpp: edit metadata is still loading");
         }
         return;
     }
@@ -3164,10 +3164,6 @@ void App::render_toolbar() {
         bool requested_edit_mode = edit_mode_enabled_;
         if (ImGui::Checkbox(tr("chk.edit_mode").c_str(), &requested_edit_mode)) {
             set_edit_mode_enabled(requested_edit_mode);
-        }
-        if (edit_mode_enabled_ && has_model_ && !edit_registry_loaded_) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", tr("status.edit.loading_metadata").c_str());
         }
 
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
