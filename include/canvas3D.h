@@ -172,21 +172,29 @@ struct Canvas3DSceneBuildResult {
 
 struct Canvas3DSceneUiText {
     std::string switch_signal_aspect = "Switch Signal Aspect";
+    std::string element_properties = "Properties/Edit";
     std::string locate_structure_list = "Locate in Map Structure List";
     std::string locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
     std::string locate_repeater_list = "Locate in Repeater List";
     std::string loading = "Loading...";
 };
 
+struct Canvas3DSceneContextMenuOptions {
+    bool element_properties_enabled = false;
+};
+
 enum class Canvas3DSceneContextActionKind {
     None,
     LocateStructure,
     LocateRepeater,
+    EditElement,
 };
 
 struct Canvas3DSceneContextAction {
     Canvas3DSceneContextActionKind kind = Canvas3DSceneContextActionKind::None;
     size_t row_index = 0;
+    std::string edit_id;
+    std::string row_kind;
 };
 
 Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options);
@@ -227,7 +235,10 @@ public:
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
     bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row);
-    Canvas3DSceneContextAction render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{});
+    Canvas3DSceneContextAction render_scene_preview(
+        ImVec2 size,
+        const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{},
+        const Canvas3DSceneContextMenuOptions& context_menu_options = Canvas3DSceneContextMenuOptions{});
 
 private:
     struct Impl;

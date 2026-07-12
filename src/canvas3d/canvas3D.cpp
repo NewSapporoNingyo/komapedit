@@ -4325,7 +4325,14 @@ fail:
         draw->AddText(pos, text_color, label);
     }
 
-    Canvas3DSceneContextAction render_scene_context_popup(const Canvas3DSceneUiText& ui_text) {
+    static const char* scene_object_edit_row_kind(const Canvas3DSceneObject& object) {
+        if (object.kind != Canvas3DSceneObjectKind::Structure) return nullptr;
+        return object.structure_put_between ? "structure.between" : "structure.put";
+    }
+
+    Canvas3DSceneContextAction render_scene_context_popup(
+        const Canvas3DSceneUiText& ui_text,
+        const Canvas3DSceneContextMenuOptions& context_menu_options) {
         Canvas3DSceneContextAction action;
         if (!ImGui::BeginPopup("ScenePreviewObjectContext")) return action;
 
@@ -4339,6 +4346,15 @@ fail:
                     action.kind = Canvas3DSceneContextActionKind::LocateStructure;
                     action.row_index = object.source_row;
                 }
+                const char* edit_row_kind = scene_object_edit_row_kind(object);
+                ImGui::BeginDisabled(!context_menu_options.element_properties_enabled ||
+                                     object.edit_id.empty() || !edit_row_kind);
+                if (ImGui::MenuItem(ui_text.element_properties.c_str())) {
+                    action.kind = Canvas3DSceneContextActionKind::EditElement;
+                    action.edit_id = object.edit_id;
+                    action.row_kind = edit_row_kind;
+                }
+                ImGui::EndDisabled();
             } else if (object.kind == Canvas3DSceneObjectKind::Repeater) {
                 if (ImGui::MenuItem(ui_text.locate_repeater_list.c_str())) {
                     action.kind = Canvas3DSceneContextActionKind::LocateRepeater;
@@ -4364,7 +4380,10 @@ fail:
         return action;
     }
 
-    Canvas3DSceneContextAction render_scene_preview(ImVec2 requested_size, const Canvas3DSceneUiText& ui_text) {
+    Canvas3DSceneContextAction render_scene_preview(
+        ImVec2 requested_size,
+        const Canvas3DSceneUiText& ui_text,
+        const Canvas3DSceneContextMenuOptions& context_menu_options) {
         Canvas3DSceneContextAction action;
         ImVec2 avail = requested_size;
         if (avail.x <= 0.0f || avail.y <= 0.0f) avail = ImGui::GetContentRegionAvail();
@@ -4431,7 +4450,7 @@ fail:
             scene_context_object_index = scene_hovered_object_index;
             ImGui::OpenPopup("ScenePreviewObjectContext");
         }
-        action = render_scene_context_popup(ui_text);
+        action = render_scene_context_popup(ui_text, context_menu_options);
         return action;
     }
 
@@ -4797,6 +4816,9 @@ bool Canvas3D::jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t 
     return impl_->jump_scene_camera_to_object(kind, source_row);
 }
 
-Canvas3DSceneContextAction Canvas3D::render_scene_preview(ImVec2 size, const Canvas3DSceneUiText& ui_text) {
-    return impl_->render_scene_preview(size, ui_text);
+Canvas3DSceneContextAction Canvas3D::render_scene_preview(
+    ImVec2 size,
+    const Canvas3DSceneUiText& ui_text,
+    const Canvas3DSceneContextMenuOptions& context_menu_options) {
+    return impl_->render_scene_preview(size, ui_text, context_menu_options);
 }
