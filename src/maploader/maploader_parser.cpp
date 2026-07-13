@@ -42,6 +42,10 @@ public:
         if (ctx_.include_stack.empty()) {
             ctx_.include_stack.push_back(ctx_.current_file_path);
         }
+        if (ctx_.current_include_invocation_key.empty()) {
+            ctx_.current_include_invocation_key = kRootIncludeInvocationKey;
+            ctx_.current_include_invocation_index = kNoSourceRef;
+        }
     }
 
     void parse() {
@@ -62,6 +66,7 @@ private:
     struct PendingInclude {
         std::filesystem::path path;
         std::string include_path;
+        std::string include_invocation_key;
         double seed_distance = 0.0;
         std::unordered_map<std::string, Value> seed_variables;
         std::future<IncludeResult> future;
@@ -73,6 +78,7 @@ private:
     std::filesystem::path file_path_;
     size_t pos_ = 0;
     std::vector<PendingInclude> pending_includes_;
+    std::unordered_map<std::string, size_t> include_call_occurrences_;
 
     bool eof() const { return pos_ >= src_.size(); }
     char peek() const { return eof() ? '\0' : src_[pos_]; }
@@ -219,6 +225,9 @@ private:
             }
             ctx_.variables[name] = value;
             note_variable_write(ctx_, name);
+            if (ctx_.parse_options.collect_edit_metadata) {
+                rebuild_variable_environment_snapshot(ctx_);
+            }
             return;
         }
 
@@ -241,7 +250,7 @@ private:
                                          trim_field_copy(src_.substr(args_start, args_end - args_start)),
                                          {path}, ctx_.distance_expression, ctx_.distance);
                 }
-                queue_include(as_text(path));
+                queue_include(as_text(path), statement_start, pos_);
                 return;
             }
             if (current_starts_map_element()) {
@@ -296,13 +305,15 @@ private:
     }
 
     MapContext make_child_seed(const std::filesystem::path& child,
-                               const std::string& include_path) const {
+                               const std::string& include_path,
+                               const std::string& include_invocation_key) {
         MapContext seed;
         seed.rootpath = ctx_.rootpath;
         seed.rootpath_utf8 = ctx_.rootpath_utf8;
         seed.entry_file_path = ctx_.entry_file_path;
         seed.current_file_path = normalized_source_path(child);
         seed.include_stack = ctx_.include_stack;
+        seed.current_include_invocation_key = include_invocation_key;
         seed.source_overrides = ctx_.source_overrides;
         seed.parse_options = ctx_.parse_options;
         seed.unit_distance = ctx_.unit_distance;
@@ -315,6 +326,9 @@ private:
         seed.distance = ctx_.distance;
         seed.distance_expression = ctx_.distance_expression;
         seed.variables = ctx_.variables;
+        if (seed.parse_options.collect_edit_metadata) {
+            seed.variable_environment_snapshot = current_variable_environment_snapshot(ctx_);
+        }
         return seed;
     }
 
@@ -337,13 +351,23 @@ private:
         return result;
     }
 
-    void queue_include(const std::string& path_text) {
+    void queue_include(const std::string& path_text, size_t body_start, size_t body_end) {
         std::filesystem::path child = join_path(ctx_.rootpath, path_text);
         log_info("including " + path_to_utf8(child));
-        MapContext seed = make_child_seed(child, path_text);
+        const size_t byte_start = loaded_.body_offset + body_start;
+        const size_t byte_end = loaded_.body_offset + body_end;
+        std::string callsite_key = make_include_invocation_key(
+            ctx_.current_include_invocation_key, loaded_.normalized_key,
+            byte_start, byte_end, 0);
+        const size_t occurrence = include_call_occurrences_[callsite_key]++;
+        std::string include_invocation_key = make_include_invocation_key(
+            ctx_.current_include_invocation_key, loaded_.normalized_key,
+            byte_start, byte_end, occurrence);
+        MapContext seed = make_child_seed(child, path_text, include_invocation_key);
         PendingInclude pending;
         pending.path = child;
         pending.include_path = path_text;
+        pending.include_invocation_key = std::move(include_invocation_key);
         pending.seed_distance = seed.distance;
         pending.seed_variables = seed.variables;
         pending.future = std::async(std::launch::async,
@@ -356,6 +380,15 @@ private:
     bool include_result_is_stale(const PendingInclude& pending, const MapContext& parsed) const {
         if (parsed.depends_on_initial_distance && ctx_.distance != pending.seed_distance) {
             return true;
+        }
+        if (ctx_.parse_options.collect_edit_metadata) {
+            if (ctx_.variables.size() != pending.seed_variables.size()) return true;
+            for (const auto& variable : ctx_.variables) {
+                if (!variable_value_matches(ctx_.variables, pending.seed_variables,
+                                            variable.first)) {
+                    return true;
+                }
+            }
         }
         for (const std::string& key : parsed.external_variable_reads) {
             if (!variable_value_matches(ctx_.variables, pending.seed_variables, key)) {
@@ -400,6 +433,7 @@ private:
         merge_file_structure(child);
         std::vector<size_t> source_file_index_map = merge_source_file_records(ctx_, child);
         std::vector<size_t> include_stack_index_map = merge_include_stacks(ctx_, child);
+        std::vector<size_t> include_invocation_index_map = merge_include_invocation_keys(ctx_, child);
         size_t statement_index_base = ctx_.parsed_statements.size();
         int edit_order_base = ctx_.edit_order;
         for (auto& statement : child.parsed_statements) {
@@ -412,6 +446,10 @@ private:
             }
             if (statement.source.include_stack_index < include_stack_index_map.size()) {
                 statement.source.include_stack_index = include_stack_index_map[statement.source.include_stack_index];
+            }
+            if (statement.source.include_invocation_index < include_invocation_index_map.size()) {
+                statement.source.include_invocation_index =
+                    include_invocation_index_map[statement.source.include_invocation_index];
             }
         }
         ctx_.edit_order += child.edit_order;
@@ -483,11 +521,16 @@ private:
             ctx_.distance_expression = child.distance_expression;
             ctx_.has_distance_assignment = true;
         }
+        bool parent_variable_environment_changed = false;
         for (const std::string& key : child.variable_writes) {
             auto it = child.variables.find(key);
             if (it != child.variables.end()) {
                 ctx_.variables[key] = std::move(it->second);
+                parent_variable_environment_changed = true;
             }
+        }
+        if (parent_variable_environment_changed && ctx_.parse_options.collect_edit_metadata) {
+            rebuild_variable_environment_snapshot(ctx_);
         }
 
         for (auto& statement : child.parsed_statements) {
@@ -548,14 +591,16 @@ private:
             }
             if (!result.error.empty()) {
                 result = parse_include_context(
-                    make_child_seed(pending.path, pending.include_path), pending.path);
+                    make_child_seed(pending.path, pending.include_path,
+                                    pending.include_invocation_key), pending.path);
                 if (!result.error.empty()) {
                     log_warn(result.error);
                     continue;
                 }
             } else if (include_result_is_stale(pending, result.context)) {
                 result = parse_include_context(
-                    make_child_seed(pending.path, pending.include_path), pending.path);
+                    make_child_seed(pending.path, pending.include_path,
+                                    pending.include_invocation_key), pending.path);
                 if (!result.error.empty()) {
                     log_warn(result.error);
                     continue;

@@ -476,6 +476,40 @@ size_t intern_include_stack(MapContext& ctx, const std::vector<std::string>& sta
     return index;
 }
 
+std::string make_include_invocation_key(const std::string& parent_key,
+                                        const std::string& source_key,
+                                        size_t byte_start,
+                                        size_t byte_end,
+                                        size_t occurrence) {
+    // Length-prefix the strings so paths and parent keys cannot make two
+    // different invocation chains serialize to the same key.
+    std::string key;
+    key.reserve(parent_key.size() + source_key.size() + 80);
+    key += std::to_string(parent_key.size());
+    key.push_back(':');
+    key += parent_key;
+    key.push_back('|');
+    key += std::to_string(source_key.size());
+    key.push_back(':');
+    key += source_key;
+    key.push_back('|');
+    key += std::to_string(byte_start);
+    key.push_back(':');
+    key += std::to_string(byte_end);
+    key.push_back(':');
+    key += std::to_string(occurrence);
+    return key;
+}
+
+size_t intern_include_invocation_key(MapContext& ctx, const std::string& key) {
+    auto existing = ctx.include_invocation_indices.find(key);
+    if (existing != ctx.include_invocation_indices.end()) return existing->second;
+    size_t index = ctx.include_invocation_keys.size();
+    ctx.include_invocation_indices[key] = index;
+    ctx.include_invocation_keys.push_back(key);
+    return index;
+}
+
 const SourceFileRecord* source_file_record(const MapContext& ctx, const SourceSpan& span) {
     if (span.source_file_index >= ctx.source_files.size()) return nullptr;
     return &ctx.source_files[span.source_file_index];
@@ -511,6 +545,12 @@ const std::vector<std::string>& source_include_stack(const MapContext& ctx, cons
     return ctx.include_stacks[span.include_stack_index];
 }
 
+const std::string& source_include_invocation_key(const MapContext& ctx, const SourceSpan& span) {
+    static const std::string empty;
+    if (span.include_invocation_index >= ctx.include_invocation_keys.size()) return empty;
+    return ctx.include_invocation_keys[span.include_invocation_index];
+}
+
 int utf8_column_count(const std::string& text, size_t begin, size_t end) {
     int count = 0;
     for (size_t i = begin; i < end && i < text.size(); ++i) {
@@ -542,6 +582,17 @@ SourceSpan make_source_span(MapContext& ctx,
     if (!ctx.parse_options.collect_edit_metadata) return span;
     span.source_file_index = register_source_file_index(ctx, loaded);
     span.include_stack_index = intern_include_stack(ctx, include_stack);
+    if (ctx.current_include_invocation_key.empty()) {
+        ctx.current_include_invocation_key = kRootIncludeInvocationKey;
+        ctx.current_include_invocation_index = kNoSourceRef;
+    }
+    if (ctx.current_include_invocation_index >= ctx.include_invocation_keys.size() ||
+        ctx.include_invocation_keys[ctx.current_include_invocation_index] !=
+            ctx.current_include_invocation_key) {
+        ctx.current_include_invocation_index =
+            intern_include_invocation_key(ctx, ctx.current_include_invocation_key);
+    }
+    span.include_invocation_index = ctx.current_include_invocation_index;
     span.byte_start = loaded.body_offset + body_start;
     span.byte_end = loaded.body_offset + body_end;
     auto start = line_column_for_body_pos(loaded, body_start);
@@ -570,6 +621,18 @@ std::string raw_text_preview(std::string text) {
     return text;
 }
 
+VariableEnvironmentSnapshot current_variable_environment_snapshot(MapContext& ctx) {
+    if (!ctx.variable_environment_snapshot) {
+        rebuild_variable_environment_snapshot(ctx);
+    }
+    return ctx.variable_environment_snapshot;
+}
+
+void rebuild_variable_environment_snapshot(MapContext& ctx) {
+    ctx.variable_environment_snapshot =
+        std::make_shared<const VariableEnvironment>(ctx.variables);
+}
+
 std::string make_edit_id(const std::string& source_key, int global_order,
                          const std::string& kind, int element_index);
 
@@ -589,6 +652,7 @@ size_t add_parsed_statement(MapContext& ctx,
     statement.raw_text_preview = raw_text_preview(statement.raw_text);
     statement.raw_arguments = std::move(raw_arguments);
     statement.evaluated_values = std::move(evaluated_values);
+    statement.variable_environment = current_variable_environment_snapshot(ctx);
     statement.distance_expression = std::move(distance_expression);
     statement.distance_value = distance_value;
     statement.global_order = ctx.next_edit_order();
@@ -630,6 +694,14 @@ std::vector<size_t> merge_include_stacks(MapContext& dest, const MapContext& chi
     std::vector<size_t> index_map(child.include_stacks.size(), kNoSourceRef);
     for (size_t i = 0; i < child.include_stacks.size(); ++i) {
         index_map[i] = intern_include_stack(dest, child.include_stacks[i]);
+    }
+    return index_map;
+}
+
+std::vector<size_t> merge_include_invocation_keys(MapContext& dest, const MapContext& child) {
+    std::vector<size_t> index_map(child.include_invocation_keys.size(), kNoSourceRef);
+    for (size_t i = 0; i < child.include_invocation_keys.size(); ++i) {
+        index_map[i] = intern_include_invocation_key(dest, child.include_invocation_keys[i]);
     }
     return index_map;
 }

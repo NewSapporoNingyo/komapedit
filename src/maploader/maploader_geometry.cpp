@@ -537,6 +537,8 @@ void generate_owntrack(MapContext& ctx, double unitdist,
                                               round_minus2(cp_max) + boundary_margin,
                                               equaldist_unit};
         }
+        ctx.cp_defaultrange = {ctx.cp_arbdistribution_default[0],
+                               ctx.cp_arbdistribution_default[1]};
         append_arange(list_cp, arb_start, arb_end, arb_step);
     } else if (!ctx.station_position.empty()) {
         double min_station = ctx.station_position.begin()->first;
@@ -1088,6 +1090,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
                        const std::vector<double>* extra_controlpoints) {
     log_info("calculating track geometry");
     ctx.unit_distance = unitdist;
+    ctx.cp_arbdistribution_explicit = has_arb;
     ctx.othertrack_buffers.clear();
     ctx.timing.owntrack_seconds = 0.0;
     ctx.timing.othertrack_seconds.clear();

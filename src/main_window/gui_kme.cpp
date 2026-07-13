@@ -592,6 +592,56 @@ std::optional<EditTargetInfo> fetch_edit_target_info(void* handle,
     }
 }
 
+DistanceResolutionRequest distance_resolution_request_from_json(
+    const mini_json::Value& value) {
+    DistanceResolutionRequest request;
+    if (!value.is_object()) return request;
+    request.resolution_key = value.at("resolutionKey").scalar_text();
+    request.reason = value.at("reason").scalar_text();
+    request.source_file = value.at("sourceFile").scalar_text();
+    request.target_distance = value.at("targetDistance").scalar_text();
+    request.variable_name = value.at("variableName").scalar_text();
+    request.suggested_expression = value.at("suggestedExpression").scalar_text();
+    request.insertion_preview = value.at("insertionPreview").scalar_text();
+    request.can_confirm_reuse = value.at("canConfirmReuse").boolean;
+
+    const mini_json::Value& include_stack = value.at("includeStack");
+    if (include_stack.is_array()) {
+        request.include_stack.reserve(include_stack.array.size());
+        for (const mini_json::Value& item : include_stack.array) {
+            request.include_stack.push_back(item.scalar_text());
+        }
+    }
+    const mini_json::Value& section = value.at("sourceSection");
+    if (section.is_object()) {
+        request.source_section_first_line = static_cast<int>(section.at("firstLine").number);
+        request.source_section_last_line = static_cast<int>(section.at("lastLine").number);
+        request.source_section_direction = section.at("direction").scalar_text();
+    }
+    const mini_json::Value& boundaries = value.at("allowedBoundaries");
+    if (boundaries.is_array()) {
+        request.allowed_boundaries.reserve(boundaries.array.size());
+        for (const mini_json::Value& item : boundaries.array) {
+            if (!item.is_object()) continue;
+            DistanceResolutionBoundary boundary;
+            boundary.token = item.at("token").scalar_text();
+            boundary.line = static_cast<int>(item.at("line").number);
+            boundary.column = static_cast<int>(item.at("column").number);
+            boundary.recommended = item.at("recommended").boolean;
+            if (!boundary.token.empty()) request.allowed_boundaries.push_back(std::move(boundary));
+        }
+    }
+    const mini_json::Value& affected_edit_ids = value.at("affectedEditIds");
+    if (affected_edit_ids.is_array()) {
+        request.affected_edit_ids.reserve(affected_edit_ids.array.size());
+        for (const mini_json::Value& item : affected_edit_ids.array) {
+            std::string edit_id = item.scalar_text();
+            if (!edit_id.empty()) request.affected_edit_ids.push_back(std::move(edit_id));
+        }
+    }
+    return request;
+}
+
 void apply_table_row_edit_metadata(TableRow& row, const mini_json::Value& value) {
     if (!value.is_object()) return;
     row.edit_id = value.at("editId").scalar_text();
@@ -835,6 +885,12 @@ void App::apply_load_result(LoadResult result) {
         clear_pending_edit_state();
         clear_pending_edits_after_load_ = false;
     }
+    // A successful disk load starts a new edit batch even when it reloads the
+    // same file with no pending ledger.
+    distance_resolution_choices_.clear();
+    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    text_preview_.placement = TextPreviewPlacementState{};
+    edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
     invalidate_table_cache();
     has_model_ = true;
     rebuild_marker_overlay_cache();
@@ -1017,6 +1073,10 @@ void App::apply_edit_metadata_result(LoadResult result) {
     if (handle_) kv_free(handle_);
     handle_ = result.handle;
     result.handle = nullptr;
+    distance_resolution_choices_.clear();
+    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    text_preview_.placement = TextPreviewPlacementState{};
+    edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
     merge_edit_metadata(model_, std::move(result.model));
     edit_registry_loaded_ = true;
     preview_cache_handle_ = false;
@@ -1524,7 +1584,11 @@ void normalize_station_preview_rows(MapModel& model);
 
 void App::clear_pending_edit_state() {
     pending_edit_changes_.clear();
+    edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
+    distance_resolution_choices_.clear();
+    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    text_preview_.placement = TextPreviewPlacementState{};
     inspector_ = MapElementInspectorState{};
 }
 
@@ -1574,6 +1638,10 @@ void App::apply_edit_mode_enabled(bool enabled) {
     if (!edit_mode_enabled_) {
         inspector_.open = false;
         pending_inspector_request_.reset();
+        distance_resolution_choices_.clear();
+        distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+        text_preview_.placement = TextPreviewPlacementState{};
+        edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
         add_log("[info]gui_kme.cpp: edit mode disabled");
         return;
     }
@@ -2056,6 +2124,10 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
 void App::apply_inspector_changes() {
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
+    if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
+        distance_resolution_workflow_.retry_requested) {
+        cancel_distance_resolution_workflow();
+    }
     if (inspector_.pending_delete) {
         apply_pending_edits_to_preview();
         return;
@@ -2093,18 +2165,41 @@ void App::apply_inspector_changes() {
         return;
     }
 
+    auto existing_change = pending_edit_changes_.find(change.edit_id);
+    if (existing_change != pending_edit_changes_.end()) {
+        auto old_distance = existing_change->second.field_changes.find("distance");
+        auto new_distance = change.field_changes.find("distance");
+        if (old_distance != existing_change->second.field_changes.end() &&
+            new_distance != change.field_changes.end() &&
+            old_distance->second == new_distance->second) {
+            change.distance_resolution_key = existing_change->second.distance_resolution_key;
+            change.distance_boundary_token = existing_change->second.distance_boundary_token;
+            change.distance_expression = existing_change->second.distance_expression;
+            change.confirm_environment_mismatch =
+                existing_change->second.confirm_environment_mismatch;
+        }
+    }
+
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     candidate[change.edit_id] = std::move(change);
     std::optional<MapElementInspectorRequest> reload_request =
         make_inspector_reload_request(inspector_);
-    if (!apply_edit_ledger_to_preview(candidate, std::move(reload_request), false)) {
-        inspector_.status_message = tr("status.edit.pending");
+    if (!apply_edit_ledger_to_preview(candidate, std::move(reload_request), false,
+                                      inspector_.edit_id)) {
+        if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
+            !distance_resolution_workflow_.retry_requested) {
+            inspector_.status_message = tr("status.edit.pending");
+        }
     }
 }
 
 void App::revert_inspector_changes() {
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
+    if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
+        distance_resolution_workflow_.retry_requested) {
+        cancel_distance_resolution_workflow();
+    }
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     candidate.erase(inspector_.edit_id);
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
@@ -2120,6 +2215,10 @@ void App::revert_inspector_changes() {
 void App::delete_inspector_target() {
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty() || !inspector_.delete_supported) return;
+    if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
+        distance_resolution_workflow_.retry_requested) {
+        cancel_distance_resolution_workflow();
+    }
     MapElementPendingChange change;
     change.change_id = "delete-" + inspector_.edit_id;
     change.edit_id = inspector_.edit_id;
@@ -2235,11 +2334,23 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
                                     const std::string& success_prefix,
                                     int* update_count,
                                     int* delete_count,
-                                    int* changed_file_count) {
+                                    int* changed_file_count,
+                                    std::vector<DistanceResolutionRequest>* resolution_requests) {
+    if (resolution_requests) resolution_requests->clear();
     bool ok = false;
     try {
         auto report = mini_json::Parser(report_text).parse();
         ok = report.at("ok").boolean;
+        const auto& requests = report.at("resolutionRequests");
+        if (resolution_requests && requests.is_array()) {
+            resolution_requests->reserve(requests.array.size());
+            for (const auto& item : requests.array) {
+                DistanceResolutionRequest request = distance_resolution_request_from_json(item);
+                if (!request.resolution_key.empty()) {
+                    resolution_requests->push_back(std::move(request));
+                }
+            }
+        }
         const auto& warnings = report.at("warnings");
         if (warnings.is_array()) {
             for (const auto& item : warnings.array) {
@@ -2288,16 +2399,21 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
 
 std::string edit_changes_json(const std::map<std::string, MapElementPendingChange>& changes);
 
-bool App::sync_edit_memory_with_ledger(const std::map<std::string, MapElementPendingChange>& changes) {
+bool App::sync_edit_memory_with_ledger(
+    const std::map<std::string, MapElementPendingChange>& changes,
+    std::vector<DistanceResolutionRequest>* resolution_requests) {
+    if (resolution_requests) resolution_requests->clear();
     if (!edit_actions_available()) return false;
     if (!handle_ || load_state_.running) return false;
 
     if (!kv_edit_reset_memory(handle_)) {
+        edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit memory reset failed: ") +
                 (err ? err : "unknown error"));
         return false;
     }
+    edit_memory_matches_pending_ledger_ = changes.empty();
     if (changes.empty()) {
         add_log("[info]gui_kme.cpp: edit memory reset to disk baseline");
         return true;
@@ -2306,6 +2422,7 @@ bool App::sync_edit_memory_with_ledger(const std::map<std::string, MapElementPen
     std::string json = edit_changes_json(changes);
     const char* raw = kv_edit_apply_to_memory(handle_, json.c_str());
     if (!raw) {
+        edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit memory apply failed: ") +
                 (err ? err : "unknown error"));
@@ -2314,19 +2431,30 @@ bool App::sync_edit_memory_with_ledger(const std::map<std::string, MapElementPen
     std::string report_text(raw);
     kv_free_string(raw);
 
-    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit memory updated")) {
+    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit memory updated",
+                                   nullptr, nullptr, nullptr, resolution_requests)) {
+        edit_memory_matches_pending_ledger_ = false;
         return false;
     }
+    edit_memory_matches_pending_ledger_ = true;
     return true;
 }
 
 bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPendingChange>& changes,
                                        std::optional<MapElementInspectorRequest> reload_request,
-                                       bool applying_delete) {
+                                       bool applying_delete,
+                                       std::string resolution_origin_edit_id) {
     if (!edit_actions_available()) return false;
-    if (!sync_edit_memory_with_ledger(changes)) {
+    const bool ended_batch = !pending_edit_changes_.empty() && changes.empty();
+    std::vector<DistanceResolutionRequest> resolution_requests;
+    if (!sync_edit_memory_with_ledger(changes, &resolution_requests)) {
         if (!pending_edit_changes_.empty()) {
             sync_edit_memory_with_ledger(pending_edit_changes_);
+        }
+        if (!resolution_requests.empty()) {
+            begin_distance_resolution_workflow(
+                changes, std::move(reload_request), applying_delete,
+                std::move(resolution_origin_edit_id), resolution_requests);
         }
         return false;
     }
@@ -2346,6 +2474,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
     }
     pending_edit_changes_ = changes;
+    if (ended_batch) {
+        distance_resolution_choices_.clear();
+    }
     if (reload_request) {
         pending_inspector_request_ = std::move(reload_request);
     } else if (applying_delete && inspector_.open) {
@@ -2354,6 +2485,212 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         inspector_.status_message = tr("status.edit.applied_to_preview");
     }
     return true;
+}
+
+void App::begin_distance_resolution_workflow(
+    const std::map<std::string, MapElementPendingChange>& changes,
+    std::optional<MapElementInspectorRequest> reload_request,
+    bool applying_delete,
+    std::string origin_edit_id,
+    const std::vector<DistanceResolutionRequest>& requests) {
+    if (requests.empty()) return;
+
+    DistanceResolutionWorkflowState workflow;
+    workflow.request = requests.front();
+    workflow.candidate_changes = changes;
+    workflow.reload_request = std::move(reload_request);
+    workflow.applying_delete = applying_delete;
+    workflow.origin_edit_id = std::move(origin_edit_id);
+    if (workflow.origin_edit_id.empty()) {
+        for (const std::string& edit_id : workflow.request.affected_edit_ids) {
+            if (workflow.candidate_changes.find(edit_id) != workflow.candidate_changes.end()) {
+                workflow.origin_edit_id = edit_id;
+                break;
+            }
+        }
+    }
+    if (workflow.origin_edit_id.empty()) {
+        for (const auto& item : workflow.candidate_changes) {
+            if (item.second.field_changes.find("distance") != item.second.field_changes.end() &&
+                item.second.distance_resolution_key.empty()) {
+                workflow.origin_edit_id = item.first;
+                break;
+            }
+        }
+    }
+
+    const std::string expression = workflow.request.suggested_expression;
+    const size_t expression_size = std::min(
+        expression.size(), workflow.expression_buffer.size() - 1);
+    if (expression_size > 0) {
+        std::memcpy(workflow.expression_buffer.data(), expression.data(), expression_size);
+    }
+    workflow.expression_buffer[expression_size] = '\0';
+    distance_resolution_workflow_ = std::move(workflow);
+
+    auto cached = distance_resolution_choices_.find(
+        distance_resolution_workflow_.request.resolution_key);
+    if (cached != distance_resolution_choices_.end()) {
+        const bool needs_expression =
+            !distance_resolution_workflow_.request.variable_name.empty() ||
+            distance_resolution_workflow_.request.reason ==
+                "distanceExpressionRequiresManualEdit" ||
+            distance_resolution_workflow_.request.reason ==
+                "conflictingManualDistanceExpressions";
+        const bool cached_satisfies_request = needs_expression
+            ? !cached->second.distance_expression.empty()
+            : (!cached->second.boundary_token.empty() ||
+               (distance_resolution_workflow_.request.can_confirm_reuse &&
+                cached->second.confirm_environment_mismatch));
+        if (cached_satisfies_request) {
+            size_t target_count = 0;
+            size_t matching_count = 0;
+            auto count_target = [&](const std::string& edit_id) {
+                auto change = distance_resolution_workflow_.candidate_changes.find(edit_id);
+                if (change == distance_resolution_workflow_.candidate_changes.end()) return;
+                ++target_count;
+                const MapElementPendingChange& value = change->second;
+                if (value.distance_resolution_key !=
+                    distance_resolution_workflow_.request.resolution_key) {
+                    return;
+                }
+                const bool matches = needs_expression
+                    ? value.distance_expression == cached->second.distance_expression
+                    : (!cached->second.boundary_token.empty()
+                       ? value.distance_boundary_token == cached->second.boundary_token
+                       : value.confirm_environment_mismatch ==
+                         cached->second.confirm_environment_mismatch);
+                if (matches) ++matching_count;
+            };
+            for (const std::string& edit_id :
+                 distance_resolution_workflow_.request.affected_edit_ids) {
+                count_target(edit_id);
+            }
+            if (target_count == 0 && !distance_resolution_workflow_.origin_edit_id.empty()) {
+                count_target(distance_resolution_workflow_.origin_edit_id);
+            }
+            if (target_count == 0 || matching_count != target_count) {
+                apply_distance_resolution_choice(cached->second);
+                return;
+            }
+
+            DistanceResolutionChoice remaining = cached->second;
+            if (needs_expression) {
+                remaining.distance_expression.clear();
+            } else {
+                remaining.boundary_token.clear();
+                remaining.confirm_environment_mismatch = false;
+            }
+            if (remaining.boundary_token.empty() && remaining.distance_expression.empty() &&
+                !remaining.confirm_environment_mismatch) {
+                distance_resolution_choices_.erase(cached);
+            } else {
+                cached->second = std::move(remaining);
+            }
+        }
+    }
+
+    const bool needs_expression =
+        !distance_resolution_workflow_.request.variable_name.empty() ||
+        distance_resolution_workflow_.request.reason ==
+            "distanceExpressionRequiresManualEdit" ||
+        distance_resolution_workflow_.request.reason ==
+            "conflictingManualDistanceExpressions";
+    distance_resolution_workflow_.phase = needs_expression
+        ? DistanceResolutionPhase::EditExpression
+        : DistanceResolutionPhase::ConfirmAction;
+    distance_resolution_workflow_.popup_requested = true;
+    if (inspector_.open) {
+        inspector_.status_message = tr("status.edit.distance_resolution_required");
+    }
+}
+
+void App::apply_distance_resolution_choice(const DistanceResolutionChoice& choice) {
+    DistanceResolutionWorkflowState& workflow = distance_resolution_workflow_;
+    if (workflow.request.resolution_key.empty() || workflow.candidate_changes.empty()) return;
+
+    DistanceResolutionChoice combined;
+    auto cached = distance_resolution_choices_.find(workflow.request.resolution_key);
+    if (cached != distance_resolution_choices_.end()) combined = cached->second;
+    if (!choice.distance_expression.empty()) {
+        combined.distance_expression = choice.distance_expression;
+    }
+    if (!choice.boundary_token.empty()) {
+        combined.boundary_token = choice.boundary_token;
+        combined.confirm_environment_mismatch = false;
+    }
+    if (choice.confirm_environment_mismatch) {
+        combined.confirm_environment_mismatch = true;
+        combined.boundary_token.clear();
+    }
+    distance_resolution_choices_[workflow.request.resolution_key] = combined;
+    bool applied = false;
+    auto apply_to_edit = [&](const std::string& edit_id) {
+        auto change = workflow.candidate_changes.find(edit_id);
+        if (change == workflow.candidate_changes.end()) return;
+        MapElementPendingChange& value = change->second;
+        value.distance_resolution_key = workflow.request.resolution_key;
+        value.distance_boundary_token = combined.boundary_token;
+        value.distance_expression = combined.distance_expression;
+        value.confirm_environment_mismatch = combined.confirm_environment_mismatch;
+        applied = true;
+    };
+    for (const std::string& edit_id : workflow.request.affected_edit_ids) {
+        apply_to_edit(edit_id);
+    }
+    for (auto& item : workflow.candidate_changes) {
+        if (item.second.distance_resolution_key == workflow.request.resolution_key) {
+            apply_to_edit(item.first);
+        }
+    }
+    if (!applied && !workflow.origin_edit_id.empty()) apply_to_edit(workflow.origin_edit_id);
+    if (!applied) {
+        for (auto& item : workflow.candidate_changes) {
+            if (item.second.field_changes.find("distance") == item.second.field_changes.end()) continue;
+            apply_to_edit(item.first);
+            break;
+        }
+    }
+
+    text_preview_.placement = TextPreviewPlacementState{};
+    workflow.phase = DistanceResolutionPhase::None;
+    workflow.popup_requested = false;
+    workflow.retry_requested = applied;
+}
+
+void App::select_distance_resolution_boundary(const std::string& token) {
+    if (distance_resolution_workflow_.phase != DistanceResolutionPhase::SelectBoundary) return;
+    const auto& boundaries = distance_resolution_workflow_.request.allowed_boundaries;
+    const bool allowed = std::any_of(boundaries.begin(), boundaries.end(),
+                                     [&](const DistanceResolutionBoundary& boundary) {
+                                         return boundary.token == token;
+                                     });
+    if (!allowed) return;
+    DistanceResolutionChoice choice;
+    choice.boundary_token = token;
+    apply_distance_resolution_choice(choice);
+}
+
+void App::cancel_distance_resolution_workflow() {
+    if (!distance_resolution_workflow_.request.resolution_key.empty()) {
+        distance_resolution_choices_.erase(
+            distance_resolution_workflow_.request.resolution_key);
+    }
+    text_preview_.placement = TextPreviewPlacementState{};
+    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    if (inspector_.open) {
+        inspector_.status_message = tr("status.edit.distance_resolution_cancelled");
+    }
+}
+
+void App::process_distance_resolution_retry() {
+    if (!distance_resolution_workflow_.retry_requested) return;
+    DistanceResolutionWorkflowState workflow = std::move(distance_resolution_workflow_);
+    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    apply_edit_ledger_to_preview(workflow.candidate_changes,
+                                 std::move(workflow.reload_request),
+                                 workflow.applying_delete,
+                                 std::move(workflow.origin_edit_id));
 }
 
 bool App::apply_pending_edits_to_preview() {
@@ -2384,6 +2721,14 @@ std::string edit_changes_json(const std::map<std::string, MapElementPendingChang
         append_gui_json_string(out, change.operation);
         out << ",\"expectedSourceHash\":";
         append_gui_json_string(out, change.expected_source_hash);
+        out << ",\"distanceResolutionKey\":";
+        append_gui_json_string(out, change.distance_resolution_key);
+        out << ",\"distanceBoundaryToken\":";
+        append_gui_json_string(out, change.distance_boundary_token);
+        out << ",\"distanceExpression\":";
+        append_gui_json_string(out, change.distance_expression);
+        out << ",\"confirmEnvironmentMismatch\":"
+            << (change.confirm_environment_mismatch ? "true" : "false");
         out << ",\"fieldChanges\":{";
         bool first_field = true;
         for (const auto& field : change.field_changes) {
@@ -2407,6 +2752,15 @@ bool App::save_pending_edits(bool refresh_inspector) {
     if (!edit_actions_available()) return false;
     if (!handle_ || !has_pending_edits() || load_state_.running) return false;
 
+    if (!edit_memory_matches_pending_ledger_) {
+        std::vector<DistanceResolutionRequest> replay_requests;
+        if (!sync_edit_memory_with_ledger(pending_edit_changes_, &replay_requests)) {
+            add_log("[error]gui_kme.cpp: edit save blocked because the pending ledger "
+                    "could not be restored to the maploader working copy");
+            return false;
+        }
+    }
+
     const bool inspector_target_deleted = inspector_.open && row_is_pending_delete(inspector_.edit_id);
     std::optional<MapElementInspectorRequest> inspector_request;
     if (refresh_inspector && inspector_.open && !inspector_target_deleted) {
@@ -2425,11 +2779,22 @@ bool App::save_pending_edits(bool refresh_inspector) {
     std::string report_text(raw);
     kv_free_string(raw);
 
+    int committed_file_count = 0;
     if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit save committed",
-                                   nullptr, nullptr, nullptr)) {
+                                   nullptr, nullptr, &committed_file_count)) {
         return false;
     }
+    if (committed_file_count <= 0) {
+        edit_memory_matches_pending_ledger_ = false;
+        add_log("[error]gui_kme.cpp: edit save returned no committed source files; "
+                "the pending ledger was retained");
+        return false;
+    }
+    distance_resolution_choices_.clear();
+    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    text_preview_.placement = TextPreviewPlacementState{};
     pending_edit_changes_.clear();
+    edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
     if (refresh_inspector && inspector_target_deleted) {
         inspector_.open = false;
@@ -2445,8 +2810,17 @@ bool App::save_pending_edits(bool refresh_inspector) {
 }
 
 bool App::discard_pending_edits() {
-    if (!has_pending_edits()) return true;
-    return apply_edit_ledger_to_preview({}, std::nullopt, false);
+    if (!has_pending_edits()) {
+        distance_resolution_choices_.clear();
+        distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+        text_preview_.placement = TextPreviewPlacementState{};
+        return true;
+    }
+    if (!apply_edit_ledger_to_preview({}, std::nullopt, false)) return false;
+    distance_resolution_choices_.clear();
+    distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
+    text_preview_.placement = TextPreviewPlacementState{};
+    return true;
 }
 
 bool App::resolve_pending_close_action(bool save_changes) {
@@ -2476,7 +2850,9 @@ void App::render_element_inspector() {
     if (!inspector_.open) return;
     std::string title = tr("dialog.element_properties") + "###ElementInspector";
     if (!ImGui::Begin(title.c_str(), &inspector_.open)) {
+        const bool closed = !inspector_.open;
         ImGui::End();
+        if (closed) cancel_distance_resolution_workflow();
         return;
     }
 
@@ -2521,9 +2897,17 @@ void App::render_element_inspector() {
     if (ImGui::Button(tr("button.delete").c_str())) delete_inspector_target();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button(tr("button.close").c_str())) inspector_.open = false;
+    if (ImGui::Button(tr("button.close").c_str())) {
+        cancel_distance_resolution_workflow();
+        inspector_.open = false;
+    }
 
     ImGui::End();
+    if (!inspector_.open &&
+        (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
+         distance_resolution_workflow_.retry_requested)) {
+        cancel_distance_resolution_workflow();
+    }
 }
 
 std::string App::open_map_dialog() {
@@ -3481,6 +3865,101 @@ void App::render_popups() {
         last_saved_view_3d_settings_ = settings_.view_3d;
     };
 
+    bool cancel_distance_resolution = false;
+    if (distance_resolution_workflow_.phase == DistanceResolutionPhase::ConfirmAction &&
+        distance_resolution_workflow_.popup_requested) {
+        ImGui::OpenPopup(tr("dialog.distance_resolution_title").c_str());
+        distance_resolution_workflow_.popup_requested = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.distance_resolution_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+        ImGui::TextUnformatted(tr("dialog.distance_resolution_message").c_str());
+        if (!distance_resolution_workflow_.request.source_file.empty()) {
+            ImGui::TextDisabled("%s", distance_resolution_workflow_.request.source_file.c_str());
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (distance_resolution_workflow_.request.can_confirm_reuse) {
+            if (ImGui::Button(tr("button.confirm_reuse").c_str())) {
+                DistanceResolutionChoice choice;
+                choice.confirm_environment_mismatch = true;
+                apply_distance_resolution_choice(choice);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+        }
+        ImGui::BeginDisabled(
+            distance_resolution_workflow_.request.allowed_boundaries.empty());
+        if (ImGui::Button(tr("button.manual_select").c_str())) {
+            distance_resolution_workflow_.phase = DistanceResolutionPhase::SelectBoundary;
+            open_text_preview_for_distance_resolution(
+                distance_resolution_workflow_.request);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            cancel_distance_resolution = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (distance_resolution_workflow_.phase == DistanceResolutionPhase::EditExpression &&
+        distance_resolution_workflow_.popup_requested) {
+        ImGui::OpenPopup(tr("dialog.distance_expression_title").c_str());
+        distance_resolution_workflow_.popup_requested = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.distance_expression_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        std::string message;
+        if (distance_resolution_workflow_.request.variable_name.empty()) {
+            message = tr("dialog.distance_expression_message");
+        } else {
+            message = tr("dialog.distance_variable_message");
+            const std::string placeholder = "{variable}";
+            size_t placeholder_at = message.find(placeholder);
+            if (placeholder_at != std::string::npos) {
+                message.replace(placeholder_at, placeholder.size(),
+                                distance_resolution_workflow_.request.variable_name);
+            }
+        }
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+        ImGui::TextUnformatted(message.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::SetNextItemWidth(520.0f);
+        ImGui::InputText("##distance_source_expression",
+                         distance_resolution_workflow_.expression_buffer.data(),
+                         distance_resolution_workflow_.expression_buffer.size());
+        ImGui::Separator();
+        ImGui::BeginDisabled(distance_resolution_workflow_.expression_buffer[0] == '\0');
+        if (ImGui::Button(tr("button.apply").c_str())) {
+            DistanceResolutionChoice choice;
+            choice.distance_expression = distance_resolution_workflow_.expression_buffer.data();
+            apply_distance_resolution_choice(choice);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            cancel_distance_resolution = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (distance_resolution_workflow_.phase == DistanceResolutionPhase::ConfirmAction &&
+        !distance_resolution_workflow_.popup_requested &&
+        !ImGui::IsPopupOpen(tr("dialog.distance_resolution_title").c_str())) {
+        cancel_distance_resolution = true;
+    }
+    if (distance_resolution_workflow_.phase == DistanceResolutionPhase::EditExpression &&
+        !distance_resolution_workflow_.popup_requested &&
+        !ImGui::IsPopupOpen(tr("dialog.distance_expression_title").c_str())) {
+        cancel_distance_resolution = true;
+    }
+    if (cancel_distance_resolution) cancel_distance_resolution_workflow();
+
     if (popups_.ui_settings) {
         ImGui::OpenPopup(tr("dialog.ui_settings").c_str());
         popups_.ui_settings = false;
@@ -4305,6 +4784,7 @@ void App::render() {
     process_pending_element_inspector();
     render_element_inspector();
     render_popups();
+    process_distance_resolution_retry();
     touch_input::apply_touch_scroll_to_hovered_window();
     save_runtime_settings_if_changed();
 }
@@ -4460,6 +4940,18 @@ int main(int, char**) {
         return App::run_debug_headless_source_anchors(source_anchors.path,
                                                       source_anchors.unit_distance,
                                                       source_anchors.output_path);
+    }
+
+    HeadlessDistanceEditBatchOptions distance_edit_batch =
+        parse_headless_distance_edit_batch_options(args);
+    if (distance_edit_batch.requested) {
+        if (!distance_edit_batch.error.empty()) {
+            std::cerr << distance_edit_batch.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-distance-edit-batch [map-path] "
+                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_distance_edit_batch(distance_edit_batch);
     }
 
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);

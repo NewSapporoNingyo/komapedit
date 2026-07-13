@@ -12,6 +12,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cctype>
@@ -201,6 +202,44 @@ struct TextPreviewSelection {
     size_t index = 0;
 };
 
+struct DistanceResolutionBoundary {
+    std::string token;
+    int line = 0;
+    int column = 0;
+    bool recommended = false;
+};
+
+struct DistanceResolutionRequest {
+    std::string resolution_key;
+    std::string reason;
+    std::string source_file;
+    std::vector<std::string> include_stack;
+    std::string target_distance;
+    std::string variable_name;
+    std::string suggested_expression;
+    std::string insertion_preview;
+    bool can_confirm_reuse = false;
+    int source_section_first_line = 0;
+    int source_section_last_line = 0;
+    std::string source_section_direction;
+    std::vector<DistanceResolutionBoundary> allowed_boundaries;
+    std::vector<std::string> affected_edit_ids;
+};
+
+struct TextPreviewPlacementState {
+    bool active = false;
+    std::string resolution_key;
+    std::vector<std::string> include_stack;
+    std::string include_context_display;
+    std::string insertion_preview;
+    int source_section_first_line = 0;
+    int source_section_last_line = 0;
+    std::string source_section_direction;
+    std::vector<DistanceResolutionBoundary> allowed_boundaries;
+    int scroll_to_line = 0;
+    bool scroll_pending = false;
+};
+
 struct TextPreviewState {
     bool open = false;
     bool focus_next = false;
@@ -210,6 +249,7 @@ struct TextPreviewState {
     std::vector<TextPreviewLineRange> lines;
     std::string error;
     TextPreviewSelection selection;
+    TextPreviewPlacementState placement;
     const ImFont* measured_font = nullptr;
     float measured_font_size = 0.0f;
     float max_text_width = 0.0f;
@@ -984,6 +1024,10 @@ struct MapElementPendingChange {
     std::string operation = "update";
     std::map<std::string, std::string> field_changes;
     std::string expected_source_hash;
+    std::string distance_resolution_key;
+    std::string distance_boundary_token;
+    std::string distance_expression;
+    bool confirm_environment_mismatch = false;
 };
 
 struct MapElementPreviewSnapshot {
@@ -1022,6 +1066,31 @@ struct MapElementInspectorRequest {
     int line = 0;
     int column = 0;
     std::map<std::string, std::string> field_values;
+};
+
+struct DistanceResolutionChoice {
+    std::string boundary_token;
+    std::string distance_expression;
+    bool confirm_environment_mismatch = false;
+};
+
+enum class DistanceResolutionPhase {
+    None,
+    ConfirmAction,
+    EditExpression,
+    SelectBoundary,
+};
+
+struct DistanceResolutionWorkflowState {
+    DistanceResolutionPhase phase = DistanceResolutionPhase::None;
+    bool popup_requested = false;
+    bool retry_requested = false;
+    DistanceResolutionRequest request;
+    std::map<std::string, MapElementPendingChange> candidate_changes;
+    std::optional<MapElementInspectorRequest> reload_request;
+    bool applying_delete = false;
+    std::string origin_edit_id;
+    std::array<char, 1024> expression_buffer{};
 };
 
 struct BackgroundHistory {
@@ -1108,8 +1177,11 @@ private:
     bool preview_cache_handle_ = false;
     bool clear_pending_edits_after_load_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
+    bool edit_memory_matches_pending_ledger_ = true;
     std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
     std::map<std::string, std::string> committed_edit_id_remaps_;
+    std::map<std::string, DistanceResolutionChoice> distance_resolution_choices_;
+    DistanceResolutionWorkflowState distance_resolution_workflow_;
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
 
@@ -1426,11 +1498,25 @@ private:
                                    const std::string& success_prefix,
                                    int* update_count = nullptr,
                                    int* delete_count = nullptr,
-                                   int* changed_file_count = nullptr);
-    bool sync_edit_memory_with_ledger(const std::map<std::string, MapElementPendingChange>& changes);
+                                   int* changed_file_count = nullptr,
+                                   std::vector<DistanceResolutionRequest>* resolution_requests = nullptr);
+    bool sync_edit_memory_with_ledger(
+        const std::map<std::string, MapElementPendingChange>& changes,
+        std::vector<DistanceResolutionRequest>* resolution_requests = nullptr);
     bool apply_edit_ledger_to_preview(const std::map<std::string, MapElementPendingChange>& changes,
                                       std::optional<MapElementInspectorRequest> reload_request,
-                                      bool applying_delete);
+                                      bool applying_delete,
+                                      std::string resolution_origin_edit_id = {});
+    void begin_distance_resolution_workflow(
+        const std::map<std::string, MapElementPendingChange>& changes,
+        std::optional<MapElementInspectorRequest> reload_request,
+        bool applying_delete,
+        std::string origin_edit_id,
+        const std::vector<DistanceResolutionRequest>& requests);
+    void apply_distance_resolution_choice(const DistanceResolutionChoice& choice);
+    void select_distance_resolution_boundary(const std::string& token);
+    void cancel_distance_resolution_workflow();
+    void process_distance_resolution_retry();
     bool apply_pending_edits_to_preview();
     bool apply_local_preview_change(const MapElementPendingChange& change);
     bool restore_local_preview_change(const std::string& edit_id, const std::string& row_kind);
@@ -1493,7 +1579,9 @@ private:
     void render_fogs_window();
     void render_file_structure_window();
     static bool is_supported_text_preview_file(const std::string& file_path);
-    void open_text_preview(const std::string& file_path);
+    void open_text_preview(const std::string& file_path,
+                           bool parser_confirmed_source = false);
+    void open_text_preview_for_distance_resolution(const DistanceResolutionRequest& request);
     void refresh_text_preview_after_map_load();
     void render_text_preview_window();
     void render_model_preview_window();

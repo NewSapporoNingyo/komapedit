@@ -192,6 +192,9 @@ struct Value {
     bool is_continue() const { return kind == ValueKind::ContinueValue; }
 };
 
+using VariableEnvironment = std::unordered_map<std::string, Value>;
+using VariableEnvironmentSnapshot = std::shared_ptr<const VariableEnvironment>;
+
 double as_number(const Value& value, double fallback = 0.0);
 std::string as_text(const Value& value);
 std::string key_text(const Value& value);
@@ -204,6 +207,7 @@ std::string trim_matching_quotes(std::string text);
 int parse_sound_buffer_count(const std::string& text);
 
 constexpr size_t kNoSourceRef = std::numeric_limits<size_t>::max();
+inline constexpr const char* kRootIncludeInvocationKey = "root";
 struct SourceFileRecord {
     std::string file_path;
     std::string source_key;
@@ -223,6 +227,7 @@ struct FileStructureRecord {
 struct SourceSpan {
     size_t source_file_index = kNoSourceRef;
     size_t include_stack_index = kNoSourceRef;
+    size_t include_invocation_index = kNoSourceRef;
     size_t byte_start = 0;
     size_t byte_end = 0;
     int line = 1;
@@ -239,6 +244,7 @@ struct ParsedStatement {
     std::string raw_text_preview;
     std::string raw_arguments;
     std::vector<Value> evaluated_values;
+    std::shared_ptr<const VariableEnvironment> variable_environment;
     std::string distance_expression;
     double distance_value = 0.0;
     int global_order = 0;
@@ -590,13 +596,16 @@ struct MapContext {
     std::string entry_file_path;
     std::string current_file_path;
     std::vector<std::string> include_stack;
+    std::string current_include_invocation_key;
+    size_t current_include_invocation_index = kNoSourceRef;
     SourceTextOverrides source_overrides;
     double unit_distance = 25.0;
     double distance = 0.0;
     std::string distance_expression;
     int parse_order = 0;
     int edit_order = 0;
-    std::unordered_map<std::string, Value> variables;
+    VariableEnvironment variables;
+    VariableEnvironmentSnapshot variable_environment_snapshot;
     std::set<std::string> external_variable_reads;
     std::set<std::string> variable_writes;
     bool depends_on_initial_distance = false;
@@ -647,6 +656,7 @@ struct MapContext {
     std::array<double, 3> cp_arbdistribution_default{0.0, 0.0, 0.0};
     std::array<double, 2> cp_defaultrange{0.0, 0.0};
     bool has_cp_arbdistribution = false;
+    bool cp_arbdistribution_explicit = false;
     std::map<unsigned, std::string> ir_json_cache_by_flags;
     LoadTiming timing;
     bool load_timing_logged = false;
@@ -658,10 +668,14 @@ struct MapContext {
     std::unordered_map<std::string, size_t> source_file_indices;
     std::vector<std::vector<std::string>> include_stacks;
     std::unordered_map<std::string, size_t> include_stack_indices;
+    std::vector<std::string> include_invocation_keys;
+    std::unordered_map<std::string, size_t> include_invocation_indices;
     mutable std::unordered_map<std::string, std::string> element_edit_id_cache;
     std::vector<ParsedStatement> parsed_statements;
     size_t active_statement_index = kNoSourceRef;
     int active_statement_next_element_index = 0;
+    std::string edit_validation_fingerprint;
+    bool edit_validation_current = false;
 
     int next_parse_order() {
         return ++parse_order;
@@ -671,6 +685,9 @@ struct MapContext {
         return ++edit_order;
     }
 };
+
+VariableEnvironmentSnapshot current_variable_environment_snapshot(MapContext& ctx);
+void rebuild_variable_environment_snapshot(MapContext& ctx);
 
 LoadedText load_header_text(const MapContext& ctx,
                             const std::filesystem::path& path,
@@ -682,12 +699,19 @@ size_t register_source_file_index(MapContext& ctx, const LoadedText& loaded);
 void register_source_file(MapContext& ctx, const LoadedText& loaded);
 std::string include_stack_key(const std::vector<std::string>& stack);
 size_t intern_include_stack(MapContext& ctx, const std::vector<std::string>& stack);
+std::string make_include_invocation_key(const std::string& parent_key,
+                                        const std::string& source_key,
+                                        size_t byte_start,
+                                        size_t byte_end,
+                                        size_t occurrence);
+size_t intern_include_invocation_key(MapContext& ctx, const std::string& key);
 const SourceFileRecord* source_file_record(const MapContext& ctx, const SourceSpan& span);
 const std::string& source_file_path(const MapContext& ctx, const SourceSpan& span);
 const std::string& source_file_key(const MapContext& ctx, const SourceSpan& span);
 const std::string& source_file_encoding(const MapContext& ctx, const SourceSpan& span);
 const std::string& source_file_newline(const MapContext& ctx, const SourceSpan& span);
 const std::vector<std::string>& source_include_stack(const MapContext& ctx, const SourceSpan& span);
+const std::string& source_include_invocation_key(const MapContext& ctx, const SourceSpan& span);
 int utf8_column_count(const std::string& text, size_t begin, size_t end);
 std::pair<int, int> line_column_for_body_pos(const LoadedText& loaded, size_t body_pos);
 SourceSpan make_source_span(MapContext& ctx,
@@ -734,6 +758,7 @@ struct ActiveStatementScope {
 
 std::vector<size_t> merge_source_file_records(MapContext& dest, const MapContext& child);
 std::vector<size_t> merge_include_stacks(MapContext& dest, const MapContext& child);
+std::vector<size_t> merge_include_invocation_keys(MapContext& dest, const MapContext& child);
 void offset_edit_ref(EditSourceRef& ref, size_t statement_index_base);
 template <typename Row>
 void offset_row_edit_ref(Row& row, size_t statement_index_base) {
@@ -812,6 +837,38 @@ struct MapEditChange {
     std::string target_file_path;
     std::string insert_before_edit_id;
     std::string expected_source_hash;
+    std::string distance_resolution_key;
+    std::string distance_boundary_token;
+    std::string distance_expression;
+    bool confirm_environment_mismatch = false;
+};
+
+struct DistanceResolutionBoundary {
+    std::string token;
+    int line = 0;
+    int column = 0;
+    bool recommended = false;
+};
+
+struct DistanceResolutionSection {
+    int first_line = 0;
+    int last_line = 0;
+    std::string direction;
+};
+
+struct DistanceResolutionRequest {
+    std::string resolution_key;
+    std::string reason;
+    std::string source_file;
+    std::vector<std::string> include_stack;
+    double target_distance = 0.0;
+    std::string variable_name;
+    std::vector<std::string> affected_edit_ids;
+    std::string suggested_expression;
+    std::string insertion_preview;
+    bool can_confirm_reuse = false;
+    DistanceResolutionSection source_section;
+    std::vector<DistanceResolutionBoundary> allowed_boundaries;
 };
 
 struct MapEditPreview {
@@ -857,12 +914,21 @@ struct MapEditReport {
     std::vector<std::string> blocking_errors;
     std::vector<MapEditPreview> previews;
     std::vector<MapEditPatchedFile> patched_files;
+    std::vector<DistanceResolutionRequest> resolution_requests;
+    std::shared_ptr<MapContext> validated_context;
+    std::string validation_fingerprint;
+    bool full_reparse_ok = false;
+    int target_distance_match_count = 0;
+    int non_target_changed_count = 0;
+    int created_distance_block_count = 0;
+    int reused_distance_block_count = 0;
+    int distance_group_count = 0;
     int update_count = 0;
     int insert_count = 0;
     int delete_count = 0;
 
     bool ok() const {
-        return blocking_errors.empty();
+        return blocking_errors.empty() && resolution_requests.empty();
     }
 };
 
