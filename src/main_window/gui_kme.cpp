@@ -52,6 +52,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -69,6 +70,34 @@ void release_com(T*& p) {
         p = nullptr;
     }
 }
+
+namespace {
+
+constexpr unsigned char ascii_lower(unsigned char ch) noexcept {
+    return ch >= 'A' && ch <= 'Z' ? static_cast<unsigned char>(ch + ('a' - 'A')) : ch;
+}
+
+bool starts_with_ascii_case_insensitive(std::string_view text, std::string_view prefix) noexcept {
+    if (text.size() < prefix.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        if (ascii_lower(static_cast<unsigned char>(text[i])) !=
+            ascii_lower(static_cast<unsigned char>(prefix[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+LogSeverity classify_log_severity(std::string_view text) noexcept {
+    if (starts_with_ascii_case_insensitive(text, "[warn]") ||
+        starts_with_ascii_case_insensitive(text, "[warning]")) {
+        return LogSeverity::Warning;
+    }
+    if (starts_with_ascii_case_insensitive(text, "[error]")) return LogSeverity::Error;
+    return LogSeverity::Info;
+}
+
+} // namespace
 
 void set_crosshair_cursor() {
     ::SetCursor(::LoadCursor(nullptr, IDC_CROSS));
@@ -656,23 +685,17 @@ void TextureImage::release() {
 }
 
 void App::add_log(std::string text) {
-    std::string lower_text = text;
-    std::transform(lower_text.begin(), lower_text.end(), lower_text.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    int sev = 0;
-    if (lower_text.find("[error]") != std::string::npos ||
-        lower_text.find("error") != std::string::npos) {
-        sev = 2;
-    } else if (lower_text.find("[warn]") != std::string::npos ||
-               lower_text.find("warning") != std::string::npos) {
-        sev = 1;
-    }
+    const LogSeverity severity = classify_log_severity(text);
+    add_log(severity, std::move(text));
+}
+
+void App::add_log(LogSeverity severity, std::string text) {
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
-        logs_.push_back({text, sev});
         last_log_ = text;
-        if (sev == 2) ++error_count_;
-        if (sev == 1) ++warn_count_;
+        logs_.push_back({std::move(text), severity});
+        if (severity == LogSeverity::Error) ++error_count_;
+        if (severity == LogSeverity::Warning) ++warn_count_;
     }
     wake_main_window();
 }
@@ -797,7 +820,7 @@ void App::apply_load_result(LoadResult result) {
     if (!result.ok) {
         load_state_.pending_started_at.reset();
         pending_scene_preview_started_at_.reset();
-        add_log("Error during loading: " + result.error);
+        add_log(LogSeverity::Error, "Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
     }
@@ -2256,7 +2279,7 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
         }
     } catch (const std::exception& e) {
         add_log(std::string("[error]gui_kme.cpp: failed to parse edit report: ") + e.what());
-        add_log(report_text);
+        add_log(LogSeverity::Error, report_text);
         return false;
     }
     return ok;
@@ -3427,9 +3450,11 @@ void App::render_console() {
         (console_rect.Contains(touch.single_start_pos) || console_rect.Contains(touch.single_pos));
     std::lock_guard<std::mutex> lock(log_mutex_);
     for (const auto& line : logs_) {
-        ImVec4 color = line.severity == 2 ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
-                     : line.severity == 1 ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f)
-                                          : ImVec4(0.88f, 0.88f, 0.88f, 1.0f);
+        ImVec4 color = line.severity == LogSeverity::Error
+                         ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                     : line.severity == LogSeverity::Warning
+                         ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f)
+                         : ImVec4(0.88f, 0.88f, 0.88f, 1.0f);
         ImGui::TextColored(color, "%s", line.text.c_str());
     }
     if (was_at_bottom && !touch_vertical_scroll) ImGui::SetScrollHereY(1.0f);

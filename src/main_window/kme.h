@@ -756,9 +756,15 @@ struct TextureImage {
     void release();
 };
 
+enum class LogSeverity : std::uint8_t {
+    Info,
+    Warning,
+    Error,
+};
+
 struct LogLine {
     std::string text;
-    int severity = 0;
+    LogSeverity severity = LogSeverity::Info;
 };
 
 struct WindowVisibilitySettings {
@@ -1013,6 +1019,7 @@ public:
 
     void render();
     void add_log(std::string text);
+    void add_log(LogSeverity severity, std::string text);
     void request_exit();
 #ifndef NDEBUG
     static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
