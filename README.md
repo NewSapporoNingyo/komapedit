@@ -113,8 +113,8 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] UI language switching between Simplified Chinese, English, and Japanese.
 - [x] Settings for font size, UI component size, station marker size, and theme color.
 - [x] Recent-map history.
-- [x] Save background-image parameters with recent-map entries in `history.ini`.
-- [x] Save settings to `settings.ini` next to the executable.
+- [x] Save background-image parameters with recent-map entries in `settings/history.ini`.
+- [x] Save settings to `settings/settings.ini` under the executable directory.
 - [x] Export own-track and other-track geometry to CSV.
 - [ ] Element preset groups stored as ordinary BVE map/list statements through `element_presets.json`.
 - [ ] Route release export that expands includes, optionally constantizes distance/variable expressions, copies only used resources, writes a report, and protects development route directories from overwrite.
@@ -123,13 +123,20 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 
 This repository does not currently provide a standalone installer. The recommended workflow is to build from source and run the generated executable.
 
-After building, make sure `komapedit.exe`, `maploader.dll`, `model_loader.dll`, and any Assimp runtime DLLs copied by the build are in the same directory, then run `build_release\komapedit.exe`.
+After building, run `build_release\komapedit.exe`. The executable stays at the
+top level, while `maploader.dll`, `model_loader.dll`, and copied Assimp/runtime
+dependencies are loaded from `build_release\bin`.
 
-On startup, the application creates or reads the following files next to the executable:
+On startup, the application creates the `settings` directory when necessary and
+creates or reads the following files there:
 
-- `imgui.ini`: stores UI window positions and related ImGui layout data.
-- `settings.ini`: stores settings such as UI language, font size, component size, station marker size, and theme color.
-- `history.ini`: stores recent maps and background-image alignment parameters.
+- `settings/imgui.ini`: stores UI window positions and related ImGui layout data.
+- `settings/settings.ini`: stores settings such as UI language, font size, component size, station marker size, and theme color.
+- `settings/history.ini`: stores recent maps and background-image alignment parameters.
+
+The build and distribution-cleanup scripts migrate legacy root-level INI files
+into `settings`. If both legacy and new copies exist, the script stops instead
+of overwriting either file.
 
 ## Usage
 
@@ -175,7 +182,7 @@ komapedit/
 ├─ THIRD_PARTY_NOTICES.md          # Third-party library and reference-project notices
 ├─ build_dev.bat                   # Debug build script
 ├─ build_release.bat               # Release build script
-├─ clear_build_release_dist.bat    # Cleans Release output, keeping the executable, DLLs, and notices
+├─ clear_build_release_dist.bat    # Cleans Release output while preserving bin, settings, and notices
 ├─ get_3rd_party_packages.bat      # Fetches ImGui and ImPlot
 ├─ install_Assimp.bat              # Helper for installing Assimp with vcpkg
 ├─ include/
@@ -187,6 +194,8 @@ komapedit/
 │  ├─ main_window/
 │  │  ├─ gui_kme.cpp               # Main window, Win32/DirectX 11 setup, app loop
 │  │  ├─ app_settings.cpp/.h       # Runtime settings, history, and UI style helpers
+│  │  ├─ runtime_paths.cpp/.h       # Executable, DLL, and settings directory paths
+│  │  ├─ maploader_runtime.cpp      # Cached runtime dispatch for bin/maploader.dll
 │  │  ├─ debug_headless.cpp/.h     # Debug-only headless validation entry points
 │  │  └─ kme.h                     # App declaration and shared GUI state
 │  ├─ table/
@@ -213,8 +222,8 @@ komapedit/
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui, docking branch
 │  └─ implot/                      # ImPlot
-├─ build/                          # Debug build output, generated locally
-└─ build_release/                  # Release build output, generated locally
+├─ build/                          # Debug: komapedit.exe, bin/ DLLs, settings/ INIs
+└─ build_release/                  # Release: komapedit.exe, bin/ DLLs, settings/ INIs
 ```
 
 ## Building From Source
@@ -253,24 +262,26 @@ directory.
 
 ### Debug Build: `build_dev.bat`
 
-The output directory is `build`.
+The output directory is `build`, using the same top-level executable, `bin` DLL,
+and `settings` INI layout described below for Release.
 
 ### Release Build: `build_release.bat`
 
 The output directory is `build_release`. The main build products are:
 
 - `komapedit.exe`
-- `maploader.dll`
-- `model_loader.dll`
-- Assimp runtime DLLs, depending on the selected toolchain/package manager
+- `bin/maploader.dll`
+- `bin/model_loader.dll`
+- Assimp/runtime DLLs under `bin`, depending on the selected toolchain/package manager
+- `settings/`, initially empty until settings are written
 - `LICENSE`
 - `NOTICE`
 - `THIRD_PARTY_NOTICES.md`
 
 To clean the Release output for distribution, run
-`clear_build_release_dist.bat`. It keeps `komapedit.exe`, all `.dll` files
-including `maploader.dll`, `model_loader.dll`, Assimp runtime DLLs and their
-copied dependencies, plus `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
+`clear_build_release_dist.bat`. It keeps `komapedit.exe`, `bin` and its `.dll`
+files, the `settings` directory and its existing contents, plus `LICENSE`,
+`NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 
 ## Appendix: CSV Data Formats
 

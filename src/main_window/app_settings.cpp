@@ -8,6 +8,7 @@
 #pragma execution_character_set("utf-8")
 
 #include "app_settings.h"
+#include "runtime_paths.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -262,31 +263,16 @@ Language language_from_string(const std::string& text, Language fallback) {
     return fallback;
 }
 
-std::filesystem::path executable_directory() {
-    std::vector<wchar_t> buffer(MAX_PATH);
-    while (true) {
-        DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (len == 0) break;
-        if (len < buffer.size() - 1) {
-            return std::filesystem::path(std::wstring(buffer.data(), len)).parent_path();
-        }
-        buffer.resize(buffer.size() * 2);
-    }
-    std::error_code ec;
-    std::filesystem::path cwd = std::filesystem::current_path(ec);
-    return ec ? std::filesystem::path(L".") : cwd;
-}
-
 std::filesystem::path default_settings_path() {
-    return executable_directory() / L"settings.ini";
+    return runtime_paths::settings_directory() / L"settings.ini";
 }
 
 std::filesystem::path default_history_path() {
-    return executable_directory() / L"history.ini";
+    return runtime_paths::settings_directory() / L"history.ini";
 }
 
 std::filesystem::path default_imgui_ini_path() {
-    return executable_directory() / L"imgui.ini";
+    return runtime_paths::settings_directory() / L"imgui.ini";
 }
 
 std::string bool_to_string(bool value) {

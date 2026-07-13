@@ -107,8 +107,8 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - [x] 简体中文、英文、日文界面语言切换
 - [x] 字体大小、组件大小、车站标记大小和主题色设置
 - [x] 最近打开地图历史记录
-- [x] 背景图参数随最近地图保存到 `history.ini`
-- [x] 设置保存到程序目录下的 `settings.ini`
+- [x] 背景图参数随最近地图保存到 `settings/history.ini`
+- [x] 设置保存到程序目录下的 `settings/settings.ini`
 - [x] 将自轨道和他轨道几何导出为 CSV
 - [ ] 通过 `element_presets.json` 保存元素预设组，应用后生成普通 BVE map/list 语句
 - [ ] 线路 release 导出：展开 Include、可选常量化距离/变量表达式、只复制实际使用资源、输出报告，并保护开发线路目录不被覆盖
@@ -117,13 +117,18 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 
 当前仓库未提供发行版本，推荐从源代码构建后运行。
 
-构建完成后，请确保 `komapedit.exe`、`maploader.dll`、`model_loader.dll` 和构建复制的 Assimp 运行时 DLL 位于同一目录，然后运行 `build_release\komapedit.exe`。
+构建完成后，运行 `build_release\komapedit.exe`。可执行文件保留在第 1 层，
+`maploader.dll`、`model_loader.dll` 及构建复制的 Assimp/运行时依赖 DLL
+统一从 `build_release\bin` 加载。
 
-程序启动后会在可执行文件同目录创建或读取：
+程序启动时会按需新建 `settings` 目录，并在其中创建或读取：
 
-- `imgui.ini`：用户界面内的窗口位置等信息
-- `settings.ini`：保存设置：界面语言、字体大小、组件大小、车站标记大小、主题色
-- `history.ini`：最近打开地图和背景图对齐参数
+- `settings/imgui.ini`：用户界面内的窗口位置等信息
+- `settings/settings.ini`：保存设置：界面语言、字体大小、组件大小、车站标记大小、主题色
+- `settings/history.ini`：最近打开地图和背景图对齐参数
+
+构建及发布清理脚本会把旧版第 1 层 INI 迁移到 `settings`。如果新旧位置同时
+存在同名文件，脚本会中止，不会覆盖其中任何一份。
 
 ## 使用方法
 
@@ -169,7 +174,7 @@ komapedit/
 ├─ THIRD_PARTY_NOTICES.md          # 第三方库和参考项目声明
 ├─ build_dev.bat                   # Debug 构建脚本
 ├─ build_release.bat               # Release 构建脚本
-├─ clear_build_release_dist.bat    # 清理 Release 目录，保留可执行文件、DLL 和声明文件
+├─ clear_build_release_dist.bat    # 清理 Release 目录，保留 bin、settings 和声明文件
 ├─ get_3rd_party_packages.bat      # 拉取 ImGui 和 ImPlot
 ├─ install_Assimp.bat              # 使用 vcpkg 安装 Assimp 的辅助脚本
 ├─ include/
@@ -181,6 +186,8 @@ komapedit/
 │  ├─ main_window/
 │  │  ├─ gui_kme.cpp               # 主窗口、Win32/DirectX 11 初始化和主循环
 │  │  ├─ app_settings.cpp/.h       # 运行时设置、历史记录和 UI 样式辅助代码
+│  │  ├─ runtime_paths.cpp/.h       # 可执行文件、DLL 和设置目录路径
+│  │  ├─ maploader_runtime.cpp      # bin/maploader.dll 的缓存运行时分发
 │  │  ├─ debug_headless.cpp/.h     # 仅 Debug 构建使用的 headless 验证入口
 │  │  └─ kme.h                     # App 声明与 GUI 共享状态
 │  ├─ table/
@@ -207,8 +214,8 @@ komapedit/
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui，docking 分支
 │  └─ implot/                      # ImPlot
-├─ build/                          # Debug 构建输出（生成目录）
-└─ build_release/                  # Release 构建输出（生成目录）
+├─ build/                          # Debug：komapedit.exe、bin/ DLL、settings/ INI
+└─ build_release/                  # Release：komapedit.exe、bin/ DLL、settings/ INI
 ```
 
 ## 从源代码构建
@@ -238,21 +245,25 @@ Assimp 不放在 `third_party/` 目录中，需要在配置项目前单独安装
 
 ### Debug 构建：build_dev.bat
 
-输出目录为 `build`。
+输出目录为 `build`，目录层级与下述 Release 相同：可执行文件位于第 1 层，
+DLL 位于 `bin`，INI 位于 `settings`。
 
 ### Release 构建：build_release.bat
 
 输出目录为 `build_release`。主要产物：
 
 - `komapedit.exe`
-- `maploader.dll`
-- `model_loader.dll`
-- Assimp 运行时 DLL，具体取决于所选工具链/包管理器
+- `bin/maploader.dll`
+- `bin/model_loader.dll`
+- `bin` 下的 Assimp/运行时 DLL，具体取决于所选工具链/包管理器
+- `settings/`，设置写入前为空
 - `LICENSE`
 - `NOTICE`
 - `THIRD_PARTY_NOTICES.md`
 
-如需整理发布目录，可执行 `clear_build_release_dist.bat`。该脚本会保留 `komapedit.exe`、所有 `.dll` 文件（包括 `maploader.dll`、`model_loader.dll`、Assimp 运行时 DLL 及其已复制的依赖 DLL），以及 `LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md`。
+如需整理发布目录，可执行 `clear_build_release_dist.bat`。该脚本会保留
+`komapedit.exe`、`bin` 目录及其中的 `.dll` 文件、`settings` 目录及其现有内容，
+以及 `LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md`。
 
 
 ## 附录：CSV 数据格式

@@ -11,6 +11,7 @@
 #include "kme.h"
 #include "maploader.h"
 #include "model_loader.h"
+#include "runtime_paths.h"
 #include "touch_input.h"
 
 #include "imgui.h"
@@ -176,19 +177,6 @@ std::string win32_error_text(DWORD code) {
     LocalFree(buffer);
     while (!text.empty() && (text.back() == L'\n' || text.back() == L'\r' || text.back() == L' ')) text.pop_back();
     return wide_to_utf8_local(text);
-}
-
-std::filesystem::path executable_directory() {
-    std::vector<wchar_t> buffer(MAX_PATH);
-    while (true) {
-        DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (len == 0) break;
-        if (len < buffer.size() - 1) {
-            return std::filesystem::path(std::wstring(buffer.data(), len)).parent_path();
-        }
-        buffer.resize(buffer.size() * 2);
-    }
-    return std::filesystem::current_path();
 }
 
 std::string hresult_text(const char* action, HRESULT hr) {
@@ -1377,15 +1365,11 @@ private:
     bool ensure_loaded(std::string& error) {
         if (library_) return true;
 
-        std::filesystem::path dll_path = executable_directory() / L"model_loader.dll";
-        library_ = LoadLibraryW(dll_path.c_str());
+        DWORD first_error = ERROR_SUCCESS;
+        library_ = runtime_paths::load_dll(L"model_loader.dll", &first_error);
         if (!library_) {
-            DWORD first_error = GetLastError();
-            library_ = LoadLibraryW(L"model_loader.dll");
-            if (!library_) {
-                error = "model_loader.dll load failed: " + win32_error_text(first_error);
-                return false;
-            }
+            error = "bin/model_loader.dll load failed: " + win32_error_text(first_error);
+            return false;
         }
 
         api_version_ = reinterpret_cast<MlApiVersionFn>(GetProcAddress(library_, "ml_api_version"));

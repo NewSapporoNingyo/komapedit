@@ -28,6 +28,42 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if not exist "build\bin\maploader.dll" (
+    echo maploader.dll was not generated in build\bin.
+    exit /b 1
+)
+if not exist "build\bin\model_loader.dll" (
+    echo model_loader.dll was not generated in build\bin.
+    exit /b 1
+)
+if not exist "build\settings\" mkdir "build\settings"
+
+rem Migrate legacy root-level INI files without overwriting newer settings.
+for %%F in (settings.ini history.ini imgui.ini) do (
+    if exist "build\%%F" (
+        if exist "build\settings\%%F" (
+            echo Conflicting settings files: build\%%F and build\settings\%%F
+            exit /b 1
+        )
+        move /y "build\%%F" "build\settings\%%F" >nul
+        if errorlevel 1 (
+            echo Failed to migrate build\%%F to build\settings.
+            exit /b 1
+        )
+    )
+)
+
+rem Remove obsolete root-level DLLs left by builds made before the runtime layout change.
+for %%F in ("build\*.dll") do (
+    if exist "%%~fF" del /f /q "%%~fF"
+)
+
+for %%F in (LICENSE NOTICE THIRD_PARTY_NOTICES.md) do (
+    if exist "%%F" copy /y "%%F" "build\%%F" >nul
+)
+
 echo kobushiCPP dev built: %cd%\build
+echo Runtime DLLs: %cd%\build\bin
+echo Settings: %cd%\build\settings
 
 pause

@@ -11,6 +11,8 @@
 #if defined(_WIN32)
 #  if defined(MAPLOADER_EXPORTS)
 #    define KV_API __declspec(dllexport)
+#  elif defined(MAPLOADER_RUNTIME_DISPATCH)
+#    define KV_API
 #  else
 #    define KV_API __declspec(dllimport)
 #  endif

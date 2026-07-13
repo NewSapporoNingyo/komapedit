@@ -8,6 +8,14 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set(KOMAPEDIT_DLL_OUTPUT_DIRECTORY "${KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY}/bin")
+set(KOMAPEDIT_SETTINGS_OUTPUT_DIRECTORY "${KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY}/settings")
+file(MAKE_DIRECTORY
+    "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
+    "${KOMAPEDIT_SETTINGS_OUTPUT_DIRECTORY}"
+)
+
 add_library(kme_text_decoder STATIC
     src/maploader/text_decoder.cpp
 )
@@ -49,8 +57,8 @@ endif()
 set_target_properties(maploader PROPERTIES
     OUTPUT_NAME "maploader"
     PREFIX ""
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
+    LIBRARY_OUTPUT_DIRECTORY "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
@@ -74,8 +82,8 @@ target_link_libraries(model_loader PRIVATE assimp::assimp)
 set_target_properties(model_loader PROPERTIES
     OUTPUT_NAME "model_loader"
     PREFIX ""
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
+    LIBRARY_OUTPUT_DIRECTORY "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 if(WIN32)
@@ -152,6 +160,8 @@ target_link_libraries(implot PUBLIC imgui)
 add_executable(komapedit
     src/main_window/gui_kme.cpp
     src/main_window/app_settings.cpp
+    src/main_window/runtime_paths.cpp
+    src/main_window/maploader_runtime.cpp
     src/main_window/file_structure_diagram.cpp
     src/main_window/text_preview.cpp
     src/main_window/debug_headless.cpp
@@ -162,8 +172,11 @@ add_executable(komapedit
     src/table/datatable.cpp
     src/table/table_navigation.cpp
 )
-add_dependencies(komapedit model_loader)
-set_target_properties(komapedit PROPERTIES WIN32_EXECUTABLE TRUE)
+add_dependencies(komapedit maploader model_loader)
+set_target_properties(komapedit PROPERTIES
+    WIN32_EXECUTABLE TRUE
+    RUNTIME_OUTPUT_DIRECTORY "${KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY}"
+)
 if(WIN32)
     target_sources(komapedit PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/komapedit.rc
@@ -174,6 +187,7 @@ target_include_directories(komapedit PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main_window
 )
 target_compile_definitions(komapedit PRIVATE
+    MAPLOADER_RUNTIME_DISPATCH
     UNICODE
     _UNICODE
     NOMINMAX
@@ -183,7 +197,6 @@ if(MSVC)
     target_link_options(komapedit PRIVATE /ENTRY:mainCRTStartup)
 endif()
 target_link_libraries(komapedit PRIVATE
-    maploader
     kme_text_decoder
     implot
     imgui
