@@ -670,6 +670,12 @@ struct MapContext {
     std::unordered_map<std::string, size_t> include_stack_indices;
     std::vector<std::string> include_invocation_keys;
     std::unordered_map<std::string, size_t> include_invocation_indices;
+    // editIds are derived from global_order, which changes when statements move.
+    // These maps keep element identities stable for the lifetime of one loaded
+    // editing session while retaining the native IDs needed after a disk reset.
+    std::unordered_map<std::string, std::string> native_element_edit_id_to_stable;
+    std::unordered_map<std::string, std::string> disk_native_element_edit_id_to_stable;
+    std::unordered_map<std::string, std::string> disk_source_hashes_for_stable_ids;
     mutable std::unordered_map<std::string, std::string> element_edit_id_cache;
     std::vector<ParsedStatement> parsed_statements;
     size_t active_statement_index = kNoSourceRef;
@@ -824,6 +830,8 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
 unsigned normalize_ir_json_flags(unsigned flags);
 std::string build_ir_json(MapContext& ctx, unsigned flags);
 std::string statement_edit_id(MapContext& ctx, ParsedStatement& statement);
+std::string native_element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
+                                   const std::string& row_kind);
 std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
                             const std::string& row_kind);
 void append_edit_fields(std::ostringstream& out, const MapContext& ctx,
@@ -906,6 +914,19 @@ struct MapEditCommittedRow {
     std::string raw_text_preview;
 };
 
+// Internal-only provenance for reconnecting one validated reparse element to
+// the stable editId that selected its source statement. Offsets refer to the
+// final decoded UTF-8 text in MapEditPatchedFile and are never serialized.
+struct MapEditIdentityOrigin {
+    std::string edit_id;
+    std::string row_kind;
+    std::string source_key;
+    size_t text_start = 0;
+    size_t text_end = 0;
+    int element_index = 0;
+    int baseline_global_order = 0;
+};
+
 struct MapEditReport {
     std::vector<std::string> changed_files;
     std::vector<MapEditCommittedFile> committed_files;
@@ -914,6 +935,7 @@ struct MapEditReport {
     std::vector<std::string> blocking_errors;
     std::vector<MapEditPreview> previews;
     std::vector<MapEditPatchedFile> patched_files;
+    std::vector<MapEditIdentityOrigin> identity_origins;
     std::vector<DistanceResolutionRequest> resolution_requests;
     std::shared_ptr<MapContext> validated_context;
     std::string validation_fingerprint;

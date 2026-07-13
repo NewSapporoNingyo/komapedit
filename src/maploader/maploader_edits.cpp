@@ -233,6 +233,7 @@ private:
 struct SemanticElementJson {
     std::string edit_id;
     std::string source_file;
+    std::string container_path;
     const edit_json::Value* value = nullptr;
     std::string canonical;
 };
@@ -289,16 +290,20 @@ void append_canonical_semantic_json(std::ostringstream& out,
 }
 
 std::string canonical_semantic_json(const edit_json::Value& value,
-                                    const std::string& source_file = {}) {
+                                    const std::string& source_file = {},
+                                    const std::string& container_path = {}) {
     std::ostringstream out;
     append_json_string(out, source_file);
+    out << "|";
+    append_json_string(out, container_path);
     out << "|";
     append_canonical_semantic_json(out, value);
     return out.str();
 }
 
 void collect_semantic_elements(const edit_json::Value& value,
-                               std::vector<SemanticElementJson>& elements) {
+                               std::vector<SemanticElementJson>& elements,
+                               const std::string& container_path = {}) {
     if (value.is_object()) {
         const edit_json::Value& edit_id = value.at("editId");
         if (edit_id.is_string() && !edit_id.string.empty()) {
@@ -306,19 +311,24 @@ void collect_semantic_elements(const edit_json::Value& value,
             element.edit_id = edit_id.string;
             const edit_json::Value& source = value.at("source");
             if (source.is_object()) element.source_file = source.at("filePath").scalar_text();
+            element.container_path = container_path;
             element.value = &value;
-            element.canonical = canonical_semantic_json(value, element.source_file);
+            element.canonical = canonical_semantic_json(
+                value, element.source_file, element.container_path);
             elements.push_back(std::move(element));
             return;
         }
         for (const auto& item : value.object) {
-            collect_semantic_elements(item.second, elements);
+            const std::string child_path = container_path.empty()
+                ? item.first
+                : container_path + "." + item.first;
+            collect_semantic_elements(item.second, elements, child_path);
         }
         return;
     }
     if (value.is_array()) {
         for (const edit_json::Value& item : value.array) {
-            collect_semantic_elements(item, elements);
+            collect_semantic_elements(item, elements, container_path);
         }
     }
 }
@@ -338,33 +348,31 @@ SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
     return snapshot;
 }
 
-std::vector<std::string> semantic_sequence(
-    const std::vector<SemanticElementJson>& elements,
-    const std::set<std::string>& excluded_edit_ids = {}) {
-    std::vector<std::string> values;
-    values.reserve(elements.size());
-    for (const SemanticElementJson& element : elements) {
-        if (excluded_edit_ids.find(element.edit_id) != excluded_edit_ids.end()) continue;
-        values.push_back(element.canonical);
-    }
-    return values;
-}
-
 struct EditableTarget {
     size_t statement_index = kNoSourceRef;
     std::string row_kind;
     size_t row_index = 0;
+    int element_index = 0;
     const StructureModel* structure_model = nullptr;
     const StructurePut* structure_put = nullptr;
     const StationPut* station_put = nullptr;
     int elements_for_statement = 0;
 };
 
+struct TextReplacementIdentity {
+    std::string edit_id;
+    std::string row_kind;
+    size_t relative_begin = 0;
+    size_t relative_end = 0;
+    int element_index = 0;
+    int baseline_global_order = 0;
+};
+
 struct TextReplacement {
     size_t begin = 0;
     size_t end = 0;
     std::string text;
-    std::string edit_id;
+    std::vector<TextReplacementIdentity> identities;
 };
 
 struct SourcePatch {
@@ -973,6 +981,7 @@ bool match_edit_ref(MapContext& ctx, const Row& row, const std::string& row_kind
     target.statement_index = row.edit_ref.statement_index;
     target.row_kind = row_kind;
     target.row_index = row_index;
+    target.element_index = row.edit_ref.element_index;
     target.elements_for_statement = count_elements_for_statement(ctx, target.statement_index);
     return true;
 }
@@ -2272,21 +2281,29 @@ void validate_edit_report(MapContext& baseline,
     const std::vector<SemanticElementJson>& before_elements = before_snapshot.elements;
     const std::vector<SemanticElementJson>& after_elements = after_snapshot.elements;
     std::map<std::string, const SemanticElementJson*> before_by_id;
+    std::map<std::string, const SemanticElementJson*> after_by_native_id;
     for (const SemanticElementJson& element : before_elements) {
-        auto inserted = before_by_id.emplace(element.edit_id, &element);
-        if (!inserted.second) {
+        if (!before_by_id.emplace(element.edit_id, &element).second) {
             report.blocking_errors.push_back("duplicate baseline editId during validation: " +
+                                             element.edit_id);
+            return;
+        }
+    }
+    for (const SemanticElementJson& element : after_elements) {
+        if (!after_by_native_id.emplace(element.edit_id, &element).second) {
+            report.blocking_errors.push_back("duplicate candidate editId during validation: " +
                                              element.edit_id);
             return;
         }
     }
 
     std::set<std::string> excluded_before;
-    std::map<std::string, size_t> expected_target_counts;
+    std::map<std::string, std::string> expected_target_canonical;
     int expected_distance_target_count = 0;
     for (const MapEditChange& change : changes) {
         if (change.edit_id.empty()) continue;
-        const std::string operation = ascii_lower(change.operation.empty() ? "update" : change.operation);
+        const std::string operation =
+            ascii_lower(change.operation.empty() ? "update" : change.operation);
         auto before_it = before_by_id.find(change.edit_id);
         if (before_it == before_by_id.end()) {
             report.blocking_errors.push_back("validation lost baseline target: " + change.edit_id);
@@ -2294,7 +2311,6 @@ void validate_edit_report(MapContext& baseline,
         }
         excluded_before.insert(change.edit_id);
         if (operation == "delete") continue;
-
         if (!before_it->second->value) {
             report.blocking_errors.push_back("validation target has no semantic value: " +
                                              change.edit_id);
@@ -2308,47 +2324,209 @@ void validate_edit_report(MapContext& baseline,
                                              change.edit_id + ": " + e.what());
             return;
         }
-        const std::string expected_canonical =
-            canonical_semantic_json(expected, before_it->second->source_file);
-        ++expected_target_counts[expected_canonical];
+        expected_target_canonical.emplace(
+            change.edit_id,
+            canonical_semantic_json(expected, before_it->second->source_file,
+                                    before_it->second->container_path));
         if (has_field_change(change, "distance")) ++expected_distance_target_count;
     }
 
-    std::vector<std::string> before_non_targets =
-        semantic_sequence(before_elements, excluded_before);
-    size_t before_position = 0;
-    size_t matched_target_count = 0;
-    for (const SemanticElementJson& element : after_elements) {
-        if (before_position < before_non_targets.size() &&
-            element.canonical == before_non_targets[before_position]) {
-            ++before_position;
-            continue;
+    using IdentityLocation =
+        std::tuple<std::string, size_t, size_t, std::string, int>;
+    struct CandidateIdentityElement {
+        std::string native_edit_id;
+        int global_order = 0;
+    };
+    std::map<IdentityLocation, std::vector<const MapEditIdentityOrigin*>> origins_by_location;
+    std::set<std::string> origin_edit_ids;
+    for (const MapEditIdentityOrigin& origin : report.identity_origins) {
+        if (expected_target_canonical.find(origin.edit_id) ==
+            expected_target_canonical.end()) {
+            report.blocking_errors.push_back(
+                "generated edit identity does not belong to a surviving target: " +
+                origin.edit_id);
+            return;
         }
-        auto expected = expected_target_counts.find(element.canonical);
-        if (expected != expected_target_counts.end() && expected->second > 0) {
-            --expected->second;
-            ++matched_target_count;
-            continue;
+        if (!origin_edit_ids.insert(origin.edit_id).second) {
+            report.blocking_errors.push_back(
+                "generated more than one source identity for edit target: " + origin.edit_id);
+            return;
         }
-        report.non_target_changed_count = 1;
+        origins_by_location[IdentityLocation{
+            origin.source_key, origin.text_start, origin.text_end,
+            origin.row_kind, origin.element_index,
+        }].push_back(&origin);
+    }
+    if (origin_edit_ids.size() != expected_target_canonical.size()) {
         report.blocking_errors.push_back(
-            "full reparse changed one or more non-target evaluated elements");
+            "full reparse validation is missing source provenance for an edited target");
         return;
     }
-    const size_t expected_target_total = static_cast<size_t>(std::count_if(
-        changes.begin(), changes.end(), [](const MapEditChange& change) {
-            return ascii_lower(change.operation.empty() ? "update" : change.operation) != "delete";
-        }));
-    const bool missing_non_target = before_position != before_non_targets.size();
-    const bool missing_target = matched_target_count != expected_target_total ||
-        std::any_of(expected_target_counts.begin(), expected_target_counts.end(),
-                    [](const auto& entry) { return entry.second != 0; });
-    if (missing_non_target || missing_target) {
-        report.non_target_changed_count = missing_non_target ? 1 : 0;
-        report.blocking_errors.push_back(missing_target
-            ? "edited targets did not reparse to the expected semantic multiset"
-            : "full reparse changed one or more non-target evaluated elements");
+
+    std::map<std::string, const std::string*> patched_text_by_source_key;
+    for (const MapEditPatchedFile& file : report.patched_files) {
+        patched_text_by_source_key[file.source_key] = &file.text;
+    }
+    std::map<IdentityLocation, std::vector<CandidateIdentityElement>> candidates_by_location;
+    auto collect_candidate_rows = [&](const auto& rows, const std::string& row_kind) {
+        for (const auto& row : rows) {
+            const EditSourceRef& ref = row.edit_ref;
+            if (!ref.valid() || ref.statement_index >= candidate->parsed_statements.size()) continue;
+            const ParsedStatement& statement = candidate->parsed_statements[ref.statement_index];
+            const std::string& source_key = source_file_key(*candidate, statement.source);
+            auto patched_text = patched_text_by_source_key.find(source_key);
+            if (patched_text == patched_text_by_source_key.end()) continue;
+            SourcePatch source;
+            source.text = *patched_text->second;
+            const auto range = source_range_in_text(source, statement.source);
+            candidates_by_location[IdentityLocation{
+                source_key, range.first, range.second, row_kind, ref.element_index,
+            }].push_back({
+                native_element_edit_id(*candidate, ref, row_kind),
+                statement.global_order,
+            });
+        }
+    };
+    try {
+        collect_candidate_rows(candidate->structure_models, "structure.model");
+        collect_candidate_rows(candidate->structure_puts, "structure.put");
+        collect_candidate_rows(candidate->structure_betweens, "structure.between");
+        collect_candidate_rows(candidate->station_puts, "station.put");
+    } catch (const std::exception& e) {
+        report.blocking_errors.push_back(
+            std::string("failed to resolve edited target source provenance: ") + e.what());
         return;
+    }
+
+    std::map<std::string, std::string> candidate_to_stable_edit_ids;
+    std::map<std::string, std::string> stable_to_candidate_edit_ids;
+    auto preserve_edit_identity = [&](const std::string& stable_id,
+                                      const std::string& candidate_id) {
+        if (stable_id.empty() || candidate_id.empty()) {
+            report.blocking_errors.push_back(
+                "validated edit identity contains an empty editId");
+            return;
+        }
+        auto by_candidate = candidate_to_stable_edit_ids.emplace(candidate_id, stable_id);
+        if (!by_candidate.second && by_candidate.first->second != stable_id) {
+            report.blocking_errors.push_back(
+                "validated candidate editId matched multiple baseline elements: " +
+                candidate_id);
+        }
+        auto by_stable = stable_to_candidate_edit_ids.emplace(stable_id, candidate_id);
+        if (!by_stable.second && by_stable.first->second != candidate_id) {
+            report.blocking_errors.push_back(
+                "validated baseline editId matched multiple candidate elements: " + stable_id);
+        }
+    };
+
+    std::set<std::string> candidate_target_ids;
+    for (auto& origin_group : origins_by_location) {
+        auto candidates = candidates_by_location.find(origin_group.first);
+        if (candidates == candidates_by_location.end() ||
+            candidates->second.size() != origin_group.second.size()) {
+            report.blocking_errors.push_back(
+                "edited target could not be uniquely reconnected to its generated source statement");
+            return;
+        }
+        std::stable_sort(origin_group.second.begin(), origin_group.second.end(),
+                         [](const auto* lhs, const auto* rhs) {
+                             return lhs->baseline_global_order < rhs->baseline_global_order;
+                         });
+        std::stable_sort(candidates->second.begin(), candidates->second.end(),
+                         [](const auto& lhs, const auto& rhs) {
+                             return lhs.global_order < rhs.global_order;
+                         });
+        for (size_t i = 0; i < origin_group.second.size(); ++i) {
+            const MapEditIdentityOrigin& origin = *origin_group.second[i];
+            const CandidateIdentityElement& candidate_element = candidates->second[i];
+            auto after = after_by_native_id.find(candidate_element.native_edit_id);
+            auto expected = expected_target_canonical.find(origin.edit_id);
+            if (after == after_by_native_id.end() ||
+                expected == expected_target_canonical.end() ||
+                after->second->canonical != expected->second) {
+                report.blocking_errors.push_back(
+                    "edited target did not reparse to its expected semantic value: " +
+                    origin.edit_id);
+                return;
+            }
+            preserve_edit_identity(origin.edit_id, candidate_element.native_edit_id);
+            candidate_target_ids.insert(candidate_element.native_edit_id);
+        }
+    }
+    if (!report.blocking_errors.empty()) return;
+
+    std::vector<const SemanticElementJson*> before_non_targets;
+    before_non_targets.reserve(before_elements.size() - excluded_before.size());
+    for (const SemanticElementJson& element : before_elements) {
+        if (excluded_before.find(element.edit_id) == excluded_before.end()) {
+            before_non_targets.push_back(&element);
+        }
+    }
+    size_t before_position = 0;
+    for (const SemanticElementJson& element : after_elements) {
+        if (candidate_target_ids.find(element.edit_id) != candidate_target_ids.end()) continue;
+        if (before_position >= before_non_targets.size() ||
+            element.canonical != before_non_targets[before_position]->canonical) {
+            report.non_target_changed_count = 1;
+            report.blocking_errors.push_back(
+                "full reparse changed one or more non-target evaluated elements");
+            return;
+        }
+        preserve_edit_identity(before_non_targets[before_position]->edit_id,
+                               element.edit_id);
+        ++before_position;
+    }
+    if (before_position != before_non_targets.size() ||
+        candidate_target_ids.size() != expected_target_canonical.size()) {
+        report.non_target_changed_count =
+            before_position == before_non_targets.size() ? 0 : 1;
+        report.blocking_errors.push_back(
+            candidate_target_ids.size() != expected_target_canonical.size()
+                ? "edited targets did not reparse to the expected semantic set"
+                : "full reparse changed one or more non-target evaluated elements");
+        return;
+    }
+    if (!report.blocking_errors.empty()) return;
+
+    // editId contains global_order, so moving a statement can regenerate IDs for
+    // both the target and every crossed element. The GUI intentionally keeps the
+    // disk-baseline IDs while a batch is pending so it can reset and replay the
+    // complete ledger. Preserve those validated identities in the working-copy
+    // context instead of forcing the GUI to guess an old-to-new row mapping.
+    candidate->native_element_edit_id_to_stable.clear();
+    candidate->native_element_edit_id_to_stable.reserve(
+        candidate_to_stable_edit_ids.size());
+    for (const auto& identity : candidate_to_stable_edit_ids) {
+        candidate->native_element_edit_id_to_stable.emplace(
+            identity.first, identity.second);
+    }
+    candidate->element_edit_id_cache.clear();
+
+    candidate->disk_native_element_edit_id_to_stable =
+        baseline.disk_native_element_edit_id_to_stable;
+    candidate->disk_source_hashes_for_stable_ids =
+        baseline.disk_source_hashes_for_stable_ids;
+    if (candidate->disk_native_element_edit_id_to_stable.empty()) {
+        if (!baseline.native_element_edit_id_to_stable.empty()) {
+            candidate->disk_native_element_edit_id_to_stable =
+                baseline.native_element_edit_id_to_stable;
+        } else {
+            candidate->disk_native_element_edit_id_to_stable.reserve(
+                before_elements.size());
+            for (const SemanticElementJson& element : before_elements) {
+                candidate->disk_native_element_edit_id_to_stable.emplace(
+                    element.edit_id, element.edit_id);
+            }
+        }
+    }
+    if (candidate->disk_source_hashes_for_stable_ids.empty()) {
+        candidate->disk_source_hashes_for_stable_ids.reserve(
+            baseline.source_files.size());
+        for (const SourceFileRecord& file : baseline.source_files) {
+            candidate->disk_source_hashes_for_stable_ids.emplace(
+                file.source_key, file.source_hash);
+        }
     }
 
     std::string derived_error;
@@ -3029,6 +3207,9 @@ MapEditReport build_edit_report(MapContext& ctx,
         size_t source_offset = 0;
         size_t input_ordinal = 0;
         std::string text;
+        size_t statement_begin = 0;
+        size_t statement_length = 0;
+        std::vector<TextReplacementIdentity> identities;
     };
     struct InsertionPart {
         double target_distance = 0.0;
@@ -3038,28 +3219,57 @@ MapEditReport build_edit_report(MapContext& ctx,
         std::string distance_indent;
         std::vector<InsertionStatement> statements;
         std::string identity;
-        std::string edit_id;
         size_t first_source_offset = std::numeric_limits<size_t>::max();
     };
     std::map<std::pair<size_t, size_t>, std::vector<InsertionPart>> insertion_parts;
     std::map<std::tuple<size_t, size_t, size_t>, std::string> replacement_by_range;
 
+    auto append_replacement_identity = [&](TextReplacement& replacement,
+                                           const PreparedEdit* identity_edit) {
+        if (!identity_edit || identity_edit->operation == "delete") return;
+        const ParsedStatement& baseline_statement =
+            ctx.parsed_statements[identity_edit->target.statement_index];
+        replacement.identities.push_back({
+            identity_edit->change->edit_id,
+            identity_edit->target.row_kind,
+            0,
+            replacement.text.size(),
+            identity_edit->target.element_index,
+            baseline_statement.global_order,
+        });
+    };
+
     auto add_source_replacement = [&](size_t file_index,
                                       size_t begin,
                                       size_t end,
                                       const std::string& text,
-                                      const std::string& edit_id) {
+                                      const PreparedEdit* identity_edit) {
         auto key = std::make_tuple(file_index, begin, end);
         auto existing = replacement_by_range.find(key);
         if (existing != replacement_by_range.end()) {
             if (existing->second != text) {
                 report.blocking_errors.push_back(
                     "conflicting edits target the same physical source statement");
+            } else if (identity_edit) {
+                auto replacement = std::find_if(
+                    patches[file_index].replacements.begin(),
+                    patches[file_index].replacements.end(),
+                    [&](const TextReplacement& candidate) {
+                        return candidate.begin == begin && candidate.end == end;
+                    });
+                if (replacement != patches[file_index].replacements.end()) {
+                    append_replacement_identity(*replacement, identity_edit);
+                }
             }
             return;
         }
         replacement_by_range.emplace(key, text);
-        patches[file_index].replacements.push_back({begin, end, text, edit_id});
+        TextReplacement replacement;
+        replacement.begin = begin;
+        replacement.end = end;
+        replacement.text = text;
+        append_replacement_identity(replacement, identity_edit);
+        patches[file_index].replacements.push_back(std::move(replacement));
     };
 
     for (const PreparedEdit& edit : prepared) {
@@ -3067,7 +3277,7 @@ MapEditReport build_edit_report(MapContext& ctx,
             add_source_replacement(edit.source_file_index,
                                    edit.removal_range.first,
                                    edit.removal_range.second,
-                                   {}, edit.change->edit_id);
+                                   {}, nullptr);
         } else {
             add_source_replacement(edit.source_file_index,
                                    edit.operation == "delete" ? edit.removal_range.first
@@ -3076,7 +3286,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                                                               : edit.source_range.second,
                                    edit.operation == "delete" ? std::string{}
                                                               : edit.replacement_statement,
-                                   edit.change->edit_id);
+                                   edit.operation == "delete" ? nullptr : &edit);
         }
     }
 
@@ -3108,7 +3318,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                     boundary_after_range.first - resolved.boundary.insert_offset);
             }
         }
-        std::set<std::pair<size_t, size_t>> physical_statements;
+        std::map<std::pair<size_t, size_t>, size_t> physical_statements;
         std::ostringstream identity;
         // Absolute target values may differ between executions of the same
         // physical Include file. The physical patch is identical when its
@@ -3118,23 +3328,65 @@ MapEditReport build_edit_report(MapContext& ctx,
                  << part.distance_expression << "\n";
         for (size_t index : members) {
             const PreparedEdit& edit = prepared[index];
-            if (!physical_statements.emplace(edit.source_range).second) continue;
-            part.statements.push_back({edit.source_range.first, edit.input_ordinal,
-                                       edit.source_indent + edit.replacement_statement});
+            TextReplacementIdentity statement_identity{
+                edit.change->edit_id,
+                edit.target.row_kind,
+                0,
+                0,
+                edit.target.element_index,
+                ctx.parsed_statements[edit.target.statement_index].global_order,
+            };
+            auto inserted = physical_statements.emplace(
+                edit.source_range, part.statements.size());
+            if (inserted.second) {
+                InsertionStatement statement;
+                statement.source_offset = edit.source_range.first;
+                statement.input_ordinal = edit.input_ordinal;
+                statement.text = edit.source_indent + edit.replacement_statement;
+                statement.statement_begin = edit.source_indent.size();
+                statement.statement_length = edit.replacement_statement.size();
+                statement.identities.push_back(std::move(statement_identity));
+                part.statements.push_back(std::move(statement));
+            } else {
+                part.statements[inserted.first->second].identities.push_back(
+                    std::move(statement_identity));
+            }
             part.first_source_offset = std::min(part.first_source_offset,
                                                 edit.source_range.first);
             identity << edit.source_range.first << ":" << edit.source_range.second << "="
                      << edit.replacement_statement << "\n";
-            if (part.edit_id.empty()) part.edit_id = edit.change->edit_id;
         }
         part.identity = hex64(stable_hash64(identity.str()));
         auto insertion_key = std::make_pair(group.source_file_index,
                                             resolved.boundary.insert_offset);
         auto& parts = insertion_parts[insertion_key];
-        bool duplicate = std::any_of(parts.begin(), parts.end(), [&](const InsertionPart& existing) {
-            return existing.identity == part.identity;
-        });
-        if (!duplicate) parts.push_back(std::move(part));
+        auto duplicate = std::find_if(parts.begin(), parts.end(),
+                                      [&](const InsertionPart& existing) {
+                                          return existing.identity == part.identity;
+                                      });
+        if (duplicate == parts.end()) {
+            parts.push_back(std::move(part));
+        } else {
+            // Repeated Include invocations can resolve to one identical physical
+            // patch. Coalesce the source text once, but retain every logical
+            // element identity that the shared statement represents.
+            for (InsertionStatement& statement : part.statements) {
+                auto existing_statement = std::find_if(
+                    duplicate->statements.begin(), duplicate->statements.end(),
+                    [&](const InsertionStatement& candidate) {
+                        return candidate.source_offset == statement.source_offset &&
+                               candidate.text == statement.text;
+                    });
+                if (existing_statement == duplicate->statements.end()) {
+                    duplicate->statements.push_back(std::move(statement));
+                } else {
+                    existing_statement->identities.insert(
+                        existing_statement->identities.end(),
+                        std::make_move_iterator(statement.identities.begin()),
+                        std::make_move_iterator(statement.identities.end()));
+                }
+            }
+        }
     }
 
     for (auto& insertion_entry : insertion_parts) {
@@ -3164,7 +3416,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         SourcePatch& patch = patches[file_index];
         const std::string nl = newline_text(patch.record->newline);
         std::string insertion_body;
-        std::string edit_id;
+        std::vector<TextReplacementIdentity> insertion_identities;
         for (size_t part_begin = 0; part_begin < parts.size();) {
             size_t part_end = part_begin + 1;
             while (part_end < parts.size() &&
@@ -3184,7 +3436,6 @@ MapEditReport build_edit_report(MapContext& ctx,
                 }
                 statements.insert(statements.end(), part.statements.begin(),
                                   part.statements.end());
-                if (edit_id.empty()) edit_id = part.edit_id;
             }
             if (!compatible) {
                 report.blocking_errors.push_back(
@@ -3209,14 +3460,31 @@ MapEditReport build_edit_report(MapContext& ctx,
             } else {
                 ++report.reused_distance_block_count;
             }
-            std::set<std::pair<size_t, std::string>> emitted_statements;
+            std::map<std::pair<size_t, std::string>, std::pair<size_t, size_t>>
+                emitted_statements;
             for (const InsertionStatement& statement : statements) {
-                if (!emitted_statements.emplace(statement.source_offset,
-                                                statement.text).second) {
-                    continue;
+                const auto statement_key =
+                    std::make_pair(statement.source_offset, statement.text);
+                auto emitted = emitted_statements.find(statement_key);
+                std::pair<size_t, size_t> statement_range;
+                if (emitted == emitted_statements.end()) {
+                    if (!insertion_body.empty()) insertion_body += nl;
+                    const size_t text_begin = insertion_body.size();
+                    insertion_body += statement.text;
+                    statement_range = {
+                        text_begin + statement.statement_begin,
+                        text_begin + statement.statement_begin + statement.statement_length,
+                    };
+                    emitted_statements.emplace(statement_key, statement_range);
+                } else {
+                    statement_range = emitted->second;
                 }
-                if (!insertion_body.empty()) insertion_body += nl;
-                insertion_body += statement.text;
+                for (const TextReplacementIdentity& source_identity : statement.identities) {
+                    TextReplacementIdentity identity = source_identity;
+                    identity.relative_begin = statement_range.first;
+                    identity.relative_end = statement_range.second;
+                    insertion_identities.push_back(std::move(identity));
+                }
             }
             part_begin = part_end;
         }
@@ -3225,7 +3493,17 @@ MapEditReport build_edit_report(MapContext& ctx,
         insertion.end = offset;
         insertion.text = statement_insertion_text(
             patch.text, offset, insertion_body, *patch.record);
-        insertion.edit_id = std::move(edit_id);
+        const size_t body_offset = insertion.text.find(insertion_body);
+        if (body_offset == std::string::npos) {
+            report.blocking_errors.push_back(
+                "failed to retain edit identity in a generated distance insertion");
+        } else {
+            for (TextReplacementIdentity& identity : insertion_identities) {
+                identity.relative_begin += body_offset;
+                identity.relative_end += body_offset;
+            }
+            insertion.identities = std::move(insertion_identities);
+        }
         patch.replacements.push_back(std::move(insertion));
     }
 
@@ -3253,15 +3531,43 @@ MapEditReport build_edit_report(MapContext& ctx,
         SourcePatch& patch = patch_entry.second;
         if (!patch.record || patch.replacements.empty()) continue;
         std::string patched_text = patch.text;
+        std::vector<MapEditIdentityOrigin> resolved_identities;
         for (const TextReplacement& replacement : patch.replacements) {
             report.previews.push_back({
                 patch.record->file_path,
                 preview_fragment(patched_text, replacement.begin, replacement.end),
                 preview_fragment(replacement.text, 0, replacement.text.size())
             });
+            const std::ptrdiff_t delta =
+                static_cast<std::ptrdiff_t>(replacement.text.size()) -
+                static_cast<std::ptrdiff_t>(replacement.end - replacement.begin);
+            for (MapEditIdentityOrigin& identity : resolved_identities) {
+                if (identity.text_start < replacement.end) continue;
+                identity.text_start = static_cast<size_t>(
+                    static_cast<std::ptrdiff_t>(identity.text_start) + delta);
+                identity.text_end = static_cast<size_t>(
+                    static_cast<std::ptrdiff_t>(identity.text_end) + delta);
+            }
             patched_text.replace(replacement.begin,
                                  replacement.end - replacement.begin,
                                  replacement.text);
+            for (const TextReplacementIdentity& source_identity : replacement.identities) {
+                if (source_identity.relative_end < source_identity.relative_begin ||
+                    source_identity.relative_end > replacement.text.size()) {
+                    report.blocking_errors.push_back(
+                        "generated edit identity range is outside its source replacement");
+                    continue;
+                }
+                resolved_identities.push_back({
+                    source_identity.edit_id,
+                    source_identity.row_kind,
+                    patch.record->source_key,
+                    replacement.begin + source_identity.relative_begin,
+                    replacement.begin + source_identity.relative_end,
+                    source_identity.element_index,
+                    source_identity.baseline_global_order,
+                });
+            }
         }
         std::string bytes;
         try {
@@ -3284,6 +3590,10 @@ MapEditReport build_edit_report(MapContext& ctx,
             bytes.size(),
             patch.utf8_bom
         });
+        report.identity_origins.insert(
+            report.identity_origins.end(),
+            std::make_move_iterator(resolved_identities.begin()),
+            std::make_move_iterator(resolved_identities.end()));
     }
 
     if (!report.ok()) return report;
@@ -3322,6 +3632,14 @@ MapEditReport build_edit_report(MapContext& ctx,
         }
 
         ctx = std::move(*report.validated_context);
+        ctx.disk_native_element_edit_id_to_stable =
+            ctx.native_element_edit_id_to_stable;
+        ctx.disk_source_hashes_for_stable_ids.clear();
+        ctx.disk_source_hashes_for_stable_ids.reserve(ctx.source_files.size());
+        for (const SourceFileRecord& file : ctx.source_files) {
+            ctx.disk_source_hashes_for_stable_ids.emplace(
+                file.source_key, file.source_hash);
+        }
         ctx.source_overrides.clear();
         ctx.edit_validation_current = false;
         ctx.edit_validation_fingerprint.clear();
@@ -3352,6 +3670,8 @@ void reparse_context_with_overrides(MapContext& ctx,
                                     SourceTextOverrides overrides,
                                     bool has_arbitrary_distribution,
                                     const std::array<double, 3>& arbitrary_distribution) {
+    const auto disk_identities = ctx.disk_native_element_edit_id_to_stable;
+    const auto disk_source_hashes = ctx.disk_source_hashes_for_stable_ids;
     std::string entry_file_path = ctx.entry_file_path;
     if (entry_file_path.empty()) {
         if (!ctx.include_stack.empty()) entry_file_path = ctx.include_stack.front();
@@ -3365,6 +3685,25 @@ void reparse_context_with_overrides(MapContext& ctx,
     options.rebuild_preview_cache = false;
     auto next = parse_map_context(path_from_utf8(entry_file_path), unit_distance, std::move(overrides),
                                   has_arbitrary_distribution, arbitrary_distribution, options);
+    if (!disk_identities.empty() && !disk_source_hashes.empty()) {
+        bool disk_baseline_matches = next->source_files.size() == disk_source_hashes.size();
+        for (const SourceFileRecord& file : next->source_files) {
+            auto expected = disk_source_hashes.find(file.source_key);
+            if (expected == disk_source_hashes.end() ||
+                expected->second != file.source_hash) {
+                disk_baseline_matches = false;
+                break;
+            }
+        }
+        if (!disk_baseline_matches) {
+            throw std::runtime_error(
+                "source files changed externally; full Reload is required before editing");
+        }
+    }
+    next->native_element_edit_id_to_stable = disk_identities;
+    next->disk_native_element_edit_id_to_stable = disk_identities;
+    next->disk_source_hashes_for_stable_ids = disk_source_hashes;
+    next->element_edit_id_cache.clear();
     ctx = std::move(*next);
 }
 
@@ -3378,6 +3717,12 @@ void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report) {
 }
 
 void reset_memory_edits(MapContext& ctx) {
+    if (ctx.source_overrides.empty()) {
+        // The current context already represents the disk baseline. Re-parsing
+        // here would regenerate global-order-based editIds after a committed
+        // distance move and break the session-stable identities held by the GUI.
+        return;
+    }
     bool has_arbitrary_distribution = ctx.cp_arbdistribution_explicit;
     std::array<double, 3> arbitrary_distribution = ctx.cp_arbdistribution;
     reparse_context_with_overrides(ctx, SourceTextOverrides{},
@@ -3542,7 +3887,17 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
     }
     ctx.edit_validation_current = false;
     ctx.edit_validation_fingerprint.clear();
-    if (!writes.empty()) populate_committed_edit_state(ctx, report);
+    if (!writes.empty()) {
+        ctx.disk_native_element_edit_id_to_stable =
+            ctx.native_element_edit_id_to_stable;
+        ctx.disk_source_hashes_for_stable_ids.clear();
+        ctx.disk_source_hashes_for_stable_ids.reserve(ctx.source_files.size());
+        for (const SourceFileRecord& file : ctx.source_files) {
+            ctx.disk_source_hashes_for_stable_ids.emplace(
+                file.source_key, file.source_hash);
+        }
+        populate_committed_edit_state(ctx, report);
+    }
     return report;
 }
 

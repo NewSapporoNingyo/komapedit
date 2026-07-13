@@ -1037,14 +1037,23 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         if (raw) kv_free_string(raw);
         return text;
     };
-    auto first_structure_values = [&](void* handle, const std::string& map_path,
-                                      double& distance, double& x) {
-        MapModel model = build_model_from_handle(handle, map_path, LoadModelOptions{true});
-        if (model.structures.empty()) return false;
-        const TableRow& row = model.structures.front();
-        distance = table_cell_number(row, "distance");
-        x = table_cell_number(row, "x");
-        return true;
+    auto find_structure_by_edit_id = [](const MapModel& model,
+                                        const std::string& edit_id) -> const TableRow* {
+        auto row = std::find_if(model.structures.begin(), model.structures.end(),
+                                [&](const TableRow& candidate) {
+                                    return candidate.edit_id == edit_id;
+                                });
+        return row == model.structures.end() ? nullptr : &*row;
+    };
+    auto find_structure_by_values = [](const MapModel& model, double distance,
+                                       double x) -> const TableRow* {
+        auto row = std::find_if(model.structures.begin(), model.structures.end(),
+                                [&](const TableRow& candidate) {
+                                    return std::abs(table_cell_number(candidate, "distance") -
+                                                    distance) < 1e-6 &&
+                                           std::abs(table_cell_number(candidate, "x") - x) < 1e-6;
+                                });
+        return row == model.structures.end() ? nullptr : &*row;
     };
 
     *out << "komapedit debug-headless-edit-roundtrip source_path=\"" << path
@@ -1066,6 +1075,8 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
                  << "Station['STA'].Put();\n"
                  << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n"
                  << "Structure['bridge'].PutBetween('0','1',0);\n"
+                 << "125;\n"
+                 << "Structure['pole'].Put('0',9,2,3,0,0,0,0,25);\n"
                  << "200;\n";
     };
     write_map_fixture(temp_map);
@@ -1086,14 +1097,50 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         std::filesystem::remove_all(temp_root);
         return 2;
     }
-    if (load.model.structures.empty()) {
-        *out << "missing_structure_rows=1\nresult=FAIL\n";
+    const TableRow* initial_target = find_structure_by_values(load.model, 100.0, 1.0);
+    const TableRow* initial_non_target = find_structure_by_values(load.model, 125.0, 9.0);
+    if (!initial_target || !initial_non_target) {
+        *out << "missing_structure_identity_fixture_rows=1\nresult=FAIL\n";
         if (load.handle) kv_free(load.handle);
         std::filesystem::remove_all(temp_root);
         return 3;
     }
 
-    const TableRow& structure_row = load.model.structures.front();
+    const TableRow& structure_row = *initial_target;
+    MapModel local_commit_model = load.model;
+    const std::string baseline_structure_edit_id = structure_row.edit_id;
+    const std::string baseline_non_target_edit_id = initial_non_target->edit_id;
+    const std::string baseline_source_hash =
+        source_hash_for_path(load.model, structure_row.source.file_path);
+    std::string baseline_metadata_error;
+    const std::optional<InspectorTargetMetadata> baseline_target_info =
+        resolve_inspector_target_metadata(load.handle, baseline_structure_edit_id,
+                                           "structure.put", &baseline_metadata_error);
+    std::string baseline_non_target_metadata_error;
+    const std::optional<InspectorTargetMetadata> baseline_non_target_info =
+        resolve_inspector_target_metadata(load.handle, baseline_non_target_edit_id,
+                                           "structure.put",
+                                           &baseline_non_target_metadata_error);
+    const bool baseline_metadata_ok = baseline_target_info && baseline_non_target_info &&
+        baseline_target_info->source_distance_string == "100" &&
+        std::abs(baseline_target_info->distance_value - 100.0) < 1e-9 &&
+        baseline_non_target_info->source_distance_string == "125" &&
+        std::abs(baseline_non_target_info->distance_value - 125.0) < 1e-9 &&
+        !baseline_source_hash.empty() &&
+        baseline_target_info->expected_source_hash == baseline_source_hash &&
+        baseline_non_target_info->expected_source_hash == baseline_source_hash &&
+        baseline_target_info->source.file_path == structure_row.source.file_path &&
+        baseline_non_target_info->source.file_path == structure_row.source.file_path &&
+        baseline_target_info->source.line != baseline_non_target_info->source.line &&
+        baseline_target_info->raw_statement.find("Structure['pole'].Put") !=
+            std::string::npos;
+    *out << "baseline_source_distance_metadata_ok=" << (baseline_metadata_ok ? 1 : 0) << "\n";
+    if (!baseline_metadata_ok) {
+        *out << "baseline_target_metadata_error=" << baseline_metadata_error << "\n"
+             << "baseline_non_target_metadata_error=" <<
+                baseline_non_target_metadata_error << "\n";
+        exit_code = 4;
+    }
     std::string changes = make_update_json(structure_row, load.model, {
         {"distance", "125"},
         {"x", "9"},
@@ -1127,27 +1174,83 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             *out << "apply_to_memory_report=" << apply_memory_report << "\n";
             exit_code = 6;
         } else {
-            double memory_distance = 0.0;
-            double memory_x = 0.0;
-            const bool memory_matches =
-                first_structure_values(load.handle, wide_to_utf8(temp_map.wstring()), memory_distance, memory_x) &&
+            MapModel memory_model = build_model_from_handle(
+                load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
+            const TableRow* memory_target =
+                find_structure_by_edit_id(memory_model, baseline_structure_edit_id);
+            const TableRow* memory_non_target =
+                find_structure_by_edit_id(memory_model, baseline_non_target_edit_id);
+            const double memory_distance = memory_target
+                ? table_cell_number(*memory_target, "distance") : 0.0;
+            const double memory_x = memory_target
+                ? table_cell_number(*memory_target, "x") : 0.0;
+            const bool memory_matches = memory_target && memory_non_target &&
                 std::abs(memory_distance - 125.0) < 1e-6 &&
-                std::abs(memory_x - 9.0) < 1e-6;
+                std::abs(memory_x - 9.0) < 1e-6 &&
+                std::abs(table_cell_number(*memory_non_target, "distance") - 125.0) < 1e-6 &&
+                std::abs(table_cell_number(*memory_non_target, "x") - 9.0) < 1e-6;
             *out << "memory_distance=" << format_double(memory_distance, 3) << "\n";
             *out << "memory_x=" << format_double(memory_x, 3) << "\n";
             *out << "apply_to_memory_match=" << (memory_matches ? 1 : 0) << "\n";
-            if (!memory_matches) exit_code = 6;
+            const bool target_id_stable = memory_target != nullptr;
+            const bool non_target_id_stable = memory_non_target != nullptr;
+            std::string post_apply_target_error;
+            const std::optional<InspectorTargetMetadata> post_apply_target_info =
+                resolve_inspector_target_metadata(load.handle, baseline_structure_edit_id,
+                                                   "structure.put",
+                                                   &post_apply_target_error);
+            std::string post_apply_non_target_error;
+            const std::optional<InspectorTargetMetadata> post_apply_non_target_info =
+                resolve_inspector_target_metadata(load.handle, baseline_non_target_edit_id,
+                                                   "structure.put",
+                                                   &post_apply_non_target_error);
+            const bool post_apply_metadata_ok = post_apply_target_info &&
+                post_apply_target_info->source_distance_string == "125" &&
+                std::abs(post_apply_target_info->distance_value - 125.0) < 1e-9 &&
+                post_apply_target_info->expected_source_hash == baseline_source_hash &&
+                post_apply_target_info->source.file_path == structure_row.source.file_path &&
+                post_apply_target_info->raw_statement.find("Structure['pole'].Put") !=
+                    std::string::npos;
+            const bool post_apply_non_target_metadata_ok = post_apply_non_target_info &&
+                post_apply_non_target_info->source_distance_string == "125" &&
+                std::abs(post_apply_non_target_info->distance_value - 125.0) < 1e-9 &&
+                post_apply_non_target_info->expected_source_hash == baseline_source_hash &&
+                post_apply_non_target_info->source.file_path == structure_row.source.file_path &&
+                (!post_apply_target_info ||
+                 post_apply_non_target_info->source.line != post_apply_target_info->source.line);
+            *out << "working_target_edit_id_stable=" << (target_id_stable ? 1 : 0) << "\n";
+            *out << "working_non_target_edit_id_stable=" << (non_target_id_stable ? 1 : 0) << "\n";
+            *out << "post_apply_baseline_id_metadata_ok=" <<
+                (post_apply_metadata_ok ? 1 : 0) << "\n";
+            *out << "post_apply_non_target_metadata_ok=" <<
+                (post_apply_non_target_metadata_ok ? 1 : 0) << "\n";
+            if (!memory_matches || !target_id_stable || !non_target_id_stable ||
+                !post_apply_metadata_ok || !post_apply_non_target_metadata_ok) {
+                if (!post_apply_metadata_ok) {
+                    *out << "post_apply_target_error=" << post_apply_target_error << "\n";
+                }
+                if (!post_apply_non_target_metadata_ok) {
+                    *out << "post_apply_non_target_error=" <<
+                        post_apply_non_target_error << "\n";
+                }
+                exit_code = 6;
+            }
         }
     }
 
     if (exit_code == 0) {
         const bool reset_ok = kv_edit_reset_memory(load.handle) != 0;
-        double reset_distance = 0.0;
-        double reset_x = 0.0;
-        const bool reset_matches = reset_ok &&
-            first_structure_values(load.handle, wide_to_utf8(temp_map.wstring()), reset_distance, reset_x) &&
-            std::abs(reset_distance - 100.0) < 1e-6 &&
-            std::abs(reset_x - 1.0) < 1e-6;
+        MapModel reset_model = build_model_from_handle(
+            load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
+        const TableRow* reset_target =
+            find_structure_by_edit_id(reset_model, baseline_structure_edit_id);
+        const TableRow* reset_non_target =
+            find_structure_by_edit_id(reset_model, baseline_non_target_edit_id);
+        const bool reset_matches = reset_ok && reset_target && reset_non_target &&
+            std::abs(table_cell_number(*reset_target, "distance") - 100.0) < 1e-6 &&
+            std::abs(table_cell_number(*reset_target, "x") - 1.0) < 1e-6 &&
+            std::abs(table_cell_number(*reset_non_target, "distance") - 125.0) < 1e-6 &&
+            std::abs(table_cell_number(*reset_non_target, "x") - 9.0) < 1e-6;
         *out << "reset_memory_ok=" << (reset_ok ? 1 : 0) << "\n";
         *out << "reset_revert_match=" << (reset_matches ? 1 : 0) << "\n";
         if (!reset_matches) exit_code = 7;
@@ -1166,10 +1269,147 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     if (exit_code == 0) {
         std::string commit_report = call_commit(load.handle);
         const bool commit_ok = report_ok(commit_report);
+        std::string commit_metadata_error;
+        bool commit_metadata_merge_ok = commit_ok &&
+            apply_committed_edit_report_to_model(
+                local_commit_model, commit_report, commit_metadata_error);
+        std::string committed_target_metadata_error;
+        const std::optional<InspectorTargetMetadata> committed_target_metadata =
+            resolve_inspector_target_metadata(load.handle, baseline_structure_edit_id,
+                                               "structure.put",
+                                               &committed_target_metadata_error);
+        std::string committed_non_target_metadata_error;
+        const std::optional<InspectorTargetMetadata> committed_non_target_metadata =
+            resolve_inspector_target_metadata(load.handle, baseline_non_target_edit_id,
+                                               "structure.put",
+                                               &committed_non_target_metadata_error);
+        const TableRow* local_committed_target =
+            find_structure_by_edit_id(local_commit_model, baseline_structure_edit_id);
+        const TableRow* local_committed_non_target =
+            find_structure_by_edit_id(local_commit_model, baseline_non_target_edit_id);
+        commit_metadata_merge_ok = commit_metadata_merge_ok && committed_target_metadata &&
+            committed_non_target_metadata && local_committed_target &&
+            local_committed_non_target &&
+            local_committed_target->source.line == committed_target_metadata->source.line &&
+            local_committed_non_target->source.line ==
+                committed_non_target_metadata->source.line &&
+            local_committed_target->source.line != local_committed_non_target->source.line;
         *out << "commit_ok=" << (commit_ok ? 1 : 0) << "\n";
-        if (!commit_ok) {
+        *out << "commit_metadata_merge_ok=" <<
+            (commit_metadata_merge_ok ? 1 : 0) << "\n";
+        if (!commit_ok || !commit_metadata_merge_ok) {
             *out << "commit_report=" << commit_report << "\n";
+            *out << "commit_metadata_error=" << commit_metadata_error << "\n"
+                 << "committed_target_metadata_error=" <<
+                    committed_target_metadata_error << "\n"
+                 << "committed_non_target_metadata_error=" <<
+                    committed_non_target_metadata_error << "\n";
             exit_code = 9;
+        }
+    }
+
+    if (exit_code == 0) {
+        const bool post_commit_reset_ok = kv_edit_reset_memory(load.handle) != 0;
+        MapModel committed_model = build_model_from_handle(
+            load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
+        const TableRow* committed_target =
+            find_structure_by_edit_id(committed_model, baseline_structure_edit_id);
+        const TableRow* committed_non_target =
+            find_structure_by_edit_id(committed_model, baseline_non_target_edit_id);
+        const bool committed_identity_stable = committed_target && committed_non_target;
+        const std::string committed_source_hash = committed_target
+            ? source_hash_for_path(committed_model, committed_target->source.file_path)
+            : std::string{};
+        std::string second_batch_changes;
+        if (committed_non_target) {
+            second_batch_changes = make_update_json(
+                *committed_non_target, committed_model, {{"x", "10"}});
+        }
+        const std::string second_batch_report = second_batch_changes.empty()
+            ? std::string{}
+            : call_apply_to_memory(load.handle, second_batch_changes);
+        const bool second_batch_ok = report_ok(second_batch_report);
+        MapModel second_batch_model = build_model_from_handle(
+            load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
+        const TableRow* second_batch_target =
+            find_structure_by_edit_id(second_batch_model, baseline_structure_edit_id);
+        const TableRow* second_batch_non_target =
+            find_structure_by_edit_id(second_batch_model, baseline_non_target_edit_id);
+        const bool second_batch_identity_stable =
+            second_batch_target && second_batch_non_target;
+        const bool second_batch_value_ok = second_batch_target && second_batch_non_target &&
+            std::abs(table_cell_number(*second_batch_target, "x") - 9.0) < 1e-6 &&
+            std::abs(table_cell_number(*second_batch_non_target, "x") - 10.0) < 1e-6;
+        std::string second_batch_target_error;
+        const std::optional<InspectorTargetMetadata> second_batch_target_info =
+            resolve_inspector_target_metadata(load.handle, baseline_structure_edit_id,
+                                               "structure.put", &second_batch_target_error);
+        std::string second_batch_non_target_error;
+        const std::optional<InspectorTargetMetadata> second_batch_non_target_info =
+            resolve_inspector_target_metadata(load.handle, baseline_non_target_edit_id,
+                                               "structure.put",
+                                               &second_batch_non_target_error);
+        const bool second_batch_metadata_ok = second_batch_target_info &&
+            second_batch_non_target_info &&
+            second_batch_target_info->source_distance_string == "125" &&
+            second_batch_non_target_info->source_distance_string == "125" &&
+            std::abs(second_batch_target_info->distance_value - 125.0) < 1e-9 &&
+            std::abs(second_batch_non_target_info->distance_value - 125.0) < 1e-9 &&
+            second_batch_target_info->raw_statement.find(",9,2,3,") != std::string::npos &&
+            second_batch_non_target_info->raw_statement.find(",10,2,3,") !=
+                std::string::npos;
+
+        const bool second_batch_discard_ok = kv_edit_reset_memory(load.handle) != 0;
+        MapModel discarded_model = build_model_from_handle(
+            load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
+        const TableRow* discarded_target =
+            find_structure_by_edit_id(discarded_model, baseline_structure_edit_id);
+        const TableRow* discarded_non_target =
+            find_structure_by_edit_id(discarded_model, baseline_non_target_edit_id);
+        const bool discarded_identity_stable = discarded_target && discarded_non_target;
+        const bool discarded_value_ok = discarded_target && discarded_non_target &&
+            std::abs(table_cell_number(*discarded_target, "distance") - 125.0) < 1e-6 &&
+            std::abs(table_cell_number(*discarded_target, "x") - 9.0) < 1e-6 &&
+            std::abs(table_cell_number(*discarded_non_target, "distance") - 125.0) < 1e-6 &&
+            std::abs(table_cell_number(*discarded_non_target, "x") - 9.0) < 1e-6;
+        std::string discarded_metadata_error;
+        const std::optional<InspectorTargetMetadata> discarded_metadata =
+            resolve_inspector_target_metadata(load.handle, baseline_structure_edit_id,
+                                               "structure.put", &discarded_metadata_error);
+        const bool discarded_metadata_ok = discarded_metadata &&
+            discarded_metadata->source_distance_string == "125" &&
+            std::abs(discarded_metadata->distance_value - 125.0) < 1e-9 &&
+            !committed_source_hash.empty() &&
+            discarded_metadata->expected_source_hash == committed_source_hash;
+
+        *out << "post_commit_reset_ok=" << (post_commit_reset_ok ? 1 : 0) << "\n";
+        *out << "post_commit_identity_stable=" << (committed_identity_stable ? 1 : 0) << "\n";
+        *out << "second_batch_apply_ok=" << (second_batch_ok ? 1 : 0) << "\n";
+        *out << "second_batch_identity_stable=" <<
+            (second_batch_identity_stable ? 1 : 0) << "\n";
+        *out << "second_batch_value_ok=" << (second_batch_value_ok ? 1 : 0) << "\n";
+        *out << "second_batch_metadata_ok=" << (second_batch_metadata_ok ? 1 : 0) << "\n";
+        *out << "second_batch_discard_ok=" << (second_batch_discard_ok ? 1 : 0) << "\n";
+        *out << "discarded_identity_stable=" << (discarded_identity_stable ? 1 : 0) << "\n";
+        *out << "discarded_value_ok=" << (discarded_value_ok ? 1 : 0) << "\n";
+        *out << "discarded_metadata_ok=" << (discarded_metadata_ok ? 1 : 0) << "\n";
+        if (!post_commit_reset_ok || !committed_identity_stable || !second_batch_ok ||
+            !second_batch_identity_stable || !second_batch_value_ok ||
+            !second_batch_metadata_ok || !second_batch_discard_ok ||
+            !discarded_identity_stable || !discarded_value_ok ||
+            !discarded_metadata_ok) {
+            if (!second_batch_ok) {
+                *out << "second_batch_report=" << second_batch_report << "\n";
+            }
+            if (!second_batch_metadata_ok) {
+                *out << "second_batch_target_error=" << second_batch_target_error << "\n"
+                     << "second_batch_non_target_error=" <<
+                        second_batch_non_target_error << "\n";
+            }
+            if (!discarded_metadata_ok) {
+                *out << "discarded_metadata_error=" << discarded_metadata_error << "\n";
+            }
+            exit_code = 16;
         }
     }
     if (load.handle) kv_free(load.handle);
@@ -1177,15 +1417,19 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     if (exit_code == 0) {
         LoadResult reload = load_map_worker(wide_to_utf8(temp_map.wstring()), unit_distance,
                                             false, 0.0, 0.0, 25.0, LoadModelOptions{true});
-        if (!reload.ok || reload.model.structures.empty()) {
+        if (!reload.ok || reload.model.structures.size() < 2) {
             *out << "reload_error=" << reload.error << "\n";
             exit_code = 10;
         } else {
-            const TableRow& updated = reload.model.structures.front();
-            const double distance = table_cell_number(updated, "distance");
-            const double x = table_cell_number(updated, "x");
-            const bool reload_matches = std::abs(distance - 125.0) < 1e-6 &&
-                                        std::abs(x - 9.0) < 1e-6;
+            const int matching_rows = static_cast<int>(std::count_if(
+                reload.model.structures.begin(), reload.model.structures.end(),
+                [](const TableRow& row) {
+                    return std::abs(table_cell_number(row, "distance") - 125.0) < 1e-6 &&
+                           std::abs(table_cell_number(row, "x") - 9.0) < 1e-6;
+                }));
+            const double distance = table_cell_number(reload.model.structures.front(), "distance");
+            const double x = table_cell_number(reload.model.structures.front(), "x");
+            const bool reload_matches = matching_rows == 2;
             *out << "reload_distance=" << format_double(distance, 3) << "\n";
             *out << "reload_x=" << format_double(x, 3) << "\n";
             *out << "save_reload_match=" << (reload_matches ? 1 : 0) << "\n";
@@ -1197,12 +1441,15 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     if (exit_code == 0) {
         LoadResult direct_load = load_map_worker(wide_to_utf8(temp_direct_map.wstring()), unit_distance,
                                                  false, 0.0, 0.0, 25.0, LoadModelOptions{true});
-        if (!direct_load.ok || direct_load.model.structures.empty()) {
+        const TableRow* direct_target = direct_load.ok
+            ? find_structure_by_values(direct_load.model, 100.0, 1.0)
+            : nullptr;
+        if (!direct_load.ok || !direct_target) {
             *out << "direct_load_error=" << direct_load.error << "\n";
             exit_code = 12;
         } else {
-            std::string direct_changes = make_update_json(direct_load.model.structures.front(),
-                                                          direct_load.model, {{"x", "12"}});
+            std::string direct_changes = make_update_json(
+                *direct_target, direct_load.model, {{"x", "12"}});
             std::string direct_report = call_direct_apply(direct_load.handle, direct_changes);
             const bool direct_ok = report_ok(direct_report);
             *out << "direct_apply_ok=" << (direct_ok ? 1 : 0) << "\n";
@@ -1217,11 +1464,14 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     if (exit_code == 0) {
         LoadResult direct_reload = load_map_worker(wide_to_utf8(temp_direct_map.wstring()), unit_distance,
                                                    false, 0.0, 0.0, 25.0, LoadModelOptions{true});
-        if (!direct_reload.ok || direct_reload.model.structures.empty()) {
+        const TableRow* direct_updated = direct_reload.ok
+            ? find_structure_by_values(direct_reload.model, 100.0, 12.0)
+            : nullptr;
+        if (!direct_reload.ok || !direct_updated) {
             *out << "direct_reload_error=" << direct_reload.error << "\n";
             exit_code = 14;
         } else {
-            const double direct_x = table_cell_number(direct_reload.model.structures.front(), "x");
+            const double direct_x = table_cell_number(*direct_updated, "x");
             const bool direct_matches = std::abs(direct_x - 12.0) < 1e-6;
             *out << "direct_reload_x=" << format_double(direct_x, 3) << "\n";
             *out << "direct_apply_reload_match=" << (direct_matches ? 1 : 0) << "\n";
@@ -1561,6 +1811,7 @@ std::string hash_text(const std::string& text) {
 
 struct StructureEdit {
     std::string edit_id;
+    std::string row_kind;
     std::string source_file;
     std::string structure_key;
     std::string raw_text_preview;
@@ -1712,6 +1963,7 @@ std::vector<StructureEdit> structure_rows_from_ir(const std::string& ir_json) {
         const JsonValue& source = row.at("source");
         StructureEdit edit;
         edit.edit_id = row.at("editId").scalar_text();
+        edit.row_kind = "structure.put";
         edit.source_file = source.at("filePath").scalar_text();
         edit.source_line = static_cast<int>(source.at("line").number);
         edit.raw_text_preview = source.at("rawTextPreview").scalar_text();
@@ -1739,6 +1991,7 @@ std::vector<StructureEdit> station_put_rows_from_ir(const std::string& ir_json) 
         const JsonValue& source = row.at("source");
         StructureEdit edit;
         edit.edit_id = row.at("editId").scalar_text();
+        edit.row_kind = "station.put";
         edit.source_file = source.at("filePath").scalar_text();
         edit.source_line = static_cast<int>(source.at("line").number);
         edit.raw_text_preview = source.at("rawTextPreview").scalar_text();
@@ -1755,27 +2008,17 @@ std::vector<StructureEdit> station_put_rows_from_ir(const std::string& ir_json) 
 }
 
 bool populate_target_info(void* handle, StructureEdit& edit, std::string& error) {
-    try {
-        std::string text = take_owned_json(
-            kv_get_edit_target_info(handle, edit.edit_id.c_str()),
-            "kv_get_edit_target_info");
-        JsonValue root = JsonParser(text).parse();
-        if (!root.at("ok").is_bool() || !root.at("ok").boolean) {
-            error = root.at("error").scalar_text();
-            return false;
-        }
-        edit.expected_source_hash = root.at("expectedSourceHash").scalar_text();
-        edit.original_distance_expression = root.at("distanceExpression").scalar_text();
-        edit.elements_for_statement = static_cast<int>(root.at("elementsForStatement").number);
-        if (edit.expected_source_hash.empty() || edit.elements_for_statement != 1) {
-            error = "target is not a unique source-backed editable statement";
-            return false;
-        }
-        return true;
-    } catch (const std::exception& e) {
-        error = e.what();
+    const std::optional<InspectorTargetMetadata> info =
+        resolve_inspector_target_metadata(handle, edit.edit_id, edit.row_kind, &error);
+    if (!info) return false;
+    edit.expected_source_hash = info->expected_source_hash;
+    edit.original_distance_expression = info->source_distance_string;
+    edit.elements_for_statement = info->elements_for_statement;
+    if (edit.expected_source_hash.empty() || edit.elements_for_statement != 1) {
+        error = "target is not a unique source-backed editable statement";
         return false;
     }
+    return true;
 }
 
 bool candidate_has_recommended_resolution(const JsonValue& report,
@@ -2551,6 +2794,11 @@ struct BatchRunFacts {
     int distance_group_count = 0;
     int created_distance_block_count = 0;
     int reused_distance_block_count = 0;
+    int post_apply_metadata_resolved_count = 0;
+    int post_apply_source_distance_string_count = 0;
+    int post_apply_metadata_distance_match_count = 0;
+    int post_apply_metadata_identity_match_count = 0;
+    int post_apply_metadata_fallback_required_count = 0;
     bool no_local_wrapper = false;
     bool reset_ok = false;
     bool reset_ir_fingerprint_restored = false;
@@ -2566,6 +2814,11 @@ struct BatchRunFacts {
         return error.empty() && selected.size() == 5 && selected_sig_context_count >= 2 &&
                final_dry_run_ok && apply_to_memory_ok && full_reparse_ok &&
                target_distance_match_count == 5 && non_target_changed_count == 0 &&
+               post_apply_metadata_resolved_count == 5 &&
+               post_apply_source_distance_string_count == 5 &&
+               post_apply_metadata_distance_match_count == 5 &&
+               post_apply_metadata_identity_match_count == 5 &&
+               post_apply_metadata_fallback_required_count == 0 &&
                distance_group_count == 5 &&
                created_distance_block_count + reused_distance_block_count == distance_group_count &&
                no_local_wrapper && reset_ok && reset_ir_fingerprint_restored &&
@@ -2600,6 +2853,16 @@ void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
         << "  \"distanceGroupCount\": " << facts.distance_group_count << ",\n"
         << "  \"createdDistanceBlockCount\": " << facts.created_distance_block_count << ",\n"
         << "  \"reusedDistanceBlockCount\": " << facts.reused_distance_block_count << ",\n"
+        << "  \"postApplyMetadataResolvedCount\": "
+        << facts.post_apply_metadata_resolved_count << ",\n"
+        << "  \"postApplySourceDistanceStringCount\": "
+        << facts.post_apply_source_distance_string_count << ",\n"
+        << "  \"postApplyMetadataDistanceMatchCount\": "
+        << facts.post_apply_metadata_distance_match_count << ",\n"
+        << "  \"postApplyMetadataIdentityMatchCount\": "
+        << facts.post_apply_metadata_identity_match_count << ",\n"
+        << "  \"postApplyMetadataFallbackRequiredCount\": "
+        << facts.post_apply_metadata_fallback_required_count << ",\n"
         << "  \"noLocalWrapper\": " << boolean(facts.no_local_wrapper) << ",\n"
         << "  \"resetOk\": " << boolean(facts.reset_ok) << ",\n"
         << "  \"resetIrFingerprintRestored\": "
@@ -2764,6 +3027,43 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
             std::string detail = first_blocking_error(apply_report);
             if (detail.empty()) detail = "apply-to-memory assertions did not match";
             throw std::runtime_error(detail);
+        }
+
+        for (const StructureEdit& edit : facts.selected) {
+            std::string metadata_error;
+            const std::optional<InspectorTargetMetadata> metadata =
+                resolve_inspector_target_metadata(
+                    handle.value, edit.edit_id, "structure.put", &metadata_error);
+            if (!metadata) {
+                ++facts.post_apply_metadata_fallback_required_count;
+                continue;
+            }
+            ++facts.post_apply_metadata_resolved_count;
+            if (!metadata->source_distance_string.empty()) {
+                ++facts.post_apply_source_distance_string_count;
+            }
+            const double distance_tolerance =
+                1e-9 * std::max(1.0, std::abs(edit.target_distance));
+            if (std::isfinite(metadata->distance_value) &&
+                std::abs(metadata->distance_value - edit.target_distance) <=
+                    distance_tolerance) {
+                ++facts.post_apply_metadata_distance_match_count;
+            }
+            if (metadata->row_kind == "structure.put" &&
+                metadata->source.file_path == edit.source_file &&
+                metadata->expected_source_hash == edit.expected_source_hash &&
+                metadata->raw_statement.find("Structure[") != std::string::npos &&
+                metadata->raw_statement.find(edit.structure_key) != std::string::npos) {
+                ++facts.post_apply_metadata_identity_match_count;
+            }
+        }
+        if (facts.post_apply_metadata_resolved_count != 5 ||
+            facts.post_apply_source_distance_string_count != 5 ||
+            facts.post_apply_metadata_distance_match_count != 5 ||
+            facts.post_apply_metadata_identity_match_count != 5 ||
+            facts.post_apply_metadata_fallback_required_count != 0) {
+            throw std::runtime_error(
+                "post-Apply baseline editId metadata did not remain resolvable");
         }
 
         facts.reset_ok = kv_edit_reset_memory(handle.value) != 0;

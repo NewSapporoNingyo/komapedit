@@ -536,25 +536,17 @@ void hydrate_file_structure(MapModel& model, const mini_json::Value& value,
     model.file_structure_revision = file_structure_revision(model.file_structure);
 }
 
-struct EditTargetInfo {
-    std::string row_kind;
-    size_t row_index = 0;
-    int elements_for_statement = 0;
-    std::string statement_kind;
-    std::string source_hash;
-    std::string expected_source_hash;
-    EditSourceInfo source;
-    std::string raw_text;
-    std::string raw_arguments;
-    std::string distance_expression;
-    double distance_value = 0.0;
-};
+bool row_kind_has_source_distance_string(const std::string& row_kind);
 
-std::optional<EditTargetInfo> fetch_edit_target_info(void* handle,
-                                                     const std::string& edit_id,
-                                                     std::string* error_message = nullptr) {
+std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
+    void* handle, const std::string& edit_id,
+    const std::string& expected_row_kind,
+    std::string* error_message) {
     if (error_message) error_message->clear();
-    if (!handle || edit_id.empty()) return std::nullopt;
+    if (!handle || edit_id.empty()) {
+        if (error_message) *error_message = "invalid edit target request";
+        return std::nullopt;
+    }
 
     const char* raw = kv_get_edit_target_info(handle, edit_id.c_str());
     if (!raw) {
@@ -573,17 +565,26 @@ std::optional<EditTargetInfo> fetch_edit_target_info(void* handle,
             if (error_message) *error_message = root.at("error").scalar_text();
             return std::nullopt;
         }
-        EditTargetInfo info;
+        InspectorTargetMetadata info;
         info.row_kind = root.at("rowKind").scalar_text();
+        if (!expected_row_kind.empty() && info.row_kind != expected_row_kind) {
+            if (error_message) {
+                *error_message = "edit target row kind changed from " +
+                    expected_row_kind + " to " + info.row_kind;
+            }
+            return std::nullopt;
+        }
         info.row_index = static_cast<size_t>(std::max(0.0, root.at("rowIndex").number));
         info.elements_for_statement = static_cast<int>(root.at("elementsForStatement").number);
         info.statement_kind = root.at("statementKind").scalar_text();
         info.source_hash = root.at("sourceHash").scalar_text();
         info.expected_source_hash = root.at("expectedSourceHash").scalar_text();
         info.source = edit_source_from_json(root.at("source"));
-        info.raw_text = root.at("rawText").scalar_text();
+        info.raw_statement = root.at("rawText").scalar_text();
         info.raw_arguments = root.at("rawArguments").scalar_text();
-        info.distance_expression = root.at("distanceExpression").scalar_text();
+        if (row_kind_has_source_distance_string(info.row_kind)) {
+            info.source_distance_string = root.at("distanceExpression").scalar_text();
+        }
         info.distance_value = root.at("distanceValue").number;
         return info;
     } catch (const std::exception& e) {
@@ -874,17 +875,15 @@ void App::apply_load_result(LoadResult result) {
         if (result.handle) kv_free(result.handle);
         return;
     }
-    const bool loaded_different_file = result.path != file_path_;
     if (handle_) kv_free(handle_);
     handle_ = result.handle;
     model_ = std::move(result.model);
-    committed_edit_id_remaps_.clear();
     edit_registry_loaded_ = result.full_edit_registry;
     preview_cache_handle_ = result.preview_cache_hit;
-    if (clear_pending_edits_after_load_ || loaded_different_file || has_pending_edits()) {
-        clear_pending_edit_state();
-        clear_pending_edits_after_load_ = false;
-    }
+    // A full disk load creates a new maploader identity session. Never keep an
+    // inspector request or pending ledger whose stable editIds belong to the
+    // replaced handle, including an ordinary same-file Reload with no changes.
+    clear_pending_edit_state();
     // A successful disk load starts a new edit batch even when it reloads the
     // same file with no pending ledger.
     distance_resolution_choices_.clear();
@@ -1590,6 +1589,7 @@ void App::clear_pending_edit_state() {
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     text_preview_.placement = TextPreviewPlacementState{};
     inspector_ = MapElementInspectorState{};
+    pending_inspector_request_.reset();
 }
 
 bool App::has_pending_edits() const {
@@ -1603,17 +1603,6 @@ bool App::row_has_pending_edit(const std::string& edit_id) const {
 bool App::row_is_pending_delete(const std::string& edit_id) const {
     auto it = pending_edit_changes_.find(edit_id);
     return it != pending_edit_changes_.end() && it->second.operation == "delete";
-}
-
-std::string App::current_edit_id(const std::string& edit_id) const {
-    std::string current = edit_id;
-    std::set<std::string> visited;
-    while (!current.empty() && visited.insert(current).second) {
-        auto remap = committed_edit_id_remaps_.find(current);
-        if (remap == committed_edit_id_remaps_.end() || remap->second.empty()) break;
-        current = remap->second;
-    }
-    return current;
 }
 
 bool App::edit_actions_available() const {
@@ -1759,7 +1748,7 @@ void App::request_element_inspector(const std::string& edit_id, const std::strin
         return;
     }
     if (edit_id.empty()) return;
-    pending_inspector_request_ = MapElementInspectorRequest{current_edit_id(edit_id), row_kind};
+    pending_inspector_request_ = MapElementInspectorRequest{edit_id, row_kind};
 }
 
 void App::process_pending_element_inspector() {
@@ -2017,7 +2006,8 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     }
 
     std::string info_error;
-    std::optional<EditTargetInfo> target_info = fetch_edit_target_info(handle_, edit_id, &info_error);
+    std::optional<InspectorTargetMetadata> target_info =
+        resolve_inspector_target_metadata(handle_, edit_id, request.row_kind, &info_error);
     if (!target_info && !info_error.empty()) {
         add_log("[warn]gui_kme.cpp: edit target metadata fallback: " + info_error);
     }
@@ -2034,11 +2024,9 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     if (target_info) next.expected_source_hash = target_info->expected_source_hash;
     next.line = source.line;
     next.column = source.column;
-    if (target_info && row_kind_has_source_distance_string(request.row_kind)) {
-        next.source_distance_string = target_info->distance_expression;
-    }
-    next.raw_statement = target_info && !target_info->raw_text.empty()
-        ? target_info->raw_text
+    if (target_info) next.source_distance_string = target_info->source_distance_string;
+    next.raw_statement = target_info && !target_info->raw_statement.empty()
+        ? target_info->raw_statement
         : source.raw_text_preview;
     next.delete_supported = true;
 
@@ -2248,7 +2236,6 @@ struct CommittedEditRowState {
 };
 
 bool apply_committed_edit_state(MapModel& model, const mini_json::Value& report,
-                                std::map<std::string, std::string>& edit_id_remaps,
                                 std::string& error) {
     const mini_json::Value& files = report.at("committedFiles");
     if (!files.is_array() || files.array.empty()) return true;
@@ -2290,6 +2277,8 @@ bool apply_committed_edit_state(MapModel& model, const mini_json::Value& report,
     static constexpr std::array<const char*, 4> kCommittedRowKinds = {
         "structure.model", "structure.put", "structure.between", "station.put",
     };
+    std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
+        states_by_edit_id;
     for (const char* row_kind : kCommittedRowKinds) {
         std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
         const std::vector<CommittedEditRowState>& states = rows_by_kind[row_kind];
@@ -2304,6 +2293,23 @@ bool apply_committed_edit_state(MapModel& model, const mini_json::Value& report,
                 return false;
             }
             seen[state.row_index] = true;
+            if (!state.edit_id.empty()) {
+                auto inserted = states_by_edit_id[row_kind].emplace(state.edit_id, &state);
+                if (!inserted.second) {
+                    error = std::string("edit commit contains a duplicate editId for ") +
+                        row_kind + ": " + state.edit_id;
+                    return false;
+                }
+            }
+        }
+        for (const TableRow& row : *target_rows) {
+            if (row.edit_id.empty()) continue;
+            if (states_by_edit_id[row_kind].find(row.edit_id) ==
+                states_by_edit_id[row_kind].end()) {
+                error = std::string("edit commit lost stable row identity for ") +
+                    row_kind + ": " + row.edit_id;
+                return false;
+            }
         }
     }
 
@@ -2318,16 +2324,44 @@ bool apply_committed_edit_state(MapModel& model, const mini_json::Value& report,
     }
     for (const char* row_kind : kCommittedRowKinds) {
         std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
-        for (const CommittedEditRowState& state : rows_by_kind[row_kind]) {
-            TableRow& row = (*target_rows)[state.row_index];
-            if (!row.edit_id.empty() && !state.edit_id.empty() && row.edit_id != state.edit_id) {
-                edit_id_remaps[row.edit_id] = state.edit_id;
+        for (size_t row_index = 0; row_index < target_rows->size(); ++row_index) {
+            TableRow& row = (*target_rows)[row_index];
+            const CommittedEditRowState* state = nullptr;
+            if (!row.edit_id.empty()) {
+                state = states_by_edit_id[row_kind].at(row.edit_id);
+            } else {
+                const std::vector<CommittedEditRowState>& states = rows_by_kind[row_kind];
+                auto fallback = std::find_if(
+                    states.begin(), states.end(), [&](const CommittedEditRowState& candidate) {
+                        return candidate.row_index == row_index && candidate.edit_id.empty();
+                    });
+                if (fallback != states.end()) state = &*fallback;
             }
-            row.edit_id = state.edit_id;
-            row.source = state.source;
+            if (!state) {
+                error = std::string("edit commit could not bind row metadata for ") + row_kind;
+                return false;
+            }
+            row.source = state->source;
         }
     }
     return true;
+}
+
+bool apply_committed_edit_report_to_model(MapModel& model,
+                                          const std::string& report_json,
+                                          std::string& error_message) {
+    error_message.clear();
+    try {
+        const mini_json::Value report = mini_json::Parser(report_json).parse();
+        if (!report.at("ok").boolean) {
+            error_message = "edit commit report is not successful";
+            return false;
+        }
+        return apply_committed_edit_state(model, report, error_message);
+    } catch (const std::exception& e) {
+        error_message = e.what();
+        return false;
+    }
 }
 
 bool App::parse_and_log_edit_report(const std::string& report_text,
@@ -2373,15 +2407,17 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
         if (delete_count) *delete_count = deletes;
         if (changed_file_count) *changed_file_count = files;
         if (ok) {
-            std::map<std::string, std::string> edit_id_remaps;
             std::string committed_state_error;
-            if (!apply_committed_edit_state(model_, report, edit_id_remaps,
-                                            committed_state_error)) {
-                add_log("[warn]gui_kme.cpp: saved edit metadata refresh failed: " + committed_state_error);
-            } else {
-                for (const auto& remap : edit_id_remaps) {
-                    committed_edit_id_remaps_[remap.first] = remap.second;
-                }
+            if (!apply_committed_edit_state(model_, report, committed_state_error)) {
+                add_log("[error]gui_kme.cpp: saved edit metadata refresh failed; Reload is required: " +
+                        committed_state_error);
+                // The disk commit has already completed, so retaining the old
+                // GUI ledger or inspector would make a later Save target stale
+                // session identities. Disable editing until a full Reload
+                // rebuilds the model and edit registry from the committed file.
+                clear_pending_edit_state();
+                edit_registry_loaded_ = false;
+                ok = false;
             }
         }
         if (ok && !success_prefix.empty()) {
@@ -2446,6 +2482,26 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
                                        std::string resolution_origin_edit_id) {
     if (!edit_actions_available()) return false;
     const bool ended_batch = !pending_edit_changes_.empty() && changes.empty();
+
+    // The backend working copy and the locally patched table rows form one
+    // preview transaction. Back up only the row kinds touched by either ledger
+    // so a local lookup failure cannot leave a validated backend candidate that
+    // Save would commit while the GUI still shows the previous ledger.
+    std::set<std::string> affected_row_kinds;
+    for (const auto& entry : pending_edit_changes_) {
+        if (!entry.second.row_kind.empty()) affected_row_kinds.insert(entry.second.row_kind);
+    }
+    for (const auto& entry : changes) {
+        if (!entry.second.row_kind.empty()) affected_row_kinds.insert(entry.second.row_kind);
+    }
+    std::map<std::string, std::vector<TableRow>> row_backups;
+    for (const std::string& row_kind : affected_row_kinds) {
+        if (std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, row_kind)) {
+            row_backups.emplace(row_kind, *rows);
+        }
+    }
+    const auto snapshot_backup = original_edit_rows_;
+
     std::vector<DistanceResolutionRequest> resolution_requests;
     if (!sync_edit_memory_with_ledger(changes, &resolution_requests)) {
         if (!pending_edit_changes_.empty()) {
@@ -2459,18 +2515,38 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         return false;
     }
 
+    auto rollback_local_preview = [&]() {
+        for (auto& backup : row_backups) {
+            if (std::vector<TableRow>* rows =
+                    mutable_inspector_rows_for_kind(model_, backup.first)) {
+                *rows = std::move(backup.second);
+            }
+        }
+        original_edit_rows_ = snapshot_backup;
+        for (const std::string& row_kind : affected_row_kinds) {
+            refresh_local_preview_after_edit(row_kind);
+        }
+
+        edit_memory_matches_pending_ledger_ = false;
+        if (!sync_edit_memory_with_ledger(pending_edit_changes_)) {
+            add_log("[error]gui_kme.cpp: failed to restore maploader working copy after "
+                    "a local preview error; Save is blocked");
+        }
+        return false;
+    };
+
     for (const auto& kv : pending_edit_changes_) {
         if (changes.find(kv.first) != changes.end()) continue;
         if (!restore_local_preview_change(kv.first, kv.second.row_kind)) {
             add_log("[error]gui_kme.cpp: failed to restore local edit preview: " + kv.first);
-            return false;
+            return rollback_local_preview();
         }
     }
 
     for (const auto& kv : changes) {
         if (!apply_local_preview_change(kv.second)) {
             add_log("[error]gui_kme.cpp: failed to apply local edit preview: " + kv.first);
-            return false;
+            return rollback_local_preview();
         }
     }
     pending_edit_changes_ = changes;
@@ -2799,7 +2875,6 @@ bool App::save_pending_edits(bool refresh_inspector) {
     if (refresh_inspector && inspector_target_deleted) {
         inspector_.open = false;
     } else if (inspector_request) {
-        inspector_request->edit_id = current_edit_id(inspector_request->edit_id);
         if (open_element_inspector(*inspector_request)) {
             inspector_.status_message = tr("status.edit.saved");
         }
@@ -4640,7 +4715,6 @@ bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
 void App::execute_pending_reload_action() {
     PendingReloadAction action = pending_reload_action_;
     pending_reload_action_ = PendingReloadAction::None;
-    clear_pending_edits_after_load_ = true;
     if (action == PendingReloadAction::MapAndModelPreview) {
         perform_reload_current_map_and_model_preview();
     } else if (action == PendingReloadAction::GeometryOnly) {

@@ -1068,6 +1068,29 @@ struct MapElementInspectorRequest {
     std::map<std::string, std::string> field_values;
 };
 
+struct InspectorTargetMetadata {
+    std::string row_kind;
+    size_t row_index = 0;
+    int elements_for_statement = 0;
+    std::string statement_kind;
+    std::string source_hash;
+    std::string expected_source_hash;
+    EditSourceInfo source;
+    std::string raw_statement;
+    std::string raw_arguments;
+    std::string source_distance_string;
+    double distance_value = 0.0;
+};
+
+std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
+    void* handle, const std::string& edit_id,
+    const std::string& expected_row_kind,
+    std::string* error_message = nullptr);
+
+bool apply_committed_edit_report_to_model(MapModel& model,
+                                          const std::string& report_json,
+                                          std::string& error_message);
+
 struct DistanceResolutionChoice {
     std::string boundary_token;
     std::string distance_expression;
@@ -1175,11 +1198,9 @@ private:
     bool edit_mode_enabled_ = false;
     bool edit_registry_loaded_ = false;
     bool preview_cache_handle_ = false;
-    bool clear_pending_edits_after_load_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
     bool edit_memory_matches_pending_ledger_ = true;
     std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
-    std::map<std::string, std::string> committed_edit_id_remaps_;
     std::map<std::string, DistanceResolutionChoice> distance_resolution_choices_;
     DistanceResolutionWorkflowState distance_resolution_workflow_;
     MapElementInspectorState inspector_;
@@ -1528,7 +1549,6 @@ private:
     bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);
     bool row_has_pending_edit(const std::string& edit_id) const;
     bool row_is_pending_delete(const std::string& edit_id) const;
-    std::string current_edit_id(const std::string& edit_id) const;
     bool edit_actions_available() const;
     void set_edit_mode_enabled(bool enabled);
     void apply_edit_mode_enabled(bool enabled);
