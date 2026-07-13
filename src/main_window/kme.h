@@ -187,6 +187,34 @@ struct FileStructureDiagramLayoutCache {
     ImVec2 content_size;
 };
 
+struct TextPreviewLineRange {
+    size_t begin = 0;
+    size_t end = 0;
+};
+
+enum class TextPreviewSelectionKind { None, Line, BetweenLines };
+
+struct TextPreviewSelection {
+    TextPreviewSelectionKind kind = TextPreviewSelectionKind::None;
+    // Line uses a zero-based line index. BetweenLines uses a gap index in
+    // [0, line_count], so future insert/move tools can target source gaps.
+    size_t index = 0;
+};
+
+struct TextPreviewState {
+    bool open = false;
+    bool focus_next = false;
+    std::string file_path;
+    std::string encoding;
+    std::string text;
+    std::vector<TextPreviewLineRange> lines;
+    std::string error;
+    TextPreviewSelection selection;
+    const ImFont* measured_font = nullptr;
+    float measured_font_size = 0.0f;
+    float max_text_width = 0.0f;
+};
+
 struct EditSourceFileInfo {
     std::string file_path;
     std::string display_path;
@@ -1264,6 +1292,7 @@ private:
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
     FileStructureDiagramLayoutCache file_structure_layout_cache_;
+    TextPreviewState text_preview_;
     TableFindState structure_model_find_;
     TableFindState signal_aspect_find_;
     TableFindState sound_file_find_;
@@ -1463,6 +1492,10 @@ private:
     void render_cab_illuminance_window();
     void render_fogs_window();
     void render_file_structure_window();
+    static bool is_supported_text_preview_file(const std::string& file_path);
+    void open_text_preview(const std::string& file_path);
+    void refresh_text_preview_after_map_load();
+    void render_text_preview_window();
     void render_model_preview_window();
     void render_scene_preview_window();
     void preview_structure_model(const std::string& path);

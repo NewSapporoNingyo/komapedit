@@ -180,6 +180,20 @@ std::string decode_utf16(const std::string& bytes, bool little_endian) {
     return out;
 }
 
+std::string decode_text_bytes(const std::string& bytes, const std::string& encoding) {
+    std::string lower = encoding;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (lower == "utf-16le") return decode_utf16(bytes, true);
+    if (lower == "utf-16be") return decode_utf16(bytes, false);
+    if (lower == "cp932" || lower == "shift_jis" || lower == "sjis") {
+        return decode_codepage(bytes, 932, false);
+    }
+    if (has_utf8_bom(bytes)) return decode_codepage(bytes.substr(3), 65001, true);
+    return decode_codepage(bytes, 65001, true);
+}
+
 std::string first_line_ascii(const std::string& bytes) {
     size_t end = bytes.find('\n');
     if (end == std::string::npos) end = std::min<size_t>(bytes.size(), 512);

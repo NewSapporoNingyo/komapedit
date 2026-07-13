@@ -16,6 +16,7 @@ std::filesystem::path path_from_utf8(const std::string& utf8);
 std::string read_binary_file(const std::filesystem::path& path);
 std::string decode_codepage(const std::string& bytes, unsigned int codepage, bool strict);
 std::string decode_utf16(const std::string& bytes, bool little_endian);
+std::string decode_text_bytes(const std::string& bytes, const std::string& encoding);
 std::string first_line_ascii(const std::string& bytes);
 bool has_utf8_bom(const std::string& bytes);
 std::string encode_text_for_writeback(const std::string& utf8_text,

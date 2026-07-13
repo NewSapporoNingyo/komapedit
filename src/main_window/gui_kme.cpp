@@ -850,6 +850,7 @@ void App::apply_load_result(LoadResult result) {
         scene_preview_preserve_camera_on_rebuild_ = false;
     }
     file_path_ = result.path;
+    refresh_text_preview_after_map_load();
     dmin_ = model_.default_min;
     dmax_ = model_.default_max;
     plot_min_ = dmin_;
@@ -2852,6 +2853,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Fogs", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("FileStructureDiagram", dock_main);
+    ImGui::DockBuilderDockWindow("TextPreview", dock_main);
     ImGui::DockBuilderDockWindow("ModelPreview3D", dock_main);
     ImGui::DockBuilderDockWindow("ScenePreview3D", dock_main);
     ImGui::DockBuilderDockWindow("Plots", dock_main);
@@ -3200,6 +3202,13 @@ void App::render_menu() {
                             &show_file_structure_window_) && show_file_structure_window_) {
             focus_file_structure_next_ = true;
         }
+        const bool can_preview_root = has_model_ && !model_.file_structure.empty() &&
+            is_supported_text_preview_file(model_.file_structure.front().absolute_path);
+        ImGui::BeginDisabled(!can_preview_root);
+        if (ImGui::MenuItem(tr("frame.text_preview").c_str(), nullptr, text_preview_.open)) {
+            open_text_preview(model_.file_structure.front().absolute_path);
+        }
+        ImGui::EndDisabled();
         ImGui::MenuItem(tr("chk.console_window").c_str(), nullptr, &show_console_window_);
     };
 
@@ -4270,6 +4279,7 @@ void App::render() {
     render_console();
     render_plots();
     render_file_structure_window();
+    render_text_preview_window();
     render_model_preview_window();
     render_scene_preview_window();
     render_structures_window();

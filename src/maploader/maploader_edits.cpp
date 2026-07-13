@@ -271,18 +271,6 @@ std::string newline_text(const std::string& newline) {
     return "\n";
 }
 
-std::string decode_source_text_for_edit(const std::string& bytes,
-                                        const std::string& encoding) {
-    std::string lower = ascii_lower(encoding);
-    if (lower == "utf-16le") return decode_utf16(bytes, true);
-    if (lower == "utf-16be") return decode_utf16(bytes, false);
-    if (lower == "cp932" || lower == "shift_jis" || lower == "sjis") {
-        return decode_codepage(bytes, 932, false);
-    }
-    if (has_utf8_bom(bytes)) return decode_codepage(bytes.substr(3), CP_UTF8, true);
-    return decode_codepage(bytes, CP_UTF8, true);
-}
-
 SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& record) {
     SourcePatch patch;
     patch.record = &record;
@@ -301,7 +289,7 @@ SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& rec
     patch.current_hash = hex64(stable_hash64(bytes));
     patch.base_hash = patch.current_hash;
     patch.utf8_bom = has_utf8_bom(bytes);
-    patch.text = decode_source_text_for_edit(bytes, record.encoding);
+    patch.text = decode_text_bytes(bytes, record.encoding);
     return patch;
 }
 

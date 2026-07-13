@@ -8,6 +8,23 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_library(kme_text_decoder STATIC
+    src/maploader/text_decoder.cpp
+)
+target_compile_features(kme_text_decoder PRIVATE cxx_std_17)
+target_include_directories(kme_text_decoder PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/maploader
+)
+set_target_properties(kme_text_decoder PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(WIN32)
+    target_compile_definitions(kme_text_decoder PRIVATE
+        UNICODE
+        _UNICODE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+endif()
+
 add_library(maploader SHARED
     src/maploader/maploader.cpp
     src/maploader/maploader_core.cpp
@@ -16,7 +33,6 @@ add_library(maploader SHARED
     src/maploader/maploader_ir_json.cpp
     src/maploader/maploader_edits.cpp
     src/maploader/diagnostics.cpp
-    src/maploader/text_decoder.cpp
     src/maploader/c_api.cpp
 )
 
@@ -24,6 +40,7 @@ target_compile_features(maploader PRIVATE cxx_std_17)
 target_include_directories(maploader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_link_libraries(maploader PRIVATE kme_text_decoder)
 
 if(MINGW)
     target_link_libraries(maploader PRIVATE ole32)
@@ -136,6 +153,7 @@ add_executable(komapedit
     src/main_window/gui_kme.cpp
     src/main_window/app_settings.cpp
     src/main_window/file_structure_diagram.cpp
+    src/main_window/text_preview.cpp
     src/main_window/debug_headless.cpp
     src/main_window/touch_input.cpp
     src/canvas2d/canvas2D.cpp
@@ -166,6 +184,7 @@ if(MSVC)
 endif()
 target_link_libraries(komapedit PRIVATE
     maploader
+    kme_text_decoder
     implot
     imgui
     d3d11

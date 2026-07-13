@@ -264,6 +264,13 @@ void App::render_file_structure_window() {
             if (ImGui::BeginPopupContextItem("file_structure_node_context",
                                              ImGuiPopupFlags_MouseButtonRight)) {
                 const bool can_open = !blank_ascii(node.absolute_path);
+                const bool can_preview =
+                    can_open && is_supported_text_preview_file(node.absolute_path);
+                ImGui::BeginDisabled(!can_preview);
+                if (ImGui::MenuItem(tr("menu.preview_text").c_str())) {
+                    open_text_preview(node.absolute_path);
+                }
+                ImGui::EndDisabled();
                 ImGui::BeginDisabled(!can_open);
                 if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
                     open_parent_directory_in_explorer(node.absolute_path);
