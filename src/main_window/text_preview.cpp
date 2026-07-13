@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cfloat>
 #include <climits>
 #include <cstdio>
 #include <exception>
@@ -219,13 +218,13 @@ void App::render_text_preview_window() {
 
                 ImGui::TableSetColumnIndex(1);
                 ImGui::PushID(line_index);
+                const ImVec2 text_position = ImGui::GetCursorScreenPos();
                 if (ImGui::Selectable("##text_preview_line", selected,
-                                      ImGuiSelectableFlags_None,
-                                      ImVec2(-FLT_MIN, ImGui::GetTextLineHeight()))) {
+                                      ImGuiSelectableFlags_SpanAllColumns,
+                                      ImVec2(0.0f, ImGui::GetTextLineHeight()))) {
                     text_preview_.selection.kind = TextPreviewSelectionKind::Line;
                     text_preview_.selection.index = index;
                 }
-                const ImVec2 text_position = ImGui::GetItemRectMin();
                 const TextPreviewLineRange& line = text_preview_.lines[index];
                 ImGui::GetWindowDrawList()->AddText(
                     text_position, ImGui::GetColorU32(ImGuiCol_Text),
