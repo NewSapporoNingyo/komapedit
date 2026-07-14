@@ -506,6 +506,18 @@ KV_API const char* kv_get_edit_target_info(void* handle, const char* edit_id) {
     }
 }
 
+KV_API const char* kv_get_source_text(void* handle, const char* file_path) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        auto* ctx = static_cast<MapContext*>(handle);
+        return copy_c_string(kme::maploader::detail::current_source_text(
+            *ctx, file_path ? file_path : ""));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
+}
+
 KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json) {
     try {
         if (!handle) throw std::runtime_error("handle is null");

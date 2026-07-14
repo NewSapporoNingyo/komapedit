@@ -2532,6 +2532,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             add_log("[error]gui_kme.cpp: failed to restore maploader working copy after "
                     "a local preview error; Save is blocked");
         }
+        refresh_text_preview_from_working_copy();
         return false;
     };
 
@@ -2560,6 +2561,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     } else if (!pending_edit_changes_.empty() && inspector_.open) {
         inspector_.status_message = tr("status.edit.applied_to_preview");
     }
+    refresh_text_preview_from_working_copy();
     return true;
 }
 
@@ -2737,10 +2739,21 @@ void App::apply_distance_resolution_choice(const DistanceResolutionChoice& choic
 void App::select_distance_resolution_boundary(const std::string& token) {
     if (distance_resolution_workflow_.phase != DistanceResolutionPhase::SelectBoundary) return;
     const auto& boundaries = distance_resolution_workflow_.request.allowed_boundaries;
-    const bool allowed = std::any_of(boundaries.begin(), boundaries.end(),
-                                     [&](const DistanceResolutionBoundary& boundary) {
-                                         return boundary.token == token;
-                                     });
+    const auto selected = std::find_if(
+        boundaries.begin(), boundaries.end(),
+        [&](const DistanceResolutionBoundary& boundary) { return boundary.token == token; });
+    if (selected == boundaries.end()) return;
+    text_preview_.placement.selected_boundary_token = token;
+}
+
+void App::confirm_distance_resolution_boundary() {
+    if (distance_resolution_workflow_.phase != DistanceResolutionPhase::SelectBoundary) return;
+    const std::string token = text_preview_.placement.selected_boundary_token;
+    if (token.empty()) return;
+    const auto& boundaries = distance_resolution_workflow_.request.allowed_boundaries;
+    const bool allowed = std::any_of(
+        boundaries.begin(), boundaries.end(),
+        [&](const DistanceResolutionBoundary& boundary) { return boundary.token == token; });
     if (!allowed) return;
     DistanceResolutionChoice choice;
     choice.boundary_token = token;
@@ -2872,6 +2885,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     pending_edit_changes_.clear();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
+    refresh_text_preview_from_working_copy();
     if (refresh_inspector && inspector_target_deleted) {
         inspector_.open = false;
     } else if (inspector_request) {
@@ -3665,7 +3679,7 @@ void App::render_menu() {
             is_supported_text_preview_file(model_.file_structure.front().absolute_path);
         ImGui::BeginDisabled(!can_preview_root);
         if (ImGui::MenuItem(tr("frame.text_preview").c_str(), nullptr, text_preview_.open)) {
-            open_text_preview(model_.file_structure.front().absolute_path);
+            open_text_preview(model_.file_structure.front().absolute_path, true);
         }
         ImGui::EndDisabled();
         ImGui::MenuItem(tr("chk.console_window").c_str(), nullptr, &show_console_window_);

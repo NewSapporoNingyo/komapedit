@@ -268,7 +268,7 @@ void App::render_file_structure_window() {
                     can_open && is_supported_text_preview_file(node.absolute_path);
                 ImGui::BeginDisabled(!can_preview);
                 if (ImGui::MenuItem(tr("menu.preview_text").c_str())) {
-                    open_text_preview(node.absolute_path);
+                    open_text_preview(node.absolute_path, true);
                 }
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!can_open);

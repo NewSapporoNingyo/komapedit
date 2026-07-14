@@ -701,6 +701,7 @@ LoadedText load_header_text(const MapContext& ctx,
                             double min_version);
 std::string normalized_source_path(const std::filesystem::path& path);
 std::string normalized_source_key(std::string path);
+std::string current_source_text(const MapContext& ctx, const std::string& file_path);
 size_t register_source_file_index(MapContext& ctx, const LoadedText& loaded);
 void register_source_file(MapContext& ctx, const LoadedText& loaded);
 std::string include_stack_key(const std::vector<std::string>& stack);

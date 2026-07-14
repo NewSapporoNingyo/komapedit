@@ -13,6 +13,7 @@
 namespace kme::maploader::detail {
 
 using kme::maploader::decode_codepage;
+using kme::maploader::decode_text_bytes;
 using kme::maploader::decode_utf16;
 using kme::maploader::encode_text_for_writeback;
 using kme::maploader::first_line_ascii;
@@ -433,6 +434,25 @@ std::string normalized_source_path(const std::filesystem::path& path) {
 std::string normalized_source_key(std::string path) {
     std::replace(path.begin(), path.end(), '\\', '/');
     return ascii_lower(std::move(path));
+}
+
+std::string current_source_text(const MapContext& ctx, const std::string& file_path) {
+    if (file_path.empty()) throw std::runtime_error("source file path is empty");
+
+    const std::string source_key = normalized_source_key(
+        normalized_source_path(path_from_utf8(file_path)));
+    const auto source_index = ctx.source_file_indices.find(source_key);
+    if (source_index == ctx.source_file_indices.end() ||
+        source_index->second >= ctx.source_files.size()) {
+        throw std::runtime_error("source file is not part of the loaded map: " + file_path);
+    }
+
+    const auto override_it = ctx.source_overrides.find(source_key);
+    if (override_it != ctx.source_overrides.end()) return override_it->second.text;
+
+    const SourceFileRecord& source = ctx.source_files[source_index->second];
+    const std::string bytes = read_binary_file(path_from_utf8(source.file_path));
+    return decode_text_bytes(bytes, source.encoding);
 }
 
 size_t register_source_file_index(MapContext& ctx, const LoadedText& loaded) {

@@ -95,6 +95,11 @@ KV_API const char* kv_get_ir_json(void* handle);
    UTF-8 JSON owned by the caller. Release it with kv_free_string(). */
 KV_API const char* kv_get_edit_target_info(void* handle, const char* edit_id);
 
+/* Returns the complete decoded UTF-8 text for one parsed source file, including
+   the active in-memory edit override when present. The source file must belong
+   to the loaded map. Release the returned string with kv_free_string(). */
+KV_API const char* kv_get_source_text(void* handle, const char* file_path);
+
 /* Validates edit changes and returns a newly allocated UTF-8 JSON report.
    Does not write source files. Release it with kv_free_string(). */
 KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json);

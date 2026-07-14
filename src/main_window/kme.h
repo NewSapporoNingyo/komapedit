@@ -229,13 +229,9 @@ struct DistanceResolutionRequest {
 struct TextPreviewPlacementState {
     bool active = false;
     std::string resolution_key;
-    std::vector<std::string> include_stack;
-    std::string include_context_display;
     std::string insertion_preview;
-    int source_section_first_line = 0;
-    int source_section_last_line = 0;
-    std::string source_section_direction;
     std::vector<DistanceResolutionBoundary> allowed_boundaries;
+    std::string selected_boundary_token;
     int scroll_to_line = 0;
     bool scroll_pending = false;
 };
@@ -243,6 +239,7 @@ struct TextPreviewPlacementState {
 struct TextPreviewState {
     bool open = false;
     bool focus_next = false;
+    bool parser_source = false;
     std::string file_path;
     std::string encoding;
     std::string text;
@@ -1536,6 +1533,7 @@ private:
         const std::vector<DistanceResolutionRequest>& requests);
     void apply_distance_resolution_choice(const DistanceResolutionChoice& choice);
     void select_distance_resolution_boundary(const std::string& token);
+    void confirm_distance_resolution_boundary();
     void cancel_distance_resolution_workflow();
     void process_distance_resolution_retry();
     bool apply_pending_edits_to_preview();
@@ -1601,6 +1599,8 @@ private:
     static bool is_supported_text_preview_file(const std::string& file_path);
     void open_text_preview(const std::string& file_path,
                            bool parser_confirmed_source = false);
+    bool load_text_preview_content(TextPreviewState& preview);
+    void refresh_text_preview_from_working_copy();
     void open_text_preview_for_distance_resolution(const DistanceResolutionRequest& request);
     void refresh_text_preview_after_map_load();
     void render_text_preview_window();

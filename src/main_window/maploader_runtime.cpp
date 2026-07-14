@@ -28,6 +28,7 @@ namespace {
     X(get_ir_json_ex, kv_get_ir_json_ex) \
     X(get_ir_json, kv_get_ir_json) \
     X(get_edit_target_info, kv_get_edit_target_info) \
+    X(get_source_text, kv_get_source_text) \
     X(edit_dry_run, kv_edit_dry_run) \
     X(edit_apply_to_memory, kv_edit_apply_to_memory) \
     X(edit_reset_memory, kv_edit_reset_memory) \
@@ -201,6 +202,11 @@ const char* kv_get_ir_json(void* handle) {
 const char* kv_get_edit_target_info(void* handle, const char* edit_id) {
     MaploaderRuntime& runtime = maploader_runtime();
     return runtime.available() ? runtime.get_edit_target_info(handle, edit_id) : nullptr;
+}
+
+const char* kv_get_source_text(void* handle, const char* file_path) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.get_source_text(handle, file_path) : nullptr;
 }
 
 const char* kv_edit_dry_run(void* handle, const char* changes_json) {
