@@ -22,6 +22,7 @@ struct Canvas3DTrackPoint {
     double y = 0.0;
     double z = 0.0;
     double theta = 0.0;
+    double gradient = 0.0;
     double cant_angle = 0.0;
 };
 
@@ -71,6 +72,10 @@ struct Canvas3DModelInstance {
     double distance = 0.0;
     int object_index = -1;
     bool follow_track = false;
+    bool put_between = false;
+    std::string put_between_track_key1;
+    std::string put_between_track_key2;
+    int put_between_flag = 0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;

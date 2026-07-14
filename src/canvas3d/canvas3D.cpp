@@ -548,6 +548,8 @@ struct CpuMaterial {
 
 struct CpuModelData {
     std::string path;
+    std::string scene_key;
+    std::string shared_model_key;
     std::vector<GpuVertex> vertices;
     std::vector<unsigned int> indices;
     std::vector<MeshPart> parts;
@@ -558,6 +560,22 @@ struct CpuModelData {
     float radius = 1.0f;
     bool ok = false;
     std::string error;
+};
+
+struct ScenePutBetweenDeformation {
+    bool enabled = false;
+    double distance = 0.0;
+    int flag = 0;
+    DVec3 origin;
+    const Canvas3DTrackPath* own_track = nullptr;
+    const Canvas3DTrackPath* track1 = nullptr;
+    const Canvas3DTrackPath* track2 = nullptr;
+};
+
+struct SceneModelLoadRequest {
+    std::string key;
+    std::string source_path;
+    ScenePutBetweenDeformation put_between;
 };
 
 struct SceneModelGpu {
@@ -850,6 +868,7 @@ Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool
     p.z = -points.at(row, 1);
     p.y = points.cols > 3 ? points.at(row, 3) : 0.0;
     p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_matrix_track_tangent(points, row);
+    p.gradient = has_theta_column && points.cols > 6 ? points.at(row, 6) : 0.0;
     if (has_theta_column) {
         double cant = points.cols > 8 ? points.at(row, 8) : 0.0;
         double gauge = points.cols > 10 ? points.at(row, 10) : default_gauge;
@@ -903,6 +922,7 @@ std::optional<Canvas3DTrackPoint> scene_sample_track_path_points(const Canvas3DT
     out.y = a.y + (b.y - a.y) * t;
     out.z = a.z + (b.z - a.z) * t;
     out.theta = angle_lerp(a.theta, b.theta, t);
+    out.gradient = a.gradient + (b.gradient - a.gradient) * t;
     out.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
     return out;
 }
@@ -922,6 +942,181 @@ const Canvas3DTrackPath* scene_other_track_path_for_key(const Canvas3DScene& sce
         if (normalize_scene_track_key(path.key) == normalized_key) return &path;
     }
     return nullptr;
+}
+
+void append_scene_model_key_field(std::string& key, const std::string& value) {
+    const size_t size = value.size();
+    key.append(reinterpret_cast<const char*>(&size), sizeof(size));
+    key.append(value);
+}
+
+std::string scene_model_key_for_instance(const Canvas3DModelInstance& instance,
+                                         size_t geometry_generation) {
+    if (!instance.put_between) return instance.model_path;
+
+    std::string key(1, '\x1f');
+    key.append("putbetween");
+    append_scene_model_key_field(key, instance.model_path);
+    append_scene_model_key_field(key, normalize_scene_track_key(instance.put_between_track_key1));
+    append_scene_model_key_field(key, normalize_scene_track_key(instance.put_between_track_key2));
+    key.append(reinterpret_cast<const char*>(&instance.distance), sizeof(instance.distance));
+    const int flag = instance.put_between_flag & 1;
+    key.append(reinterpret_cast<const char*>(&flag), sizeof(flag));
+    key.append(reinterpret_cast<const char*>(&geometry_generation), sizeof(geometry_generation));
+    return key;
+}
+
+bool update_cpu_model_bounds(CpuModelData& model) {
+    if (model.vertices.empty()) return false;
+
+    DVec3 bounds_min{
+        std::numeric_limits<double>::infinity(),
+        std::numeric_limits<double>::infinity(),
+        std::numeric_limits<double>::infinity()
+    };
+    DVec3 bounds_max{
+        -std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity()
+    };
+    for (const GpuVertex& vertex : model.vertices) {
+        bounds_min.x = std::min(bounds_min.x, static_cast<double>(vertex.px));
+        bounds_min.y = std::min(bounds_min.y, static_cast<double>(vertex.py));
+        bounds_min.z = std::min(bounds_min.z, static_cast<double>(vertex.pz));
+        bounds_max.x = std::max(bounds_max.x, static_cast<double>(vertex.px));
+        bounds_max.y = std::max(bounds_max.y, static_cast<double>(vertex.py));
+        bounds_max.z = std::max(bounds_max.z, static_cast<double>(vertex.pz));
+    }
+    const DVec3 center = (bounds_min + bounds_max) * 0.5;
+    double radius_squared = 0.0;
+    for (const GpuVertex& vertex : model.vertices) {
+        const DVec3 offset{
+            static_cast<double>(vertex.px) - center.x,
+            static_cast<double>(vertex.py) - center.y,
+            static_cast<double>(vertex.pz) - center.z
+        };
+        radius_squared = std::max(radius_squared, dot(offset, offset));
+    }
+    if (!std::isfinite(radius_squared)) return false;
+
+    model.bounds_min = {
+        static_cast<float>(bounds_min.x),
+        static_cast<float>(bounds_min.y),
+        static_cast<float>(bounds_min.z)
+    };
+    model.bounds_max = {
+        static_cast<float>(bounds_max.x),
+        static_cast<float>(bounds_max.y),
+        static_cast<float>(bounds_max.z)
+    };
+    model.center = {
+        static_cast<float>(center.x),
+        static_cast<float>(center.y),
+        static_cast<float>(center.z)
+    };
+    model.radius = std::max(static_cast<float>(std::sqrt(radius_squared)), 0.001f);
+    return true;
+}
+
+CpuModelData derive_put_between_model(const CpuModelData& source,
+                                      const SceneModelLoadRequest& request) {
+    CpuModelData result;
+    result.path = request.source_path;
+    result.scene_key = request.key;
+    result.shared_model_key = request.source_path;
+    if (!source.ok) {
+        result.error = source.error;
+        return result;
+    }
+    if (!request.put_between.own_track || !request.put_between.track1 || !request.put_between.track2) {
+        result.error = "PutBetween references an unavailable track";
+        return result;
+    }
+    if (source.vertices.empty()) {
+        result.error = "PutBetween model contains no vertices";
+        return result;
+    }
+
+    double average_x = 0.0;
+    for (const GpuVertex& vertex : source.vertices) average_x += static_cast<double>(vertex.px);
+    average_x /= static_cast<double>(source.vertices.size());
+    if (!std::isfinite(average_x)) {
+        result.error = "PutBetween model contains invalid vertex coordinates";
+        return result;
+    }
+
+    // BVE PutBetween models extend from x=0 in either the positive or negative x direction.
+    // The sign determines which end of the mesh is anchored to trackKey1.
+    const double orientation = average_x < 0.0 ? -1.0 : 1.0;
+    double min_oriented_x = std::numeric_limits<double>::infinity();
+    double max_oriented_x = -std::numeric_limits<double>::infinity();
+    for (const GpuVertex& vertex : source.vertices) {
+        const double oriented_x = static_cast<double>(vertex.px) * orientation;
+        min_oriented_x = std::min(min_oriented_x, oriented_x);
+        max_oriented_x = std::max(max_oriented_x, oriented_x);
+    }
+    const double split_x = average_x * orientation;
+    const double opposite_edge_offset = (min_oriented_x + max_oriented_x) * orientation;
+    const double max_float = static_cast<double>(std::numeric_limits<float>::max());
+
+    result.vertices = source.vertices;
+    for (GpuVertex& vertex : result.vertices) {
+        const double original_x = static_cast<double>(vertex.px);
+        const double vertex_distance = request.put_between.distance - static_cast<double>(vertex.pz);
+        const bool track1_side = original_x * orientation < split_x;
+        const Canvas3DTrackPath& selected_track =
+            track1_side ? *request.put_between.track1 : *request.put_between.track2;
+        auto own_point = scene_sample_track_path_points(*request.put_between.own_track, vertex_distance);
+        auto selected_point = scene_sample_track_path_points(selected_track, vertex_distance);
+        if (!own_point || !selected_point) {
+            result.vertices.clear();
+            result.error = "PutBetween could not sample track geometry";
+            return result;
+        }
+
+        const double residual_x = track1_side ? original_x : original_x - opposite_edge_offset;
+        DVec3 anchor{selected_point->x, selected_point->y, selected_point->z};
+        if ((request.put_between.flag & 1) != 0) anchor.y = own_point->y;
+
+        const double gradient = std::isfinite(own_point->gradient) ? own_point->gradient / 1000.0 : 0.0;
+        const DVec3 right = right_from_theta_d(own_point->theta);
+        const DVec3 forward = normalize(DVec3{
+            std::sin(own_point->theta),
+            gradient,
+            -std::cos(own_point->theta)
+        });
+        const DVec3 up = normalize(cross(right, forward));
+        const DVec3 world_position =
+            anchor + right * residual_x + up * static_cast<double>(vertex.py);
+        const DVec3 local_position = world_position - request.put_between.origin;
+        if (!std::isfinite(local_position.x) || !std::isfinite(local_position.y) ||
+            !std::isfinite(local_position.z) || std::abs(local_position.x) > max_float ||
+            std::abs(local_position.y) > max_float || std::abs(local_position.z) > max_float) {
+            result.vertices.clear();
+            result.error = "PutBetween produced invalid vertex coordinates";
+            return result;
+        }
+        vertex.px = static_cast<float>(local_position.x);
+        vertex.py = static_cast<float>(local_position.y);
+        vertex.pz = static_cast<float>(local_position.z);
+
+        const DVec3 source_normal{vertex.nx, vertex.ny, vertex.nz};
+        if (dot(source_normal, source_normal) > 1e-12) {
+            const DVec3 world_normal = normalize(
+                right * source_normal.x + up * source_normal.y + forward * -source_normal.z);
+            vertex.nx = static_cast<float>(world_normal.x);
+            vertex.ny = static_cast<float>(world_normal.y);
+            vertex.nz = static_cast<float>(world_normal.z);
+        }
+    }
+
+    if (!update_cpu_model_bounds(result)) {
+        result.vertices.clear();
+        result.error = "PutBetween could not calculate deformed model bounds";
+        return result;
+    }
+    result.ok = true;
+    return result;
 }
 
 bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
@@ -1019,15 +1214,8 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         double distance = table_cell_number(row, "distance");
         auto p1 = sample_placement_track(table_cell(row, "trackKey1"), distance);
         auto p2 = sample_placement_track(table_cell(row, "trackKey2"), distance);
-        if (!p1 || !p2) continue;
-        DVec3 a{p1->x, p1->y, p1->z};
-        DVec3 b{p2->x, p2->y, p2->z};
-        if (static_cast<int>(table_cell_number(row, "flag")) & 1) b.y = a.y;
-        DVec3 right = normalize(b - a);
-        DVec3 forward = normalize(forward_from_theta_d(angle_lerp(p1->theta, p2->theta, 0.5)));
-        forward = normalize(forward - right * dot(forward, right));
-        DVec3 up = cross(right, forward);
-        DVec3 origin = (a + b) * 0.5;
+        auto own = scene_sample_track_path_points(*own_path, distance);
+        if (!p1 || !p2 || !own) continue;
         Canvas3DSceneObject object;
         object.kind = Canvas3DSceneObjectKind::Structure;
         object.source_row = model.structures.size() + between_index;
@@ -1041,7 +1229,13 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         instance.model_path = path;
         instance.distance = distance;
         instance.object_index = object_index;
-        store_world(instance.world, right, up, forward, origin);
+        instance.put_between = true;
+        instance.put_between_track_key1 = table_cell(row, "trackKey1");
+        instance.put_between_track_key2 = table_cell(row, "trackKey2");
+        instance.put_between_flag = static_cast<int>(table_cell_number(row, "flag")) & 1;
+        instance.world[12] = own->x;
+        instance.world[13] = own->y;
+        instance.world[14] = own->z;
         scene.instances.push_back(std::move(instance));
     }
 
@@ -1676,6 +1870,7 @@ struct Canvas3D::Impl {
             release_scene_resources();
         }
         scene_data = std::move(scene);
+        if (++scene_geometry_generation == 0) ++scene_geometry_generation;
         clear_scene_focus_highlight();
         std::sort(scene_data.backgrounds.begin(), scene_data.backgrounds.end(),
                   [](const Canvas3DBackgroundChange& a, const Canvas3DBackgroundChange& b) {
@@ -1707,40 +1902,40 @@ struct Canvas3D::Impl {
             return false;
         }
 
-        std::set<std::string> paths = collect_scene_model_paths();
-        std::vector<std::string> paths_to_load;
-        paths_to_load.reserve(paths.size());
+        std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
+        std::vector<SceneModelLoadRequest> requests_to_load;
+        requests_to_load.reserve(requests.size());
         if (preserve_loaded_models) {
             for (auto it = scene_models.begin(); it != scene_models.end();) {
-                if (paths.find(it->first) == paths.end()) {
+                if (requests.find(it->first) == requests.end()) {
                     release_scene_model(it->second);
                     it = scene_models.erase(it);
                 } else {
                     ++it;
                 }
             }
-            for (const std::string& path : paths) {
-                auto [it, inserted] = scene_models.try_emplace(path);
+            for (const auto& entry : requests) {
+                auto [it, inserted] = scene_models.try_emplace(entry.first);
                 if (inserted || it->second.state == SceneModelGpu::State::Pending) {
                     release_scene_model(it->second);
                     it->second = SceneModelGpu{};
-                    paths_to_load.push_back(path);
+                    requests_to_load.push_back(entry.second);
                 }
             }
         } else {
-            for (const std::string& path : paths) {
-                scene_models[path] = SceneModelGpu{};
-                paths_to_load.push_back(path);
+            for (const auto& entry : requests) {
+                scene_models[entry.first] = SceneModelGpu{};
+                requests_to_load.push_back(entry.second);
             }
         }
-        scene_stats_value.model_path_count = paths.size();
+        scene_stats_value.model_path_count = requests.size();
         scene_stats_value.instance_count = count_scene_instances();
         scene_stats_value.chunk_count = scene_chunks.size();
         scene_stats_value.window_back_m = scene_window_back_m;
         scene_stats_value.window_forward_m = scene_window_forward_m;
         scene_stats_value.camera_distance = scene_camera_distance;
         reset_scene_fps_counter();
-        start_scene_model_worker(std::move(paths_to_load));
+        start_scene_model_worker(std::move(requests_to_load));
         return true;
     }
 
@@ -1818,46 +2013,47 @@ struct Canvas3D::Impl {
         scene_has_highlight = false;
         scene_highlight_object_index = -1;
 
-        std::set<std::string> paths = collect_scene_model_paths();
-        std::vector<std::string> paths_to_load;
-        paths_to_load.reserve(paths.size());
+        std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
+        std::vector<SceneModelLoadRequest> requests_to_load;
+        requests_to_load.reserve(requests.size());
         for (auto it = scene_models.begin(); it != scene_models.end();) {
-            if (paths.find(it->first) == paths.end()) {
+            if (requests.find(it->first) == requests.end()) {
                 release_scene_model(it->second);
                 it = scene_models.erase(it);
             } else {
                 ++it;
             }
         }
-        for (const std::string& path : paths) {
-            auto [it, inserted] = scene_models.try_emplace(path);
+        for (const auto& entry : requests) {
+            auto [it, inserted] = scene_models.try_emplace(entry.first);
             if (inserted || it->second.state == SceneModelGpu::State::Pending) {
                 release_scene_model(it->second);
                 it->second = SceneModelGpu{};
-                paths_to_load.push_back(path);
+                requests_to_load.push_back(entry.second);
             }
         }
-        if (!paths_to_load.empty() && scene_worker_running.load()) {
+        if (!requests_to_load.empty() && scene_worker_running.load()) {
             stop_scene_loader();
             clear_pending_scene_model_uploads();
-            paths_to_load.clear();
-            paths_to_load.reserve(scene_models.size());
+            requests_to_load.clear();
+            requests_to_load.reserve(scene_models.size());
             for (auto& kv : scene_models) {
                 if (kv.second.state != SceneModelGpu::State::Pending) continue;
                 release_scene_model(kv.second);
                 kv.second = SceneModelGpu{};
-                paths_to_load.push_back(kv.first);
+                auto request_it = requests.find(kv.first);
+                if (request_it != requests.end()) requests_to_load.push_back(request_it->second);
             }
         }
 
-        scene_stats_value.model_path_count = paths.size();
+        scene_stats_value.model_path_count = requests.size();
         scene_stats_value.instance_count = count_scene_instances();
         scene_stats_value.chunk_count = scene_chunks.size();
         scene_stats_value.window_back_m = scene_window_back_m;
         scene_stats_value.window_forward_m = scene_window_forward_m;
         scene_stats_value.camera_distance = scene_camera_distance;
         reset_scene_fps_counter();
-        start_scene_model_worker(std::move(paths_to_load));
+        start_scene_model_worker(std::move(requests_to_load));
         return true;
     }
 
@@ -1887,17 +2083,19 @@ struct Canvas3D::Impl {
         }
         stop_scene_loader();
         clear_pending_scene_model_uploads();
-        std::vector<std::string> paths;
-        paths.reserve(scene_models.size());
+        std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
+        std::vector<SceneModelLoadRequest> requests_to_load;
+        requests_to_load.reserve(requests.size());
         for (auto& kv : scene_models) {
             release_scene_model(kv.second);
             kv.second = SceneModelGpu{};
-            paths.push_back(kv.first);
+            auto request_it = requests.find(kv.first);
+            if (request_it != requests.end()) requests_to_load.push_back(request_it->second);
         }
         scene_last_error.clear();
         scene_stats_value.model_path_count = scene_models.size();
         scene_load_summary_pending = false;
-        start_scene_model_worker(std::move(paths));
+        start_scene_model_worker(std::move(requests_to_load));
         return true;
     }
 
@@ -1996,27 +2194,47 @@ struct Canvas3D::Impl {
         return count;
     }
 
-    std::set<std::string> collect_scene_model_paths() const {
-        std::set<std::string> paths;
-        for (const SceneChunk& chunk : scene_chunks) {
-            for (const SceneInstance& instance : chunk.instances) {
-                if (!instance.model_path.empty()) paths.insert(instance.model_path);
-            }
+    std::map<std::string, SceneModelLoadRequest> collect_scene_model_load_requests() const {
+        std::map<std::string, SceneModelLoadRequest> requests;
+        auto note_regular_model = [&](const std::string& path) {
+            if (path.empty() || requests.find(path) != requests.end()) return;
+            SceneModelLoadRequest request;
+            request.key = path;
+            request.source_path = path;
+            requests.emplace(path, std::move(request));
+        };
+
+        for (const Canvas3DModelInstance& instance : scene_data.instances) {
+            note_regular_model(instance.model_path);
+            if (!instance.put_between || instance.model_path.empty()) continue;
+
+            SceneModelLoadRequest request;
+            request.key = scene_model_key_for_instance(instance, scene_geometry_generation);
+            request.source_path = instance.model_path;
+            request.put_between.enabled = true;
+            request.put_between.distance = instance.distance;
+            request.put_between.flag = instance.put_between_flag & 1;
+            request.put_between.origin = {instance.world[12], instance.world[13], instance.world[14]};
+            request.put_between.own_track = own_track_path();
+            request.put_between.track1 = placement_track_path_for_key(instance.put_between_track_key1);
+            request.put_between.track2 = placement_track_path_for_key(instance.put_between_track_key2);
+            const std::string request_key = request.key;
+            requests.emplace(request_key, std::move(request));
         }
         for (const Canvas3DSceneObject& object : scene_data.objects) {
             for (const Canvas3DSceneModelOption& option : object.model_options) {
-                if (!option.model_path.empty()) paths.insert(option.model_path);
+                note_regular_model(option.model_path);
             }
         }
         for (const Canvas3DBackgroundChange& bg : scene_data.backgrounds) {
-            if (!bg.model_path.empty()) paths.insert(bg.model_path);
+            note_regular_model(bg.model_path);
         }
         for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
             for (const std::string& path : repeater.model_paths) {
-                if (!path.empty()) paths.insert(path);
+                note_regular_model(path);
             }
         }
-        return paths;
+        return requests;
     }
 
     bool set_scene_object_model_option(int object_index, size_t option_index) {
@@ -2038,7 +2256,10 @@ struct Canvas3D::Impl {
         if (scene_models.find(option.model_path) == scene_models.end()) {
             scene_models[option.model_path] = SceneModelGpu{};
             scene_stats_value.model_path_count = scene_models.size();
-            start_scene_model_worker({option.model_path});
+            SceneModelLoadRequest request;
+            request.key = option.model_path;
+            request.source_path = option.model_path;
+            start_scene_model_worker({std::move(request)});
         }
         scene_has_highlight = false;
         return true;
@@ -2365,6 +2586,7 @@ fail:
     CpuModelData copy_cpu_model(const std::string& path, const MlMeshData& data) {
         CpuModelData out;
         out.path = path;
+        out.scene_key = path;
         if (data.vertex_count == 0 || data.index_count == 0 || !data.vertices || !data.indices) {
             out.error = "model contains no renderable data";
             return out;
@@ -2410,39 +2632,88 @@ fail:
         scene_pending_logs.push_back(std::move(message));
     }
 
-    void start_scene_model_worker(std::vector<std::string> paths) {
-        if (paths.empty()) return;
+    void start_scene_model_worker(std::vector<SceneModelLoadRequest> requests) {
+        if (requests.empty()) return;
         if (scene_worker.joinable()) {
             if (scene_worker_running.load()) return;
             scene_worker.join();
         }
+        std::map<std::string, std::vector<SceneModelLoadRequest>> requests_by_source;
+        for (SceneModelLoadRequest& request : requests) {
+            if (request.key.empty() || request.source_path.empty()) continue;
+            requests_by_source[request.source_path].push_back(std::move(request));
+        }
+        if (requests_by_source.empty()) return;
         scene_load_summary_pending = true;
         scene_worker_running.store(true);
-        scene_worker = std::thread([this, paths = std::move(paths)]() {
-            for (size_t path_index = 0; path_index < paths.size(); ++path_index) {
-                const std::string& path = paths[path_index];
+        scene_worker = std::thread([this, requests_by_source = std::move(requests_by_source)]() mutable {
+            size_t source_index = 0;
+            for (auto& source_entry : requests_by_source) {
+                const std::string& path = source_entry.first;
+                std::vector<SceneModelLoadRequest>& source_requests = source_entry.second;
                 if (scene_cancel.load()) break;
-                const std::string progress = std::to_string(path_index + 1) + "/" + std::to_string(paths.size());
-                CpuModelData cpu;
-                cpu.path = path;
+                const std::string progress = std::to_string(++source_index) + "/" +
+                    std::to_string(requests_by_source.size());
+                CpuModelData source_cpu;
+                source_cpu.path = path;
+                source_cpu.scene_key = path;
                 MlMeshData data = {};
                 std::string error;
                 if (scene_loader.load(path, data, error)) {
-                    cpu = copy_cpu_model(path, data);
+                    source_cpu = copy_cpu_model(path, data);
                     scene_loader.free_model(data);
-                    if (!cpu.ok) {
+                    if (!source_cpu.ok) {
                         push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
-                                            path + ": " + cpu.error);
+                                            path + ": " + source_cpu.error);
                     }
                 } else {
-                    cpu.error = error;
+                    source_cpu.error = error;
                     push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
                                         path + ": " + error);
                 }
                 if (scene_cancel.load()) break;
+
+                std::vector<CpuModelData> outputs;
+                outputs.reserve(source_requests.size());
+                if (!source_cpu.ok) {
+                    for (const SceneModelLoadRequest& request : source_requests) {
+                        CpuModelData failed;
+                        failed.path = path;
+                        failed.scene_key = request.key;
+                        failed.error = source_cpu.error;
+                        outputs.push_back(std::move(failed));
+                    }
+                } else {
+                    const SceneModelLoadRequest* regular_request = nullptr;
+                    std::vector<CpuModelData> derived_models;
+                    derived_models.reserve(source_requests.size());
+                    for (const SceneModelLoadRequest& request : source_requests) {
+                        if (!request.put_between.enabled) {
+                            regular_request = &request;
+                            continue;
+                        }
+                        CpuModelData derived = derive_put_between_model(source_cpu, request);
+                        if (!derived.ok) {
+                            push_scene_load_log("[warn]canvas3D.cpp: failed to deform PutBetween model: " +
+                                                path + ": " + derived.error);
+                        }
+                        derived_models.push_back(std::move(derived));
+                        if (scene_cancel.load()) break;
+                    }
+                    if (scene_cancel.load()) break;
+                    if (regular_request) {
+                        source_cpu.scene_key = regular_request->key;
+                        outputs.push_back(std::move(source_cpu));
+                    }
+                    for (CpuModelData& derived : derived_models) {
+                        outputs.push_back(std::move(derived));
+                    }
+                }
                 {
                     std::lock_guard<std::mutex> lock(scene_upload_mutex);
-                    scene_pending_uploads.push_back(std::move(cpu));
+                    for (CpuModelData& output : outputs) {
+                        scene_pending_uploads.push_back(std::move(output));
+                    }
                 }
             }
             scene_worker_running.store(false);
@@ -2461,7 +2732,8 @@ fail:
     }
 
     bool upload_scene_model(const CpuModelData& cpu, std::string& error) {
-        auto it = scene_models.find(cpu.path);
+        const std::string& scene_key = cpu.scene_key.empty() ? cpu.path : cpu.scene_key;
+        auto it = scene_models.find(scene_key);
         if (it == scene_models.end()) return true;
         SceneModelGpu& model = it->second;
         release_scene_model(model);
@@ -2477,6 +2749,19 @@ fail:
             return true;
         }
 
+        const SceneModelGpu* shared_model = nullptr;
+        if (!cpu.shared_model_key.empty()) {
+            auto shared_it = scene_models.find(cpu.shared_model_key);
+            if (shared_it == scene_models.end() ||
+                shared_it->second.state != SceneModelGpu::State::Ready ||
+                !shared_it->second.index_buffer) {
+                model.state = SceneModelGpu::State::Failed;
+                model.error = "PutBetween base model is not ready";
+                return true;
+            }
+            shared_model = &shared_it->second;
+        }
+
         D3D11_BUFFER_DESC vb_desc = {};
         vb_desc.ByteWidth = static_cast<UINT>(cpu.vertices.size() * sizeof(GpuVertex));
         vb_desc.Usage = D3D11_USAGE_DEFAULT;
@@ -2489,39 +2774,50 @@ fail:
             return false;
         }
 
-        D3D11_BUFFER_DESC ib_desc = {};
-        ib_desc.ByteWidth = static_cast<UINT>(cpu.indices.size() * sizeof(unsigned int));
-        ib_desc.Usage = D3D11_USAGE_DEFAULT;
-        ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA ib_data = {};
-        ib_data.pSysMem = cpu.indices.data();
-        hr = device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateBuffer(scene index)", hr);
-            return false;
-        }
+        if (shared_model) {
+            model.index_buffer = shared_model->index_buffer;
+            model.index_buffer->AddRef();
+            model.parts = shared_model->parts;
+            model.materials = shared_model->materials;
+            for (GpuMaterial& material : model.materials) {
+                if (material.texture) material.texture->AddRef();
+            }
+            model.index_count = shared_model->index_count;
+        } else {
+            D3D11_BUFFER_DESC ib_desc = {};
+            ib_desc.ByteWidth = static_cast<UINT>(cpu.indices.size() * sizeof(unsigned int));
+            ib_desc.Usage = D3D11_USAGE_DEFAULT;
+            ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+            D3D11_SUBRESOURCE_DATA ib_data = {};
+            ib_data.pSysMem = cpu.indices.data();
+            hr = device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateBuffer(scene index)", hr);
+                return false;
+            }
 
-        model.parts = cpu.parts;
-        model.materials.resize(std::max<size_t>(cpu.materials.size(), 1));
-        for (size_t i = 0; i < model.materials.size(); ++i) {
-            const CpuMaterial* src = i < cpu.materials.size() ? &cpu.materials[i] : nullptr;
-            if (!src) continue;
-            model.materials[i].diffuse[0] = src->diffuse[0];
-            model.materials[i].diffuse[1] = src->diffuse[1];
-            model.materials[i].diffuse[2] = src->diffuse[2];
-            model.materials[i].diffuse[3] = normalize_material_alpha(src->diffuse[3]);
-            if (!src->texture_path.empty()) {
-                std::string texture_error;
-                bool texture_has_alpha = false;
-                if (load_texture(src->texture_path, &model.materials[i].texture, texture_error, &texture_has_alpha)) {
-                    model.materials[i].has_texture = true;
-                    model.materials[i].texture_has_alpha = texture_has_alpha;
-                } else if (scene_last_error.empty()) {
-                    scene_last_error = texture_error;
+            model.parts = cpu.parts;
+            model.materials.resize(std::max<size_t>(cpu.materials.size(), 1));
+            for (size_t i = 0; i < model.materials.size(); ++i) {
+                const CpuMaterial* src = i < cpu.materials.size() ? &cpu.materials[i] : nullptr;
+                if (!src) continue;
+                model.materials[i].diffuse[0] = src->diffuse[0];
+                model.materials[i].diffuse[1] = src->diffuse[1];
+                model.materials[i].diffuse[2] = src->diffuse[2];
+                model.materials[i].diffuse[3] = normalize_material_alpha(src->diffuse[3]);
+                if (!src->texture_path.empty()) {
+                    std::string texture_error;
+                    bool texture_has_alpha = false;
+                    if (load_texture(src->texture_path, &model.materials[i].texture, texture_error, &texture_has_alpha)) {
+                        model.materials[i].has_texture = true;
+                        model.materials[i].texture_has_alpha = texture_has_alpha;
+                    } else if (scene_last_error.empty()) {
+                        scene_last_error = texture_error;
+                    }
                 }
             }
+            model.index_count = static_cast<UINT>(cpu.indices.size());
         }
-        model.index_count = static_cast<UINT>(cpu.indices.size());
         model.bounds_min = cpu.bounds_min;
         model.bounds_max = cpu.bounds_max;
         model.center = cpu.center;
@@ -2540,8 +2836,10 @@ fail:
         for (const CpuModelData& cpu : pending) {
             std::string error;
             if (!upload_scene_model(cpu, error)) {
-                auto it = scene_models.find(cpu.path);
+                const std::string& scene_key = cpu.scene_key.empty() ? cpu.path : cpu.scene_key;
+                auto it = scene_models.find(scene_key);
                 if (it != scene_models.end()) {
+                    release_scene_model(it->second);
                     it->second.state = SceneModelGpu::State::Failed;
                     it->second.error = error;
                 }
@@ -3371,7 +3669,7 @@ fail:
             int index = static_cast<int>(std::floor((source.distance - first) / scene_chunk_m));
             index = std::clamp(index, 0, static_cast<int>(scene_chunks.size()) - 1);
             SceneInstance instance;
-            instance.model_path = source.model_path;
+            instance.model_path = scene_model_key_for_instance(source, scene_geometry_generation);
             instance.distance = source.distance;
             instance.object_index = source.object_index;
             if (source.follow_track) {
@@ -3736,6 +4034,7 @@ fail:
         out.y = a.y + (b.y - a.y) * t;
         out.z = a.z + (b.z - a.z) * t;
         out.theta = angle_lerp(a.theta, b.theta, t);
+        out.gradient = a.gradient + (b.gradient - a.gradient) * t;
         out.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
         return true;
     }
@@ -4652,6 +4951,7 @@ fail:
     ImVec4 background_color_value = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
     std::string last_error;
     Canvas3DScene scene_data;
+    size_t scene_geometry_generation = 0;
     bool scene_active = false;
     std::vector<SceneChunk> scene_chunks;
     std::vector<SceneTrackChunkGpu> scene_track_chunks;
