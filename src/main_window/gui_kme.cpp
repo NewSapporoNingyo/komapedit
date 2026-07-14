@@ -2021,6 +2021,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.row_kind = request.row_kind;
     next.title = tr("dialog.element_properties");
     next.source_file = source.file_path;
+    next.source_file_name = display_name_from_path(next.source_file);
     if (target_info) next.expected_source_hash = target_info->expected_source_hash;
     next.line = source.line;
     next.column = source.column;
@@ -2951,12 +2952,17 @@ void App::render_element_inspector() {
             ? "status.edit.pending_delete"
             : "status.edit.pending").c_str());
     }
-    render_inline_wrapped_text(tr("label.source_file").c_str(), inspector_.source_file);
-    ImGui::Text("%s %d:%d", tr("label.source_position").c_str(), inspector_.line, inspector_.column);
-    if (!inspector_.source_distance_string.empty()) {
-        render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
-                                   inspector_.source_distance_string);
+    ImGui::TextUnformatted(tr("label.source_file").c_str());
+    ImGui::SameLine();
+    ImGui::TextUnformatted(inspector_.source_file_name.c_str());
+    const bool source_file_hovered = ImGui::IsItemHovered();
+    render_source_file_context_menu("element_inspector_source_file_context",
+                                    inspector_.source_file);
+    if (source_file_hovered && !inspector_.source_file.empty() &&
+        !ImGui::IsPopupOpen("element_inspector_source_file_context")) {
+        ImGui::SetTooltip("%s", inspector_.source_file.c_str());
     }
+    ImGui::Text("%s %d:%d", tr("label.source_position").c_str(), inspector_.line, inspector_.column);
     if (!inspector_.raw_statement.empty()) {
         ImGui::Separator();
         ImGui::TextUnformatted(tr("label.raw_statement").c_str());
@@ -2965,12 +2971,18 @@ void App::render_element_inspector() {
 
     ImGui::Separator();
     ImGui::BeginDisabled(inspector_.pending_delete);
-    for (MapElementEditFieldState& field : inspector_.fields) {
+    for (size_t field_index = 0; field_index < inspector_.fields.size(); ++field_index) {
+        MapElementEditFieldState& field = inspector_.fields[field_index];
+        if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
         const bool changed = edit_field_buffer_text(field) != field.original_value;
         if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
         ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
         ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
         if (changed) ImGui::PopStyleColor();
+        if (field.key == "distance" && !inspector_.source_distance_string.empty()) {
+            render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
+                                       inspector_.source_distance_string);
+        }
     }
     ImGui::EndDisabled();
 
@@ -3778,6 +3790,12 @@ void App::render_toolbar() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(style.WindowPadding.x, toolbar_padding_y));
     bool visible = ImGui::BeginViewportSideBar("##MainToolbar", ImGui::GetMainViewport(), ImGuiDir_Up, toolbar_height, flags);
     if (visible) {
+        auto render_section_separator = [&style]() {
+            ImGui::SameLine(0.0f, style.ItemSpacing.x);
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine(0.0f, style.ItemSpacing.x);
+        };
+
         if (ImGui::Button(tr("button.open").c_str())) {
             std::string p = open_map_dialog();
             if (!p.empty()) begin_load(p, false, true);
@@ -3797,20 +3815,18 @@ void App::render_toolbar() {
         if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
         ImGui::EndDisabled();
 
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits());
-        if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
-        ImGui::EndDisabled();
-
-        ImGui::SameLine();
+        render_section_separator();
         bool requested_edit_mode = edit_mode_enabled_;
         if (ImGui::Checkbox(tr("chk.edit_mode").c_str(), &requested_edit_mode)) {
             set_edit_mode_enabled(requested_edit_mode);
         }
 
-        ImGui::SameLine(0.0f, style.ItemSpacing.x);
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine(0.0f, style.ItemSpacing.x);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits());
+        if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
+        ImGui::EndDisabled();
+
+        render_section_separator();
         render_station_jump_combo();
         ImGui::SameLine(0.0f, style.ItemSpacing.x);
         render_distance_jump_control();

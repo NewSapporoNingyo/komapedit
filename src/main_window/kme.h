@@ -1045,6 +1045,7 @@ struct MapElementInspectorState {
     std::string row_kind;
     std::string title;
     std::string source_file;
+    std::string source_file_name;
     std::string expected_source_hash;
     std::string source_distance_string;
     int line = 0;
@@ -1596,6 +1597,8 @@ private:
     void render_cab_illuminance_window();
     void render_fogs_window();
     void render_file_structure_window();
+    void render_source_file_context_menu(const char* popup_id,
+                                         const std::string& file_path);
     static bool is_supported_text_preview_file(const std::string& file_path);
     void open_text_preview(const std::string& file_path,
                            bool parser_confirmed_source = false);

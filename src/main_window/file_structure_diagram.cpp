@@ -179,6 +179,26 @@ void open_parent_directory_in_explorer(const std::string& file_path) {
     }
 }
 
+void App::render_source_file_context_menu(const char* popup_id,
+                                          const std::string& file_path) {
+    touch_input::open_popup_on_last_item_long_press(popup_id);
+    if (!ImGui::BeginPopupContextItem(popup_id, ImGuiPopupFlags_MouseButtonRight)) return;
+
+    const bool can_open = !blank_ascii(file_path);
+    const bool can_preview = can_open && is_supported_text_preview_file(file_path);
+    ImGui::BeginDisabled(!can_preview);
+    if (ImGui::MenuItem(tr("menu.preview_text").c_str())) {
+        open_text_preview(file_path, true);
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!can_open);
+    if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
+        open_parent_directory_in_explorer(file_path);
+    }
+    ImGui::EndDisabled();
+    ImGui::EndPopup();
+}
+
 void App::render_file_structure_window() {
     if (!show_file_structure_window_) return;
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
@@ -260,24 +280,7 @@ void App::render_file_structure_window() {
             const bool hovered = ImGui::IsItemHovered();
             const bool active = ImGui::IsItemActive();
 
-            touch_input::open_popup_on_last_item_long_press("file_structure_node_context");
-            if (ImGui::BeginPopupContextItem("file_structure_node_context",
-                                             ImGuiPopupFlags_MouseButtonRight)) {
-                const bool can_open = !blank_ascii(node.absolute_path);
-                const bool can_preview =
-                    can_open && is_supported_text_preview_file(node.absolute_path);
-                ImGui::BeginDisabled(!can_preview);
-                if (ImGui::MenuItem(tr("menu.preview_text").c_str())) {
-                    open_text_preview(node.absolute_path, true);
-                }
-                ImGui::EndDisabled();
-                ImGui::BeginDisabled(!can_open);
-                if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
-                    open_parent_directory_in_explorer(node.absolute_path);
-                }
-                ImGui::EndDisabled();
-                ImGui::EndPopup();
-            }
+            render_source_file_context_menu("file_structure_node_context", node.absolute_path);
 
             ImU32 fill_color = ImGui::GetColorU32(ImGuiCol_Button);
             if (active) fill_color = ImGui::GetColorU32(ImGuiCol_ButtonActive);
