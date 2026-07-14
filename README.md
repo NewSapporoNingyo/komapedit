@@ -115,6 +115,7 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Recent-map history.
 - [x] Save background-image parameters with recent-map entries in `settings/history.ini`.
 - [x] Save settings to `settings/settings.ini` under the executable directory.
+- [x] Preview-cache management with size/count information, manual clearing, and a persistent disable-cache option.
 - [x] Export own-track and other-track geometry to CSV.
 - [ ] Element preset groups stored as ordinary BVE map/list statements through `element_presets.json`.
 - [ ] Route release export that expands includes, optionally constantizes distance/variable expressions, copies only used resources, writes a report, and protects development route directories from overwrite.
@@ -133,6 +134,14 @@ creates or reads the following files there:
 - `settings/imgui.ini`: stores UI window positions and related ImGui layout data.
 - `settings/settings.ini`: stores settings such as UI language, font size, component size, station marker size, and theme color.
 - `settings/history.ini`: stores recent maps and background-image alignment parameters.
+
+Disk preview caches are stored in `cache\preview-v2` beside the executable when
+that directory is writable. Otherwise, the application uses
+`%LOCALAPPDATA%\komapedit\cache\preview-v2`; it does not fall back to a temporary
+system directory. `Options -> Cache Management...` shows and manages only the
+active cache location. It does not migrate or delete an inactive fallback
+location. Disabling cache prevents subsequent map loads from reading or writing
+disk preview cache, while existing files remain until they are cleared manually.
 
 The build and distribution-cleanup scripts migrate legacy root-level INI files
 into `settings`. If both legacy and new copies exist, the script stops instead
@@ -167,8 +176,9 @@ of overwriting either file.
 9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
 11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. In select mode, scene objects can be located back in their Structure or Repeater tables.
-12. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
-13. Press `F5` or use `File -> Reload` to reload the current map.
+12. Use `Options -> Cache Management...` to inspect the active preview-cache directory, file count, and total size; open the directory, clear all preview cache after confirmation, or disable cache for subsequent map loads.
+13. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
+14. Press `F5` or use `File -> Reload` to reload the current map.
 
 ## Project Layout
 

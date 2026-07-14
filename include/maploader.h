@@ -37,6 +37,19 @@ typedef void (*KvLogCallback)(const char* message);
 
 KV_API void kv_set_log_callback(KvLogCallback callback);
 
+/* Configures the base directory used for preview cache version folders.
+   Pass an empty UTF-8 string to make disk preview caching unavailable. */
+KV_API int kv_set_preview_cache_root(const char* root_utf8);
+
+/* Returns newly allocated UTF-8 JSON describing the configured preview cache.
+   Release the returned string with kv_free_string(). */
+KV_API const char* kv_get_preview_cache_info(void);
+
+/* Removes all recognized preview cache version folders below the configured
+   base directory and returns a newly allocated UTF-8 JSON report. Release the
+   returned string with kv_free_string(). */
+KV_API const char* kv_clear_preview_cache(void);
+
 /* Returns an opaque map handle owned by the caller. Release it exactly once
    with kv_free(), even after retrieving buffers or IR JSON from it. */
 KV_API void* kv_load_map(const char* path, double unit_distance);

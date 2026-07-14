@@ -14,6 +14,9 @@ namespace {
 
 #define KME_MAPLOADER_FUNCTIONS(X) \
     X(set_log_callback, kv_set_log_callback) \
+    X(set_preview_cache_root, kv_set_preview_cache_root) \
+    X(get_preview_cache_info, kv_get_preview_cache_info) \
+    X(clear_preview_cache, kv_clear_preview_cache) \
     X(load_map, kv_load_map) \
     X(load_map_ex, kv_load_map_ex) \
     X(generate_geometry, kv_generate_geometry) \
@@ -63,6 +66,12 @@ public:
         }
         KME_MAPLOADER_FUNCTIONS(KME_RESOLVE_FUNCTION)
 #undef KME_RESOLVE_FUNCTION
+
+        const std::filesystem::path& cache_directory = runtime_paths::preview_cache_directory();
+        const std::string cache_directory_utf8 = cache_directory.empty()
+            ? std::string{}
+            : cache_directory.u8string();
+        set_preview_cache_root(cache_directory_utf8.c_str());
     }
 
     bool available() const {
@@ -104,6 +113,21 @@ extern "C" {
 void kv_set_log_callback(KvLogCallback callback) {
     MaploaderRuntime& runtime = maploader_runtime();
     if (runtime.available()) runtime.set_log_callback(callback);
+}
+
+int kv_set_preview_cache_root(const char* root_utf8) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.set_preview_cache_root(root_utf8) : 0;
+}
+
+const char* kv_get_preview_cache_info(void) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.get_preview_cache_info() : nullptr;
+}
+
+const char* kv_clear_preview_cache(void) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.clear_preview_cache() : nullptr;
 }
 
 void* kv_load_map(const char* path, double unit_distance) {

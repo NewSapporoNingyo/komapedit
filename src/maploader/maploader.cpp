@@ -14,6 +14,8 @@
 #include "c_api.h"
 #include "diagnostics.h"
 
+#include <string_view>
+
 namespace {
 
 using kme::maploader::copy_c_string;
@@ -46,6 +48,18 @@ constexpr char kPreviewCacheMagic[] = "KMPVC002";
 constexpr std::uint32_t kPreviewCacheVersion = 2;
 constexpr const char* kPreviewCacheDirectory = "preview-v2";
 constexpr const char* kPreviewCacheKeyVersion = "loader-preview-cache-v2";
+
+std::mutex g_preview_cache_mutex;
+std::filesystem::path g_preview_cache_base;
+bool g_preview_cache_unavailable_logged = false;
+
+struct PreviewCacheStats {
+    std::uint64_t file_count = 0;
+    std::uint64_t total_bytes = 0;
+    std::string error;
+
+    bool ok() const { return error.empty(); }
+};
 
 MapParseOptions parse_options_from_load_flags(unsigned flags) {
     MapParseOptions options;
@@ -122,24 +136,172 @@ Matrix read_matrix(std::istream& in) {
     return matrix;
 }
 
-std::filesystem::path preview_cache_root() {
-#if defined(_WIN32)
-    std::filesystem::path base;
-    DWORD required = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
-    if (required > 1) {
-        std::wstring buffer(required, L'\0');
-        DWORD copied = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer.data(), required);
-        if (copied > 0 && copied < required) {
-            buffer.resize(copied);
-            base = buffer;
+std::filesystem::path preview_cache_root_unlocked() {
+    return g_preview_cache_base.empty()
+        ? std::filesystem::path{}
+        : g_preview_cache_base / kPreviewCacheDirectory;
+}
+
+bool is_preview_cache_version_directory(const std::filesystem::path& path) {
+    const std::string name = path.filename().u8string();
+    constexpr std::string_view prefix = "preview-v";
+    return name.size() > prefix.size() &&
+        name.compare(0, prefix.size(), prefix) == 0 &&
+        std::all_of(name.begin() + static_cast<std::ptrdiff_t>(prefix.size()), name.end(),
+                    [](unsigned char ch) { return std::isdigit(ch) != 0; });
+}
+
+void append_cache_error(std::string& target, const std::string& message) {
+    if (message.empty()) return;
+    if (!target.empty()) target += "; ";
+    target += message;
+}
+
+PreviewCacheStats collect_preview_cache_stats_unlocked() {
+    PreviewCacheStats stats;
+    if (g_preview_cache_base.empty()) return stats;
+
+    std::error_code ec;
+    if (!std::filesystem::exists(g_preview_cache_base, ec)) {
+        if (ec) append_cache_error(stats.error, ec.message());
+        return stats;
+    }
+
+    const auto options = std::filesystem::directory_options::skip_permission_denied;
+    std::filesystem::directory_iterator it(g_preview_cache_base, options, ec);
+    const std::filesystem::directory_iterator end;
+    for (; !ec && it != end; it.increment(ec)) {
+        std::error_code status_ec;
+        const std::filesystem::file_status status = it->symlink_status(status_ec);
+        if (status_ec) {
+            append_cache_error(stats.error, status_ec.message());
+            continue;
+        }
+        if (!std::filesystem::is_directory(status) ||
+            !is_preview_cache_version_directory(it->path())) {
+            continue;
+        }
+
+        std::error_code scan_ec;
+        std::filesystem::recursive_directory_iterator child(it->path(), options, scan_ec);
+        const std::filesystem::recursive_directory_iterator child_end;
+        for (; !scan_ec && child != child_end; child.increment(scan_ec)) {
+            std::error_code child_status_ec;
+            const std::filesystem::file_status child_status = child->symlink_status(child_status_ec);
+            if (child_status_ec) {
+                append_cache_error(stats.error, child_status_ec.message());
+                continue;
+            }
+            if (!std::filesystem::is_regular_file(child_status)) continue;
+
+            std::error_code size_ec;
+            const std::uintmax_t size = child->file_size(size_ec);
+            if (size_ec) {
+                append_cache_error(stats.error, size_ec.message());
+                continue;
+            }
+            ++stats.file_count;
+            stats.total_bytes += static_cast<std::uint64_t>(size);
+        }
+        if (scan_ec) append_cache_error(stats.error, scan_ec.message());
+    }
+    if (ec) append_cache_error(stats.error, ec.message());
+    return stats;
+}
+
+std::string preview_cache_info_json_unlocked() {
+    const bool available = !g_preview_cache_base.empty();
+    const PreviewCacheStats stats = collect_preview_cache_stats_unlocked();
+    std::ostringstream out;
+    out << "{\"ok\":" << (stats.ok() ? "true" : "false")
+        << ",\"available\":" << (available ? "true" : "false")
+        << ",\"directory\":";
+    kme::maploader::detail::append_json_string(
+        out, available ? path_to_utf8(g_preview_cache_base) : std::string{});
+    out << ",\"fileCount\":" << stats.file_count
+        << ",\"totalBytes\":" << stats.total_bytes
+        << ",\"error\":";
+    kme::maploader::detail::append_json_string(out, stats.error);
+    out << '}';
+    return out.str();
+}
+
+std::string clear_preview_cache_json_unlocked() {
+    const bool available = !g_preview_cache_base.empty();
+    if (!available) {
+        return "{\"ok\":false,\"available\":false,\"directory\":\"\","
+               "\"removedFileCount\":0,\"removedBytes\":0,\"fileCount\":0,"
+               "\"totalBytes\":0,\"error\":\"preview cache directory is unavailable\"}";
+    }
+
+    const PreviewCacheStats before = collect_preview_cache_stats_unlocked();
+    std::string error = before.error;
+    std::error_code ec;
+    const bool root_exists = std::filesystem::exists(g_preview_cache_base, ec);
+    if (ec) append_cache_error(error, ec.message());
+    if (!ec && root_exists) {
+        const auto options = std::filesystem::directory_options::skip_permission_denied;
+        std::vector<std::filesystem::path> version_directories;
+        std::filesystem::directory_iterator it(g_preview_cache_base, options, ec);
+        const std::filesystem::directory_iterator end;
+        for (; !ec && it != end; it.increment(ec)) {
+            std::error_code status_ec;
+            const std::filesystem::file_status status = it->symlink_status(status_ec);
+            if (status_ec) {
+                append_cache_error(error, status_ec.message());
+                continue;
+            }
+            if (!std::filesystem::is_directory(status) ||
+                !is_preview_cache_version_directory(it->path())) {
+                continue;
+            }
+            version_directories.push_back(it->path());
+        }
+        if (ec) append_cache_error(error, ec.message());
+        for (const std::filesystem::path& directory : version_directories) {
+            std::error_code remove_ec;
+            std::filesystem::remove_all(directory, remove_ec);
+            if (remove_ec) {
+                append_cache_error(error, path_to_utf8(directory) + ": " + remove_ec.message());
+            }
         }
     }
-    if (base.empty()) base = std::filesystem::temp_directory_path();
-#else
-    const char* local = std::getenv("LOCALAPPDATA");
-    std::filesystem::path base = local && *local ? local : std::filesystem::temp_directory_path();
-#endif
-    return base / "komapedit" / "cache" / kPreviewCacheDirectory;
+
+    const PreviewCacheStats after = collect_preview_cache_stats_unlocked();
+    append_cache_error(error, after.error);
+    const std::uint64_t removed_file_count = before.file_count >= after.file_count
+        ? before.file_count - after.file_count
+        : 0;
+    const std::uint64_t removed_bytes = before.total_bytes >= after.total_bytes
+        ? before.total_bytes - after.total_bytes
+        : 0;
+
+    std::ostringstream out;
+    out << "{\"ok\":" << (error.empty() ? "true" : "false")
+        << ",\"available\":true,\"directory\":";
+    kme::maploader::detail::append_json_string(out, path_to_utf8(g_preview_cache_base));
+    out << ",\"removedFileCount\":" << removed_file_count
+        << ",\"removedBytes\":" << removed_bytes
+        << ",\"fileCount\":" << after.file_count
+        << ",\"totalBytes\":" << after.total_bytes
+        << ",\"error\":";
+    kme::maploader::detail::append_json_string(out, error);
+    out << '}';
+    return out.str();
+}
+
+bool preview_cache_available_for_load() {
+    bool should_log = false;
+    {
+        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
+        if (!g_preview_cache_base.empty()) return true;
+        if (!g_preview_cache_unavailable_logged) {
+            g_preview_cache_unavailable_logged = true;
+            should_log = true;
+        }
+    }
+    if (should_log) log_warn("preview cache directory unavailable; disk cache disabled");
+    return false;
 }
 
 std::filesystem::path preview_cache_path(const std::filesystem::path& map_path, double unit_distance) {
@@ -150,7 +312,7 @@ std::filesystem::path preview_cache_path(const std::filesystem::path& map_path, 
         << "|" << kPreviewCacheKeyVersion;
     std::string name = kme::maploader::detail::hex64(
         kme::maploader::detail::stable_hash64(key.str())) + ".kmpv";
-    return preview_cache_root() / name;
+    return preview_cache_root_unlocked() / name;
 }
 
 bool stat_preview_cache_file(const std::string& utf8_path,
@@ -227,6 +389,8 @@ bool preview_cache_manifest_valid(const std::vector<PreviewCacheEntry>& manifest
 
 std::unique_ptr<MapContext> try_load_preview_cache(const std::filesystem::path& map_path,
                                                    double unit_distance) {
+    std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
+    if (g_preview_cache_base.empty()) return nullptr;
     std::ifstream in(preview_cache_path(map_path, unit_distance), std::ios::binary);
     if (!in) return nullptr;
     try {
@@ -288,6 +452,8 @@ std::unique_ptr<MapContext> try_load_preview_cache(const std::filesystem::path& 
 
 void write_preview_cache(const MapContext& ctx, const std::filesystem::path& map_path,
                          double unit_distance, const std::string& compact_json) {
+    std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
+    if (g_preview_cache_base.empty()) return;
     try {
         std::vector<PreviewCacheEntry> manifest = make_preview_cache_manifest(ctx);
         if (manifest.empty()) return;
@@ -339,6 +505,40 @@ KV_API void kv_set_log_callback(KvLogCallback callback) {
     set_log_callback(callback);
 }
 
+KV_API int kv_set_preview_cache_root(const char* root_utf8) {
+    try {
+        std::filesystem::path root;
+        if (root_utf8 && *root_utf8) root = path_from_utf8(root_utf8).lexically_normal();
+        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
+        g_preview_cache_base = std::move(root);
+        g_preview_cache_unavailable_logged = false;
+        return 1;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return 0;
+    }
+}
+
+KV_API const char* kv_get_preview_cache_info(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
+        return copy_c_string(preview_cache_info_json_unlocked());
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
+}
+
+KV_API const char* kv_clear_preview_cache(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
+        return copy_c_string(clear_preview_cache_json_unlocked());
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    }
+}
+
 KV_API void* kv_load_map(const char* path, double unit_distance) {
     return kv_load_map_ex(path, unit_distance, KV_LOAD_EDIT_METADATA);
 }
@@ -348,6 +548,10 @@ KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned fla
         if (!path) throw std::runtime_error("path is null");
         std::filesystem::path map_path = path_from_utf8(path);
         MapParseOptions options = parse_options_from_load_flags(flags);
+        if (options.use_preview_cache && !preview_cache_available_for_load()) {
+            options.use_preview_cache = false;
+            options.rebuild_preview_cache = false;
+        }
         if (!options.collect_edit_metadata && options.use_preview_cache && !options.rebuild_preview_cache) {
             if (auto cached = try_load_preview_cache(map_path, unit_distance)) {
                 return cached.release();
