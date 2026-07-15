@@ -656,6 +656,24 @@ struct SceneHighlightInstance {
     ImVec2 screen_max = ImVec2(0.0f, 0.0f);
 };
 
+struct SceneHighlightBatch {
+    int object_index = -1;
+    std::vector<SceneHighlightInstance> instances;
+    ImVec2 screen_min = ImVec2(0.0f, 0.0f);
+    ImVec2 screen_max = ImVec2(0.0f, 0.0f);
+
+    void clear() {
+        object_index = -1;
+        instances.clear();
+        screen_min = ImVec2(0.0f, 0.0f);
+        screen_max = ImVec2(0.0f, 0.0f);
+    }
+
+    bool valid() const {
+        return object_index >= 0 && !instances.empty();
+    }
+};
+
 struct SceneRepeaterIndexRange {
     long long first = 0;
     long long last = -1;
@@ -2024,8 +2042,7 @@ struct Canvas3D::Impl {
         clear_scene_focus_highlight();
         scene_hovered_object_index = -1;
         scene_context_object_index = -1;
-        scene_has_highlight = false;
-        scene_highlight_object_index = -1;
+        scene_hover_highlight_batch.clear();
 
         std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
         std::vector<SceneModelLoadRequest> requests_to_load;
@@ -2079,8 +2096,7 @@ struct Canvas3D::Impl {
         scene_rotating = false;
         scene_hovered_object_index = -1;
         scene_context_object_index = -1;
-        scene_has_highlight = false;
-        scene_highlight_object_index = -1;
+        scene_hover_highlight_batch.clear();
         clear_scene_focus_highlight();
         scene_stats_value = {};
         reset_scene_fps_counter();
@@ -2152,7 +2168,7 @@ struct Canvas3D::Impl {
         scene_rotating = false;
         scene_hovered_object_index = -1;
         scene_context_object_index = -1;
-        scene_has_highlight = false;
+        scene_hover_highlight_batch.clear();
     }
 
     Canvas3DSceneInteractionMode scene_interaction_mode_value() const {
@@ -2275,7 +2291,7 @@ struct Canvas3D::Impl {
             request.source_path = option.model_path;
             start_scene_model_worker({std::move(request)});
         }
-        scene_has_highlight = false;
+        scene_hover_highlight_batch.clear();
         return true;
     }
 
@@ -2383,9 +2399,11 @@ struct Canvas3D::Impl {
         scene_focus_highlight_object_index = -1;
         scene_focus_highlight_model_path.clear();
         scene_focus_highlight_until = {};
+        scene_focus_highlight_batch.clear();
     }
 
     void start_scene_focus_highlight(int object_index, const std::string& model_path, const double world[16]) {
+        scene_focus_highlight_batch.clear();
         scene_focus_highlight_object_index = object_index;
         scene_focus_highlight_model_path = model_path;
         std::copy(world, world + 16, scene_focus_highlight_world);
@@ -2402,7 +2420,11 @@ struct Canvas3D::Impl {
         return false;
     }
 
-    bool apply_scene_focus_highlight(DVec3 render_origin, const Mat4& view_proj, int width, int height) {
+    bool update_scene_focus_highlight_batch(DVec3 render_origin,
+                                            const Mat4& view_proj,
+                                            int width,
+                                            int height) {
+        scene_focus_highlight_batch.clear();
         if (!scene_focus_highlight_active_now() ||
             !scene_object_index_valid(scene_focus_highlight_object_index)) {
             return false;
@@ -2421,20 +2443,15 @@ struct Canvas3D::Impl {
             return false;
         }
 
-        scene_highlight_instances.clear();
-        scene_highlight_instances.push_back(SceneHighlightInstance{
+        scene_focus_highlight_batch.instances.push_back(SceneHighlightInstance{
             scene_focus_highlight_model_path,
             make_instance_data_relative(scene_focus_highlight_world, render_origin),
             bounds.screen_min,
             bounds.screen_max
         });
-        scene_highlight_screen_min = bounds.screen_min;
-        scene_highlight_screen_max = bounds.screen_max;
-        const Canvas3DSceneObject& object =
-            scene_data.objects[static_cast<size_t>(scene_focus_highlight_object_index)];
-        scene_highlight_color = scene_highlight_color_for_kind(object.kind);
-        scene_highlight_object_index = scene_focus_highlight_object_index;
-        scene_has_highlight = true;
+        scene_focus_highlight_batch.screen_min = bounds.screen_min;
+        scene_focus_highlight_batch.screen_max = bounds.screen_max;
+        scene_focus_highlight_batch.object_index = scene_focus_highlight_object_index;
         return true;
     }
 
@@ -3552,6 +3569,20 @@ fail:
         composite_scene_highlight_outline(width, height, screen_min, screen_max, color);
     }
 
+    void draw_scene_highlight_batch(const SceneHighlightBatch& batch,
+                                    const Mat4& view_proj,
+                                    int width,
+                                    int height) {
+        if (!batch.valid() || !scene_object_index_valid(batch.object_index)) return;
+        const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(batch.object_index)];
+        draw_scene_model_highlight_outlines(batch.instances,
+                                            view_proj, width, height,
+                                            batch.screen_min,
+                                            batch.screen_max,
+                                            scene_highlight_color_for_kind(object.kind),
+                                            object.kind == Canvas3DSceneObjectKind::Repeater);
+    }
+
 
     static bool scene_chunk_visible(const SceneChunk& chunk, double visible_min, double visible_max) {
         return chunk.d_max >= visible_min && chunk.d_min <= visible_max;
@@ -4451,9 +4482,7 @@ fail:
     void render_scene_preview_target(int width, int height, ImVec2 mouse_local, bool pick_enabled) {
         std::string error;
         scene_hovered_object_index = -1;
-        scene_has_highlight = false;
-        scene_highlight_object_index = -1;
-        scene_highlight_instances.clear();
+        scene_hover_highlight_batch.clear();
         if (!ensure_render_target(width, height, error)) {
             if (scene_last_error != error) scene_last_error = error;
             return;
@@ -4549,43 +4578,38 @@ fail:
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
         if (picked_object_index >= 0) {
             scene_hovered_object_index = picked_object_index;
-            scene_highlight_instances.clear();
-            scene_highlight_screen_min = ImVec2(static_cast<float>(width), static_cast<float>(height));
-            scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
+            scene_hover_highlight_batch.object_index = picked_object_index;
+            scene_hover_highlight_batch.screen_min = ImVec2(static_cast<float>(width), static_cast<float>(height));
+            scene_hover_highlight_batch.screen_max = ImVec2(0.0f, 0.0f);
             auto refs_it = visible_object_instances.find(picked_object_index);
             if (refs_it != visible_object_instances.end()) {
                 for (const SceneVisibleInstanceRef& ref : refs_it->second) {
                     if (!ref.model_path) continue;
                     auto visible_it = visible_instances.find(*ref.model_path);
                     if (visible_it == visible_instances.end() || ref.instance_index >= visible_it->second.size()) continue;
-                    scene_highlight_instances.push_back(SceneHighlightInstance{
+                    scene_hover_highlight_batch.instances.push_back(SceneHighlightInstance{
                         *ref.model_path,
                         visible_it->second[ref.instance_index],
                         ref.screen_min,
                         ref.screen_max
                     });
-                    include_scene_screen_bounds(scene_highlight_screen_min, scene_highlight_screen_max, ref);
+                    include_scene_screen_bounds(scene_hover_highlight_batch.screen_min,
+                                                scene_hover_highlight_batch.screen_max,
+                                                ref);
                 }
             }
-            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(picked_object_index)];
-            scene_highlight_color = scene_highlight_color_for_kind(object.kind);
-            scene_highlight_object_index = picked_object_index;
-            scene_has_highlight = true;
         }
-        apply_scene_focus_highlight(render_origin, view_proj, width, height);
+        if (picked_object_index >= 0 &&
+            picked_object_index == scene_focus_highlight_object_index) {
+            clear_scene_focus_highlight();
+        }
+        update_scene_focus_highlight_batch(render_origin, view_proj, width, height);
         for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
             if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj, track_instance, error);
         }
-        if (scene_has_highlight && scene_object_index_valid(scene_highlight_object_index)) {
-            const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(scene_highlight_object_index)];
-            draw_scene_model_highlight_outlines(scene_highlight_instances,
-                                                view_proj, width, height,
-                                                scene_highlight_screen_min,
-                                                scene_highlight_screen_max,
-                                                scene_highlight_color,
-                                                object.kind == Canvas3DSceneObjectKind::Repeater);
-        }
+        draw_scene_highlight_batch(scene_focus_highlight_batch, view_proj, width, height);
+        draw_scene_highlight_batch(scene_hover_highlight_batch, view_proj, width, height);
 
         ID3D11ShaderResourceView* null_srv = nullptr;
         context->PSSetShaderResources(0, 1, &null_srv);
@@ -5055,12 +5079,8 @@ fail:
     Canvas3DSceneInteractionMode scene_interaction_mode = Canvas3DSceneInteractionMode::Move;
     int scene_hovered_object_index = -1;
     int scene_context_object_index = -1;
-    bool scene_has_highlight = false;
-    int scene_highlight_object_index = -1;
-    std::vector<SceneHighlightInstance> scene_highlight_instances;
-    ImVec4 scene_highlight_color = ImVec4(0.62f, 1.0f, 0.72f, 0.92f);
-    ImVec2 scene_highlight_screen_min = ImVec2(0.0f, 0.0f);
-    ImVec2 scene_highlight_screen_max = ImVec2(0.0f, 0.0f);
+    SceneHighlightBatch scene_hover_highlight_batch;
+    SceneHighlightBatch scene_focus_highlight_batch;
     int scene_focus_highlight_object_index = -1;
     std::string scene_focus_highlight_model_path;
     double scene_focus_highlight_world[16] = {
