@@ -97,6 +97,7 @@ struct Canvas3DRepeaterSegment {
     std::vector<std::string> model_paths;
     double begin_distance = 0.0;
     double end_distance = 0.0;
+    bool has_end_or_change_position = false;
     double interval = 0.0;
     double x = 0.0;
     double y = 0.0;
@@ -181,6 +182,8 @@ struct Canvas3DSceneUiText {
     std::string locate_structure_list = "Locate in Map Structure List";
     std::string locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
     std::string locate_repeater_list = "Locate in Repeater List";
+    std::string jump_to_repeater_start_position = "Jump to Start Position";
+    std::string jump_to_repeater_end_or_change_position = "Jump to End/Change Position";
     std::string loading = "Loading...";
 };
 

@@ -4889,6 +4889,9 @@ void App::render_scene_preview_window() {
         scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list");
         scene_ui_text.locate_structure_put_between_list = tr("menu.locate_in_structure_put_between_list");
         scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list");
+        scene_ui_text.jump_to_repeater_start_position = tr("menu.jump_to_repeater_start_position");
+        scene_ui_text.jump_to_repeater_end_or_change_position =
+            tr("menu.jump_to_repeater_end_or_change_position");
         scene_ui_text.loading = tr("status.scene_loading");
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();

@@ -767,20 +767,31 @@ size_t scene_repeater_instance_count(const Canvas3DRepeaterSegment& repeater) {
     return scene_repeater_index_count(range);
 }
 
-bool scene_repeater_render_distance_span(const Canvas3DRepeaterSegment& repeater,
-                                         double& first_distance,
-                                         double& last_distance) {
+bool scene_repeater_last_instance(const Canvas3DRepeaterSegment& repeater,
+                                  double& distance,
+                                  size_t& model_index) {
     if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) return false;
     if (!scene_repeater_has_interval(repeater)) {
-        first_distance = repeater.begin_distance;
-        last_distance = repeater.begin_distance;
+        distance = repeater.begin_distance;
+        model_index = 0;
         return true;
     }
 
     SceneRepeaterIndexRange range;
-    if (!scene_repeater_index_range(repeater, repeater.begin_distance, repeater.end_distance, range)) return false;
-    first_distance = repeater.begin_distance + static_cast<double>(range.first) * repeater.interval;
-    last_distance = repeater.begin_distance + static_cast<double>(range.last) * repeater.interval;
+    if (!scene_repeater_index_range(repeater, repeater.begin_distance, repeater.end_distance, range)) {
+        return false;
+    }
+    distance = repeater.begin_distance + static_cast<double>(range.last) * repeater.interval;
+    model_index = static_cast<size_t>(range.last) % repeater.model_paths.size();
+    return true;
+}
+
+bool scene_repeater_render_distance_span(const Canvas3DRepeaterSegment& repeater,
+                                         double& first_distance,
+                                         double& last_distance) {
+    size_t last_model_index = 0;
+    if (!scene_repeater_last_instance(repeater, last_distance, last_model_index)) return false;
+    first_distance = repeater.begin_distance;
     return true;
 }
 
@@ -1306,12 +1317,15 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
     std::stable_sort(repeater_events.begin(), repeater_events.end(), repeater_event_distance_order_less);
     std::map<std::string, RepeaterBegin> active_repeaters;
     size_t repeater_row_index = 0;
-    auto emit_repeater = [&](const RepeaterBegin& begin, double end_distance) {
+    auto emit_repeater = [&](const RepeaterBegin& begin,
+                             double end_distance,
+                             bool has_end_or_change_position) {
         if (end_distance < begin.distance) return;
         Canvas3DRepeaterSegment segment;
         segment.track_key = begin.track_key;
         segment.begin_distance = begin.distance;
         segment.end_distance = end_distance;
+        segment.has_end_or_change_position = has_end_or_change_position;
         segment.interval = begin.interval;
         segment.x = begin.x;
         segment.y = begin.y;
@@ -1343,7 +1357,7 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         if (method == "Begin" || method == "Begin0") {
             auto existing = active_repeaters.find(key);
             if (existing != active_repeaters.end()) {
-                emit_repeater(existing->second, distance);
+                emit_repeater(existing->second, distance, true);
                 active_repeaters.erase(existing);
             }
             RepeaterBegin begin;
@@ -1368,12 +1382,12 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         } else if (method == "End") {
             auto existing = active_repeaters.find(key);
             if (existing == active_repeaters.end()) continue;
-            emit_repeater(existing->second, distance);
+            emit_repeater(existing->second, distance, true);
             active_repeaters.erase(existing);
         }
     }
     for (const auto& kv : active_repeaters) {
-        emit_repeater(kv.second, scene.max_distance);
+        emit_repeater(kv.second, scene.max_distance, false);
     }
 
     for (const TableRow& row : model.backgrounds) {
@@ -2302,23 +2316,59 @@ struct Canvas3D::Impl {
         return false;
     }
 
-    bool find_repeater_jump_target(size_t source_row, SceneObjectJumpTarget& target) const {
+    const Canvas3DRepeaterSegment* find_repeater_segment(size_t source_row) const {
         for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
-            if (!scene_object_index_valid(repeater.object_index) || repeater.model_paths.empty()) continue;
+            if (!scene_object_index_valid(repeater.object_index)) continue;
             const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(repeater.object_index)];
-            if (object.kind != Canvas3DSceneObjectKind::Repeater || object.source_row != source_row) continue;
-            const std::string& model_path = repeater.model_paths.front();
-            if (model_path.empty()) return false;
-            double world[16] = {};
-            if (!make_repeater_instance_world(repeater, repeater.begin_distance, world)) return false;
-            if (!scene_model_center_world(model_path, world, target.center)) return false;
-            target.object_index = repeater.object_index;
-            target.distance = repeater.begin_distance;
-            target.model_path = model_path;
-            std::copy(world, world + 16, target.world);
-            return true;
+            if (object.kind == Canvas3DSceneObjectKind::Repeater && object.source_row == source_row) {
+                return &repeater;
+            }
         }
-        return false;
+        return nullptr;
+    }
+
+    bool find_repeater_jump_target(size_t source_row, SceneObjectJumpTarget& target) const {
+        const Canvas3DRepeaterSegment* repeater = find_repeater_segment(source_row);
+        if (!repeater || repeater->model_paths.empty()) return false;
+        const std::string& model_path = repeater->model_paths.front();
+        if (model_path.empty()) return false;
+        double world[16] = {};
+        if (!make_repeater_instance_world(*repeater, repeater->begin_distance, world)) return false;
+        if (!scene_model_center_world(model_path, world, target.center)) return false;
+        target.object_index = repeater->object_index;
+        target.distance = repeater->begin_distance;
+        target.model_path = model_path;
+        std::copy(world, world + 16, target.world);
+        return true;
+    }
+
+    bool find_repeater_end_or_change_jump_target(size_t source_row,
+                                                 SceneObjectJumpTarget& target) const {
+        const Canvas3DRepeaterSegment* repeater = find_repeater_segment(source_row);
+        if (!repeater || !repeater->has_end_or_change_position) return false;
+
+        double last_instance_distance = 0.0;
+        size_t last_model_index = 0;
+        if (!scene_repeater_last_instance(*repeater, last_instance_distance, last_model_index)) return false;
+
+        const std::string& model_path = repeater->model_paths[last_model_index];
+        double last_instance_world[16] = {};
+        if (model_path.empty() ||
+            !make_repeater_instance_world(*repeater, last_instance_distance, last_instance_world)) {
+            return false;
+        }
+
+        double boundary_world[16] = {};
+        if (!make_repeater_instance_world(*repeater, repeater->end_distance, boundary_world)) return false;
+
+        target.object_index = repeater->object_index;
+        target.distance = repeater->end_distance;
+        target.model_path = model_path;
+        std::copy(last_instance_world, last_instance_world + 16, target.world);
+        if (!scene_model_center_world(model_path, last_instance_world, target.center)) {
+            target.center = {boundary_world[12], boundary_world[13], boundary_world[14]};
+        }
+        return true;
     }
 
     bool find_scene_object_jump_target(Canvas3DSceneObjectKind kind,
@@ -2388,13 +2438,8 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row) {
-        if (!scene_active) return false;
-
-        SceneObjectJumpTarget target;
-        if (!find_scene_object_jump_target(kind, source_row, target)) return false;
-
-        scene_camera_distance = std::clamp(target.distance - kSceneObjectJumpBackM,
+    bool set_scene_camera_for_target(double distance, DVec3 target_center) {
+        scene_camera_distance = std::clamp(distance - kSceneObjectJumpBackM,
                                            scene_data.min_distance,
                                            scene_data.max_distance);
         scene_camera_lateral_offset = 0.0;
@@ -2404,7 +2449,7 @@ struct Canvas3D::Impl {
         scene_rotating = false;
         if (!update_scene_camera_from_owntrack()) return false;
 
-        DVec3 to_target = target.center - scene_camera_pos;
+        DVec3 to_target = target_center - scene_camera_pos;
         double len_sq = dot(to_target, to_target);
         if (len_sq > 1e-12) {
             double len = std::sqrt(len_sq);
@@ -2415,6 +2460,30 @@ struct Canvas3D::Impl {
             if (sample_own_track(scene_camera_distance, point)) {
                 scene_camera_yaw_offset = scene_camera_yaw - static_cast<float>(point.theta);
             }
+        }
+
+        return true;
+    }
+
+    bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row) {
+        if (!scene_active) return false;
+
+        SceneObjectJumpTarget target;
+        if (!find_scene_object_jump_target(kind, source_row, target) ||
+            !set_scene_camera_for_target(target.distance, target.center)) {
+            return false;
+        }
+
+        start_scene_focus_highlight(target.object_index, target.model_path, target.world);
+        return true;
+    }
+
+    bool jump_scene_camera_to_repeater_end_or_change(size_t source_row) {
+        if (!scene_active) return false;
+        SceneObjectJumpTarget target;
+        if (!find_repeater_end_or_change_jump_target(source_row, target) ||
+            !set_scene_camera_for_target(target.distance, target.center)) {
+            return false;
         }
 
         start_scene_focus_highlight(target.object_index, target.model_path, target.world);
@@ -4643,6 +4712,16 @@ fail:
                     action.kind = Canvas3DSceneContextActionKind::LocateRepeater;
                     action.row_index = object.source_row;
                 }
+                ImGui::Separator();
+                if (ImGui::MenuItem(ui_text.jump_to_repeater_start_position.c_str())) {
+                    jump_scene_camera_to_object(Canvas3DSceneObjectKind::Repeater, object.source_row);
+                }
+                const Canvas3DRepeaterSegment* repeater = find_repeater_segment(object.source_row);
+                ImGui::BeginDisabled(!repeater || !repeater->has_end_or_change_position);
+                if (ImGui::MenuItem(ui_text.jump_to_repeater_end_or_change_position.c_str())) {
+                    jump_scene_camera_to_repeater_end_or_change(object.source_row);
+                }
+                ImGui::EndDisabled();
             } else if (object.kind == Canvas3DSceneObjectKind::Signal &&
                        ImGui::BeginMenu(ui_text.switch_signal_aspect.c_str(), !object.model_options.empty())) {
                 for (size_t i = 0; i < object.model_options.size(); ++i) {
