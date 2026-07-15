@@ -559,6 +559,8 @@ KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned fla
             log_info("preview_cache=miss");
         } else if (!options.collect_edit_metadata && options.rebuild_preview_cache) {
             log_info("preview_cache=rebuild");
+        } else if (!options.collect_edit_metadata) {
+            log_info("preview_cache=disabled");
         }
         auto ctx = kme::maploader::detail::parse_map_context(
             map_path, unit_distance, SourceTextOverrides{}, false, {0.0, 0.0, 0.0}, options);
