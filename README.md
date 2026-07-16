@@ -8,7 +8,7 @@
 [简体中文Readme](README_zhcn.md)
 ## Project Overview
 
-komapedit is a lightweight viewer and editor for BVE Trainsim map files. It reworks the track-geometry approach from `kobushi-trackviewer` as a C++/Win32 desktop application. The current version focuses on loading maps, generating track geometry, showing 2D plan/profile/radius views, displaying map data tables, previewing Structure models and map scenes in 3D, and exporting track geometry to CSV.
+komapedit is a lightweight viewer and editor for BVE Trainsim map files. It reworks the track-geometry approach from `kobushi-trackviewer` as a C++/Win32 desktop application. The current version focuses on loading maps, generating track geometry, showing 2D plan/profile/radius views, displaying map data tables, inspecting source/include files, editing a limited set of source-backed map elements, previewing Structure models and map scenes in 3D, and exporting track geometry to CSV.
 
 The application has three main runtime components:
 
@@ -16,7 +16,7 @@ The application has three main runtime components:
 - `model_loader.dll`: loads Structure model files through Assimp and exposes mesh/material data for the 3D previews.
 - `komapedit.exe`: the desktop GUI, built with Dear ImGui, ImPlot, Win32, DirectX 11, and WIC.
 
-At this stage, komapedit is closer to a map viewer, track-geometry visualizer, data inspector, and 3D preview tool than a full map editor. Full object editing, 3D scene editing, sound editing, and environmental-effect editing are still planned.
+At this stage, komapedit provides source-backed editing for Structure model-list entries, `Structure.Put`/`Put0`/`PutBetween`, and `Station.Put`, including live X/Y/Z Structure placement edits in the 3D scene. It is not yet a full map editor: curve/gradient, Repeater, sound, environmental-effect, and new-element editing are still planned.
 
 ## Development Status (TODO List)
 
@@ -28,8 +28,9 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Support `$variable = expression;`, the predefined `distance` variable, and basic math functions.
 - [x] Support `#` and `//` comments.
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
-- [ ] Add source anchors and stable edit metadata for editable map/list statements while keeping `kv_get_ir_json()` compatible.
-- [ ] Edit, delete, insert, and save elements in source map/include/list files while preserving include structure, distance expressions, original encodings, and line endings where possible.
+- [x] Expose source anchors and stable edit metadata for editable map/list statements while keeping compact `kv_get_ir_json_ex()` consumers compatible.
+- [x] Apply supported updates/deletions to an in-memory working copy and save them to source map/include/list files, preserving include structure, distance semantics, original encodings, and line endings where possible.
+- [ ] Add new-element insertion and extend source-backed editing beyond the currently supported Structure and `Station.Put` rows.
 
 ### Own-Track and Other-Track Geometry
 
@@ -79,13 +80,15 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Load and display Structure model lists referenced by `Structure.Load` (`.txt` or `.csv`).
 - [x] Display `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` data, with Begin/End distances merged for readability.
 - [x] Provide shared find and unused-entry search panels for Structure models, signal aspects, and sound lists.
-- [ ] Edit Structure model lists.
-- [ ] Edit station lists and station positions.
+- [x] Edit Structure model-list keys and file paths through the source-backed property inspector.
+- [x] Edit `Station.Put` distance and `stationKey` fields.
+- [ ] Edit the remaining station-list fields and support adding station rows.
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, and `Fog Change Point List`.
 - [ ] Edit signal and beacon lists.
-- [ ] Add a source-backed property inspector for Map Info rows, 2D markers, and 3D scene objects.
+- [x] Provide a source-backed `Properties/Edit` inspector for supported Structure/`Station.Put` table rows and Structure objects in the 3D scene.
+- [ ] Extend the property inspector to 2D markers, remaining Map Info rows, and Repeater objects in the 3D scene.
 
 ### 3D Canvas
 
@@ -96,8 +99,10 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Jump the 3D scene camera from station selections and numeric distance jumps, and show the current 3D position on the plan view.
 - [x] Locate Structure and Repeater table rows in the 3D scene preview, and locate picked scene objects back in their tables.
 - [ ] 3D scene quality settings for render scale, MSAA, texture filtering, and outline quality.
-- [ ] 3D camera information for current curve radius, gradient, and distance to previous/next station.
-- [ ] Structure position editing tools in the 3D canvas.
+- [x] Display the current curve radius/cant, gradient, and distance to the next station in the 3D scene route overlay.
+- [ ] Extend the 3D route overlay with previous-station information and unsupported interpolation cases.
+- [x] Edit `Structure.Put` positions along X/Y/Z with a live 3D gizmo, including optional `Put0` conversion and configurable gizmo size.
+- [ ] Add 3D gizmo editing for Structure rotation and other placement fields.
 - [ ] Repeater editing with synchronized rebuilds of generated scene instances.
 
 ### Environmental Effects
@@ -116,6 +121,8 @@ At this stage, komapedit is closer to a map viewer, track-geometry visualizer, d
 - [x] Save background-image parameters with recent-map entries in `settings/history.ini`.
 - [x] Save settings to `settings/settings.ini` under the executable directory.
 - [x] Preview-cache management with size/count information, manual clearing, and a persistent disable-cache option.
+- [x] Include-file structure diagram and read-only source text preview using the active in-memory working copy.
+- [x] Edit mode with separate Apply-to-preview, Save-to-disk, Revert, and Reload-from-disk behavior plus unsaved-change prompts.
 - [x] Export own-track and other-track geometry to CSV.
 - [ ] Element preset groups stored as ordinary BVE map/list statements through `element_presets.json`.
 - [ ] Route release export that expands includes, optionally constantizes distance/variable expressions, copies only used resources, writes a report, and protects development route directories from overwrite.
@@ -158,7 +165,7 @@ of overwriting either file.
    - Double-click the plan view to fit the map to the current viewport.
 4. Use `Station Jump` or `Jump to distance(m)` on the toolbar to jump to a station or numeric map distance.
 5. Use the `2D View` menu to show or hide the 2D view window, profile chart, curve-radius chart, gradient overlays, profile other-track display, and background-image controls.
-6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
+6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files; right-click a source-file node to open its read-only text preview. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
 7. Switch `Mode` to `Measure`, then move near the track or double-click to view mileage, elevation, gradient, curve radius, and speed limit.
 8. Use the `Map Info` menu to open the data tables for stations, tracks, other trains, Structures, repeaters, signals, beacons, sounds, irregularity/adhesion data, backgrounds, cab-illuminance, and fog. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
    - `Signal Aspect List`: view signal aspect definitions.
@@ -173,9 +180,10 @@ of overwriting either file.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map, and locate rendered objects in the 3D scene preview when it is loaded.
    - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. Right-click a structure key and choose `Preview Model` to open the 3D model preview.
    - `Repeater List`: view `Repeater.Begin/End` data, and locate generated repeaters in the 3D scene preview when it is loaded.
+   - Turn on `Enable Edit` to use `Properties/Edit` on supported `Station.Put`, Structure model-list, and Structure placement rows. `Apply` updates the in-memory preview; the toolbar `Save` writes pending changes to source files, while `Reload` reads the map from disk again.
 9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
-11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. In select mode, scene objects can be located back in their Structure or Repeater tables.
+11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, and next-station information. In select mode, scene objects can be located back in their Structure or Repeater tables. With edit mode enabled, right-click a Structure and choose `Properties/Edit` to edit its fields; supported `Structure.Put` coordinates can also be dragged with the X/Y/Z gizmo.
 12. Use `Options -> Cache Management...` to inspect the active preview-cache directory, file count, and total size; open the directory, clear all preview cache after confirmation, or disable cache for subsequent map loads.
 13. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
 14. Press `F5` or use `File -> Reload` to reload the current map.
@@ -206,7 +214,10 @@ komapedit/
 │  │  ├─ app_settings.cpp/.h       # Runtime settings, history, and UI style helpers
 │  │  ├─ runtime_paths.cpp/.h       # Executable, DLL, and settings directory paths
 │  │  ├─ maploader_runtime.cpp      # Cached runtime dispatch for bin/maploader.dll
+│  │  ├─ file_structure_diagram.cpp # Include-file structure diagram and source-file actions
+│  │  ├─ text_preview.cpp            # Read-only source preview and distance-boundary selection
 │  │  ├─ debug_headless.cpp/.h     # Debug-only headless validation entry points
+│  │  ├─ touch_input.cpp/.h         # Win32 touch gesture translation
 │  │  └─ kme.h                     # App declaration and shared GUI state
 │  ├─ table/
 │  │  ├─ datatable.cpp             # Data table columns, cache, and table windows
