@@ -126,50 +126,50 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - 预览：实际进入轨道几何、表格、标记或 3D 场景。
 - 基本编辑：已有语句可通过属性检查器修改并写回；不代表支持新建该语句。
 - 图形化编辑：可在 2D/3D 画布直接拖动或操纵；右键打开属性窗口不算。
-- √ 完整支持；△ 部分或间接支持；✕ 不支持。
+- √ = 完整支持；△ = 部分或间接支持；✕ = 暂不支持；- = 没有计划支持或无必要性。
 
-| 地图语法 | 预览 | 基本编辑 | 图形化编辑 | 当前实际情况 |
-|---|:---:|:---:|:---:|---|
-| 文件头、版本及编码 | △ | ✕ | ✕ | 可加载受支持编码，编码覆盖并不完整 |
-| 注释、赋值、函数调用、数组、键 | √ | ✕ | ✕ | 作为解析基础使用，没有通用源码编辑器 |
-| 变量及参数变量 | √ | ✕ | ✕ | 可参与表达式求值 |
-| 算术、比较及逻辑运算符 | △ | ✕ | ✕ | 大部分可求值，字符串和数值混合等边界情况不完整 |
-| 数学函数 | √ | ✕ | ✕ | 用于地图表达式求值 |
-| 距离声明及距离表达式 | √ | △ | ✕ | 仅 `Structure.Put/Put0/PutBetween`、`Station.Put` 等编辑目标可修改距离 |
-| `include`、带距离偏移的 `include` | √ | △ | ✕ | 可加载包含文件；其中受支持元素可以写回，但 include 路径本身不可编辑 |
-| `Curve.*` | √ | ✕ | ✕ | 参与轨道几何生成 |
-| `Gradient.*` | √ | ✕ | ✕ | 参与轨道高程及坡度生成 |
-| `Track['key'].X/Y/Position` | √ | ✕ | ✕ | 生成其他轨道几何 |
-| `Track['key'].Cant.*` | √ | ✕ | ✕ | 进入轨道几何和超高数据 |
-| `Structure.Load` | √ | △ | ✕ | 结构列表及模型会加载；可编辑被加载列表中的 key/path，但不能编辑 Load 路径 |
-| `Structure.Put` | √ | √ | △ | 属性字段可写回；3D 中仅支持 X/Y/Z 平移，不支持旋转、里程、轨道、倾斜和跨度的直接操纵 |
-| `Structure.Put0` | √ | √ | △ | 基本字段可编辑；确认转换成 `Structure.Put` 后才显示 X/Y/Z 操纵器 |
-| `Structure.PutBetween` | √ | √ | ✕ | 属性检查器内可编辑，但没有 2D/3D 操纵器 |
-| `Repeater.*` | √ | ✕ | ✕ | 参与连续布景生成及列表展示 |
-| `Background.Change` | √ | ✕ | ✕ | 可进入背景数据及场景预览 |
-| `Station.Load` | √ | ✕ | ✕ | 站名及站点列表可加载 |
-| `Station.Put` | √ | △ | ✕ | 只可编辑距离和 `stationKey`，车门及停车余量等参数不可编辑 |
-| `Section.Begin` / `Section.BeginNew` | ✕ | ✕ | ✕ | 仅被解析并输出到 IR，当前 GUI 预览模型没有读取或呈现 |
-| `Section.SetSpeedLimit` / `Signal.SpeedLimit` | ✕ | ✕ | ✕ | 与 Section.Begin 相同，仅停留在解析/IR 层 |
-| `Signal.Load` | √ | ✕ | ✕ | 信号相位和模型数据可加载、展示 |
-| `Signal.Put` | √ | ✕ | ✕ | 可进入信号列表、标记和场景 |
-| `Beacon.Put` | √ | ✕ | ✕ | 可进入列表及地图标记 |
-| `SpeedLimit.Begin` / `SpeedLimit.End` | √ | ✕ | ✕ | 可进入限速模型、列表及标记 |
-| `PreTrain.Pass` | √ | ✕ | ✕ | 可进入列表及地图标记 |
-| `Light.Ambient/Diffuse/Direction` | ✕ | ✕ | ✕ | 未支持光照相关语法 |
-| `Fog.Set` | √ | ✕ | ✕ | 可进入表格/标记，但未完整模拟视觉雾效 |
-| `DrawDistance.Set` | ✕ | ✕ | ✕ | 完全未支持 |
-| `CabIlluminance.Set` | √ | ✕ | ✕ | 可进入列表/标记，不模拟驾驶台亮度效果 |
-| `Irregularity.Change` | √ | ✕ | ✕ | 可进入列表/标记，不模拟车辆振动 |
-| `Adhesion.Change` | √ | ✕ | ✕ | 可进入列表/标记，不模拟车辆黏着效果 |
-| `Sound.Load` / `Sound.Play` | √ | ✕ | ✕ | 声音资源和播放点可列出、定位，但不实际播放 |
-| `Sound3D.Load` / `Sound3D.Put` | √ | ✕ | ✕ | 可进入资源列表和空间位置数据，但不实际播放 |
-| `RollingNoise.Change` | √ | ✕ | ✕ | 可进入列表/标记 |
-| `FlangeNoise.Change` | √ | ✕ | ✕ | 可进入列表/标记 |
-| `JointNoise.Play` | √ | ✕ | ✕ | 可进入列表/标记 |
-| `Train.Add` / `Train.Load` | △ | ✕ | ✕ | 其他列车定义可展示，但外部列车文件只被部分建模 |
-| `Train.Enable` | ✕ | ✕ | ✕ | 仅进入解析/IR |
-| `Train.Stop` | √ | ✕ | ✕ | 可生成其他列车停车表、路径和地图标记 |
+| 地图语法                                      | 预览  | 基本编辑 | 图形化编辑 | 当前实际情况                                                                         |
+| --------------------------------------------- | :---: | :------: | :--------: | ------------------------------------------------------------------------------------ |
+| 文件头、版本及编码                            |   △   |    ✕     |     -      | 可加载受支持编码，编码覆盖并不完整                                                   |
+| 注释、赋值、函数调用、数组、键                |   √   |    ✕     |     -      | 作为解析基础使用，没有通用源码编辑器                                                 |
+| 变量及参数变量                                |   √   |    ✕     |     -      | 可参与表达式求值                                                                     |
+| 算术、比较及逻辑运算符                        |   △   |    ✕     |     -      | 大部分可求值，字符串和数值混合等边界情况不完整                                       |
+| 数学函数                                      |   √   |    ✕     |     -      | 用于地图表达式求值                                                                   |
+| 距离声明及距离表达式                          |   √   |    △     |     ✕      | 仅 `Structure.Put/Put0/PutBetween`、`Station.Put` 等编辑目标可修改距离               |
+| `include`、带距离偏移的 `include`             |   √   |    △     |     ✕      | 可加载包含文件；其中受支持元素可以写回，但 include 路径本身不可编辑                  |
+| `Curve.*`                                     |   √   |    ✕     |     ✕      | 参与轨道几何生成                                                                     |
+| `Gradient.*`                                  |   √   |    ✕     |     ✕      | 参与轨道高程及坡度生成                                                               |
+| `Track['key'].X/Y/Position`                   |   √   |    ✕     |     ✕      | 生成其他轨道几何                                                                     |
+| `Track['key'].Cant.*`                         |   √   |    ✕     |     ✕      | 进入轨道几何和超高数据                                                               |
+| `Structure.Load`                              |   √   |    △     |     -      | 结构列表及模型会加载；可编辑被加载列表中的 key/path，但不能编辑 Load 路径            |
+| `Structure.Put`                               |   √   |    √     |     △      | 属性字段可写回；3D 中仅支持 X/Y/Z 平移，不支持旋转、里程、轨道、倾斜和跨度的直接操纵 |
+| `Structure.Put0`                              |   √   |    √     |     △      | 基本字段可编辑；确认转换成 `Structure.Put` 后才显示 X/Y/Z 操纵器                     |
+| `Structure.PutBetween`                        |   √   |    √     |     ✕      | 属性检查器内可编辑，但没有 2D/3D 操纵器                                              |
+| `Repeater.*`                                  |   √   |    ✕     |     ✕      | 参与连续布景生成及列表展示                                                           |
+| `Background.Change`                           |   √   |    ✕     |     ✕      | 可进入背景数据及场景预览                                                             |
+| `Station.Load`                                |   √   |    ✕     |     -      | 站名及站点列表可加载                                                                 |
+| `Station.Put`                                 |   √   |    △     |     ✕      | 只可编辑距离和 `stationKey`，车门及停车余量等参数不可编辑                            |
+| `Section.Begin` / `Section.BeginNew`          |   ✕   |    ✕     |     ✕      | 仅被解析并输出到 IR，当前 GUI 预览模型没有读取或呈现                                 |
+| `Section.SetSpeedLimit` / `Signal.SpeedLimit` |   ✕   |    ✕     |     ✕      | 与 Section.Begin 相同，仅停留在解析/IR 层                                            |
+| `Signal.Load`                                 |   √   |    ✕     |     -      | 信号相位和模型数据可加载、展示                                                       |
+| `Signal.Put`                                  |   √   |    ✕     |     ✕      | 可进入信号列表、标记和场景                                                           |
+| `Beacon.Put`                                  |   √   |    ✕     |     ✕      | 可进入列表及地图标记                                                                 |
+| `SpeedLimit.Begin` / `SpeedLimit.End`         |   √   |    ✕     |     ✕      | 可进入限速模型、列表及标记                                                           |
+| `PreTrain.Pass`                               |   √   |    ✕     |     ✕      | 可进入列表及地图标记                                                                 |
+| `Light.Ambient/Diffuse/Direction`             |   -   |    -     |     -      | 未支持光照相关语法                                                                   |
+| `Fog.Set`                                     |   √   |    ✕     |     ✕      | 可进入表格/标记，但未完整模拟视觉雾效                                                |
+| `DrawDistance.Set`                            |   ✕   |    ✕     |     ✕      | 完全未支持                                                                           |
+| `CabIlluminance.Set`                          |   √   |    ✕     |     ✕      | 可进入列表/标记，不模拟驾驶台亮度效果                                                |
+| `Irregularity.Change`                         |   √   |    ✕     |     ✕      | 可进入列表/标记，不模拟车辆振动                                                      |
+| `Adhesion.Change`                             |   √   |    ✕     |     ✕      | 可进入列表/标记，不模拟车辆黏着效果                                                  |
+| `Sound.Load` / `Sound.Play`                   |   √   |    ✕     |     ✕      | 声音资源和播放点可列出、定位，但不实际播放                                           |
+| `Sound3D.Load` / `Sound3D.Put`                |   √   |    ✕     |     ✕      | 可进入资源列表和空间位置数据，但不实际播放                                           |
+| `RollingNoise.Change`                         |   √   |    ✕     |     ✕      | 可进入列表/标记                                                                      |
+| `FlangeNoise.Change`                          |   √   |    ✕     |     ✕      | 可进入列表/标记                                                                      |
+| `JointNoise.Play`                             |   √   |    ✕     |     ✕      | 可进入列表/标记                                                                      |
+| `Train.Add` / `Train.Load`                    |   △   |    ✕     |     ✕      | 其他列车定义可展示，但外部列车文件只被部分建模                                       |
+| `Train.Enable`                                |   ✕   |    ✕     |     ✕      | 仅进入解析/IR                                                                        |
+| `Train.Stop`                                  |   √   |    ✕     |     ✕      | 可生成其他列车停车表、路径和地图标记                                                 |
 
 ## 安装与启动
 
@@ -353,19 +353,19 @@ DLL 位于 `bin`，INI 位于 `settings`。
 
 字段说明：
 
-| 字段 | 说明 |
-| --- | --- |
-| distance | 地图绝对距离，单位 m |
-| x | 自轨道计算后的平面 X 坐标 |
-| y | 自轨道计算后的平面 Y 坐标 |
-| z | 标高 |
-| direction | 轨道方向角，单位 rad |
-| radius | 当前曲线半径 |
-| gradient | 当前坡度，按 BVE 的千分率语义处理 |
+| 字段             | 说明                                                    |
+| ---------------- | ------------------------------------------------------- |
+| distance         | 地图绝对距离，单位 m                                    |
+| x                | 自轨道计算后的平面 X 坐标                               |
+| y                | 自轨道计算后的平面 Y 坐标                               |
+| z                | 标高                                                    |
+| direction        | 轨道方向角，单位 rad                                    |
+| radius           | 当前曲线半径                                            |
+| gradient         | 当前坡度，按 BVE 的千分率语义处理                       |
 | interpolate_func | 插值类型，`0` 表示 `sin半波长递减`，`1` 表示 `线性递减` |
-| cant | 超高 |
-| center | 轨道中心偏移 |
-| gauge | 轨距 |
+| cant             | 超高                                                    |
+| center           | 轨道中心偏移                                            |
+| gauge            | 轨距                                                    |
 
 ### 他轨道几何 CSV（导出）
 
@@ -383,16 +383,16 @@ DLL 位于 `bin`，INI 位于 `settings`。
 
 字段说明：
 
-| 字段 | 说明 |
-| --- | --- |
-| distance | 地图绝对距离，单位 m |
-| x | 他轨道计算后的平面 X 坐标 |
-| y | 他轨道计算后的平面 Y 坐标 |
-| z | 他轨道标高 |
+| 字段             | 说明                                      |
+| ---------------- | ----------------------------------------- |
+| distance         | 地图绝对距离，单位 m                      |
+| x                | 他轨道计算后的平面 X 坐标                 |
+| y                | 他轨道计算后的平面 Y 坐标                 |
+| z                | 他轨道标高                                |
 | interpolate_func | 插值类型，`0` 表示 `sin`，`1` 表示 `line` |
-| cant | 超高 |
-| center | 轨道中心偏移 |
-| gauge | 轨距 |
+| cant             | 超高                                      |
+| center           | 轨道中心偏移                              |
+| gauge            | 轨距                                      |
 
 导出的数值使用固定 6 位小数。当前 CSV 导出仅包含轨道几何，不导出车站、布景、连续布景、信号、应答器、音效、背景变化点、驾驶台亮度变化点、雾或 3D 场景数据。
 
@@ -406,18 +406,18 @@ komapedit 以 Apache License, Version 2.0 分发。许可证全文见 `LICENSE`�
 
 参考项目：
 
-| 项目 | 版权 | 许可证 |
-| --- | --- | --- |
+| 项目                                                                                   | 版权                               | 许可证                      |
+| -------------------------------------------------------------------------------------- | ---------------------------------- | --------------------------- |
 | konawasabi 的 [kobushi-trackviewer](https://github.com/konawasabi/kobushi-trackviewer) | Copyright (c) 2021-2024 konawasabi | Apache License, Version 2.0 |
 
 GUI 和模型预览使用的第三方库：
 
-| 库 | 用途 | 版权 | 许可证 |
-| --- | --- | --- | --- |
-| [Dear ImGui](https://github.com/ocornut/imgui) | Docking GUI、Win32 后端、DirectX 11 后端、C++ std::string 辅助模块 | Copyright (c) 2014-2026 Omar Cornut | MIT License |
-| [ImPlot](https://github.com/epezent/implot) | 2D 图表控件 | Copyright (c) 2020 Evan Pezent | MIT License |
-| [Assimp / Open Asset Import Library](https://github.com/assimp/assimp) | 布景模型导入 | Copyright (c) 2006-2026, assimp team | Modified BSD 3-Clause License |
-| Dear ImGui 随附的 stb 单文件库 | Dear ImGui 使用的字体、文本编辑、矩形打包支持 | Copyright (c) 2017 Sean Barrett | MIT License 或 Public Domain |
+| 库                                                                     | 用途                                                               | 版权                                 | 许可证                        |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------ | ----------------------------- |
+| [Dear ImGui](https://github.com/ocornut/imgui)                         | Docking GUI、Win32 后端、DirectX 11 后端、C++ std::string 辅助模块 | Copyright (c) 2014-2026 Omar Cornut  | MIT License                   |
+| [ImPlot](https://github.com/epezent/implot)                            | 2D 图表控件                                                        | Copyright (c) 2020 Evan Pezent       | MIT License                   |
+| [Assimp / Open Asset Import Library](https://github.com/assimp/assimp) | 布景模型导入                                                       | Copyright (c) 2006-2026, assimp team | Modified BSD 3-Clause License |
+| Dear ImGui 随附的 stb 单文件库                                         | Dear ImGui 使用的字体、文本编辑、矩形打包支持                      | Copyright (c) 2017 Sean Barrett      | MIT License 或 Public Domain  |
 
 分发本仓库源码或由本仓库构建的二进制文件时，请一并包含 `LICENSE`、
 `NOTICE` 和 `THIRD_PARTY_NOTICES.md`。如果分发 `third_party/` 源码目录，
