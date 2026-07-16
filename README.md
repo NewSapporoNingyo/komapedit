@@ -127,6 +127,56 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 - [ ] Element preset groups stored as ordinary BVE map/list statements through `element_presets.json`.
 - [ ] Route release export that expands includes, optionally constantizes distance/variable expressions, copies only used resources, writes a report, and protects development route directories from overwrite.
 
+### Current BVE Map Syntax Support
+
+- Preview: the syntax actually feeds track geometry, tables, markers, or the 3D scene.
+- Basic editing: existing statements can be changed and written back through the property inspector; this does not imply support for creating new statements.
+- Graphical editing: elements can be dragged or manipulated directly on the 2D/3D canvas; opening the property window from a context menu does not count.
+- √ = fully supported; △ = partially or indirectly supported; ✕ = currently unsupported; - = support is not planned or not applicable.
+
+| Map syntax                                    | Preview | Basic editing | Graphical editing | Current behavior                                                                                                         |
+| --------------------------------------------- | :-----: | :-----------: | :---------------: | ------------------------------------------------------------------------------------------------------------------------ |
+| File header, version, and encoding            |    △    |       ✕       |         -         | Supported encodings can be loaded, but encoding coverage is not complete                                                |
+| Comments, assignments, calls, arrays, and keys |    √    |       ✕       |         -         | Used as parsing foundations; there is no general-purpose source editor                                                   |
+| Variables and argument variables              |    √    |       ✕       |         -         | Can participate in expression evaluation                                                                                |
+| Arithmetic, comparison, and logical operators |    △    |       ✕       |         -         | Most expressions can be evaluated, but edge cases such as mixed strings and numbers are incomplete                      |
+| Mathematical functions                        |    √    |       ✕       |         -         | Used to evaluate map expressions                                                                                        |
+| Distance declarations and expressions         |    √    |       △       |         ✕         | Distance can be changed only for edit targets such as `Structure.Put/Put0/PutBetween` and `Station.Put`                  |
+| `include` and distance-offset `include`        |    √    |       △       |         ✕         | Include files can be loaded and supported elements in them can be written back, but Include paths are not editable       |
+| `Curve.*`                                     |    √    |       ✕       |         ✕         | Participates in track-geometry generation                                                                               |
+| `Gradient.*`                                  |    √    |       ✕       |         ✕         | Participates in track elevation and gradient generation                                                                 |
+| `Track['key'].X/Y/Position`                   |    √    |       ✕       |         ✕         | Generates other-track geometry                                                                                          |
+| `Track['key'].Cant.*`                         |    √    |       ✕       |         ✕         | Feeds track geometry and cant data                                                                                      |
+| `Structure.Load`                              |    √    |       △       |         -         | Structure lists and models are loaded; keys/paths in loaded lists are editable, but the Load path is not                |
+| `Structure.Put`                               |    √    |       √       |         △         | Property fields can be written back; 3D supports only X/Y/Z translation, not direct rotation, distance, track, tilt, or span manipulation |
+| `Structure.Put0`                              |    √    |       √       |         △         | Basic fields are editable; the X/Y/Z gizmo appears only after confirming conversion to `Structure.Put`                  |
+| `Structure.PutBetween`                        |    √    |       √       |         ✕         | Editable in the property inspector, but has no 2D/3D gizmo                                                              |
+| `Repeater.*`                                  |    √    |       ✕       |         ✕         | Participates in continuous-object generation and list display                                                           |
+| `Background.Change`                           |    √    |       ✕       |         ✕         | Feeds background data and the scene preview                                                                             |
+| `Station.Load`                                |    √    |       ✕       |         -         | Station names and the station list can be loaded                                                                        |
+| `Station.Put`                                 |    √    |       △       |         ✕         | Only distance and `stationKey` are editable; door side, stop margins, and other parameters are not                       |
+| `Section.Begin` / `Section.BeginNew`          |    ✕    |       ✕       |         ✕         | Parsed and emitted to the IR only; the current GUI preview model does not read or present it                             |
+| `Section.SetSpeedLimit` / `Signal.SpeedLimit` |    ✕    |       ✕       |         ✕         | Like Section.Begin, remains only at the parser/IR layer                                                                  |
+| `Signal.Load`                                 |    √    |       ✕       |         -         | Signal aspects and model data can be loaded and displayed                                                               |
+| `Signal.Put`                                  |    √    |       ✕       |         ✕         | Feeds the signal list, markers, and scene                                                                                |
+| `Beacon.Put`                                  |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
+| `SpeedLimit.Begin` / `SpeedLimit.End`         |    √    |       ✕       |         ✕         | Feeds the speed-limit model, list, and markers                                                                           |
+| `PreTrain.Pass`                               |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
+| `Light.Ambient/Diffuse/Direction`             |    -    |       -       |         -         | Lighting syntax is not supported                                                                                        |
+| `Fog.Set`                                     |    √    |       ✕       |         ✕         | Feeds tables/markers, but the visual fog effect is not fully simulated                                                   |
+| `DrawDistance.Set`                            |    ✕    |       ✕       |         ✕         | Not supported                                                                                                           |
+| `CabIlluminance.Set`                          |    √    |       ✕       |         ✕         | Feeds lists/markers, but cab brightness is not simulated                                                                 |
+| `Irregularity.Change`                         |    √    |       ✕       |         ✕         | Feeds lists/markers, but vehicle vibration is not simulated                                                              |
+| `Adhesion.Change`                             |    √    |       ✕       |         ✕         | Feeds lists/markers, but vehicle adhesion effects are not simulated                                                      |
+| `Sound.Load` / `Sound.Play`                   |    √    |       ✕       |         ✕         | Sound resources and playback points can be listed and located, but audio is not played                                  |
+| `Sound3D.Load` / `Sound3D.Put`                |    √    |       ✕       |         ✕         | Feeds resource lists and spatial-position data, but audio is not played                                                  |
+| `RollingNoise.Change`                         |    √    |       ✕       |         ✕         | Feeds lists/markers                                                                                                      |
+| `FlangeNoise.Change`                          |    √    |       ✕       |         ✕         | Feeds lists/markers                                                                                                      |
+| `JointNoise.Play`                             |    √    |       ✕       |         ✕         | Feeds lists/markers                                                                                                      |
+| `Train.Add` / `Train.Load`                    |    △    |       ✕       |         ✕         | Other-train definitions can be displayed, but external train files are only partially modeled                           |
+| `Train.Enable`                                |    ✕    |       ✕       |         ✕         | Reaches only the parser/IR layer                                                                                        |
+| `Train.Stop`                                  |    √    |       ✕       |         ✕         | Generates other-train stop tables, paths, and map markers                                                               |
+
 ## Installation and Startup
 
 This repository does not currently provide a standalone installer. The recommended workflow is to build from source and run the generated executable.
