@@ -271,6 +271,7 @@ public:
     bool reload_scene_models(std::string& error);
     bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error);
     void set_scene_window(double back_m, double forward_m);
+    void set_scene_edit_component_scale(float scale);
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
     Canvas3DSceneInteractionMode scene_interaction_mode() const;
     Canvas3DSceneStats scene_stats() const;

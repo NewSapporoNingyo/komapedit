@@ -120,6 +120,19 @@ int clamp_scene_draw_distance(double value) {
     return std::clamp(rounded, kMinSceneDrawDistanceM, kMaxSceneDrawDistanceM);
 }
 
+int clamp_scene_edit_component_size_percent(double value) {
+    if (!std::isfinite(value)) return kDefaultSceneEditComponentSizePercent;
+    value = std::clamp(value,
+                       static_cast<double>(kMinSceneEditComponentSizePercent),
+                       static_cast<double>(kMaxSceneEditComponentSizePercent));
+    const int rounded = static_cast<int>(
+        std::round(value / kSceneEditComponentSizeStepPercent)) *
+        kSceneEditComponentSizeStepPercent;
+    return std::clamp(rounded,
+                      kMinSceneEditComponentSizePercent,
+                      kMaxSceneEditComponentSizePercent);
+}
+
 ImVec4 default_theme_color() {
     return ImVec4(0.26f, 0.59f, 0.98f, 1.0f);
 }
@@ -395,6 +408,9 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_scene_owntrack_markers=" << bool_to_string(settings.view_3d.show_scene_owntrack_markers) << "\n";
     out << "show_scene_current_position_on_plan=" << bool_to_string(settings.view_3d.show_scene_current_position_on_plan) << "\n";
     out << "scene_draw_distance_m=" << clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m) << "\n";
+    out << "scene_edit_component_size_percent="
+        << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
+        << "\n";
     return true;
 }
 
@@ -653,6 +669,16 @@ UserSettings load_user_settings() {
             } catch (...) {
                 settings.view_3d.scene_draw_distance_m = kDefaultSceneDrawDistanceM;
             }
+        } else if (key == "scene_edit_component_size_percent" ||
+                   key == "edit_component_size_percent") {
+            view_3d_keys_seen.insert("scene_edit_component_size_percent");
+            try {
+                settings.view_3d.scene_edit_component_size_percent =
+                    clamp_scene_edit_component_size_percent(std::stod(value));
+            } catch (...) {
+                settings.view_3d.scene_edit_component_size_percent =
+                    kDefaultSceneEditComponentSizePercent;
+            }
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
@@ -663,7 +689,9 @@ UserSettings load_user_settings() {
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
     settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m);
-    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 3) {
+    settings.view_3d.scene_edit_component_size_percent =
+        clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent);
+    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 4) {
         save_user_settings(settings);
     }
     return settings;

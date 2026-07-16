@@ -817,6 +817,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     settings_.view_3d = last_saved_view_3d_settings_;
     pending_scene_draw_distance_m_ = scene_draw_distance_m_;
     scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
+    pending_scene_edit_component_size_percent_ = scene_edit_component_size_percent_;
+    scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -3862,6 +3864,7 @@ View3DSettings App::current_view_3d_settings() const {
     view.show_scene_owntrack_markers = show_scene_owntrack_markers_;
     view.show_scene_current_position_on_plan = show_scene_current_position_on_plan_;
     view.scene_draw_distance_m = scene_draw_distance_m_;
+    view.scene_edit_component_size_percent = scene_edit_component_size_percent_;
     return view;
 }
 
@@ -3869,13 +3872,23 @@ void App::apply_view_3d_settings(const View3DSettings& settings) {
     show_scene_owntrack_markers_ = settings.show_scene_owntrack_markers;
     show_scene_current_position_on_plan_ = settings.show_scene_current_position_on_plan;
     scene_draw_distance_m_ = clamp_scene_draw_distance(settings.scene_draw_distance_m);
+    scene_edit_component_size_percent_ =
+        clamp_scene_edit_component_size_percent(settings.scene_edit_component_size_percent);
     apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+    apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
 }
 
 void App::apply_scene_draw_distance_to_canvas(int distance_m) {
     if (scene_preview_canvas_) {
         scene_preview_canvas_->set_scene_window(kSceneWindowBackDistanceM,
                                                 static_cast<double>(clamp_scene_draw_distance(distance_m)));
+    }
+}
+
+void App::apply_scene_edit_component_size_to_canvas(int size_percent) {
+    if (scene_preview_canvas_) {
+        scene_preview_canvas_->set_scene_edit_component_scale(
+            static_cast<float>(clamp_scene_edit_component_size_percent(size_percent)) / 100.0f);
     }
 }
 
@@ -3973,6 +3986,8 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("menu.canvas_3d_settings").c_str())) {
             pending_scene_draw_distance_m_ = scene_draw_distance_m_;
             scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
+            pending_scene_edit_component_size_percent_ = scene_edit_component_size_percent_;
+            scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
             popups_.canvas_3d_settings = true;
         }
         ImGui::Separator();
@@ -4804,11 +4819,32 @@ void App::render_popups() {
             pending_scene_draw_distance_m_ = clamp_scene_draw_distance(draw_distance_chunks * kSceneDrawDistanceStepM);
             apply_scene_draw_distance_to_canvas(pending_scene_draw_distance_m_);
         }
+        int edit_component_size_steps =
+            clamp_scene_edit_component_size_percent(pending_scene_edit_component_size_percent_) /
+            kSceneEditComponentSizeStepPercent;
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::SliderInt(
+                tr("label.scene_edit_component_size").c_str(),
+                &edit_component_size_steps,
+                kMinSceneEditComponentSizePercent / kSceneEditComponentSizeStepPercent,
+                kMaxSceneEditComponentSizePercent / kSceneEditComponentSizeStepPercent,
+                "%d0%%",
+                ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
+            pending_scene_edit_component_size_percent_ =
+                clamp_scene_edit_component_size_percent(
+                    edit_component_size_steps * kSceneEditComponentSizeStepPercent);
+            apply_scene_edit_component_size_to_canvas(pending_scene_edit_component_size_percent_);
+        }
         if (ImGui::Button(tr("button.ok").c_str())) {
             scene_draw_distance_m_ = clamp_scene_draw_distance(pending_scene_draw_distance_m_);
             pending_scene_draw_distance_m_ = scene_draw_distance_m_;
             scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
+            scene_edit_component_size_percent_ = clamp_scene_edit_component_size_percent(
+                pending_scene_edit_component_size_percent_);
+            pending_scene_edit_component_size_percent_ = scene_edit_component_size_percent_;
+            scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+            apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
             sync_runtime_settings_before_save();
             save_user_settings(settings_);
             ImGui::CloseCurrentPopup();
@@ -4816,14 +4852,20 @@ void App::render_popups() {
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
             pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
+            pending_scene_edit_component_size_percent_ =
+                scene_edit_component_size_before_dialog_percent_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+            apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
     if (!canvas_3d_settings_popup_open) {
         pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
+        pending_scene_edit_component_size_percent_ =
+            scene_edit_component_size_before_dialog_percent_;
         apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+        apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
     }
 
     if (popups_.range) {

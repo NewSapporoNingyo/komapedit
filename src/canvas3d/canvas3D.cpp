@@ -64,7 +64,11 @@ constexpr double kSceneFocusHighlightSeconds = 3.0;
 constexpr double kSceneFpsIdleResetSeconds = 0.25;
 constexpr float kSceneFpsSmoothing = 0.15f;
 constexpr float kSceneGizmoLengthPx = 72.0f;
+constexpr float kSceneGizmoOriginGapPx = 9.0f;
 constexpr float kSceneGizmoHitRadiusPx = 8.0f;
+constexpr float kSceneGizmoArrowLengthPx = 11.0f;
+constexpr float kSceneGizmoArrowHalfWidthPx = 5.5f;
+constexpr float kSceneGizmoCenterRadiusPx = 4.0f;
 
 template <typename T>
 void release_com(T*& p) {
@@ -652,6 +656,8 @@ struct SceneGizmoAxisProjection {
     ImVec2 begin;
     ImVec2 end;
     ImVec2 direction;
+    DVec3 world_direction;
+    double parameter_sign = 1.0;
     double world_units_per_pixel = 0.0;
 };
 
@@ -673,6 +679,7 @@ struct SceneStructureEditState {
     double drag_start_value = 0.0;
     double drag_start_axis_parameter = 0.0;
     double drag_world_units_per_pixel = 0.0;
+    double drag_parameter_sign = 1.0;
     bool drag_uses_ray = false;
 };
 
@@ -2215,6 +2222,11 @@ struct Canvas3D::Impl {
         if (std::isfinite(forward_m) && forward_m > 0.0) scene_window_forward_m = forward_m;
         scene_stats_value.window_back_m = scene_window_back_m;
         scene_stats_value.window_forward_m = scene_window_forward_m;
+    }
+
+    void set_scene_edit_component_scale(float scale) {
+        if (!std::isfinite(scale)) scale = 1.0f;
+        scene_edit_component_scale = std::clamp(scale, 0.5f, 5.0f);
     }
 
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode) {
@@ -4794,16 +4806,21 @@ fail:
             ImVec2(0.0f, -1.0f),
             ImVec2(-0.8660254f, 0.5f)
         };
+        const DVec3 to_camera = scene_camera_pos - scene_structure_edit.origin;
+        const float gizmo_scale = scene_edit_component_scale;
         bool any = false;
         for (size_t i = 0; i < scene_structure_edit.axes.size(); ++i) {
-            const DVec3 axis = normalize(scene_structure_edit.axes[i]);
+            const DVec3 parameter_axis = normalize(scene_structure_edit.axes[i]);
+            const double parameter_sign = dot(parameter_axis, to_camera) < 0.0 ? -1.0 : 1.0;
+            const DVec3 visual_axis = parameter_axis * parameter_sign;
             ImVec2 one_meter_screen;
-            const bool projected = project_scene_point(relative_origin + axis, view_proj,
+            const bool projected = project_scene_point(relative_origin + visual_axis, view_proj,
                                                         width, height, one_meter_screen);
             float dx = projected ? one_meter_screen.x - origin_screen.x : 0.0f;
             float dy = projected ? one_meter_screen.y - origin_screen.y : 0.0f;
             const float projected_length = std::sqrt(dx * dx + dy * dy);
-            ImVec2 direction = fallback_directions[i];
+            ImVec2 direction(fallback_directions[i].x * static_cast<float>(parameter_sign),
+                             fallback_directions[i].y * static_cast<float>(parameter_sign));
             if (projected_length >= 1.0f) {
                 direction = ImVec2(dx / projected_length, dy / projected_length);
             }
@@ -4811,10 +4828,14 @@ fail:
             axis_projection.valid = true;
             axis_projection.ray_drag_reliable = projected_length >= 4.0f;
             axis_projection.direction = direction;
-            axis_projection.begin = ImVec2(origin_screen.x + direction.x * 9.0f,
-                                           origin_screen.y + direction.y * 9.0f);
-            axis_projection.end = ImVec2(origin_screen.x + direction.x * kSceneGizmoLengthPx,
-                                         origin_screen.y + direction.y * kSceneGizmoLengthPx);
+            axis_projection.world_direction = visual_axis;
+            axis_projection.parameter_sign = parameter_sign;
+            axis_projection.begin = ImVec2(
+                origin_screen.x + direction.x * kSceneGizmoOriginGapPx * gizmo_scale,
+                origin_screen.y + direction.y * kSceneGizmoOriginGapPx * gizmo_scale);
+            axis_projection.end = ImVec2(
+                origin_screen.x + direction.x * kSceneGizmoLengthPx * gizmo_scale,
+                origin_screen.y + direction.y * kSceneGizmoLengthPx * gizmo_scale);
             axis_projection.world_units_per_pixel = projected_length >= 1.0f
                 ? 1.0 / static_cast<double>(projected_length)
                 : generic_world_units_per_pixel;
@@ -4836,7 +4857,8 @@ fail:
         if (scene_structure_edit.dragging_axis == Canvas3DSceneDragAxis::None) {
             scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
             if (canvas_hovered) {
-                float best_distance_sq = kSceneGizmoHitRadiusPx * kSceneGizmoHitRadiusPx;
+                const float hit_radius = kSceneGizmoHitRadiusPx * scene_edit_component_scale;
+                float best_distance_sq = hit_radius * hit_radius;
                 for (size_t i = 0; i < scene_structure_edit.projection.size(); ++i) {
                     const SceneGizmoAxisProjection& projection = scene_structure_edit.projection[i];
                     if (!projection.valid) continue;
@@ -4856,12 +4878,12 @@ fail:
                     scene_structure_edit.projection[static_cast<size_t>(axis_index)];
                 scene_structure_edit.dragging_axis = scene_structure_edit.hovered_axis;
                 scene_structure_edit.drag_axis_origin = scene_structure_edit.origin;
-                scene_structure_edit.drag_axis_direction =
-                    normalize(scene_structure_edit.axes[static_cast<size_t>(axis_index)]);
+                scene_structure_edit.drag_axis_direction = projection.world_direction;
                 scene_structure_edit.drag_start_mouse = mouse_local;
                 scene_structure_edit.drag_screen_direction = projection.direction;
                 scene_structure_edit.drag_world_units_per_pixel =
                     projection.world_units_per_pixel;
+                scene_structure_edit.drag_parameter_sign = projection.parameter_sign;
                 scene_structure_edit.drag_start_value = axis_index == 0
                     ? scene_structure_edit.current.x
                     : axis_index == 1 ? scene_structure_edit.current.y
@@ -4907,6 +4929,7 @@ fail:
                      screen_delta_y * scene_structure_edit.drag_screen_direction.y) *
                 scene_structure_edit.drag_world_units_per_pixel;
         }
+        delta *= scene_structure_edit.drag_parameter_sign;
 
         const double candidate = truncate_scene_millimeter(
             scene_structure_edit.drag_start_value + delta);
@@ -4952,7 +4975,7 @@ fail:
             IM_COL32(153, 255, 164, 255),
             IM_COL32(151, 190, 255, 255)
         };
-        static constexpr std::array<const char*, 3> labels = {"X", "Y", "Z"};
+        const float gizmo_scale = scene_edit_component_scale;
         for (size_t i = 0; i < scene_structure_edit.projection.size(); ++i) {
             const SceneGizmoAxisProjection& projection = scene_structure_edit.projection[i];
             if (!projection.valid) continue;
@@ -4966,25 +4989,30 @@ fail:
                        canvas_origin.y + projection.end.y);
             ImVec2 direction = projection.direction;
             ImVec2 perpendicular(-direction.y, direction.x);
-            ImVec2 arrow_base(end.x - direction.x * 11.0f,
-                              end.y - direction.y * 11.0f);
-            draw->AddLine(begin, end, color, active ? 4.5f : 3.0f);
+            const float arrow_length = kSceneGizmoArrowLengthPx * gizmo_scale;
+            const float arrow_half_width = kSceneGizmoArrowHalfWidthPx * gizmo_scale;
+            ImVec2 arrow_base(end.x - direction.x * arrow_length,
+                              end.y - direction.y * arrow_length);
+            draw->AddLine(begin, end, color, (active ? 4.5f : 3.0f) * gizmo_scale);
             draw->AddTriangleFilled(
                 end,
-                ImVec2(arrow_base.x + perpendicular.x * 5.5f,
-                       arrow_base.y + perpendicular.y * 5.5f),
-                ImVec2(arrow_base.x - perpendicular.x * 5.5f,
-                       arrow_base.y - perpendicular.y * 5.5f),
+                ImVec2(arrow_base.x + perpendicular.x * arrow_half_width,
+                       arrow_base.y + perpendicular.y * arrow_half_width),
+                ImVec2(arrow_base.x - perpendicular.x * arrow_half_width,
+                       arrow_base.y - perpendicular.y * arrow_half_width),
                 color);
-            draw->AddText(ImVec2(end.x + direction.x * 5.0f - 3.0f,
-                                 end.y + direction.y * 5.0f - 7.0f), color, labels[i]);
         }
         const SceneGizmoAxisProjection& first = scene_structure_edit.projection[0];
         if (first.valid) {
-            ImVec2 center(canvas_origin.x + first.begin.x - first.direction.x * 9.0f,
-                          canvas_origin.y + first.begin.y - first.direction.y * 9.0f);
-            draw->AddCircleFilled(center, 4.0f, IM_COL32(245, 245, 245, 235));
-            draw->AddCircle(center, 4.0f, IM_COL32(30, 30, 30, 220), 0, 1.0f);
+            ImVec2 center(
+                canvas_origin.x + first.begin.x -
+                    first.direction.x * kSceneGizmoOriginGapPx * gizmo_scale,
+                canvas_origin.y + first.begin.y -
+                    first.direction.y * kSceneGizmoOriginGapPx * gizmo_scale);
+            const float center_radius = kSceneGizmoCenterRadiusPx * gizmo_scale;
+            draw->AddCircleFilled(center, center_radius, IM_COL32(245, 245, 245, 235));
+            draw->AddCircle(center, center_radius, IM_COL32(30, 30, 30, 220), 0,
+                            gizmo_scale);
         }
     }
 
@@ -5663,6 +5691,7 @@ fail:
     std::vector<SceneChunk> scene_chunks;
     std::unordered_map<std::string, SceneStructureInstanceLocation> scene_structure_locations;
     SceneStructureEditState scene_structure_edit;
+    float scene_edit_component_scale = 1.0f;
     std::vector<SceneTrackChunkGpu> scene_track_chunks;
     std::map<std::string, SceneModelGpu> scene_models;
     std::mutex scene_upload_mutex;
@@ -5775,6 +5804,10 @@ bool Canvas3D::set_scene_track_visibility(const std::vector<Canvas3DTrackVisibil
 
 void Canvas3D::set_scene_window(double back_m, double forward_m) {
     impl_->set_scene_window(back_m, forward_m);
+}
+
+void Canvas3D::set_scene_edit_component_scale(float scale) {
+    impl_->set_scene_edit_component_scale(scale);
 }
 
 void Canvas3D::set_scene_interaction_mode(Canvas3DSceneInteractionMode mode) {
