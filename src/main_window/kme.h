@@ -408,6 +408,7 @@ struct MapModel {
     Matrix curve;
     std::vector<OtherTrack> other_tracks;
     std::vector<Station> stations;
+    std::map<std::string, std::string> station_names;
     std::vector<TrackEvent> own_events;
     std::vector<SpeedLimit> speedlimits;
     std::vector<double> controlpoints;

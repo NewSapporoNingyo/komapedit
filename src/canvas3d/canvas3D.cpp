@@ -69,6 +69,13 @@ constexpr float kSceneGizmoHitRadiusPx = 8.0f;
 constexpr float kSceneGizmoArrowLengthPx = 11.0f;
 constexpr float kSceneGizmoArrowHalfWidthPx = 5.5f;
 constexpr float kSceneGizmoCenterRadiusPx = 4.0f;
+constexpr double kSceneRouteDisplayZeroEpsilon = 0.0000005;
+
+enum class SceneOverlayCorner {
+    TopLeft,
+    TopRight,
+    BottomRight,
+};
 
 template <typename T>
 void release_com(T*& p) {
@@ -1202,6 +1209,144 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
     return result;
 }
 
+void append_scene_route_value_event(
+    std::vector<Canvas3DSceneRouteValueEvent>& events,
+    const TrackEvent& source,
+    double& current_value) {
+    if (!std::isfinite(source.distance) ||
+        (!source.value_number && source.flag != "bt" && source.flag != "i")) {
+        return;
+    }
+
+    Canvas3DSceneRouteValueEvent event;
+    event.distance = source.distance;
+    event.previous_value = current_value;
+    if (source.value_number && std::isfinite(source.number)) current_value = source.number;
+    event.value = current_value;
+    if (source.flag == "bt") {
+        event.kind = Canvas3DSceneRouteEventKind::BeginTransition;
+    } else if (source.flag == "i") {
+        event.kind = Canvas3DSceneRouteEventKind::Interpolate;
+    }
+    events.push_back(event);
+}
+
+void populate_canvas3d_scene_route_values(Canvas3DSceneRouteInfo& route_info,
+                                          const MapModel& model) {
+    size_t radius_count = 0;
+    size_t cant_count = 0;
+    size_t gradient_count = 0;
+    for (const TrackEvent& event : model.own_events) {
+        if (event.key == "radius") ++radius_count;
+        else if (event.key == "cant") ++cant_count;
+        else if (event.key == "gradient") ++gradient_count;
+    }
+    route_info.radius_events.reserve(radius_count);
+    route_info.cant_events.reserve(cant_count);
+    route_info.gradient_events.reserve(gradient_count);
+
+    double radius_value = 0.0;
+    double cant_value = 0.0;
+    double gradient_value = 0.0;
+    // maploader emits own_events in stable distance order; filtering preserves that query order.
+    for (const TrackEvent& source : model.own_events) {
+        if (source.key == "radius") {
+            append_scene_route_value_event(route_info.radius_events, source, radius_value);
+        } else if (source.key == "cant") {
+            append_scene_route_value_event(route_info.cant_events, source, cant_value);
+        } else if (source.key == "gradient") {
+            append_scene_route_value_event(route_info.gradient_events, source, gradient_value);
+        }
+    }
+}
+
+void populate_canvas3d_scene_route_stations(Canvas3DSceneRouteInfo& route_info,
+                                            const MapModel& model) {
+    route_info.stations.clear();
+    route_info.stations.reserve(model.stations.size());
+    for (const Station& station : model.stations) {
+        if (!std::isfinite(station.distance)) continue;
+        Canvas3DSceneRouteStation route_station;
+        route_station.distance = station.distance;
+        route_station.name = station.name.empty() ? station.key : station.name;
+        route_info.stations.push_back(std::move(route_station));
+    }
+    if (!std::is_sorted(route_info.stations.begin(), route_info.stations.end(),
+                        [](const Canvas3DSceneRouteStation& a,
+                           const Canvas3DSceneRouteStation& b) {
+                            return a.distance < b.distance;
+                        })) {
+        std::stable_sort(route_info.stations.begin(), route_info.stations.end(),
+                         [](const Canvas3DSceneRouteStation& a,
+                            const Canvas3DSceneRouteStation& b) {
+                             return a.distance < b.distance;
+                         });
+    }
+}
+
+void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& model) {
+    Canvas3DSceneRouteInfo route_info;
+    populate_canvas3d_scene_route_values(route_info, model);
+    populate_canvas3d_scene_route_stations(route_info, model);
+    scene.route_info = std::move(route_info);
+}
+
+enum class SceneRouteValueMode {
+    Constant,
+    Transition,
+    Interpolate,
+};
+
+struct SceneRouteValueSample {
+    SceneRouteValueMode mode = SceneRouteValueMode::Constant;
+    double value = 0.0;
+    double from_value = 0.0;
+    double to_value = 0.0;
+};
+
+SceneRouteValueSample sample_scene_route_value(
+    const std::vector<Canvas3DSceneRouteValueEvent>& events,
+    double distance) {
+    auto next = std::upper_bound(
+        events.begin(), events.end(), distance,
+        [](double value, const Canvas3DSceneRouteValueEvent& event) {
+            return value < event.distance;
+        });
+    const Canvas3DSceneRouteValueEvent* previous =
+        next == events.begin() ? nullptr : &*(next - 1);
+
+    SceneRouteValueSample result;
+    result.value = previous ? previous->value : 0.0;
+    result.from_value = result.value;
+    result.to_value = result.value;
+    if (previous && next != events.end() &&
+        next->kind == Canvas3DSceneRouteEventKind::Interpolate) {
+        result.mode = SceneRouteValueMode::Interpolate;
+        result.from_value = previous->value;
+        result.to_value = next->value;
+    } else if (previous && previous->kind == Canvas3DSceneRouteEventKind::BeginTransition &&
+               next != events.end() &&
+               next->kind != Canvas3DSceneRouteEventKind::BeginTransition) {
+        result.mode = SceneRouteValueMode::Transition;
+        result.from_value = previous->previous_value;
+        result.to_value = next->value;
+    }
+    return result;
+}
+
+void format_scene_route_number(char* output, size_t output_size, double value) {
+    if (!output || output_size == 0) return;
+    if (!std::isfinite(value)) value = 0.0;
+    if (std::abs(value) <= kSceneRouteDisplayZeroEpsilon) value = 0.0;
+    std::snprintf(output, output_size, "%.6f", value);
+    char* end = output + std::strlen(output);
+    char* decimal = std::strchr(output, '.');
+    if (!decimal) return;
+    while (end > decimal + 1 && end[-1] == '0') --end;
+    if (end > decimal && end[-1] == '.') --end;
+    *end = '\0';
+}
+
 bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
                                              const MapModel& model,
                                              int station_index) {
@@ -1741,6 +1886,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
     for (const OtherTrack& track : scene_other_tracks) {
         append_track_path(track.key, track.points, false, track.color, track.visible);
     }
+    populate_canvas3d_scene_route_info(scene, model);
     if (!populate_canvas3d_scene_dynamic_content(scene, model, options.station_index)) {
         result.log_messages.push_back("[warn]canvas3D.cpp: 3D scene preview dynamic content could not be built");
     }
@@ -2146,6 +2292,10 @@ struct Canvas3D::Impl {
         reset_scene_fps_counter();
         start_scene_model_worker(std::move(requests_to_load));
         return true;
+    }
+
+    void refresh_scene_route_stations(const MapModel& model) {
+        if (scene_active) populate_canvas3d_scene_route_stations(scene_data.route_info, model);
     }
 
     void clear_scene() {
@@ -5263,8 +5413,20 @@ fail:
         scene_fps_last_frame_valid = true;
     }
 
-    void draw_scene_overlay_label(ImDrawList* draw, ImVec2 pos, ImVec2 text_size,
-                                  const char* text, float pad) const {
+    void draw_scene_overlay_label(ImDrawList* draw, ImVec2 origin, ImVec2 size,
+                                  const char* text, SceneOverlayCorner corner) const {
+        if (!draw || !text || size.x <= 0.0f || size.y <= 0.0f) return;
+        const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
+        const ImVec2 text_size = ImGui::CalcTextSize(text);
+        ImVec2 pos(origin.x + pad * 2.0f, origin.y + pad * 2.0f);
+        if (corner == SceneOverlayCorner::TopRight) {
+            pos.x = origin.x + size.x - text_size.x - pad * 2.0f;
+        } else if (corner == SceneOverlayCorner::BottomRight) {
+            pos.x = origin.x + size.x - text_size.x - pad * 2.0f;
+            pos.y = origin.y + size.y - text_size.y - pad * 2.0f;
+        }
+        pos.x = std::max(origin.x + pad, pos.x);
+        pos.y = std::max(origin.y + pad, pos.y);
         draw->AddRectFilled(ImVec2(pos.x - pad, pos.y - pad * 0.5f),
                             ImVec2(pos.x + text_size.x + pad, pos.y + text_size.y + pad * 0.5f),
                             IM_COL32(0, 0, 0, 140), 3.0f);
@@ -5278,10 +5440,92 @@ fail:
                       scene_camera_lateral_offset,
                       static_cast<double>(scene_camera_vertical_offset),
                       scene_camera_distance);
-        const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
-        ImVec2 text_size = ImGui::CalcTextSize(buffer);
-        ImVec2 pos(origin.x + pad * 2.0f, origin.y + pad * 2.0f);
-        draw_scene_overlay_label(draw, pos, text_size, buffer, pad);
+        draw_scene_overlay_label(draw, origin, size, buffer, SceneOverlayCorner::TopLeft);
+    }
+
+    void draw_scene_route_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
+                                  const Canvas3DSceneUiText& ui_text) const {
+        if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active) return;
+
+        const SceneRouteValueSample radius =
+            sample_scene_route_value(scene_data.route_info.radius_events, scene_camera_distance);
+        const SceneRouteValueSample cant =
+            sample_scene_route_value(scene_data.route_info.cant_events, scene_camera_distance);
+        const SceneRouteValueSample gradient =
+            sample_scene_route_value(scene_data.route_info.gradient_events, scene_camera_distance);
+
+        char curve_line[192] = {};
+        if (radius.mode == SceneRouteValueMode::Interpolate) {
+            std::snprintf(curve_line, sizeof(curve_line), "%s",
+                          ui_text.interpolate_unsupported);
+        } else {
+            const bool transition = radius.mode == SceneRouteValueMode::Transition;
+            const bool use_transition_target =
+                !transition || std::abs(radius.to_value) > kSceneRouteDisplayZeroEpsilon ||
+                std::abs(radius.from_value) <= kSceneRouteDisplayZeroEpsilon;
+            const double displayed_radius = transition
+                ? (use_transition_target ? radius.to_value : radius.from_value)
+                : radius.value;
+            const double displayed_cant = transition
+                ? (use_transition_target ? cant.to_value : cant.from_value)
+                : cant.value;
+            const char* prefix = transition ? "[Tr.] " : "";
+            if (std::abs(displayed_radius) <= kSceneRouteDisplayZeroEpsilon) {
+                std::snprintf(curve_line, sizeof(curve_line), "%s%s",
+                              prefix, ui_text.straight);
+            } else {
+                char radius_text[64] = {};
+                char cant_text[64] = {};
+                format_scene_route_number(radius_text, sizeof(radius_text),
+                                          std::abs(displayed_radius));
+                format_scene_route_number(cant_text, sizeof(cant_text), displayed_cant);
+                std::snprintf(curve_line, sizeof(curve_line), "%sR %s m %s %s",
+                              prefix, radius_text, cant_text,
+                              displayed_radius < 0.0 ? u8"←" : u8"→");
+            }
+        }
+
+        const bool gradient_transition = gradient.mode != SceneRouteValueMode::Constant;
+        const bool use_gradient_target =
+            !gradient_transition || std::abs(gradient.to_value) > kSceneRouteDisplayZeroEpsilon ||
+            std::abs(gradient.from_value) <= kSceneRouteDisplayZeroEpsilon;
+        const double displayed_gradient = gradient_transition
+            ? (use_gradient_target ? gradient.to_value : gradient.from_value)
+            : gradient.value;
+        char gradient_text[64] = {};
+        format_scene_route_number(gradient_text, sizeof(gradient_text),
+                                  std::abs(displayed_gradient));
+        char gradient_line[160] = {};
+        const char* gradient_prefix = gradient_transition ? "[Tr.] " : "";
+        if (std::abs(displayed_gradient) <= kSceneRouteDisplayZeroEpsilon) {
+            std::snprintf(gradient_line, sizeof(gradient_line), "%s0‰", gradient_prefix);
+        } else {
+            std::snprintf(gradient_line, sizeof(gradient_line), "%s%s %s‰",
+                          gradient_prefix,
+                          displayed_gradient > 0.0 ? u8"↗" : u8"↘",
+                          gradient_text);
+        }
+
+        char station_line[768] = {};
+        const auto next_station = std::upper_bound(
+            scene_data.route_info.stations.begin(), scene_data.route_info.stations.end(),
+            scene_camera_distance,
+            [](double distance, const Canvas3DSceneRouteStation& station) {
+                return distance < station.distance;
+            });
+        if (next_station == scene_data.route_info.stations.end()) {
+            std::snprintf(station_line, sizeof(station_line), "%s",
+                          ui_text.no_station_ahead);
+        } else {
+            const double remaining_m = std::max(0.0, next_station->distance - scene_camera_distance);
+            std::snprintf(station_line, sizeof(station_line), "%s %s  %.0fm",
+                          ui_text.next_station, next_station->name.c_str(), remaining_m);
+        }
+
+        char buffer[1152] = {};
+        std::snprintf(buffer, sizeof(buffer), "%s\n%s\n%s",
+                      curve_line, gradient_line, station_line);
+        draw_scene_overlay_label(draw, origin, size, buffer, SceneOverlayCorner::TopRight);
     }
 
     void draw_scene_metrics_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
@@ -5294,24 +5538,18 @@ fail:
                       stats.model_ready_count,
                       stats.model_path_count,
                       static_cast<double>(scene_fps_value));
-        const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
-        ImVec2 text_size = ImGui::CalcTextSize(buffer);
-        ImVec2 pos(origin.x + size.x - text_size.x - pad * 2.0f,
-                   origin.y + size.y - text_size.y - pad * 2.0f);
-        pos.x = std::max(origin.x + pad, pos.x);
-        pos.y = std::max(origin.y + pad, pos.y);
-        draw_scene_overlay_label(draw, pos, text_size, buffer, pad);
+        draw_scene_overlay_label(draw, origin, size, buffer, SceneOverlayCorner::BottomRight);
     }
 
     void draw_scene_loading_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
-                                    const std::string& text) const {
+                                    const char* text) const {
         if (!draw || size.x <= 0.0f || size.y <= 0.0f) return;
         ImVec2 end(origin.x + size.x, origin.y + size.y);
         ImVec4 bg = clamp_background_color(background_color_value);
         bg.w = 1.0f;
         draw->AddRectFilled(origin, end, ImGui::ColorConvertFloat4ToU32(bg));
 
-        const char* label = text.empty() ? "Loading..." : text.c_str();
+        const char* label = text && text[0] ? text : "Loading...";
         ImVec2 text_size = ImGui::CalcTextSize(label);
         ImVec2 pos(origin.x + std::max(0.0f, (size.x - text_size.x) * 0.5f),
                    origin.y + std::max(0.0f, (size.y - text_size.y) * 0.5f));
@@ -5338,39 +5576,39 @@ fail:
         if (scene_object_index_valid(scene_context_object_index)) {
             Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(scene_context_object_index)];
             if (object.kind == Canvas3DSceneObjectKind::Structure) {
-                const std::string& locate_label = object.structure_put_between
+                const char* locate_label = object.structure_put_between
                     ? ui_text.locate_structure_put_between_list
                     : ui_text.locate_structure_list;
-                if (ImGui::MenuItem(locate_label.c_str())) {
+                if (ImGui::MenuItem(locate_label)) {
                     action.kind = Canvas3DSceneContextActionKind::LocateStructure;
                     action.row_index = object.source_row;
                 }
                 const char* edit_row_kind = scene_object_edit_row_kind(object);
                 ImGui::BeginDisabled(!context_menu_options.element_properties_enabled ||
                                      object.edit_id.empty() || !edit_row_kind);
-                if (ImGui::MenuItem(ui_text.element_properties.c_str())) {
+                if (ImGui::MenuItem(ui_text.element_properties)) {
                     action.kind = Canvas3DSceneContextActionKind::EditElement;
                     action.edit_id = object.edit_id;
                     action.row_kind = edit_row_kind;
                 }
                 ImGui::EndDisabled();
             } else if (object.kind == Canvas3DSceneObjectKind::Repeater) {
-                if (ImGui::MenuItem(ui_text.locate_repeater_list.c_str())) {
+                if (ImGui::MenuItem(ui_text.locate_repeater_list)) {
                     action.kind = Canvas3DSceneContextActionKind::LocateRepeater;
                     action.row_index = object.source_row;
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem(ui_text.jump_to_repeater_start_position.c_str())) {
+                if (ImGui::MenuItem(ui_text.jump_to_repeater_start_position)) {
                     jump_scene_camera_to_object(Canvas3DSceneObjectKind::Repeater, object.source_row);
                 }
                 const Canvas3DRepeaterSegment* repeater = find_repeater_segment(object.source_row);
                 ImGui::BeginDisabled(!repeater || !repeater->has_end_or_change_position);
-                if (ImGui::MenuItem(ui_text.jump_to_repeater_end_or_change_position.c_str())) {
+                if (ImGui::MenuItem(ui_text.jump_to_repeater_end_or_change_position)) {
                     jump_scene_camera_to_repeater_end_or_change(object.source_row);
                 }
                 ImGui::EndDisabled();
             } else if (object.kind == Canvas3DSceneObjectKind::Signal &&
-                       ImGui::BeginMenu(ui_text.switch_signal_aspect.c_str(), !object.model_options.empty())) {
+                       ImGui::BeginMenu(ui_text.switch_signal_aspect, !object.model_options.empty())) {
                 for (size_t i = 0; i < object.model_options.size(); ++i) {
                     const Canvas3DSceneModelOption& option = object.model_options[i];
                     std::string label = std::to_string(option.structure_key_index) + " - " + option.structure_key;
@@ -5449,6 +5687,7 @@ fail:
             draw_scene_loading_overlay(draw, origin, avail, ui_text.loading);
         } else {
             draw_scene_overlay(draw, origin, avail);
+            draw_scene_route_overlay(draw, origin, avail, ui_text);
             draw_scene_metrics_overlay(draw, origin, avail, stats);
             draw_scene_structure_gizmo(draw, origin, width, height);
         }
@@ -5784,6 +6023,10 @@ bool Canvas3D::load_scene(Canvas3DScene scene, std::string& error,
 
 bool Canvas3D::refresh_scene_dynamic_content(const MapModel& model, int station_index, std::string& error) {
     return impl_->refresh_scene_dynamic_content(model, station_index, error);
+}
+
+void Canvas3D::refresh_scene_route_stations(const MapModel& model) {
+    impl_->refresh_scene_route_stations(model);
 }
 
 void Canvas3D::clear_scene() {

@@ -74,6 +74,27 @@ void release_com(T*& p) {
 
 namespace {
 
+const ImWchar* application_font_glyph_ranges(ImFontAtlas& fonts) {
+    static ImVector<ImWchar> ranges;
+    if (ranges.empty()) {
+        ImFontGlyphRangesBuilder builder;
+        builder.AddRanges(fonts.GetGlyphRangesChineseFull());
+        builder.AddText(u8"←→↗↘");
+        builder.BuildRanges(&ranges);
+    }
+    return ranges.Data;
+}
+
+void merge_required_symbol_glyphs(ImFontAtlas& fonts, float font_size) {
+    constexpr const char* symbol_font = "C:/Windows/Fonts/seguisym.ttf";
+    if (!std::filesystem::exists(symbol_font)) return;
+    static constexpr ImWchar symbol_ranges[] = {0x2190, 0x21FF, 0};
+    ImFontConfig config;
+    config.MergeMode = true;
+    config.PixelSnapH = true;
+    fonts.AddFontFromFileTTF(symbol_font, font_size, &config, symbol_ranges);
+}
+
 constexpr unsigned char ascii_lower(unsigned char ch) noexcept {
     return ch >= 'A' && ch <= 'Z' ? static_cast<unsigned char>(ch + ('a' - 'A')) : ch;
 }
@@ -1586,6 +1607,11 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     const auto& station = root.at("station");
     const auto& positions = station.at("position");
     const auto& names = station.at("stationkey");
+    if (names.is_object()) {
+        for (const auto& entry : names.object) {
+            model.station_names[entry.first] = entry.second.scalar_text();
+        }
+    }
     if (positions.is_array()) {
         std::set<std::string> seen;
         for (const auto& item : positions.array) {
@@ -1593,7 +1619,8 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
             Station s;
             s.distance = item.array[0].number;
             s.key = item.array[1].scalar_text();
-            s.name = names.at(s.key).scalar_text();
+            auto station_name = model.station_names.find(s.key);
+            if (station_name != model.station_names.end()) s.name = station_name->second;
             if (s.name.empty()) s.name = s.key;
             s.mileage = s.distance - model.distance_origin;
             if (!model.own.empty()) {
@@ -1943,6 +1970,9 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
                                            const std::string& edit_id) {
     if (row_kind == "station.put") {
         normalize_station_preview_rows(model_);
+        if (scene_preview_started_ && scene_preview_canvas_) {
+            scene_preview_canvas_->refresh_scene_route_stations(model_);
+        }
     }
     invalidate_table_cache();
     rebuild_marker_overlay_cache();
@@ -2080,6 +2110,11 @@ void normalize_station_preview_rows(MapModel& model) {
                          return table_cell_number(a, "_order") < table_cell_number(b, "_order");
                      });
 
+    for (const Station& station : model.stations) {
+        if (!station.key.empty() && !station.name.empty()) {
+            model.station_names.try_emplace(station.key, station.name);
+        }
+    }
     model.stations.clear();
     std::set<std::string> seen;
     size_t own_row = 0;
@@ -2094,8 +2129,10 @@ void normalize_station_preview_rows(MapModel& model) {
 
         Station station;
         station.key = key;
-        station.name = table_cell(row, "stationName");
+        auto station_name = model.station_names.find(key);
+        station.name = station_name == model.station_names.end() ? key : station_name->second;
         if (station.name.empty()) station.name = key;
+        row.cells["stationName"] = station.name;
         station.distance = distance;
         station.mileage = distance - model.distance_origin;
         if (!model.own.empty()) {
@@ -5259,15 +5296,19 @@ void App::render_scene_preview_window() {
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
         ImVec2 avail = ImGui::GetContentRegionAvail();
         Canvas3DSceneUiText scene_ui_text;
-        scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect");
-        scene_ui_text.element_properties = tr("dialog.element_properties");
-        scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list");
-        scene_ui_text.locate_structure_put_between_list = tr("menu.locate_in_structure_put_between_list");
-        scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list");
-        scene_ui_text.jump_to_repeater_start_position = tr("menu.jump_to_repeater_start_position");
+        scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect").c_str();
+        scene_ui_text.element_properties = tr("dialog.element_properties").c_str();
+        scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list").c_str();
+        scene_ui_text.locate_structure_put_between_list = tr("menu.locate_in_structure_put_between_list").c_str();
+        scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list").c_str();
+        scene_ui_text.jump_to_repeater_start_position = tr("menu.jump_to_repeater_start_position").c_str();
         scene_ui_text.jump_to_repeater_end_or_change_position =
-            tr("menu.jump_to_repeater_end_or_change_position");
-        scene_ui_text.loading = tr("status.scene_loading");
+            tr("menu.jump_to_repeater_end_or_change_position").c_str();
+        scene_ui_text.loading = tr("status.scene_loading").c_str();
+        scene_ui_text.straight = tr("scene.route_info.straight").c_str();
+        scene_ui_text.interpolate_unsupported = tr("scene.route_info.interpolate_unsupported").c_str();
+        scene_ui_text.next_station = tr("scene.route_info.next_station").c_str();
+        scene_ui_text.no_station_ahead = tr("scene.route_info.no_station_ahead").c_str();
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();
         sync_scene_structure_edit_from_inspector();
@@ -5764,12 +5805,14 @@ int main(int, char**) {
     bool font_loaded = false;
     for (const char* font : font_candidates) {
         if (std::filesystem::exists(font)) {
-            io.Fonts->AddFontFromFileTTF(font, kDefaultFontSize * scale, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+            io.Fonts->AddFontFromFileTTF(font, kDefaultFontSize * scale, nullptr,
+                                         application_font_glyph_ranges(*io.Fonts));
             font_loaded = true;
             break;
         }
     }
     if (!font_loaded) io.Fonts->AddFontDefault();
+    merge_required_symbol_glyphs(*io.Fonts, kDefaultFontSize * scale);
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);

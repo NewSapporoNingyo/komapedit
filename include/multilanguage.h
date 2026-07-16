@@ -18,6 +18,7 @@ struct Translation {
 
     Translation() {
         en = {
+            {"scene.route_info.straight", "Straight"}, {"scene.route_info.interpolate_unsupported", "interpolate(unsupported)"}, {"scene.route_info.next_station", "Next sta. :"}, {"scene.route_info.no_station_ahead", "No station ahead"},
             {"dialog.distance_expression_message", "Edit the distance source expression manually?"},
             {"dialog.structure_put0_convert_title", "Convert Put0"}, {"dialog.structure_put0_convert_message", "This Structure uses Put0, so its coordinates cannot be edited directly. Convert it to Put?"},
             {"dialog.structure_z_rebase_title", "Adjust Distance"}, {"dialog.structure_z_rebase_message", "The current model's Z-axis offset exceeds 5 m. Adjust the distance?"},
@@ -95,6 +96,7 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
         zh = {
+            {"scene.route_info.straight", "Straight"}, {"scene.route_info.interpolate_unsupported", "interpolate(unsupported)"}, {"scene.route_info.next_station", "Next sta. :"}, {"scene.route_info.no_station_ahead", "No station ahead"},
             {"dialog.distance_expression_message", "是否手动编辑距离源字符串？"},
             {"dialog.structure_put0_convert_title", "转换 Put0"}, {"dialog.structure_put0_convert_message", "当前structure使用put0方法，无法直接编辑坐标，是否转换为Put？"},
             {"dialog.structure_z_rebase_title", "重新设置里程"}, {"dialog.structure_z_rebase_message", "当前模型的z轴偏移大于5m，是否重新设置里程？"},
@@ -172,6 +174,7 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
         ja = {
+            {"scene.route_info.straight", "Straight"}, {"scene.route_info.interpolate_unsupported", "interpolate(unsupported)"}, {"scene.route_info.next_station", "Next sta. :"}, {"scene.route_info.no_station_ahead", "No station ahead"},
             {"dialog.distance_expression_message", "距離のソース文字列を手動で編集しますか？"},
             {"dialog.structure_put0_convert_title", "Put0 の変換"}, {"dialog.structure_put0_convert_message", "この Structure は Put0 を使用しているため、座標を直接編集できません。Put に変換しますか？"},
             {"dialog.structure_z_rebase_title", "距離の再設定"}, {"dialog.structure_z_rebase_message", "現在のモデルの Z 軸オフセットが 5 m を超えています。距離を再設定しますか？"},

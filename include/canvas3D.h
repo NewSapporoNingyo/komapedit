@@ -116,6 +116,31 @@ struct Canvas3DBackgroundChange {
     std::string model_path;
 };
 
+enum class Canvas3DSceneRouteEventKind {
+    Value,
+    BeginTransition,
+    Interpolate,
+};
+
+struct Canvas3DSceneRouteValueEvent {
+    double distance = 0.0;
+    double previous_value = 0.0;
+    double value = 0.0;
+    Canvas3DSceneRouteEventKind kind = Canvas3DSceneRouteEventKind::Value;
+};
+
+struct Canvas3DSceneRouteStation {
+    double distance = 0.0;
+    std::string name;
+};
+
+struct Canvas3DSceneRouteInfo {
+    std::vector<Canvas3DSceneRouteValueEvent> radius_events;
+    std::vector<Canvas3DSceneRouteValueEvent> cant_events;
+    std::vector<Canvas3DSceneRouteValueEvent> gradient_events;
+    std::vector<Canvas3DSceneRouteStation> stations;
+};
+
 struct Canvas3DCameraStart {
     double distance = 0.0;
     double x = 0.0;
@@ -131,6 +156,7 @@ struct Canvas3DScene {
     std::vector<Canvas3DModelInstance> instances;
     std::vector<Canvas3DRepeaterSegment> repeaters;
     std::vector<Canvas3DBackgroundChange> backgrounds;
+    Canvas3DSceneRouteInfo route_info;
     Canvas3DCameraStart camera;
     double min_distance = 0.0;
     double max_distance = 0.0;
@@ -178,14 +204,18 @@ struct Canvas3DSceneBuildResult {
 };
 
 struct Canvas3DSceneUiText {
-    std::string switch_signal_aspect = "Switch Signal Aspect";
-    std::string element_properties = "Properties/Edit";
-    std::string locate_structure_list = "Locate in Map Structure List";
-    std::string locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
-    std::string locate_repeater_list = "Locate in Repeater List";
-    std::string jump_to_repeater_start_position = "Jump to Start Position";
-    std::string jump_to_repeater_end_or_change_position = "Jump to End/Change Position";
-    std::string loading = "Loading...";
+    const char* switch_signal_aspect = "Switch Signal Aspect";
+    const char* element_properties = "Properties/Edit";
+    const char* locate_structure_list = "Locate in Map Structure List";
+    const char* locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
+    const char* locate_repeater_list = "Locate in Repeater List";
+    const char* jump_to_repeater_start_position = "Jump to Start Position";
+    const char* jump_to_repeater_end_or_change_position = "Jump to End/Change Position";
+    const char* loading = "Loading...";
+    const char* straight = "Straight";
+    const char* interpolate_unsupported = "interpolate(unsupported)";
+    const char* next_station = "Next sta. :";
+    const char* no_station_ahead = "No station ahead";
 };
 
 struct Canvas3DSceneContextMenuOptions {
@@ -270,6 +300,7 @@ public:
     bool has_scene() const;
     bool reload_scene_models(std::string& error);
     bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error);
+    void refresh_scene_route_stations(const MapModel& model);
     void set_scene_window(double back_m, double forward_m);
     void set_scene_edit_component_scale(float scale);
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
