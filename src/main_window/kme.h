@@ -33,6 +33,8 @@
 struct ID3D11Device;
 struct ID3D11ShaderResourceView;
 class Canvas3D;
+struct Canvas3DStructureDragUpdate;
+struct Canvas3DStructureEditTarget;
 
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
@@ -1006,12 +1008,19 @@ struct TableFindState {
     bool unused_has_run = false;
 };
 
+enum class MapElementNumericConstraint {
+    None,
+    Finite,
+    Integer,
+    Truncate3,
+};
+
 struct MapElementEditFieldState {
     std::string key;
     std::string label;
     std::string original_value;
     char value[256] = {};
-    bool numeric = false;
+    MapElementNumericConstraint numeric_constraint = MapElementNumericConstraint::None;
     bool required = true;
 };
 
@@ -1055,6 +1064,10 @@ struct MapElementInspectorState {
     std::string status_message;
     bool delete_supported = false;
     bool pending_delete = false;
+    bool source_method_put0 = false;
+    bool put0_conversion_draft = false;
+    bool put0_prompt_requested = false;
+    bool z_rebase_prompt_requested = false;
     std::vector<MapElementEditFieldState> fields;
 };
 
@@ -1556,7 +1569,8 @@ private:
     bool apply_local_preview_change(const MapElementPendingChange& change);
     bool restore_local_preview_change(const std::string& edit_id, const std::string& row_kind);
     bool snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind);
-    void refresh_local_preview_after_edit(const std::string& row_kind);
+    void refresh_local_preview_after_edit(const std::string& row_kind,
+                                          const std::string& edit_id = {});
     void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
     void process_pending_element_inspector();
     bool open_element_inspector(const MapElementInspectorRequest& request);
@@ -1572,6 +1586,11 @@ private:
     void apply_inspector_changes();
     void revert_inspector_changes();
     void delete_inspector_target();
+    void enable_inspector_put0_conversion();
+    void sync_scene_structure_edit_from_inspector();
+    void apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& update);
+    bool update_scene_structure_instance_from_model(const std::string& edit_id);
+    void clear_scene_structure_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
     std::string pending_changes_json() const;
     void render_element_inspector();

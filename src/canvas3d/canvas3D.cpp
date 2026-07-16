@@ -37,6 +37,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -62,6 +63,8 @@ constexpr double kSceneFocusHighlightSeconds = 3.0;
 // The event-driven canvas stops repainting while idle, so preserve the last active FPS across long gaps.
 constexpr double kSceneFpsIdleResetSeconds = 0.25;
 constexpr float kSceneFpsSmoothing = 0.15f;
+constexpr float kSceneGizmoLengthPx = 72.0f;
+constexpr float kSceneGizmoHitRadiusPx = 8.0f;
 
 template <typename T>
 void release_com(T*& p) {
@@ -635,6 +638,50 @@ struct SceneChunk {
     DVec3 origin;
     std::vector<SceneInstance> instances;
     std::vector<size_t> repeater_indices;
+};
+
+struct SceneStructureInstanceLocation {
+    size_t source_index = 0;
+    size_t chunk_index = 0;
+    size_t chunk_instance_index = 0;
+};
+
+struct SceneGizmoAxisProjection {
+    bool valid = false;
+    bool ray_drag_reliable = false;
+    ImVec2 begin;
+    ImVec2 end;
+    ImVec2 direction;
+    double world_units_per_pixel = 0.0;
+};
+
+struct SceneStructureEditState {
+    bool active = false;
+    bool show_gizmo = false;
+    std::string edit_id;
+    Canvas3DModelInstance baseline_instance;
+    Canvas3DStructureEditTarget current;
+    DVec3 origin;
+    std::array<DVec3, 3> axes{};
+    std::array<SceneGizmoAxisProjection, 3> projection{};
+    Canvas3DSceneDragAxis hovered_axis = Canvas3DSceneDragAxis::None;
+    Canvas3DSceneDragAxis dragging_axis = Canvas3DSceneDragAxis::None;
+    DVec3 drag_axis_origin;
+    DVec3 drag_axis_direction;
+    ImVec2 drag_start_mouse;
+    ImVec2 drag_screen_direction;
+    double drag_start_value = 0.0;
+    double drag_start_axis_parameter = 0.0;
+    double drag_world_units_per_pixel = 0.0;
+    bool drag_uses_ray = false;
+};
+
+struct StructurePlacementFrame {
+    DVec3 origin;
+    DVec3 model_right;
+    DVec3 model_up;
+    DVec3 model_forward;
+    std::array<DVec3, 3> parameter_axes{};
 };
 
 struct SceneScreenBounds {
@@ -1901,6 +1948,8 @@ struct Canvas3D::Impl {
         } else {
             release_scene_resources();
         }
+        scene_structure_edit = SceneStructureEditState{};
+        scene_structure_locations.clear();
         scene_data = std::move(scene);
         if (++scene_geometry_generation == 0) ++scene_geometry_generation;
         clear_scene_focus_highlight();
@@ -1983,6 +2032,8 @@ struct Canvas3D::Impl {
             return false;
         }
 
+        clear_scene_structure_edit_target();
+
         std::vector<Canvas3DSceneObject> old_objects = std::move(scene_data.objects);
         std::vector<Canvas3DModelInstance> old_instances = std::move(scene_data.instances);
         std::vector<Canvas3DRepeaterSegment> old_repeaters = std::move(scene_data.repeaters);
@@ -1991,6 +2042,7 @@ struct Canvas3D::Impl {
         const double old_min_distance = scene_data.min_distance;
         const double old_max_distance = scene_data.max_distance;
         std::vector<SceneChunk> old_chunks = std::move(scene_chunks);
+        auto old_structure_locations = scene_structure_locations;
 
         auto restore_dynamic_content = [&]() {
             scene_data.objects = std::move(old_objects);
@@ -2001,6 +2053,7 @@ struct Canvas3D::Impl {
             scene_data.min_distance = old_min_distance;
             scene_data.max_distance = old_max_distance;
             scene_chunks = std::move(old_chunks);
+            scene_structure_locations = std::move(old_structure_locations);
         };
 
         if (!populate_canvas3d_scene_dynamic_content(scene_data, model, station_index)) {
@@ -2093,6 +2146,8 @@ struct Canvas3D::Impl {
         release_scene_resources();
         scene_data = {};
         scene_active = false;
+        scene_structure_edit = SceneStructureEditState{};
+        scene_structure_locations.clear();
         scene_rotating = false;
         scene_hovered_object_index = -1;
         scene_context_object_index = -1;
@@ -2292,6 +2347,194 @@ struct Canvas3D::Impl {
             start_scene_model_worker({std::move(request)});
         }
         scene_hover_highlight_batch.clear();
+        return true;
+    }
+
+    static bool same_structure_edit_target(const Canvas3DStructureEditTarget& a,
+                                           const Canvas3DStructureEditTarget& b) {
+        return a.edit_id == b.edit_id && a.track_key == b.track_key &&
+            a.distance == b.distance && a.x == b.x && a.y == b.y && a.z == b.z &&
+            a.rx == b.rx && a.ry == b.ry && a.rz == b.rz &&
+            a.tilt == b.tilt && a.span == b.span;
+    }
+
+    const std::string* structure_edit_id_for_object(int object_index) const {
+        if (!scene_object_index_valid(object_index)) return nullptr;
+        const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(object_index)];
+        if (object.kind != Canvas3DSceneObjectKind::Structure ||
+            object.structure_put_between || object.edit_id.empty()) {
+            return nullptr;
+        }
+        return &object.edit_id;
+    }
+
+    size_t scene_chunk_index_for_distance(double distance) const {
+        if (scene_chunks.empty()) return 0;
+        const double first = scene_chunks.front().d_min;
+        int index = static_cast<int>(std::floor((distance - first) / scene_chunk_m));
+        index = std::clamp(index, 0, static_cast<int>(scene_chunks.size()) - 1);
+        return static_cast<size_t>(index);
+    }
+
+    Canvas3DModelInstance structure_instance_from_target(
+        const Canvas3DStructureEditTarget& target,
+        const Canvas3DModelInstance& base) const {
+        Canvas3DModelInstance desired = base;
+        desired.track_key = target.track_key;
+        desired.distance = target.distance;
+        desired.follow_track = true;
+        desired.put_between = false;
+        desired.x = target.x;
+        desired.y = target.y;
+        desired.z = target.z;
+        desired.rx = target.rx;
+        desired.ry = target.ry;
+        desired.rz = target.rz;
+        desired.tilt = target.tilt;
+        desired.span = target.span;
+        return desired;
+    }
+
+    bool write_scene_structure_instance(const std::string& edit_id,
+                                        Canvas3DModelInstance desired) {
+        auto location_it = scene_structure_locations.find(edit_id);
+        if (location_it == scene_structure_locations.end() || scene_chunks.empty()) return false;
+        SceneStructureInstanceLocation location = location_it->second;
+        if (location.source_index >= scene_data.instances.size() ||
+            location.chunk_index >= scene_chunks.size() ||
+            location.chunk_instance_index >= scene_chunks[location.chunk_index].instances.size()) {
+            return false;
+        }
+
+        StructurePlacementFrame frame;
+        if (!make_track_placement_frame(desired.track_key, desired.distance,
+                                        desired.x, desired.y, desired.z,
+                                        desired.rx, desired.ry, desired.rz,
+                                        desired.tilt, desired.span, frame)) {
+            return false;
+        }
+        store_world(desired.world, frame.model_right, frame.model_up,
+                    frame.model_forward, frame.origin);
+
+        SceneInstance replacement;
+        replacement.model_path = scene_model_key_for_instance(desired, scene_geometry_generation);
+        replacement.distance = desired.distance;
+        replacement.object_index = desired.object_index;
+        std::copy(desired.world, desired.world + 16, replacement.world);
+        const std::string render_model_path = replacement.model_path;
+
+        const size_t destination_chunk_index = scene_chunk_index_for_distance(desired.distance);
+        if (destination_chunk_index == location.chunk_index) {
+            scene_chunks[location.chunk_index].instances[location.chunk_instance_index] =
+                std::move(replacement);
+        } else {
+            SceneChunk& old_chunk = scene_chunks[location.chunk_index];
+            const size_t last_index = old_chunk.instances.size() - 1;
+            if (location.chunk_instance_index != last_index) {
+                old_chunk.instances[location.chunk_instance_index] =
+                    std::move(old_chunk.instances[last_index]);
+                const SceneInstance& moved = old_chunk.instances[location.chunk_instance_index];
+                if (const std::string* moved_edit_id = structure_edit_id_for_object(moved.object_index)) {
+                    auto moved_location = scene_structure_locations.find(*moved_edit_id);
+                    if (moved_location != scene_structure_locations.end()) {
+                        moved_location->second.chunk_index = location.chunk_index;
+                        moved_location->second.chunk_instance_index = location.chunk_instance_index;
+                    }
+                }
+            }
+            old_chunk.instances.pop_back();
+
+            SceneChunk& destination = scene_chunks[destination_chunk_index];
+            location.chunk_index = destination_chunk_index;
+            location.chunk_instance_index = destination.instances.size();
+            destination.instances.push_back(std::move(replacement));
+            scene_structure_locations[edit_id] = location;
+        }
+
+        scene_data.instances[location.source_index] = desired;
+        if (scene_focus_highlight_object_index == desired.object_index) {
+            scene_focus_highlight_model_path = render_model_path.empty()
+                ? desired.model_path : render_model_path;
+            std::copy(desired.world, desired.world + 16, scene_focus_highlight_world);
+        }
+        if (scene_structure_edit.active && scene_structure_edit.edit_id == edit_id) {
+            scene_structure_edit.origin = frame.origin;
+            scene_structure_edit.axes = frame.parameter_axes;
+        }
+        return true;
+    }
+
+    void clear_scene_structure_edit_target() {
+        if (!scene_structure_edit.active) return;
+        const std::string edit_id = scene_structure_edit.edit_id;
+        Canvas3DModelInstance baseline = scene_structure_edit.baseline_instance;
+        scene_structure_edit = SceneStructureEditState{};
+        write_scene_structure_instance(edit_id, std::move(baseline));
+    }
+
+    bool set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
+                                         bool show_gizmo) {
+        if (!scene_active || target.edit_id.empty()) return false;
+        if (scene_structure_edit.active && scene_structure_edit.edit_id != target.edit_id) {
+            clear_scene_structure_edit_target();
+        }
+
+        auto location_it = scene_structure_locations.find(target.edit_id);
+        if (location_it == scene_structure_locations.end() ||
+            location_it->second.source_index >= scene_data.instances.size()) {
+            return false;
+        }
+
+        if (!scene_structure_edit.active) {
+            scene_structure_edit.active = true;
+            scene_structure_edit.edit_id = target.edit_id;
+            scene_structure_edit.baseline_instance =
+                scene_data.instances[location_it->second.source_index];
+        } else if (same_structure_edit_target(scene_structure_edit.current, target) &&
+                   scene_structure_edit.show_gizmo == show_gizmo) {
+            return true;
+        }
+
+        Canvas3DModelInstance desired = structure_instance_from_target(
+            target, scene_structure_edit.baseline_instance);
+        if (!write_scene_structure_instance(target.edit_id, std::move(desired))) {
+            if (scene_structure_edit.current.edit_id.empty()) {
+                scene_structure_edit = SceneStructureEditState{};
+            }
+            return false;
+        }
+        scene_structure_edit.current = target;
+        scene_structure_edit.show_gizmo = show_gizmo;
+        if (!show_gizmo) {
+            scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
+            scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+        }
+        return true;
+    }
+
+    bool update_scene_structure_instance(const Canvas3DStructureEditTarget& target) {
+        if (!scene_active) return true;
+        auto location_it = scene_structure_locations.find(target.edit_id);
+        if (location_it == scene_structure_locations.end() ||
+            location_it->second.source_index >= scene_data.instances.size()) {
+            return false;
+        }
+        const Canvas3DModelInstance& base = scene_structure_edit.active &&
+            scene_structure_edit.edit_id == target.edit_id
+            ? scene_structure_edit.baseline_instance
+            : scene_data.instances[location_it->second.source_index];
+        Canvas3DModelInstance desired = structure_instance_from_target(target, base);
+        if (!write_scene_structure_instance(target.edit_id, std::move(desired))) return false;
+
+        if (scene_structure_edit.active && scene_structure_edit.edit_id == target.edit_id) {
+            auto updated_location = scene_structure_locations.find(target.edit_id);
+            if (updated_location != scene_structure_locations.end() &&
+                updated_location->second.source_index < scene_data.instances.size()) {
+                scene_structure_edit.baseline_instance =
+                    scene_data.instances[updated_location->second.source_index];
+            }
+            scene_structure_edit.current = target;
+        }
         return true;
     }
 
@@ -2656,6 +2899,8 @@ fail:
         scene_models.clear();
         release_scene_track_chunks();
         scene_chunks.clear();
+        scene_structure_locations.clear();
+        scene_structure_edit = SceneStructureEditState{};
         clear_pending_scene_model_uploads();
         scene_last_error.clear();
         scene_stats_value = {};
@@ -3746,6 +3991,7 @@ fail:
 
     void build_scene_chunks() {
         scene_chunks.clear();
+        scene_structure_locations.clear();
         double min_d = scene_data.min_distance;
         double max_d = scene_data.max_distance;
         if (max_d <= min_d) {
@@ -3764,7 +4010,8 @@ fail:
                 scene_chunks[i].origin = {origin_point.x, origin_point.y, origin_point.z};
             }
         }
-        for (const Canvas3DModelInstance& source : scene_data.instances) {
+        for (size_t source_index = 0; source_index < scene_data.instances.size(); ++source_index) {
+            const Canvas3DModelInstance& source = scene_data.instances[source_index];
             if (source.model_path.empty()) continue;
             int index = static_cast<int>(std::floor((source.distance - first) / scene_chunk_m));
             index = std::clamp(index, 0, static_cast<int>(scene_chunks.size()) - 1);
@@ -3783,7 +4030,21 @@ fail:
             } else {
                 std::copy(source.world, source.world + 16, instance.world);
             }
-            scene_chunks[static_cast<size_t>(index)].instances.push_back(std::move(instance));
+            SceneChunk& chunk = scene_chunks[static_cast<size_t>(index)];
+            const size_t chunk_instance_index = chunk.instances.size();
+            chunk.instances.push_back(std::move(instance));
+            if (scene_object_index_valid(source.object_index)) {
+                const Canvas3DSceneObject& object =
+                    scene_data.objects[static_cast<size_t>(source.object_index)];
+                if (object.kind == Canvas3DSceneObjectKind::Structure &&
+                    !object.structure_put_between && !object.edit_id.empty()) {
+                    scene_structure_locations[object.edit_id] = SceneStructureInstanceLocation{
+                        source_index,
+                        static_cast<size_t>(index),
+                        chunk_instance_index
+                    };
+                }
+            }
         }
         for (size_t repeater_index = 0; repeater_index < scene_data.repeaters.size(); ++repeater_index) {
             const Canvas3DRepeaterSegment& repeater = scene_data.repeaters[repeater_index];
@@ -4183,17 +4444,17 @@ fail:
         up = rotate_axis(up, axis, -cant_angle);
     }
 
-    bool make_track_world(const std::string& track_key,
-                          double distance,
-                          double x,
-                          double y,
-                          double z,
-                          double rx,
-                          double ry,
-                          double rz,
-                          double tilt,
-                          double span,
-                          double out_world[16]) const {
+    bool make_track_placement_frame(const std::string& track_key,
+                                    double distance,
+                                    double x,
+                                    double y,
+                                    double z,
+                                    double rx,
+                                    double ry,
+                                    double rz,
+                                    double tilt,
+                                    double span,
+                                    StructurePlacementFrame& frame) const {
         Canvas3DTrackPoint point;
         if (!sample_scene_placement_track(track_key, distance, point)) return false;
 
@@ -4242,8 +4503,35 @@ fail:
         }
 
         origin = origin + forward * z;
+        frame.origin = origin;
+        frame.parameter_axes[0] = normalize(offset_right);
+        frame.parameter_axes[1] = normalize(offset_up);
+        frame.parameter_axes[2] = normalize(forward);
         apply_euler(right, up, forward, rx, ry, rz);
-        store_world(out_world, right, up, forward, origin);
+        frame.model_right = right;
+        frame.model_up = up;
+        frame.model_forward = forward;
+        return true;
+    }
+
+    bool make_track_world(const std::string& track_key,
+                          double distance,
+                          double x,
+                          double y,
+                          double z,
+                          double rx,
+                          double ry,
+                          double rz,
+                          double tilt,
+                          double span,
+                          double out_world[16]) const {
+        StructurePlacementFrame frame;
+        if (!make_track_placement_frame(track_key, distance, x, y, z,
+                                        rx, ry, rz, tilt, span, frame)) {
+            return false;
+        }
+        store_world(out_world, frame.model_right, frame.model_up,
+                    frame.model_forward, frame.origin);
         return true;
     }
 
@@ -4393,7 +4681,314 @@ fail:
         update_scene_camera_from_owntrack();
     }
 
-    void handle_scene_input(bool hovered) {
+    static int structure_drag_axis_index(Canvas3DSceneDragAxis axis) {
+        switch (axis) {
+            case Canvas3DSceneDragAxis::X: return 0;
+            case Canvas3DSceneDragAxis::Y: return 1;
+            case Canvas3DSceneDragAxis::Z: return 2;
+            case Canvas3DSceneDragAxis::None: break;
+        }
+        return -1;
+    }
+
+    static Canvas3DSceneDragAxis structure_drag_axis_from_index(size_t index) {
+        if (index == 0) return Canvas3DSceneDragAxis::X;
+        if (index == 1) return Canvas3DSceneDragAxis::Y;
+        if (index == 2) return Canvas3DSceneDragAxis::Z;
+        return Canvas3DSceneDragAxis::None;
+    }
+
+    static double truncate_scene_millimeter(double value) {
+        if (!std::isfinite(value)) return value;
+        double scaled = value * 1000.0;
+        const double nearest = std::round(scaled);
+        if (std::abs(scaled - nearest) < 1e-9) scaled = nearest;
+        double result = std::trunc(scaled) / 1000.0;
+        return result == 0.0 ? 0.0 : result;
+    }
+
+    bool scene_camera_ray(ImVec2 mouse_local, int width, int height,
+                          DVec3& ray_origin, DVec3& ray_direction) const {
+        if (width <= 0 || height <= 0) return false;
+        const double ndc_x = 2.0 * static_cast<double>(mouse_local.x) /
+            static_cast<double>(width) - 1.0;
+        const double ndc_y = 1.0 - 2.0 * static_cast<double>(mouse_local.y) /
+            static_cast<double>(height);
+        const double aspect = static_cast<double>(width) / static_cast<double>(height);
+        const double tan_half_fov = std::tan(static_cast<double>(kSceneCameraFovY) * 0.5);
+        DVec3 forward = dvec3_from_vec3(scene_forward());
+        DVec3 right = dvec3_from_vec3(scene_right());
+        DVec3 up = normalize(cross(right, forward));
+        ray_origin = scene_camera_pos;
+        ray_direction = normalize(forward + right * (ndc_x * aspect * tan_half_fov) +
+                                  up * (ndc_y * tan_half_fov));
+        return std::isfinite(ray_direction.x) && std::isfinite(ray_direction.y) &&
+            std::isfinite(ray_direction.z);
+    }
+
+    static bool closest_axis_parameter(DVec3 axis_origin, DVec3 axis_direction,
+                                       DVec3 ray_origin, DVec3 ray_direction,
+                                       double& parameter) {
+        axis_direction = normalize(axis_direction);
+        ray_direction = normalize(ray_direction);
+        DVec3 w = axis_origin - ray_origin;
+        const double a = dot(axis_direction, axis_direction);
+        const double b = dot(axis_direction, ray_direction);
+        const double c = dot(ray_direction, ray_direction);
+        const double d = dot(axis_direction, w);
+        const double e = dot(ray_direction, w);
+        const double denominator = a * c - b * b;
+        if (!std::isfinite(denominator) || denominator < 1e-4) return false;
+        parameter = (b * e - c * d) / denominator;
+        return std::isfinite(parameter);
+    }
+
+    static float point_segment_distance_sq(ImVec2 point, ImVec2 a, ImVec2 b) {
+        const float vx = b.x - a.x;
+        const float vy = b.y - a.y;
+        const float length_sq = vx * vx + vy * vy;
+        float t = 0.0f;
+        if (length_sq > 1e-6f) {
+            t = std::clamp(((point.x - a.x) * vx + (point.y - a.y) * vy) / length_sq,
+                           0.0f, 1.0f);
+        }
+        const float dx = point.x - (a.x + vx * t);
+        const float dy = point.y - (a.y + vy * t);
+        return dx * dx + dy * dy;
+    }
+
+    bool update_scene_structure_gizmo_projection(int width, int height) {
+        for (SceneGizmoAxisProjection& projection : scene_structure_edit.projection) {
+            projection = SceneGizmoAxisProjection{};
+        }
+        if (!scene_structure_edit.active || !scene_structure_edit.show_gizmo ||
+            width <= 0 || height <= 0) {
+            return false;
+        }
+
+        const DVec3 relative_origin = scene_structure_edit.origin - scene_camera_pos;
+        const DVec3 camera_forward = dvec3_from_vec3(scene_forward());
+        const double depth = dot(relative_origin, camera_forward);
+        if (!std::isfinite(depth) || depth <= static_cast<double>(kSceneNearZ)) return false;
+
+        Vec3 forward = scene_forward();
+        Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, forward, {0.0f, 1.0f, 0.0f});
+        const float aspect = static_cast<float>(width) /
+            std::max(1.0f, static_cast<float>(height));
+        Mat4 proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect,
+                                                 kSceneNearZ, scene_far_z());
+        Mat4 view_proj = multiply(view, proj);
+        ImVec2 origin_screen;
+        if (!project_scene_point(relative_origin, view_proj, width, height, origin_screen) ||
+            origin_screen.x < 0.0f || origin_screen.y < 0.0f ||
+            origin_screen.x > static_cast<float>(width) ||
+            origin_screen.y > static_cast<float>(height)) {
+            return false;
+        }
+
+        const double generic_world_units_per_pixel =
+            2.0 * depth * std::tan(static_cast<double>(kSceneCameraFovY) * 0.5) /
+            static_cast<double>(height);
+        static constexpr std::array<ImVec2, 3> fallback_directions = {
+            ImVec2(0.8660254f, 0.5f),
+            ImVec2(0.0f, -1.0f),
+            ImVec2(-0.8660254f, 0.5f)
+        };
+        bool any = false;
+        for (size_t i = 0; i < scene_structure_edit.axes.size(); ++i) {
+            const DVec3 axis = normalize(scene_structure_edit.axes[i]);
+            ImVec2 one_meter_screen;
+            const bool projected = project_scene_point(relative_origin + axis, view_proj,
+                                                        width, height, one_meter_screen);
+            float dx = projected ? one_meter_screen.x - origin_screen.x : 0.0f;
+            float dy = projected ? one_meter_screen.y - origin_screen.y : 0.0f;
+            const float projected_length = std::sqrt(dx * dx + dy * dy);
+            ImVec2 direction = fallback_directions[i];
+            if (projected_length >= 1.0f) {
+                direction = ImVec2(dx / projected_length, dy / projected_length);
+            }
+            SceneGizmoAxisProjection& axis_projection = scene_structure_edit.projection[i];
+            axis_projection.valid = true;
+            axis_projection.ray_drag_reliable = projected_length >= 4.0f;
+            axis_projection.direction = direction;
+            axis_projection.begin = ImVec2(origin_screen.x + direction.x * 9.0f,
+                                           origin_screen.y + direction.y * 9.0f);
+            axis_projection.end = ImVec2(origin_screen.x + direction.x * kSceneGizmoLengthPx,
+                                         origin_screen.y + direction.y * kSceneGizmoLengthPx);
+            axis_projection.world_units_per_pixel = projected_length >= 1.0f
+                ? 1.0 / static_cast<double>(projected_length)
+                : generic_world_units_per_pixel;
+            any = true;
+        }
+        return any;
+    }
+
+    std::optional<Canvas3DStructureDragUpdate> handle_scene_structure_gizmo_input(
+        bool canvas_hovered, int width, int height, ImVec2 mouse_local) {
+        if (!update_scene_structure_gizmo_projection(width, height)) {
+            scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+            }
+            return std::nullopt;
+        }
+
+        if (scene_structure_edit.dragging_axis == Canvas3DSceneDragAxis::None) {
+            scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
+            if (canvas_hovered) {
+                float best_distance_sq = kSceneGizmoHitRadiusPx * kSceneGizmoHitRadiusPx;
+                for (size_t i = 0; i < scene_structure_edit.projection.size(); ++i) {
+                    const SceneGizmoAxisProjection& projection = scene_structure_edit.projection[i];
+                    if (!projection.valid) continue;
+                    const float distance_sq = point_segment_distance_sq(
+                        mouse_local, projection.begin, projection.end);
+                    if (distance_sq <= best_distance_sq) {
+                        best_distance_sq = distance_sq;
+                        scene_structure_edit.hovered_axis = structure_drag_axis_from_index(i);
+                    }
+                }
+            }
+
+            if (scene_structure_edit.hovered_axis != Canvas3DSceneDragAxis::None &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                const int axis_index = structure_drag_axis_index(scene_structure_edit.hovered_axis);
+                const SceneGizmoAxisProjection& projection =
+                    scene_structure_edit.projection[static_cast<size_t>(axis_index)];
+                scene_structure_edit.dragging_axis = scene_structure_edit.hovered_axis;
+                scene_structure_edit.drag_axis_origin = scene_structure_edit.origin;
+                scene_structure_edit.drag_axis_direction =
+                    normalize(scene_structure_edit.axes[static_cast<size_t>(axis_index)]);
+                scene_structure_edit.drag_start_mouse = mouse_local;
+                scene_structure_edit.drag_screen_direction = projection.direction;
+                scene_structure_edit.drag_world_units_per_pixel =
+                    projection.world_units_per_pixel;
+                scene_structure_edit.drag_start_value = axis_index == 0
+                    ? scene_structure_edit.current.x
+                    : axis_index == 1 ? scene_structure_edit.current.y
+                                      : scene_structure_edit.current.z;
+                DVec3 ray_origin;
+                DVec3 ray_direction;
+                scene_structure_edit.drag_uses_ray =
+                    projection.ray_drag_reliable &&
+                    scene_camera_ray(mouse_local, width, height, ray_origin, ray_direction) &&
+                    closest_axis_parameter(scene_structure_edit.drag_axis_origin,
+                                           scene_structure_edit.drag_axis_direction,
+                                           ray_origin, ray_direction,
+                                           scene_structure_edit.drag_start_axis_parameter);
+            }
+        }
+
+        if (scene_structure_edit.dragging_axis == Canvas3DSceneDragAxis::None) return std::nullopt;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+            return std::nullopt;
+        }
+
+        double delta = 0.0;
+        bool used_ray = false;
+        if (scene_structure_edit.drag_uses_ray) {
+            DVec3 ray_origin;
+            DVec3 ray_direction;
+            double current_parameter = 0.0;
+            if (scene_camera_ray(mouse_local, width, height, ray_origin, ray_direction) &&
+                closest_axis_parameter(scene_structure_edit.drag_axis_origin,
+                                       scene_structure_edit.drag_axis_direction,
+                                       ray_origin, ray_direction, current_parameter)) {
+                delta = current_parameter - scene_structure_edit.drag_start_axis_parameter;
+                used_ray = true;
+            }
+        }
+        if (!used_ray) {
+            const double screen_delta_x =
+                static_cast<double>(mouse_local.x - scene_structure_edit.drag_start_mouse.x);
+            const double screen_delta_y =
+                static_cast<double>(mouse_local.y - scene_structure_edit.drag_start_mouse.y);
+            delta = (screen_delta_x * scene_structure_edit.drag_screen_direction.x +
+                     screen_delta_y * scene_structure_edit.drag_screen_direction.y) *
+                scene_structure_edit.drag_world_units_per_pixel;
+        }
+
+        const double candidate = truncate_scene_millimeter(
+            scene_structure_edit.drag_start_value + delta);
+        const int axis_index = structure_drag_axis_index(scene_structure_edit.dragging_axis);
+        double* current_value = axis_index == 0 ? &scene_structure_edit.current.x
+            : axis_index == 1 ? &scene_structure_edit.current.y
+                              : &scene_structure_edit.current.z;
+        if (std::abs(candidate - *current_value) < 0.000999999) return std::nullopt;
+        const double previous_value = *current_value;
+        *current_value = candidate;
+        const Canvas3DSceneDragAxis changed_axis = scene_structure_edit.dragging_axis;
+        Canvas3DModelInstance desired = structure_instance_from_target(
+            scene_structure_edit.current, scene_structure_edit.baseline_instance);
+        if (!write_scene_structure_instance(scene_structure_edit.edit_id, std::move(desired))) {
+            *current_value = previous_value;
+            return std::nullopt;
+        }
+
+        Canvas3DStructureDragUpdate result;
+        result.edit_id = scene_structure_edit.edit_id;
+        result.axis = changed_axis;
+        result.x = scene_structure_edit.current.x;
+        result.y = scene_structure_edit.current.y;
+        result.z = scene_structure_edit.current.z;
+        return result;
+    }
+
+    bool scene_structure_gizmo_consumes_left_input() const {
+        return scene_structure_edit.dragging_axis != Canvas3DSceneDragAxis::None ||
+            scene_structure_edit.hovered_axis != Canvas3DSceneDragAxis::None;
+    }
+
+    void draw_scene_structure_gizmo(ImDrawList* draw, ImVec2 canvas_origin,
+                                    int width, int height) {
+        if (!draw || !update_scene_structure_gizmo_projection(width, height)) return;
+        static constexpr std::array<ImU32, 3> colors = {
+            IM_COL32(235, 67, 67, 255),
+            IM_COL32(73, 205, 91, 255),
+            IM_COL32(65, 126, 245, 255)
+        };
+        static constexpr std::array<ImU32, 3> active_colors = {
+            IM_COL32(255, 142, 142, 255),
+            IM_COL32(153, 255, 164, 255),
+            IM_COL32(151, 190, 255, 255)
+        };
+        static constexpr std::array<const char*, 3> labels = {"X", "Y", "Z"};
+        for (size_t i = 0; i < scene_structure_edit.projection.size(); ++i) {
+            const SceneGizmoAxisProjection& projection = scene_structure_edit.projection[i];
+            if (!projection.valid) continue;
+            const Canvas3DSceneDragAxis axis = structure_drag_axis_from_index(i);
+            const bool active = scene_structure_edit.dragging_axis == axis ||
+                scene_structure_edit.hovered_axis == axis;
+            const ImU32 color = active ? active_colors[i] : colors[i];
+            ImVec2 begin(canvas_origin.x + projection.begin.x,
+                         canvas_origin.y + projection.begin.y);
+            ImVec2 end(canvas_origin.x + projection.end.x,
+                       canvas_origin.y + projection.end.y);
+            ImVec2 direction = projection.direction;
+            ImVec2 perpendicular(-direction.y, direction.x);
+            ImVec2 arrow_base(end.x - direction.x * 11.0f,
+                              end.y - direction.y * 11.0f);
+            draw->AddLine(begin, end, color, active ? 4.5f : 3.0f);
+            draw->AddTriangleFilled(
+                end,
+                ImVec2(arrow_base.x + perpendicular.x * 5.5f,
+                       arrow_base.y + perpendicular.y * 5.5f),
+                ImVec2(arrow_base.x - perpendicular.x * 5.5f,
+                       arrow_base.y - perpendicular.y * 5.5f),
+                color);
+            draw->AddText(ImVec2(end.x + direction.x * 5.0f - 3.0f,
+                                 end.y + direction.y * 5.0f - 7.0f), color, labels[i]);
+        }
+        const SceneGizmoAxisProjection& first = scene_structure_edit.projection[0];
+        if (first.valid) {
+            ImVec2 center(canvas_origin.x + first.begin.x - first.direction.x * 9.0f,
+                          canvas_origin.y + first.begin.y - first.direction.y * 9.0f);
+            draw->AddCircleFilled(center, 4.0f, IM_COL32(245, 245, 245, 235));
+            draw->AddCircle(center, 4.0f, IM_COL32(30, 30, 30, 220), 0, 1.0f);
+        }
+    }
+
+    void handle_scene_input(bool hovered, bool block_left_drag) {
         if (!hovered) {
             scene_rotating = false;
             return;
@@ -4404,7 +4999,7 @@ fail:
         }
 
         const bool rotation_enabled = scene_interaction_mode == Canvas3DSceneInteractionMode::Move;
-        if (rotation_enabled && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (rotation_enabled && !block_left_drag && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             if (!scene_rotating) {
                 scene_rotating = true;
                 scene_last_mouse = io.MousePos;
@@ -4766,11 +5361,11 @@ fail:
         return action;
     }
 
-    Canvas3DSceneContextAction render_scene_preview(
+    Canvas3DSceneFrameResult render_scene_preview(
         ImVec2 requested_size,
         const Canvas3DSceneUiText& ui_text,
         const Canvas3DSceneContextMenuOptions& context_menu_options) {
-        Canvas3DSceneContextAction action;
+        Canvas3DSceneFrameResult result;
         ImVec2 avail = requested_size;
         if (avail.x <= 0.0f || avail.y <= 0.0f) avail = ImGui::GetContentRegionAvail();
         avail.x = std::max(avail.x, 50.0f);
@@ -4782,7 +5377,6 @@ fail:
         bool hovered = ImGui::IsItemHovered();
         const bool context_popup_open = ImGui::IsPopupOpen("ScenePreviewObjectContext");
         const bool loading_before_render = scene_stats().loading;
-        if (scene_active && !loading_before_render) handle_scene_input(hovered);
         ImGuiIO& io = ImGui::GetIO();
         ImVec2 pointer_pos = io.MousePos;
         const touch_input::TouchFrame& touch = touch_input::current_frame();
@@ -4792,8 +5386,15 @@ fail:
 
         int width = std::max(1, static_cast<int>(std::round(avail.x)));
         int height = std::max(1, static_cast<int>(std::round(avail.y)));
+        if (scene_active && !loading_before_render) {
+            result.structure_drag = handle_scene_structure_gizmo_input(
+                hovered, width, height, mouse_local);
+            handle_scene_input(hovered, scene_structure_gizmo_consumes_left_input());
+        }
         if (scene_active) {
-            render_scene_preview_target(width, height, mouse_local, hovered || context_popup_open);
+            render_scene_preview_target(
+                width, height, mouse_local,
+                (hovered || context_popup_open) && !scene_structure_gizmo_consumes_left_input());
         } else {
             std::string error;
             ensure_render_target(width, height, error);
@@ -4821,10 +5422,13 @@ fail:
         } else {
             draw_scene_overlay(draw, origin, avail);
             draw_scene_metrics_overlay(draw, origin, avail, stats);
+            draw_scene_structure_gizmo(draw, origin, width, height);
         }
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
-        if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0) {
+        if (!stats.loading && scene_structure_gizmo_consumes_left_input()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        } else if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         }
         ImVec2 long_press_pos;
@@ -4836,8 +5440,8 @@ fail:
             scene_context_object_index = scene_hovered_object_index;
             ImGui::OpenPopup("ScenePreviewObjectContext");
         }
-        action = render_scene_context_popup(ui_text, context_menu_options);
-        return action;
+        result.context_action = render_scene_context_popup(ui_text, context_menu_options);
+        return result;
     }
 
     void render_scene(int width, int height) {
@@ -5057,6 +5661,8 @@ fail:
     size_t scene_geometry_generation = 0;
     bool scene_active = false;
     std::vector<SceneChunk> scene_chunks;
+    std::unordered_map<std::string, SceneStructureInstanceLocation> scene_structure_locations;
+    SceneStructureEditState scene_structure_edit;
     std::vector<SceneTrackChunkGpu> scene_track_chunks;
     std::map<std::string, SceneModelGpu> scene_models;
     std::mutex scene_upload_mutex;
@@ -5199,7 +5805,20 @@ bool Canvas3D::jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t 
     return impl_->jump_scene_camera_to_object(kind, source_row);
 }
 
-Canvas3DSceneContextAction Canvas3D::render_scene_preview(
+bool Canvas3D::set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
+                                               bool show_gizmo) {
+    return impl_->set_scene_structure_edit_target(target, show_gizmo);
+}
+
+bool Canvas3D::update_scene_structure_instance(const Canvas3DStructureEditTarget& target) {
+    return impl_->update_scene_structure_instance(target);
+}
+
+void Canvas3D::clear_scene_structure_edit_target() {
+    impl_->clear_scene_structure_edit_target();
+}
+
+Canvas3DSceneFrameResult Canvas3D::render_scene_preview(
     ImVec2 size,
     const Canvas3DSceneUiText& ui_text,
     const Canvas3DSceneContextMenuOptions& context_menu_options) {

@@ -909,14 +909,35 @@ std::string build_structure_put_statement(const MapEditChange& change,
                                           bool between) {
     std::string structure_key = required_string_field(change, "structureKey", value_to_edit_text(row.structure_key));
     std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
+    const bool source_put0 = ascii_lower(row.method) == "put0";
+    std::string output_method = row.method;
+    auto method_change = change.field_changes.find("method");
+    if (method_change != change.field_changes.end()) {
+        const std::string requested_method = trim_field_copy(method_change->second);
+        if (between || !source_put0 || ascii_lower(requested_method) != "put") {
+            throw std::runtime_error("unsupported Structure placement method conversion");
+        }
+        output_method = "Put";
+    }
+    const bool converted_put0 = source_put0 && ascii_lower(output_method) == "put";
     std::ostringstream out;
-    out << "Structure[" << quoted_bve_string(structure_key) << "]." << row.method << "(";
+    out << "Structure[" << quoted_bve_string(structure_key) << "]." << output_method << "(";
     if (between) {
         out << value_field_as_bve_arg(change, "trackKey1", row.track_key1, raw_arg_at(raw_args, 0)) << ","
             << value_field_as_bve_arg(change, "trackKey2", row.track_key2, raw_arg_at(raw_args, 1)) << ","
             << numeric_field(change, "flag", row.flag, raw_arg_at(raw_args, 2));
-    } else if (ascii_lower(row.method) == "put0") {
+    } else if (source_put0 && !converted_put0) {
         out << value_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
+            << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1)) << ","
+            << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2));
+    } else if (converted_put0) {
+        out << value_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
+            << numeric_field(change, "x", 0.0) << ","
+            << numeric_field(change, "y", 0.0) << ","
+            << numeric_field(change, "z", 0.0) << ","
+            << numeric_field(change, "rx", 0.0) << ","
+            << numeric_field(change, "ry", 0.0) << ","
+            << numeric_field(change, "rz", 0.0) << ","
             << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1)) << ","
             << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2));
     } else {

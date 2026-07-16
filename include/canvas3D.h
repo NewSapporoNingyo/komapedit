@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -205,6 +206,40 @@ struct Canvas3DSceneContextAction {
     std::string row_kind;
 };
 
+struct Canvas3DStructureEditTarget {
+    std::string edit_id;
+    std::string track_key;
+    double distance = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double rx = 0.0;
+    double ry = 0.0;
+    double rz = 0.0;
+    double tilt = 0.0;
+    double span = 0.0;
+};
+
+enum class Canvas3DSceneDragAxis {
+    None,
+    X,
+    Y,
+    Z,
+};
+
+struct Canvas3DStructureDragUpdate {
+    std::string edit_id;
+    Canvas3DSceneDragAxis axis = Canvas3DSceneDragAxis::None;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+struct Canvas3DSceneFrameResult {
+    Canvas3DSceneContextAction context_action;
+    std::optional<Canvas3DStructureDragUpdate> structure_drag;
+};
+
 Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options);
 std::vector<Canvas3DTrackVisibility> build_canvas3d_scene_track_visibility(
     const MapModel& model,
@@ -243,7 +278,11 @@ public:
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
     bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row);
-    Canvas3DSceneContextAction render_scene_preview(
+    bool set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
+                                         bool show_gizmo);
+    bool update_scene_structure_instance(const Canvas3DStructureEditTarget& target);
+    void clear_scene_structure_edit_target();
+    Canvas3DSceneFrameResult render_scene_preview(
         ImVec2 size,
         const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{},
         const Canvas3DSceneContextMenuOptions& context_menu_options = Canvas3DSceneContextMenuOptions{});

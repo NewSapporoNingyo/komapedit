@@ -19,6 +19,8 @@ struct Translation {
     Translation() {
         en = {
             {"dialog.distance_expression_message", "Edit the distance source expression manually?"},
+            {"dialog.structure_put0_convert_title", "Convert Put0"}, {"dialog.structure_put0_convert_message", "This Structure uses Put0, so its coordinates cannot be edited directly. Convert it to Put?"},
+            {"dialog.structure_z_rebase_title", "Adjust Distance"}, {"dialog.structure_z_rebase_message", "The current model's Z-axis offset exceeds 5 m. Adjust the distance?"},
             {"app.title", "komapedit"},
             {"menu.map_info.other_trains", "Other Train"},
             {"frame.other_trains", "Other Train List"},
@@ -94,6 +96,8 @@ struct Translation {
         };
         zh = {
             {"dialog.distance_expression_message", "是否手动编辑距离源字符串？"},
+            {"dialog.structure_put0_convert_title", "转换 Put0"}, {"dialog.structure_put0_convert_message", "当前structure使用put0方法，无法直接编辑坐标，是否转换为Put？"},
+            {"dialog.structure_z_rebase_title", "重新设置里程"}, {"dialog.structure_z_rebase_message", "当前模型的z轴偏移大于5m，是否重新设置里程？"},
             {"app.title", "komapedit"},
             {"menu.map_info.other_trains", "他列车"},
             {"frame.other_trains", "他列车列表"},
@@ -169,6 +173,8 @@ struct Translation {
         };
         ja = {
             {"dialog.distance_expression_message", "距離のソース文字列を手動で編集しますか？"},
+            {"dialog.structure_put0_convert_title", "Put0 の変換"}, {"dialog.structure_put0_convert_message", "この Structure は Put0 を使用しているため、座標を直接編集できません。Put に変換しますか？"},
+            {"dialog.structure_z_rebase_title", "距離の再設定"}, {"dialog.structure_z_rebase_message", "現在のモデルの Z 軸オフセットが 5 m を超えています。距離を再設定しますか？"},
             {"app.title", "komapedit"},
             {"menu.map_info.other_trains", "他列車"},
             {"frame.other_trains", "他列車リスト"},

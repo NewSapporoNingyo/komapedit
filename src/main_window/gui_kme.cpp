@@ -43,6 +43,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -146,14 +147,17 @@ void set_edit_field_buffer(MapElementEditFieldState& field, const std::string& v
     std::snprintf(field.value, sizeof(field.value), "%s", value.c_str());
 }
 
-bool parse_gui_edit_number(const std::string& text) {
+bool parse_gui_edit_number(const std::string& text, double* parsed_value = nullptr) {
     std::string trimmed = trim_gui_ascii_copy(text);
     if (trimmed.empty()) return false;
     const char* begin = trimmed.c_str();
     char* end = nullptr;
     errno = 0;
-    std::strtod(begin, &end);
-    return end != begin && errno != ERANGE && end && *end == '\0';
+    double value = std::strtod(begin, &end);
+    const bool valid = end != begin && errno != ERANGE && end && *end == '\0' &&
+        std::isfinite(value);
+    if (valid && parsed_value) *parsed_value = value;
+    return valid;
 }
 
 void render_inline_wrapped_text(const char* label, const std::string& value) {
@@ -199,7 +203,77 @@ std::string format_double(double value, int precision) {
         while (s.size() > dot + 1 && s.back() == '0') s.pop_back();
         if (s.size() == dot + 1) s.pop_back();
     }
+    if (s == "-0") return "0";
     return s;
+}
+
+double truncate_gui_thousandths(double value) {
+    if (!std::isfinite(value)) return value;
+    double scaled = value * 1000.0;
+    const double nearest = std::round(scaled);
+    if (std::abs(scaled - nearest) < 1e-9) scaled = nearest;
+    double result = std::trunc(scaled) / 1000.0;
+    return result == 0.0 ? 0.0 : result;
+}
+
+std::string format_gui_transform_number(double value) {
+    return format_double(truncate_gui_thousandths(value), 3);
+}
+
+MapElementEditFieldState* find_inspector_field(MapElementInspectorState& inspector,
+                                                const std::string& key) {
+    auto it = std::find_if(inspector.fields.begin(), inspector.fields.end(),
+                           [&](const MapElementEditFieldState& field) {
+                               return field.key == key;
+                           });
+    return it == inspector.fields.end() ? nullptr : &*it;
+}
+
+const MapElementEditFieldState* find_inspector_field(const MapElementInspectorState& inspector,
+                                                      const std::string& key) {
+    auto it = std::find_if(inspector.fields.begin(), inspector.fields.end(),
+                           [&](const MapElementEditFieldState& field) {
+                               return field.key == key;
+                           });
+    return it == inspector.fields.end() ? nullptr : &*it;
+}
+
+bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,
+                                          bool canonicalize) {
+    if (field.numeric_constraint == MapElementNumericConstraint::None) return true;
+    double value = 0.0;
+    if (!parse_gui_edit_number(edit_field_buffer_text(field), &value)) return false;
+    if (field.numeric_constraint == MapElementNumericConstraint::Integer &&
+        std::trunc(value) != value) {
+        return false;
+    }
+    if (!canonicalize) return true;
+    if (field.numeric_constraint == MapElementNumericConstraint::Truncate3) {
+        set_edit_field_buffer(field, format_gui_transform_number(value));
+    } else if (field.numeric_constraint == MapElementNumericConstraint::Integer) {
+        set_edit_field_buffer(field, format_double(value, 0));
+    }
+    return true;
+}
+
+MapElementNumericConstraint structure_edit_numeric_constraint(const std::string& key) {
+    if (key == "tilt") return MapElementNumericConstraint::Integer;
+    static constexpr std::array<const char*, 7> kTruncatedFields = {
+        "x", "y", "z", "rx", "ry", "rz", "span"
+    };
+    if (std::any_of(kTruncatedFields.begin(), kTruncatedFields.end(),
+                    [&](const char* field) { return key == field; })) {
+        return MapElementNumericConstraint::Truncate3;
+    }
+    return MapElementNumericConstraint::Finite;
+}
+
+bool is_structure_coordinate_field(const std::string& key) {
+    static constexpr std::array<const char*, 6> kCoordinateFields = {
+        "x", "y", "z", "rx", "ry", "rz"
+    };
+    return std::any_of(kCoordinateFields.begin(), kCoordinateFields.end(),
+                       [&](const char* field) { return key == field; });
 }
 
 float distance_jump_input_width() {
@@ -1691,6 +1765,7 @@ void set_inspector_row_field_value(TableRow& row,
 void normalize_station_preview_rows(MapModel& model);
 
 void App::clear_pending_edit_state() {
+    clear_scene_structure_edit_target();
     pending_edit_changes_.clear();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
@@ -1734,6 +1809,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
     save_user_settings(settings_);
 
     if (!edit_mode_enabled_) {
+        clear_scene_structure_edit_target();
         inspector_.open = false;
         pending_inspector_request_.reset();
         distance_resolution_choices_.clear();
@@ -1795,8 +1871,16 @@ bool App::restore_local_preview_change(const std::string& edit_id, const std::st
         size_t insert_index = std::min(snapshot->second.row_index, rows->size());
         rows->insert(rows->begin() + static_cast<std::ptrdiff_t>(insert_index), snapshot->second.row);
     }
+    bool requires_full_scene_refresh = false;
+    auto pending = pending_edit_changes_.find(edit_id);
+    if (pending != pending_edit_changes_.end()) {
+        requires_full_scene_refresh =
+            pending->second.field_changes.find("structureKey") !=
+            pending->second.field_changes.end();
+    }
     original_edit_rows_.erase(snapshot);
-    refresh_local_preview_after_edit(effective_row_kind);
+    refresh_local_preview_after_edit(
+        effective_row_kind, requires_full_scene_refresh ? std::string{} : edit_id);
     return true;
 }
 
@@ -1821,11 +1905,40 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change) {
     for (const auto& field : change.field_changes) {
         set_inspector_row_field_value(row, change.row_kind, field.first, field.second, model_.distance_origin);
     }
-    refresh_local_preview_after_edit(change.row_kind);
+    const bool requires_full_scene_refresh =
+        change.row_kind == "structure.put" &&
+        change.field_changes.find("structureKey") != change.field_changes.end();
+    refresh_local_preview_after_edit(
+        change.row_kind, requires_full_scene_refresh ? std::string{} : change.edit_id);
     return true;
 }
 
-void App::refresh_local_preview_after_edit(const std::string& row_kind) {
+Canvas3DStructureEditTarget scene_structure_target_from_row(const TableRow& row) {
+    Canvas3DStructureEditTarget target;
+    target.edit_id = row.edit_id;
+    target.track_key = table_cell(row, "trackKey");
+    target.distance = table_cell_number(row, "distance");
+    target.x = table_cell_number(row, "x");
+    target.y = table_cell_number(row, "y");
+    target.z = table_cell_number(row, "z");
+    target.rx = table_cell_number(row, "rx");
+    target.ry = table_cell_number(row, "ry");
+    target.rz = table_cell_number(row, "rz");
+    target.tilt = table_cell_number(row, "tilt");
+    target.span = table_cell_number(row, "span");
+    return target;
+}
+
+bool App::update_scene_structure_instance_from_model(const std::string& edit_id) {
+    if (!scene_preview_started_ || !scene_preview_canvas_) return true;
+    size_t row_index = 0;
+    if (!find_row_index_by_edit_id(model_.structures, edit_id, row_index)) return false;
+    return scene_preview_canvas_->update_scene_structure_instance(
+        scene_structure_target_from_row(model_.structures[row_index]));
+}
+
+void App::refresh_local_preview_after_edit(const std::string& row_kind,
+                                           const std::string& edit_id) {
     if (row_kind == "station.put") {
         normalize_station_preview_rows(model_);
     }
@@ -1833,10 +1946,13 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind) {
     rebuild_marker_overlay_cache();
     sync_marker_visibility_sizes();
 
+    bool structure_instance_synced = false;
+    if (row_kind == "structure.put" && !edit_id.empty()) {
+        structure_instance_synced = update_scene_structure_instance_from_model(edit_id);
+    }
     const bool affects_scene_dynamic =
-        row_kind == "structure.put" ||
-        row_kind == "structure.between" ||
-        row_kind == "structure.model";
+        (row_kind == "structure.put" && !structure_instance_synced) ||
+        row_kind == "structure.between" || row_kind == "structure.model";
     if (affects_scene_dynamic && scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, error)) {
@@ -2098,6 +2214,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_log("[warn]gui_kme.cpp: edit target row not found: " + request.edit_id);
         return false;
     }
+    clear_scene_structure_edit_target();
 
     if (!request.edit_id.empty() && request.edit_id != edit_id) {
         auto pending = pending_edit_changes_.extract(request.edit_id);
@@ -2148,51 +2265,52 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
 
     auto add_field = [&](const std::string& key, const std::string& label,
                          const std::string& value, const std::string& original_value,
-                         bool numeric, bool required) {
+                         MapElementNumericConstraint numeric_constraint, bool required) {
         MapElementEditFieldState field;
         field.key = key;
         field.label = label;
         field.original_value = original_value;
-        field.numeric = numeric;
+        field.numeric_constraint = numeric_constraint;
         field.required = required;
         set_edit_field_buffer(field, value);
         next.fields.push_back(field);
     };
     auto add_row_field = [&](const std::string& key, const std::string& label,
-                             bool numeric, bool required) {
+                             MapElementNumericConstraint numeric_constraint, bool required) {
         add_field(key, label,
                   inspector_row_field_value(*row, request.row_kind, key),
                   inspector_row_field_value(*original_row, request.row_kind, key),
-                  numeric, required);
+                  numeric_constraint, required);
     };
 
     if (request.row_kind == "structure.model") {
-        add_row_field("structureKey", "structureKey", false, true);
-        add_row_field("filePath", "filePath", false, true);
+        add_row_field("structureKey", "structureKey", MapElementNumericConstraint::None, true);
+        add_row_field("filePath", "filePath", MapElementNumericConstraint::None, true);
     } else if (request.row_kind == "structure.put") {
         const std::string method = table_cell(*row, "method");
-        add_row_field("distance", "distance", true, true);
-        add_row_field("structureKey", "structureKey", false, true);
-        add_row_field("trackKey", "trackKey", false, true);
+        const std::string original_method = table_cell(*original_row, "method");
+        next.source_method_put0 = ascii_lower(original_method) == "put0";
+        next.put0_conversion_draft = next.source_method_put0 && ascii_lower(method) != "put0";
+        next.put0_prompt_requested = ascii_lower(method) == "put0";
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("structureKey", "structureKey", MapElementNumericConstraint::None, true);
+        add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, true);
         if (ascii_lower(method) != "put0") {
-            add_row_field("x", "x", true, true);
-            add_row_field("y", "y", true, true);
-            add_row_field("z", "z", true, true);
-            add_row_field("rx", "rx", true, true);
-            add_row_field("ry", "ry", true, true);
-            add_row_field("rz", "rz", true, true);
+            for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
+                add_row_field(key, key, structure_edit_numeric_constraint(key), true);
+            }
         }
-        add_row_field("tilt", "tilt", true, true);
-        add_row_field("span", "span", true, true);
+        add_row_field("tilt", "tilt", structure_edit_numeric_constraint("tilt"), true);
+        add_row_field("span", "span", structure_edit_numeric_constraint("span"), true);
     } else if (request.row_kind == "structure.between") {
-        add_row_field("distance", "distance", true, true);
-        add_row_field("structureKey", "structureKey", false, true);
-        add_row_field("trackKey1", "trackKey1", false, true);
-        add_row_field("trackKey2", "trackKey2", false, true);
-        add_row_field("flag", "flag", true, true);
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("structureKey", "structureKey", MapElementNumericConstraint::None, true);
+        add_row_field("trackKey1", "trackKey1", MapElementNumericConstraint::None, true);
+        add_row_field("trackKey2", "trackKey2", MapElementNumericConstraint::None, true);
+        add_row_field("flag", "flag", MapElementNumericConstraint::Finite, true);
     } else if (request.row_kind == "station.put") {
-        add_row_field("distance", "distance", true, true);
-        add_row_field("stationKey", "stationKey", false, true);
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("stationKey", "stationKey", MapElementNumericConstraint::None, true);
     }
 
     auto pending = pending_edit_changes_.find(edit_id);
@@ -2219,6 +2337,119 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
     return open_element_inspector(MapElementInspectorRequest{edit_id, row_kind});
 }
 
+void App::enable_inspector_put0_conversion() {
+    if (!inspector_.open || inspector_.row_kind != "structure.put" ||
+        !inspector_.source_method_put0 || inspector_.put0_conversion_draft) {
+        inspector_.put0_prompt_requested = false;
+        return;
+    }
+
+    auto insert_at = std::find_if(inspector_.fields.begin(), inspector_.fields.end(),
+                                  [](const MapElementEditFieldState& field) {
+                                      return field.key == "tilt";
+                                  });
+    const size_t insertion_index = static_cast<size_t>(
+        std::distance(inspector_.fields.begin(), insert_at));
+    std::vector<MapElementEditFieldState> coordinates;
+    coordinates.reserve(6);
+    for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
+        MapElementEditFieldState field;
+        field.key = key;
+        field.label = key;
+        field.original_value = "0";
+        field.numeric_constraint = structure_edit_numeric_constraint(key);
+        field.required = true;
+        set_edit_field_buffer(field, "0");
+        coordinates.push_back(std::move(field));
+    }
+    inspector_.fields.insert(
+        inspector_.fields.begin() + static_cast<std::ptrdiff_t>(insertion_index),
+        std::make_move_iterator(coordinates.begin()),
+        std::make_move_iterator(coordinates.end()));
+    inspector_.put0_conversion_draft = true;
+    inspector_.put0_prompt_requested = false;
+    inspector_.status_message.clear();
+}
+
+void App::clear_scene_structure_edit_target() {
+    if (scene_preview_canvas_) scene_preview_canvas_->clear_scene_structure_edit_target();
+}
+
+void App::sync_scene_structure_edit_from_inspector() {
+    if (!scene_preview_started_ || !scene_preview_canvas_ || !inspector_.open ||
+        inspector_.pending_delete || inspector_.row_kind != "structure.put") {
+        clear_scene_structure_edit_target();
+        return;
+    }
+
+    size_t row_index = 0;
+    if (!find_row_index_by_edit_id(model_.structures, inspector_.edit_id, row_index)) {
+        clear_scene_structure_edit_target();
+        return;
+    }
+    Canvas3DStructureEditTarget target =
+        scene_structure_target_from_row(model_.structures[row_index]);
+    if (const MapElementEditFieldState* distance_field =
+            find_inspector_field(inspector_, "distance")) {
+        if (!parse_gui_edit_number(edit_field_buffer_text(*distance_field), &target.distance)) return;
+    }
+    if (const MapElementEditFieldState* track_field =
+            find_inspector_field(inspector_, "trackKey")) {
+        target.track_key = trim_gui_ascii_copy(edit_field_buffer_text(*track_field));
+        if (target.track_key.empty()) return;
+    }
+    for (const char* key : {"x", "y", "z", "rx", "ry", "rz", "tilt", "span"}) {
+        const MapElementEditFieldState* field = find_inspector_field(inspector_, key);
+        if (!field) continue;
+        double value = 0.0;
+        if (!parse_gui_edit_number(edit_field_buffer_text(*field), &value)) return;
+        if (field->numeric_constraint == MapElementNumericConstraint::Integer &&
+            std::trunc(value) != value) {
+            return;
+        }
+        if (field->numeric_constraint == MapElementNumericConstraint::Truncate3 &&
+            trim_gui_ascii_copy(edit_field_buffer_text(*field)) != field->original_value) {
+            value = truncate_gui_thousandths(value);
+        }
+        if (std::strcmp(key, "x") == 0) target.x = value;
+        else if (std::strcmp(key, "y") == 0) target.y = value;
+        else if (std::strcmp(key, "z") == 0) target.z = value;
+        else if (std::strcmp(key, "rx") == 0) target.rx = value;
+        else if (std::strcmp(key, "ry") == 0) target.ry = value;
+        else if (std::strcmp(key, "rz") == 0) target.rz = value;
+        else if (std::strcmp(key, "tilt") == 0) target.tilt = value;
+        else if (std::strcmp(key, "span") == 0) target.span = value;
+    }
+    const bool show_gizmo = !inspector_.source_method_put0 ||
+        inspector_.put0_conversion_draft;
+    scene_preview_canvas_->set_scene_structure_edit_target(target, show_gizmo);
+}
+
+void App::apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& update) {
+    if (!inspector_.open || inspector_.row_kind != "structure.put" ||
+        inspector_.edit_id != update.edit_id) {
+        return;
+    }
+    const char* field_key = nullptr;
+    double value = 0.0;
+    if (update.axis == Canvas3DSceneDragAxis::X) {
+        field_key = "x";
+        value = update.x;
+    } else if (update.axis == Canvas3DSceneDragAxis::Y) {
+        field_key = "y";
+        value = update.y;
+    } else if (update.axis == Canvas3DSceneDragAxis::Z) {
+        field_key = "z";
+        value = update.z;
+    }
+    if (field_key) {
+        if (MapElementEditFieldState* field = find_inspector_field(inspector_, field_key)) {
+            set_edit_field_buffer(*field, format_gui_transform_number(value));
+        }
+    }
+    inspector_.status_message.clear();
+}
+
 void App::apply_inspector_changes() {
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
@@ -2239,18 +2470,34 @@ void App::apply_inspector_changes() {
     change.expected_source_hash =
         inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
 
-    for (const MapElementEditFieldState& field : inspector_.fields) {
+    for (MapElementEditFieldState& field : inspector_.fields) {
         std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
         if (field.required && value.empty()) {
             inspector_.status_message = tr("status.edit.required_field");
             return;
         }
-        if (field.numeric && !parse_gui_edit_number(value)) {
+        const bool field_changed = value != field.original_value;
+        if (!validate_and_canonicalize_edit_field(field, field_changed)) {
             inspector_.status_message = tr("status.edit.invalid_number");
             return;
         }
+        value = trim_gui_ascii_copy(edit_field_buffer_text(field));
         if (value != field.original_value) {
             change.field_changes[field.key] = value;
+        }
+    }
+
+    if (inspector_.row_kind == "structure.put" && inspector_.put0_conversion_draft) {
+        change.field_changes["method"] = "Put";
+    }
+
+    if (inspector_.row_kind == "structure.put") {
+        const MapElementEditFieldState* z_field = find_inspector_field(inspector_, "z");
+        double z_value = 0.0;
+        if (z_field && parse_gui_edit_number(edit_field_buffer_text(*z_field), &z_value) &&
+            std::abs(truncate_gui_thousandths(z_value)) > 5.0) {
+            inspector_.z_rebase_prompt_requested = true;
+            return;
         }
     }
 
@@ -2306,6 +2553,18 @@ void App::revert_inspector_changes() {
         for (MapElementEditFieldState& field : inspector_.fields) {
             set_edit_field_buffer(field, field.original_value);
         }
+        if (inspector_.source_method_put0) {
+            inspector_.fields.erase(
+                std::remove_if(inspector_.fields.begin(), inspector_.fields.end(),
+                               [](const MapElementEditFieldState& field) {
+                                   return is_structure_coordinate_field(field.key);
+                               }),
+                inspector_.fields.end());
+            inspector_.put0_conversion_draft = false;
+            inspector_.put0_prompt_requested = false;
+        }
+        inspector_.z_rebase_prompt_requested = false;
+        clear_scene_structure_edit_target();
         inspector_.status_message = tr("status.edit.reverted");
     }
 }
@@ -3043,6 +3302,7 @@ bool App::resolve_pending_close_action(bool save_changes) {
 
 void App::render_element_inspector() {
     if (!edit_mode_enabled_) {
+        clear_scene_structure_edit_target();
         inspector_.open = false;
         return;
     }
@@ -3051,7 +3311,10 @@ void App::render_element_inspector() {
     if (!ImGui::Begin(title.c_str(), &inspector_.open)) {
         const bool closed = !inspector_.open;
         ImGui::End();
-        if (closed) cancel_distance_resolution_workflow();
+        if (closed) {
+            cancel_distance_resolution_workflow();
+            clear_scene_structure_edit_target();
+        }
         return;
     }
 
@@ -3087,6 +3350,10 @@ void App::render_element_inspector() {
         if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
         ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
         ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
+        if (ImGui::IsItemDeactivatedAfterEdit() &&
+            !validate_and_canonicalize_edit_field(field, true)) {
+            inspector_.status_message = tr("status.edit.invalid_number");
+        }
         if (changed) ImGui::PopStyleColor();
         if (field.key == "distance" && !inspector_.source_distance_string.empty()) {
             render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
@@ -3109,6 +3376,7 @@ void App::render_element_inspector() {
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) {
         cancel_distance_resolution_workflow();
+        clear_scene_structure_edit_target();
         inspector_.open = false;
     }
 
@@ -3118,6 +3386,7 @@ void App::render_element_inspector() {
          distance_resolution_workflow_.retry_requested)) {
         cancel_distance_resolution_workflow();
     }
+    if (!inspector_.open) clear_scene_structure_edit_target();
 }
 
 std::string App::open_map_dialog() {
@@ -4084,6 +4353,71 @@ void App::render_popups() {
         last_saved_view_3d_settings_ = settings_.view_3d;
     };
 
+    if (inspector_.open && inspector_.put0_prompt_requested) {
+        ImGui::OpenPopup(tr("dialog.structure_put0_convert_title").c_str());
+        inspector_.put0_prompt_requested = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.structure_put0_convert_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 480.0f);
+        ImGui::TextUnformatted(tr("dialog.structure_put0_convert_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            enable_inspector_put0_conversion();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            inspector_.put0_conversion_draft = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (inspector_.open && inspector_.z_rebase_prompt_requested) {
+        ImGui::OpenPopup(tr("dialog.structure_z_rebase_title").c_str());
+        inspector_.z_rebase_prompt_requested = false;
+    }
+    bool apply_z_rebase_after_popup = false;
+    if (ImGui::BeginPopupModal(tr("dialog.structure_z_rebase_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 480.0f);
+        ImGui::TextUnformatted(tr("dialog.structure_z_rebase_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            MapElementEditFieldState* distance_field = find_inspector_field(inspector_, "distance");
+            MapElementEditFieldState* z_field = find_inspector_field(inspector_, "z");
+            double distance = 0.0;
+            double z = 0.0;
+            if (!distance_field || !z_field ||
+                !parse_gui_edit_number(edit_field_buffer_text(*distance_field), &distance) ||
+                !parse_gui_edit_number(edit_field_buffer_text(*z_field), &z)) {
+                inspector_.status_message = tr("status.edit.invalid_number");
+                ImGui::CloseCurrentPopup();
+            } else {
+                z = truncate_gui_thousandths(z);
+                const double distance_part = std::trunc(z);
+                set_edit_field_buffer(*distance_field,
+                                      format_double(distance + distance_part, 12));
+                set_edit_field_buffer(*z_field,
+                                      format_gui_transform_number(z - distance_part));
+                ImGui::CloseCurrentPopup();
+                apply_z_rebase_after_popup = true;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (apply_z_rebase_after_popup) {
+        apply_inspector_changes();
+        return;
+    }
+
     bool cancel_distance_resolution = false;
     if (distance_resolution_workflow_.phase == DistanceResolutionPhase::ConfirmAction &&
         distance_resolution_workflow_.popup_requested) {
@@ -4895,8 +5229,13 @@ void App::render_scene_preview_window() {
         scene_ui_text.loading = tr("status.scene_loading");
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();
-        Canvas3DSceneContextAction scene_action =
+        sync_scene_structure_edit_from_inspector();
+        Canvas3DSceneFrameResult scene_result =
             scene_preview_canvas_->render_scene_preview(avail, scene_ui_text, context_menu_options);
+        if (scene_result.structure_drag) {
+            apply_scene_structure_drag_update(*scene_result.structure_drag);
+        }
+        const Canvas3DSceneContextAction& scene_action = scene_result.context_action;
         if (scene_action.kind == Canvas3DSceneContextActionKind::LocateStructure) {
             locate_structure_row_in_list(scene_action.row_index);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::LocateRepeater) {
