@@ -2296,7 +2296,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         next.put0_prompt_requested = ascii_lower(method) == "put0";
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("structureKey", "structureKey", MapElementNumericConstraint::None, true);
-        add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, true);
+        add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, false);
         if (ascii_lower(method) != "put0") {
             for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
                 add_row_field(key, key, structure_edit_numeric_constraint(key), true);
@@ -2398,7 +2398,6 @@ void App::sync_scene_structure_edit_from_inspector() {
     if (const MapElementEditFieldState* track_field =
             find_inspector_field(inspector_, "trackKey")) {
         target.track_key = trim_gui_ascii_copy(edit_field_buffer_text(*track_field));
-        if (target.track_key.empty()) return;
     }
     for (const char* key : {"x", "y", "z", "rx", "ry", "rz", "tilt", "span"}) {
         const MapElementEditFieldState* field = find_inspector_field(inspector_, key);
