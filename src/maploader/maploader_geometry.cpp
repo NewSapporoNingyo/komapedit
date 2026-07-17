@@ -1087,8 +1087,10 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
 
 void generate_geometry(MapContext& ctx, double unitdist,
                        bool has_arb, double arb_start, double arb_end, double arb_step,
-                       const std::vector<double>* extra_controlpoints) {
+                       const std::vector<double>* extra_controlpoints,
+                       bool generate_auxiliary_buffers) {
     log_info("calculating track geometry");
+    ctx.scene_geometry_valid = false;
     ctx.unit_distance = unitdist;
     ctx.cp_arbdistribution_explicit = has_arb;
     ctx.othertrack_buffers.clear();
@@ -1100,7 +1102,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
         ScopedTimer timer(&ctx.timing.owntrack_seconds);
         generate_owntrack(ctx, unitdist, has_arb, arb_start, arb_end, arb_step, extra_controlpoints);
     }
-    generate_curveradius(ctx);
+    if (generate_auxiliary_buffers) generate_curveradius(ctx);
     std::vector<std::future<OtherTrackBuildResult>> futures;
     futures.reserve(ctx.othertrack_order.size());
     for (const auto& key : ctx.othertrack_order) {
@@ -1120,7 +1122,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
             ctx.othertrack_buffers[result.key] = std::move(result.buffer);
         }
     }
-    build_structure_put_buffer(ctx);
+    if (generate_auxiliary_buffers) build_structure_put_buffer(ctx);
     ctx.ir_json_cache_by_flags.clear();
 }
 

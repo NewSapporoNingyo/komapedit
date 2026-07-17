@@ -21,6 +21,8 @@ namespace {
     X(load_map_ex, kv_load_map_ex) \
     X(generate_geometry, kv_generate_geometry) \
     X(generate_scene_geometry, kv_generate_scene_geometry) \
+    X(get_scene_owntrack_buffer, kv_get_scene_owntrack_buffer) \
+    X(get_scene_othertrack_buffer, kv_get_scene_othertrack_buffer) \
     X(get_owntrack_buffer, kv_get_owntrack_buffer) \
     X(get_curveradius_buffer, kv_get_curveradius_buffer) \
     X(get_othertrack_count, kv_get_othertrack_count) \
@@ -176,6 +178,16 @@ int kv_generate_scene_geometry(
             max_angle_degrees,
             max_chord_error)
         : 0;
+}
+
+KvDoubleBuffer kv_get_scene_owntrack_buffer(void* handle) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.get_scene_owntrack_buffer(handle) : KvDoubleBuffer{};
+}
+
+KvDoubleBuffer kv_get_scene_othertrack_buffer(void* handle, const char* key) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.get_scene_othertrack_buffer(handle, key) : KvDoubleBuffer{};
 }
 
 KvDoubleBuffer kv_get_owntrack_buffer(void* handle) {

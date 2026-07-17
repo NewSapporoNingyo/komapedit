@@ -1841,12 +1841,13 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         bool scene_geometry_ok =
             kv_generate_scene_geometry(options.map_handle, options.unit_distance, 1.0, max_step, 1.0, 0.01) != 0;
         if (scene_geometry_ok) {
-            Matrix dense_own = copy_scene_buffer(kv_get_owntrack_buffer(options.map_handle));
+            Matrix dense_own = copy_scene_buffer(kv_get_scene_owntrack_buffer(options.map_handle));
             std::vector<OtherTrack> dense_other_tracks;
             dense_other_tracks.reserve(model.other_tracks.size());
             for (const OtherTrack& track : model.other_tracks) {
                 OtherTrack dense = track;
-                dense.points = copy_scene_buffer(kv_get_othertrack_buffer(options.map_handle, track.key.c_str()));
+                dense.points = copy_scene_buffer(
+                    kv_get_scene_othertrack_buffer(options.map_handle, track.key.c_str()));
                 dense_other_tracks.push_back(std::move(dense));
             }
             if (!dense_own.empty()) {
@@ -1859,13 +1860,6 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
                                           (err ? err : "geometry failed"));
         }
 
-        if (!kv_generate_geometry(options.map_handle, options.unit_distance, model.has_cp_arb ? 1 : 0,
-                                  options.control_point_start, options.control_point_end,
-                                  options.control_point_interval)) {
-            const char* err = kv_get_last_error();
-            result.log_messages.push_back(std::string("[error]canvas3D.cpp: 3D scene preview failed to restore 2D geometry: ") +
-                                          (err ? err : "geometry failed"));
-        }
     }
 
     auto append_track_path = [&](const std::string& key, const Matrix& points, bool has_theta, ImVec4 color,

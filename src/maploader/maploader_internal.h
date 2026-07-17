@@ -652,6 +652,10 @@ struct MapContext {
     Matrix curveradius_buffer;
     Matrix structure_put_buffer;
     std::map<std::string, Matrix> othertrack_buffers;
+    Matrix scene_owntrack_buffer;
+    std::map<std::string, Matrix> scene_othertrack_buffers;
+    std::array<double, 5> scene_geometry_parameters{0.0, 0.0, 0.0, 0.0, 0.0};
+    bool scene_geometry_valid = false;
     std::array<double, 3> cp_arbdistribution{0.0, 0.0, 0.0};
     std::array<double, 3> cp_arbdistribution_default{0.0, 0.0, 0.0};
     std::array<double, 2> cp_defaultrange{0.0, 0.0};
@@ -820,7 +824,8 @@ void put_other(MapContext& ctx, const Value& track_key, const std::string& eleme
 void relocate(MapContext& ctx);
 void generate_geometry(MapContext& ctx, double unitdist,
                        bool has_arb, double arb_start, double arb_end, double arb_step,
-                       const std::vector<double>* extra_controlpoints = nullptr);
+                       const std::vector<double>* extra_controlpoints = nullptr,
+                       bool generate_auxiliary_buffers = true);
 std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
                                                        const Matrix& baseline,
                                                        double min_step,
