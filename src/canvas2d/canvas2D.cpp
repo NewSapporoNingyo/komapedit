@@ -5,7 +5,9 @@
  * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
  */
 
+#ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
+#endif
 
 #include "kme.h"
 #include "canvas3D.h"
@@ -45,18 +47,6 @@ void set_move_cursor() {
 double angle_lerp(double a, double b, double t) {
     double delta = std::atan2(std::sin(b - a), std::cos(b - a));
     return a + delta * t;
-}
-
-double matrix_track_tangent(const Matrix& points, size_t row) {
-    if (points.rows < 2 || points.cols < 3) return 0.0;
-    size_t a = row == 0 ? 0 : row - 1;
-    size_t b = row + 1 < points.rows ? row + 1 : row;
-    if (a == b && b + 1 < points.rows) ++b;
-    if (a == b) return 0.0;
-    double dx = points.at(b, 1) - points.at(a, 1);
-    double dy = points.at(b, 2) - points.at(a, 2);
-    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
-    return std::atan2(dy, dx);
 }
 
 TrackPoint matrix_row_track_point(const Matrix& points, size_t row, bool has_theta_column) {
@@ -259,6 +249,8 @@ void debug_plan_stage(const char*) {}
 } // namespace
 
 void App::rebuild_marker_overlay_cache() {
+    plan_data_cache_.valid = false;
+    ++plan_data_source_revision_;
     structure_marker_cache_.clear();
     repeater_marker_cache_.clear();
     signal_marker_cache_.clear();
@@ -356,62 +348,36 @@ void App::rebuild_marker_overlay_cache() {
                                                       structure_marker_cache_.size()));
     }
 
-    signal_marker_cache_.reserve(model_.signals.size());
-    for (const auto& row : model_.signals) {
-        double distance = table_cell_number(row, "distance");
-        double lateral = table_cell_number(row, "x");
-        double forward = table_cell_number(row, "z");
-        if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
-            PlanSignalMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = table_cell(row, "signalAspectKey");
-            if (marker.label.empty()) marker.label = "#" + std::to_string(signal_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = signal_marker_cache_.size();
-            signal_marker_cache_.push_back(std::move(marker));
-        } else {
-            signal_marker_cache_.push_back(std::nullopt);
-        }
-    }
+    auto build_standard_markers = [&](const std::vector<TableRow>& rows, auto& cache,
+                                      const std::string& label_key,
+                                      bool use_row_placement = false) {
+        cache.reserve(rows.size());
+        for (const TableRow& row : rows) {
+            const double distance = table_cell_number(row, "distance");
+            std::optional<TrackPoint> point = use_row_placement
+                ? sample_track(table_cell(row, "trackKey"), distance,
+                               table_cell_number(row, "x"), table_cell_number(row, "z"))
+                : sample_track("", distance, 0.0, 0.0);
+            if (!point) {
+                cache.push_back(std::nullopt);
+                continue;
+            }
 
-    beacon_marker_cache_.reserve(model_.beacons.size());
-    for (const auto& row : model_.beacons) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanBeaconMarker marker;
+            PlanMarker marker;
             marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = table_cell(row, "type");
-            if (marker.label.empty()) marker.label = "#" + std::to_string(beacon_marker_cache_.size() + 1);
+            marker.x = point->x;
+            marker.y = point->y;
+            marker.label = label_key.empty() ? std::string{} : table_cell(row, label_key);
+            if (marker.label.empty()) marker.label = "#" + std::to_string(cache.size() + 1);
             marker.edit_id = row.edit_id;
-            marker.row_index = beacon_marker_cache_.size();
-            beacon_marker_cache_.push_back(std::move(marker));
-        } else {
-            beacon_marker_cache_.push_back(std::nullopt);
+            marker.row_index = cache.size();
+            cache.push_back(std::move(marker));
         }
-    }
+    };
 
-    pretrain_marker_cache_.reserve(model_.pretrains.size());
-    for (const auto& row : model_.pretrains) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanPreTrainMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = table_cell(row, "passTime");
-            if (marker.label.empty()) marker.label = "#" + std::to_string(pretrain_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = pretrain_marker_cache_.size();
-            pretrain_marker_cache_.push_back(std::move(marker));
-        } else {
-            pretrain_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
+    build_standard_markers(model_.signals, signal_marker_cache_, "signalAspectKey", true);
+    build_standard_markers(model_.beacons, beacon_marker_cache_, "type");
+    build_standard_markers(model_.pretrains, pretrain_marker_cache_, "passTime");
     auto build_other_train_path_points = [&](const std::string& key, double start, double end) {
         std::vector<TrackPoint> points;
         if (end < start) std::swap(start, end);
@@ -552,187 +518,22 @@ void App::rebuild_marker_overlay_cache() {
             ? "#" + std::to_string(definition.row_index + 1)
             : definition.train_key;
         path.definition_row_index = definition.row_index;
-        path.first_stop_row_index = valid_stop_rows.front();
-        path.last_stop_row_index = valid_stop_rows.back();
         path.d_min = std::min(start, end);
         path.d_max = std::max(start, end);
         path.reverse_direction = definition.reverse_direction;
         other_train_path_cache_.push_back(std::move(path));
     }
 
-    irregularity_marker_cache_.reserve(model_.irregularities.size());
-    for (const auto& row : model_.irregularities) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanIrregularityMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = "#" + std::to_string(irregularity_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = irregularity_marker_cache_.size();
-            irregularity_marker_cache_.push_back(std::move(marker));
-        } else {
-            irregularity_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    map_sound_marker_cache_.reserve(model_.map_sounds.size());
-    for (const auto& row : model_.map_sounds) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanMapSoundMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = table_cell(row, "soundKey");
-            if (marker.label.empty()) marker.label = "#" + std::to_string(map_sound_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = map_sound_marker_cache_.size();
-            map_sound_marker_cache_.push_back(std::move(marker));
-        } else {
-            map_sound_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    map_sound_3d_marker_cache_.reserve(model_.map_sound_3d.size());
-    for (const auto& row : model_.map_sound_3d) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanMapSound3DMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = table_cell(row, "soundKey");
-            if (marker.label.empty()) marker.label = "#" + std::to_string(map_sound_3d_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = map_sound_3d_marker_cache_.size();
-            map_sound_3d_marker_cache_.push_back(std::move(marker));
-        } else {
-            map_sound_3d_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    rolling_noise_marker_cache_.reserve(model_.rolling_noises.size());
-    for (const auto& row : model_.rolling_noises) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanRollingNoiseMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = "#" + std::to_string(rolling_noise_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = rolling_noise_marker_cache_.size();
-            rolling_noise_marker_cache_.push_back(std::move(marker));
-        } else {
-            rolling_noise_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    flange_noise_marker_cache_.reserve(model_.flange_noises.size());
-    for (const auto& row : model_.flange_noises) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanFlangeNoiseMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = "#" + std::to_string(flange_noise_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = flange_noise_marker_cache_.size();
-            flange_noise_marker_cache_.push_back(std::move(marker));
-        } else {
-            flange_noise_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    joint_noise_marker_cache_.reserve(model_.joint_noises.size());
-    for (const auto& row : model_.joint_noises) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanJointNoiseMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = "#" + std::to_string(joint_noise_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = joint_noise_marker_cache_.size();
-            joint_noise_marker_cache_.push_back(std::move(marker));
-        } else {
-            joint_noise_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    background_marker_cache_.reserve(model_.backgrounds.size());
-    for (const auto& row : model_.backgrounds) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanBackgroundMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = table_cell(row, "structureKey");
-            if (marker.label.empty()) marker.label = "#" + std::to_string(background_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = background_marker_cache_.size();
-            background_marker_cache_.push_back(std::move(marker));
-        } else {
-            background_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    adhesion_marker_cache_.reserve(model_.adhesions.size());
-    for (const auto& row : model_.adhesions) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanAdhesionMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = "#" + std::to_string(adhesion_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = adhesion_marker_cache_.size();
-            adhesion_marker_cache_.push_back(std::move(marker));
-        } else {
-            adhesion_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    cab_illuminance_marker_cache_.reserve(model_.cab_illuminance.size());
-    for (const auto& row : model_.cab_illuminance) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanCabIlluminanceMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = "#" + std::to_string(cab_illuminance_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = cab_illuminance_marker_cache_.size();
-            cab_illuminance_marker_cache_.push_back(std::move(marker));
-        } else {
-            cab_illuminance_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
-    fog_marker_cache_.reserve(model_.fogs.size());
-    for (const auto& row : model_.fogs) {
-        double distance = table_cell_number(row, "distance");
-        if (auto p = sample_track("", distance, 0.0, 0.0)) {
-            PlanFogMarker marker;
-            marker.d = distance;
-            marker.x = p->x;
-            marker.y = p->y;
-            marker.label = "#" + std::to_string(fog_marker_cache_.size() + 1);
-            marker.edit_id = row.edit_id;
-            marker.row_index = fog_marker_cache_.size();
-            fog_marker_cache_.push_back(std::move(marker));
-        } else {
-            fog_marker_cache_.push_back(std::nullopt);
-        }
-    }
-
+    build_standard_markers(model_.irregularities, irregularity_marker_cache_, "");
+    build_standard_markers(model_.map_sounds, map_sound_marker_cache_, "soundKey");
+    build_standard_markers(model_.map_sound_3d, map_sound_3d_marker_cache_, "soundKey");
+    build_standard_markers(model_.rolling_noises, rolling_noise_marker_cache_, "");
+    build_standard_markers(model_.flange_noises, flange_noise_marker_cache_, "");
+    build_standard_markers(model_.joint_noises, joint_noise_marker_cache_, "");
+    build_standard_markers(model_.backgrounds, background_marker_cache_, "structureKey");
+    build_standard_markers(model_.adhesions, adhesion_marker_cache_, "");
+    build_standard_markers(model_.cab_illuminance, cab_illuminance_marker_cache_, "");
+    build_standard_markers(model_.fogs, fog_marker_cache_, "");
     auto build_repeater_segment = [&](const std::string& key, double start, double end,
                                       double lateral, double forward) -> PlanRepeaterSegment {
         PlanRepeaterSegment segment;
@@ -1034,81 +835,40 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         [](unsigned char visible) { return visible != 0; }));
     bool skip_dense_repeater_markers = !include_other_tracks && plan_view_.fitted &&
         dense_repeater_overview_lod(visible_repeater_count, plan_view_.scale);
-    out.structure_markers.reserve(std::min(structure_marker_cache_.size(), structure_row_visible_.size()));
     if (!skip_dense_repeater_markers) {
-        out.repeater_markers.reserve(std::min(repeater_marker_cache_.size(), repeater_row_visible_.size()) * 2);
+        out.repeater_markers.reserve(
+            std::min(repeater_marker_cache_.size(), repeater_row_visible_.size()) * 2);
     }
-    for (size_t i = 0; i < structure_marker_cache_.size() && i < structure_row_visible_.size(); ++i) {
-        if (!structure_row_visible_[i] || !structure_marker_cache_[i]) continue;
-        const PlanStructureMarker& source = *structure_marker_cache_[i];
-        if (source.d < dmin_ || source.d > dmax_) continue;
-        TrackPoint p;
-        p.x = source.x;
-        p.y = source.y;
-        p = rotate_point(p);
-        PlanStructureMarker marker = source;
-        marker.x = p.x;
-        marker.y = p.y;
-        marker.row_index = i;
-        out.structure_markers.push_back(std::move(marker));
-        append_marker_bounds(p.x, p.y);
-    }
-
-    out.signal_markers.reserve(std::min(signal_marker_cache_.size(), signal_row_visible_.size()));
-    for (size_t i = 0; i < signal_marker_cache_.size() && i < signal_row_visible_.size(); ++i) {
-        if (!signal_row_visible_[i] || !signal_marker_cache_[i]) continue;
-        const PlanSignalMarker& source = *signal_marker_cache_[i];
-        if (source.d < dmin_ || source.d > dmax_) continue;
-        TrackPoint p;
-        p.x = source.x;
-        p.y = source.y;
-        p = rotate_point(p);
-        PlanSignalMarker marker = source;
-        marker.x = p.x;
-        marker.y = p.y;
-        marker.row_index = i;
-        out.signal_markers.push_back(std::move(marker));
-        append_marker_bounds(p.x, p.y);
-    }
-
-    if (show_beacon_markers_) {
-        out.beacon_markers.reserve(beacon_marker_cache_.size());
-        for (size_t i = 0; i < beacon_marker_cache_.size(); ++i) {
-            if (!beacon_marker_cache_[i]) continue;
-            const PlanBeaconMarker& source = *beacon_marker_cache_[i];
+    auto append_markers = [&](const std::vector<std::optional<PlanMarker>>& cache,
+                              std::vector<PlanMarker>& markers,
+                              const std::vector<unsigned char>* row_visibility = nullptr) {
+        markers.reserve(row_visibility ? std::min(cache.size(), row_visibility->size())
+                                       : cache.size());
+        for (size_t row_index = 0; row_index < cache.size(); ++row_index) {
+            if (row_visibility &&
+                (row_index >= row_visibility->size() || !(*row_visibility)[row_index])) {
+                continue;
+            }
+            if (!cache[row_index]) continue;
+            const PlanMarker& source = *cache[row_index];
             if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanBeaconMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.beacon_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
+            TrackPoint point;
+            point.x = source.x;
+            point.y = source.y;
+            point = rotate_point(point);
+            PlanMarker marker = source;
+            marker.x = point.x;
+            marker.y = point.y;
+            marker.row_index = row_index;
+            markers.push_back(std::move(marker));
+            append_marker_bounds(point.x, point.y);
         }
-    }
+    };
 
-    if (show_pretrain_markers_) {
-        out.pretrain_markers.reserve(pretrain_marker_cache_.size());
-        for (size_t i = 0; i < pretrain_marker_cache_.size(); ++i) {
-            if (!pretrain_marker_cache_[i]) continue;
-            const PlanPreTrainMarker& source = *pretrain_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanPreTrainMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.pretrain_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
-    }
-
+    append_markers(structure_marker_cache_, out.structure_markers, &structure_row_visible_);
+    append_markers(signal_marker_cache_, out.signal_markers, &signal_row_visible_);
+    if (show_beacon_markers_) append_markers(beacon_marker_cache_, out.beacon_markers);
+    if (show_pretrain_markers_) append_markers(pretrain_marker_cache_, out.pretrain_markers);
     auto is_other_train_path_visible = [this](size_t definition_row_index) {
         return definition_row_index < other_train_path_visible_.size() &&
             other_train_path_visible_[definition_row_index] != 0;
@@ -1151,195 +911,29 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     }
 
     if (show_irregularity_markers_) {
-        out.irregularity_markers.reserve(irregularity_marker_cache_.size());
-        for (size_t i = 0; i < irregularity_marker_cache_.size(); ++i) {
-            if (!irregularity_marker_cache_[i]) continue;
-            const PlanIrregularityMarker& source = *irregularity_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanIrregularityMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.irregularity_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
+        append_markers(irregularity_marker_cache_, out.irregularity_markers);
     }
-
-    if (show_map_sound_markers_) {
-        out.map_sound_markers.reserve(map_sound_marker_cache_.size());
-        for (size_t i = 0; i < map_sound_marker_cache_.size(); ++i) {
-            if (!map_sound_marker_cache_[i]) continue;
-            const PlanMapSoundMarker& source = *map_sound_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanMapSoundMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.map_sound_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
-    }
-
+    if (show_map_sound_markers_) append_markers(map_sound_marker_cache_, out.map_sound_markers);
     if (show_map_sound_3d_markers_) {
-        out.map_sound_3d_markers.reserve(map_sound_3d_marker_cache_.size());
-        for (size_t i = 0; i < map_sound_3d_marker_cache_.size(); ++i) {
-            if (!map_sound_3d_marker_cache_[i]) continue;
-            const PlanMapSound3DMarker& source = *map_sound_3d_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanMapSound3DMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.map_sound_3d_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
+        append_markers(map_sound_3d_marker_cache_, out.map_sound_3d_markers);
     }
-
     if (show_rolling_noise_markers_) {
-        out.rolling_noise_markers.reserve(rolling_noise_marker_cache_.size());
-        for (size_t i = 0; i < rolling_noise_marker_cache_.size(); ++i) {
-            if (!rolling_noise_marker_cache_[i]) continue;
-            const PlanRollingNoiseMarker& source = *rolling_noise_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanRollingNoiseMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.rolling_noise_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
+        append_markers(rolling_noise_marker_cache_, out.rolling_noise_markers);
     }
-
     if (show_flange_noise_markers_) {
-        out.flange_noise_markers.reserve(flange_noise_marker_cache_.size());
-        for (size_t i = 0; i < flange_noise_marker_cache_.size(); ++i) {
-            if (!flange_noise_marker_cache_[i]) continue;
-            const PlanFlangeNoiseMarker& source = *flange_noise_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanFlangeNoiseMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.flange_noise_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
+        append_markers(flange_noise_marker_cache_, out.flange_noise_markers);
     }
-
     if (show_joint_noise_markers_) {
-        out.joint_noise_markers.reserve(joint_noise_marker_cache_.size());
-        for (size_t i = 0; i < joint_noise_marker_cache_.size(); ++i) {
-            if (!joint_noise_marker_cache_[i]) continue;
-            const PlanJointNoiseMarker& source = *joint_noise_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanJointNoiseMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.joint_noise_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
+        append_markers(joint_noise_marker_cache_, out.joint_noise_markers);
     }
-
     if (show_background_markers_) {
-        out.background_markers.reserve(background_marker_cache_.size());
-        for (size_t i = 0; i < background_marker_cache_.size(); ++i) {
-            if (!background_marker_cache_[i]) continue;
-            const PlanBackgroundMarker& source = *background_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanBackgroundMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.background_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
+        append_markers(background_marker_cache_, out.background_markers);
     }
-
-    if (show_adhesion_markers_) {
-        out.adhesion_markers.reserve(adhesion_marker_cache_.size());
-        for (size_t i = 0; i < adhesion_marker_cache_.size(); ++i) {
-            if (!adhesion_marker_cache_[i]) continue;
-            const PlanAdhesionMarker& source = *adhesion_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanAdhesionMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.adhesion_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
-    }
-
+    if (show_adhesion_markers_) append_markers(adhesion_marker_cache_, out.adhesion_markers);
     if (show_cab_illuminance_markers_) {
-        out.cab_illuminance_markers.reserve(cab_illuminance_marker_cache_.size());
-        for (size_t i = 0; i < cab_illuminance_marker_cache_.size(); ++i) {
-            if (!cab_illuminance_marker_cache_[i]) continue;
-            const PlanCabIlluminanceMarker& source = *cab_illuminance_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanCabIlluminanceMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.cab_illuminance_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
+        append_markers(cab_illuminance_marker_cache_, out.cab_illuminance_markers);
     }
-
-    if (show_fog_markers_) {
-        out.fog_markers.reserve(fog_marker_cache_.size());
-        for (size_t i = 0; i < fog_marker_cache_.size(); ++i) {
-            if (!fog_marker_cache_[i]) continue;
-            const PlanFogMarker& source = *fog_marker_cache_[i];
-            if (source.d < dmin_ || source.d > dmax_) continue;
-            TrackPoint p;
-            p.x = source.x;
-            p.y = source.y;
-            p = rotate_point(p);
-            PlanFogMarker marker = source;
-            marker.x = p.x;
-            marker.y = p.y;
-            marker.row_index = i;
-            out.fog_markers.push_back(std::move(marker));
-            append_marker_bounds(p.x, p.y);
-        }
-    }
-
+    if (show_fog_markers_) append_markers(fog_marker_cache_, out.fog_markers);
     auto append_repeater_marker = [&](const PlanRepeaterMarker& source, size_t row_index) {
         if (source.d < dmin_ || source.d > dmax_) return;
         TrackPoint p;
@@ -1382,6 +976,61 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     double pad = std::max({out.xmax - out.xmin, out.ymax - out.ymin, 1.0}) * 0.05;
     out.xmin -= pad; out.xmax += pad; out.ymin -= pad; out.ymax += pad;
     return out;
+}
+
+const PlanData& App::current_plan_data() {
+    std::uint32_t marker_visibility_mask = 0;
+    auto include_visibility = [&](bool visible, unsigned bit) {
+        if (visible) marker_visibility_mask |= std::uint32_t{1} << bit;
+    };
+    include_visibility(show_beacon_markers_, 0);
+    include_visibility(show_pretrain_markers_, 1);
+    include_visibility(show_irregularity_markers_, 2);
+    include_visibility(show_map_sound_markers_, 3);
+    include_visibility(show_map_sound_3d_markers_, 4);
+    include_visibility(show_rolling_noise_markers_, 5);
+    include_visibility(show_flange_noise_markers_, 6);
+    include_visibility(show_joint_noise_markers_, 7);
+    include_visibility(show_background_markers_, 8);
+    include_visibility(show_adhesion_markers_, 9);
+    include_visibility(show_cab_illuminance_markers_, 10);
+    include_visibility(show_fog_markers_, 11);
+
+    const bool cache_matches = plan_data_cache_.valid &&
+        plan_data_cache_.source_revision == plan_data_source_revision_ &&
+        plan_data_cache_.has_model == has_model_ &&
+        plan_data_cache_.distance_min == dmin_ &&
+        plan_data_cache_.distance_max == dmax_ &&
+        plan_data_cache_.mode == mode_ &&
+        plan_data_cache_.fitted == plan_view_.fitted &&
+        plan_data_cache_.scale == plan_view_.scale &&
+        plan_data_cache_.show_curve_values == show_curve_values_ &&
+        plan_data_cache_.marker_visibility_mask == marker_visibility_mask &&
+        plan_data_cache_.structure_row_visible == structure_row_visible_ &&
+        plan_data_cache_.repeater_row_visible == repeater_row_visible_ &&
+        plan_data_cache_.signal_row_visible == signal_row_visible_ &&
+        plan_data_cache_.other_train_path_visible == other_train_path_visible_;
+    if (cache_matches) return plan_data_cache_.data;
+
+    plan_data_cache_.data = build_plan_data(false);
+    plan_data_cache_.source_revision = plan_data_source_revision_;
+    plan_data_cache_.has_model = has_model_;
+    plan_data_cache_.distance_min = dmin_;
+    plan_data_cache_.distance_max = dmax_;
+    plan_data_cache_.mode = mode_;
+    plan_data_cache_.fitted = plan_view_.fitted;
+    plan_data_cache_.scale = plan_view_.scale;
+    plan_data_cache_.show_curve_values = show_curve_values_;
+    plan_data_cache_.marker_visibility_mask = marker_visibility_mask;
+    plan_data_cache_.structure_row_visible = structure_row_visible_;
+    plan_data_cache_.repeater_row_visible = repeater_row_visible_;
+    plan_data_cache_.signal_row_visible = signal_row_visible_;
+    plan_data_cache_.other_train_path_visible = other_train_path_visible_;
+    plan_data_cache_.valid = true;
+#ifndef NDEBUG
+    ++plan_data_cache_.rebuild_count;
+#endif
+    return plan_data_cache_.data;
 }
 
 ProfileData App::build_profile_data() const {
@@ -1602,7 +1251,7 @@ void App::apply_background_alignment() {
     if (bg_image_.path.empty() || bg_width_ <= 0.0 || bg_height_ <= 0.0) return;
     align_station1_ = std::clamp(align_station1_, 0, static_cast<int>(model_.stations.size()) - 1);
     align_station2_ = std::clamp(align_station2_, 0, static_cast<int>(model_.stations.size()) - 1);
-    PlanData pd = build_plan_data(false);
+    const PlanData& pd = current_plan_data();
     auto find_station = [&](const std::string& key) -> std::optional<ImVec2> {
         for (const auto& s : pd.stations) {
             if (s.station.key == key) return ImVec2(static_cast<float>(s.x), static_cast<float>(s.y));
@@ -2539,13 +2188,13 @@ static bool point_near_canvas(ImVec2 p, ImVec2 origin, ImVec2 size, float margin
 
 void App::finish_pending_load_timing_after_plan_data_ready() {
     if (!load_state_.pending_started_at) return;
-    PlanData data = build_plan_data(false);
+    const PlanData& data = current_plan_data();
     if (!data.own.empty()) finish_pending_load_timing(std::chrono::steady_clock::now());
 }
 
 void App::render_plan_canvas(ImVec2 size) {
     debug_plan_stage("start");
-    PlanData data = build_plan_data(false);
+    const PlanData& data = current_plan_data();
     debug_plan_stage("build_plan_data");
     ImGui::BeginChild("PlanCanvasChild", size, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -2634,271 +2283,20 @@ void App::render_plan_canvas(ImVec2 size) {
     const float marker_canvas_margin = std::max(12.0f, 12.0f * marker_size_scale);
     const double marker_hover_radius = static_cast<double>(marker_canvas_margin);
     const double marker_hover_radius_sq = marker_hover_radius * marker_hover_radius;
-    auto nearest_structure_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.structure_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
+    auto nearest_marker_hit = [&](const auto& markers,
+                                  const PlanScreenTransform& hit_transform,
+                                  bool suppressed = false) -> std::optional<MarkerHit> {
+        if (!hovered || mode_ != Mode::Pan || picking_background_station || suppressed) {
+            return std::nullopt;
         }
-        return best_hit;
-    };
-    auto nearest_repeater_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station || dense_repeater_marker_lod) return std::nullopt;
         double best = marker_hover_radius_sq;
         std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.repeater_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_signal_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.signal_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_beacon_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.beacon_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_pretrain_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.pretrain_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_other_train_stop_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.other_train_stop_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_irregularity_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.irregularity_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_rolling_noise_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.rolling_noise_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_map_sound_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.map_sound_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_map_sound_3d_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.map_sound_3d_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_flange_noise_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.flange_noise_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_joint_noise_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.joint_noise_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_background_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.background_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_adhesion_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.adhesion_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_cab_illuminance_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.cab_illuminance_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq <= best) {
-                best = dist_sq;
-                best_hit = MarkerHit{marker.row_index, dist_sq};
-            }
-        }
-        return best_hit;
-    };
-    auto nearest_fog_marker_hit = [&](const PlanScreenTransform& hit_transform) -> std::optional<MarkerHit> {
-        if (!hovered || mode_ != Mode::Pan || picking_background_station) return std::nullopt;
-        double best = marker_hover_radius_sq;
-        std::optional<MarkerHit> best_hit;
-        for (const auto& marker : data.fog_markers) {
-            ImVec2 p = hit_transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail, marker_canvas_margin)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            double dist_sq = dx * dx + dy * dy;
+        for (const auto& marker : markers) {
+            const ImVec2 point = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail, marker_canvas_margin)) continue;
+            const double dx = static_cast<double>(point.x - mouse.x);
+            const double dy = static_cast<double>(point.y - mouse.y);
+            const double dist_sq = dx * dx + dy * dy;
             if (dist_sq <= best) {
                 best = dist_sq;
                 best_hit = MarkerHit{marker.row_index, dist_sq};
@@ -2907,22 +2305,38 @@ void App::render_plan_canvas(ImVec2 size) {
         return best_hit;
     };
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
-    std::optional<MarkerHit> hovered_structure_hit = nearest_structure_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_repeater_hit = nearest_repeater_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_signal_hit = nearest_signal_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_beacon_hit = nearest_beacon_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_pretrain_hit = nearest_pretrain_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_other_train_stop_hit = nearest_other_train_stop_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_irregularity_hit = nearest_irregularity_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_rolling_noise_hit = nearest_rolling_noise_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_map_sound_hit = nearest_map_sound_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_map_sound_3d_hit = nearest_map_sound_3d_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_flange_noise_hit = nearest_flange_noise_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_joint_noise_hit = nearest_joint_noise_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_background_hit = nearest_background_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_adhesion_hit = nearest_adhesion_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_cab_illuminance_hit = nearest_cab_illuminance_marker_hit(hit_transform);
-    std::optional<MarkerHit> hovered_fog_hit = nearest_fog_marker_hit(hit_transform);
+    std::optional<MarkerHit> hovered_structure_hit =
+        nearest_marker_hit(data.structure_markers, hit_transform);
+    std::optional<MarkerHit> hovered_repeater_hit =
+        nearest_marker_hit(data.repeater_markers, hit_transform, dense_repeater_marker_lod);
+    std::optional<MarkerHit> hovered_signal_hit =
+        nearest_marker_hit(data.signal_markers, hit_transform);
+    std::optional<MarkerHit> hovered_beacon_hit =
+        nearest_marker_hit(data.beacon_markers, hit_transform);
+    std::optional<MarkerHit> hovered_pretrain_hit =
+        nearest_marker_hit(data.pretrain_markers, hit_transform);
+    std::optional<MarkerHit> hovered_other_train_stop_hit =
+        nearest_marker_hit(data.other_train_stop_markers, hit_transform);
+    std::optional<MarkerHit> hovered_irregularity_hit =
+        nearest_marker_hit(data.irregularity_markers, hit_transform);
+    std::optional<MarkerHit> hovered_rolling_noise_hit =
+        nearest_marker_hit(data.rolling_noise_markers, hit_transform);
+    std::optional<MarkerHit> hovered_map_sound_hit =
+        nearest_marker_hit(data.map_sound_markers, hit_transform);
+    std::optional<MarkerHit> hovered_map_sound_3d_hit =
+        nearest_marker_hit(data.map_sound_3d_markers, hit_transform);
+    std::optional<MarkerHit> hovered_flange_noise_hit =
+        nearest_marker_hit(data.flange_noise_markers, hit_transform);
+    std::optional<MarkerHit> hovered_joint_noise_hit =
+        nearest_marker_hit(data.joint_noise_markers, hit_transform);
+    std::optional<MarkerHit> hovered_background_hit =
+        nearest_marker_hit(data.background_markers, hit_transform);
+    std::optional<MarkerHit> hovered_adhesion_hit =
+        nearest_marker_hit(data.adhesion_markers, hit_transform);
+    std::optional<MarkerHit> hovered_cab_illuminance_hit =
+        nearest_marker_hit(data.cab_illuminance_markers, hit_transform);
+    std::optional<MarkerHit> hovered_fog_hit =
+        nearest_marker_hit(data.fog_markers, hit_transform);
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_structure_row = hovered_structure_hit
         ? std::optional<size_t>(hovered_structure_hit->row_index)
@@ -3458,207 +2872,113 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("signal_markers");
 
-    if (!data.beacon_markers.empty()) {
-        ImU32 beacon_color = IM_COL32(148, 242, 178, 255);
-        for (const auto& marker : data.beacon_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_beacon_row && *hovered_beacon_row == marker.row_index &&
+    auto draw_colored_marker_set = [&](const std::vector<PlanMarker>& markers,
+                                       PlanMarkerKind kind,
+                                       const std::optional<size_t>& hovered_row,
+                                       ImU32 color, auto draw_icon) {
+        for (const PlanMarker& marker : markers) {
+            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail)) continue;
+            const double dx = static_cast<double>(point.x - mouse.x);
+            const double dy = static_cast<double>(point.y - mouse.y);
+            const bool marker_hovered = hovered_row && *hovered_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::Beacon, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::Beacon, marker.row_index, beacon_color);
-            draw_plan_beacon_marker(draw, p, beacon_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, beacon_color, marker.label);
+            const bool marker_active = marker_emphasized(kind, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(point, kind, marker.row_index, color);
+            draw_icon(draw, point, color,
+                      marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, point, color, marker.label);
         }
-    }
+    };
+
+    const ImU32 beacon_color = IM_COL32(148, 242, 178, 255);
+    draw_colored_marker_set(data.beacon_markers, PlanMarkerKind::Beacon,
+                            hovered_beacon_row, beacon_color, draw_plan_beacon_marker);
     debug_plan_stage("beacon_markers");
 
     if (!data.pretrain_markers.empty()) {
-        for (const auto& marker : data.pretrain_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_pretrain_row && *hovered_pretrain_row == marker.row_index &&
+        for (const PlanMarker& marker : data.pretrain_markers) {
+            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail)) continue;
+            const double dx = static_cast<double>(point.x - mouse.x);
+            const double dy = static_cast<double>(point.y - mouse.y);
+            const bool marker_hovered = hovered_pretrain_row &&
+                *hovered_pretrain_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::PreTrain, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::PreTrain, marker.row_index, IM_COL32(255, 255, 255, 255));
-            draw_plan_pretrain_marker(draw, p, marker.label, marker_size_scale * (marker_active ? 1.22f : 1.0f));
+            const bool marker_active = marker_emphasized(
+                PlanMarkerKind::PreTrain, marker.row_index, marker_hovered);
+            const ImU32 color = IM_COL32(255, 255, 255, 255);
+            draw_selected_marker_ring(point, PlanMarkerKind::PreTrain, marker.row_index, color);
+            draw_plan_pretrain_marker(
+                draw, point, marker.label, marker_size_scale * (marker_active ? 1.22f : 1.0f));
         }
     }
     debug_plan_stage("pretrain_markers");
 
-    if (!data.irregularity_markers.empty()) {
-        ImU32 irregularity_color = IM_COL32(204, 170, 255, 255);
-        for (const auto& marker : data.irregularity_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_irregularity_row && *hovered_irregularity_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::Irregularity, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::Irregularity, marker.row_index, irregularity_color);
-            draw_plan_wave_marker(draw, p, irregularity_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, irregularity_color, marker.label);
-        }
-    }
+    const ImU32 irregularity_color = IM_COL32(204, 170, 255, 255);
+    draw_colored_marker_set(data.irregularity_markers, PlanMarkerKind::Irregularity,
+                            hovered_irregularity_row, irregularity_color, draw_plan_wave_marker);
     debug_plan_stage("irregularity_markers");
 
-    if (!data.map_sound_markers.empty()) {
-        ImU32 map_sound_color = IM_COL32(222, 190, 255, 255);
-        for (const auto& marker : data.map_sound_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_map_sound_row && *hovered_map_sound_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::MapSound, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::MapSound, marker.row_index, map_sound_color);
-            draw_plan_speaker_marker(draw, p, map_sound_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, map_sound_color, marker.label);
-        }
-    }
+    const ImU32 map_sound_color = IM_COL32(222, 190, 255, 255);
+    draw_colored_marker_set(data.map_sound_markers, PlanMarkerKind::MapSound,
+                            hovered_map_sound_row, map_sound_color, draw_plan_speaker_marker);
     debug_plan_stage("map_sound_markers");
 
-    if (!data.map_sound_3d_markers.empty()) {
-        ImU32 map_sound_3d_color = IM_COL32(222, 190, 255, 255);
-        for (const auto& marker : data.map_sound_3d_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_map_sound_3d_row && *hovered_map_sound_3d_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::MapSound3D, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::MapSound3D, marker.row_index, map_sound_3d_color);
-            draw_plan_broadcast_marker(draw, p, map_sound_3d_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, map_sound_3d_color, marker.label);
-        }
-    }
+    draw_colored_marker_set(data.map_sound_3d_markers, PlanMarkerKind::MapSound3D,
+                            hovered_map_sound_3d_row, map_sound_color, draw_plan_broadcast_marker);
     debug_plan_stage("map_sound_3d_markers");
 
-    if (!data.rolling_noise_markers.empty()) {
-        ImU32 rolling_noise_color = IM_COL32(126, 214, 255, 255);
-        for (const auto& marker : data.rolling_noise_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_rolling_noise_row && *hovered_rolling_noise_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::RollingNoise, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::RollingNoise, marker.row_index, rolling_noise_color);
-            draw_plan_axle_marker(draw, p, rolling_noise_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, rolling_noise_color, marker.label);
-        }
-    }
+    const ImU32 rolling_noise_color = IM_COL32(126, 214, 255, 255);
+    draw_colored_marker_set(data.rolling_noise_markers, PlanMarkerKind::RollingNoise,
+                            hovered_rolling_noise_row, rolling_noise_color, draw_plan_axle_marker);
     debug_plan_stage("rolling_noise_markers");
 
-    if (!data.flange_noise_markers.empty()) {
-        ImU32 flange_noise_color = IM_COL32(214, 176, 255, 255);
-        for (const auto& marker : data.flange_noise_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_flange_noise_row && *hovered_flange_noise_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::FlangeNoise, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::FlangeNoise, marker.row_index, flange_noise_color);
-            draw_plan_flange_noise_marker(draw, p, flange_noise_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, flange_noise_color, marker.label);
-        }
-    }
+    const ImU32 flange_noise_color = IM_COL32(214, 176, 255, 255);
+    draw_colored_marker_set(data.flange_noise_markers, PlanMarkerKind::FlangeNoise,
+                            hovered_flange_noise_row, flange_noise_color,
+                            draw_plan_flange_noise_marker);
     debug_plan_stage("flange_noise_markers");
 
-    if (!data.joint_noise_markers.empty()) {
-        ImU32 joint_noise_color = IM_COL32(158, 224, 255, 255);
-        for (const auto& marker : data.joint_noise_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_joint_noise_row && *hovered_joint_noise_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::JointNoise, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::JointNoise, marker.row_index, joint_noise_color);
-            draw_plan_joint_noise_marker(draw, p, joint_noise_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, joint_noise_color, marker.label);
-        }
-    }
+    const ImU32 joint_noise_color = IM_COL32(158, 224, 255, 255);
+    draw_colored_marker_set(data.joint_noise_markers, PlanMarkerKind::JointNoise,
+                            hovered_joint_noise_row, joint_noise_color,
+                            draw_plan_joint_noise_marker);
     debug_plan_stage("joint_noise_markers");
 
-    if (!data.background_markers.empty()) {
-        ImU32 background_color = IM_COL32(255, 230, 72, 255);
-        for (const auto& marker : data.background_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_background_row && *hovered_background_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::Background, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::Background, marker.row_index, background_color);
-            draw_plan_square_marker(draw, p, background_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, background_color, marker.label);
-        }
-    }
+    const ImU32 background_color = IM_COL32(255, 230, 72, 255);
+    draw_colored_marker_set(data.background_markers, PlanMarkerKind::Background,
+                            hovered_background_row, background_color, draw_plan_square_marker);
     debug_plan_stage("background_change_markers");
 
-    if (!data.adhesion_markers.empty()) {
-        ImU32 adhesion_color = IM_COL32(178, 102, 255, 255);
-        for (const auto& marker : data.adhesion_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_adhesion_row && *hovered_adhesion_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::Adhesion, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::Adhesion, marker.row_index, adhesion_color);
-            draw_plan_adhesion_marker(draw, p, adhesion_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, adhesion_color, marker.label);
-        }
-    }
+    const ImU32 adhesion_color = IM_COL32(178, 102, 255, 255);
+    draw_colored_marker_set(data.adhesion_markers, PlanMarkerKind::Adhesion,
+                            hovered_adhesion_row, adhesion_color, draw_plan_adhesion_marker);
     debug_plan_stage("adhesion_markers");
 
-    if (!data.cab_illuminance_markers.empty()) {
-        ImU32 cab_color = IM_COL32(255, 226, 64, 255);
-        for (const auto& marker : data.cab_illuminance_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_cab_illuminance_row && *hovered_cab_illuminance_row == marker.row_index &&
-                dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::CabIlluminance, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::CabIlluminance, marker.row_index, cab_color);
-            draw_plan_sun_marker(draw, p, cab_color, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, cab_color, marker.label);
-        }
-    }
+    const ImU32 cab_color = IM_COL32(255, 226, 64, 255);
+    draw_colored_marker_set(data.cab_illuminance_markers, PlanMarkerKind::CabIlluminance,
+                            hovered_cab_illuminance_row, cab_color, draw_plan_sun_marker);
     debug_plan_stage("cab_illuminance_markers");
 
     if (!data.fog_markers.empty()) {
-        for (const auto& marker : data.fog_markers) {
-            ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
-            if (!point_near_canvas(p, origin, avail)) continue;
-            double dx = static_cast<double>(p.x - mouse.x);
-            double dy = static_cast<double>(p.y - mouse.y);
-            bool marker_hovered = hovered_fog_row && *hovered_fog_row == marker.row_index &&
+        for (const PlanMarker& marker : data.fog_markers) {
+            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail)) continue;
+            const double dx = static_cast<double>(point.x - mouse.x);
+            const double dy = static_cast<double>(point.y - mouse.y);
+            const bool marker_hovered = hovered_fog_row && *hovered_fog_row == marker.row_index &&
                 dx * dx + dy * dy <= marker_hover_radius_sq;
-            bool marker_active = marker_emphasized(PlanMarkerKind::Fog, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(p, PlanMarkerKind::Fog, marker.row_index, IM_COL32(255, 255, 255, 255));
-            draw_plan_fog_marker(draw, p, marker_size_scale * (marker_active ? 1.28f : 1.0f));
-            if (marker_active) draw_plan_small_text(draw, p, IM_COL32(255, 255, 255, 255), marker.label);
+            const bool marker_active = marker_emphasized(
+                PlanMarkerKind::Fog, marker.row_index, marker_hovered);
+            const ImU32 color = IM_COL32(255, 255, 255, 255);
+            draw_selected_marker_ring(point, PlanMarkerKind::Fog, marker.row_index, color);
+            draw_plan_fog_marker(draw, point,
+                                 marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, point, color, marker.label);
         }
     }
     debug_plan_stage("fog_markers");
-
     if (!repeater_marker_cache_.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
         draw_repeater_segment_chunks(draw, repeater_marker_cache_, repeater_row_visible_,

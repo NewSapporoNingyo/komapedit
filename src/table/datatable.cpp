@@ -5,7 +5,9 @@
  * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
  */
 
+#ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
+#endif
 
 #include "kme.h"
 #include "touch_input.h"
@@ -910,8 +912,6 @@ static const TableColumnDef kStationListColumns[] = {
     {"stuckInDoor", "stuck", 65.0f},
 };
 
-std::string display_name_from_path(const std::string& path);
-
 const std::string& table_cell(const TableRow& row, const std::string& key) {
     static const std::string empty;
     auto it = row.cells.find(key);
@@ -1075,6 +1075,77 @@ void append_structure_table_rows(const std::vector<TableRow>& source_rows,
     }
 }
 
+template <size_t N, typename RenderSpecialCellFn>
+void render_event_table(const char* table_id,
+                        const TableColumnDef (&columns)[N],
+                        int distance_column,
+                        int file_path_column,
+                        const std::vector<CachedTableRow>& rows,
+                        float distance_width,
+                        float file_path_width,
+                        const std::string& file_name_header,
+                        const std::string& open_menu_label,
+                        int& scroll_row,
+                        int& highlight_row,
+                        ImU32 highlight_color,
+                        RenderSpecialCellFn render_special_cell) {
+    if (!ImGui::BeginTable(table_id, static_cast<int>(N),
+                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                           ImGuiTableFlags_ScrollY)) {
+        return;
+    }
+    for (int column = 0; column < static_cast<int>(N); ++column) {
+        float width = columns[column].width;
+        if (column == distance_column) width = distance_width;
+        if (column == file_path_column) width = file_path_width;
+        const char* header = column == file_path_column
+            ? file_name_header.c_str()
+            : columns[column].header;
+        ImGui::TableSetupColumn(
+            header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+    }
+    setup_fixed_table_header();
+    ImGui::TableHeadersRow();
+    ImGuiListClipper clipper;
+    const int row_count = static_cast<int>(rows.size());
+    if (scroll_row >= row_count) scroll_row = -1;
+    if (highlight_row >= row_count) highlight_row = -1;
+    const int scroll_target_row = scroll_row;
+    clipper.Begin(row_count);
+    if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+        clipper.IncludeItemByIndex(scroll_target_row);
+    }
+    while (clipper.Step()) {
+        for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+            const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
+            ImGui::TableNextRow();
+            if (row_index == highlight_row) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+            }
+            if (row_index == scroll_target_row) {
+                ImGui::SetScrollHereY(0.5f);
+                scroll_row = -1;
+            }
+            ImGui::PushID(row_index);
+            for (int column = 0; column < static_cast<int>(N); ++column) {
+                ImGui::TableSetColumnIndex(column);
+                const std::string& value = row.cells[static_cast<size_t>(column)];
+                if (render_special_cell(row_index, column, value)) continue;
+                if (value.empty()) continue;
+                if (column == file_path_column) {
+                    render_file_path_cell_with_context(
+                        value, row.open_path, open_menu_label, row.open_path);
+                } else {
+                    ImGui::TextUnformatted(value.c_str());
+                }
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndTable();
+}
+
 template <size_t N, typename CanLocateFn, typename LocateFn>
 void render_change_point_table(const char* table_id,
                                const TableColumnDef (&columns)[N],
@@ -1091,66 +1162,20 @@ void render_change_point_table(const char* table_id,
                                ImU32 highlight_color,
                                CanLocateFn can_locate,
                                LocateFn locate_row_on_plan) {
-    if (ImGui::BeginTable(table_id, static_cast<int>(N),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        for (int i = 0; i < static_cast<int>(N); ++i) {
-            float width = columns[i].width;
-            if (i == distance_column) width = distance_width;
-            if (i == file_path_column) width = file_path_width;
-            const char* header = i == file_path_column
-                ? file_name_header.c_str()
-                : columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(rows.size());
-        if (scroll_row >= row_count) scroll_row = -1;
-        if (highlight_row >= row_count) highlight_row = -1;
-        const int scroll_target_row = scroll_row;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == highlight_row) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    scroll_row = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < static_cast<int>(N); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == distance_column) {
-                        const size_t marker_index = static_cast<size_t>(row_index);
-                        if (render_text_cell_with_context(value, locate_menu_label, can_locate(marker_index))) {
-                            locate_row_on_plan(marker_index);
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path, open_menu_label, row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
+    render_event_table(
+        table_id, columns, distance_column, file_path_column, rows,
+        distance_width, file_path_width, file_name_header, open_menu_label,
+        scroll_row, highlight_row, highlight_color,
+        [&](int row_index, int column, const std::string& value) {
+            if (column != distance_column) return false;
+            const size_t marker_index = static_cast<size_t>(row_index);
+            if (render_text_cell_with_context(
+                    value, locate_menu_label, can_locate(marker_index))) {
+                locate_row_on_plan(marker_index);
             }
-        }
-        ImGui::EndTable();
-    }
+            return true;
+        });
 }
-
 template <size_t N, typename CanLocateFn, typename LocateFn, typename FindFn>
 void render_map_sound_event_table(const char* table_id,
                                   const TableColumnDef (&columns)[N],
@@ -1170,80 +1195,31 @@ void render_map_sound_event_table(const char* table_id,
                                   CanLocateFn can_locate,
                                   LocateFn locate_row_on_plan,
                                   FindFn find_sound_file) {
-    if (ImGui::BeginTable(table_id, static_cast<int>(N),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        for (int i = 0; i < static_cast<int>(N); ++i) {
-            float width = columns[i].width;
-            if (i == distance_column) width = distance_width;
-            if (i == file_path_column) width = file_path_width;
-            const char* header = i == file_path_column
-                ? file_name_header.c_str()
-                : columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(rows.size());
-        if (scroll_row >= row_count) scroll_row = -1;
-        if (highlight_row >= row_count) highlight_row = -1;
-        const int scroll_target_row = scroll_row;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == highlight_row) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    scroll_row = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < static_cast<int>(N); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == distance_column) {
-                        const size_t marker_index = static_cast<size_t>(row_index);
-                        ImGui::PushID(i);
-                        const bool should_locate =
-                            render_text_cell_with_context(value, locate_menu_label, can_locate(marker_index));
-                        ImGui::PopID();
-                        if (should_locate) {
-                            locate_row_on_plan(marker_index);
-                        }
-                        continue;
-                    }
-                    if (i == sound_key_column) {
-                        ImGui::PushID(i);
-                        const bool should_find =
-                            render_text_cell_with_context(value, find_menu_label, !blank_ascii(value));
-                        ImGui::PopID();
-                        if (should_find) {
-                            find_sound_file(value);
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path, open_menu_label, row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
+    render_event_table(
+        table_id, columns, distance_column, file_path_column, rows,
+        distance_width, file_path_width, file_name_header, open_menu_label,
+        scroll_row, highlight_row, highlight_color,
+        [&](int row_index, int column, const std::string& value) {
+            if (column == distance_column) {
+                const size_t marker_index = static_cast<size_t>(row_index);
+                ImGui::PushID(column);
+                const bool should_locate = render_text_cell_with_context(
+                    value, locate_menu_label, can_locate(marker_index));
                 ImGui::PopID();
+                if (should_locate) locate_row_on_plan(marker_index);
+                return true;
             }
-        }
-        ImGui::EndTable();
-    }
+            if (column == sound_key_column) {
+                ImGui::PushID(column);
+                const bool should_find = render_text_cell_with_context(
+                    value, find_menu_label, !blank_ascii(value));
+                ImGui::PopID();
+                if (should_find) find_sound_file(value);
+                return true;
+            }
+            return false;
+        });
 }
-
 static void render_sound_list_table(const char* table_id,
                                     const std::vector<CachedTableRow>& rows,
                                     float file_path_width,

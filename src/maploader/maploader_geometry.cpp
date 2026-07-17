@@ -444,7 +444,6 @@ public:
         while (pointer_.over_nextpoint(dist)) {
             int origin = pointer_.seekoriginofcontinuous(pointer_.next());
             if (origin >= 0) {
-                cant_distance_ = event(origin).distance;
                 cant_value_ = as_number(event(origin).value);
             }
             pointer_.seeknext();
@@ -486,7 +485,6 @@ private:
     const std::vector<OwnTrackEvent>* own_data_ = nullptr;
     const std::vector<OtherTrackEvent>* other_data_ = nullptr;
     bool other_ = false;
-    double cant_distance_ = 0.0;
     double cant_value_ = 0.0;
     mutable OwnTrackEvent temp_;
 };

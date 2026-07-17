@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "json.h"
 #include "maploader.h"
 
 #include "diagnostics.h"
@@ -109,7 +110,6 @@ std::string ascii_lower(std::string s);
 std::string trim_copy(const std::string& s);
 std::string trim_field_copy(const std::string& s);
 bool ascii_ieq(const std::string& a, const std::string& b);
-void append_json_escaped(std::ostringstream& out, const std::string& s);
 void append_json_string(std::ostringstream& out, const std::string& s);
 std::string json_escape(const std::string& s);
 std::string json_number(double value);

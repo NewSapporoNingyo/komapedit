@@ -8,13 +8,14 @@
 
 #include <map>
 #include <string>
+#include <string_view>
 
 enum class Language { Ja, En, Zh };
 
 struct Translation {
-    std::map<std::string, std::string> en;
-    std::map<std::string, std::string> zh;
-    std::map<std::string, std::string> ja;
+    std::map<std::string, std::string, std::less<>> en;
+    std::map<std::string, std::string, std::less<>> zh;
+    std::map<std::string, std::string, std::less<>> ja;
 
     Translation() {
         en = {
@@ -253,7 +254,7 @@ struct Translation {
         };
     }
 
-    const std::string& get(Language lang, const std::string& key) const {
+    const std::string& get(Language lang, std::string_view key) const {
         const auto* table = &en;
         if (lang == Language::Zh) table = &zh;
         else if (lang == Language::Ja) table = &ja;
@@ -261,8 +262,8 @@ struct Translation {
         if (it != table->end()) return it->second;
         auto it_en = en.find(key);
         if (it_en != en.end()) return it_en->second;
-        static std::string missing;
-        missing = key;
+        static thread_local std::string missing;
+        missing.assign(key.data(), key.size());
         return missing;
     }
 };

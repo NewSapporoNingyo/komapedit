@@ -5,7 +5,9 @@
  * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
  */
 
+#ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
+#endif
 
 #include "kme.h"
 #include "touch_input.h"

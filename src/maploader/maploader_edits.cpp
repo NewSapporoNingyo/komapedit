@@ -18,235 +18,25 @@ using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
 using kme::maploader::read_binary_file;
 
-namespace edit_json {
-
-struct Value {
-    enum class Type { Null, Bool, Number, String, Array, Object };
-    Type type = Type::Null;
-    bool boolean = false;
-    double number = 0.0;
-    std::string string;
-    std::vector<Value> array;
-    std::map<std::string, Value> object;
-
-    bool is_object() const { return type == Type::Object; }
-    bool is_array() const { return type == Type::Array; }
-    bool is_string() const { return type == Type::String; }
-    bool is_number() const { return type == Type::Number; }
-    bool is_bool() const { return type == Type::Bool; }
-
-    const Value& at(const std::string& key) const {
-        static const Value empty;
-        auto it = object.find(key);
-        return it == object.end() ? empty : it->second;
-    }
-
-    std::string scalar_text() const {
-        if (is_string()) return string;
-        if (is_number()) return json_number(number);
-        if (is_bool()) return boolean ? "true" : "false";
-        return {};
-    }
-};
-
-class Parser {
-public:
-    explicit Parser(const std::string& source) : source_(source) {}
-
-    Value parse() {
-        Value value = parse_value();
-        skip_ws();
-        if (pos_ != source_.size()) throw std::runtime_error("trailing JSON text");
-        return value;
-    }
-
-private:
-    const std::string& source_;
-    size_t pos_ = 0;
-
-    void skip_ws() {
-        while (pos_ < source_.size() &&
-               std::isspace(static_cast<unsigned char>(source_[pos_]))) {
-            ++pos_;
-        }
-    }
-
-    char peek() const {
-        return pos_ < source_.size() ? source_[pos_] : '\0';
-    }
-
-    char get() {
-        if (pos_ >= source_.size()) throw std::runtime_error("unexpected JSON EOF");
-        return source_[pos_++];
-    }
-
-    void expect(char expected) {
-        if (get() != expected) throw std::runtime_error("unexpected JSON token");
-    }
-
-    Value parse_value() {
-        skip_ws();
-        char ch = peek();
-        if (ch == '{') return parse_object();
-        if (ch == '[') return parse_array();
-        if (ch == '"') {
-            Value value;
-            value.type = Value::Type::String;
-            value.string = parse_string();
-            return value;
-        }
-        if (ch == '-' || std::isdigit(static_cast<unsigned char>(ch))) return parse_number();
-        if (source_.compare(pos_, 4, "true") == 0) {
-            pos_ += 4;
-            Value value;
-            value.type = Value::Type::Bool;
-            value.boolean = true;
-            return value;
-        }
-        if (source_.compare(pos_, 5, "false") == 0) {
-            pos_ += 5;
-            Value value;
-            value.type = Value::Type::Bool;
-            value.boolean = false;
-            return value;
-        }
-        if (source_.compare(pos_, 4, "null") == 0) {
-            pos_ += 4;
-            return {};
-        }
-        throw std::runtime_error("invalid JSON value");
-    }
-
-    Value parse_object() {
-        Value value;
-        value.type = Value::Type::Object;
-        expect('{');
-        skip_ws();
-        if (peek() == '}') {
-            ++pos_;
-            return value;
-        }
-        while (true) {
-            skip_ws();
-            std::string key = parse_string();
-            skip_ws();
-            expect(':');
-            value.object[std::move(key)] = parse_value();
-            skip_ws();
-            char ch = get();
-            if (ch == '}') break;
-            if (ch != ',') throw std::runtime_error("expected JSON object comma");
-        }
-        return value;
-    }
-
-    Value parse_array() {
-        Value value;
-        value.type = Value::Type::Array;
-        expect('[');
-        skip_ws();
-        if (peek() == ']') {
-            ++pos_;
-            return value;
-        }
-        while (true) {
-            value.array.push_back(parse_value());
-            skip_ws();
-            char ch = get();
-            if (ch == ']') break;
-            if (ch != ',') throw std::runtime_error("expected JSON array comma");
-        }
-        return value;
-    }
-
-    std::string parse_string() {
-        expect('"');
-        std::string out;
-        while (true) {
-            char ch = get();
-            if (ch == '"') break;
-            if (ch != '\\') {
-                out.push_back(ch);
-                continue;
-            }
-            char escaped = get();
-            switch (escaped) {
-                case '"': out.push_back('"'); break;
-                case '\\': out.push_back('\\'); break;
-                case '/': out.push_back('/'); break;
-                case 'b': out.push_back('\b'); break;
-                case 'f': out.push_back('\f'); break;
-                case 'n': out.push_back('\n'); break;
-                case 'r': out.push_back('\r'); break;
-                case 't': out.push_back('\t'); break;
-                case 'u': {
-                    unsigned value = 0;
-                    for (int i = 0; i < 4; ++i) {
-                        char hex = get();
-                        value <<= 4;
-                        if (hex >= '0' && hex <= '9') value |= static_cast<unsigned>(hex - '0');
-                        else if (hex >= 'a' && hex <= 'f') value |= static_cast<unsigned>(hex - 'a' + 10);
-                        else if (hex >= 'A' && hex <= 'F') value |= static_cast<unsigned>(hex - 'A' + 10);
-                        else throw std::runtime_error("invalid JSON unicode escape");
-                    }
-                    if (value <= 0x7f) {
-                        out.push_back(static_cast<char>(value));
-                    } else if (value <= 0x7ff) {
-                        out.push_back(static_cast<char>(0xc0 | (value >> 6)));
-                        out.push_back(static_cast<char>(0x80 | (value & 0x3f)));
-                    } else {
-                        out.push_back(static_cast<char>(0xe0 | (value >> 12)));
-                        out.push_back(static_cast<char>(0x80 | ((value >> 6) & 0x3f)));
-                        out.push_back(static_cast<char>(0x80 | (value & 0x3f)));
-                    }
-                    break;
-                }
-                default:
-                    throw std::runtime_error("invalid JSON string escape");
-            }
-        }
-        return out;
-    }
-
-    Value parse_number() {
-        size_t start = pos_;
-        if (peek() == '-') ++pos_;
-        while (std::isdigit(static_cast<unsigned char>(peek()))) ++pos_;
-        if (peek() == '.') {
-            ++pos_;
-            while (std::isdigit(static_cast<unsigned char>(peek()))) ++pos_;
-        }
-        if (peek() == 'e' || peek() == 'E') {
-            ++pos_;
-            if (peek() == '+' || peek() == '-') ++pos_;
-            while (std::isdigit(static_cast<unsigned char>(peek()))) ++pos_;
-        }
-        Value value;
-        value.type = Value::Type::Number;
-        value.number = std::stod(source_.substr(start, pos_ - start));
-        return value;
-    }
-};
-
-} // namespace edit_json
+using JsonValue = kme::json::Value;
 
 struct SemanticElementJson {
     std::string edit_id;
     std::string source_file;
     std::string container_path;
-    const edit_json::Value* value = nullptr;
+    const JsonValue* value = nullptr;
     std::string canonical;
 };
 
 struct SemanticSnapshot {
-    std::shared_ptr<edit_json::Value> root;
+    std::shared_ptr<JsonValue> root;
     std::vector<SemanticElementJson> elements;
     std::string full_fingerprint;
 };
 
 void append_canonical_semantic_json(std::ostringstream& out,
-                                    const edit_json::Value& value) {
-    using Type = edit_json::Value::Type;
+                                    const JsonValue& value) {
+    using Type = JsonValue::Type;
     switch (value.type) {
         case Type::Null:
             out << "null";
@@ -289,7 +79,7 @@ void append_canonical_semantic_json(std::ostringstream& out,
     }
 }
 
-std::string canonical_semantic_json(const edit_json::Value& value,
+std::string canonical_semantic_json(const JsonValue& value,
                                     const std::string& source_file = {},
                                     const std::string& container_path = {}) {
     std::ostringstream out;
@@ -301,15 +91,15 @@ std::string canonical_semantic_json(const edit_json::Value& value,
     return out.str();
 }
 
-void collect_semantic_elements(const edit_json::Value& value,
+void collect_semantic_elements(const JsonValue& value,
                                std::vector<SemanticElementJson>& elements,
                                const std::string& container_path = {}) {
     if (value.is_object()) {
-        const edit_json::Value& edit_id = value.at("editId");
+        const JsonValue& edit_id = value.at("editId");
         if (edit_id.is_string() && !edit_id.string.empty()) {
             SemanticElementJson element;
             element.edit_id = edit_id.string;
-            const edit_json::Value& source = value.at("source");
+            const JsonValue& source = value.at("source");
             if (source.is_object()) element.source_file = source.at("filePath").scalar_text();
             element.container_path = container_path;
             element.value = &value;
@@ -327,7 +117,7 @@ void collect_semantic_elements(const edit_json::Value& value,
         return;
     }
     if (value.is_array()) {
-        for (const edit_json::Value& item : value.array) {
+        for (const JsonValue& item : value.array) {
             collect_semantic_elements(item, elements, container_path);
         }
     }
@@ -339,7 +129,7 @@ std::string variable_environment_fingerprint(const VariableEnvironment& variable
 SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
     std::string json = build_ir_json(ctx, KV_IR_JSON_COMPACT);
     SemanticSnapshot snapshot;
-    snapshot.root = std::make_shared<edit_json::Value>(edit_json::Parser(json).parse());
+    snapshot.root = std::make_shared<JsonValue>(kme::json::parse(json));
     collect_semantic_elements(*snapshot.root, snapshot.elements);
     std::ostringstream state;
     append_canonical_semantic_json(state, *snapshot.root);
@@ -353,7 +143,6 @@ struct EditableTarget {
     std::string row_kind;
     size_t row_index = 0;
     int element_index = 0;
-    const StructureModel* structure_model = nullptr;
     const StructurePut* structure_put = nullptr;
     const StationPut* station_put = nullptr;
     int elements_for_statement = 0;
@@ -386,13 +175,13 @@ struct SourcePatch {
 
 std::vector<MapEditChange> parse_edit_changes_json(const char* changes_json) {
     if (!changes_json) throw std::runtime_error("changes_json is null");
-    edit_json::Value root = edit_json::Parser(changes_json).parse();
-    const edit_json::Value& changes_value = root.is_array() ? root : root.at("changes");
+    JsonValue root = kme::json::parse(changes_json);
+    const JsonValue& changes_value = root.is_array() ? root : root.at("changes");
     if (!changes_value.is_array()) throw std::runtime_error("edit changes JSON must contain a changes array");
 
     std::vector<MapEditChange> changes;
     changes.reserve(changes_value.array.size());
-    for (const edit_json::Value& item : changes_value.array) {
+    for (const JsonValue& item : changes_value.array) {
         if (!item.is_object()) continue;
         MapEditChange change;
         change.change_id = item.at("changeId").scalar_text();
@@ -405,11 +194,11 @@ std::vector<MapEditChange> parse_edit_changes_json(const char* changes_json) {
         change.distance_resolution_key = item.at("distanceResolutionKey").scalar_text();
         change.distance_boundary_token = item.at("distanceBoundaryToken").scalar_text();
         change.distance_expression = item.at("distanceExpression").scalar_text();
-        const edit_json::Value& confirm_environment_mismatch =
+        const JsonValue& confirm_environment_mismatch =
             item.at("confirmEnvironmentMismatch");
         change.confirm_environment_mismatch =
             confirm_environment_mismatch.is_bool() && confirm_environment_mismatch.boolean;
-        const edit_json::Value& fields = item.at("fieldChanges");
+        const JsonValue& fields = item.at("fieldChanges");
         if (fields.is_object()) {
             for (const auto& kv : fields.object) {
                 change.field_changes[kv.first] = kv.second.scalar_text();
@@ -1012,7 +801,6 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
     for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
         const StructureModel& row = ctx.structure_models[i];
         if (match_edit_ref(ctx, row, "structure.model", i, edit_id, target)) {
-            target.structure_model = &row;
             return target;
         }
     }
@@ -2178,21 +1966,21 @@ TransactionalWriteOutcome replace_files_transactionally(
     return outcome;
 }
 
-edit_json::Value json_number_value(double value) {
-    edit_json::Value result;
-    result.type = edit_json::Value::Type::Number;
+JsonValue json_number_value(double value) {
+    JsonValue result;
+    result.type = JsonValue::Type::Number;
     result.number = value;
     return result;
 }
 
-edit_json::Value json_string_value(std::string value) {
-    edit_json::Value result;
-    result.type = edit_json::Value::Type::String;
+JsonValue json_string_value(std::string value) {
+    JsonValue result;
+    result.type = JsonValue::Type::String;
     result.string = std::move(value);
     return result;
 }
 
-void apply_expected_field_changes(edit_json::Value& expected,
+void apply_expected_field_changes(JsonValue& expected,
                                   const MapEditChange& change) {
     if (!expected.is_object()) return;
     static const std::set<std::string> numeric_fields = {
@@ -2337,7 +2125,7 @@ void validate_edit_report(MapContext& baseline,
                                              change.edit_id);
             return;
         }
-        edit_json::Value expected = *before_it->second->value;
+        JsonValue expected = *before_it->second->value;
         try {
             apply_expected_field_changes(expected, change);
         } catch (const std::exception& e) {

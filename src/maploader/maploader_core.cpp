@@ -78,37 +78,12 @@ bool ascii_ieq(const std::string& a, const std::string& b) {
     return ascii_lower(a) == ascii_lower(b);
 }
 
-void append_json_escaped(std::ostringstream& out, const std::string& s) {
-    for (unsigned char c : s) {
-        switch (c) {
-            case '\\': out << "\\\\"; break;
-            case '"': out << "\\\""; break;
-            case '\b': out << "\\b"; break;
-            case '\f': out << "\\f"; break;
-            case '\n': out << "\\n"; break;
-            case '\r': out << "\\r"; break;
-            case '\t': out << "\\t"; break;
-            default:
-                if (c < 0x20) {
-                    out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                        << static_cast<int>(c) << std::dec << std::setfill(' ');
-                } else {
-                    out << static_cast<char>(c);
-                }
-        }
-    }
-}
-
 void append_json_string(std::ostringstream& out, const std::string& s) {
-    out << "\"";
-    append_json_escaped(out, s);
-    out << "\"";
+    kme::json::append_string(out, s);
 }
 
 std::string json_escape(const std::string& s) {
-    std::ostringstream out;
-    append_json_escaped(out, s);
-    return out.str();
+    return kme::json::escape(s);
 }
 
 std::string json_number(double value) {
@@ -127,9 +102,6 @@ std::string json_number(double value) {
     out << std::setprecision(17) << value;
     return out.str();
 }
-
-std::uint64_t stable_hash64(const std::string& text);
-std::string hex64(std::uint64_t value);
 
 double parse_first_version(const std::string& header) {
     for (size_t i = 0; i < header.size(); ++i) {
@@ -172,9 +144,6 @@ std::string declared_encoding_from_header(const std::string& header) {
     if (enc == "shift_jis" || enc == "sjis") return "cp932";
     return enc;
 }
-
-std::string normalized_source_path(const std::filesystem::path& path);
-std::string normalized_source_key(std::string path);
 
 std::vector<size_t> build_line_starts(const std::string& text) {
     std::vector<size_t> starts;
@@ -652,9 +621,6 @@ void rebuild_variable_environment_snapshot(MapContext& ctx) {
     ctx.variable_environment_snapshot =
         std::make_shared<const VariableEnvironment>(ctx.variables);
 }
-
-std::string make_edit_id(const std::string& source_key, int global_order,
-                         const std::string& kind, int element_index);
 
 size_t add_parsed_statement(MapContext& ctx,
                             std::string kind,

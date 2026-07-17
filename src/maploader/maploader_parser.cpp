@@ -16,6 +16,15 @@ using kme::maploader::log_info;
 using kme::maploader::log_warn;
 using kme::maploader::path_to_utf8;
 
+std::string resolve_loaded_asset_path(const std::filesystem::path& root,
+                                      const std::string& path_text) {
+    std::filesystem::path path = join_path(root, path_text);
+    std::error_code error;
+    const std::filesystem::path absolute = std::filesystem::absolute(path, error);
+    if (!error) path = absolute;
+    return path_to_utf8(path.lexically_normal());
+}
+
 struct MapObject {
     std::string label;
     Value key;
@@ -994,11 +1003,7 @@ private:
             StructureModel row;
             row.structure_key = fields[0];
             if (fields.size() > 1 && !fields[1].empty()) {
-                std::filesystem::path model_path = join_path(loaded.root, fields[1]);
-                std::error_code ec;
-                std::filesystem::path abs = std::filesystem::absolute(model_path, ec);
-                if (!ec) model_path = abs;
-                row.file_path = path_to_utf8(model_path.lexically_normal());
+                row.file_path = resolve_loaded_asset_path(loaded.root, fields[1]);
             }
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StructureList.Row",
                                                      line_start, line_end, line, fields);
@@ -1053,11 +1058,7 @@ private:
             row.sound_key = fields[0];
             row.is_3d = is_3d;
             if (fields.size() > 1 && !fields[1].empty()) {
-                std::filesystem::path sound_path = join_path(loaded.root, fields[1]);
-                std::error_code ec;
-                std::filesystem::path abs = std::filesystem::absolute(sound_path, ec);
-                if (!ec) sound_path = abs;
-                row.file_path = path_to_utf8(sound_path.lexically_normal());
+                row.file_path = resolve_loaded_asset_path(loaded.root, fields[1]);
             }
             if (fields.size() > 2) {
                 row.buffer_count = parse_sound_buffer_count(fields[2]);

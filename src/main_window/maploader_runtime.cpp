@@ -91,7 +91,7 @@ public:
 private:
     template <typename Function>
     bool resolve(Function& function, const char* name) {
-        function = reinterpret_cast<Function>(GetProcAddress(library_, name));
+        function = runtime_paths::resolve_dll_function<Function>(library_, name);
         if (function) return true;
         load_error_ = "bin/maploader.dll is missing required entry point: ";
         load_error_ += name;

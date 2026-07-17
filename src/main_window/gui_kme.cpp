@@ -5,11 +5,14 @@
  * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
  */
 
+#ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
+#endif
 
 #include "kme.h"
 #include "app_settings.h"
 #include "debug_headless.h"
+#include "json.h"
 #include "touch_input.h"
 
 #include "canvas3D.h"
@@ -131,26 +134,7 @@ void set_move_cursor() {
 }
 
 void append_gui_json_string(std::ostringstream& out, const std::string& text) {
-    out << '"';
-    for (unsigned char ch : text) {
-        switch (ch) {
-            case '\\': out << "\\\\"; break;
-            case '"': out << "\\\""; break;
-            case '\b': out << "\\b"; break;
-            case '\f': out << "\\f"; break;
-            case '\n': out << "\\n"; break;
-            case '\r': out << "\\r"; break;
-            case '\t': out << "\\t"; break;
-            default:
-                if (ch < 0x20) {
-                    out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                        << static_cast<int>(ch) << std::dec << std::setfill(' ');
-                } else {
-                    out << static_cast<char>(ch);
-                }
-        }
-    }
-    out << '"';
+    kme::json::append_string(out, text);
 }
 
 std::string edit_field_buffer_text(const MapElementEditFieldState& field) {
@@ -347,210 +331,18 @@ std::string sanitize_filename(std::string text) {
     return text;
 }
 
-namespace mini_json {
+using JsonValue = kme::json::Value;
 
-struct Value {
-    enum class Type { Null, Bool, Number, String, Array, Object };
-    Type type = Type::Null;
-    bool boolean = false;
-    double number = 0.0;
-    std::string string;
-    std::vector<Value> array;
-    std::map<std::string, Value> object;
-
-    bool is_null() const { return type == Type::Null; }
-    bool is_number() const { return type == Type::Number; }
-    bool is_string() const { return type == Type::String; }
-    bool is_array() const { return type == Type::Array; }
-    bool is_object() const { return type == Type::Object; }
-
-    const Value& at(const std::string& key) const {
-        static Value empty;
-        auto it = object.find(key);
-        return it == object.end() ? empty : it->second;
+std::optional<JsonValue> parse_json_report(const std::string& text, std::string& error) {
+    try {
+        return kme::json::parse(text);
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        return std::nullopt;
     }
+}
 
-    std::string scalar_text() const {
-        if (type == Type::String) return string;
-        if (type == Type::Number) return format_double(number);
-        if (type == Type::Bool) return boolean ? "true" : "false";
-        return "";
-    }
-};
-
-class Parser {
-public:
-    explicit Parser(const std::string& source) : s_(source) {}
-
-    Value parse() {
-        skip_ws();
-        Value v = parse_value();
-        skip_ws();
-        return v;
-    }
-
-private:
-    const std::string& s_;
-    size_t p_ = 0;
-
-    bool eof() const { return p_ >= s_.size(); }
-    char peek() const { return eof() ? '\0' : s_[p_]; }
-    char get() { return eof() ? '\0' : s_[p_++]; }
-
-    void skip_ws() {
-        while (!eof() && std::isspace(static_cast<unsigned char>(peek()))) ++p_;
-    }
-
-    static void append_utf8(std::string& out, unsigned codepoint) {
-        if (codepoint <= 0x7f) {
-            out.push_back(static_cast<char>(codepoint));
-        } else if (codepoint <= 0x7ff) {
-            out.push_back(static_cast<char>(0xc0 | ((codepoint >> 6) & 0x1f)));
-            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-        } else if (codepoint <= 0xffff) {
-            out.push_back(static_cast<char>(0xe0 | ((codepoint >> 12) & 0x0f)));
-            out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
-            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-        } else {
-            out.push_back(static_cast<char>(0xf0 | ((codepoint >> 18) & 0x07)));
-            out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f)));
-            out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
-            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-        }
-    }
-
-    unsigned parse_hex4() {
-        unsigned value = 0;
-        for (int i = 0; i < 4; ++i) {
-            char c = get();
-            value <<= 4;
-            if (c >= '0' && c <= '9') value |= static_cast<unsigned>(c - '0');
-            else if (c >= 'a' && c <= 'f') value |= static_cast<unsigned>(c - 'a' + 10);
-            else if (c >= 'A' && c <= 'F') value |= static_cast<unsigned>(c - 'A' + 10);
-        }
-        return value;
-    }
-
-    Value parse_string() {
-        Value v;
-        v.type = Value::Type::String;
-        if (get() != '"') return v;
-        while (!eof()) {
-            char c = get();
-            if (c == '"') break;
-            if (c == '\\') {
-                char esc = get();
-                switch (esc) {
-                    case '"': v.string.push_back('"'); break;
-                    case '\\': v.string.push_back('\\'); break;
-                    case '/': v.string.push_back('/'); break;
-                    case 'b': v.string.push_back('\b'); break;
-                    case 'f': v.string.push_back('\f'); break;
-                    case 'n': v.string.push_back('\n'); break;
-                    case 'r': v.string.push_back('\r'); break;
-                    case 't': v.string.push_back('\t'); break;
-                    case 'u': append_utf8(v.string, parse_hex4()); break;
-                    default: v.string.push_back(esc); break;
-                }
-            } else {
-                v.string.push_back(c);
-            }
-        }
-        return v;
-    }
-
-    Value parse_number() {
-        size_t begin = p_;
-        if (peek() == '-') ++p_;
-        while (std::isdigit(static_cast<unsigned char>(peek()))) ++p_;
-        if (peek() == '.') {
-            ++p_;
-            while (std::isdigit(static_cast<unsigned char>(peek()))) ++p_;
-        }
-        if (peek() == 'e' || peek() == 'E') {
-            ++p_;
-            if (peek() == '+' || peek() == '-') ++p_;
-            while (std::isdigit(static_cast<unsigned char>(peek()))) ++p_;
-        }
-        Value v;
-        v.type = Value::Type::Number;
-        v.number = std::strtod(s_.c_str() + begin, nullptr);
-        return v;
-    }
-
-    Value parse_array() {
-        Value v;
-        v.type = Value::Type::Array;
-        get();
-        skip_ws();
-        if (peek() == ']') {
-            get();
-            return v;
-        }
-        while (!eof()) {
-            v.array.push_back(parse_value());
-            skip_ws();
-            char c = get();
-            if (c == ']') break;
-            if (c != ',') break;
-            skip_ws();
-        }
-        return v;
-    }
-
-    Value parse_object() {
-        Value v;
-        v.type = Value::Type::Object;
-        get();
-        skip_ws();
-        if (peek() == '}') {
-            get();
-            return v;
-        }
-        while (!eof()) {
-            Value key = parse_string();
-            skip_ws();
-            if (get() != ':') break;
-            skip_ws();
-            v.object[key.string] = parse_value();
-            skip_ws();
-            char c = get();
-            if (c == '}') break;
-            if (c != ',') break;
-            skip_ws();
-        }
-        return v;
-    }
-
-    Value parse_literal(const char* literal, Value value) {
-        while (*literal) {
-            if (get() != *literal++) break;
-        }
-        return value;
-    }
-
-    Value parse_value() {
-        skip_ws();
-        char c = peek();
-        if (c == '"') return parse_string();
-        if (c == '[') return parse_array();
-        if (c == '{') return parse_object();
-        if (c == '-' || std::isdigit(static_cast<unsigned char>(c))) return parse_number();
-        if (s_.compare(p_, 4, "true") == 0) {
-            Value v; v.type = Value::Type::Bool; v.boolean = true; return parse_literal("true", v);
-        }
-        if (s_.compare(p_, 5, "false") == 0) {
-            Value v; v.type = Value::Type::Bool; v.boolean = false; return parse_literal("false", v);
-        }
-        Value nullv;
-        if (s_.compare(p_, 4, "null") == 0) return parse_literal("null", nullv);
-        return nullv;
-    }
-};
-
-} // namespace mini_json
-
-std::uint64_t nonnegative_json_integer(const mini_json::Value& value) {
+std::uint64_t nonnegative_json_integer(const JsonValue& value) {
     if (!value.is_number() || !std::isfinite(value.number) || value.number <= 0.0) return 0;
     const double maximum = static_cast<double>(std::numeric_limits<std::uint64_t>::max());
     if (value.number >= maximum) return std::numeric_limits<std::uint64_t>::max();
@@ -582,7 +374,7 @@ bool open_directory_in_explorer(const std::string& directory_utf8) {
     return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
-std::string table_cell_text(const mini_json::Value& value) {
+std::string table_cell_text(const JsonValue& value) {
     if (value.is_array()) {
         std::string text;
         for (size_t i = 0; i < value.array.size(); ++i) {
@@ -591,16 +383,16 @@ std::string table_cell_text(const mini_json::Value& value) {
         }
         return text;
     }
-    return value.scalar_text();
+    return value.scalar_text_fixed(6);
 }
 
-EditSourceInfo edit_source_from_json(const mini_json::Value& value) {
+EditSourceInfo edit_source_from_json(const JsonValue& value) {
     EditSourceInfo source;
     if (!value.is_object()) return source;
-    source.file_path = value.at("filePath").scalar_text();
+    source.file_path = value.at("filePath").scalar_text_fixed(6);
     source.line = static_cast<int>(value.at("line").number);
     source.column = static_cast<int>(value.at("column").number);
-    source.raw_text_preview = value.at("rawTextPreview").scalar_text();
+    source.raw_text_preview = value.at("rawTextPreview").scalar_text_fixed(6);
     return source;
 }
 
@@ -628,20 +420,20 @@ std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& node
     return hash;
 }
 
-void hydrate_file_structure(MapModel& model, const mini_json::Value& value,
+void hydrate_file_structure(MapModel& model, const JsonValue& value,
                             const std::string& fallback_entry_path) {
     if (value.is_array()) {
         model.file_structure.reserve(value.array.size());
-        for (const mini_json::Value& item : value.array) {
+        for (const JsonValue& item : value.array) {
             if (!item.is_object()) continue;
             FileStructureNode node;
-            node.include_path = item.at("includePath").scalar_text();
-            node.absolute_path = item.at("absolutePath").scalar_text();
+            node.include_path = item.at("includePath").scalar_text_fixed(6);
+            node.absolute_path = item.at("absolutePath").scalar_text_fixed(6);
             node.display_name = display_name_from_path(node.absolute_path);
             if (node.display_name.empty()) node.display_name = node.include_path;
 
             if (!model.file_structure.empty()) {
-                const mini_json::Value& parent = item.at("parentIndex");
+                const JsonValue& parent = item.at("parentIndex");
                 if (parent.is_number() && std::isfinite(parent.number) && parent.number >= 0.0 &&
                     parent.number < static_cast<double>(model.file_structure.size())) {
                     node.parent_index = static_cast<size_t>(parent.number);
@@ -687,13 +479,13 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
     std::string json(raw);
     kv_free_string(raw);
     try {
-        auto root = mini_json::Parser(json).parse();
+        auto root = kme::json::parse(json);
         if (!root.at("ok").boolean) {
-            if (error_message) *error_message = root.at("error").scalar_text();
+            if (error_message) *error_message = root.at("error").scalar_text_fixed(6);
             return std::nullopt;
         }
         InspectorTargetMetadata info;
-        info.row_kind = root.at("rowKind").scalar_text();
+        info.row_kind = root.at("rowKind").scalar_text_fixed(6);
         if (!expected_row_kind.empty() && info.row_kind != expected_row_kind) {
             if (error_message) {
                 *error_message = "edit target row kind changed from " +
@@ -703,14 +495,14 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
         }
         info.row_index = static_cast<size_t>(std::max(0.0, root.at("rowIndex").number));
         info.elements_for_statement = static_cast<int>(root.at("elementsForStatement").number);
-        info.statement_kind = root.at("statementKind").scalar_text();
-        info.source_hash = root.at("sourceHash").scalar_text();
-        info.expected_source_hash = root.at("expectedSourceHash").scalar_text();
+        info.statement_kind = root.at("statementKind").scalar_text_fixed(6);
+        info.source_hash = root.at("sourceHash").scalar_text_fixed(6);
+        info.expected_source_hash = root.at("expectedSourceHash").scalar_text_fixed(6);
         info.source = edit_source_from_json(root.at("source"));
-        info.raw_statement = root.at("rawText").scalar_text();
-        info.raw_arguments = root.at("rawArguments").scalar_text();
+        info.raw_statement = root.at("rawText").scalar_text_fixed(6);
+        info.raw_arguments = root.at("rawArguments").scalar_text_fixed(6);
         if (row_kind_has_source_distance_string(info.row_kind)) {
-            info.source_distance_string = root.at("distanceExpression").scalar_text();
+            info.source_distance_string = root.at("distanceExpression").scalar_text_fixed(6);
         }
         info.distance_value = root.at("distanceValue").number;
         return info;
@@ -721,58 +513,56 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
 }
 
 DistanceResolutionRequest distance_resolution_request_from_json(
-    const mini_json::Value& value) {
+    const JsonValue& value) {
     DistanceResolutionRequest request;
     if (!value.is_object()) return request;
-    request.resolution_key = value.at("resolutionKey").scalar_text();
-    request.reason = value.at("reason").scalar_text();
-    request.source_file = value.at("sourceFile").scalar_text();
-    request.target_distance = value.at("targetDistance").scalar_text();
-    request.variable_name = value.at("variableName").scalar_text();
-    request.suggested_expression = value.at("suggestedExpression").scalar_text();
-    request.insertion_preview = value.at("insertionPreview").scalar_text();
+    request.resolution_key = value.at("resolutionKey").scalar_text_fixed(6);
+    request.reason = value.at("reason").scalar_text_fixed(6);
+    request.source_file = value.at("sourceFile").scalar_text_fixed(6);
+    request.target_distance = value.at("targetDistance").scalar_text_fixed(6);
+    request.variable_name = value.at("variableName").scalar_text_fixed(6);
+    request.suggested_expression = value.at("suggestedExpression").scalar_text_fixed(6);
+    request.insertion_preview = value.at("insertionPreview").scalar_text_fixed(6);
     request.can_confirm_reuse = value.at("canConfirmReuse").boolean;
 
-    const mini_json::Value& include_stack = value.at("includeStack");
+    const JsonValue& include_stack = value.at("includeStack");
     if (include_stack.is_array()) {
         request.include_stack.reserve(include_stack.array.size());
-        for (const mini_json::Value& item : include_stack.array) {
-            request.include_stack.push_back(item.scalar_text());
+        for (const JsonValue& item : include_stack.array) {
+            request.include_stack.push_back(item.scalar_text_fixed(6));
         }
     }
-    const mini_json::Value& section = value.at("sourceSection");
+    const JsonValue& section = value.at("sourceSection");
     if (section.is_object()) {
-        request.source_section_first_line = static_cast<int>(section.at("firstLine").number);
-        request.source_section_last_line = static_cast<int>(section.at("lastLine").number);
-        request.source_section_direction = section.at("direction").scalar_text();
+        request.source_section_direction = section.at("direction").scalar_text_fixed(6);
     }
-    const mini_json::Value& boundaries = value.at("allowedBoundaries");
+    const JsonValue& boundaries = value.at("allowedBoundaries");
     if (boundaries.is_array()) {
         request.allowed_boundaries.reserve(boundaries.array.size());
-        for (const mini_json::Value& item : boundaries.array) {
+        for (const JsonValue& item : boundaries.array) {
             if (!item.is_object()) continue;
             DistanceResolutionBoundary boundary;
-            boundary.token = item.at("token").scalar_text();
+            boundary.token = item.at("token").scalar_text_fixed(6);
             boundary.line = static_cast<int>(item.at("line").number);
             boundary.column = static_cast<int>(item.at("column").number);
             boundary.recommended = item.at("recommended").boolean;
             if (!boundary.token.empty()) request.allowed_boundaries.push_back(std::move(boundary));
         }
     }
-    const mini_json::Value& affected_edit_ids = value.at("affectedEditIds");
+    const JsonValue& affected_edit_ids = value.at("affectedEditIds");
     if (affected_edit_ids.is_array()) {
         request.affected_edit_ids.reserve(affected_edit_ids.array.size());
-        for (const mini_json::Value& item : affected_edit_ids.array) {
-            std::string edit_id = item.scalar_text();
+        for (const JsonValue& item : affected_edit_ids.array) {
+            std::string edit_id = item.scalar_text_fixed(6);
             if (!edit_id.empty()) request.affected_edit_ids.push_back(std::move(edit_id));
         }
     }
     return request;
 }
 
-void apply_table_row_edit_metadata(TableRow& row, const mini_json::Value& value) {
+void apply_table_row_edit_metadata(TableRow& row, const JsonValue& value) {
     if (!value.is_object()) return;
-    row.edit_id = value.at("editId").scalar_text();
+    row.edit_id = value.at("editId").scalar_text_fixed(6);
     row.source = edit_source_from_json(value.at("source"));
 }
 
@@ -795,7 +585,7 @@ void wake_main_window() {
 }
 
 App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout)
-    : device_(device), settings_(std::move(settings)), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled),
+    : device_(device), dpi_scale_(dpi_scale), viewports_enabled_(viewports_enabled), settings_(std::move(settings)),
       has_saved_layout_(has_saved_layout) {
     g_app = this;
     kv_set_log_callback(&App::log_callback);
@@ -864,21 +654,28 @@ void App::refresh_preview_cache_info() {
     const std::string report(report_text);
     kv_free_string(report_text);
 
-    const mini_json::Value root = mini_json::Parser(report).parse();
-    const mini_json::Value& ok = root.at("ok");
-    const mini_json::Value& available = root.at("available");
-    if (!root.is_object() || ok.type != mini_json::Value::Type::Bool ||
-        available.type != mini_json::Value::Type::Bool) {
+    std::string parse_error;
+    std::optional<JsonValue> parsed = parse_json_report(report, parse_error);
+    if (!parsed) {
+        preview_cache_ui_.error = "invalid preview cache info response: " + parse_error;
+        add_log("[error]gui_kme.cpp: " + preview_cache_ui_.error);
+        return;
+    }
+    const JsonValue& root = *parsed;
+    const JsonValue& ok = root.at("ok");
+    const JsonValue& available = root.at("available");
+    if (!root.is_object() || ok.type != JsonValue::Type::Bool ||
+        available.type != JsonValue::Type::Bool) {
         preview_cache_ui_.error = "invalid preview cache info response";
         return;
     }
 
     preview_cache_ui_.query_ok = ok.boolean;
     preview_cache_ui_.available = available.boolean;
-    preview_cache_ui_.directory = root.at("directory").scalar_text();
+    preview_cache_ui_.directory = root.at("directory").scalar_text_fixed(6);
     preview_cache_ui_.file_count = nonnegative_json_integer(root.at("fileCount"));
     preview_cache_ui_.total_bytes = nonnegative_json_integer(root.at("totalBytes"));
-    preview_cache_ui_.error = root.at("error").scalar_text();
+    preview_cache_ui_.error = root.at("error").scalar_text_fixed(6);
 }
 
 void App::clear_preview_cache() {
@@ -894,11 +691,20 @@ void App::clear_preview_cache() {
     const std::string report(report_text);
     kv_free_string(report_text);
 
-    const mini_json::Value root = mini_json::Parser(report).parse();
-    const mini_json::Value& ok = root.at("ok");
-    const mini_json::Value& available = root.at("available");
-    if (!root.is_object() || ok.type != mini_json::Value::Type::Bool ||
-        available.type != mini_json::Value::Type::Bool) {
+    std::string parse_error;
+    std::optional<JsonValue> parsed = parse_json_report(report, parse_error);
+    if (!parsed) {
+        preview_cache_ui_.query_ok = false;
+        preview_cache_ui_.error = "invalid preview cache clear response: " + parse_error;
+        preview_cache_ui_.status_key = "status.cache_clear_failed";
+        add_log("[error]gui_kme.cpp: " + preview_cache_ui_.error);
+        return;
+    }
+    const JsonValue& root = *parsed;
+    const JsonValue& ok = root.at("ok");
+    const JsonValue& available = root.at("available");
+    if (!root.is_object() || ok.type != JsonValue::Type::Bool ||
+        available.type != JsonValue::Type::Bool) {
         preview_cache_ui_.query_ok = false;
         preview_cache_ui_.error = "invalid preview cache clear response";
         preview_cache_ui_.status_key = "status.cache_clear_failed";
@@ -908,12 +714,12 @@ void App::clear_preview_cache() {
 
     preview_cache_ui_.query_ok = true;
     preview_cache_ui_.available = available.boolean;
-    preview_cache_ui_.directory = root.at("directory").scalar_text();
+    preview_cache_ui_.directory = root.at("directory").scalar_text_fixed(6);
     preview_cache_ui_.file_count = nonnegative_json_integer(root.at("fileCount"));
     preview_cache_ui_.total_bytes = nonnegative_json_integer(root.at("totalBytes"));
     preview_cache_ui_.removed_file_count = nonnegative_json_integer(root.at("removedFileCount"));
     preview_cache_ui_.removed_bytes = nonnegative_json_integer(root.at("removedBytes"));
-    preview_cache_ui_.error = root.at("error").scalar_text();
+    preview_cache_ui_.error = root.at("error").scalar_text_fixed(6);
     preview_cache_ui_.status_key = ok.boolean
         ? "status.cache_clear_success"
         : "status.cache_clear_failed";
@@ -1397,7 +1203,6 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
     }
     out.preview_cache_hit = kv_get_preview_cache_hit(handle) != 0;
     if (has_cp) {
-        auto geometry_started_at = std::chrono::steady_clock::now();
         if (!kv_generate_geometry(handle, unit_distance, 1, cp_start, cp_end, cp_step)) {
             const char* err = kv_get_last_error();
             out.error = err ? err : "geometry failed";
@@ -1405,8 +1210,6 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
             kv_free(handle);
             return out;
         }
-        out.geometry_seconds = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - geometry_started_at).count();
     }
     try {
         auto model_started_at = std::chrono::steady_clock::now();
@@ -1448,7 +1251,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         std::chrono::steady_clock::now() - json_started_at).count();
 
     auto parse_started_at = std::chrono::steady_clock::now();
-    auto root = mini_json::Parser(json).parse();
+    auto root = kme::json::parse(json);
     double json_parse_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - parse_started_at).count();
 
@@ -1463,11 +1266,11 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         for (const auto& item : edit_files.array) {
             if (!item.is_object()) continue;
             EditSourceFileInfo file;
-            file.file_path = item.at("filePath").scalar_text();
-            file.display_path = item.at("displayPath").scalar_text();
-            file.encoding = item.at("encoding").scalar_text();
-            file.newline = item.at("newline").scalar_text();
-            file.source_hash = item.at("sourceHash").scalar_text();
+            file.file_path = item.at("filePath").scalar_text_fixed(6);
+            file.display_path = item.at("displayPath").scalar_text_fixed(6);
+            file.encoding = item.at("encoding").scalar_text_fixed(6);
+            file.newline = item.at("newline").scalar_text_fixed(6);
+            file.source_hash = item.at("sourceHash").scalar_text_fixed(6);
             file.byte_length = static_cast<size_t>(std::max(0.0, item.at("byteLength").number));
             model.edit_files.push_back(std::move(file));
         }
@@ -1478,12 +1281,12 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         for (const auto& item : edit_statements.array) {
             if (!item.is_object()) continue;
             EditStatementInfo statement;
-            statement.edit_id = item.at("editId").scalar_text();
-            statement.statement_kind = item.at("statementKind").scalar_text();
+            statement.edit_id = item.at("editId").scalar_text_fixed(6);
+            statement.statement_kind = item.at("statementKind").scalar_text_fixed(6);
             statement.source = edit_source_from_json(item.at("source"));
-            statement.raw_text = item.at("rawText").scalar_text();
-            statement.raw_arguments = item.at("rawArguments").scalar_text();
-            statement.distance_expression = item.at("distanceExpression").scalar_text();
+            statement.raw_text = item.at("rawText").scalar_text_fixed(6);
+            statement.raw_arguments = item.at("rawArguments").scalar_text_fixed(6);
+            statement.distance_expression = item.at("distanceExpression").scalar_text_fixed(6);
             statement.distance_value = item.at("distanceValue").number;
             statement.global_order = static_cast<int>(item.at("globalOrder").number);
             model.edit_statements.push_back(std::move(statement));
@@ -1495,10 +1298,10 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         for (const auto& item : edit_elements.array) {
             if (!item.is_object()) continue;
             EditElementInfo element;
-            element.edit_id = item.at("editId").scalar_text();
-            element.row_kind = item.at("rowKind").scalar_text();
+            element.edit_id = item.at("editId").scalar_text_fixed(6);
+            element.row_kind = item.at("rowKind").scalar_text_fixed(6);
             element.row_index = static_cast<size_t>(std::max(0.0, item.at("rowIndex").number));
-            element.source_file_path = item.at("sourceFilePath").scalar_text();
+            element.source_file_path = item.at("sourceFilePath").scalar_text_fixed(6);
             element.global_order = static_cast<int>(item.at("globalOrder").number);
             model.edit_elements.push_back(std::move(element));
         }
@@ -1518,11 +1321,6 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         for (const auto& v : cps.array) if (v.is_number()) model.controlpoints.push_back(v.number);
     }
 
-    const auto& cp_default = root.at("cp_defaultrange");
-    if (cp_default.is_array() && cp_default.array.size() >= 2) {
-        model.cp_default_min = cp_default.array[0].number;
-        model.cp_default_max = cp_default.array[1].number;
-    }
     const auto& cp_arb = root.at("cp_arbdistribution");
     if (cp_arb.is_array() && cp_arb.array.size() >= 3) {
         model.cp_arb[0] = cp_arb.array[0].number;
@@ -1549,7 +1347,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     const auto& ranges = other.at("cp_range");
     if (order.is_array()) {
         for (size_t i = 0; i < order.array.size(); ++i) {
-            std::string key = order.array[i].scalar_text();
+            std::string key = order.array[i].scalar_text_fixed(6);
             OtherTrack t;
             t.key = key;
             t.color = palette[i % (sizeof(palette) / sizeof(palette[0]))];
@@ -1577,14 +1375,14 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         for (const auto& row : own_track.array) {
             TrackEvent e;
             e.distance = row.at("distance").number;
-            e.key = row.at("key").scalar_text();
-            e.flag = row.at("flag").scalar_text();
+            e.key = row.at("key").scalar_text_fixed(6);
+            e.flag = row.at("flag").scalar_text_fixed(6);
             const auto& val = row.at("value");
             if (val.is_number()) {
                 e.value_number = true;
                 e.number = val.number;
             } else {
-                e.text = val.scalar_text();
+                e.text = val.scalar_text_fixed(6);
             }
             model.own_events.push_back(std::move(e));
         }
@@ -1609,7 +1407,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     const auto& names = station.at("stationkey");
     if (names.is_object()) {
         for (const auto& entry : names.object) {
-            model.station_names[entry.first] = entry.second.scalar_text();
+            model.station_names[entry.first] = entry.second.scalar_text_fixed(6);
         }
     }
     if (positions.is_array()) {
@@ -1618,7 +1416,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
             if (!item.is_array() || item.array.size() < 2) continue;
             Station s;
             s.distance = item.array[0].number;
-            s.key = item.array[1].scalar_text();
+            s.key = item.array[1].scalar_text_fixed(6);
             auto station_name = model.station_names.find(s.key);
             if (station_name != model.station_names.end()) s.name = station_name->second;
             if (s.name.empty()) s.name = s.key;
@@ -1635,7 +1433,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         }
     }
 
-    auto make_table_rows = [](const mini_json::Value& array) {
+    auto make_table_rows = [](const JsonValue& array) {
         std::vector<TableRow> rows;
         if (!array.is_array()) return rows;
         for (const auto& v : array.array) {
@@ -1662,14 +1460,14 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         for (const auto& item : signal_aspects.array) {
             if (!item.is_object()) continue;
             TableRow row;
-            row.cells["signalAspectKey"] = item.at("signalAspectKey").scalar_text();
+            row.cells["signalAspectKey"] = item.at("signalAspectKey").scalar_text_fixed(6);
             const auto& structure_keys = item.at("structureKeys");
             size_t structure_key_count = 0;
             if (structure_keys.is_array()) {
                 structure_key_count = structure_keys.array.size();
                 for (size_t i = 0; i < structure_keys.array.size(); ++i) {
                     row.cells["structureKey" + std::to_string(i + 1)] =
-                        structure_keys.array[i].scalar_text();
+                        structure_keys.array[i].scalar_text_fixed(6);
                 }
             }
             row.cells["_structureKeyCount"] = std::to_string(structure_key_count);
@@ -1718,16 +1516,16 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     if (station_puts.is_array()) {
         for (const auto& item : station_puts.array) {
             if (!item.is_object()) continue;
-            std::string key = item.at("stationKey").scalar_text();
+            std::string key = item.at("stationKey").scalar_text_fixed(6);
             double distance = item.at("distance").number;
             TableRow row;
             row.cells["_distance"] = format_double(distance);
-            row.cells["_order"] = item.at("order").scalar_text();
+            row.cells["_order"] = item.at("order").scalar_text_fixed(6);
             row.cells["dist"] = format_double(distance - model.distance_origin, 0);
             row.cells["posKey"] = key;
-            row.cells["door"] = item.at("door").scalar_text();
-            row.cells["margin1"] = item.at("margin1").scalar_text();
-            row.cells["margin2"] = item.at("margin2").scalar_text();
+            row.cells["door"] = item.at("door").scalar_text_fixed(6);
+            row.cells["margin1"] = item.at("margin1").scalar_text_fixed(6);
+            row.cells["margin2"] = item.at("margin2").scalar_text_fixed(6);
             apply_table_row_edit_metadata(row, item);
             append_station_table_row(std::move(row), key);
         }
@@ -1735,7 +1533,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         int order_index = 0;
         for (const auto& item : positions.array) {
             if (!item.is_array() || item.array.size() < 2) continue;
-            std::string key = item.array[1].scalar_text();
+            std::string key = item.array[1].scalar_text_fixed(6);
             double distance = item.array[0].number;
             TableRow row;
             row.cells["_distance"] = format_double(distance);
@@ -2642,39 +2440,39 @@ struct CommittedEditRowState {
     EditSourceInfo source;
 };
 
-bool apply_committed_edit_state(MapModel& model, const mini_json::Value& report,
+bool apply_committed_edit_state(MapModel& model, const JsonValue& report,
                                 std::string& error) {
-    const mini_json::Value& files = report.at("committedFiles");
+    const JsonValue& files = report.at("committedFiles");
     if (!files.is_array() || files.array.empty()) return true;
 
     std::vector<CommittedEditFileState> file_states;
     file_states.reserve(files.array.size());
-    for (const mini_json::Value& item : files.array) {
+    for (const JsonValue& item : files.array) {
         if (!item.is_object()) continue;
         CommittedEditFileState state;
-        state.file_path = item.at("filePath").scalar_text();
-        state.source_hash = item.at("sourceHash").scalar_text();
+        state.file_path = item.at("filePath").scalar_text_fixed(6);
+        state.source_hash = item.at("sourceHash").scalar_text_fixed(6);
         state.byte_length = static_cast<size_t>(std::max(0.0, item.at("byteLength").number));
         file_states.push_back(std::move(state));
     }
 
-    const mini_json::Value& rows = report.at("committedRows");
+    const JsonValue& rows = report.at("committedRows");
     if (!rows.is_array()) {
         error = "edit commit report is missing committed row metadata";
         return false;
     }
     std::map<std::string, std::vector<CommittedEditRowState>> rows_by_kind;
-    for (const mini_json::Value& item : rows.array) {
+    for (const JsonValue& item : rows.array) {
         if (!item.is_object()) continue;
         CommittedEditRowState state;
-        state.row_kind = item.at("rowKind").scalar_text();
-        const mini_json::Value& row_index = item.at("rowIndex");
+        state.row_kind = item.at("rowKind").scalar_text_fixed(6);
+        const JsonValue& row_index = item.at("rowIndex");
         if (!row_index.is_number() || !std::isfinite(row_index.number) || row_index.number < 0.0) {
             error = "edit commit report contains an invalid row index";
             return false;
         }
         state.row_index = static_cast<size_t>(row_index.number);
-        state.edit_id = item.at("editId").scalar_text();
+        state.edit_id = item.at("editId").scalar_text_fixed(6);
         state.source = edit_source_from_json(item.at("source"));
         if (mutable_inspector_rows_for_kind(model, state.row_kind)) {
             rows_by_kind[state.row_kind].push_back(std::move(state));
@@ -2759,7 +2557,7 @@ bool apply_committed_edit_report_to_model(MapModel& model,
                                           std::string& error_message) {
     error_message.clear();
     try {
-        const mini_json::Value report = mini_json::Parser(report_json).parse();
+        const JsonValue report = kme::json::parse(report_json);
         if (!report.at("ok").boolean) {
             error_message = "edit commit report is not successful";
             return false;
@@ -2780,7 +2578,7 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
     if (resolution_requests) resolution_requests->clear();
     bool ok = false;
     try {
-        auto report = mini_json::Parser(report_text).parse();
+        auto report = kme::json::parse(report_text);
         ok = report.at("ok").boolean;
         const auto& requests = report.at("resolutionRequests");
         if (resolution_requests && requests.is_array()) {
@@ -2795,13 +2593,13 @@ bool App::parse_and_log_edit_report(const std::string& report_text,
         const auto& warnings = report.at("warnings");
         if (warnings.is_array()) {
             for (const auto& item : warnings.array) {
-                add_log("[warn]gui_kme.cpp: " + item.scalar_text());
+                add_log("[warn]gui_kme.cpp: " + item.scalar_text_fixed(6));
             }
         }
         const auto& errors = report.at("blockingErrors");
         if (errors.is_array()) {
             for (const auto& item : errors.array) {
-                add_log("[error]gui_kme.cpp: " + item.scalar_text());
+                add_log("[error]gui_kme.cpp: " + item.scalar_text_fixed(6));
             }
         }
         const int updates = static_cast<int>(report.at("updateCount").number);
@@ -3471,7 +3269,8 @@ void App::save_history() {
     }
 }
 
-void App::touch_recent_map(const std::string& path) {
+void App::upsert_recent_map(const std::string& path,
+                            const std::optional<BackgroundHistory>& background) {
     std::string stored_path = normalized_storage_path(path);
     std::string key = normalized_path_key(stored_path);
     if (key.empty()) return;
@@ -3491,10 +3290,15 @@ void App::touch_recent_map(const std::string& path) {
             kept.push_back(entry);
         }
     }
+    if (background) selected.background = *background;
     kept.insert(kept.begin(), std::move(selected));
     if (kept.size() > kMaxRecentMaps) kept.resize(kMaxRecentMaps);
     recent_maps_ = std::move(kept);
     save_history();
+}
+
+void App::touch_recent_map(const std::string& path) {
+    upsert_recent_map(path, std::nullopt);
 }
 
 BackgroundHistory App::current_background_history() const {
@@ -3514,30 +3318,7 @@ BackgroundHistory App::current_background_history() const {
 void App::save_current_background_to_history() {
     if (file_path_.empty()) return;
     if (bg_image_.path.empty()) return;
-    std::string stored_path = normalized_storage_path(file_path_);
-    std::string key = normalized_path_key(stored_path);
-    if (key.empty()) return;
-
-    RecentMapEntry selected;
-    selected.path = stored_path;
-    std::vector<RecentMapEntry> kept;
-    bool found = false;
-    for (const auto& entry : recent_maps_) {
-        if (normalized_path_key(entry.path) == key) {
-            if (!found) {
-                selected = entry;
-                selected.path = stored_path;
-                found = true;
-            }
-        } else {
-            kept.push_back(entry);
-        }
-    }
-    selected.background = current_background_history();
-    kept.insert(kept.begin(), std::move(selected));
-    if (kept.size() > kMaxRecentMaps) kept.resize(kMaxRecentMaps);
-    recent_maps_ = std::move(kept);
-    save_history();
+    upsert_recent_map(file_path_, current_background_history());
 }
 
 void App::sync_pending_background_values() {

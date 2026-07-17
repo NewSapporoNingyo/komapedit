@@ -5,11 +5,14 @@
  * The GUI uses Dear ImGui and ImPlot; see THIRD_PARTY_NOTICES.md.
  */
 
+#ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
+#endif
 
 #include "kme.h"
 #include "canvas3D.h"
 #include "debug_headless.h"
+#include "json.h"
 #include "maploader.h"
 #include "touch_input.h"
 
@@ -22,6 +25,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -38,6 +42,7 @@
 #include <sstream>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #ifndef NDEBUG
@@ -84,47 +89,136 @@ double angle_distance(double a, double b) {
     return std::abs(std::atan2(std::sin(a - b), std::cos(a - b)));
 }
 
+const std::string* take_option_value(const std::vector<std::string>& args, size_t& index,
+                                     std::string_view option, const char* requirement,
+                                     std::string& error) {
+    if (index + 1 >= args.size()) {
+        error.assign(option.data(), option.size());
+        error += " requires ";
+        error += requirement;
+        return nullptr;
+    }
+    return &args[++index];
+}
+
+bool parse_integer_option(const std::vector<std::string>& args, size_t& index,
+                          std::string_view option, long minimum, long maximum,
+                          const char* invalid_message, int& destination,
+                          std::string& error) {
+    const std::string* text = take_option_value(args, index, option, "a number", error);
+    if (!text) return false;
+    char* end = nullptr;
+    long parsed = std::strtol(text->c_str(), &end, 10);
+    if (!end || *end != '\0' || parsed < minimum || parsed > maximum) {
+        error = invalid_message;
+        return false;
+    }
+    destination = static_cast<int>(parsed);
+    return true;
+}
+
+template <typename Validator>
+bool parse_double_option(const std::vector<std::string>& args, size_t& index,
+                         std::string_view option, const char* requirement,
+                         const char* invalid_message, double& destination,
+                         std::string& error, Validator&& valid) {
+    const std::string* text = take_option_value(args, index, option, requirement, error);
+    if (!text) return false;
+    char* end = nullptr;
+    double parsed = std::strtod(text->c_str(), &end);
+    if (!end || *end != '\0' || !valid(parsed)) {
+        error = invalid_message;
+        return false;
+    }
+    destination = parsed;
+    return true;
+}
+
+struct FrameTimingStats {
+    double average_ms = 0.0;
+    double minimum_ms = 0.0;
+    double p95_ms = 0.0;
+    double maximum_ms = 0.0;
+    double p95_fps = 0.0;
+};
+
+FrameTimingStats calculate_frame_timing_stats(const std::vector<double>& frame_ms) {
+    FrameTimingStats stats;
+    if (frame_ms.empty()) return stats;
+    std::vector<double> sorted_ms = frame_ms;
+    std::sort(sorted_ms.begin(), sorted_ms.end());
+    double sum_ms = 0.0;
+    for (double value : frame_ms) sum_ms += value;
+    const size_t p95_index = std::min(
+        static_cast<size_t>(std::ceil(0.95 * static_cast<double>(sorted_ms.size()))) - 1,
+        sorted_ms.size() - 1);
+    stats.average_ms = sum_ms / static_cast<double>(frame_ms.size());
+    stats.minimum_ms = sorted_ms.front();
+    stats.p95_ms = sorted_ms[p95_index];
+    stats.maximum_ms = sorted_ms.back();
+    stats.p95_fps = stats.p95_ms > 0.0 ? 1000.0 / stats.p95_ms : 0.0;
+    return stats;
+}
+
+std::array<size_t, 22> plan_data_size_summary(const PlanData& data) {
+    return {
+        data.own.size(),
+        data.stations.size(),
+        data.speedlimits.size(),
+        data.structure_markers.size(),
+        data.repeater_markers.size(),
+        data.signal_markers.size(),
+        data.beacon_markers.size(),
+        data.pretrain_markers.size(),
+        data.other_train_stop_markers.size(),
+        data.other_train_paths.size(),
+        data.irregularity_markers.size(),
+        data.map_sound_markers.size(),
+        data.map_sound_3d_markers.size(),
+        data.rolling_noise_markers.size(),
+        data.flange_noise_markers.size(),
+        data.joint_noise_markers.size(),
+        data.background_markers.size(),
+        data.adhesion_markers.size(),
+        data.cab_illuminance_markers.size(),
+        data.fog_markers.size(),
+        data.curve_sections.size(),
+        data.transition_sections.size(),
+    };
+}
+
+bool plan_data_summary_matches(const PlanData& left, const PlanData& right) {
+    return plan_data_size_summary(left) == plan_data_size_summary(right) &&
+        left.origin_angle == right.origin_angle &&
+        left.xmin == right.xmin && left.ymin == right.ymin &&
+        left.xmax == right.xmax && left.ymax == right.ymax;
+}
+
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
         const std::string& arg = args[i];
         if (arg == "--headless-load-map" || arg == "--headless-load") {
             options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
         } else if (arg == "--repeat") {
-            if (i + 1 >= args.size()) {
-                options.error = "--repeat requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            long parsed = std::strtol(args[++i].c_str(), &end, 10);
-            if (!end || *end != '\0' || parsed <= 0 || parsed > 10000) {
-                options.error = "--repeat must be between 1 and 10000";
-                return options;
-            }
-            options.repeat = static_cast<int>(parsed);
+            if (!parse_integer_option(args, i, arg, 1, 10000,
+                                      "--repeat must be between 1 and 10000",
+                                      options.repeat, options.error)) return options;
         } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive number";
-                return options;
-            }
-            options.unit_distance = parsed;
         } else if (arg == "--ir-json-mode") {
-            if (i + 1 >= args.size()) {
-                options.error = "--ir-json-mode requires compact or full";
-                return options;
-            }
-            std::string mode = args[++i];
+            const std::string* value = take_option_value(
+                args, i, arg, "compact or full", options.error);
+            if (!value) return options;
+            const std::string& mode = *value;
             if (mode == "compact") {
                 options.full_ir_json = false;
             } else if (mode == "full") {
@@ -134,11 +228,10 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
                 return options;
             }
         } else if (arg == "--load-profile") {
-            if (i + 1 >= args.size()) {
-                options.error = "--load-profile requires preview or edit";
-                return options;
-            }
-            std::string profile = args[++i];
+            const std::string* value = take_option_value(
+                args, i, arg, "preview or edit", options.error);
+            if (!value) return options;
+            const std::string& profile = *value;
             if (profile == "preview" || profile == "edit") {
                 options.load_profile = profile;
             } else {
@@ -146,11 +239,10 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
                 return options;
             }
         } else if (arg == "--cache-mode") {
-            if (i + 1 >= args.size()) {
-                options.error = "--cache-mode requires off, read, or rebuild";
-                return options;
-            }
-            std::string mode = args[++i];
+            const std::string* value = take_option_value(
+                args, i, arg, "off, read, or rebuild", options.error);
+            if (!value) return options;
+            const std::string& mode = *value;
             if (mode == "off" || mode == "read" || mode == "rebuild") {
                 options.cache_mode = mode;
             } else {
@@ -158,11 +250,9 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
                 return options;
             }
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         }
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
@@ -177,65 +267,38 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
         const std::string& arg = args[i];
         if (arg == "--debug-headless-plan-bench") {
             options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
         } else if (arg == "--frames") {
-            if (i + 1 >= args.size()) {
-                options.error = "--frames requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            long parsed = std::strtol(args[++i].c_str(), &end, 10);
-            if (!end || *end != '\0' || parsed <= 0 || parsed > 100000) {
-                options.error = "--frames must be between 1 and 100000";
-                return options;
-            }
-            options.frames = static_cast<int>(parsed);
+            if (!parse_integer_option(args, i, arg, 1, 100000,
+                                      "--frames must be between 1 and 100000",
+                                      options.frames, options.error)) return options;
         } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive number";
-                return options;
-            }
-            options.unit_distance = parsed;
         } else if (arg == "--pan-pixels") {
-            if (i + 1 >= args.size()) {
-                options.error = "--pan-pixels requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--pan-pixels must be a finite number",
+                                     options.pan_pixels, options.error,
+                                     [](double value) { return std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || !std::isfinite(parsed)) {
-                options.error = "--pan-pixels must be a finite number";
-                return options;
-            }
-            options.pan_pixels = parsed;
         } else if (arg == "--max-frame-ms") {
-            if (i + 1 >= args.size()) {
-                options.error = "--max-frame-ms requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--max-frame-ms must be a positive number",
+                                     options.max_frame_ms, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--max-frame-ms must be a positive number";
-                return options;
-            }
-            options.max_frame_ms = parsed;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         } else if (arg == "--profile-stages") {
             options.profile_stages = true;
         }
@@ -252,77 +315,45 @@ HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const s
         const std::string& arg = args[i];
         if (arg == "--debug-headless-scene3d-bench") {
             options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
         } else if (arg == "--frames") {
-            if (i + 1 >= args.size()) {
-                options.error = "--frames requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            long parsed = std::strtol(args[++i].c_str(), &end, 10);
-            if (!end || *end != '\0' || parsed <= 0 || parsed > 100000) {
-                options.error = "--frames must be between 1 and 100000";
-                return options;
-            }
-            options.frames = static_cast<int>(parsed);
+            if (!parse_integer_option(args, i, arg, 1, 100000,
+                                      "--frames must be between 1 and 100000",
+                                      options.frames, options.error)) return options;
         } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive number";
-                return options;
-            }
-            options.unit_distance = parsed;
         } else if (arg == "--max-frame-ms") {
-            if (i + 1 >= args.size()) {
-                options.error = "--max-frame-ms requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--max-frame-ms must be a positive number",
+                                     options.max_frame_ms, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--max-frame-ms must be a positive number";
-                return options;
-            }
-            options.max_frame_ms = parsed;
         } else if (arg == "--window-back-m") {
-            if (i + 1 >= args.size()) {
-                options.error = "--window-back-m requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--window-back-m must be a non-negative number",
+                                     options.window_back_m, options.error,
+                                     [](double value) { return value >= 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed < 0.0 || !std::isfinite(parsed)) {
-                options.error = "--window-back-m must be a non-negative number";
-                return options;
-            }
-            options.window_back_m = parsed;
         } else if (arg == "--window-forward-m") {
-            if (i + 1 >= args.size()) {
-                options.error = "--window-forward-m requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--window-forward-m must be a positive number",
+                                     options.window_forward_m, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--window-forward-m must be a positive number";
-                return options;
-            }
-            options.window_forward_m = parsed;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         }
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
@@ -337,42 +368,30 @@ HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(
         const std::string& arg = args[i];
         if (arg == "--debug-headless-scene-camera-transfer") {
             options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
         } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive number";
-                return options;
-            }
-            options.unit_distance = parsed;
         } else if (arg == "--camera-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--camera-distance requires a number";
-                return options;
-            }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || !std::isfinite(parsed)) {
-                options.error = "--camera-distance must be a finite number";
+            double parsed = 0.0;
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--camera-distance must be a finite number",
+                                     parsed, options.error,
+                                     [](double value) { return std::isfinite(value); })) {
                 return options;
             }
             options.has_camera_distance = true;
             options.camera_distance = parsed;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         }
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
@@ -387,29 +406,20 @@ HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vect
         const std::string& arg = args[i];
         if (arg == "--debug-headless-source-anchors") {
             options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
         } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a number";
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive number";
-                return options;
-            }
-            options.unit_distance = parsed;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         }
     }
     if (options.requested && options.path.empty() && options.error.empty()) {
@@ -424,29 +434,20 @@ HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::ve
         const std::string& arg = args[i];
         if (arg == "--debug-headless-edit-roundtrip") {
             options.requested = true;
-            if (i + 1 >= args.size()) {
-                options.error = arg + " requires a map path";
-                return options;
-            }
-            options.path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
         } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a value";
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be positive",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0; })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0) {
-                options.error = "--unit-distance must be positive";
-                return options;
-            }
-            options.unit_distance = parsed;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         }
     }
     if (options.requested && options.path.empty()) {
@@ -469,23 +470,16 @@ HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
                 options.path = args[++i];
             }
         } else if (arg == "--unit-distance") {
-            if (i + 1 >= args.size()) {
-                options.error = "--unit-distance requires a value";
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-            char* end = nullptr;
-            double parsed = std::strtod(args[++i].c_str(), &end);
-            if (!end || *end != '\0' || parsed <= 0.0 || !std::isfinite(parsed)) {
-                options.error = "--unit-distance must be a positive finite number";
-                return options;
-            }
-            options.unit_distance = parsed;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         } else if (arg == "--commit") {
             options.commit = true;
         }
@@ -501,11 +495,9 @@ HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std
         if (arg == "--debug-headless-table-find") {
             options.requested = true;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         }
     }
     return options;
@@ -518,11 +510,9 @@ HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<s
         if (arg == "--debug-headless-touch-input") {
             options.requested = true;
         } else if (arg == "--headless-output") {
-            if (i + 1 >= args.size()) {
-                options.error = "--headless-output requires a path";
-                return options;
-            }
-            options.output_path = args[++i];
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
         }
     }
     return options;
@@ -968,18 +958,7 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     }
 
     auto append_json_string = [](std::ostringstream& json, const std::string& text) {
-        json << '"';
-        for (unsigned char ch : text) {
-            switch (ch) {
-                case '\\': json << "\\\\"; break;
-                case '"': json << "\\\""; break;
-                case '\n': json << "\\n"; break;
-                case '\r': json << "\\r"; break;
-                case '\t': json << "\\t"; break;
-                default: json << static_cast<char>(ch); break;
-            }
-        }
-        json << '"';
+        kme::json::append_string(json, text);
     };
     auto source_hash_for_path = [](const MapModel& model, const std::string& file_path) {
         for (const EditSourceFileInfo& file : model.edit_files) {
@@ -1488,222 +1467,7 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
 
 namespace distance_batch_headless {
 
-struct JsonValue {
-    enum class Type { Null, Bool, Number, String, Array, Object };
-    Type type = Type::Null;
-    bool boolean = false;
-    double number = 0.0;
-    std::string string;
-    std::vector<JsonValue> array;
-    std::map<std::string, JsonValue> object;
-
-    bool is_bool() const { return type == Type::Bool; }
-    bool is_number() const { return type == Type::Number; }
-    bool is_string() const { return type == Type::String; }
-    bool is_array() const { return type == Type::Array; }
-    bool is_object() const { return type == Type::Object; }
-
-    const JsonValue& at(const std::string& key) const {
-        static const JsonValue empty;
-        auto it = object.find(key);
-        return it == object.end() ? empty : it->second;
-    }
-
-    std::string scalar_text() const {
-        if (is_string()) return string;
-        if (is_bool()) return boolean ? "true" : "false";
-        if (is_number()) {
-            std::ostringstream out;
-            out << std::setprecision(17) << number;
-            return out.str();
-        }
-        return {};
-    }
-};
-
-class JsonParser {
-public:
-    explicit JsonParser(const std::string& source) : source_(source) {}
-
-    JsonValue parse() {
-        skip_ws();
-        JsonValue value = parse_value();
-        skip_ws();
-        if (!eof()) throw std::runtime_error("unexpected trailing JSON data");
-        return value;
-    }
-
-private:
-    const std::string& source_;
-    size_t position_ = 0;
-
-    bool eof() const { return position_ >= source_.size(); }
-    char peek() const { return eof() ? '\0' : source_[position_]; }
-    char get() { return eof() ? '\0' : source_[position_++]; }
-
-    void skip_ws() {
-        while (!eof() && std::isspace(static_cast<unsigned char>(peek()))) ++position_;
-    }
-
-    [[noreturn]] void fail(const char* message) const {
-        throw std::runtime_error(std::string("invalid JSON: ") + message);
-    }
-
-    static void append_utf8(std::string& out, unsigned codepoint) {
-        if (codepoint <= 0x7f) {
-            out.push_back(static_cast<char>(codepoint));
-        } else if (codepoint <= 0x7ff) {
-            out.push_back(static_cast<char>(0xc0 | ((codepoint >> 6) & 0x1f)));
-            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-        } else if (codepoint <= 0xffff) {
-            out.push_back(static_cast<char>(0xe0 | ((codepoint >> 12) & 0x0f)));
-            out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
-            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-        } else {
-            out.push_back(static_cast<char>(0xf0 | ((codepoint >> 18) & 0x07)));
-            out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f)));
-            out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
-            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-        }
-    }
-
-    unsigned parse_hex4() {
-        unsigned value = 0;
-        for (int i = 0; i < 4; ++i) {
-            const char ch = get();
-            value <<= 4;
-            if (ch >= '0' && ch <= '9') value |= static_cast<unsigned>(ch - '0');
-            else if (ch >= 'a' && ch <= 'f') value |= static_cast<unsigned>(ch - 'a' + 10);
-            else if (ch >= 'A' && ch <= 'F') value |= static_cast<unsigned>(ch - 'A' + 10);
-            else fail("bad unicode escape");
-        }
-        return value;
-    }
-
-    JsonValue parse_string() {
-        if (get() != '"') fail("expected string");
-        JsonValue value;
-        value.type = JsonValue::Type::String;
-        while (!eof()) {
-            const char ch = get();
-            if (ch == '"') return value;
-            if (ch != '\\') {
-                value.string.push_back(ch);
-                continue;
-            }
-            const char escaped = get();
-            switch (escaped) {
-                case '"': value.string.push_back('"'); break;
-                case '\\': value.string.push_back('\\'); break;
-                case '/': value.string.push_back('/'); break;
-                case 'b': value.string.push_back('\b'); break;
-                case 'f': value.string.push_back('\f'); break;
-                case 'n': value.string.push_back('\n'); break;
-                case 'r': value.string.push_back('\r'); break;
-                case 't': value.string.push_back('\t'); break;
-                case 'u': append_utf8(value.string, parse_hex4()); break;
-                default: fail("bad string escape");
-            }
-        }
-        fail("unterminated string");
-    }
-
-    JsonValue parse_number() {
-        const size_t begin = position_;
-        if (peek() == '-') ++position_;
-        while (std::isdigit(static_cast<unsigned char>(peek()))) ++position_;
-        if (peek() == '.') {
-            ++position_;
-            while (std::isdigit(static_cast<unsigned char>(peek()))) ++position_;
-        }
-        if (peek() == 'e' || peek() == 'E') {
-            ++position_;
-            if (peek() == '+' || peek() == '-') ++position_;
-            while (std::isdigit(static_cast<unsigned char>(peek()))) ++position_;
-        }
-        char* end = nullptr;
-        JsonValue value;
-        value.type = JsonValue::Type::Number;
-        value.number = std::strtod(source_.c_str() + begin, &end);
-        if (!end || static_cast<size_t>(end - source_.c_str()) != position_) fail("bad number");
-        return value;
-    }
-
-    JsonValue parse_array() {
-        JsonValue value;
-        value.type = JsonValue::Type::Array;
-        get();
-        skip_ws();
-        if (peek() == ']') {
-            get();
-            return value;
-        }
-        while (true) {
-            value.array.push_back(parse_value());
-            skip_ws();
-            const char separator = get();
-            if (separator == ']') return value;
-            if (separator != ',') fail("expected array separator");
-            skip_ws();
-        }
-    }
-
-    JsonValue parse_object() {
-        JsonValue value;
-        value.type = JsonValue::Type::Object;
-        get();
-        skip_ws();
-        if (peek() == '}') {
-            get();
-            return value;
-        }
-        while (true) {
-            if (peek() != '"') fail("expected object key");
-            JsonValue key = parse_string();
-            skip_ws();
-            if (get() != ':') fail("expected object colon");
-            skip_ws();
-            value.object.emplace(std::move(key.string), parse_value());
-            skip_ws();
-            const char separator = get();
-            if (separator == '}') return value;
-            if (separator != ',') fail("expected object separator");
-            skip_ws();
-        }
-    }
-
-    JsonValue parse_literal(const char* literal, JsonValue value) {
-        while (*literal) {
-            if (get() != *literal++) fail("bad literal");
-        }
-        return value;
-    }
-
-    JsonValue parse_value() {
-        skip_ws();
-        const char ch = peek();
-        if (ch == '"') return parse_string();
-        if (ch == '[') return parse_array();
-        if (ch == '{') return parse_object();
-        if (ch == '-' || std::isdigit(static_cast<unsigned char>(ch))) return parse_number();
-        if (source_.compare(position_, 4, "true") == 0) {
-            JsonValue value;
-            value.type = JsonValue::Type::Bool;
-            value.boolean = true;
-            return parse_literal("true", std::move(value));
-        }
-        if (source_.compare(position_, 5, "false") == 0) {
-            JsonValue value;
-            value.type = JsonValue::Type::Bool;
-            value.boolean = false;
-            return parse_literal("false", std::move(value));
-        }
-        if (source_.compare(position_, 4, "null") == 0) {
-            return parse_literal("null", JsonValue{});
-        }
-        fail("unexpected value");
-    }
-};
+using JsonValue = kme::json::Value;
 
 struct MapHandle {
     void* value = nullptr;
@@ -1751,29 +1515,7 @@ std::string direct_apply_json(void* handle, const std::string& changes) {
 }
 
 std::string json_escape(const std::string& text) {
-    std::ostringstream out;
-    out << '"';
-    for (unsigned char ch : text) {
-        switch (ch) {
-            case '"': out << "\\\""; break;
-            case '\\': out << "\\\\"; break;
-            case '\b': out << "\\b"; break;
-            case '\f': out << "\\f"; break;
-            case '\n': out << "\\n"; break;
-            case '\r': out << "\\r"; break;
-            case '\t': out << "\\t"; break;
-            default:
-                if (ch < 0x20) {
-                    out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                        << static_cast<int>(ch) << std::dec << std::setfill(' ');
-                } else {
-                    out << static_cast<char>(ch);
-                }
-                break;
-        }
-    }
-    out << '"';
-    return out.str();
+    return kme::json::quote(text);
 }
 
 std::string edit_number(double value) {
@@ -1953,7 +1695,7 @@ std::string build_single_field_update_json(const StructureEdit& edit,
 }
 
 std::vector<StructureEdit> structure_rows_from_ir(const std::string& ir_json) {
-    JsonValue root = JsonParser(ir_json).parse();
+    JsonValue root = kme::json::parse(ir_json);
     const JsonValue& rows = root.at("structure").at("data");
     if (!rows.is_array()) throw std::runtime_error("IR has no structure.data array");
     std::vector<StructureEdit> result;
@@ -1981,7 +1723,7 @@ std::vector<StructureEdit> structure_rows_from_ir(const std::string& ir_json) {
 }
 
 std::vector<StructureEdit> station_put_rows_from_ir(const std::string& ir_json) {
-    JsonValue root = JsonParser(ir_json).parse();
+    JsonValue root = kme::json::parse(ir_json);
     const JsonValue& rows = root.at("station").at("put");
     if (!rows.is_array()) throw std::runtime_error("IR has no station.put array");
     std::vector<StructureEdit> result;
@@ -2058,7 +1800,7 @@ bool choose_candidate_target(void* handle, StructureEdit& candidate,
         try {
             ++dry_run_attempts;
             report_text = dry_run_json(handle, build_changes_json({trial}));
-            JsonValue report = JsonParser(report_text).parse();
+            JsonValue report = kme::json::parse(report_text);
             int score = 99;
             if (candidate_has_recommended_resolution(report, trial, score) && score < best_score) {
                 best = std::move(trial);
@@ -2361,7 +2103,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 edit.target_distance = 150.0;
                 edit.increment = static_cast<int>(edit.target_distance - edit.old_distance);
             }
-            JsonValue report = JsonParser(dry_run_json(handle.value, build_changes_json(edits))).parse();
+            JsonValue report = kme::json::parse(dry_run_json(handle.value, build_changes_json(edits)));
             ReportFacts summary = report_facts(report);
             facts.increasing_target_match_count = summary.target_distance_match_count;
             facts.increasing_same_target_one_block =
@@ -2400,8 +2142,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 throw std::runtime_error(error);
             }
             target.target_distance = 100.0;
-            JsonValue report = JsonParser(
-                dry_run_json(handle.value, build_changes_json({target}))).parse();
+            JsonValue report = kme::json::parse(
+                dry_run_json(handle.value, build_changes_json({target})));
             ReportFacts summary = report_facts(report);
             facts.terminal_unique_target_reused =
                 summary.ok && summary.full_reparse_ok &&
@@ -2447,8 +2189,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 edit.target_distance = edit.old_distance + 5.0;
             }
 
-            JsonValue partial = JsonParser(dry_run_json(
-                handle.value, build_changes_json({edits.front()}))).parse();
+            JsonValue partial = kme::json::parse(dry_run_json(
+                handle.value, build_changes_json({edits.front()})));
             ReportFacts partial_summary = report_facts(partial);
             facts.repeated_include_partial_blocked =
                 !partial_summary.ok && partial_summary.resolution_request_count > 0 &&
@@ -2456,8 +2198,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 report_has_reason(
                     partial, "physicalSourceHasIncompatibleIncludeContexts");
 
-            JsonValue complete = JsonParser(
-                dry_run_json(handle.value, build_changes_json(edits))).parse();
+            JsonValue complete = kme::json::parse(
+                dry_run_json(handle.value, build_changes_json(edits)));
             ReportFacts complete_summary = report_facts(complete);
             facts.repeated_include_all_targets_coalesced =
                 complete_summary.ok && complete_summary.full_reparse_ok &&
@@ -2484,7 +2226,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             std::string error;
             if (!populate_target_info(handle.value, edits.front(), error)) throw std::runtime_error(error);
             edits.front().target_distance = 75.0;
-            JsonValue report = JsonParser(dry_run_json(handle.value, build_changes_json(edits))).parse();
+            JsonValue report = kme::json::parse(dry_run_json(handle.value, build_changes_json(edits)));
             ReportFacts summary = report_facts(report);
             facts.unordered_resolution_count = static_cast<int>(summary.resolution_request_count);
             facts.unordered_requires_resolution_without_patch =
@@ -2511,7 +2253,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             std::string error;
             if (!populate_target_info(handle.value, edits.front(), error)) throw std::runtime_error(error);
             edits.front().target_distance = 150.0;
-            JsonValue initial = JsonParser(dry_run_json(handle.value, build_changes_json(edits))).parse();
+            JsonValue initial = kme::json::parse(dry_run_json(handle.value, build_changes_json(edits)));
             std::map<std::string, ResolutionChoice> resolutions;
             int expression_count = 0;
             if (!report_has_reason(initial, "variableHasMultipleContextValues") ||
@@ -2520,8 +2262,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                     ? "environment fixture did not request the expected variable resolution"
                     : error);
             }
-            JsonValue forced = JsonParser(
-                dry_run_json(handle.value, build_changes_json(edits, resolutions))).parse();
+            JsonValue forced = kme::json::parse(
+                dry_run_json(handle.value, build_changes_json(edits, resolutions)));
             ReportFacts summary = report_facts(forced);
             facts.environment_blocking_error_count = static_cast<int>(summary.blocking_error_count);
             facts.variable_environment_change_blocked =
@@ -2555,8 +2297,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 throw std::runtime_error(error);
             }
             target.target_distance = 100.0;
-            JsonValue report = JsonParser(
-                dry_run_json(handle.value, build_changes_json({target}))).parse();
+            JsonValue report = kme::json::parse(
+                dry_run_json(handle.value, build_changes_json({target})));
             ReportFacts summary = report_facts(report);
             facts.derived_state_blocking_error_count =
                 static_cast<int>(summary.blocking_error_count);
@@ -2606,9 +2348,9 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             }
             JsonValue report;
             try {
-                report = JsonParser(direct_apply_json(
+                report = kme::json::parse(direct_apply_json(
                     handle.value,
-                    build_field_updates_json(edits, "x", {"11", "22"}))).parse();
+                    build_field_updates_json(edits, "x", {"11", "22"})));
             } catch (...) {
                 CloseHandle(locked_child);
                 throw;
@@ -2620,9 +2362,9 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 read_fixture_file(transaction_entry_map) == entry_before &&
                 read_fixture_file(transaction_child_map) == child_before;
 
-            JsonValue success_report = JsonParser(direct_apply_json(
+            JsonValue success_report = kme::json::parse(direct_apply_json(
                 handle.value,
-                build_field_updates_json(edits, "x", {"11", "22"}))).parse();
+                build_field_updates_json(edits, "x", {"11", "22"})));
             ReportFacts success_summary = report_facts(success_report);
             bool transaction_artifacts_remain = false;
             for (const auto& directory_entry :
@@ -2673,8 +2415,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             }
             edits.front().target_distance = 75.0;
 
-            JsonValue section_request = JsonParser(
-                dry_run_json(handle.value, build_changes_json(edits))).parse();
+            JsonValue section_request = kme::json::parse(
+                dry_run_json(handle.value, build_changes_json(edits)));
             if (!report_has_reason(section_request, "ambiguousSourceSection")) {
                 throw std::runtime_error(
                     "staged variable fixture did not first request a source boundary");
@@ -2687,8 +2429,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                     ? "staged variable fixture could not select a parser boundary"
                     : error);
             }
-            JsonValue expression_request = JsonParser(
-                dry_run_json(handle.value, build_changes_json(edits, resolutions))).parse();
+            JsonValue expression_request = kme::json::parse(
+                dry_run_json(handle.value, build_changes_json(edits, resolutions)));
             const bool requested_manual_expression =
                 report_has_reason(expression_request, "variableHasMultipleContextValues") ||
                 report_has_reason(expression_request, "distanceExpressionRequiresManualEdit");
@@ -2707,8 +2449,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 throw std::runtime_error(
                     "staged variable fixture did not inject the numeric distance expression");
             }
-            JsonValue resolved = JsonParser(
-                dry_run_json(handle.value, build_changes_json(edits, resolutions))).parse();
+            JsonValue resolved = kme::json::parse(
+                dry_run_json(handle.value, build_changes_json(edits, resolutions)));
             ReportFacts summary = report_facts(resolved);
             facts.staged_variable_resolution_succeeded =
                 summary.ok && summary.full_reparse_ok &&
@@ -2738,13 +2480,13 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             if (!populate_target_info(handle.value, edits.front(), error)) {
                 throw std::runtime_error(error);
             }
-            JsonValue first_report = JsonParser(direct_apply_json(
+            JsonValue first_report = kme::json::parse(direct_apply_json(
                 handle.value,
-                build_single_field_update_json(edits.front(), "x", "12"))).parse();
+                build_single_field_update_json(edits.front(), "x", "12")));
             ReportFacts first_summary = report_facts(first_report);
             if (first_summary.ok && first_summary.full_reparse_ok) {
                 const std::string first_ir = compact_ir_json(handle.value);
-                JsonValue first_root = JsonParser(first_ir).parse();
+                JsonValue first_root = kme::json::parse(first_ir);
                 std::vector<StructureEdit> first_rows = structure_rows_from_ir(first_ir);
                 const JsonValue& first_data = first_root.at("structure").at("data");
                 const double first_x = first_data.array.empty()
@@ -2755,12 +2497,12 @@ FixtureFacts run_fixture_checks(double unit_distance) {
 
                 if (first_rows.size() == 1 &&
                     populate_target_info(handle.value, first_rows.front(), error)) {
-                    JsonValue second_report = JsonParser(direct_apply_json(
+                    JsonValue second_report = kme::json::parse(direct_apply_json(
                         handle.value,
-                        build_single_field_update_json(first_rows.front(), "x", "13"))).parse();
+                        build_single_field_update_json(first_rows.front(), "x", "13")));
                     ReportFacts second_summary = report_facts(second_report);
                     const std::string second_ir = compact_ir_json(handle.value);
-                    JsonValue second_root = JsonParser(second_ir).parse();
+                    JsonValue second_root = kme::json::parse(second_ir);
                     const JsonValue& second_data = second_root.at("structure").at("data");
                     const double second_x = second_data.array.empty()
                         ? std::numeric_limits<double>::quiet_NaN()
@@ -2969,7 +2711,7 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
 
         std::map<std::string, ResolutionChoice> resolutions;
         std::string final_changes = build_changes_json(facts.selected, resolutions);
-        JsonValue final_report = JsonParser(dry_run_json(handle.value, final_changes)).parse();
+        JsonValue final_report = kme::json::parse(dry_run_json(handle.value, final_changes));
         facts.initial_resolution_request_count = static_cast<int>(
             final_report.at("resolutionRequests").array.size());
         for (const JsonValue& request : final_report.at("resolutionRequests").array) {
@@ -2992,7 +2734,7 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
             }
             ++facts.resolution_round_count;
             final_changes = build_changes_json(facts.selected, resolutions);
-            final_report = JsonParser(dry_run_json(handle.value, final_changes)).parse();
+            final_report = kme::json::parse(dry_run_json(handle.value, final_changes));
         }
 
         ReportFacts dry = report_facts(final_report);
@@ -3006,8 +2748,8 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
         }
         const bool dry_without_wrapper = !preview_has_local_wrapper(final_report, facts.selected);
 
-        JsonValue apply_report = JsonParser(
-            apply_memory_json(handle.value, final_changes)).parse();
+        JsonValue apply_report = kme::json::parse(
+            apply_memory_json(handle.value, final_changes));
         ReportFacts applied = report_facts(apply_report);
         facts.apply_to_memory_ok = applied.ok;
         facts.full_reparse_ok = applied.full_reparse_ok;
@@ -3099,8 +2841,8 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
 
         if (options.commit) {
             facts.commit_attempted = true;
-            JsonValue commit_apply = JsonParser(
-                apply_memory_json(handle.value, final_changes)).parse();
+            JsonValue commit_apply = kme::json::parse(
+                apply_memory_json(handle.value, final_changes));
             ReportFacts reapplied = report_facts(commit_apply);
             if (!reapplied.ok || !reapplied.full_reparse_ok ||
                 reapplied.target_distance_match_count != 5 ||
@@ -3110,7 +2852,7 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
                     ? "pre-commit apply-to-memory validation failed"
                     : detail);
             }
-            JsonValue commit_report = JsonParser(commit_json(handle.value)).parse();
+            JsonValue commit_report = kme::json::parse(commit_json(handle.value));
             ReportFacts committed = report_facts(commit_report);
             facts.commit_ok = committed.ok && committed.full_reparse_ok;
             if (!facts.commit_ok) {
@@ -3211,8 +2953,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         for (const auto& marker : app.other_train_stop_marker_cache_) {
             if (marker) ++other_train_stop_marker_count;
         }
-        for (const OtherTrainPathOverlay& path : app.other_train_path_cache_) {
-            other_train_path_point_count += path.points.size();
+        for (const OtherTrainPathOverlay& overlay : app.other_train_path_cache_) {
+            other_train_path_point_count += overlay.points.size();
         }
         size_t visible_other_count = 0;
         size_t visible_other_rows = 0;
@@ -3294,6 +3036,178 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         *out << "stage=warmup-complete\n";
         out->flush();
 
+        const PlanData& cached_initial = app.current_plan_data();
+        const PlanData uncached_initial = app.build_plan_data(false);
+        const bool uncached_match = plan_data_summary_matches(cached_initial, uncached_initial);
+        const std::uint64_t hit_count_before = app.plan_data_cache_.rebuild_count;
+        app.current_plan_data();
+        const bool stable_hit = app.plan_data_cache_.rebuild_count == hit_count_before;
+
+        const double saved_center_x = app.plan_view_.cx;
+        const double saved_center_y = app.plan_view_.cy;
+        const double saved_rotation = app.plan_view_.rotation;
+        app.plan_view_.pan_by_screen_delta(ImVec2(23.0f, -17.0f));
+        app.plan_view_.rotation += 0.125;
+        const PlanData& panned_data = app.current_plan_data();
+        const bool pan_rotation_hit = app.plan_data_cache_.rebuild_count == hit_count_before &&
+            plan_data_summary_matches(panned_data, uncached_initial);
+        app.plan_view_.cx = saved_center_x;
+        app.plan_view_.cy = saved_center_y;
+        app.plan_view_.rotation = saved_rotation;
+
+        auto validate_marker_toggle = [&](bool& toggle, unsigned bit, auto projection) {
+            const bool original = toggle;
+            toggle = false;
+            app.current_plan_data();
+            const std::uint64_t enabled_count_before = app.plan_data_cache_.rebuild_count;
+            toggle = true;
+            const PlanData& enabled = app.current_plan_data();
+            const size_t enabled_size = projection(enabled).size();
+            const PlanData enabled_uncached = app.build_plan_data(false);
+            bool passed = app.plan_data_cache_.rebuild_count == enabled_count_before + 1 &&
+                (app.plan_data_cache_.marker_visibility_mask & (std::uint32_t{1} << bit)) != 0 &&
+                enabled_size == projection(enabled_uncached).size();
+
+            const std::uint64_t disabled_count_before = app.plan_data_cache_.rebuild_count;
+            toggle = false;
+            const PlanData& disabled = app.current_plan_data();
+            const PlanData disabled_uncached = app.build_plan_data(false);
+            passed = passed &&
+                app.plan_data_cache_.rebuild_count == disabled_count_before + 1 &&
+                (app.plan_data_cache_.marker_visibility_mask & (std::uint32_t{1} << bit)) == 0 &&
+                projection(disabled).empty() &&
+                plan_data_summary_matches(disabled, disabled_uncached);
+            toggle = original;
+            app.current_plan_data();
+            return passed;
+        };
+
+        bool marker_toggles_pass = true;
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_beacon_markers_, 0,
+            [](const PlanData& data) -> const auto& { return data.beacon_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_pretrain_markers_, 1,
+            [](const PlanData& data) -> const auto& { return data.pretrain_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_irregularity_markers_, 2,
+            [](const PlanData& data) -> const auto& { return data.irregularity_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_map_sound_markers_, 3,
+            [](const PlanData& data) -> const auto& { return data.map_sound_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_map_sound_3d_markers_, 4,
+            [](const PlanData& data) -> const auto& { return data.map_sound_3d_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_rolling_noise_markers_, 5,
+            [](const PlanData& data) -> const auto& { return data.rolling_noise_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_flange_noise_markers_, 6,
+            [](const PlanData& data) -> const auto& { return data.flange_noise_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_joint_noise_markers_, 7,
+            [](const PlanData& data) -> const auto& { return data.joint_noise_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_background_markers_, 8,
+            [](const PlanData& data) -> const auto& { return data.background_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_adhesion_markers_, 9,
+            [](const PlanData& data) -> const auto& { return data.adhesion_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_cab_illuminance_markers_, 10,
+            [](const PlanData& data) -> const auto& { return data.cab_illuminance_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_fog_markers_, 11,
+            [](const PlanData& data) -> const auto& { return data.fog_markers; });
+
+        const bool original_curve_visibility = app.show_curve_values_;
+        app.show_curve_values_ = false;
+        app.current_plan_data();
+        const std::uint64_t curve_count_before = app.plan_data_cache_.rebuild_count;
+        app.show_curve_values_ = true;
+        const PlanData& visible_curves = app.current_plan_data();
+        const PlanData visible_curves_uncached = app.build_plan_data(false);
+        bool curve_toggle_pass = app.plan_data_cache_.rebuild_count == curve_count_before + 1 &&
+            app.plan_data_cache_.show_curve_values &&
+            visible_curves.curve_sections.size() == visible_curves_uncached.curve_sections.size() &&
+            visible_curves.transition_sections.size() == visible_curves_uncached.transition_sections.size();
+        app.show_curve_values_ = false;
+        const PlanData& hidden_curves = app.current_plan_data();
+        curve_toggle_pass = curve_toggle_pass && !app.plan_data_cache_.show_curve_values &&
+            hidden_curves.curve_sections.empty() && hidden_curves.transition_sections.empty();
+        app.show_curve_values_ = original_curve_visibility;
+        app.current_plan_data();
+
+        auto validate_row_visibility = [&](auto& visibility, auto cache_snapshot) {
+            if (visibility.empty()) return true;
+            const unsigned char original = visibility.front();
+            const std::uint64_t count_before = app.plan_data_cache_.rebuild_count;
+            visibility.front() = original == 0 ? 1 : 0;
+            const PlanData& cached = app.current_plan_data();
+            const PlanData uncached = app.build_plan_data(false);
+            bool passed = app.plan_data_cache_.rebuild_count == count_before + 1 &&
+                cache_snapshot() == visibility && plan_data_summary_matches(cached, uncached);
+            visibility.front() = original;
+            app.current_plan_data();
+            return passed;
+        };
+        bool row_visibility_pass = true;
+        row_visibility_pass &= validate_row_visibility(
+            app.structure_row_visible_,
+            [&]() -> const auto& { return app.plan_data_cache_.structure_row_visible; });
+        row_visibility_pass &= validate_row_visibility(
+            app.repeater_row_visible_,
+            [&]() -> const auto& { return app.plan_data_cache_.repeater_row_visible; });
+        row_visibility_pass &= validate_row_visibility(
+            app.signal_row_visible_,
+            [&]() -> const auto& { return app.plan_data_cache_.signal_row_visible; });
+        row_visibility_pass &= validate_row_visibility(
+            app.other_train_path_visible_,
+            [&]() -> const auto& { return app.plan_data_cache_.other_train_path_visible; });
+
+        const Mode original_mode = app.mode_;
+        const std::uint64_t mode_count_before = app.plan_data_cache_.rebuild_count;
+        app.mode_ = original_mode == Mode::Pan ? Mode::Measure : Mode::Pan;
+        const PlanData& changed_mode = app.current_plan_data();
+        const PlanData changed_mode_uncached = app.build_plan_data(false);
+        bool keyed_state_pass = app.plan_data_cache_.rebuild_count == mode_count_before + 1 &&
+            plan_data_summary_matches(changed_mode, changed_mode_uncached);
+        app.mode_ = original_mode;
+        app.current_plan_data();
+
+        const double original_scale = app.plan_view_.scale;
+        const std::uint64_t scale_count_before = app.plan_data_cache_.rebuild_count;
+        app.plan_view_.scale = original_scale + 0.125;
+        const PlanData& changed_scale = app.current_plan_data();
+        const PlanData changed_scale_uncached = app.build_plan_data(false);
+        keyed_state_pass = keyed_state_pass &&
+            app.plan_data_cache_.rebuild_count == scale_count_before + 1 &&
+            plan_data_summary_matches(changed_scale, changed_scale_uncached);
+        app.plan_view_.scale = original_scale;
+        app.current_plan_data();
+
+        const std::uint64_t source_revision_before = app.plan_data_source_revision_;
+        app.rebuild_marker_overlay_cache();
+        bool source_revision_pass = !app.plan_data_cache_.valid &&
+            app.plan_data_source_revision_ == source_revision_before + 1;
+        const PlanData& rebuilt_source_data = app.current_plan_data();
+        const PlanData rebuilt_source_uncached = app.build_plan_data(false);
+        source_revision_pass = source_revision_pass &&
+            plan_data_summary_matches(rebuilt_source_data, rebuilt_source_uncached);
+
+        const bool cache_checks_pass = uncached_match && stable_hit && pan_rotation_hit &&
+            marker_toggles_pass && curve_toggle_pass && row_visibility_pass &&
+            keyed_state_pass && source_revision_pass;
+        *out << "plan_cache_checks uncached_match=" << (uncached_match ? "PASS" : "FAIL")
+             << " stable_hit=" << (stable_hit ? "PASS" : "FAIL")
+             << " pan_rotation_hit=" << (pan_rotation_hit ? "PASS" : "FAIL")
+             << " marker_toggles=" << (marker_toggles_pass ? "PASS" : "FAIL")
+             << " curve_toggle=" << (curve_toggle_pass ? "PASS" : "FAIL")
+             << " row_visibility=" << (row_visibility_pass ? "PASS" : "FAIL")
+             << " keyed_state=" << (keyed_state_pass ? "PASS" : "FAIL")
+             << " source_revision=" << (source_revision_pass ? "PASS" : "FAIL")
+             << " result=" << (cache_checks_pass ? "PASS" : "FAIL") << "\n";
+
         std::vector<double> frame_ms;
         frame_ms.reserve(static_cast<size_t>(frames));
         for (int frame = 0; frame < frames; ++frame) {
@@ -3307,29 +3221,15 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         *out << "stage=frames-complete\n";
         out->flush();
 
-        std::vector<double> sorted_ms = frame_ms;
-        std::sort(sorted_ms.begin(), sorted_ms.end());
-        double sum_ms = 0.0;
-        for (double value : frame_ms) sum_ms += value;
-        auto percentile = [&](double p) {
-            if (sorted_ms.empty()) return 0.0;
-            size_t index = static_cast<size_t>(std::ceil(p * static_cast<double>(sorted_ms.size()))) - 1;
-            index = std::min(index, sorted_ms.size() - 1);
-            return sorted_ms[index];
-        };
-        double avg_ms = frame_ms.empty() ? 0.0 : sum_ms / static_cast<double>(frame_ms.size());
-        double min_ms = sorted_ms.empty() ? 0.0 : sorted_ms.front();
-        double p95_ms = percentile(0.95);
-        double max_ms = sorted_ms.empty() ? 0.0 : sorted_ms.back();
-        double p95_fps = p95_ms > 0.0 ? 1000.0 / p95_ms : 0.0;
-        bool pass = p95_ms <= max_frame_ms;
+        const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
+        bool pass = cache_checks_pass && timing.p95_ms <= max_frame_ms;
 
         *out << std::fixed << std::setprecision(3)
-             << "plan_bench avg_ms=" << avg_ms
-             << " min_ms=" << min_ms
-             << " p95_ms=" << p95_ms
-             << " max_ms=" << max_ms
-             << " p95_fps=" << p95_fps
+             << "plan_bench avg_ms=" << timing.average_ms
+             << " min_ms=" << timing.minimum_ms
+             << " p95_ms=" << timing.p95_ms
+             << " max_ms=" << timing.maximum_ms
+             << " p95_fps=" << timing.p95_fps
              << " result=" << (pass ? "PASS" : "FAIL") << "\n";
         if (!pass) exit_code = 3;
     } catch (const std::exception& e) {
@@ -3475,30 +3375,16 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         *out << "stage=frames-complete\n";
         out->flush();
 
-        std::vector<double> sorted_ms = frame_ms;
-        std::sort(sorted_ms.begin(), sorted_ms.end());
-        double sum_ms = 0.0;
-        for (double value : frame_ms) sum_ms += value;
-        auto percentile = [&](double p) {
-            if (sorted_ms.empty()) return 0.0;
-            size_t index = static_cast<size_t>(std::ceil(p * static_cast<double>(sorted_ms.size()))) - 1;
-            index = std::min(index, sorted_ms.size() - 1);
-            return sorted_ms[index];
-        };
-        double avg_ms = frame_ms.empty() ? 0.0 : sum_ms / static_cast<double>(frame_ms.size());
-        double min_ms = sorted_ms.empty() ? 0.0 : sorted_ms.front();
-        double p95_ms = percentile(0.95);
-        double max_ms = sorted_ms.empty() ? 0.0 : sorted_ms.back();
-        double p95_fps = p95_ms > 0.0 ? 1000.0 / p95_ms : 0.0;
-        bool pass = p95_ms <= max_frame_ms;
+        const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
+        bool pass = timing.p95_ms <= max_frame_ms;
         Canvas3DSceneStats final_stats = app.scene_preview_canvas_->scene_stats();
 
         *out << std::fixed << std::setprecision(3)
-             << "scene3d_bench avg_ms=" << avg_ms
-             << " min_ms=" << min_ms
-             << " p95_ms=" << p95_ms
-             << " max_ms=" << max_ms
-             << " p95_fps=" << p95_fps
+             << "scene3d_bench avg_ms=" << timing.average_ms
+             << " min_ms=" << timing.minimum_ms
+             << " p95_ms=" << timing.p95_ms
+             << " max_ms=" << timing.maximum_ms
+             << " p95_fps=" << timing.p95_fps
              << " drawn_instances=" << final_stats.drawn_instance_count
              << " drawn_track_chunks=" << final_stats.drawn_track_chunk_count
              << " result=" << (pass ? "PASS" : "FAIL") << "\n";

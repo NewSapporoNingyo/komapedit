@@ -4,7 +4,9 @@
  * Licensed under Apache License 2.0; see LICENSE and NOTICE.
  */
 
+#ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
+#endif
 
 #include "canvas3D.h"
 
@@ -301,24 +303,6 @@ Mat4 identity() {
     return r;
 }
 
-Mat4 mat4_from_array(const float values[16]) {
-    Mat4 r;
-    for (int row = 0; row < 4; ++row) {
-        for (int col = 0; col < 4; ++col) {
-            r.m[row][col] = values[row * 4 + col];
-        }
-    }
-    return r;
-}
-
-void mat4_to_array(const Mat4& m, float values[16]) {
-    for (int row = 0; row < 4; ++row) {
-        for (int col = 0; col < 4; ++col) {
-            values[row * 4 + col] = m.m[row][col];
-        }
-    }
-}
-
 Mat4 multiply(const Mat4& a, const Mat4& b) {
     Mat4 r;
     for (int row = 0; row < 4; ++row) {
@@ -359,55 +343,6 @@ Mat4 rotation_y(float angle) {
     return r;
 }
 
-Mat4 rotation_z(float angle) {
-    Mat4 r = identity();
-    float c = std::cos(angle);
-    float s = std::sin(angle);
-    r.m[0][0] = c;
-    r.m[0][1] = s;
-    r.m[1][0] = -s;
-    r.m[1][1] = c;
-    return r;
-}
-
-Mat4 structure_basis(Vec3 right, Vec3 up, Vec3 forward, Vec3 origin) {
-    Mat4 r = identity();
-    r.m[0][0] = right.x;
-    r.m[0][1] = right.y;
-    r.m[0][2] = right.z;
-    r.m[1][0] = up.x;
-    r.m[1][1] = up.y;
-    r.m[1][2] = up.z;
-    r.m[2][0] = forward.x;
-    r.m[2][1] = forward.y;
-    r.m[2][2] = forward.z;
-    r.m[3][0] = origin.x;
-    r.m[3][1] = origin.y;
-    r.m[3][2] = origin.z;
-    return r;
-}
-
-Mat4 look_at_lh(Vec3 eye, Vec3 target, Vec3 up) {
-    Vec3 zaxis = normalize(target - eye);
-    Vec3 xaxis = normalize(cross(up, zaxis));
-    Vec3 yaxis = cross(zaxis, xaxis);
-
-    Mat4 r = identity();
-    r.m[0][0] = xaxis.x;
-    r.m[1][0] = xaxis.y;
-    r.m[2][0] = xaxis.z;
-    r.m[3][0] = -dot(xaxis, eye);
-    r.m[0][1] = yaxis.x;
-    r.m[1][1] = yaxis.y;
-    r.m[2][1] = yaxis.z;
-    r.m[3][1] = -dot(yaxis, eye);
-    r.m[0][2] = zaxis.x;
-    r.m[1][2] = zaxis.y;
-    r.m[2][2] = zaxis.z;
-    r.m[3][2] = -dot(zaxis, eye);
-    return r;
-}
-
 Mat4 look_to_bve(Vec3 eye, Vec3 forward, Vec3 up) {
     Vec3 zaxis = normalize(forward);
     Vec3 xaxis = normalize(cross(zaxis, up));
@@ -426,18 +361,6 @@ Mat4 look_to_bve(Vec3 eye, Vec3 forward, Vec3 up) {
     r.m[1][2] = zaxis.y;
     r.m[2][2] = zaxis.z;
     r.m[3][2] = -dot(zaxis, eye);
-    return r;
-}
-
-Mat4 perspective_fov_lh(float fovy, float aspect, float zn, float zf) {
-    Mat4 r;
-    float y_scale = 1.0f / std::tan(fovy * 0.5f);
-    float x_scale = y_scale / std::max(aspect, 0.001f);
-    r.m[0][0] = x_scale;
-    r.m[1][1] = y_scale;
-    r.m[2][2] = zf / (zf - zn);
-    r.m[2][3] = 1.0f;
-    r.m[3][2] = -zn * zf / (zf - zn);
     return r;
 }
 
@@ -932,18 +855,6 @@ Matrix copy_scene_buffer(KvDoubleBuffer buffer) {
     return m;
 }
 
-double scene_matrix_track_tangent(const Matrix& points, size_t row) {
-    if (points.rows < 2 || points.cols < 3) return 0.0;
-    size_t a = row == 0 ? 0 : row - 1;
-    size_t b = row + 1 < points.rows ? row + 1 : row;
-    if (a == b && b + 1 < points.rows) ++b;
-    if (a == b) return 0.0;
-    double dx = points.at(b, 1) - points.at(a, 1);
-    double dy = points.at(b, 2) - points.at(a, 2);
-    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
-    return std::atan2(dy, dx);
-}
-
 Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool has_theta_column) {
     constexpr double default_gauge = 1067.0;
     auto cant_angle = [default_gauge](double cant, double gauge) {
@@ -957,7 +868,7 @@ Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool
     p.x = points.at(row, 2);
     p.z = -points.at(row, 1);
     p.y = points.cols > 3 ? points.at(row, 3) : 0.0;
-    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_matrix_track_tangent(points, row);
+    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : matrix_track_tangent(points, row);
     p.gradient = has_theta_column && points.cols > 6 ? points.at(row, 6) : 0.0;
     if (has_theta_column) {
         double cant = points.cols > 8 ? points.at(row, 8) : 0.0;
@@ -1797,10 +1708,10 @@ private:
             return false;
         }
 
-        api_version_ = reinterpret_cast<MlApiVersionFn>(GetProcAddress(library_, "ml_api_version"));
-        load_model_ = reinterpret_cast<MlLoadModelFn>(GetProcAddress(library_, "ml_load_model"));
-        free_model_ = reinterpret_cast<MlFreeModelFn>(GetProcAddress(library_, "ml_free_model"));
-        get_last_error_ = reinterpret_cast<MlGetLastErrorFn>(GetProcAddress(library_, "ml_get_last_error"));
+        api_version_ = runtime_paths::resolve_dll_function<MlApiVersionFn>(library_, "ml_api_version");
+        load_model_ = runtime_paths::resolve_dll_function<MlLoadModelFn>(library_, "ml_load_model");
+        free_model_ = runtime_paths::resolve_dll_function<MlFreeModelFn>(library_, "ml_free_model");
+        get_last_error_ = runtime_paths::resolve_dll_function<MlGetLastErrorFn>(library_, "ml_get_last_error");
         if (!api_version_ || !load_model_ || !free_model_ || !get_last_error_) {
             error = "model_loader.dll is missing required entry points";
             FreeLibrary(library_);
@@ -4581,11 +4492,6 @@ fail:
         std::string normalized = normalize_scene_track_key(key);
         if (is_scene_own_track_placement_key(normalized)) return own_track_path();
         return other_track_path_for_normalized_key(normalized);
-    }
-
-    bool sample_scene_track(const std::string& key, double distance, Canvas3DTrackPoint& out) const {
-        const Canvas3DTrackPath* path = track_path_for_key(key);
-        return path && sample_track_path(*path, distance, out);
     }
 
     bool sample_scene_placement_track(const std::string& key, double distance, Canvas3DTrackPoint& out) const {

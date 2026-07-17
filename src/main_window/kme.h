@@ -27,7 +27,9 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 struct ID3D11Device;
@@ -122,6 +124,18 @@ struct Matrix {
         return rows == 0 || cols == 0;
     }
 };
+
+inline double matrix_track_tangent(const Matrix& points, size_t row) {
+    if (points.rows < 2 || points.cols < 3) return 0.0;
+    size_t first = row == 0 ? 0 : row - 1;
+    size_t last = row + 1 < points.rows ? row + 1 : row;
+    if (first == last && last + 1 < points.rows) ++last;
+    if (first == last) return 0.0;
+    const double dx = points.at(last, 1) - points.at(first, 1);
+    const double dy = points.at(last, 2) - points.at(first, 2);
+    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
+    return std::atan2(dy, dx);
+}
 
 struct TrackEvent {
     double distance = 0.0;
@@ -226,8 +240,6 @@ struct DistanceResolutionRequest {
     std::string suggested_expression;
     std::string insertion_preview;
     bool can_confirm_reuse = false;
-    int source_section_first_line = 0;
-    int source_section_last_line = 0;
     std::string source_section_direction;
     std::vector<DistanceResolutionBoundary> allowed_boundaries;
     std::vector<std::string> affected_edit_ids;
@@ -442,8 +454,6 @@ struct MapModel {
     double origin_angle = 0.0;
     double default_min = 0.0;
     double default_max = 0.0;
-    double cp_default_min = 0.0;
-    double cp_default_max = 0.0;
     double cp_arb[3] = {0.0, 0.0, 25.0};
     double buffer_copy_seconds = 0.0;
     double ir_json_seconds = 0.0;
@@ -531,13 +541,7 @@ struct PlanSpeed {
     double speed = 0.0;
 };
 
-struct PlanOther {
-    std::string key;
-    std::vector<TrackPoint> points;
-    ImVec4 color;
-};
-
-struct PlanStructureMarker {
+struct PlanMarker {
     double d = 0.0;
     double x = 0.0;
     double y = 0.0;
@@ -546,41 +550,21 @@ struct PlanStructureMarker {
     size_t row_index = 0;
 };
 
-struct PlanRepeaterMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanSignalMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanBeaconMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanPreTrainMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
+using PlanStructureMarker = PlanMarker;
+using PlanRepeaterMarker = PlanMarker;
+using PlanSignalMarker = PlanMarker;
+using PlanBeaconMarker = PlanMarker;
+using PlanPreTrainMarker = PlanMarker;
+using PlanIrregularityMarker = PlanMarker;
+using PlanMapSoundMarker = PlanMarker;
+using PlanMapSound3DMarker = PlanMarker;
+using PlanRollingNoiseMarker = PlanMarker;
+using PlanFlangeNoiseMarker = PlanMarker;
+using PlanJointNoiseMarker = PlanMarker;
+using PlanBackgroundMarker = PlanMarker;
+using PlanAdhesionMarker = PlanMarker;
+using PlanCabIlluminanceMarker = PlanMarker;
+using PlanFogMarker = PlanMarker;
 
 struct PlanOtherTrainStopMarker {
     double d = 0.0;
@@ -593,97 +577,6 @@ struct PlanOtherTrainStopMarker {
     size_t definition_row_index = 0;
     bool reverse_direction = false;
 };
-
-struct PlanIrregularityMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanMapSoundMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanMapSound3DMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanRollingNoiseMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanFlangeNoiseMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanJointNoiseMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanBackgroundMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanAdhesionMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanCabIlluminanceMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
-struct PlanFogMarker {
-    double d = 0.0;
-    double x = 0.0;
-    double y = 0.0;
-    std::string label;
-    std::string edit_id;
-    size_t row_index = 0;
-};
-
 enum class PlanMarkerKind {
     None,
     Structure,
@@ -753,8 +646,6 @@ struct OtherTrainPathOverlay {
     std::vector<TrackPoint> points;
     std::string label;
     size_t definition_row_index = 0;
-    size_t first_stop_row_index = 0;
-    size_t last_stop_row_index = 0;
     double d_min = 0.0;
     double d_max = 0.0;
     bool reverse_direction = false;
@@ -762,7 +653,6 @@ struct OtherTrainPathOverlay {
 
 struct PlanData {
     std::vector<TrackPoint> own;
-    std::vector<PlanOther> other;
     std::vector<PlanStation> stations;
     std::vector<PlanSpeed> speedlimits;
     std::vector<PlanStructureMarker> structure_markers;
@@ -1086,6 +976,10 @@ struct MapElementInspectorRequest {
     int line = 0;
     int column = 0;
     std::map<std::string, std::string> field_values;
+
+    MapElementInspectorRequest() = default;
+    MapElementInspectorRequest(std::string requested_edit_id, std::string requested_row_kind)
+        : edit_id(std::move(requested_edit_id)), row_kind(std::move(requested_row_kind)) {}
 };
 
 struct InspectorTargetMetadata {
@@ -1253,7 +1147,6 @@ private:
         std::chrono::steady_clock::time_point started_at;
         double elapsed_seconds = 0.0;
         double maploader_seconds = 0.0;
-        double geometry_seconds = 0.0;
         double model_build_seconds = 0.0;
     };
     struct LoadModelOptions {
@@ -1448,6 +1341,28 @@ private:
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
     std::vector<unsigned char> signal_row_visible_;
+    struct PlanDataCache {
+        bool valid = false;
+        std::uint64_t source_revision = 0;
+        bool has_model = false;
+        double distance_min = 0.0;
+        double distance_max = 0.0;
+        Mode mode = Mode::Pan;
+        bool fitted = false;
+        double scale = 1.0;
+        bool show_curve_values = false;
+        std::uint32_t marker_visibility_mask = 0;
+        std::vector<unsigned char> structure_row_visible;
+        std::vector<unsigned char> repeater_row_visible;
+        std::vector<unsigned char> signal_row_visible;
+        std::vector<unsigned char> other_train_path_visible;
+        PlanData data;
+#ifndef NDEBUG
+        std::uint64_t rebuild_count = 0;
+#endif
+    };
+    PlanDataCache plan_data_cache_;
+    std::uint64_t plan_data_source_revision_ = 0;
     int structure_list_scroll_row_ = -1;
     int structure_list_highlight_row_ = -1;
     int repeater_list_scroll_row_ = -1;
@@ -1527,7 +1442,7 @@ private:
     std::optional<ImVec2> align_pick2_;
     int pick_slot_ = 0;
 
-    const std::string& tr(const std::string& key) const { return i18n_.get(lang_, key); }
+    const std::string& tr(std::string_view key) const { return i18n_.get(lang_, key); }
 
     static void log_callback(const char* message);
 
@@ -1712,6 +1627,13 @@ private:
     void locate_repeater_row_in_scene_preview(size_t row_index);
     void locate_signal_row_on_plan(size_t row_index);
     void locate_signal_row_in_list(size_t row_index);
+    void locate_standard_marker_on_plan(
+        const std::vector<std::optional<PlanMarker>>& cache,
+        size_t row_index, bool& markers_visible);
+    void locate_standard_marker_in_list(
+        const std::vector<std::optional<PlanMarker>>& cache,
+        size_t row_index, bool& window_visible, bool& focus_window,
+        int& scroll_row, int& highlight_row);
     void locate_beacon_row_on_plan(size_t row_index);
     void locate_beacon_row_in_list(size_t row_index);
     void locate_other_train_stop_row_on_plan(size_t row_index);
@@ -1740,6 +1662,7 @@ private:
 
     double current_plan_origin_angle() const;
     PlanData build_plan_data(bool include_other_tracks = true) const;
+    const PlanData& current_plan_data();
     ProfileData build_profile_data() const;
     std::vector<Section> curve_sections(bool transition) const;
     size_t nearest_own_index(double distance) const;
@@ -1756,6 +1679,8 @@ private:
     void jump_to_distance(double distance);
     void export_csv();
     void save_history();
+    void upsert_recent_map(const std::string& path,
+                           const std::optional<BackgroundHistory>& background);
     void touch_recent_map(const std::string& path);
     void save_current_background_to_history();
     BackgroundHistory current_background_history() const;

@@ -150,21 +150,34 @@ void App::locate_signal_row_in_list(size_t row_index) {
     signal_list_highlight_row_ = static_cast<int>(row_index);
 }
 
+void App::locate_standard_marker_on_plan(
+    const std::vector<std::optional<PlanMarker>>& cache,
+    size_t row_index, bool& markers_visible) {
+    if (row_index >= cache.size() || !cache[row_index]) return;
+    markers_visible = true;
+    focus_plan_at_model_point(cache[row_index]->x, cache[row_index]->y);
+}
+
+void App::locate_standard_marker_in_list(
+    const std::vector<std::optional<PlanMarker>>& cache,
+    size_t row_index, bool& window_visible, bool& focus_window,
+    int& scroll_row, int& highlight_row) {
+    if (row_index >= cache.size() || !cache[row_index]) return;
+    window_visible = true;
+    focus_window = true;
+    scroll_row = static_cast<int>(row_index);
+    highlight_row = static_cast<int>(row_index);
+}
+
 void App::locate_beacon_row_on_plan(size_t row_index) {
-    if (row_index >= beacon_marker_cache_.size() || !beacon_marker_cache_[row_index]) return;
-    show_beacon_markers_ = true;
-    const PlanBeaconMarker& marker = *beacon_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(beacon_marker_cache_, row_index, show_beacon_markers_);
 }
 
 void App::locate_beacon_row_in_list(size_t row_index) {
-    if (row_index >= beacon_marker_cache_.size() || !beacon_marker_cache_[row_index]) return;
-    show_beacons_window_ = true;
-    focus_beacons_next_ = true;
-    beacon_list_scroll_row_ = static_cast<int>(row_index);
-    beacon_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(beacon_marker_cache_, row_index,
+                                   show_beacons_window_, focus_beacons_next_,
+                                   beacon_list_scroll_row_, beacon_list_highlight_row_);
 }
-
 void App::locate_other_train_stop_row_on_plan(size_t row_index) {
     sync_marker_visibility_sizes();
     if (row_index >= other_train_stop_marker_cache_.size() || !other_train_stop_marker_cache_[row_index]) return;
@@ -185,155 +198,112 @@ void App::locate_other_train_stop_row_in_list(size_t row_index) {
 }
 
 void App::locate_irregularity_row_on_plan(size_t row_index) {
-    if (row_index >= irregularity_marker_cache_.size() || !irregularity_marker_cache_[row_index]) return;
-    show_irregularity_markers_ = true;
-    const PlanIrregularityMarker& marker = *irregularity_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(
+        irregularity_marker_cache_, row_index, show_irregularity_markers_);
 }
 
 void App::locate_irregularity_row_in_list(size_t row_index) {
-    if (row_index >= irregularity_marker_cache_.size() || !irregularity_marker_cache_[row_index]) return;
-    show_irregularities_window_ = true;
-    focus_irregularities_next_ = true;
-    irregularity_list_scroll_row_ = static_cast<int>(row_index);
-    irregularity_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(irregularity_marker_cache_, row_index,
+                                   show_irregularities_window_, focus_irregularities_next_,
+                                   irregularity_list_scroll_row_, irregularity_list_highlight_row_);
 }
 
 void App::locate_map_sound_row_on_plan(size_t row_index) {
-    if (row_index >= map_sound_marker_cache_.size() || !map_sound_marker_cache_[row_index]) return;
-    show_map_sound_markers_ = true;
-    const PlanMapSoundMarker& marker = *map_sound_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(map_sound_marker_cache_, row_index, show_map_sound_markers_);
 }
 
 void App::locate_map_sound_row_in_list(size_t row_index) {
-    if (row_index >= map_sound_marker_cache_.size() || !map_sound_marker_cache_[row_index]) return;
-    show_map_sounds_window_ = true;
-    focus_map_sounds_next_ = true;
-    map_sound_list_scroll_row_ = static_cast<int>(row_index);
-    map_sound_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(map_sound_marker_cache_, row_index,
+                                   show_map_sounds_window_, focus_map_sounds_next_,
+                                   map_sound_list_scroll_row_, map_sound_list_highlight_row_);
 }
 
 void App::locate_map_sound_3d_row_on_plan(size_t row_index) {
-    if (row_index >= map_sound_3d_marker_cache_.size() || !map_sound_3d_marker_cache_[row_index]) return;
-    show_map_sound_3d_markers_ = true;
-    const PlanMapSound3DMarker& marker = *map_sound_3d_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(
+        map_sound_3d_marker_cache_, row_index, show_map_sound_3d_markers_);
 }
 
 void App::locate_map_sound_3d_row_in_list(size_t row_index) {
-    if (row_index >= map_sound_3d_marker_cache_.size() || !map_sound_3d_marker_cache_[row_index]) return;
-    show_map_sound_3d_window_ = true;
-    focus_map_sound_3d_next_ = true;
-    map_sound_3d_list_scroll_row_ = static_cast<int>(row_index);
-    map_sound_3d_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(map_sound_3d_marker_cache_, row_index,
+                                   show_map_sound_3d_window_, focus_map_sound_3d_next_,
+                                   map_sound_3d_list_scroll_row_, map_sound_3d_list_highlight_row_);
 }
 
 void App::locate_rolling_noise_row_on_plan(size_t row_index) {
-    if (row_index >= rolling_noise_marker_cache_.size() || !rolling_noise_marker_cache_[row_index]) return;
-    show_rolling_noise_markers_ = true;
-    const PlanRollingNoiseMarker& marker = *rolling_noise_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(
+        rolling_noise_marker_cache_, row_index, show_rolling_noise_markers_);
 }
 
 void App::locate_rolling_noise_row_in_list(size_t row_index) {
-    if (row_index >= rolling_noise_marker_cache_.size() || !rolling_noise_marker_cache_[row_index]) return;
-    show_rolling_noises_window_ = true;
-    focus_rolling_noises_next_ = true;
-    rolling_noise_list_scroll_row_ = static_cast<int>(row_index);
-    rolling_noise_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(rolling_noise_marker_cache_, row_index,
+                                   show_rolling_noises_window_, focus_rolling_noises_next_,
+                                   rolling_noise_list_scroll_row_, rolling_noise_list_highlight_row_);
 }
 
 void App::locate_flange_noise_row_on_plan(size_t row_index) {
-    if (row_index >= flange_noise_marker_cache_.size() || !flange_noise_marker_cache_[row_index]) return;
-    show_flange_noise_markers_ = true;
-    const PlanFlangeNoiseMarker& marker = *flange_noise_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(
+        flange_noise_marker_cache_, row_index, show_flange_noise_markers_);
 }
 
 void App::locate_flange_noise_row_in_list(size_t row_index) {
-    if (row_index >= flange_noise_marker_cache_.size() || !flange_noise_marker_cache_[row_index]) return;
-    show_flange_noises_window_ = true;
-    focus_flange_noises_next_ = true;
-    flange_noise_list_scroll_row_ = static_cast<int>(row_index);
-    flange_noise_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(flange_noise_marker_cache_, row_index,
+                                   show_flange_noises_window_, focus_flange_noises_next_,
+                                   flange_noise_list_scroll_row_, flange_noise_list_highlight_row_);
 }
 
 void App::locate_joint_noise_row_on_plan(size_t row_index) {
-    if (row_index >= joint_noise_marker_cache_.size() || !joint_noise_marker_cache_[row_index]) return;
-    show_joint_noise_markers_ = true;
-    const PlanJointNoiseMarker& marker = *joint_noise_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(
+        joint_noise_marker_cache_, row_index, show_joint_noise_markers_);
 }
 
 void App::locate_joint_noise_row_in_list(size_t row_index) {
-    if (row_index >= joint_noise_marker_cache_.size() || !joint_noise_marker_cache_[row_index]) return;
-    show_joint_noises_window_ = true;
-    focus_joint_noises_next_ = true;
-    joint_noise_list_scroll_row_ = static_cast<int>(row_index);
-    joint_noise_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(joint_noise_marker_cache_, row_index,
+                                   show_joint_noises_window_, focus_joint_noises_next_,
+                                   joint_noise_list_scroll_row_, joint_noise_list_highlight_row_);
 }
 
 void App::locate_background_row_on_plan(size_t row_index) {
-    if (row_index >= background_marker_cache_.size() || !background_marker_cache_[row_index]) return;
-    show_background_markers_ = true;
-    const PlanBackgroundMarker& marker = *background_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(
+        background_marker_cache_, row_index, show_background_markers_);
 }
 
 void App::locate_background_row_in_list(size_t row_index) {
-    if (row_index >= background_marker_cache_.size() || !background_marker_cache_[row_index]) return;
-    show_backgrounds_window_ = true;
-    focus_backgrounds_next_ = true;
-    background_list_scroll_row_ = static_cast<int>(row_index);
-    background_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(background_marker_cache_, row_index,
+                                   show_backgrounds_window_, focus_backgrounds_next_,
+                                   background_list_scroll_row_, background_list_highlight_row_);
 }
 
 void App::locate_adhesion_row_on_plan(size_t row_index) {
-    if (row_index >= adhesion_marker_cache_.size() || !adhesion_marker_cache_[row_index]) return;
-    show_adhesion_markers_ = true;
-    const PlanAdhesionMarker& marker = *adhesion_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(adhesion_marker_cache_, row_index, show_adhesion_markers_);
 }
 
 void App::locate_adhesion_row_in_list(size_t row_index) {
-    if (row_index >= adhesion_marker_cache_.size() || !adhesion_marker_cache_[row_index]) return;
-    show_adhesions_window_ = true;
-    focus_adhesions_next_ = true;
-    adhesion_list_scroll_row_ = static_cast<int>(row_index);
-    adhesion_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(adhesion_marker_cache_, row_index,
+                                   show_adhesions_window_, focus_adhesions_next_,
+                                   adhesion_list_scroll_row_, adhesion_list_highlight_row_);
 }
 
 void App::locate_cab_illuminance_row_on_plan(size_t row_index) {
-    if (row_index >= cab_illuminance_marker_cache_.size() || !cab_illuminance_marker_cache_[row_index]) return;
-    show_cab_illuminance_markers_ = true;
-    const PlanCabIlluminanceMarker& marker = *cab_illuminance_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(
+        cab_illuminance_marker_cache_, row_index, show_cab_illuminance_markers_);
 }
 
 void App::locate_cab_illuminance_row_in_list(size_t row_index) {
-    if (row_index >= cab_illuminance_marker_cache_.size() || !cab_illuminance_marker_cache_[row_index]) return;
-    show_cab_illuminance_window_ = true;
-    focus_cab_illuminance_next_ = true;
-    cab_illuminance_list_scroll_row_ = static_cast<int>(row_index);
-    cab_illuminance_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(cab_illuminance_marker_cache_, row_index,
+                                   show_cab_illuminance_window_, focus_cab_illuminance_next_,
+                                   cab_illuminance_list_scroll_row_,
+                                   cab_illuminance_list_highlight_row_);
 }
 
 void App::locate_fog_row_on_plan(size_t row_index) {
-    if (row_index >= fog_marker_cache_.size() || !fog_marker_cache_[row_index]) return;
-    show_fog_markers_ = true;
-    const PlanFogMarker& marker = *fog_marker_cache_[row_index];
-    focus_plan_at_model_point(marker.x, marker.y);
+    locate_standard_marker_on_plan(fog_marker_cache_, row_index, show_fog_markers_);
 }
 
 void App::locate_fog_row_in_list(size_t row_index) {
-    if (row_index >= fog_marker_cache_.size() || !fog_marker_cache_[row_index]) return;
-    show_fogs_window_ = true;
-    focus_fogs_next_ = true;
-    fog_list_scroll_row_ = static_cast<int>(row_index);
-    fog_list_highlight_row_ = static_cast<int>(row_index);
+    locate_standard_marker_in_list(fog_marker_cache_, row_index,
+                                   show_fogs_window_, focus_fogs_next_,
+                                   fog_list_scroll_row_, fog_list_highlight_row_);
 }
-
 bool App::can_locate_scene_preview_row() const {
     if (!scene_preview_started_ || !scene_preview_canvas_ || !scene_preview_canvas_->has_scene()) return false;
     return !scene_preview_canvas_->scene_stats().loading;

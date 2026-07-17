@@ -8,6 +8,45 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+
+option(KOMAPEDIT_STRICT_WARNINGS
+    "Treat high-value warnings in komapedit-owned targets as errors"
+    OFF
+)
+
+function(komapedit_enable_strict_warnings target)
+    if(NOT KOMAPEDIT_STRICT_WARNINGS)
+        return()
+    endif()
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /WX)
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${target} PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wformat=2
+            -Wduplicated-cond
+            -Wduplicated-branches
+            -Wlogical-op
+            -Wnull-dereference
+            -Wshadow=local
+            -Wredundant-decls
+            -Werror
+        )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${target} PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wformat=2
+            -Wshadow
+            -Werror
+        )
+    endif()
+endfunction()
+
 set(KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set(KOMAPEDIT_DLL_OUTPUT_DIRECTORY "${KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY}/bin")
 set(KOMAPEDIT_SETTINGS_OUTPUT_DIRECTORY "${KOMAPEDIT_RUNTIME_OUTPUT_DIRECTORY}/settings")
@@ -15,6 +54,24 @@ file(MAKE_DIRECTORY
     "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
     "${KOMAPEDIT_SETTINGS_OUTPUT_DIRECTORY}"
 )
+
+add_library(kme_json STATIC
+    src/common/json.cpp
+)
+target_compile_features(kme_json PRIVATE cxx_std_17)
+target_include_directories(kme_json PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/common
+)
+set_target_properties(kme_json PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(BUILD_TESTING)
+    add_executable(kme_json_tests
+        src/common/tests/json_tests.cpp
+    )
+    target_compile_features(kme_json_tests PRIVATE cxx_std_17)
+    target_link_libraries(kme_json_tests PRIVATE kme_json)
+    add_test(NAME kme_json_tests COMMAND kme_json_tests)
+endif()
 
 add_library(kme_text_decoder STATIC
     src/maploader/text_decoder.cpp
@@ -48,7 +105,7 @@ target_compile_features(maploader PRIVATE cxx_std_17)
 target_include_directories(maploader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(maploader PRIVATE kme_text_decoder)
+target_link_libraries(maploader PRIVATE kme_json kme_text_decoder)
 
 if(MINGW)
     target_link_libraries(maploader PRIVATE ole32)
@@ -197,6 +254,7 @@ if(MSVC)
     target_link_options(komapedit PRIVATE /ENTRY:mainCRTStartup)
 endif()
 target_link_libraries(komapedit PRIVATE
+    kme_json
     kme_text_decoder
     implot
     imgui
@@ -211,3 +269,15 @@ target_link_libraries(komapedit PRIVATE
     shell32
     gdi32
 )
+
+foreach(komapedit_owned_target IN ITEMS
+        kme_json
+        kme_json_tests
+        kme_text_decoder
+        maploader
+        model_loader
+        komapedit)
+    if(TARGET ${komapedit_owned_target})
+        komapedit_enable_strict_warnings(${komapedit_owned_target})
+    endif()
+endforeach()
