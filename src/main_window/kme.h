@@ -883,7 +883,6 @@ struct UserSettings {
     CanvasLineWidthSettings canvas_line_widths;
     ImVec4 theme_color = default_theme_color();
     bool edit_mode_enabled = false;
-    bool preview_cache_disabled = false;
     WindowVisibilitySettings window_visibility;
     View2DSettings view_2d;
     View3DSettings view_3d;
@@ -939,12 +938,6 @@ struct MapElementPreviewSnapshot {
     std::string row_kind;
     TableRow row;
     size_t row_index = 0;
-};
-
-enum class PreviewCachePolicy {
-    Disabled,
-    Read,
-    Rebuild,
 };
 
 struct MapElementInspectorState {
@@ -1114,7 +1107,6 @@ private:
     std::string file_path_;
     bool edit_mode_enabled_ = false;
     bool edit_registry_loaded_ = false;
-    bool preview_cache_handle_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
     bool edit_memory_matches_pending_ledger_ = true;
     std::map<std::string, MapElementPreviewSnapshot> original_edit_rows_;
@@ -1135,7 +1127,6 @@ private:
         bool record_history = false;
         bool full_edit_registry = false;
         std::string load_profile = "preview";
-        bool preview_cache_hit = false;
         bool preserve_scene_preview_models = false;
         bool preserve_scene_preview_camera = false;
         bool edit_metadata_only = false;
@@ -1152,7 +1143,6 @@ private:
     struct LoadModelOptions {
         bool full_edit_registry = false;
         std::string load_profile = "preview";
-        PreviewCachePolicy preview_cache_policy = PreviewCachePolicy::Read;
     };
     struct AsyncLoadState {
         std::thread worker;
@@ -1278,18 +1268,6 @@ private:
     bool focus_model_preview_next_ = false;
     bool focus_scene_preview_next_ = false;
     bool focus_plots_next_ = true;
-    struct PreviewCacheUiState {
-        bool query_ok = false;
-        bool available = false;
-        std::string directory;
-        std::uint64_t file_count = 0;
-        std::uint64_t total_bytes = 0;
-        std::uint64_t removed_file_count = 0;
-        std::uint64_t removed_bytes = 0;
-        std::string error;
-        std::string status_key;
-    };
-    PreviewCacheUiState preview_cache_ui_;
     struct PopupState {
         bool range = false;
         bool control_points = false;
@@ -1299,8 +1277,6 @@ private:
         bool ui_settings = false;
         bool canvas_element_sizes = false;
         bool canvas_3d_settings = false;
-        bool cache_management = false;
-        bool clear_preview_cache_confirm = false;
         bool reload_unsaved_confirm = false;
         bool close_unsaved_confirm = false;
     };
@@ -1453,8 +1429,7 @@ private:
     void begin_load(std::string path, bool preserve_settings, bool record_history = false,
                     std::optional<BackgroundHistory> background_to_restore = std::nullopt,
                     bool preserve_scene_preview_models = false,
-                    bool preserve_scene_preview_camera = false,
-                    PreviewCachePolicy preview_cache_policy = PreviewCachePolicy::Read);
+                    bool preserve_scene_preview_camera = false);
     void apply_load_result(LoadResult result);
     void begin_edit_metadata_load();
     void apply_edit_metadata_result(LoadResult result);
@@ -1520,8 +1495,6 @@ private:
     bool save_pending_edits(bool refresh_inspector = true);
     std::string pending_changes_json() const;
     void render_element_inspector();
-    void refresh_preview_cache_info();
-    void clear_preview_cache();
 
     void handle_shortcuts();
     void render_menu();

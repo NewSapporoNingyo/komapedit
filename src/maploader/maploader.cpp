@@ -14,15 +14,12 @@
 #include "c_api.h"
 #include "diagnostics.h"
 
-#include <string_view>
-
 namespace {
 
 using kme::maploader::copy_c_string;
 using kme::maploader::last_error_c_str;
 using kme::maploader::log_error;
 using kme::maploader::log_info;
-using kme::maploader::log_warn;
 using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
 using kme::maploader::set_last_error;
@@ -38,463 +35,12 @@ KvDoubleBuffer make_buffer(const Matrix& m) {
     return {m.data.empty() ? nullptr : m.data.data(), m.rows, m.cols};
 }
 
-struct PreviewCacheEntry {
-    std::string path;
-    std::uint64_t size = 0;
-    std::int64_t mtime = 0;
-};
-
-constexpr char kPreviewCacheMagic[] = "KMPVC002";
-constexpr std::uint32_t kPreviewCacheVersion = 2;
-constexpr const char* kPreviewCacheDirectory = "preview-v2";
-constexpr const char* kPreviewCacheKeyVersion = "loader-preview-cache-v2";
-
-std::mutex g_preview_cache_mutex;
-std::filesystem::path g_preview_cache_base;
-bool g_preview_cache_unavailable_logged = false;
-
-struct PreviewCacheStats {
-    std::uint64_t file_count = 0;
-    std::uint64_t total_bytes = 0;
-    std::string error;
-
-    bool ok() const { return error.empty(); }
-};
-
 MapParseOptions parse_options_from_load_flags(unsigned flags) {
     MapParseOptions options;
     const bool preview = (flags & KV_LOAD_PREVIEW) != 0;
     const bool edit_metadata = (flags & KV_LOAD_EDIT_METADATA) != 0;
     options.collect_edit_metadata = edit_metadata || !preview;
-    options.use_preview_cache = (flags & KV_LOAD_USE_PREVIEW_CACHE) != 0;
-    options.rebuild_preview_cache = (flags & KV_LOAD_REBUILD_PREVIEW_CACHE) != 0;
-    if (options.rebuild_preview_cache) options.use_preview_cache = true;
     return options;
-}
-
-template <typename T>
-void write_pod(std::ostream& out, const T& value) {
-    out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-    if (!out) throw std::runtime_error("failed to write preview cache");
-}
-
-template <typename T>
-T read_pod(std::istream& in) {
-    T value{};
-    in.read(reinterpret_cast<char*>(&value), sizeof(T));
-    if (!in) throw std::runtime_error("failed to read preview cache");
-    return value;
-}
-
-void write_string(std::ostream& out, const std::string& value) {
-    std::uint64_t size = static_cast<std::uint64_t>(value.size());
-    write_pod(out, size);
-    if (size > 0) out.write(value.data(), static_cast<std::streamsize>(size));
-    if (!out) throw std::runtime_error("failed to write preview cache string");
-}
-
-std::string read_string(std::istream& in) {
-    std::uint64_t size = read_pod<std::uint64_t>(in);
-    if (size > 256ull * 1024ull * 1024ull) {
-        throw std::runtime_error("preview cache string is too large");
-    }
-    std::string value(static_cast<size_t>(size), '\0');
-    if (size > 0) in.read(&value[0], static_cast<std::streamsize>(size));
-    if (!in) throw std::runtime_error("failed to read preview cache string");
-    return value;
-}
-
-void write_matrix(std::ostream& out, const Matrix& matrix) {
-    write_pod(out, static_cast<std::uint64_t>(matrix.rows));
-    write_pod(out, static_cast<std::uint64_t>(matrix.cols));
-    write_pod(out, static_cast<std::uint64_t>(matrix.data.size()));
-    if (!matrix.data.empty()) {
-        out.write(reinterpret_cast<const char*>(matrix.data.data()),
-                  static_cast<std::streamsize>(matrix.data.size() * sizeof(double)));
-    }
-    if (!out) throw std::runtime_error("failed to write preview cache matrix");
-}
-
-Matrix read_matrix(std::istream& in) {
-    Matrix matrix;
-    matrix.rows = static_cast<size_t>(read_pod<std::uint64_t>(in));
-    matrix.cols = static_cast<size_t>(read_pod<std::uint64_t>(in));
-    std::uint64_t count = read_pod<std::uint64_t>(in);
-    if (count > 256ull * 1024ull * 1024ull / sizeof(double)) {
-        throw std::runtime_error("preview cache matrix is too large");
-    }
-    if (matrix.rows != 0 && matrix.cols != 0 &&
-        count != static_cast<std::uint64_t>(matrix.rows) * static_cast<std::uint64_t>(matrix.cols)) {
-        throw std::runtime_error("preview cache matrix shape mismatch");
-    }
-    matrix.data.resize(static_cast<size_t>(count));
-    if (count > 0) {
-        in.read(reinterpret_cast<char*>(matrix.data.data()),
-                static_cast<std::streamsize>(matrix.data.size() * sizeof(double)));
-    }
-    if (!in) throw std::runtime_error("failed to read preview cache matrix");
-    return matrix;
-}
-
-std::filesystem::path preview_cache_root_unlocked() {
-    return g_preview_cache_base.empty()
-        ? std::filesystem::path{}
-        : g_preview_cache_base / kPreviewCacheDirectory;
-}
-
-bool is_preview_cache_version_directory(const std::filesystem::path& path) {
-    const std::string name = path.filename().u8string();
-    constexpr std::string_view prefix = "preview-v";
-    return name.size() > prefix.size() &&
-        name.compare(0, prefix.size(), prefix) == 0 &&
-        std::all_of(name.begin() + static_cast<std::ptrdiff_t>(prefix.size()), name.end(),
-                    [](unsigned char ch) { return std::isdigit(ch) != 0; });
-}
-
-void append_cache_error(std::string& target, const std::string& message) {
-    if (message.empty()) return;
-    if (!target.empty()) target += "; ";
-    target += message;
-}
-
-PreviewCacheStats collect_preview_cache_stats_unlocked() {
-    PreviewCacheStats stats;
-    if (g_preview_cache_base.empty()) return stats;
-
-    std::error_code ec;
-    if (!std::filesystem::exists(g_preview_cache_base, ec)) {
-        if (ec) append_cache_error(stats.error, ec.message());
-        return stats;
-    }
-
-    const auto options = std::filesystem::directory_options::skip_permission_denied;
-    std::filesystem::directory_iterator it(g_preview_cache_base, options, ec);
-    const std::filesystem::directory_iterator end;
-    for (; !ec && it != end; it.increment(ec)) {
-        std::error_code status_ec;
-        const std::filesystem::file_status status = it->symlink_status(status_ec);
-        if (status_ec) {
-            append_cache_error(stats.error, status_ec.message());
-            continue;
-        }
-        if (!std::filesystem::is_directory(status) ||
-            !is_preview_cache_version_directory(it->path())) {
-            continue;
-        }
-
-        std::error_code scan_ec;
-        std::filesystem::recursive_directory_iterator child(it->path(), options, scan_ec);
-        const std::filesystem::recursive_directory_iterator child_end;
-        for (; !scan_ec && child != child_end; child.increment(scan_ec)) {
-            std::error_code child_status_ec;
-            const std::filesystem::file_status child_status = child->symlink_status(child_status_ec);
-            if (child_status_ec) {
-                append_cache_error(stats.error, child_status_ec.message());
-                continue;
-            }
-            if (!std::filesystem::is_regular_file(child_status)) continue;
-
-            std::error_code size_ec;
-            const std::uintmax_t size = child->file_size(size_ec);
-            if (size_ec) {
-                append_cache_error(stats.error, size_ec.message());
-                continue;
-            }
-            ++stats.file_count;
-            stats.total_bytes += static_cast<std::uint64_t>(size);
-        }
-        if (scan_ec) append_cache_error(stats.error, scan_ec.message());
-    }
-    if (ec) append_cache_error(stats.error, ec.message());
-    return stats;
-}
-
-std::string preview_cache_info_json_unlocked() {
-    const bool available = !g_preview_cache_base.empty();
-    const PreviewCacheStats stats = collect_preview_cache_stats_unlocked();
-    std::ostringstream out;
-    out << "{\"ok\":" << (stats.ok() ? "true" : "false")
-        << ",\"available\":" << (available ? "true" : "false")
-        << ",\"directory\":";
-    kme::maploader::detail::append_json_string(
-        out, available ? path_to_utf8(g_preview_cache_base) : std::string{});
-    out << ",\"fileCount\":" << stats.file_count
-        << ",\"totalBytes\":" << stats.total_bytes
-        << ",\"error\":";
-    kme::maploader::detail::append_json_string(out, stats.error);
-    out << '}';
-    return out.str();
-}
-
-std::string clear_preview_cache_json_unlocked() {
-    const bool available = !g_preview_cache_base.empty();
-    if (!available) {
-        return "{\"ok\":false,\"available\":false,\"directory\":\"\","
-               "\"removedFileCount\":0,\"removedBytes\":0,\"fileCount\":0,"
-               "\"totalBytes\":0,\"error\":\"preview cache directory is unavailable\"}";
-    }
-
-    const PreviewCacheStats before = collect_preview_cache_stats_unlocked();
-    std::string error = before.error;
-    std::error_code ec;
-    const bool root_exists = std::filesystem::exists(g_preview_cache_base, ec);
-    if (ec) append_cache_error(error, ec.message());
-    if (!ec && root_exists) {
-        const auto options = std::filesystem::directory_options::skip_permission_denied;
-        std::vector<std::filesystem::path> version_directories;
-        std::filesystem::directory_iterator it(g_preview_cache_base, options, ec);
-        const std::filesystem::directory_iterator end;
-        for (; !ec && it != end; it.increment(ec)) {
-            std::error_code status_ec;
-            const std::filesystem::file_status status = it->symlink_status(status_ec);
-            if (status_ec) {
-                append_cache_error(error, status_ec.message());
-                continue;
-            }
-            if (!std::filesystem::is_directory(status) ||
-                !is_preview_cache_version_directory(it->path())) {
-                continue;
-            }
-            version_directories.push_back(it->path());
-        }
-        if (ec) append_cache_error(error, ec.message());
-        for (const std::filesystem::path& directory : version_directories) {
-            std::error_code remove_ec;
-            std::filesystem::remove_all(directory, remove_ec);
-            if (remove_ec) {
-                append_cache_error(error, path_to_utf8(directory) + ": " + remove_ec.message());
-            }
-        }
-    }
-
-    const PreviewCacheStats after = collect_preview_cache_stats_unlocked();
-    append_cache_error(error, after.error);
-    const std::uint64_t removed_file_count = before.file_count >= after.file_count
-        ? before.file_count - after.file_count
-        : 0;
-    const std::uint64_t removed_bytes = before.total_bytes >= after.total_bytes
-        ? before.total_bytes - after.total_bytes
-        : 0;
-
-    std::ostringstream out;
-    out << "{\"ok\":" << (error.empty() ? "true" : "false")
-        << ",\"available\":true,\"directory\":";
-    kme::maploader::detail::append_json_string(out, path_to_utf8(g_preview_cache_base));
-    out << ",\"removedFileCount\":" << removed_file_count
-        << ",\"removedBytes\":" << removed_bytes
-        << ",\"fileCount\":" << after.file_count
-        << ",\"totalBytes\":" << after.total_bytes
-        << ",\"error\":";
-    kme::maploader::detail::append_json_string(out, error);
-    out << '}';
-    return out.str();
-}
-
-bool preview_cache_available_for_load() {
-    bool should_log = false;
-    {
-        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
-        if (!g_preview_cache_base.empty()) return true;
-        if (!g_preview_cache_unavailable_logged) {
-            g_preview_cache_unavailable_logged = true;
-            should_log = true;
-        }
-    }
-    if (should_log) log_warn("preview cache directory unavailable; disk cache disabled");
-    return false;
-}
-
-std::filesystem::path preview_cache_path(const std::filesystem::path& map_path, double unit_distance) {
-    std::ostringstream key;
-    key << kme::maploader::detail::normalized_source_key(
-               kme::maploader::detail::normalized_source_path(map_path))
-        << "|" << std::setprecision(17) << unit_distance
-        << "|" << kPreviewCacheKeyVersion;
-    std::string name = kme::maploader::detail::hex64(
-        kme::maploader::detail::stable_hash64(key.str())) + ".kmpv";
-    return preview_cache_root_unlocked() / name;
-}
-
-bool stat_preview_cache_file(const std::string& utf8_path,
-                             std::uint64_t& size,
-                             std::int64_t& mtime) {
-    std::error_code ec;
-    std::filesystem::path path = path_from_utf8(utf8_path);
-    if (!std::filesystem::is_regular_file(path, ec) || ec) return false;
-    std::uintmax_t file_size = std::filesystem::file_size(path, ec);
-    if (ec) return false;
-    auto file_time = std::filesystem::last_write_time(path, ec);
-    if (ec) return false;
-    size = static_cast<std::uint64_t>(file_size);
-    mtime = static_cast<std::int64_t>(file_time.time_since_epoch().count());
-    return true;
-}
-
-std::vector<PreviewCacheEntry> make_preview_cache_manifest(const MapContext& ctx) {
-    std::vector<PreviewCacheEntry> manifest;
-    std::unordered_set<std::string> seen;
-    for (const auto& source : ctx.source_files) {
-        if (source.file_path.empty()) continue;
-        std::string key = kme::maploader::detail::normalized_source_key(source.file_path);
-        if (!seen.insert(key).second) continue;
-        PreviewCacheEntry entry;
-        entry.path = source.file_path;
-        if (!stat_preview_cache_file(entry.path, entry.size, entry.mtime)) {
-            log_warn("preview cache manifest skipped source file: " + entry.path);
-            continue;
-        }
-        manifest.push_back(std::move(entry));
-    }
-    if (manifest.empty() && !ctx.entry_file_path.empty()) {
-        PreviewCacheEntry entry;
-        entry.path = ctx.entry_file_path;
-        if (stat_preview_cache_file(entry.path, entry.size, entry.mtime)) {
-            manifest.push_back(std::move(entry));
-        } else {
-            log_warn("preview cache manifest could not stat entry file: " + ctx.entry_file_path);
-        }
-    }
-    return manifest;
-}
-
-bool preview_cache_manifest_valid(const std::vector<PreviewCacheEntry>& manifest) {
-    if (manifest.empty()) return false;
-    auto validate_range = [&manifest](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            const PreviewCacheEntry& entry = manifest[i];
-            std::uint64_t size = 0;
-            std::int64_t mtime = 0;
-            if (!stat_preview_cache_file(entry.path, size, mtime)) return false;
-            if (size != entry.size || mtime != entry.mtime) return false;
-        }
-        return true;
-    };
-    if (manifest.size() < 8) return validate_range(0, manifest.size());
-
-    unsigned concurrency = std::thread::hardware_concurrency();
-    if (concurrency == 0) concurrency = 2;
-    size_t worker_count = std::min(manifest.size(), static_cast<size_t>(std::min(concurrency, 8u)));
-    size_t chunk_size = (manifest.size() + worker_count - 1) / worker_count;
-    std::vector<std::future<bool>> futures;
-    futures.reserve(worker_count);
-    for (size_t begin = 0; begin < manifest.size(); begin += chunk_size) {
-        size_t end = std::min(manifest.size(), begin + chunk_size);
-        futures.push_back(std::async(std::launch::async, validate_range, begin, end));
-    }
-    for (auto& future : futures) {
-        if (!future.get()) return false;
-    }
-    return true;
-}
-
-std::unique_ptr<MapContext> try_load_preview_cache(const std::filesystem::path& map_path,
-                                                   double unit_distance) {
-    std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
-    if (g_preview_cache_base.empty()) return nullptr;
-    std::ifstream in(preview_cache_path(map_path, unit_distance), std::ios::binary);
-    if (!in) return nullptr;
-    try {
-        char magic[sizeof(kPreviewCacheMagic) - 1] = {};
-        in.read(magic, sizeof(magic));
-        if (!in || std::memcmp(magic, kPreviewCacheMagic, sizeof(magic)) != 0) return nullptr;
-        std::uint32_t version = read_pod<std::uint32_t>(in);
-        if (version != kPreviewCacheVersion) return nullptr;
-        double cached_unit_distance = read_pod<double>(in);
-        if (cached_unit_distance != unit_distance) return nullptr;
-
-        std::uint64_t manifest_count = read_pod<std::uint64_t>(in);
-        if (manifest_count > 100000) return nullptr;
-        std::vector<PreviewCacheEntry> manifest;
-        manifest.reserve(static_cast<size_t>(manifest_count));
-        for (std::uint64_t i = 0; i < manifest_count; ++i) {
-            PreviewCacheEntry entry;
-            entry.path = read_string(in);
-            entry.size = read_pod<std::uint64_t>(in);
-            entry.mtime = read_pod<std::int64_t>(in);
-            manifest.push_back(std::move(entry));
-        }
-        if (!preview_cache_manifest_valid(manifest)) return nullptr;
-
-        std::string compact_json = read_string(in);
-        Matrix owntrack = read_matrix(in);
-        Matrix curve = read_matrix(in);
-        Matrix structures = read_matrix(in);
-        std::uint64_t other_count = read_pod<std::uint64_t>(in);
-        if (other_count > 100000) return nullptr;
-
-        auto ctx = std::make_unique<MapContext>();
-        ctx->rootpath = std::filesystem::absolute(map_path).parent_path();
-        ctx->rootpath_utf8 = path_to_utf8(ctx->rootpath);
-        ctx->entry_file_path = kme::maploader::detail::normalized_source_path(map_path);
-        ctx->current_file_path = ctx->entry_file_path;
-        ctx->unit_distance = unit_distance;
-        ctx->parse_options.collect_edit_metadata = false;
-        ctx->parse_options.use_preview_cache = true;
-        ctx->preview_cache_hit = true;
-        ctx->preview_snapshot_only = true;
-        ctx->owntrack_buffer = std::move(owntrack);
-        ctx->curveradius_buffer = std::move(curve);
-        ctx->structure_put_buffer = std::move(structures);
-        ctx->ir_json_cache_by_flags[KV_IR_JSON_COMPACT] = std::move(compact_json);
-        for (std::uint64_t i = 0; i < other_count; ++i) {
-            std::string key = read_string(in);
-            Matrix matrix = read_matrix(in);
-            ctx->othertrack_order.push_back(key);
-            ctx->othertrack_buffers[std::move(key)] = std::move(matrix);
-        }
-        log_info(path_to_utf8(map_path.filename()) + " loaded from preview cache");
-        return ctx;
-    } catch (const std::exception& e) {
-        log_warn(std::string("preview cache ignored: ") + e.what());
-        return nullptr;
-    }
-}
-
-void write_preview_cache(const MapContext& ctx, const std::filesystem::path& map_path,
-                         double unit_distance, const std::string& compact_json) {
-    std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
-    if (g_preview_cache_base.empty()) return;
-    try {
-        std::vector<PreviewCacheEntry> manifest = make_preview_cache_manifest(ctx);
-        if (manifest.empty()) return;
-
-        std::filesystem::path path = preview_cache_path(map_path, unit_distance);
-        std::filesystem::create_directories(path.parent_path());
-        std::filesystem::path temp = path;
-        temp += ".tmp";
-        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-        if (!out) throw std::runtime_error("cannot open preview cache for writing");
-
-        out.write(kPreviewCacheMagic, sizeof(kPreviewCacheMagic) - 1);
-        write_pod(out, kPreviewCacheVersion);
-        write_pod(out, unit_distance);
-        write_pod(out, static_cast<std::uint64_t>(manifest.size()));
-        for (const PreviewCacheEntry& entry : manifest) {
-            write_string(out, entry.path);
-            write_pod(out, entry.size);
-            write_pod(out, entry.mtime);
-        }
-        write_string(out, compact_json);
-        write_matrix(out, ctx.owntrack_buffer);
-        write_matrix(out, ctx.curveradius_buffer);
-        write_matrix(out, ctx.structure_put_buffer);
-        write_pod(out, static_cast<std::uint64_t>(ctx.othertrack_order.size()));
-        for (const std::string& key : ctx.othertrack_order) {
-            auto it = ctx.othertrack_buffers.find(key);
-            write_string(out, key);
-            write_matrix(out, it == ctx.othertrack_buffers.end() ? Matrix{} : it->second);
-        }
-        out.close();
-        if (!out) throw std::runtime_error("failed to flush preview cache");
-
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        ec.clear();
-        std::filesystem::rename(temp, path, ec);
-        if (ec) throw std::runtime_error("failed to publish preview cache: " + ec.message());
-    } catch (const std::exception& e) {
-        log_warn(std::string("preview cache write skipped: ") + e.what());
-    }
 }
 
 } // namespace
@@ -503,40 +49,6 @@ extern "C" {
 
 KV_API void kv_set_log_callback(KvLogCallback callback) {
     set_log_callback(callback);
-}
-
-KV_API int kv_set_preview_cache_root(const char* root_utf8) {
-    try {
-        std::filesystem::path root;
-        if (root_utf8 && *root_utf8) root = path_from_utf8(root_utf8).lexically_normal();
-        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
-        g_preview_cache_base = std::move(root);
-        g_preview_cache_unavailable_logged = false;
-        return 1;
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return 0;
-    }
-}
-
-KV_API const char* kv_get_preview_cache_info(void) {
-    try {
-        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
-        return copy_c_string(preview_cache_info_json_unlocked());
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return nullptr;
-    }
-}
-
-KV_API const char* kv_clear_preview_cache(void) {
-    try {
-        std::lock_guard<std::mutex> lock(g_preview_cache_mutex);
-        return copy_c_string(clear_preview_cache_json_unlocked());
-    } catch (const std::exception& e) {
-        set_last_error(e.what());
-        return nullptr;
-    }
 }
 
 KV_API void* kv_load_map(const char* path, double unit_distance) {
@@ -548,31 +60,8 @@ KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned fla
         if (!path) throw std::runtime_error("path is null");
         std::filesystem::path map_path = path_from_utf8(path);
         MapParseOptions options = parse_options_from_load_flags(flags);
-        if (options.use_preview_cache && !preview_cache_available_for_load()) {
-            options.use_preview_cache = false;
-            options.rebuild_preview_cache = false;
-        }
-        if (!options.collect_edit_metadata && options.use_preview_cache && !options.rebuild_preview_cache) {
-            if (auto cached = try_load_preview_cache(map_path, unit_distance)) {
-                return cached.release();
-            }
-            log_info("preview_cache=miss");
-        } else if (!options.collect_edit_metadata && options.rebuild_preview_cache) {
-            log_info("preview_cache=rebuild");
-        } else if (!options.collect_edit_metadata) {
-            log_info("preview_cache=disabled");
-        }
         auto ctx = kme::maploader::detail::parse_map_context(
             map_path, unit_distance, SourceTextOverrides{}, false, {0.0, 0.0, 0.0}, options);
-        if (!options.collect_edit_metadata && options.use_preview_cache) {
-            {
-                kme::maploader::detail::ScopedTimer timer(&ctx->timing.json_seconds);
-                ctx->ir_json_cache_by_flags[KV_IR_JSON_COMPACT] =
-                    kme::maploader::detail::build_ir_json(*ctx, KV_IR_JSON_COMPACT);
-            }
-            write_preview_cache(*ctx, map_path, unit_distance,
-                                ctx->ir_json_cache_by_flags[KV_IR_JSON_COMPACT]);
-        }
         log_info(path_to_utf8(map_path.filename()) +
                  (options.collect_edit_metadata ? " loaded (edit)" : " loaded (preview)"));
         return ctx.release();
@@ -591,9 +80,6 @@ KV_API int kv_generate_geometry(void* handle, double unit_distance,
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
-        if (ctx->preview_snapshot_only) {
-            throw std::runtime_error("preview cache handle cannot regenerate geometry");
-        }
         kme::maploader::detail::generate_geometry(*ctx, unit_distance, has_arbitrary_distribution != 0,
                                                   arbitrary_start, arbitrary_end, arbitrary_step);
         return 1;
@@ -611,9 +97,6 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
-        if (ctx->preview_snapshot_only) {
-            throw std::runtime_error("preview cache handle cannot generate scene geometry");
-        }
         const std::array<double, 5> parameters{
             unit_distance, min_step, max_step, max_angle_degrees, max_chord_error};
         if (ctx->scene_geometry_valid && ctx->scene_geometry_parameters == parameters) {
@@ -746,19 +229,11 @@ KV_API KvDoubleBuffer kv_get_structure_puts(void* handle) {
     return make_buffer(static_cast<MapContext*>(handle)->structure_put_buffer);
 }
 
-KV_API int kv_get_preview_cache_hit(void* handle) {
-    if (!handle) return 0;
-    return static_cast<MapContext*>(handle)->preview_cache_hit ? 1 : 0;
-}
-
 KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
         flags = kme::maploader::detail::normalize_ir_json_flags(flags);
-        if (ctx->preview_snapshot_only && flags != KV_IR_JSON_COMPACT) {
-            throw std::runtime_error("full IR JSON is not available from a preview cache handle");
-        }
         auto& cache = ctx->ir_json_cache_by_flags[flags];
         if (cache.empty()) {
             kme::maploader::detail::ScopedTimer timer(&ctx->timing.json_seconds);

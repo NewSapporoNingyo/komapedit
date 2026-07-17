@@ -135,8 +135,6 @@ struct LoadedText {
 
 struct MapParseOptions {
     bool collect_edit_metadata = true;
-    bool use_preview_cache = false;
-    bool rebuild_preview_cache = false;
 };
 
 struct SourceTextOverride {
@@ -665,8 +663,6 @@ struct MapContext {
     LoadTiming timing;
     bool load_timing_logged = false;
     MapParseOptions parse_options;
-    bool preview_cache_hit = false;
-    bool preview_snapshot_only = false;
     std::vector<FileStructureRecord> file_structure;
     std::vector<SourceFileRecord> source_files;
     std::unordered_map<std::string, size_t> source_file_indices;

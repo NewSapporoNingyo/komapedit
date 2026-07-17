@@ -37,32 +37,15 @@ typedef void (*KvLogCallback)(const char* message);
 
 KV_API void kv_set_log_callback(KvLogCallback callback);
 
-/* Configures the base directory used for preview cache version folders.
-   Pass an empty UTF-8 string to make disk preview caching unavailable. */
-KV_API int kv_set_preview_cache_root(const char* root_utf8);
-
-/* Returns newly allocated UTF-8 JSON describing the configured preview cache.
-   Release the returned string with kv_free_string(). */
-KV_API const char* kv_get_preview_cache_info(void);
-
-/* Removes all recognized preview cache version folders below the configured
-   base directory and returns a newly allocated UTF-8 JSON report. Release the
-   returned string with kv_free_string(). */
-KV_API const char* kv_clear_preview_cache(void);
-
 /* Returns an opaque map handle owned by the caller. Release it exactly once
    with kv_free(), even after retrieving buffers or IR JSON from it. */
 KV_API void* kv_load_map(const char* path, double unit_distance);
 
 #define KV_LOAD_PREVIEW (1u << 0)
 #define KV_LOAD_EDIT_METADATA (1u << 1)
-#define KV_LOAD_USE_PREVIEW_CACHE (1u << 2)
-#define KV_LOAD_REBUILD_PREVIEW_CACHE (1u << 3)
 
 /* Extended loader entry point. KV_LOAD_PREVIEW skips source/edit metadata when
-   KV_LOAD_EDIT_METADATA is not also set. KV_LOAD_USE_PREVIEW_CACHE enables the
-   preview cache. KV_LOAD_REBUILD_PREVIEW_CACHE skips reading an existing preview
-   cache entry and rewrites it after parsing. */
+   KV_LOAD_EDIT_METADATA is not also set. */
 KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned flags);
 
 /* Regenerates geometry in-place for an existing handle and invalidates any
@@ -92,7 +75,6 @@ KV_API size_t kv_get_othertrack_count(void* handle);
 KV_API const char* kv_get_othertrack_key(void* handle, size_t index);
 KV_API KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key);
 KV_API KvDoubleBuffer kv_get_structure_puts(void* handle);
-KV_API int kv_get_preview_cache_hit(void* handle);
 
 #define KV_IR_JSON_COMPACT 0u
 #define KV_IR_JSON_FULL_EDIT (1u << 0)

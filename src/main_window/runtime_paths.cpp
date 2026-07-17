@@ -4,58 +4,11 @@
  * Licensed under Apache License 2.0; see LICENSE and NOTICE.
  */
 
-#ifndef NTDDI_VERSION
-#define NTDDI_VERSION 0x06000000
-#endif
-
 #include "runtime_paths.h"
-
-#include <shlobj.h>
 
 #include <string>
 #include <system_error>
 #include <vector>
-
-namespace {
-
-bool ensure_writable_directory(const std::filesystem::path& directory) {
-    std::error_code ec;
-    std::filesystem::create_directories(directory, ec);
-    if (ec || !std::filesystem::is_directory(directory, ec) || ec) return false;
-
-    for (unsigned attempt = 0; attempt < 4; ++attempt) {
-        const std::wstring probe_name =
-            L".komapedit-cache-probe-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
-            std::to_wstring(GetTickCount()) + L"-" + std::to_wstring(attempt) + L".tmp";
-        const std::filesystem::path probe_path = directory / probe_name;
-        HANDLE probe = CreateFileW(
-            probe_path.c_str(),
-            GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            nullptr,
-            CREATE_NEW,
-            FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
-            nullptr);
-        if (probe != INVALID_HANDLE_VALUE) {
-            CloseHandle(probe);
-            return true;
-        }
-        if (GetLastError() != ERROR_FILE_EXISTS) return false;
-    }
-    return false;
-}
-
-std::filesystem::path local_app_data_directory() {
-    PWSTR value = nullptr;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &value)) || !value) {
-        return {};
-    }
-    std::filesystem::path result(value);
-    CoTaskMemFree(value);
-    return result;
-}
-
-} // namespace
 
 namespace runtime_paths {
 
@@ -89,21 +42,6 @@ const std::filesystem::path& settings_directory() {
         std::error_code ignored;
         std::filesystem::create_directories(result, ignored);
         return result;
-    }();
-    return directory;
-}
-
-const std::filesystem::path& preview_cache_directory() {
-    static const std::filesystem::path directory = [] {
-        const std::filesystem::path portable = executable_directory() / L"cache";
-        if (ensure_writable_directory(portable)) return portable;
-
-        const std::filesystem::path local_app_data = local_app_data_directory();
-        if (!local_app_data.empty()) {
-            const std::filesystem::path fallback = local_app_data / L"komapedit" / L"cache";
-            if (ensure_writable_directory(fallback)) return fallback;
-        }
-        return std::filesystem::path{};
     }();
     return directory;
 }

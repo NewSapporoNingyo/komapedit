@@ -333,47 +333,6 @@ std::string sanitize_filename(std::string text) {
 
 using JsonValue = kme::json::Value;
 
-std::optional<JsonValue> parse_json_report(const std::string& text, std::string& error) {
-    try {
-        return kme::json::parse(text);
-    } catch (const std::exception& exception) {
-        error = exception.what();
-        return std::nullopt;
-    }
-}
-
-std::uint64_t nonnegative_json_integer(const JsonValue& value) {
-    if (!value.is_number() || !std::isfinite(value.number) || value.number <= 0.0) return 0;
-    const double maximum = static_cast<double>(std::numeric_limits<std::uint64_t>::max());
-    if (value.number >= maximum) return std::numeric_limits<std::uint64_t>::max();
-    return static_cast<std::uint64_t>(value.number);
-}
-
-std::string format_cache_size(std::uint64_t bytes) {
-    static constexpr std::array<const char*, 5> units = {"B", "KiB", "MiB", "GiB", "TiB"};
-    double value = static_cast<double>(bytes);
-    size_t unit = 0;
-    while (value >= 1024.0 && unit + 1 < units.size()) {
-        value /= 1024.0;
-        ++unit;
-    }
-    std::ostringstream out;
-    if (unit == 0) {
-        out << bytes << ' ' << units[unit];
-    } else {
-        out << std::fixed << std::setprecision(2) << value << ' ' << units[unit];
-    }
-    return out.str();
-}
-
-bool open_directory_in_explorer(const std::string& directory_utf8) {
-    const std::wstring directory = utf8_to_wide(directory_utf8);
-    if (directory.empty()) return false;
-    const HINSTANCE result = ShellExecuteW(
-        nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(result) > 32;
-}
-
 std::string table_cell_text(const JsonValue& value) {
     if (value.is_array()) {
         std::string text;
@@ -643,97 +602,6 @@ App::~App() {
     g_app = nullptr;
 }
 
-void App::refresh_preview_cache_info() {
-    preview_cache_ui_ = {};
-    const char* report_text = kv_get_preview_cache_info();
-    if (!report_text) {
-        const char* error = kv_get_last_error();
-        preview_cache_ui_.error = error ? error : "preview cache query failed";
-        return;
-    }
-    const std::string report(report_text);
-    kv_free_string(report_text);
-
-    std::string parse_error;
-    std::optional<JsonValue> parsed = parse_json_report(report, parse_error);
-    if (!parsed) {
-        preview_cache_ui_.error = "invalid preview cache info response: " + parse_error;
-        add_log("[error]gui_kme.cpp: " + preview_cache_ui_.error);
-        return;
-    }
-    const JsonValue& root = *parsed;
-    const JsonValue& ok = root.at("ok");
-    const JsonValue& available = root.at("available");
-    if (!root.is_object() || ok.type != JsonValue::Type::Bool ||
-        available.type != JsonValue::Type::Bool) {
-        preview_cache_ui_.error = "invalid preview cache info response";
-        return;
-    }
-
-    preview_cache_ui_.query_ok = ok.boolean;
-    preview_cache_ui_.available = available.boolean;
-    preview_cache_ui_.directory = root.at("directory").scalar_text_fixed(6);
-    preview_cache_ui_.file_count = nonnegative_json_integer(root.at("fileCount"));
-    preview_cache_ui_.total_bytes = nonnegative_json_integer(root.at("totalBytes"));
-    preview_cache_ui_.error = root.at("error").scalar_text_fixed(6);
-}
-
-void App::clear_preview_cache() {
-    const char* report_text = kv_clear_preview_cache();
-    if (!report_text) {
-        const char* error = kv_get_last_error();
-        preview_cache_ui_.query_ok = false;
-        preview_cache_ui_.error = error ? error : "preview cache clear failed";
-        preview_cache_ui_.status_key = "status.cache_clear_failed";
-        add_log("[error]gui_kme.cpp: preview cache clear failed: " + preview_cache_ui_.error);
-        return;
-    }
-    const std::string report(report_text);
-    kv_free_string(report_text);
-
-    std::string parse_error;
-    std::optional<JsonValue> parsed = parse_json_report(report, parse_error);
-    if (!parsed) {
-        preview_cache_ui_.query_ok = false;
-        preview_cache_ui_.error = "invalid preview cache clear response: " + parse_error;
-        preview_cache_ui_.status_key = "status.cache_clear_failed";
-        add_log("[error]gui_kme.cpp: " + preview_cache_ui_.error);
-        return;
-    }
-    const JsonValue& root = *parsed;
-    const JsonValue& ok = root.at("ok");
-    const JsonValue& available = root.at("available");
-    if (!root.is_object() || ok.type != JsonValue::Type::Bool ||
-        available.type != JsonValue::Type::Bool) {
-        preview_cache_ui_.query_ok = false;
-        preview_cache_ui_.error = "invalid preview cache clear response";
-        preview_cache_ui_.status_key = "status.cache_clear_failed";
-        add_log("[error]gui_kme.cpp: " + preview_cache_ui_.error);
-        return;
-    }
-
-    preview_cache_ui_.query_ok = true;
-    preview_cache_ui_.available = available.boolean;
-    preview_cache_ui_.directory = root.at("directory").scalar_text_fixed(6);
-    preview_cache_ui_.file_count = nonnegative_json_integer(root.at("fileCount"));
-    preview_cache_ui_.total_bytes = nonnegative_json_integer(root.at("totalBytes"));
-    preview_cache_ui_.removed_file_count = nonnegative_json_integer(root.at("removedFileCount"));
-    preview_cache_ui_.removed_bytes = nonnegative_json_integer(root.at("removedBytes"));
-    preview_cache_ui_.error = root.at("error").scalar_text_fixed(6);
-    preview_cache_ui_.status_key = ok.boolean
-        ? "status.cache_clear_success"
-        : "status.cache_clear_failed";
-
-    std::ostringstream log;
-    log << (ok.boolean ? "[info]" : "[error]")
-        << "gui_kme.cpp: preview cache clear " << (ok.boolean ? "completed" : "incomplete")
-        << " removed_files=" << preview_cache_ui_.removed_file_count
-        << " removed_bytes=" << preview_cache_ui_.removed_bytes
-        << " remaining_files=" << preview_cache_ui_.file_count;
-    if (!preview_cache_ui_.error.empty()) log << " error=" << preview_cache_ui_.error;
-    add_log(log.str());
-}
-
 void App::log_callback(const char* message) {
     if (g_app && message) g_app->add_log(message);
 }
@@ -780,8 +648,7 @@ void App::poll_loader() {
 void App::begin_load(std::string path, bool preserve_settings, bool record_history,
                      std::optional<BackgroundHistory> background_to_restore,
                      bool preserve_scene_preview_models,
-                     bool preserve_scene_preview_camera,
-                     PreviewCachePolicy preview_cache_policy) {
+                     bool preserve_scene_preview_camera) {
     if (path.empty() || load_state_.running) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
@@ -808,9 +675,6 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     LoadModelOptions load_options;
     load_options.full_edit_registry = false;
     load_options.load_profile = "preview";
-    load_options.preview_cache_policy = settings_.preview_cache_disabled
-        ? PreviewCachePolicy::Disabled
-        : preview_cache_policy;
 
     load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
                            record_history, background_to_restore, load_started_at,
@@ -859,7 +723,6 @@ void App::begin_edit_metadata_load() {
     LoadModelOptions load_options;
     load_options.full_edit_registry = true;
     load_options.load_profile = "edit";
-    load_options.preview_cache_policy = PreviewCachePolicy::Disabled;
     std::string path = file_path_;
 
     load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, load_started_at, load_options]() mutable {
@@ -891,7 +754,6 @@ void App::apply_load_result(LoadResult result) {
     handle_ = result.handle;
     model_ = std::move(result.model);
     edit_registry_loaded_ = result.full_edit_registry;
-    preview_cache_handle_ = result.preview_cache_hit;
     // A full disk load creates a new maploader identity session. Never keep an
     // inspector request or pending ledger whose stable editIds belong to the
     // replaced handle, including an ordinary same-file Reload with no changes.
@@ -939,7 +801,6 @@ void App::apply_load_result(LoadResult result) {
     std::ostringstream timing;
     timing << std::fixed << std::setprecision(3)
            << "profile=" << result.load_profile
-           << ", preview_cache=" << (result.preview_cache_hit ? "hit" : "miss")
            << ", maploader=" << result.maploader_seconds << "s"
            << ", model=" << result.model_build_seconds << "s"
            << ", ir_json=" << model_.ir_json_seconds << "s"
@@ -1090,7 +951,6 @@ void App::apply_edit_metadata_result(LoadResult result) {
     edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
     merge_edit_metadata(model_, std::move(result.model));
     edit_registry_loaded_ = true;
-    preview_cache_handle_ = false;
     invalidate_table_cache();
     rebuild_marker_overlay_cache();
     sync_marker_visibility_sizes();
@@ -1175,7 +1035,6 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
                                       LoadModelOptions options) {
     if (options.full_edit_registry) options.load_profile = "edit";
     if (options.load_profile.empty()) options.load_profile = "preview";
-    if (options.full_edit_registry) options.preview_cache_policy = PreviewCachePolicy::Disabled;
     auto started_at = std::chrono::steady_clock::now();
     auto elapsed_seconds = [&]() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
@@ -1186,12 +1045,6 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
     out.load_profile = options.load_profile;
     auto maploader_started_at = std::chrono::steady_clock::now();
     unsigned load_flags = options.full_edit_registry ? KV_LOAD_EDIT_METADATA : KV_LOAD_PREVIEW;
-    if (!options.full_edit_registry && options.preview_cache_policy != PreviewCachePolicy::Disabled) {
-        load_flags |= KV_LOAD_USE_PREVIEW_CACHE;
-        if (options.preview_cache_policy == PreviewCachePolicy::Rebuild) {
-            load_flags |= KV_LOAD_REBUILD_PREVIEW_CACHE;
-        }
-    }
     void* handle = kv_load_map_ex(path.c_str(), unit_distance, load_flags);
     auto maploader_finished_at = std::chrono::steady_clock::now();
     out.maploader_seconds = std::chrono::duration<double>(maploader_finished_at - maploader_started_at).count();
@@ -1201,7 +1054,6 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
         out.elapsed_seconds = elapsed_seconds();
         return out;
     }
-    out.preview_cache_hit = kv_get_preview_cache_hit(handle) != 0;
     if (has_cp) {
         if (!kv_generate_geometry(handle, unit_distance, 1, cp_start, cp_end, cp_step)) {
             const char* err = kv_get_last_error();
@@ -3807,11 +3659,6 @@ void App::render_menu() {
             scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
             popups_.canvas_3d_settings = true;
         }
-        ImGui::Separator();
-        if (ImGui::MenuItem(tr("menu.cache_management").c_str(), nullptr, false,
-                            !load_state_.running)) {
-            popups_.cache_management = true;
-        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.map_info").c_str())) {
@@ -4024,8 +3871,7 @@ void App::render_toolbar() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        const bool can_reload_geometry = !load_state_.running && has_model_ && !file_path_.empty() &&
-            !preview_cache_handle_;
+        const bool can_reload_geometry = !load_state_.running && has_model_ && !file_path_.empty();
         ImGui::BeginDisabled(!can_reload_geometry);
         if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
         ImGui::EndDisabled();
@@ -4344,106 +4190,6 @@ void App::render_popups() {
         cancel_distance_resolution = true;
     }
     if (cancel_distance_resolution) cancel_distance_resolution_workflow();
-
-    if (popups_.cache_management) {
-        refresh_preview_cache_info();
-        ImGui::OpenPopup(tr("dialog.cache_management").c_str());
-        popups_.cache_management = false;
-    }
-    bool cache_management_popup_open = true;
-    ImGui::SetNextWindowSize(ImVec2(620.0f, 0.0f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal(tr("dialog.cache_management").c_str(),
-                               &cache_management_popup_open,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (preview_cache_ui_.available) {
-            ImGui::TextUnformatted(tr("label.cache_directory").c_str());
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 580.0f);
-            ImGui::TextWrapped("%s", preview_cache_ui_.directory.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::Text("%s: %llu",
-                        tr("label.cache_file_count").c_str(),
-                        static_cast<unsigned long long>(preview_cache_ui_.file_count));
-            const std::string total_size = format_cache_size(preview_cache_ui_.total_bytes);
-            ImGui::Text("%s: %s", tr("label.cache_total_size").c_str(), total_size.c_str());
-        } else {
-            ImGui::TextDisabled("%s", tr("status.cache_unavailable").c_str());
-        }
-        if (!preview_cache_ui_.query_ok && preview_cache_ui_.available) {
-            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.25f, 1.0f), "%s",
-                               tr("status.cache_query_failed").c_str());
-        }
-        if (!preview_cache_ui_.error.empty()) {
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 580.0f);
-            ImGui::TextDisabled("%s", preview_cache_ui_.error.c_str());
-            ImGui::PopTextWrapPos();
-        }
-
-        ImGui::Separator();
-        bool cache_disabled = settings_.preview_cache_disabled;
-        ImGui::BeginDisabled(load_state_.running);
-        if (ImGui::Checkbox(tr("chk.disable_preview_cache").c_str(), &cache_disabled)) {
-            settings_.preview_cache_disabled = cache_disabled;
-            sync_runtime_settings_before_save();
-            if (!save_user_settings(settings_)) {
-                add_log("[warn]gui_kme.cpp: failed to save preview cache setting");
-            }
-            add_log(std::string("[info]gui_kme.cpp: disk preview cache ") +
-                    (cache_disabled ? "disabled" : "enabled"));
-        }
-        ImGui::EndDisabled();
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 580.0f);
-        ImGui::TextDisabled("%s", tr("hint.disable_preview_cache").c_str());
-        ImGui::PopTextWrapPos();
-
-        ImGui::Separator();
-        ImGui::BeginDisabled(load_state_.running || !preview_cache_ui_.available);
-        if (ImGui::Button(tr("button.open_cache_directory").c_str())) {
-            if (!open_directory_in_explorer(preview_cache_ui_.directory)) {
-                add_log("[error]gui_kme.cpp: failed to open preview cache directory");
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(tr("button.clear_preview_cache").c_str())) {
-            popups_.clear_preview_cache_confirm = true;
-        }
-        ImGui::EndDisabled();
-
-        if (!preview_cache_ui_.status_key.empty()) {
-            const bool succeeded = preview_cache_ui_.status_key == "status.cache_clear_success";
-            const ImVec4 color = succeeded
-                ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f)
-                : ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
-            ImGui::TextColored(color, "%s", tr(preview_cache_ui_.status_key).c_str());
-            ImGui::Text("%s: %llu",
-                        tr("label.cache_removed_files").c_str(),
-                        static_cast<unsigned long long>(preview_cache_ui_.removed_file_count));
-            const std::string removed_size = format_cache_size(preview_cache_ui_.removed_bytes);
-            ImGui::Text("%s: %s", tr("label.cache_freed_size").c_str(), removed_size.c_str());
-        }
-
-        if (popups_.clear_preview_cache_confirm) {
-            ImGui::OpenPopup(tr("dialog.clear_preview_cache_title").c_str());
-            popups_.clear_preview_cache_confirm = false;
-        }
-        if (ImGui::BeginPopupModal(tr("dialog.clear_preview_cache_title").c_str(), nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 480.0f);
-            ImGui::TextUnformatted(tr("dialog.clear_preview_cache_message").c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::Separator();
-            if (ImGui::Button(tr("button.clear_preview_cache").c_str())) {
-                clear_preview_cache();
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button(tr("button.cancel").c_str())) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
-
-        ImGui::Separator();
-        if (ImGui::Button(tr("button.close").c_str())) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
 
     if (popups_.ui_settings) {
         ImGui::OpenPopup(tr("dialog.ui_settings").c_str());
@@ -4923,12 +4669,6 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
         add_log("[warn]gui_kme.cpp: 3D scene preview has no map geometry loaded");
         return;
     }
-    if (preview_cache_handle_) {
-        add_log("[info]gui_kme.cpp: hydrating loader state for 3D scene preview");
-        begin_load(file_path_, true, false, std::nullopt, true, true,
-                   PreviewCachePolicy::Disabled);
-        return;
-    }
     add_log(preserve_loaded_models
                 ? "[info]gui_kme.cpp: reloading 3D scene preview track geometry with preserved models"
                 : "[info]gui_kme.cpp: generating 3D scene preview track geometry");
@@ -5142,16 +4882,14 @@ void App::reload_model_preview() {
 
 void App::perform_reload_current_map_and_model_preview() {
     if (has_model_ && !file_path_.empty()) {
-        begin_load(file_path_, true, false, std::nullopt, false, true,
-                   PreviewCachePolicy::Disabled);
+        begin_load(file_path_, true, false, std::nullopt, false, true);
     }
     reload_model_preview();
 }
 
 void App::perform_reload_current_map_geometry() {
     add_log("[info]gui_kme.cpp: reloading map geometry with existing 3D models preserved");
-    begin_load(file_path_, true, false, std::nullopt, true, true,
-               PreviewCachePolicy::Disabled);
+    begin_load(file_path_, true, false, std::nullopt, true, true);
 }
 
 bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
@@ -5511,7 +5249,7 @@ int main(int, char**) {
             std::cerr << headless.error << "\n"
                       << "usage: komapedit.exe --headless-load-map <map-path> "
                       << "[--repeat N] [--unit-distance M] [--load-profile preview|edit] "
-                      << "[--cache-mode off|read|rebuild] [--ir-json-mode compact|full] "
+                      << "[--ir-json-mode compact|full] "
                       << "[--headless-output FILE]\n";
             return 1;
         }

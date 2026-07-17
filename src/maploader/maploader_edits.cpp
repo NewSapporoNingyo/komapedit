@@ -2065,8 +2065,6 @@ std::unique_ptr<MapContext> parse_report_candidate(MapContext& ctx,
     if (entry_file_path.empty()) throw std::runtime_error("map entry file is not known");
     MapParseOptions options = ctx.parse_options;
     options.collect_edit_metadata = true;
-    options.use_preview_cache = false;
-    options.rebuild_preview_cache = false;
     return parse_map_context(path_from_utf8(entry_file_path), ctx.unit_distance,
                              std::move(overrides), ctx.cp_arbdistribution_explicit,
                              ctx.cp_arbdistribution, options);
@@ -3490,8 +3488,6 @@ void reparse_context_with_overrides(MapContext& ctx,
     double unit_distance = ctx.unit_distance;
     MapParseOptions options = ctx.parse_options;
     options.collect_edit_metadata = true;
-    options.use_preview_cache = false;
-    options.rebuild_preview_cache = false;
     auto next = parse_map_context(path_from_utf8(entry_file_path), unit_distance, std::move(overrides),
                                   has_arbitrary_distribution, arbitrary_distribution, options);
     if (!disk_identities.empty() && !disk_source_hashes.empty()) {
