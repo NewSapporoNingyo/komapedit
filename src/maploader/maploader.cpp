@@ -80,6 +80,7 @@ KV_API int kv_generate_geometry(void* handle, double unit_distance,
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
+        kme::maploader::detail::invalidate_preview_snapshot(*ctx, false, true);
         kme::maploader::detail::generate_geometry(*ctx, unit_distance, has_arbitrary_distribution != 0,
                                                   arbitrary_start, arbitrary_end, arbitrary_step);
         return 1;
@@ -227,6 +228,30 @@ KV_API KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key) {
 KV_API KvDoubleBuffer kv_get_structure_puts(void* handle) {
     if (!handle) return {nullptr, 0, 0};
     return make_buffer(static_cast<MapContext*>(handle)->structure_put_buffer);
+}
+
+KV_API int kv_get_preview_snapshot(void* handle, unsigned version,
+                                   KvPreviewSnapshot* out_snapshot, size_t out_size) {
+    try {
+        if (!handle) throw std::runtime_error("handle is null");
+        if (!out_snapshot) throw std::runtime_error("preview snapshot output is null");
+        if (version != KV_PREVIEW_SNAPSHOT_VERSION) {
+            throw std::runtime_error("unsupported preview snapshot version");
+        }
+        if (out_size < sizeof(KvPreviewSnapshot)) {
+            throw std::runtime_error("preview snapshot output is too small");
+        }
+        auto* ctx = static_cast<MapContext*>(handle);
+        *out_snapshot = kme::maploader::detail::build_preview_snapshot(*ctx);
+        if (!ctx->load_timing_logged) {
+            kme::maploader::detail::log_load_timing(*ctx);
+            ctx->load_timing_logged = true;
+        }
+        return 1;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return 0;
+    }
 }
 
 KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags) {

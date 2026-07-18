@@ -8,6 +8,9 @@
 
 #include <cmath>
 #include <iostream>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -31,6 +34,19 @@ void expect_rejected(std::string_view source, const char* message) {
         check(std::string(error.what()).find("byte ") != std::string::npos,
               "parse errors include a byte offset");
     }
+}
+
+std::string legacy_fixed(double value, int precision) {
+    if (!std::isfinite(value)) return {};
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(precision) << value;
+    std::string text = out.str();
+    const size_t point = text.find('.');
+    if (point != std::string::npos) {
+        while (text.size() > point + 1 && text.back() == '0') text.pop_back();
+        if (text.size() == point + 1) text.pop_back();
+    }
+    return text == "-0" ? "0" : text;
 }
 
 } // namespace
@@ -64,6 +80,20 @@ int main() {
     check(overflow.is_number() && std::isinf(overflow.number) && overflow.number > 0.0,
           "overflowing valid number is retained as infinity");
     check(overflow.scalar_text() == "1e999", "infinity scalar compatibility");
+
+    const std::vector<double> fixed_boundaries = {
+        0.0, -0.0, 0.0000004, 0.0000005, -0.0000005,
+        1.2345674, 1.2345675, -1.2345675, 999999.9999995,
+        std::numeric_limits<double>::denorm_min(),
+        std::numeric_limits<double>::min(),
+        std::numeric_limits<double>::max(),
+    };
+    for (double value : fixed_boundaries) {
+        check(kme::json::number_text_fixed(value, 6) == legacy_fixed(value, 6),
+              "fast fixed formatter matches legacy formatter");
+    }
+    check(kme::json::number_text_fixed(std::numeric_limits<double>::infinity(), 6).empty(),
+          "fixed formatter keeps non-finite compatibility");
 
     const std::string raw = std::string("quote=\" slash=\\ line=\n tab=\t control=") +
         static_cast<char>(1) + " utf8=\xE3\x81\x82";

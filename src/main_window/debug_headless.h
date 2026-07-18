@@ -47,6 +47,17 @@ struct HeadlessScene3DBenchmarkOptions {
     std::string error;
 };
 
+struct HeadlessOpenBenchmarkOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int repeat = 1;
+    double unit_distance = 25.0;
+    std::string transport = "typed_snapshot";
+    bool snapshot_parity = true;
+    std::string error;
+};
+
 struct HeadlessSceneCameraTransferOptions {
     bool requested = false;
     std::string path;
@@ -97,6 +108,7 @@ struct HeadlessTouchInputOptions {
 std::vector<std::string> command_line_args_utf8();
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
+HeadlessOpenBenchmarkOptions parse_headless_open_benchmark_options(const std::vector<std::string>& args);
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args);
 HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(const std::vector<std::string>& args);
 HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vector<std::string>& args);

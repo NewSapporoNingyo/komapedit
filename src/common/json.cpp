@@ -306,10 +306,25 @@ std::string Value::scalar_text() const {
 
 std::string Value::scalar_text_fixed(int precision) const {
     if (!is_number()) return scalar_text();
-    if (!std::isfinite(number)) return {};
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(precision) << number;
-    std::string text = out.str();
+    return number_text_fixed(number, precision);
+}
+
+std::string number_text_fixed(double value, int precision) {
+    if (!std::isfinite(value)) return {};
+    precision = std::max(0, precision);
+    std::array<char, 128> stack_buffer{};
+    int written = std::snprintf(stack_buffer.data(), stack_buffer.size(), "%.*f",
+                                precision, value);
+    if (written < 0) return {};
+    std::string text;
+    if (static_cast<size_t>(written) < stack_buffer.size()) {
+        text.assign(stack_buffer.data(), static_cast<size_t>(written));
+    } else {
+        std::vector<char> buffer(static_cast<size_t>(written) + 1u);
+        written = std::snprintf(buffer.data(), buffer.size(), "%.*f", precision, value);
+        if (written < 0) return {};
+        text.assign(buffer.data(), static_cast<size_t>(written));
+    }
     const size_t point = text.find('.');
     if (point != std::string::npos) {
         while (text.size() > point + 1 && text.back() == '0') text.pop_back();

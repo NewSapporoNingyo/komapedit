@@ -64,6 +64,8 @@ public:
         }
         KME_MAPLOADER_FUNCTIONS(KME_RESOLVE_FUNCTION)
 #undef KME_RESOLVE_FUNCTION
+        get_preview_snapshot = runtime_paths::resolve_dll_function<
+            decltype(get_preview_snapshot)>(library_, "kv_get_preview_snapshot");
     }
 
     bool available() const {
@@ -77,6 +79,7 @@ public:
 #define KME_DECLARE_FUNCTION(member, symbol) decltype(&symbol) member = nullptr;
     KME_MAPLOADER_FUNCTIONS(KME_DECLARE_FUNCTION)
 #undef KME_DECLARE_FUNCTION
+    decltype(&kv_get_preview_snapshot) get_preview_snapshot = nullptr;
 
 private:
     template <typename Function>
@@ -99,6 +102,11 @@ MaploaderRuntime& maploader_runtime() {
 }
 
 } // namespace
+
+bool maploader_preview_snapshot_available() {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() && runtime.get_preview_snapshot != nullptr;
+}
 
 extern "C" {
 
@@ -193,6 +201,14 @@ KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key) {
 KvDoubleBuffer kv_get_structure_puts(void* handle) {
     MaploaderRuntime& runtime = maploader_runtime();
     return runtime.available() ? runtime.get_structure_puts(handle) : KvDoubleBuffer{};
+}
+
+int kv_get_preview_snapshot(void* handle, unsigned version,
+                            KvPreviewSnapshot* out_snapshot, size_t out_size) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() && runtime.get_preview_snapshot
+        ? runtime.get_preview_snapshot(handle, version, out_snapshot, out_size)
+        : 0;
 }
 
 const char* kv_get_ir_json_ex(void* handle, unsigned flags) {

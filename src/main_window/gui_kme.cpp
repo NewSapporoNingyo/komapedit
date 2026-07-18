@@ -535,6 +535,408 @@ Matrix copy_buffer(KvDoubleBuffer buffer) {
     return m;
 }
 
+std::string snapshot_string(const KvPreviewSnapshot& snapshot, KvStringRef ref) {
+    if (!snapshot.string_data || ref.offset > snapshot.string_size ||
+        ref.length > snapshot.string_size - ref.offset) {
+        return {};
+    }
+    return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
+                       static_cast<size_t>(ref.length));
+}
+
+bool snapshot_span_valid(KvPreviewSpan span, std::uint64_t size) {
+    return span.offset <= size && span.count <= size - span.offset;
+}
+
+std::string snapshot_value_text(const KvPreviewSnapshot& snapshot,
+                                const KvPreviewValue& value) {
+    switch (value.kind) {
+        case KV_PREVIEW_VALUE_BOOL:
+            return value.boolean_value ? "true" : "false";
+        case KV_PREVIEW_VALUE_NUMBER:
+            return kme::json::number_text_fixed(value.number_value, 6);
+        case KV_PREVIEW_VALUE_STRING:
+            return snapshot_string(snapshot, value.string_value);
+        case KV_PREVIEW_VALUE_ARRAY: {
+            if (!snapshot_span_valid(value.array_values, snapshot.array_value_count) ||
+                (!snapshot.array_values && value.array_values.count != 0)) {
+                return {};
+            }
+            std::string text;
+            for (std::uint64_t i = 0; i < value.array_values.count; ++i) {
+                if (i) text += ", ";
+                text += snapshot_value_text(
+                    snapshot, snapshot.array_values[value.array_values.offset + i]);
+            }
+            return text;
+        }
+        case KV_PREVIEW_VALUE_NULL:
+        default:
+            return {};
+    }
+}
+
+const KvPreviewTable* snapshot_table(const KvPreviewSnapshot& snapshot,
+                                     std::uint32_t kind) {
+    if (!snapshot.tables) return nullptr;
+    for (std::uint64_t i = 0; i < snapshot.table_count; ++i) {
+        if (snapshot.tables[i].kind == kind) return &snapshot.tables[i];
+    }
+    return nullptr;
+}
+
+const KvPreviewValue* snapshot_row_value(const KvPreviewSnapshot& snapshot,
+                                         const KvPreviewRow& row,
+                                         std::string_view key) {
+    if (!snapshot_span_valid(row.cells, snapshot.cell_count) ||
+        (!snapshot.cells && row.cells.count != 0)) {
+        return nullptr;
+    }
+    for (std::uint64_t i = 0; i < row.cells.count; ++i) {
+        const KvPreviewCell& cell = snapshot.cells[row.cells.offset + i];
+        KvStringRef ref = cell.key;
+        if (ref.length != key.size() || !snapshot.string_data ||
+            ref.offset > snapshot.string_size || ref.length > snapshot.string_size - ref.offset) {
+            continue;
+        }
+        if (std::memcmp(snapshot.string_data + static_cast<size_t>(ref.offset),
+                        key.data(), key.size()) == 0) {
+            return &cell.value;
+        }
+    }
+    return nullptr;
+}
+
+void apply_snapshot_row_metadata(TableRow& output, const KvPreviewSnapshot& snapshot,
+                                 const KvPreviewRow& input) {
+    output.edit_id = snapshot_string(snapshot, input.edit_id);
+    output.source.file_path = snapshot_string(snapshot, input.source_file_path);
+    output.source.line = input.source_line;
+    output.source.column = input.source_column;
+    output.source.raw_text_preview = snapshot_string(snapshot, input.source_raw_text_preview);
+}
+
+std::vector<TableRow> snapshot_table_rows(const KvPreviewSnapshot& snapshot,
+                                          std::uint32_t kind) {
+    std::vector<TableRow> output;
+    const KvPreviewTable* table = snapshot_table(snapshot, kind);
+    if (!table || !snapshot_span_valid(table->rows, snapshot.row_count) ||
+        (!snapshot.rows && table->rows.count != 0)) {
+        return output;
+    }
+    output.reserve(static_cast<size_t>(table->rows.count));
+    for (std::uint64_t i = 0; i < table->rows.count; ++i) {
+        const KvPreviewRow& input = snapshot.rows[table->rows.offset + i];
+        TableRow row;
+        if (snapshot_span_valid(input.cells, snapshot.cell_count) &&
+            (snapshot.cells || input.cells.count == 0)) {
+            for (std::uint64_t j = 0; j < input.cells.count; ++j) {
+                const KvPreviewCell& cell = snapshot.cells[input.cells.offset + j];
+                row.cells[snapshot_string(snapshot, cell.key)] =
+                    snapshot_value_text(snapshot, cell.value);
+            }
+        }
+        apply_snapshot_row_metadata(row, snapshot, input);
+        output.push_back(std::move(row));
+    }
+    return output;
+}
+
+ImVec4 other_track_palette_color(size_t index) {
+    static const ImVec4 palette[] = {
+        ImVec4(0.12f, 0.47f, 0.71f, 1.0f), ImVec4(1.00f, 0.50f, 0.05f, 1.0f),
+        ImVec4(0.17f, 0.63f, 0.17f, 1.0f), ImVec4(0.84f, 0.15f, 0.16f, 1.0f),
+        ImVec4(0.58f, 0.40f, 0.74f, 1.0f), ImVec4(0.55f, 0.34f, 0.29f, 1.0f),
+        ImVec4(0.89f, 0.47f, 0.76f, 1.0f), ImVec4(0.50f, 0.50f, 0.50f, 1.0f),
+        ImVec4(0.74f, 0.74f, 0.13f, 1.0f), ImVec4(0.09f, 0.75f, 0.81f, 1.0f)
+    };
+    return palette[index % (sizeof(palette) / sizeof(palette[0]))];
+}
+
+MapModel hydrate_preview_snapshot(const KvPreviewSnapshot& snapshot,
+                                  const std::string& path,
+                                  double snapshot_build_seconds) {
+    auto hydrate_started_at = std::chrono::steady_clock::now();
+    MapModel model;
+    model.path = path;
+    model.load_transport = "typed_snapshot";
+    model.snapshot_build_seconds = snapshot_build_seconds;
+
+    model.file_structure.reserve(static_cast<size_t>(snapshot.file_structure_count));
+    for (std::uint64_t i = 0; i < snapshot.file_structure_count; ++i) {
+        const KvPreviewFileStructure& input = snapshot.file_structure[i];
+        FileStructureNode node;
+        node.include_path = snapshot_string(snapshot, input.include_path);
+        node.absolute_path = snapshot_string(snapshot, input.absolute_path);
+        node.display_name = display_name_from_path(node.absolute_path);
+        if (node.display_name.empty()) node.display_name = node.include_path;
+        if (!model.file_structure.empty()) {
+            node.parent_index = input.parent_index >= 0 &&
+                    static_cast<std::uint64_t>(input.parent_index) < model.file_structure.size()
+                ? static_cast<size_t>(input.parent_index)
+                : 0;
+        }
+        model.file_structure.push_back(std::move(node));
+    }
+    if (model.file_structure.empty() && !path.empty()) {
+        FileStructureNode root;
+        root.absolute_path = path;
+        root.display_name = display_name_from_path(path);
+        model.file_structure.push_back(std::move(root));
+    }
+    model.file_structure_revision = file_structure_revision(model.file_structure);
+
+    model.edit_files.reserve(static_cast<size_t>(snapshot.source_file_count));
+    for (std::uint64_t i = 0; i < snapshot.source_file_count; ++i) {
+        const KvPreviewSourceFile& input = snapshot.source_files[i];
+        EditSourceFileInfo file;
+        file.file_path = snapshot_string(snapshot, input.file_path);
+        file.display_path = snapshot_string(snapshot, input.display_path);
+        file.encoding = snapshot_string(snapshot, input.encoding);
+        file.newline = snapshot_string(snapshot, input.newline);
+        file.source_hash = snapshot_string(snapshot, input.source_hash);
+        file.byte_length = static_cast<size_t>(input.byte_length);
+        model.edit_files.push_back(std::move(file));
+    }
+
+    double buffer_copy_seconds = 0.0;
+    auto copy_buffer_timed = [&buffer_copy_seconds](KvDoubleBuffer buffer) {
+        auto started_at = std::chrono::steady_clock::now();
+        Matrix matrix = copy_buffer(buffer);
+        buffer_copy_seconds += std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - started_at).count();
+        return matrix;
+    };
+    model.own = copy_buffer_timed(snapshot.owntrack);
+    model.curve = copy_buffer_timed(snapshot.curve_radius);
+    if (snapshot.controlpoints && snapshot.controlpoint_count != 0) {
+        model.controlpoints.assign(snapshot.controlpoints,
+                                   snapshot.controlpoints + snapshot.controlpoint_count);
+    }
+    for (size_t i = 0; i < 3; ++i) model.cp_arb[i] = snapshot.cp_arbdistribution[i];
+
+    if (!model.own.empty()) {
+        model.distance_origin = model.own.at(0, 0);
+        model.height_origin = model.own.at(0, 3);
+        model.origin_angle = model.own.at(0, 4);
+    }
+
+    model.other_tracks.reserve(static_cast<size_t>(snapshot.other_track_count));
+    for (std::uint64_t i = 0; i < snapshot.other_track_count; ++i) {
+        const KvPreviewOtherTrack& input = snapshot.other_tracks[i];
+        OtherTrack track;
+        track.key = snapshot_string(snapshot, input.key);
+        track.color = other_track_palette_color(static_cast<size_t>(i));
+        track.range_min = input.range_min;
+        track.range_max = input.range_max;
+        track.points = copy_buffer_timed(input.points);
+        if (!track.points.empty() && track.range_min == track.range_max) {
+            track.range_min = track.points.at(0, 0);
+            track.range_max = track.points.at(track.points.rows - 1, 0);
+        }
+        model.other_tracks.push_back(std::move(track));
+    }
+
+    model.own_events.reserve(static_cast<size_t>(snapshot.own_track_event_count));
+    for (std::uint64_t i = 0; i < snapshot.own_track_event_count; ++i) {
+        const KvPreviewOwnTrackEvent& input = snapshot.own_track_events[i];
+        TrackEvent event;
+        event.distance = input.distance;
+        event.key = snapshot_string(snapshot, input.key);
+        event.flag = snapshot_string(snapshot, input.flag);
+        if (input.value.kind == KV_PREVIEW_VALUE_NUMBER) {
+            event.value_number = true;
+            event.number = input.value.number_value;
+        } else {
+            event.text = snapshot_value_text(snapshot, input.value);
+        }
+        model.own_events.push_back(std::move(event));
+    }
+
+    model.speedlimits.reserve(static_cast<size_t>(snapshot.speed_limit_count));
+    for (std::uint64_t i = 0; i < snapshot.speed_limit_count; ++i) {
+        const KvPreviewSpeedLimit& input = snapshot.speed_limits[i];
+        SpeedLimit speed;
+        speed.distance = input.distance;
+        if (input.speed.kind == KV_PREVIEW_VALUE_NUMBER) {
+            speed.has_speed = true;
+            speed.speed = input.speed.number_value;
+        }
+        model.speedlimits.push_back(speed);
+    }
+
+    for (std::uint64_t i = 0; i < snapshot.station_name_count; ++i) {
+        const KvPreviewStationName& input = snapshot.station_names[i];
+        model.station_names[snapshot_string(snapshot, input.key)] =
+            snapshot_string(snapshot, input.name);
+    }
+    std::set<std::string> seen_stations;
+    size_t own_index = 0;
+    model.stations.reserve(static_cast<size_t>(snapshot.station_position_count));
+    for (std::uint64_t i = 0; i < snapshot.station_position_count; ++i) {
+        const KvPreviewStationPosition& input = snapshot.station_positions[i];
+        Station station;
+        station.distance = input.distance;
+        station.key = snapshot_string(snapshot, input.key);
+        auto name = model.station_names.find(station.key);
+        if (name != model.station_names.end()) station.name = name->second;
+        if (station.name.empty()) station.name = station.key;
+        station.mileage = station.distance - model.distance_origin;
+        if (!model.own.empty()) {
+            while (own_index + 1 < model.own.rows &&
+                   model.own.at(own_index, 0) < station.distance) {
+                ++own_index;
+            }
+            station.x = model.own.at(own_index, 1);
+            station.y = model.own.at(own_index, 2);
+            station.z = model.own.at(own_index, 3);
+        }
+        if (seen_stations.insert(station.key).second) {
+            model.stations.push_back(std::move(station));
+        }
+    }
+
+    model.structures = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_STRUCTURE);
+    model.structure_models = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_STRUCTURE_MODEL);
+    model.other_trains = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN);
+    model.other_train_stops = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN_STOP);
+    model.other_train_structure_keys = snapshot_table_rows(
+        snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN_STRUCTURE_KEY);
+    model.other_train_sound_3d_keys = snapshot_table_rows(
+        snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN_SOUND_3D_KEY);
+    model.sound_list = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_SOUND_LIST);
+    model.structures_between = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_STRUCTURE_BETWEEN);
+    model.repeaters = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_REPEATER);
+    model.signals = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_SIGNAL);
+    model.beacons = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_BEACON);
+    model.pretrains = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_PRETRAIN);
+    model.irregularities = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_IRREGULARITY);
+    model.map_sounds = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_MAP_SOUND);
+    model.map_sound_3d = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_MAP_SOUND_3D);
+    model.rolling_noises = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_ROLLING_NOISE);
+    model.flange_noises = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_FLANGE_NOISE);
+    model.joint_noises = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_JOINT_NOISE);
+    model.backgrounds = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_BACKGROUND);
+    model.adhesions = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_ADHESION);
+    model.cab_illuminance = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_CAB_ILLUMINANCE);
+    model.fogs = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_FOG);
+
+    const KvPreviewTable* aspects = snapshot_table(snapshot, KV_PREVIEW_TABLE_SIGNAL_ASPECT);
+    if (aspects && snapshot_span_valid(aspects->rows, snapshot.row_count)) {
+        model.signal_aspects.reserve(static_cast<size_t>(aspects->rows.count));
+        for (std::uint64_t i = 0; i < aspects->rows.count; ++i) {
+            const KvPreviewRow& input = snapshot.rows[aspects->rows.offset + i];
+            TableRow row;
+            if (const KvPreviewValue* key = snapshot_row_value(
+                    snapshot, input, "signalAspectKey")) {
+                row.cells["signalAspectKey"] = snapshot_value_text(snapshot, *key);
+            }
+            size_t structure_key_count = 0;
+            if (const KvPreviewValue* keys = snapshot_row_value(snapshot, input, "structureKeys")) {
+                if (keys->kind == KV_PREVIEW_VALUE_ARRAY &&
+                    snapshot_span_valid(keys->array_values, snapshot.array_value_count)) {
+                    structure_key_count = static_cast<size_t>(keys->array_values.count);
+                    for (std::uint64_t j = 0; j < keys->array_values.count; ++j) {
+                        row.cells["structureKey" + std::to_string(j + 1)] = snapshot_value_text(
+                            snapshot, snapshot.array_values[keys->array_values.offset + j]);
+                    }
+                }
+            }
+            row.cells["_structureKeyCount"] = std::to_string(structure_key_count);
+            apply_snapshot_row_metadata(row, snapshot, input);
+            model.signal_aspects.push_back(std::move(row));
+        }
+    }
+
+    std::map<std::string, TableRow> station_rows_by_key;
+    const KvPreviewTable* station_list = snapshot_table(snapshot, KV_PREVIEW_TABLE_STATION_LIST);
+    if (station_list && snapshot_span_valid(station_list->rows, snapshot.row_count)) {
+        for (std::uint64_t i = 0; i < station_list->rows.count; ++i) {
+            const KvPreviewRow& input = snapshot.rows[station_list->rows.offset + i];
+            TableRow row;
+            if (snapshot_span_valid(input.cells, snapshot.cell_count)) {
+                for (std::uint64_t j = 0; j < input.cells.count; ++j) {
+                    const KvPreviewCell& cell = snapshot.cells[input.cells.offset + j];
+                    row.cells[snapshot_string(snapshot, cell.key)] =
+                        snapshot_value_text(snapshot, cell.value);
+                }
+            }
+            apply_snapshot_row_metadata(row, snapshot, input);
+            const std::string object_key = snapshot_string(snapshot, input.object_key);
+            if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = object_key;
+            station_rows_by_key[ascii_lower(object_key)] = std::move(row);
+        }
+    }
+    auto append_station_table_row = [&](TableRow row, const std::string& key) {
+        auto existing = station_rows_by_key.find(ascii_lower(key));
+        if (existing != station_rows_by_key.end()) {
+            for (const auto& cell : existing->second.cells) row.cells[cell.first] = cell.second;
+        }
+        model.station_list_rows.push_back(std::move(row));
+    };
+    const KvPreviewTable* station_put = snapshot_table(snapshot, KV_PREVIEW_TABLE_STATION_PUT);
+    if (station_put && snapshot_span_valid(station_put->rows, snapshot.row_count)) {
+        model.station_list_rows.reserve(static_cast<size_t>(station_put->rows.count));
+        for (std::uint64_t i = 0; i < station_put->rows.count; ++i) {
+            const KvPreviewRow& input = snapshot.rows[station_put->rows.offset + i];
+            const KvPreviewValue* distance_value = snapshot_row_value(snapshot, input, "distance");
+            const double distance = distance_value && distance_value->kind == KV_PREVIEW_VALUE_NUMBER
+                ? distance_value->number_value : 0.0;
+            const KvPreviewValue* key_value = snapshot_row_value(snapshot, input, "stationKey");
+            const std::string key = key_value ? snapshot_value_text(snapshot, *key_value) : std::string{};
+            TableRow row;
+            row.cells["_distance"] = format_double(distance);
+            if (const KvPreviewValue* value = snapshot_row_value(snapshot, input, "order")) {
+                row.cells["_order"] = snapshot_value_text(snapshot, *value);
+            }
+            row.cells["dist"] = format_double(distance - model.distance_origin, 0);
+            row.cells["posKey"] = key;
+            for (const char* field : {"door", "margin1", "margin2"}) {
+                if (const KvPreviewValue* value = snapshot_row_value(snapshot, input, field)) {
+                    row.cells[field] = snapshot_value_text(snapshot, *value);
+                }
+            }
+            apply_snapshot_row_metadata(row, snapshot, input);
+            append_station_table_row(std::move(row), key);
+        }
+    }
+    std::stable_sort(model.station_list_rows.begin(), model.station_list_rows.end(),
+                     [](const TableRow& a, const TableRow& b) {
+        double da = table_cell_number(a, "_distance");
+        double db = table_cell_number(b, "_distance");
+        if (da != db) return da < db;
+        return table_cell_number(a, "_order") < table_cell_number(b, "_order");
+    });
+    for (size_t i = 0; i < model.station_list_rows.size(); ++i) {
+        model.station_list_rows[i].cells["rowNumber"] = std::to_string(i + 1);
+    }
+
+    if (!model.stations.empty()) {
+        double minimum = model.stations.front().distance;
+        double maximum = minimum;
+        for (const Station& station : model.stations) {
+            minimum = std::min(minimum, station.distance);
+            maximum = std::max(maximum, station.distance);
+        }
+        model.default_min = round_to_100(minimum) - 500.0;
+        model.default_max = round_to_100(maximum) + 500.0;
+    } else if (!model.controlpoints.empty()) {
+        auto range = std::minmax_element(model.controlpoints.begin(), model.controlpoints.end());
+        model.default_min = round_to_100(*range.first) - 500.0;
+        model.default_max = round_to_100(*range.second) + 500.0;
+    } else if (!model.own.empty()) {
+        model.default_min = model.own.at(0, 0);
+        model.default_max = model.own.at(model.own.rows - 1, 0);
+    }
+
+    model.buffer_copy_seconds = buffer_copy_seconds;
+    model.snapshot_hydrate_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - hydrate_started_at).count();
+    model.model_hydrate_seconds = model.snapshot_hydrate_seconds;
+    annotate_scene_track_key_warnings(model);
+    return model;
+}
+
 App* g_app = nullptr;
 HWND g_main_hwnd = nullptr;
 constexpr UINT kAppWakeMessage = WM_APP + 1;
@@ -801,13 +1203,23 @@ void App::apply_load_result(LoadResult result) {
     std::ostringstream timing;
     timing << std::fixed << std::setprecision(3)
            << "profile=" << result.load_profile
+           << ", transport=" << model_.load_transport
            << ", maploader=" << result.maploader_seconds << "s"
-           << ", model=" << result.model_build_seconds << "s"
-           << ", ir_json=" << model_.ir_json_seconds << "s"
-           << ", json_parse=" << model_.json_parse_seconds << "s"
-           << ", hydrate=" << model_.model_hydrate_seconds << "s"
-           << ", buffer copy=" << model_.buffer_copy_seconds << "s";
+           << ", model=" << result.model_build_seconds << "s";
+    if (model_.load_transport == "typed_snapshot") {
+        timing << ", snapshot_build=" << model_.snapshot_build_seconds << "s"
+               << ", snapshot_hydrate=" << model_.snapshot_hydrate_seconds << "s"
+               << ", ir_json=0.000s, json_parse=0.000s";
+    } else {
+        timing << ", ir_json=" << model_.ir_json_seconds << "s"
+               << ", json_parse=" << model_.json_parse_seconds << "s"
+               << ", hydrate=" << model_.model_hydrate_seconds << "s";
+    }
+    timing << ", buffer copy=" << model_.buffer_copy_seconds << "s";
     add_log("Load timing: " + timing.str());
+    if (!model_.transport_warning.empty()) {
+        add_log(LogSeverity::Warning, model_.transport_warning);
+    }
     for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
     add_log("Map loaded: " + result.path);
     if (result.background_to_restore) {
@@ -1091,6 +1503,28 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
 
 MapModel App::build_model_from_handle(void* handle, const std::string& path,
                                       LoadModelOptions options) {
+    std::string snapshot_fallback_warning;
+    if (!options.full_edit_registry && !options.force_json_transport) {
+        if (maploader_preview_snapshot_available()) {
+            KvPreviewSnapshot snapshot{};
+            auto snapshot_started_at = std::chrono::steady_clock::now();
+            if (kv_get_preview_snapshot(handle, KV_PREVIEW_SNAPSHOT_VERSION,
+                                        &snapshot, sizeof(snapshot)) &&
+                snapshot.version == KV_PREVIEW_SNAPSHOT_VERSION) {
+                const double snapshot_build_seconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - snapshot_started_at).count();
+                return hydrate_preview_snapshot(snapshot, path, snapshot_build_seconds);
+            }
+            const char* error = kv_get_last_error();
+            snapshot_fallback_warning =
+                "Typed preview snapshot unavailable or version-mismatched; falling back to compact JSON";
+            if (error && *error) snapshot_fallback_warning += std::string(": ") + error;
+        } else {
+            snapshot_fallback_warning =
+                "Typed preview snapshot entry point is missing; falling back to compact JSON";
+        }
+    }
+
     auto json_started_at = std::chrono::steady_clock::now();
     unsigned ir_flags = options.full_edit_registry
         ? (KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE)
@@ -1110,6 +1544,10 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
     auto hydrate_started_at = std::chrono::steady_clock::now();
     MapModel model;
     model.path = path;
+    model.load_transport = options.full_edit_registry
+        ? "json_edit"
+        : (options.force_json_transport ? "json_baseline" : "json_fallback");
+    model.transport_warning = std::move(snapshot_fallback_warning);
     hydrate_file_structure(model, root.at("fileStructure"), path);
     const auto& edit = root.at("edit");
     const auto& edit_files = edit.at("files");
@@ -1186,14 +1624,6 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
         model.origin_angle = model.own.at(0, 4);
     }
 
-    static const ImVec4 palette[] = {
-        ImVec4(0.12f, 0.47f, 0.71f, 1.0f), ImVec4(1.00f, 0.50f, 0.05f, 1.0f),
-        ImVec4(0.17f, 0.63f, 0.17f, 1.0f), ImVec4(0.84f, 0.15f, 0.16f, 1.0f),
-        ImVec4(0.58f, 0.40f, 0.74f, 1.0f), ImVec4(0.55f, 0.34f, 0.29f, 1.0f),
-        ImVec4(0.89f, 0.47f, 0.76f, 1.0f), ImVec4(0.50f, 0.50f, 0.50f, 1.0f),
-        ImVec4(0.74f, 0.74f, 0.13f, 1.0f), ImVec4(0.09f, 0.75f, 0.81f, 1.0f)
-    };
-
     const auto& other = root.at("othertrack");
     const auto& order = other.at("order");
     const auto& ranges = other.at("cp_range");
@@ -1202,7 +1632,7 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
             std::string key = order.array[i].scalar_text_fixed(6);
             OtherTrack t;
             t.key = key;
-            t.color = palette[i % (sizeof(palette) / sizeof(palette[0]))];
+            t.color = other_track_palette_color(i);
             t.range_min = 0.0;
             t.range_max = 0.0;
             const auto& range = ranges.at(key);
@@ -3320,11 +3750,7 @@ bool App::rebuild_background_texture() {
     return true;
 }
 
-void App::export_csv() {
-    if (!has_model_) return;
-    std::string folder = choose_folder_dialog();
-    if (folder.empty()) return;
-    std::filesystem::path dir = utf8_to_wide(folder);
+void App::export_csv_to_directory(const std::filesystem::path& dir) const {
     std::string base = narrow_path(dir.filename());
     if (base.empty()) base = "kobushi";
 
@@ -3345,6 +3771,13 @@ void App::export_csv() {
         write_matrix(dir / utf8_to_wide(base + "_" + sanitize_filename(t.key) + ".csv"), t.points,
                      "distance,x,y,z,interpolate_func,cant,center,gauge");
     }
+}
+
+void App::export_csv() {
+    if (!has_model_) return;
+    std::string folder = choose_folder_dialog();
+    if (folder.empty()) return;
+    export_csv_to_directory(std::filesystem::path(utf8_to_wide(folder)));
     add_log("CSV exported: " + folder);
 }
 
@@ -5242,6 +5675,19 @@ int main(int, char**) {
         return App::run_debug_headless_edit_roundtrip(edit_roundtrip.path,
                                                       edit_roundtrip.unit_distance,
                                                       edit_roundtrip.output_path);
+    }
+
+    HeadlessOpenBenchmarkOptions open_bench = parse_headless_open_benchmark_options(args);
+    if (open_bench.requested) {
+        if (!open_bench.error.empty()) {
+            std::cerr << open_bench.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-open-bench <map-path> "
+                      << "[--repeat N] [--unit-distance M] "
+                      << "[--transport typed_snapshot|json|both] "
+                      << "[--no-snapshot-parity] [--headless-output FILE]\n";
+            return 1;
+        }
+        return App::run_debug_headless_open_benchmark(open_bench);
     }
 
     HeadlessPlanBenchmarkOptions plan_bench = parse_headless_plan_benchmark_options(args);

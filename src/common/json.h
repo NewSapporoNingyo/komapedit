@@ -38,6 +38,10 @@ struct Value {
 
 Value parse(std::string_view source);
 
+/* Shared fixed-precision scalar formatter used by JSON and typed preview
+   hydration. It intentionally matches Value::scalar_text_fixed(). */
+std::string number_text_fixed(double value, int precision);
+
 void append_escaped(std::ostream& out, std::string_view text);
 void append_string(std::ostream& out, std::string_view text);
 std::string escape(std::string_view text);

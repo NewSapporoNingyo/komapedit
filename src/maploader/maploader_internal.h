@@ -71,6 +71,7 @@ struct LoadTiming {
     double relocate_seconds = 0.0;
     double owntrack_seconds = 0.0;
     double json_seconds = 0.0;
+    double snapshot_seconds = 0.0;
     std::vector<std::pair<std::string, double>> othertrack_seconds;
 };
 
@@ -588,6 +589,22 @@ struct Matrix {
     }
 };
 
+struct PreviewSnapshotStorage {
+    KvPreviewSnapshot view{};
+    std::string string_arena;
+    std::vector<KvPreviewFileStructure> file_structure;
+    std::vector<KvPreviewSourceFile> source_files;
+    std::vector<KvPreviewOtherTrack> other_tracks;
+    std::vector<KvPreviewOwnTrackEvent> own_track_events;
+    std::vector<KvPreviewSpeedLimit> speed_limits;
+    std::vector<KvPreviewStationPosition> station_positions;
+    std::vector<KvPreviewStationName> station_names;
+    std::vector<KvPreviewTable> tables;
+    std::vector<KvPreviewRow> rows;
+    std::vector<KvPreviewCell> cells;
+    std::vector<KvPreviewValue> array_values;
+};
+
 struct MapContext {
     std::filesystem::path rootpath;
     std::string rootpath_utf8;
@@ -660,6 +677,9 @@ struct MapContext {
     bool has_cp_arbdistribution = false;
     bool cp_arbdistribution_explicit = false;
     std::map<unsigned, std::string> ir_json_cache_by_flags;
+    std::unique_ptr<PreviewSnapshotStorage> preview_snapshot;
+    std::uint64_t content_revision = 1;
+    std::uint64_t geometry_revision = 1;
     LoadTiming timing;
     bool load_timing_logged = false;
     MapParseOptions parse_options;
@@ -831,6 +851,9 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
 
 unsigned normalize_ir_json_flags(unsigned flags);
 std::string build_ir_json(MapContext& ctx, unsigned flags);
+const KvPreviewSnapshot& build_preview_snapshot(MapContext& ctx);
+void invalidate_preview_snapshot(MapContext& ctx, bool content_changed,
+                                 bool geometry_changed);
 std::string statement_edit_id(MapContext& ctx, ParsedStatement& statement);
 std::string native_element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
                                    const std::string& row_kind);

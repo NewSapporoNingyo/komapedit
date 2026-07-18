@@ -317,6 +317,55 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
     return options;
 }
 
+HeadlessOpenBenchmarkOptions parse_headless_open_benchmark_options(
+    const std::vector<std::string>& args) {
+    HeadlessOpenBenchmarkOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-open-bench") {
+            options.requested = true;
+            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--repeat") {
+            if (!parse_integer_option(args, i, arg, 1, 10000,
+                                      "--repeat must be between 1 and 10000",
+                                      options.repeat, options.error)) return options;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
+                return options;
+            }
+        } else if (arg == "--transport") {
+            const std::string* value = take_option_value(
+                args, i, arg, "typed_snapshot, json, or both", options.error);
+            if (!value) return options;
+            if (*value == "typed_snapshot" || *value == "snapshot") {
+                options.transport = "typed_snapshot";
+            } else if (*value == "json" || *value == "json_baseline") {
+                options.transport = "json";
+            } else if (*value == "both") {
+                options.transport = "both";
+            } else {
+                options.error = "--transport must be typed_snapshot, json, or both";
+                return options;
+            }
+        } else if (arg == "--no-snapshot-parity") {
+            options.snapshot_parity = false;
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-open-bench requires a map path";
+    }
+    return options;
+}
+
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args) {
     HeadlessScene3DBenchmarkOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
@@ -1084,6 +1133,13 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         std::filesystem::remove_all(temp_root);
         return 2;
     }
+    KvPreviewSnapshot baseline_snapshot{};
+    KvPreviewSnapshot applied_snapshot{};
+    const bool baseline_snapshot_ok = kv_get_preview_snapshot(
+        load.handle, KV_PREVIEW_SNAPSHOT_VERSION,
+        &baseline_snapshot, sizeof(baseline_snapshot)) != 0;
+    *out << "snapshot_baseline_ok=" << (baseline_snapshot_ok ? 1 : 0) << "\n";
+    if (!baseline_snapshot_ok) exit_code = 4;
     const TableRow* initial_target = find_structure_by_values(load.model, 100.0, 1.0);
     const TableRow* initial_non_target = find_structure_by_values(load.model, 125.0, 9.0);
     if (!initial_target || !initial_non_target) {
@@ -1161,6 +1217,15 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             *out << "apply_to_memory_report=" << apply_memory_report << "\n";
             exit_code = 6;
         } else {
+            const bool applied_snapshot_ok = kv_get_preview_snapshot(
+                load.handle, KV_PREVIEW_SNAPSHOT_VERSION,
+                &applied_snapshot, sizeof(applied_snapshot)) != 0;
+            const bool apply_snapshot_invalidated = baseline_snapshot_ok && applied_snapshot_ok &&
+                applied_snapshot.content_revision > baseline_snapshot.content_revision &&
+                applied_snapshot.geometry_revision > baseline_snapshot.geometry_revision;
+            *out << "snapshot_apply_invalidation_ok="
+                 << (apply_snapshot_invalidated ? 1 : 0) << "\n";
+            if (!apply_snapshot_invalidated) exit_code = 6;
             MapModel memory_model = build_model_from_handle(
                 load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
             const TableRow* memory_target =
@@ -1227,6 +1292,13 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
 
     if (exit_code == 0) {
         const bool reset_ok = kv_edit_reset_memory(load.handle) != 0;
+        KvPreviewSnapshot reset_snapshot{};
+        const bool reset_snapshot_ok = kv_get_preview_snapshot(
+            load.handle, KV_PREVIEW_SNAPSHOT_VERSION,
+            &reset_snapshot, sizeof(reset_snapshot)) != 0;
+        const bool reset_snapshot_invalidated = reset_ok && reset_snapshot_ok &&
+            reset_snapshot.content_revision > applied_snapshot.content_revision &&
+            reset_snapshot.geometry_revision > applied_snapshot.geometry_revision;
         MapModel reset_model = build_model_from_handle(
             load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
         const TableRow* reset_target =
@@ -1240,7 +1312,9 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             std::abs(table_cell_number(*reset_non_target, "x") - 9.0) < 1e-6;
         *out << "reset_memory_ok=" << (reset_ok ? 1 : 0) << "\n";
         *out << "reset_revert_match=" << (reset_matches ? 1 : 0) << "\n";
-        if (!reset_matches) exit_code = 7;
+        *out << "snapshot_reset_invalidation_ok="
+             << (reset_snapshot_invalidated ? 1 : 0) << "\n";
+        if (!reset_matches || !reset_snapshot_invalidated) exit_code = 7;
     }
 
     if (exit_code == 0) {
@@ -2875,6 +2949,819 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
     write_batch_result(*out, facts);
     out->flush();
     return facts.passed() ? 0 : 20;
+}
+
+namespace {
+
+struct OpenBenchSample {
+    std::string transport;
+    double ready_seconds = 0.0;
+    double load_worker_seconds = 0.0;
+    double maploader_seconds = 0.0;
+    double model_seconds = 0.0;
+    double snapshot_build_seconds = 0.0;
+    double snapshot_hydrate_seconds = 0.0;
+    double ir_json_seconds = 0.0;
+    double json_parse_seconds = 0.0;
+    double hydrate_seconds = 0.0;
+    double buffer_copy_seconds = 0.0;
+    double overlay_seconds = 0.0;
+    double plan_data_seconds = 0.0;
+    double plan_draw_seconds = 0.0;
+    double profile_data_seconds = 0.0;
+    double profile_draw_seconds = 0.0;
+    double radius_draw_seconds = 0.0;
+    double first_2d_frame_seconds = 0.0;
+    std::uint64_t geometry_hash = 0;
+    std::uint64_t overlay_hash = 0;
+};
+
+struct DebugHash64 {
+    std::uint64_t value = 1469598103934665603ULL;
+
+    void byte(unsigned char input) {
+        value ^= input;
+        value *= 1099511628211ULL;
+    }
+
+    void integer(std::uint64_t input) {
+        for (unsigned shift = 0; shift < 64; shift += 8) {
+            byte(static_cast<unsigned char>((input >> shift) & 0xffu));
+        }
+    }
+
+    void number(double input) {
+        integer(hash_double_bits(input));
+    }
+
+    void text(std::string_view input) {
+        integer(static_cast<std::uint64_t>(input.size()));
+        for (unsigned char ch : input) byte(ch);
+    }
+};
+
+void hash_matrix(DebugHash64& hash, const Matrix& matrix) {
+    hash.integer(static_cast<std::uint64_t>(matrix.rows));
+    hash.integer(static_cast<std::uint64_t>(matrix.cols));
+    for (double value : matrix.data) hash.number(value);
+}
+
+std::uint64_t model_geometry_hash(const MapModel& model) {
+    DebugHash64 hash;
+    hash_matrix(hash, model.own);
+    hash_matrix(hash, model.curve);
+    hash.integer(static_cast<std::uint64_t>(model.other_tracks.size()));
+    for (const OtherTrack& track : model.other_tracks) {
+        hash.text(track.key);
+        hash.number(track.range_min);
+        hash.number(track.range_max);
+        hash_matrix(hash, track.points);
+    }
+    return hash.value;
+}
+
+bool edit_source_equal(const EditSourceInfo& a, const EditSourceInfo& b) {
+    return a.file_path == b.file_path && a.line == b.line && a.column == b.column &&
+        a.raw_text_preview == b.raw_text_preview;
+}
+
+bool table_rows_equal(const std::vector<TableRow>& a, const std::vector<TableRow>& b,
+                      const char* label, std::string& mismatch) {
+    if (a.size() != b.size()) {
+        mismatch = std::string(label) + " row count";
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].cells != b[i].cells) {
+            mismatch = std::string(label) + " cells at row " + std::to_string(i);
+            return false;
+        }
+        if (a[i].edit_id != b[i].edit_id || !edit_source_equal(a[i].source, b[i].source)) {
+            mismatch = std::string(label) + " edit/source metadata at row " + std::to_string(i);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool preview_models_equal(const MapModel& snapshot, const MapModel& json,
+                          std::string& mismatch) {
+    auto fail = [&](const char* text) {
+        mismatch = text;
+        return false;
+    };
+    auto matrix_equal = [](const Matrix& a, const Matrix& b) {
+        return a.rows == b.rows && a.cols == b.cols && a.data == b.data;
+    };
+
+    if (snapshot.file_structure.size() != json.file_structure.size()) return fail("file structure count");
+    for (size_t i = 0; i < snapshot.file_structure.size(); ++i) {
+        const FileStructureNode& a = snapshot.file_structure[i];
+        const FileStructureNode& b = json.file_structure[i];
+        if (a.parent_index != b.parent_index || a.include_path != b.include_path ||
+            a.absolute_path != b.absolute_path || a.display_name != b.display_name) {
+            mismatch = "file structure row " + std::to_string(i);
+            return false;
+        }
+    }
+    if (snapshot.file_structure_revision != json.file_structure_revision) {
+        return fail("file structure revision");
+    }
+    if (snapshot.edit_files.size() != json.edit_files.size()) return fail("source file count");
+    for (size_t i = 0; i < snapshot.edit_files.size(); ++i) {
+        const EditSourceFileInfo& a = snapshot.edit_files[i];
+        const EditSourceFileInfo& b = json.edit_files[i];
+        if (a.file_path != b.file_path || a.display_path != b.display_path ||
+            a.encoding != b.encoding || a.newline != b.newline ||
+            a.source_hash != b.source_hash || a.byte_length != b.byte_length) {
+            mismatch = "source file row " + std::to_string(i);
+            return false;
+        }
+    }
+    if (!matrix_equal(snapshot.own, json.own)) return fail("own geometry");
+    if (!matrix_equal(snapshot.curve, json.curve)) return fail("curve geometry");
+    if (snapshot.other_tracks.size() != json.other_tracks.size()) return fail("other track count");
+    for (size_t i = 0; i < snapshot.other_tracks.size(); ++i) {
+        const OtherTrack& a = snapshot.other_tracks[i];
+        const OtherTrack& b = json.other_tracks[i];
+        if (a.key != b.key || a.range_min != b.range_min || a.range_max != b.range_max ||
+            !matrix_equal(a.points, b.points)) {
+            mismatch = "other track row " + std::to_string(i);
+            return false;
+        }
+    }
+    if (snapshot.controlpoints != json.controlpoints) return fail("controlpoints");
+    for (size_t i = 0; i < 3; ++i) {
+        if (snapshot.cp_arb[i] != json.cp_arb[i]) return fail("arbitrary controlpoint range");
+    }
+    if (snapshot.station_names != json.station_names) return fail("station names");
+    if (snapshot.stations.size() != json.stations.size()) return fail("station count");
+    for (size_t i = 0; i < snapshot.stations.size(); ++i) {
+        const Station& a = snapshot.stations[i];
+        const Station& b = json.stations[i];
+        if (a.key != b.key || a.name != b.name || a.distance != b.distance ||
+            a.mileage != b.mileage || a.x != b.x || a.y != b.y || a.z != b.z) {
+            mismatch = "station row " + std::to_string(i);
+            return false;
+        }
+    }
+    if (snapshot.own_events.size() != json.own_events.size()) return fail("own event count");
+    for (size_t i = 0; i < snapshot.own_events.size(); ++i) {
+        const TrackEvent& a = snapshot.own_events[i];
+        const TrackEvent& b = json.own_events[i];
+        if (a.distance != b.distance || a.key != b.key || a.flag != b.flag ||
+            a.value_number != b.value_number || a.number != b.number || a.text != b.text) {
+            mismatch = "own event row " + std::to_string(i);
+            return false;
+        }
+    }
+    if (snapshot.speedlimits.size() != json.speedlimits.size()) return fail("speed limit count");
+    for (size_t i = 0; i < snapshot.speedlimits.size(); ++i) {
+        const SpeedLimit& a = snapshot.speedlimits[i];
+        const SpeedLimit& b = json.speedlimits[i];
+        if (a.distance != b.distance || a.has_speed != b.has_speed || a.speed != b.speed) {
+            mismatch = "speed limit row " + std::to_string(i);
+            return false;
+        }
+    }
+    if (snapshot.distance_origin != json.distance_origin ||
+        snapshot.height_origin != json.height_origin ||
+        snapshot.origin_angle != json.origin_angle ||
+        snapshot.default_min != json.default_min || snapshot.default_max != json.default_max) {
+        return fail("derived model ranges/origin");
+    }
+
+    struct TablePair {
+        const char* label;
+        const std::vector<TableRow>* snapshot_rows;
+        const std::vector<TableRow>* json_rows;
+    };
+    const TablePair tables[] = {
+        {"station.list", &snapshot.station_list_rows, &json.station_list_rows},
+        {"structure.data", &snapshot.structures, &json.structures},
+        {"structure.models", &snapshot.structure_models, &json.structure_models},
+        {"otherTrain.definitions", &snapshot.other_trains, &json.other_trains},
+        {"otherTrain.stop", &snapshot.other_train_stops, &json.other_train_stops},
+        {"otherTrain.structureKeys", &snapshot.other_train_structure_keys, &json.other_train_structure_keys},
+        {"otherTrain.sound3DKeys", &snapshot.other_train_sound_3d_keys, &json.other_train_sound_3d_keys},
+        {"soundList", &snapshot.sound_list, &json.sound_list},
+        {"structure.between", &snapshot.structures_between, &json.structures_between},
+        {"repeater", &snapshot.repeaters, &json.repeaters},
+        {"signal.aspects", &snapshot.signal_aspects, &json.signal_aspects},
+        {"signal.data", &snapshot.signals, &json.signals},
+        {"beacon", &snapshot.beacons, &json.beacons},
+        {"preTrain", &snapshot.pretrains, &json.pretrains},
+        {"irregularity", &snapshot.irregularities, &json.irregularities},
+        {"mapSound", &snapshot.map_sounds, &json.map_sounds},
+        {"mapSound3D", &snapshot.map_sound_3d, &json.map_sound_3d},
+        {"rollingNoise", &snapshot.rolling_noises, &json.rolling_noises},
+        {"flangeNoise", &snapshot.flange_noises, &json.flange_noises},
+        {"jointNoise", &snapshot.joint_noises, &json.joint_noises},
+        {"background", &snapshot.backgrounds, &json.backgrounds},
+        {"adhesion", &snapshot.adhesions, &json.adhesions},
+        {"cabIlluminance", &snapshot.cab_illuminance, &json.cab_illuminance},
+        {"fog", &snapshot.fogs, &json.fogs},
+    };
+    for (const TablePair& table : tables) {
+        if (!table_rows_equal(*table.snapshot_rows, *table.json_rows, table.label, mismatch)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct MetricSummary {
+    double median = 0.0;
+    double p95 = 0.0;
+};
+
+MetricSummary summarize_metric(std::vector<double> values) {
+    MetricSummary summary;
+    if (values.empty()) return summary;
+    std::sort(values.begin(), values.end());
+    const size_t count = values.size();
+    summary.median = count % 2 == 0
+        ? (values[count / 2 - 1] + values[count / 2]) * 0.5
+        : values[count / 2];
+    const size_t p95_index = std::min(
+        static_cast<size_t>(std::ceil(0.95 * static_cast<double>(count))) - 1,
+        count - 1);
+    summary.p95 = values[p95_index];
+    return summary;
+}
+
+template <typename Projection>
+MetricSummary summarize_samples(const std::vector<OpenBenchSample>& samples,
+                                size_t first_index, Projection projection) {
+    std::vector<double> values;
+    if (first_index < samples.size()) values.reserve(samples.size() - first_index);
+    for (size_t i = first_index; i < samples.size(); ++i) values.push_back(projection(samples[i]));
+    return summarize_metric(std::move(values));
+}
+
+} // namespace
+
+int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-open-bench path=\"" << options.path
+         << "\" repeat=" << options.repeat
+         << " unit_distance=" << format_double(options.unit_distance, 3)
+         << " transport=" << options.transport
+         << " snapshot_parity=" << (options.snapshot_parity ? "on" : "off") << "\n";
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+
+    UserSettings settings;
+    App app(nullptr, settings, 1.0f, false, false);
+    app.show_profile_graph_ = true;
+    app.show_radius_graph_ = true;
+
+    auto overlay_hash = [](const App& source) {
+        DebugHash64 hash;
+        auto hash_track_point = [&](const TrackPoint& point) {
+            hash.number(point.d); hash.number(point.x); hash.number(point.y);
+            hash.number(point.z); hash.number(point.theta); hash.number(point.radius);
+            hash.number(point.gradient);
+        };
+        auto hash_marker = [&](const auto& marker) {
+            hash.number(marker.d); hash.number(marker.x); hash.number(marker.y);
+            hash.text(marker.label); hash.text(marker.edit_id);
+            hash.integer(static_cast<std::uint64_t>(marker.row_index));
+        };
+        auto hash_marker_cache = [&](const auto& cache) {
+            hash.integer(static_cast<std::uint64_t>(cache.size()));
+            for (const auto& marker : cache) {
+                hash.integer(marker ? 1u : 0u);
+                if (marker) hash_marker(*marker);
+            }
+        };
+        hash_marker_cache(source.structure_marker_cache_);
+        hash_marker_cache(source.signal_marker_cache_);
+        hash_marker_cache(source.beacon_marker_cache_);
+        hash_marker_cache(source.pretrain_marker_cache_);
+        hash_marker_cache(source.irregularity_marker_cache_);
+        hash_marker_cache(source.map_sound_marker_cache_);
+        hash_marker_cache(source.map_sound_3d_marker_cache_);
+        hash_marker_cache(source.rolling_noise_marker_cache_);
+        hash_marker_cache(source.flange_noise_marker_cache_);
+        hash_marker_cache(source.joint_noise_marker_cache_);
+        hash_marker_cache(source.background_marker_cache_);
+        hash_marker_cache(source.adhesion_marker_cache_);
+        hash_marker_cache(source.cab_illuminance_marker_cache_);
+        hash_marker_cache(source.fog_marker_cache_);
+
+        hash.integer(static_cast<std::uint64_t>(source.other_train_stop_marker_cache_.size()));
+        for (const auto& marker : source.other_train_stop_marker_cache_) {
+            hash.integer(marker ? 1u : 0u);
+            if (!marker) continue;
+            hash_marker(*marker);
+            hash.number(marker->theta);
+            hash.integer(static_cast<std::uint64_t>(marker->definition_row_index));
+            hash.integer(marker->reverse_direction ? 1u : 0u);
+        }
+        hash.integer(static_cast<std::uint64_t>(source.other_train_path_cache_.size()));
+        for (const OtherTrainPathOverlay& path : source.other_train_path_cache_) {
+            hash.text(path.label);
+            hash.integer(static_cast<std::uint64_t>(path.definition_row_index));
+            hash.number(path.d_min); hash.number(path.d_max);
+            hash.integer(path.reverse_direction ? 1u : 0u);
+            hash.integer(static_cast<std::uint64_t>(path.points.size()));
+            for (const TrackPoint& point : path.points) hash_track_point(point);
+        }
+
+        hash.integer(static_cast<std::uint64_t>(source.repeater_marker_cache_.size()));
+        for (const RepeaterOverlayRow& row : source.repeater_marker_cache_) {
+            hash.integer(row.begin_marker ? 1u : 0u);
+            if (row.begin_marker) hash_marker(*row.begin_marker);
+            hash.integer(row.end_marker ? 1u : 0u);
+            if (row.end_marker) hash_marker(*row.end_marker);
+            const PlanRepeaterSegment& segment = row.segment;
+            hash.integer(segment.endpoints_valid ? 1u : 0u);
+            hash.integer(segment.bounds_valid ? 1u : 0u);
+            hash_track_point(segment.first_point);
+            hash_track_point(segment.last_point);
+            hash.number(segment.d_min); hash.number(segment.d_max);
+            hash.number(segment.x_min); hash.number(segment.y_min);
+            hash.number(segment.x_max); hash.number(segment.y_max);
+            hash.integer(static_cast<std::uint64_t>(segment.chunks.size()));
+            for (const PlanRepeaterSegment::Chunk& chunk : segment.chunks) {
+                hash.integer(chunk.bounds_valid ? 1u : 0u);
+                hash.number(chunk.d_min); hash.number(chunk.d_max);
+                hash.number(chunk.x_min); hash.number(chunk.y_min);
+                hash.number(chunk.x_max); hash.number(chunk.y_max);
+                hash.integer(static_cast<std::uint64_t>(chunk.points.size()));
+                for (const TrackPoint& point : chunk.points) hash_track_point(point);
+            }
+        }
+        return hash.value;
+    };
+
+    std::vector<OpenBenchSample> snapshot_samples;
+    std::vector<OpenBenchSample> json_samples;
+    std::optional<MapModel> parity_snapshot_model;
+    std::optional<MapModel> parity_json_model;
+    std::uint64_t parity_snapshot_overlay_hash = 0;
+    std::uint64_t parity_json_overlay_hash = 0;
+    bool benchmark_ok = true;
+    bool workflow_ok = true;
+
+    auto run_one = [&](bool force_json, int run, bool emit_sample) -> std::optional<OpenBenchSample> {
+        const auto ready_started_at = std::chrono::steady_clock::now();
+        LoadModelOptions load_options;
+        load_options.full_edit_registry = false;
+        load_options.force_json_transport = force_json;
+        load_options.load_profile = "preview";
+        LoadResult result = load_map_worker(options.path, options.unit_distance,
+                                            false, 0.0, 0.0, 25.0, load_options);
+        if (!result.ok) {
+            *out << "open_bench_error run=" << run
+                 << " requested_transport=" << (force_json ? "json" : "typed_snapshot")
+                 << " message=\"" << result.error << "\"\n";
+            benchmark_ok = false;
+            return std::nullopt;
+        }
+
+        OpenBenchSample sample;
+        sample.transport = result.model.load_transport;
+        sample.load_worker_seconds = result.elapsed_seconds;
+        sample.maploader_seconds = result.maploader_seconds;
+        sample.model_seconds = result.model_build_seconds;
+        sample.snapshot_build_seconds = result.model.snapshot_build_seconds;
+        sample.snapshot_hydrate_seconds = result.model.snapshot_hydrate_seconds;
+        sample.ir_json_seconds = result.model.ir_json_seconds;
+        sample.json_parse_seconds = result.model.json_parse_seconds;
+        sample.hydrate_seconds = result.model.model_hydrate_seconds;
+        sample.buffer_copy_seconds = result.model.buffer_copy_seconds;
+        if (!force_json && sample.transport != "typed_snapshot") benchmark_ok = false;
+
+        app.model_ = std::move(result.model);
+        app.file_path_ = options.path;
+        app.has_model_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.plot_min_ = app.dmin_;
+        app.plot_max_ = app.dmax_;
+        app.plan_view_ = View2D{};
+        app.plan_data_cache_.valid = false;
+        const auto overlay_started_at = std::chrono::steady_clock::now();
+        app.rebuild_marker_overlay_cache();
+        app.reset_marker_visibility();
+        sample.overlay_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - overlay_started_at).count();
+
+        const auto first_frame_started_at = std::chrono::steady_clock::now();
+        const auto plan_data_started_at = std::chrono::steady_clock::now();
+        (void)app.current_plan_data();
+        sample.plan_data_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - plan_data_started_at).count();
+
+        io.DisplaySize = ImVec2(1280.0f, 720.0f);
+        io.DeltaTime = 1.0f / 60.0f;
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        ImGui::Begin("DebugHeadlessOpenBenchmark", nullptr, flags);
+        const auto plan_draw_started_at = std::chrono::steady_clock::now();
+        app.render_plan_canvas(ImVec2(1260.0f, 400.0f));
+        sample.plan_draw_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - plan_draw_started_at).count();
+
+        const auto profile_data_started_at = std::chrono::steady_clock::now();
+        ProfileData profile = app.build_profile_data();
+        sample.profile_data_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - profile_data_started_at).count();
+        const auto profile_draw_started_at = std::chrono::steady_clock::now();
+        app.render_profile_plot(profile, ImVec2(625.0f, 250.0f));
+        sample.profile_draw_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - profile_draw_started_at).count();
+        ImGui::SameLine();
+        const auto radius_draw_started_at = std::chrono::steady_clock::now();
+        app.render_radius_plot(profile, ImVec2(625.0f, 250.0f));
+        sample.radius_draw_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - radius_draw_started_at).count();
+        ImGui::End();
+        ImGui::Render();
+        sample.first_2d_frame_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - first_frame_started_at).count();
+        sample.ready_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - ready_started_at).count();
+        sample.geometry_hash = model_geometry_hash(app.model_);
+        sample.overlay_hash = overlay_hash(app);
+
+        if (result.handle) kv_free(result.handle);
+
+        if (!force_json && !parity_snapshot_model) {
+            parity_snapshot_model = app.model_;
+            parity_snapshot_overlay_hash = sample.overlay_hash;
+        }
+        if (force_json && !parity_json_model) {
+            parity_json_model = app.model_;
+            parity_json_overlay_hash = sample.overlay_hash;
+        }
+
+        if (emit_sample) {
+            *out << std::fixed << std::setprecision(6)
+                 << "open_bench_run run=" << run
+                 << " transport=" << sample.transport
+                 << " maploader=" << sample.maploader_seconds << "s"
+                 << " model=" << sample.model_seconds << "s"
+                 << " snapshot_build=" << sample.snapshot_build_seconds << "s"
+                 << " snapshot_hydrate=" << sample.snapshot_hydrate_seconds << "s"
+                 << " ir_json=" << sample.ir_json_seconds << "s"
+                 << " json_parse=" << sample.json_parse_seconds << "s"
+                 << " hydrate=" << sample.hydrate_seconds << "s"
+                 << " buffer_copy=" << sample.buffer_copy_seconds << "s"
+                 << " overlay=" << sample.overlay_seconds << "s"
+                 << " plan_data=" << sample.plan_data_seconds << "s"
+                 << " plan_draw=" << sample.plan_draw_seconds << "s"
+                 << " profile_data=" << sample.profile_data_seconds << "s"
+                 << " profile_draw=" << sample.profile_draw_seconds << "s"
+                 << " radius_draw=" << sample.radius_draw_seconds << "s"
+                 << " first_2d_frame=" << sample.first_2d_frame_seconds << "s"
+                 << " ready_total=" << sample.ready_seconds << "s"
+                 << " geometry_hash=" << hex_u64(sample.geometry_hash)
+                 << " overlay_hash=" << hex_u64(sample.overlay_hash) << "\n";
+            out->flush();
+        }
+        return sample;
+    };
+
+    for (int run = 1; run <= options.repeat && benchmark_ok; ++run) {
+        if (options.transport == "typed_snapshot" || options.transport == "both") {
+            if (auto sample = run_one(false, run, true)) snapshot_samples.push_back(*sample);
+        }
+        if (options.transport == "json" || options.transport == "both") {
+            if (auto sample = run_one(true, run, true)) json_samples.push_back(*sample);
+        }
+    }
+
+    if (options.snapshot_parity && benchmark_ok) {
+        if (!parity_snapshot_model) (void)run_one(false, 0, false);
+        if (!parity_json_model) (void)run_one(true, 0, false);
+    }
+
+    bool parity_ok = true;
+    bool metadata_parity_ok = true;
+    std::string parity_mismatch;
+    bool snapshot_contract_ok = true;
+    if (options.snapshot_parity) {
+        parity_ok = parity_snapshot_model && parity_json_model &&
+            preview_models_equal(*parity_snapshot_model, *parity_json_model, parity_mismatch) &&
+            parity_snapshot_overlay_hash == parity_json_overlay_hash &&
+            model_geometry_hash(*parity_snapshot_model) == model_geometry_hash(*parity_json_model);
+        if (parity_mismatch.empty() && parity_snapshot_overlay_hash != parity_json_overlay_hash) {
+            parity_mismatch = "overlay deterministic hash";
+        }
+        if (parity_mismatch.empty() && parity_snapshot_model && parity_json_model &&
+            model_geometry_hash(*parity_snapshot_model) != model_geometry_hash(*parity_json_model)) {
+            parity_mismatch = "geometry deterministic hash";
+        }
+        *out << "snapshot_parity model=" << (parity_mismatch.empty() ? "PASS" : "FAIL")
+             << " geometry_hash="
+             << ((parity_snapshot_model && parity_json_model &&
+                  model_geometry_hash(*parity_snapshot_model) == model_geometry_hash(*parity_json_model))
+                    ? "PASS" : "FAIL")
+             << " overlay_hash="
+             << (parity_snapshot_overlay_hash == parity_json_overlay_hash ? "PASS" : "FAIL")
+             << " snapshot_geometry="
+             << (parity_snapshot_model ? hex_u64(model_geometry_hash(*parity_snapshot_model)) : "missing")
+             << " json_geometry="
+             << (parity_json_model ? hex_u64(model_geometry_hash(*parity_json_model)) : "missing")
+             << " snapshot_overlay=" << hex_u64(parity_snapshot_overlay_hash)
+             << " json_overlay=" << hex_u64(parity_json_overlay_hash)
+             << " mismatch=\"" << parity_mismatch << "\""
+             << " result=" << (parity_ok ? "PASS" : "FAIL") << "\n";
+
+        void* metadata_handle = kv_load_map_ex(
+            options.path.c_str(), options.unit_distance,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA);
+        std::string metadata_mismatch;
+        bool metadata_present = false;
+        if (!metadata_handle) {
+            metadata_parity_ok = false;
+            const char* error = kv_get_last_error();
+            metadata_mismatch = error ? error : "metadata map load failed";
+        } else {
+            try {
+                LoadModelOptions snapshot_options;
+                MapModel snapshot_metadata = build_model_from_handle(
+                    metadata_handle, options.path, snapshot_options);
+                LoadModelOptions json_options;
+                json_options.force_json_transport = true;
+                MapModel json_metadata = build_model_from_handle(
+                    metadata_handle, options.path, json_options);
+                metadata_present = !snapshot_metadata.edit_files.empty() &&
+                    std::any_of(snapshot_metadata.structures.begin(),
+                                snapshot_metadata.structures.end(),
+                                [](const TableRow& row) {
+                                    return !row.edit_id.empty() && !row.source.file_path.empty();
+                                });
+                metadata_parity_ok = snapshot_metadata.load_transport == "typed_snapshot" &&
+                    metadata_present && preview_models_equal(
+                        snapshot_metadata, json_metadata, metadata_mismatch);
+            } catch (const std::exception& error) {
+                metadata_parity_ok = false;
+                metadata_mismatch = error.what();
+            }
+        }
+        if (metadata_handle) kv_free(metadata_handle);
+        parity_ok = parity_ok && metadata_parity_ok;
+        *out << "snapshot_metadata_parity present="
+             << (metadata_present ? "PASS" : "FAIL")
+             << " rows_and_sources=" << (metadata_parity_ok ? "PASS" : "FAIL")
+             << " mismatch=\"" << metadata_mismatch << "\""
+             << " result=" << (metadata_parity_ok ? "PASS" : "FAIL") << "\n";
+
+        void* contract_handle = kv_load_map_ex(
+            options.path.c_str(), options.unit_distance, KV_LOAD_PREVIEW);
+        KvPreviewSnapshot first_snapshot{};
+        KvPreviewSnapshot cached_snapshot{};
+        KvPreviewSnapshot regenerated_snapshot{};
+        const bool first_ok = contract_handle && kv_get_preview_snapshot(
+            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
+            &first_snapshot, sizeof(first_snapshot));
+        const bool wrong_version_rejected = contract_handle && !kv_get_preview_snapshot(
+            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION + 1u,
+            &cached_snapshot, sizeof(cached_snapshot));
+        const bool short_output_rejected = contract_handle && !kv_get_preview_snapshot(
+            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
+            &cached_snapshot, sizeof(cached_snapshot) - 1u);
+        const bool cached_ok = contract_handle && kv_get_preview_snapshot(
+            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
+            &cached_snapshot, sizeof(cached_snapshot));
+        const bool cache_reused = first_ok && cached_ok &&
+            first_snapshot.content_revision == cached_snapshot.content_revision &&
+            first_snapshot.geometry_revision == cached_snapshot.geometry_revision &&
+            first_snapshot.rows == cached_snapshot.rows &&
+            first_snapshot.cells == cached_snapshot.cells &&
+            first_snapshot.string_data == cached_snapshot.string_data;
+        const bool regenerate_ok = contract_handle && kv_generate_geometry(
+            contract_handle, options.unit_distance, 0, 0.0, 0.0, 0.0) &&
+            kv_get_preview_snapshot(contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
+                                    &regenerated_snapshot, sizeof(regenerated_snapshot));
+        const bool revision_changed = regenerate_ok && first_ok &&
+            regenerated_snapshot.content_revision == first_snapshot.content_revision &&
+            regenerated_snapshot.geometry_revision > first_snapshot.geometry_revision;
+        snapshot_contract_ok = first_ok && wrong_version_rejected && short_output_rejected &&
+            cache_reused && regenerate_ok && revision_changed;
+        *out << "snapshot_contract version=" << (first_ok ? "PASS" : "FAIL")
+             << " wrong_version=" << (wrong_version_rejected ? "PASS" : "FAIL")
+             << " short_output=" << (short_output_rejected ? "PASS" : "FAIL")
+             << " lazy_reuse=" << (cache_reused ? "PASS" : "FAIL")
+             << " geometry_invalidation=" << (revision_changed ? "PASS" : "FAIL")
+             << " result=" << (snapshot_contract_ok ? "PASS" : "FAIL") << "\n";
+        if (contract_handle) kv_free(contract_handle);
+    }
+
+    if (options.snapshot_parity && benchmark_ok && app.has_model_) {
+        const auto hashes_consistent = [](const std::vector<OpenBenchSample>& samples) {
+            if (samples.empty()) return true;
+            return std::all_of(samples.begin() + 1, samples.end(), [&](const OpenBenchSample& sample) {
+                return sample.geometry_hash == samples.front().geometry_hash &&
+                    sample.overlay_hash == samples.front().overlay_hash;
+            });
+        };
+        const bool repeated_load_hash_ok = (!snapshot_samples.empty() || !json_samples.empty()) &&
+            hashes_consistent(snapshot_samples) && hashes_consistent(json_samples);
+
+        bool station_jump_ok = false;
+        bool measure_ok = false;
+        if (!app.model_.stations.empty()) {
+            const double station_distance = app.model_.stations.front().distance;
+            app.plan_view_ = View2D{};
+            app.jump_to_distance(station_distance);
+            station_jump_ok = app.plan_view_.fitted && std::isfinite(app.plan_view_.cx) &&
+                std::isfinite(app.plan_view_.cy) && app.focus_profile_next_ && app.focus_radius_next_;
+            app.update_measure(station_distance);
+            measure_ok = app.measure_distance_ &&
+                *app.measure_distance_ == station_distance && !app.measure_text_.empty();
+        }
+
+        bool csv_export_ok = false;
+        bool csv_cleanup_ok = false;
+        bool temp_created = false;
+        std::error_code temp_error;
+        const std::string temp_name = "komapedit_csv_smoke_" +
+            std::to_string(static_cast<unsigned long>(GetCurrentProcessId())) + "_" +
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const std::filesystem::path temp_root = std::filesystem::temp_directory_path(temp_error);
+        const std::filesystem::path temp_dir = temp_root / temp_name;
+        if (!temp_error && std::filesystem::create_directories(temp_dir, temp_error) && !temp_error) {
+            temp_created = true;
+            app.export_csv_to_directory(temp_dir);
+            const std::filesystem::path own_csv = temp_dir / (temp_name + "_owntrack.csv");
+            std::ifstream input(own_csv, std::ios::binary);
+            std::string header;
+            size_t data_rows = 0;
+            if (std::getline(input, header)) {
+                std::string row;
+                while (std::getline(input, row)) ++data_rows;
+            }
+            size_t csv_files = 0;
+            std::error_code scan_error;
+            for (std::filesystem::directory_iterator it(temp_dir, scan_error), end;
+                 !scan_error && it != end; it.increment(scan_error)) {
+                if (it->is_regular_file() && it->path().extension() == ".csv") ++csv_files;
+            }
+            csv_export_ok = input.eof() &&
+                header == "#distance,x,y,z,direction,radius,gradient,interpolate_func,cant,center,gauge" &&
+                data_rows == app.model_.own.rows &&
+                csv_files == app.model_.other_tracks.size() + 1 && !scan_error;
+        }
+        std::error_code cleanup_error;
+        if (temp_created) {
+            std::filesystem::remove_all(temp_dir, cleanup_error);
+            csv_cleanup_ok = !cleanup_error;
+        }
+        csv_export_ok = csv_export_ok && csv_cleanup_ok;
+
+        MapModel alias_fallback_model;
+        alias_fallback_model.own.rows = 2;
+        alias_fallback_model.own.cols = 11;
+        alias_fallback_model.own.data.assign(22, 0.0);
+        alias_fallback_model.own.data[0] = 0.0;
+        alias_fallback_model.own.data[11] = 100.0;
+        alias_fallback_model.own.data[12] = 100.0;
+        OtherTrack colliding_alias_track;
+        colliding_alias_track.key = "0";
+        colliding_alias_track.points.rows = 2;
+        colliding_alias_track.points.cols = 8;
+        colliding_alias_track.points.data.assign(16, 0.0);
+        colliding_alias_track.points.data[0] = 200.0;
+        colliding_alias_track.points.data[8] = 300.0;
+        colliding_alias_track.points.data[9] = 100.0;
+        alias_fallback_model.other_tracks.push_back(std::move(colliding_alias_track));
+        TableRow repeater_begin;
+        repeater_begin.cells = {{"distance", "10"}, {"method", "Begin"},
+                                {"repeaterKey", "fallback"}, {"trackKey", "0"},
+                                {"x", "0"}, {"z", "0"}, {"order", "0"}};
+        TableRow repeater_end;
+        repeater_end.cells = {{"distance", "20"}, {"method", "End"},
+                              {"repeaterKey", "fallback"}, {"order", "1"}};
+        alias_fallback_model.repeaters.push_back(std::move(repeater_begin));
+        alias_fallback_model.repeaters.push_back(std::move(repeater_end));
+        app.model_ = std::move(alias_fallback_model);
+        app.has_model_ = true;
+        app.rebuild_marker_overlay_cache();
+        const bool repeater_alias_fallback_ok = app.repeater_marker_cache_.size() == 1 &&
+            app.repeater_marker_cache_.front().begin_marker &&
+            app.repeater_marker_cache_.front().end_marker &&
+            app.repeater_marker_cache_.front().segment.endpoints_valid &&
+            std::abs(app.repeater_marker_cache_.front().segment.first_point.x - 10.0) < 1e-9 &&
+            std::abs(app.repeater_marker_cache_.front().segment.last_point.x - 20.0) < 1e-9;
+
+        workflow_ok = repeated_load_hash_ok && station_jump_ok && measure_ok && csv_export_ok &&
+            repeater_alias_fallback_ok;
+        *out << "headless_ui_workflow repeated_load_hash="
+             << (repeated_load_hash_ok ? "PASS" : "FAIL")
+             << " station_jump=" << (station_jump_ok ? "PASS" : "FAIL")
+             << " measure=" << (measure_ok ? "PASS" : "FAIL")
+             << " csv_export=" << (csv_export_ok ? "PASS" : "FAIL")
+             << " csv_temp_cleanup=" << (csv_cleanup_ok ? "PASS" : "FAIL")
+             << " repeater_alias_fallback="
+             << (repeater_alias_fallback_ok ? "PASS" : "FAIL")
+             << " result=" << (workflow_ok ? "PASS" : "FAIL") << "\n";
+    }
+
+    auto write_summary = [&](const char* transport, const std::vector<OpenBenchSample>& samples) {
+        if (samples.empty()) return;
+        const OpenBenchSample& first = samples.front();
+        const MetricSummary ready_all = summarize_samples(samples, 0,
+            [](const OpenBenchSample& sample) { return sample.ready_seconds; });
+        const MetricSummary overlay_all = summarize_samples(samples, 0,
+            [](const OpenBenchSample& sample) { return sample.overlay_seconds; });
+        const size_t steady_first = samples.size() > 1 ? 1 : 0;
+        const MetricSummary ready_steady = summarize_samples(samples, steady_first,
+            [](const OpenBenchSample& sample) { return sample.ready_seconds; });
+        const MetricSummary overlay_steady = summarize_samples(samples, steady_first,
+            [](const OpenBenchSample& sample) { return sample.overlay_seconds; });
+        const MetricSummary frame_steady = summarize_samples(samples, steady_first,
+            [](const OpenBenchSample& sample) { return sample.first_2d_frame_seconds; });
+        *out << std::fixed << std::setprecision(6)
+             << "open_bench_summary transport=" << transport
+             << " runs=" << samples.size()
+             << " first_ready=" << first.ready_seconds << "s"
+             << " first_overlay=" << first.overlay_seconds << "s"
+             << " all_ready_median=" << ready_all.median << "s"
+             << " all_ready_p95=" << ready_all.p95 << "s"
+             << " all_overlay_median=" << overlay_all.median << "s"
+             << " all_overlay_p95=" << overlay_all.p95 << "s"
+             << " steady_runs=" << (samples.size() - steady_first)
+             << " steady_ready_median=" << ready_steady.median << "s"
+             << " steady_ready_p95=" << ready_steady.p95 << "s"
+             << " steady_overlay_median=" << overlay_steady.median << "s"
+             << " steady_overlay_p95=" << overlay_steady.p95 << "s"
+             << " steady_first_2d_frame_median=" << frame_steady.median << "s"
+             << " steady_first_2d_frame_p95=" << frame_steady.p95 << "s\n";
+    };
+    write_summary("typed_snapshot", snapshot_samples);
+    write_summary("json_baseline", json_samples);
+
+    bool performance_ok = true;
+    if (!snapshot_samples.empty()) {
+        for (const OpenBenchSample& sample : snapshot_samples) {
+            performance_ok = performance_ok && sample.transport == "typed_snapshot" &&
+                sample.ir_json_seconds == 0.0 && sample.json_parse_seconds == 0.0;
+        }
+    }
+    if (!snapshot_samples.empty() && !json_samples.empty()) {
+        const size_t snapshot_first = snapshot_samples.size() > 1 ? 1 : 0;
+        const size_t json_first = json_samples.size() > 1 ? 1 : 0;
+        const MetricSummary snapshot_ready = summarize_samples(snapshot_samples, snapshot_first,
+            [](const OpenBenchSample& sample) { return sample.ready_seconds; });
+        const MetricSummary json_ready = summarize_samples(json_samples, json_first,
+            [](const OpenBenchSample& sample) { return sample.ready_seconds; });
+        const MetricSummary snapshot_overlay = summarize_samples(snapshot_samples, snapshot_first,
+            [](const OpenBenchSample& sample) { return sample.overlay_seconds; });
+        const MetricSummary json_overlay = summarize_samples(json_samples, json_first,
+            [](const OpenBenchSample& sample) { return sample.overlay_seconds; });
+        auto reduction = [](double optimized, double baseline) {
+            return baseline > 0.0 ? (baseline - optimized) * 100.0 / baseline : 0.0;
+        };
+        const double ready_median_reduction = reduction(snapshot_ready.median, json_ready.median);
+        const double ready_p95_reduction = reduction(snapshot_ready.p95, json_ready.p95);
+        *out << std::fixed << std::setprecision(2)
+             << "open_bench_comparison ready_median_reduction=" << ready_median_reduction << "%"
+             << " ready_p95_reduction=" << ready_p95_reduction << "%"
+             << " transport_result="
+             << ((ready_median_reduction >= 20.0 && ready_p95_reduction >= 20.0) ? "PASS" : "FAIL")
+             << " baseline_overlay_median=" << json_overlay.median << "s"
+             << " baseline_overlay_p95=" << json_overlay.p95 << "s"
+             << " optimized_overlay_median=" << snapshot_overlay.median << "s"
+             << " optimized_overlay_p95=" << snapshot_overlay.p95 << "s\n";
+        performance_ok = performance_ok && ready_median_reduction >= 20.0 &&
+            ready_p95_reduction >= 20.0;
+    }
+
+    const bool passed = benchmark_ok && parity_ok && snapshot_contract_ok &&
+        workflow_ok && performance_ok;
+    *out << "open_bench result=" << (passed ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    return passed ? 0 : 3;
 }
 
 int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,

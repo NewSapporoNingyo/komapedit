@@ -40,7 +40,10 @@ struct Canvas3DStructureEditTarget;
 
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
+struct HeadlessOpenBenchmarkOptions;
 #endif
+
+bool maploader_preview_snapshot_available();
 
 inline constexpr float kDefaultFontSize = 18.0f;
 inline constexpr float kMinFontSize = 6.0f;
@@ -458,7 +461,11 @@ struct MapModel {
     double buffer_copy_seconds = 0.0;
     double ir_json_seconds = 0.0;
     double json_parse_seconds = 0.0;
+    double snapshot_build_seconds = 0.0;
+    double snapshot_hydrate_seconds = 0.0;
     double model_hydrate_seconds = 0.0;
+    std::string load_transport = "json";
+    std::string transport_warning;
     bool has_cp_arb = false;
 };
 
@@ -1053,6 +1060,7 @@ public:
                                                  double unit_distance, double pan_pixels,
                                                  double max_frame_ms, const std::string& output_path,
                                                  bool profile_stages);
+    static int run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& options);
     static int run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
                                                     double unit_distance, double max_frame_ms,
                                                     double window_back_m, double window_forward_m,
@@ -1144,6 +1152,7 @@ private:
     };
     struct LoadModelOptions {
         bool full_edit_registry = false;
+        bool force_json_transport = false;
         std::string load_profile = "preview";
     };
     struct AsyncLoadState {
@@ -1652,6 +1661,7 @@ private:
     void request_plot_focus(double distance, bool include_profile, bool include_radius);
     void handle_measure_plot_double_click(bool include_profile, bool include_radius);
     void jump_to_distance(double distance);
+    void export_csv_to_directory(const std::filesystem::path& dir) const;
     void export_csv();
     void save_history();
     void upsert_recent_map(const std::string& path,

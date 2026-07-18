@@ -769,7 +769,8 @@ void log_load_timing(const MapContext& ctx) {
              ", parse=" + format_seconds(ctx.timing.parse_seconds) +
              ", relocate=" + format_seconds(ctx.timing.relocate_seconds) +
              ", owntrack=" + format_seconds(ctx.timing.owntrack_seconds) +
-             ", JSON=" + format_seconds(ctx.timing.json_seconds));
+             ", JSON=" + format_seconds(ctx.timing.json_seconds) +
+             ", snapshot=" + format_seconds(ctx.timing.snapshot_seconds));
     for (const auto& item : ctx.timing.othertrack_seconds) {
         log_info("load timing: othertrack[" + item.first + "]=" + format_seconds(item.second));
     }

@@ -527,6 +527,7 @@ void App::render_plots() {
             render_radius_plot(profile, graph_avail);
         }
     }
+    if (has_model_) finish_pending_load_timing(std::chrono::steady_clock::now());
     focus_plots_next_ = false;
     ImGui::End();
 }

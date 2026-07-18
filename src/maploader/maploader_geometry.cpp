@@ -1095,6 +1095,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
     ctx.timing.owntrack_seconds = 0.0;
     ctx.timing.othertrack_seconds.clear();
     ctx.timing.json_seconds = 0.0;
+    ctx.timing.snapshot_seconds = 0.0;
     ctx.load_timing_logged = false;
     {
         ScopedTimer timer(&ctx.timing.owntrack_seconds);

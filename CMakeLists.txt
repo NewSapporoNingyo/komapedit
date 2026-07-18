@@ -96,6 +96,7 @@ add_library(maploader SHARED
     src/maploader/maploader_parser.cpp
     src/maploader/maploader_geometry.cpp
     src/maploader/maploader_ir_json.cpp
+    src/maploader/maploader_preview_snapshot.cpp
     src/maploader/maploader_edits.cpp
     src/maploader/diagnostics.cpp
     src/maploader/c_api.cpp
