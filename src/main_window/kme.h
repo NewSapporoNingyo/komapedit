@@ -37,13 +37,13 @@ struct ID3D11ShaderResourceView;
 class Canvas3D;
 struct Canvas3DStructureDragUpdate;
 struct Canvas3DStructureEditTarget;
+struct KvEditReportSnapshot;
 
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
 #endif
 
-bool maploader_preview_snapshot_available();
 
 inline constexpr float kDefaultFontSize = 18.0f;
 inline constexpr float kMinFontSize = 6.0f;
@@ -459,13 +459,9 @@ struct MapModel {
     double default_max = 0.0;
     double cp_arb[3] = {0.0, 0.0, 25.0};
     double buffer_copy_seconds = 0.0;
-    double ir_json_seconds = 0.0;
-    double json_parse_seconds = 0.0;
     double snapshot_build_seconds = 0.0;
     double snapshot_hydrate_seconds = 0.0;
     double model_hydrate_seconds = 0.0;
-    std::string load_transport = "json";
-    std::string transport_warning;
     bool has_cp_arb = false;
 };
 
@@ -1002,7 +998,7 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
     std::string* error_message = nullptr);
 
 bool apply_committed_edit_report_to_model(MapModel& model,
-                                          const std::string& report_json,
+                                          const KvEditReportSnapshot& report,
                                           std::string& error_message);
 
 struct DistanceResolutionChoice {
@@ -1152,7 +1148,6 @@ private:
     };
     struct LoadModelOptions {
         bool full_edit_registry = false;
-        bool force_json_transport = false;
         std::string load_profile = "preview";
     };
     struct AsyncLoadState {
@@ -1453,7 +1448,7 @@ private:
                                             LoadModelOptions options);
     void clear_pending_edit_state();
     bool has_pending_edits() const;
-    bool parse_and_log_edit_report(const std::string& report_text,
+    bool parse_and_log_edit_report(const KvEditReportSnapshot& report,
                                    const std::string& success_prefix,
                                    int* update_count = nullptr,
                                    int* delete_count = nullptr,
@@ -1504,7 +1499,6 @@ private:
     bool update_scene_structure_instance_from_model(const std::string& edit_id);
     void clear_scene_structure_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
-    std::string pending_changes_json() const;
     void render_element_inspector();
 
     void handle_shortcuts();

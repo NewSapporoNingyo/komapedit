@@ -18,124 +18,11 @@ using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
 using kme::maploader::read_binary_file;
 
-using JsonValue = kme::json::Value;
-
-struct SemanticElementJson {
-    std::string edit_id;
-    std::string source_file;
-    std::string container_path;
-    const JsonValue* value = nullptr;
-    std::string canonical;
-};
-
-struct SemanticSnapshot {
-    std::shared_ptr<JsonValue> root;
-    std::vector<SemanticElementJson> elements;
-    std::string full_fingerprint;
-};
-
-void append_canonical_semantic_json(std::ostringstream& out,
-                                    const JsonValue& value) {
-    using Type = JsonValue::Type;
-    switch (value.type) {
-        case Type::Null:
-            out << "null";
-            return;
-        case Type::Bool:
-            out << (value.boolean ? "true" : "false");
-            return;
-        case Type::Number:
-            out << json_number(value.number);
-            return;
-        case Type::String:
-            append_json_string(out, value.string);
-            return;
-        case Type::Array:
-            out << "[";
-            for (size_t i = 0; i < value.array.size(); ++i) {
-                if (i) out << ",";
-                append_canonical_semantic_json(out, value.array[i]);
-            }
-            out << "]";
-            return;
-        case Type::Object:
-            out << "{";
-            {
-                bool first = true;
-                for (const auto& item : value.object) {
-                    if (item.first == "editId" || item.first == "source" ||
-                        item.first == "order") {
-                        continue;
-                    }
-                    if (!first) out << ",";
-                    first = false;
-                    append_json_string(out, item.first);
-                    out << ":";
-                    append_canonical_semantic_json(out, item.second);
-                }
-            }
-            out << "}";
-            return;
-    }
-}
-
-std::string canonical_semantic_json(const JsonValue& value,
-                                    const std::string& source_file = {},
-                                    const std::string& container_path = {}) {
-    std::ostringstream out;
-    append_json_string(out, source_file);
-    out << "|";
-    append_json_string(out, container_path);
-    out << "|";
-    append_canonical_semantic_json(out, value);
-    return out.str();
-}
-
-void collect_semantic_elements(const JsonValue& value,
-                               std::vector<SemanticElementJson>& elements,
-                               const std::string& container_path = {}) {
-    if (value.is_object()) {
-        const JsonValue& edit_id = value.at("editId");
-        if (edit_id.is_string() && !edit_id.string.empty()) {
-            SemanticElementJson element;
-            element.edit_id = edit_id.string;
-            const JsonValue& source = value.at("source");
-            if (source.is_object()) element.source_file = source.at("filePath").scalar_text();
-            element.container_path = container_path;
-            element.value = &value;
-            element.canonical = canonical_semantic_json(
-                value, element.source_file, element.container_path);
-            elements.push_back(std::move(element));
-            return;
-        }
-        for (const auto& item : value.object) {
-            const std::string child_path = container_path.empty()
-                ? item.first
-                : container_path + "." + item.first;
-            collect_semantic_elements(item.second, elements, child_path);
-        }
-        return;
-    }
-    if (value.is_array()) {
-        for (const JsonValue& item : value.array) {
-            collect_semantic_elements(item, elements, container_path);
-        }
-    }
-}
-
-std::string variable_environment_fingerprint(const VariableEnvironment& variables,
-                                             double final_distance);
+using SemanticSnapshot = SemanticMapSnapshot;
+using SemanticElement = SemanticElementSnapshot;
 
 SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
-    std::string json = build_ir_json(ctx, KV_IR_JSON_COMPACT);
-    SemanticSnapshot snapshot;
-    snapshot.root = std::make_shared<JsonValue>(kme::json::parse(json));
-    collect_semantic_elements(*snapshot.root, snapshot.elements);
-    std::ostringstream state;
-    append_canonical_semantic_json(state, *snapshot.root);
-    state << "\n" << variable_environment_fingerprint(ctx.variables, ctx.distance);
-    snapshot.full_fingerprint = hex64(stable_hash64(state.str()));
-    return snapshot;
+    return build_semantic_map_snapshot(ctx);
 }
 
 struct EditableTarget {
@@ -173,36 +60,63 @@ struct SourcePatch {
     std::vector<TextReplacement> replacements;
 };
 
-std::vector<MapEditChange> parse_edit_changes_json(const char* changes_json) {
-    if (!changes_json) throw std::runtime_error("changes_json is null");
-    JsonValue root = kme::json::parse(changes_json);
-    const JsonValue& changes_value = root.is_array() ? root : root.at("changes");
-    if (!changes_value.is_array()) throw std::runtime_error("edit changes JSON must contain a changes array");
+std::string copy_utf8_view(KvUtf8View view, const char* field_name) {
+    if (view.length == 0) return {};
+    if (!view.data) throw std::runtime_error(std::string(field_name) + " data is null");
+    if (view.length > static_cast<std::uint64_t>(std::numeric_limits<size_t>::max())) {
+        throw std::runtime_error(std::string(field_name) + " is too large");
+    }
+    return std::string(view.data, static_cast<size_t>(view.length));
+}
 
+std::vector<MapEditChange> copy_edit_batch(const KvEditBatch& batch) {
+    if (batch.change_count != 0 && !batch.changes) {
+        throw std::runtime_error("edit batch changes are null");
+    }
+    if (batch.field_count != 0 && !batch.fields) {
+        throw std::runtime_error("edit batch fields are null");
+    }
+    if (batch.change_count > static_cast<std::uint64_t>(std::numeric_limits<size_t>::max()) ||
+        batch.field_count > static_cast<std::uint64_t>(std::numeric_limits<size_t>::max())) {
+        throw std::runtime_error("edit batch is too large");
+    }
     std::vector<MapEditChange> changes;
-    changes.reserve(changes_value.array.size());
-    for (const JsonValue& item : changes_value.array) {
-        if (!item.is_object()) continue;
+    changes.reserve(static_cast<size_t>(batch.change_count));
+    for (std::uint64_t i = 0; i < batch.change_count; ++i) {
+        const KvEditChange& input = batch.changes[i];
+        if (input.fields.offset > batch.field_count ||
+            input.fields.count > batch.field_count - input.fields.offset) {
+            throw std::runtime_error("edit change field span is out of bounds");
+        }
         MapEditChange change;
-        change.change_id = item.at("changeId").scalar_text();
-        change.edit_id = item.at("editId").scalar_text();
-        change.operation = item.at("operation").scalar_text();
-        change.replacement_statement = item.at("replacementStatement").scalar_text();
-        change.target_file_path = item.at("targetFilePath").scalar_text();
-        change.insert_before_edit_id = item.at("insertBeforeEditId").scalar_text();
-        change.expected_source_hash = item.at("expectedSourceHash").scalar_text();
-        change.distance_resolution_key = item.at("distanceResolutionKey").scalar_text();
-        change.distance_boundary_token = item.at("distanceBoundaryToken").scalar_text();
-        change.distance_expression = item.at("distanceExpression").scalar_text();
-        const JsonValue& confirm_environment_mismatch =
-            item.at("confirmEnvironmentMismatch");
+        change.change_id = copy_utf8_view(input.change_id, "changeId");
+        change.edit_id = copy_utf8_view(input.edit_id, "editId");
+        switch (input.operation) {
+            case KV_EDIT_UPDATE: change.operation = "update"; break;
+            case KV_EDIT_INSERT: change.operation = "insert"; break;
+            case KV_EDIT_DELETE: change.operation = "delete"; break;
+            default: throw std::runtime_error("unsupported typed edit operation");
+        }
+        change.replacement_statement = copy_utf8_view(
+            input.replacement_statement, "replacementStatement");
+        change.target_file_path = copy_utf8_view(input.target_file_path, "targetFilePath");
+        change.insert_before_edit_id = copy_utf8_view(
+            input.insert_before_edit_id, "insertBeforeEditId");
+        change.expected_source_hash = copy_utf8_view(
+            input.expected_source_hash, "expectedSourceHash");
+        change.distance_resolution_key = copy_utf8_view(
+            input.distance_resolution_key, "distanceResolutionKey");
+        change.distance_boundary_token = copy_utf8_view(
+            input.distance_boundary_token, "distanceBoundaryToken");
+        change.distance_expression = copy_utf8_view(
+            input.distance_expression, "distanceExpression");
         change.confirm_environment_mismatch =
-            confirm_environment_mismatch.is_bool() && confirm_environment_mismatch.boolean;
-        const JsonValue& fields = item.at("fieldChanges");
-        if (fields.is_object()) {
-            for (const auto& kv : fields.object) {
-                change.field_changes[kv.first] = kv.second.scalar_text();
-            }
+            (input.flags & KV_EDIT_CHANGE_CONFIRM_ENVIRONMENT_MISMATCH) != 0;
+        for (std::uint64_t j = 0; j < input.fields.count; ++j) {
+            const KvEditField& field = batch.fields[input.fields.offset + j];
+            std::string name = copy_utf8_view(field.name, "field name");
+            if (name.empty()) throw std::runtime_error("edit field name is empty");
+            change.field_changes[std::move(name)] = copy_utf8_view(field.value, "field value");
         }
         changes.push_back(std::move(change));
     }
@@ -616,7 +530,7 @@ std::string value_to_bve_arg(const Value& value) {
     switch (value.kind) {
         case ValueKind::Null: return {};
         case ValueKind::ContinueValue: return "c";
-        case ValueKind::Number: return json_number(value.number);
+        case ValueKind::Number: return canonical_number(value.number);
         case ValueKind::String: return quoted_bve_string(value.text);
     }
     return {};
@@ -828,31 +742,21 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
     return target;
 }
 
-std::string edit_target_info_json(MapContext& ctx, const std::string& edit_id) {
-    auto error_json = [](const std::string& error) {
-        std::ostringstream out;
-        out << "{\"ok\":false,\"error\":";
-        append_json_string(out, error);
-        out << "}";
-        return out.str();
-    };
-
-    if (edit_id.empty()) return error_json("editId is empty");
-
+const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
+                                                       const std::string& edit_id) {
+    if (edit_id.empty()) throw std::runtime_error("editId is empty");
     EditableTarget target = find_editable_target(ctx, edit_id);
     if (target.statement_index == kNoSourceRef ||
         target.statement_index >= ctx.parsed_statements.size()) {
-        return error_json("unsupported or unknown editId: " + edit_id);
+        throw std::runtime_error("unsupported or unknown editId: " + edit_id);
     }
 
     const ParsedStatement& statement = ctx.parsed_statements[target.statement_index];
-    const SourceFileRecord* file = nullptr;
-    if (statement.source.source_file_index < ctx.source_files.size()) {
-        file = &ctx.source_files[statement.source.source_file_index];
-    }
-    std::string expected_source_hash;
+    const SourceFileRecord* file = statement.source.source_file_index < ctx.source_files.size()
+        ? &ctx.source_files[statement.source.source_file_index]
+        : nullptr;
+    std::string expected_source_hash = file ? file->source_hash : std::string{};
     if (file) {
-        expected_source_hash = file->source_hash;
         auto override_it = ctx.source_overrides.find(file->source_key);
         if (override_it != ctx.source_overrides.end() &&
             !override_it->second.base_hash.empty()) {
@@ -860,33 +764,50 @@ std::string edit_target_info_json(MapContext& ctx, const std::string& edit_id) {
         }
     }
 
-    std::ostringstream out;
-    out << "{\"ok\":true,\"editId\":";
-    append_json_string(out, edit_id);
-    out << ",\"rowKind\":";
-    append_json_string(out, target.row_kind);
-    out << ",\"rowIndex\":" << target.row_index
-        << ",\"elementsForStatement\":" << target.elements_for_statement
-        << ",\"statementKind\":";
-    append_json_string(out, statement.statement_kind);
-    out << ",\"sourceHash\":";
-    append_json_string(out, file ? file->source_hash : std::string{});
-    out << ",\"expectedSourceHash\":";
-    append_json_string(out, expected_source_hash);
-    out << ",\"source\":{\"filePath\":";
-    append_json_string(out, source_file_path(ctx, statement.source));
-    out << ",\"line\":" << statement.source.line
-        << ",\"column\":" << statement.source.column
-        << ",\"rawTextPreview\":";
-    append_json_string(out, statement.raw_text_preview);
-    out << "},\"rawText\":";
-    append_json_string(out, statement.raw_text);
-    out << ",\"rawArguments\":";
-    append_json_string(out, statement.raw_arguments);
-    out << ",\"distanceExpression\":";
-    append_json_string(out, statement.distance_expression);
-    out << ",\"distanceValue\":" << json_number(statement.distance_value) << "}";
-    return out.str();
+    auto storage = std::make_unique<EditTargetSnapshotStorage>();
+    storage->string_arena.reserve(4096);
+    auto string_ref = [&](const std::string& text) {
+        KvStringRef ref{static_cast<std::uint64_t>(storage->string_arena.size()),
+                        static_cast<std::uint64_t>(text.size())};
+        storage->string_arena.append(text);
+        return ref;
+    };
+    KvEditTargetSnapshot& view = storage->view;
+    view.version = KV_EDIT_TARGET_SNAPSHOT_VERSION;
+    view.structure_size = sizeof(KvEditTargetSnapshot);
+    view.edit_id = string_ref(edit_id);
+    view.row_kind = string_ref(target.row_kind);
+    view.row_index = static_cast<std::uint64_t>(target.row_index);
+    view.elements_for_statement = static_cast<std::uint64_t>(target.elements_for_statement);
+    view.statement_kind = string_ref(statement.statement_kind);
+    view.source_hash = string_ref(file ? file->source_hash : std::string{});
+    view.expected_source_hash = string_ref(expected_source_hash);
+    view.source_file_path = string_ref(source_file_path(ctx, statement.source));
+    view.source.source_file_index = static_cast<std::uint64_t>(statement.source.source_file_index);
+    view.source.byte_start = static_cast<std::uint64_t>(statement.source.byte_start);
+    view.source.byte_end = static_cast<std::uint64_t>(statement.source.byte_end);
+    view.source.line = statement.source.line;
+    view.source.column = statement.source.column;
+    view.source.line_end = statement.source.line_end;
+    view.source.column_end = statement.source.column_end;
+    const std::vector<std::string>& include_stack = source_include_stack(ctx, statement.source);
+    view.source.include_stack.offset = 0;
+    view.source.include_stack.count = static_cast<std::uint64_t>(include_stack.size());
+    storage->string_refs.reserve(include_stack.size());
+    for (const std::string& item : include_stack) storage->string_refs.push_back(string_ref(item));
+    view.source.include_invocation_key = string_ref(
+        source_include_invocation_key(ctx, statement.source));
+    view.raw_text = string_ref(statement.raw_text);
+    view.raw_text_preview = string_ref(statement.raw_text_preview);
+    view.raw_arguments = string_ref(statement.raw_arguments);
+    view.distance_expression = string_ref(statement.distance_expression);
+    view.distance_value = statement.distance_value;
+    view.string_data = storage->string_arena.empty() ? nullptr : storage->string_arena.data();
+    view.string_size = static_cast<std::uint64_t>(storage->string_arena.size());
+    view.string_refs = storage->string_refs.empty() ? nullptr : storage->string_refs.data();
+    view.string_ref_count = static_cast<std::uint64_t>(storage->string_refs.size());
+    ctx.edit_target_snapshot = std::move(storage);
+    return ctx.edit_target_snapshot->view;
 }
 
 std::string build_replacement_statement(const MapEditChange& change,
@@ -1372,17 +1293,17 @@ std::string source_section_key(const MapContext& ctx,
     std::ostringstream key;
     key << source_file_key(ctx, origin.source) << "\n"
         << source_context_identity(ctx, origin.source) << "\n"
-        << section.direction << "\n" << json_number(target_distance) << "\n";
+        << section.direction << "\n" << canonical_number(target_distance) << "\n";
     if (!section.anchors.empty()) {
         const ParsedStatement& first = ctx.parsed_statements[
             section.anchors[std::min(section.first_position, section.anchors.size() - 1)]];
         const ParsedStatement& last = ctx.parsed_statements[
             section.anchors[std::min(section.last_position, section.anchors.size() - 1)]];
         key << trim_field_copy(first.distance_expression) << "="
-            << json_number(first.distance_value) << "@"
+            << canonical_number(first.distance_value) << "@"
             << first.source.byte_start << ":" << first.source.byte_end << "\n"
             << trim_field_copy(last.distance_expression) << "="
-            << json_number(last.distance_value) << "@"
+            << canonical_number(last.distance_value) << "@"
             << last.source.byte_start << ":" << last.source.byte_end;
     }
     return "distance-resolution-" + hex64(stable_hash64(key.str()));
@@ -1474,123 +1395,133 @@ void append_resolution_request(MapContext& ctx,
     report.resolution_requests.push_back(std::move(request));
 }
 
-std::string report_json(const MapEditReport& report) {
-    std::ostringstream out;
-    out << "{\"ok\":" << (report.ok() ? "true" : "false")
-        << ",\"updateCount\":" << report.update_count
-        << ",\"insertCount\":" << report.insert_count
-        << ",\"deleteCount\":" << report.delete_count
-        << ",\"fullReparseOk\":" << (report.full_reparse_ok ? "true" : "false")
-        << ",\"targetDistanceMatchCount\":" << report.target_distance_match_count
-        << ",\"nonTargetChangedCount\":" << report.non_target_changed_count
-        << ",\"createdDistanceBlockCount\":" << report.created_distance_block_count
-        << ",\"reusedDistanceBlockCount\":" << report.reused_distance_block_count
-        << ",\"distanceGroupCount\":" << report.distance_group_count
-        << ",\"validationFingerprint\":";
-    append_json_string(out, report.validation_fingerprint);
-    out
-        << ",\"changedFiles\":[";
-    for (size_t i = 0; i < report.changed_files.size(); ++i) {
-        if (i) out << ",";
-        append_json_string(out, report.changed_files[i]);
+const KvEditReportSnapshot& build_edit_report_snapshot(MapContext& ctx,
+                                                       const MapEditReport& report) {
+    auto storage = std::make_unique<EditReportSnapshotStorage>();
+    const size_t string_hint = report.changed_files.size() + report.warnings.size() +
+        report.blocking_errors.size() + report.committed_files.size() * 2 +
+        report.committed_rows.size() * 4 + report.previews.size() * 3 + 16;
+    storage->string_arena.reserve(std::max<size_t>(4096, string_hint * 48));
+    std::unordered_map<std::string, KvStringRef> strings;
+    strings.reserve(string_hint);
+    auto string_ref = [&](const std::string& text) {
+        auto found = strings.find(text);
+        if (found != strings.end()) return found->second;
+        KvStringRef ref{static_cast<std::uint64_t>(storage->string_arena.size()),
+                        static_cast<std::uint64_t>(text.size())};
+        storage->string_arena.append(text);
+        strings.emplace(text, ref);
+        return ref;
+    };
+    auto append_string_span = [&](const std::vector<std::string>& inputs) {
+        KvSpan span{static_cast<std::uint64_t>(storage->string_refs.size()),
+                    static_cast<std::uint64_t>(inputs.size())};
+        for (const std::string& input : inputs) storage->string_refs.push_back(string_ref(input));
+        return span;
+    };
+
+    storage->changed_files.reserve(report.changed_files.size());
+    for (const std::string& input : report.changed_files) {
+        storage->changed_files.push_back(string_ref(input));
     }
-    out << "],\"committedFiles\":[";
-    for (size_t i = 0; i < report.committed_files.size(); ++i) {
-        if (i) out << ",";
-        const MapEditCommittedFile& file = report.committed_files[i];
-        out << "{\"filePath\":";
-        append_json_string(out, file.file_path);
-        out << ",\"sourceHash\":";
-        append_json_string(out, file.source_hash);
-        out << ",\"byteLength\":" << file.byte_length << "}";
+    storage->committed_files.reserve(report.committed_files.size());
+    for (const MapEditCommittedFile& input : report.committed_files) {
+        storage->committed_files.push_back({string_ref(input.file_path),
+                                            string_ref(input.source_hash),
+                                            static_cast<std::uint64_t>(input.byte_length)});
     }
-    out << "],\"committedRows\":[";
-    for (size_t i = 0; i < report.committed_rows.size(); ++i) {
-        if (i) out << ",";
-        const MapEditCommittedRow& row = report.committed_rows[i];
-        out << "{\"rowKind\":";
-        append_json_string(out, row.row_kind);
-        out << ",\"rowIndex\":" << row.row_index
-            << ",\"editId\":";
-        append_json_string(out, row.edit_id);
-        out << ",\"source\":{\"filePath\":";
-        append_json_string(out, row.file_path);
-        out << ",\"line\":" << row.line
-            << ",\"column\":" << row.column
-            << ",\"rawTextPreview\":";
-        append_json_string(out, row.raw_text_preview);
-        out << "}}";
+    storage->committed_rows.reserve(report.committed_rows.size());
+    for (const MapEditCommittedRow& input : report.committed_rows) {
+        KvEditCommittedRow row{};
+        row.row_kind = string_ref(input.row_kind);
+        row.row_index = static_cast<std::uint64_t>(input.row_index);
+        row.edit_id = string_ref(input.edit_id);
+        row.file_path = string_ref(input.file_path);
+        row.line = input.line;
+        row.column = input.column;
+        row.raw_text_preview = string_ref(input.raw_text_preview);
+        storage->committed_rows.push_back(row);
     }
-    out << "],\"warnings\":[";
-    for (size_t i = 0; i < report.warnings.size(); ++i) {
-        if (i) out << ",";
-        append_json_string(out, report.warnings[i]);
+    storage->warnings.reserve(report.warnings.size());
+    for (const std::string& input : report.warnings) storage->warnings.push_back(string_ref(input));
+    storage->blocking_errors.reserve(report.blocking_errors.size());
+    for (const std::string& input : report.blocking_errors) {
+        storage->blocking_errors.push_back(string_ref(input));
     }
-    out << "],\"blockingErrors\":[";
-    for (size_t i = 0; i < report.blocking_errors.size(); ++i) {
-        if (i) out << ",";
-        append_json_string(out, report.blocking_errors[i]);
-    }
-    out << "],\"resolutionRequests\":[";
-    for (size_t i = 0; i < report.resolution_requests.size(); ++i) {
-        if (i) out << ",";
-        const DistanceResolutionRequest& request = report.resolution_requests[i];
-        out << "{\"resolutionKey\":";
-        append_json_string(out, request.resolution_key);
-        out << ",\"reason\":";
-        append_json_string(out, request.reason);
-        out << ",\"sourceFile\":";
-        append_json_string(out, request.source_file);
-        out << ",\"includeStack\":[";
-        for (size_t stack_index = 0; stack_index < request.include_stack.size(); ++stack_index) {
-            if (stack_index) out << ",";
-            append_json_string(out, request.include_stack[stack_index]);
+    storage->resolution_requests.reserve(report.resolution_requests.size());
+    for (const DistanceResolutionRequest& input : report.resolution_requests) {
+        KvDistanceResolutionRow row{};
+        row.resolution_key = string_ref(input.resolution_key);
+        row.reason = string_ref(input.reason);
+        row.source_file = string_ref(input.source_file);
+        row.include_stack = append_string_span(input.include_stack);
+        row.target_distance = input.target_distance;
+        row.variable_name = string_ref(input.variable_name);
+        row.affected_edit_ids = append_string_span(input.affected_edit_ids);
+        row.suggested_expression = string_ref(input.suggested_expression);
+        row.insertion_preview = string_ref(input.insertion_preview);
+        row.can_confirm_reuse = input.can_confirm_reuse ? 1u : 0u;
+        row.source_section_first_line = input.source_section.first_line;
+        row.source_section_last_line = input.source_section.last_line;
+        row.source_section_direction = string_ref(input.source_section.direction);
+        row.allowed_boundaries.offset = static_cast<std::uint64_t>(storage->boundaries.size());
+        row.allowed_boundaries.count = static_cast<std::uint64_t>(input.allowed_boundaries.size());
+        storage->boundaries.reserve(storage->boundaries.size() + input.allowed_boundaries.size());
+        for (const DistanceResolutionBoundary& boundary : input.allowed_boundaries) {
+            KvDistanceBoundaryRow output{};
+            output.token = string_ref(boundary.token);
+            output.line = boundary.line;
+            output.column = boundary.column;
+            output.recommended = boundary.recommended ? 1u : 0u;
+            storage->boundaries.push_back(output);
         }
-        out << "],\"targetDistance\":" << json_number(request.target_distance)
-            << ",\"variableName\":";
-        append_json_string(out, request.variable_name);
-        out << ",\"affectedEditIds\":[";
-        for (size_t edit_index = 0; edit_index < request.affected_edit_ids.size(); ++edit_index) {
-            if (edit_index) out << ",";
-            append_json_string(out, request.affected_edit_ids[edit_index]);
-        }
-        out << "],\"suggestedExpression\":";
-        append_json_string(out, request.suggested_expression);
-        out << ",\"insertionPreview\":";
-        append_json_string(out, request.insertion_preview);
-        out << ",\"canConfirmReuse\":" << (request.can_confirm_reuse ? "true" : "false")
-            << ",\"sourceSection\":{\"firstLine\":" << request.source_section.first_line
-            << ",\"lastLine\":" << request.source_section.last_line
-            << ",\"direction\":";
-        append_json_string(out, request.source_section.direction);
-        out << "},\"allowedBoundaries\":[";
-        for (size_t boundary_index = 0;
-             boundary_index < request.allowed_boundaries.size(); ++boundary_index) {
-            if (boundary_index) out << ",";
-            const DistanceResolutionBoundary& boundary =
-                request.allowed_boundaries[boundary_index];
-            out << "{\"token\":";
-            append_json_string(out, boundary.token);
-            out << ",\"line\":" << boundary.line
-                << ",\"column\":" << boundary.column
-                << ",\"recommended\":" << (boundary.recommended ? "true" : "false")
-                << "}";
-        }
-        out << "]}";
+        storage->resolution_requests.push_back(row);
     }
-    out << "],\"previewSnippets\":[";
-    for (size_t i = 0; i < report.previews.size(); ++i) {
-        if (i) out << ",";
-        out << "{\"filePath\":";
-        append_json_string(out, report.previews[i].file_path);
-        out << ",\"before\":";
-        append_json_string(out, report.previews[i].before);
-        out << ",\"after\":";
-        append_json_string(out, report.previews[i].after);
-        out << "}";
+    storage->previews.reserve(report.previews.size());
+    for (const MapEditPreview& input : report.previews) {
+        storage->previews.push_back({string_ref(input.file_path),
+                                     string_ref(input.before),
+                                     string_ref(input.after)});
     }
-    out << "]}";
-    return out.str();
+
+    KvEditReportSnapshot& view = storage->view;
+    view.version = KV_EDIT_REPORT_SNAPSHOT_VERSION;
+    view.ok = report.ok() ? 1u : 0u;
+    view.structure_size = sizeof(KvEditReportSnapshot);
+    view.report_revision = ++ctx.edit_report_revision;
+    view.update_count = report.update_count;
+    view.insert_count = report.insert_count;
+    view.delete_count = report.delete_count;
+    view.full_reparse_ok = report.full_reparse_ok ? 1 : 0;
+    view.target_distance_match_count = report.target_distance_match_count;
+    view.non_target_changed_count = report.non_target_changed_count;
+    view.created_distance_block_count = report.created_distance_block_count;
+    view.reused_distance_block_count = report.reused_distance_block_count;
+    view.distance_group_count = report.distance_group_count;
+    view.validation_fingerprint = string_ref(report.validation_fingerprint);
+    view.string_data = storage->string_arena.empty() ? nullptr : storage->string_arena.data();
+    view.string_size = static_cast<std::uint64_t>(storage->string_arena.size());
+    view.string_refs = storage->string_refs.empty() ? nullptr : storage->string_refs.data();
+    view.string_ref_count = static_cast<std::uint64_t>(storage->string_refs.size());
+    view.boundaries = storage->boundaries.empty() ? nullptr : storage->boundaries.data();
+    view.boundary_count = static_cast<std::uint64_t>(storage->boundaries.size());
+    view.changed_files = storage->changed_files.empty() ? nullptr : storage->changed_files.data();
+    view.changed_file_count = static_cast<std::uint64_t>(storage->changed_files.size());
+    view.committed_files = storage->committed_files.empty() ? nullptr : storage->committed_files.data();
+    view.committed_file_count = static_cast<std::uint64_t>(storage->committed_files.size());
+    view.committed_rows = storage->committed_rows.empty() ? nullptr : storage->committed_rows.data();
+    view.committed_row_count = static_cast<std::uint64_t>(storage->committed_rows.size());
+    view.warnings = storage->warnings.empty() ? nullptr : storage->warnings.data();
+    view.warning_count = static_cast<std::uint64_t>(storage->warnings.size());
+    view.blocking_errors = storage->blocking_errors.empty() ? nullptr : storage->blocking_errors.data();
+    view.blocking_error_count = static_cast<std::uint64_t>(storage->blocking_errors.size());
+    view.resolution_requests = storage->resolution_requests.empty()
+        ? nullptr : storage->resolution_requests.data();
+    view.resolution_request_count = static_cast<std::uint64_t>(storage->resolution_requests.size());
+    view.preview_snippets = storage->previews.empty() ? nullptr : storage->previews.data();
+    view.preview_snippet_count = static_cast<std::uint64_t>(storage->previews.size());
+    ctx.edit_report_snapshot = std::move(storage);
+    return ctx.edit_report_snapshot->view;
 }
 
 struct TransactionalWriteRequest {
@@ -1966,53 +1897,14 @@ TransactionalWriteOutcome replace_files_transactionally(
     return outcome;
 }
 
-JsonValue json_number_value(double value) {
-    JsonValue result;
-    result.type = JsonValue::Type::Number;
-    result.number = value;
-    return result;
-}
-
-JsonValue json_string_value(std::string value) {
-    JsonValue result;
-    result.type = JsonValue::Type::String;
-    result.string = std::move(value);
-    return result;
-}
-
-void apply_expected_field_changes(JsonValue& expected,
-                                  const MapEditChange& change) {
-    if (!expected.is_object()) return;
-    static const std::set<std::string> numeric_fields = {
-        "distance", "x", "y", "z", "rx", "ry", "rz", "tilt", "span", "flag"
-    };
-    for (const auto& field : change.field_changes) {
-        if (numeric_fields.find(field.first) != numeric_fields.end()) {
-            double value = 0.0;
-            if (!parse_edit_number(field.second, value)) {
-                throw std::runtime_error("invalid numeric edit value: " + field.second);
-            }
-            expected.object[field.first] = json_number_value(value);
-        } else {
-            expected.object[field.first] = json_string_value(trim_field_copy(field.second));
-        }
+bool variable_environment_equal(const VariableEnvironment& a, double a_distance,
+                                const VariableEnvironment& b, double b_distance) {
+    if (a_distance != b_distance || a.size() != b.size()) return false;
+    for (const auto& entry : a) {
+        auto found = b.find(entry.first);
+        if (found == b.end() || !value_equal(entry.second, found->second)) return false;
     }
-}
-
-std::string variable_environment_fingerprint(const VariableEnvironment& variables,
-                                             double final_distance) {
-    std::vector<std::string> names;
-    names.reserve(variables.size());
-    for (const auto& variable : variables) names.push_back(variable.first);
-    std::sort(names.begin(), names.end());
-    std::ostringstream out;
-    out << "distance=" << json_number(final_distance) << "\n";
-    for (const std::string& name : names) {
-        const Value& value = variables.at(name);
-        out << name.size() << ":" << name << "=" << static_cast<int>(value.kind)
-            << ":" << json_value(value) << "\n";
-    }
-    return out.str();
+    return true;
 }
 
 std::map<double, std::string> effective_station_position_owners(MapContext& ctx) {
@@ -2046,7 +1938,7 @@ bool validate_non_target_derived_state(MapContext& baseline,
         auto after = candidate.station_position.find(entry.first);
         if (after == candidate.station_position.end() || after->second != entry.second) {
             error = "full reparse changed a non-target effective station position at distance " +
-                json_number(entry.first);
+                canonical_number(entry.first);
             return false;
         }
     }
@@ -2085,18 +1977,18 @@ void validate_edit_report(MapContext& baseline,
         return;
     }
 
-    const std::vector<SemanticElementJson>& before_elements = before_snapshot.elements;
-    const std::vector<SemanticElementJson>& after_elements = after_snapshot.elements;
-    std::map<std::string, const SemanticElementJson*> before_by_id;
-    std::map<std::string, const SemanticElementJson*> after_by_native_id;
-    for (const SemanticElementJson& element : before_elements) {
+    const std::vector<SemanticElement>& before_elements = before_snapshot.elements;
+    const std::vector<SemanticElement>& after_elements = after_snapshot.elements;
+    std::map<std::string, const SemanticElement*> before_by_id;
+    std::map<std::string, const SemanticElement*> after_by_native_id;
+    for (const SemanticElement& element : before_elements) {
         if (!before_by_id.emplace(element.edit_id, &element).second) {
             report.blocking_errors.push_back("duplicate baseline editId during validation: " +
                                              element.edit_id);
             return;
         }
     }
-    for (const SemanticElementJson& element : after_elements) {
+    for (const SemanticElement& element : after_elements) {
         if (!after_by_native_id.emplace(element.edit_id, &element).second) {
             report.blocking_errors.push_back("duplicate candidate editId during validation: " +
                                              element.edit_id);
@@ -2118,23 +2010,15 @@ void validate_edit_report(MapContext& baseline,
         }
         excluded_before.insert(change.edit_id);
         if (operation == "delete") continue;
-        if (!before_it->second->value) {
-            report.blocking_errors.push_back("validation target has no semantic value: " +
-                                             change.edit_id);
-            return;
-        }
-        JsonValue expected = *before_it->second->value;
         try {
-            apply_expected_field_changes(expected, change);
+            expected_target_canonical.emplace(
+                change.edit_id,
+                expected_target_semantic(baseline, *before_it->second, change));
         } catch (const std::exception& e) {
             report.blocking_errors.push_back(std::string("target validation failed for ") +
                                              change.edit_id + ": " + e.what());
             return;
         }
-        expected_target_canonical.emplace(
-            change.edit_id,
-            canonical_semantic_json(expected, before_it->second->source_file,
-                                    before_it->second->container_path));
         if (has_field_change(change, "distance")) ++expected_distance_target_count;
     }
 
@@ -2263,15 +2147,15 @@ void validate_edit_report(MapContext& baseline,
     }
     if (!report.blocking_errors.empty()) return;
 
-    std::vector<const SemanticElementJson*> before_non_targets;
+    std::vector<const SemanticElement*> before_non_targets;
     before_non_targets.reserve(before_elements.size() - excluded_before.size());
-    for (const SemanticElementJson& element : before_elements) {
+    for (const SemanticElement& element : before_elements) {
         if (excluded_before.find(element.edit_id) == excluded_before.end()) {
             before_non_targets.push_back(&element);
         }
     }
     size_t before_position = 0;
-    for (const SemanticElementJson& element : after_elements) {
+    for (const SemanticElement& element : after_elements) {
         if (candidate_target_ids.find(element.edit_id) != candidate_target_ids.end()) continue;
         if (before_position >= before_non_targets.size() ||
             element.canonical != before_non_targets[before_position]->canonical) {
@@ -2321,7 +2205,7 @@ void validate_edit_report(MapContext& baseline,
         } else {
             candidate->disk_native_element_edit_id_to_stable.reserve(
                 before_elements.size());
-            for (const SemanticElementJson& element : before_elements) {
+            for (const SemanticElement& element : before_elements) {
                 candidate->disk_native_element_edit_id_to_stable.emplace(
                     element.edit_id, element.edit_id);
             }
@@ -2344,8 +2228,8 @@ void validate_edit_report(MapContext& baseline,
         return;
     }
 
-    if (variable_environment_fingerprint(baseline.variables, baseline.distance) !=
-        variable_environment_fingerprint(candidate->variables, candidate->distance)) {
+    if (!variable_environment_equal(baseline.variables, baseline.distance,
+                                    candidate->variables, candidate->distance)) {
         report.non_target_changed_count = 1;
         report.blocking_errors.push_back(
             "full reparse changed the final variable or distance environment");
@@ -3438,7 +3322,17 @@ MapEditReport build_edit_report(MapContext& ctx,
             return report;
         }
 
+        const std::uint64_t next_content_revision = ctx.content_revision + 1;
+        const std::uint64_t next_geometry_revision = ctx.geometry_revision + 1;
+        const std::uint64_t next_scene_revision = ctx.scene_revision + 1;
         ctx = std::move(*report.validated_context);
+        ctx.content_revision = next_content_revision;
+        ctx.geometry_revision = next_geometry_revision;
+        ctx.scene_revision = next_scene_revision;
+        ctx.map_snapshot.reset();
+        ctx.scene_snapshot.reset();
+        ctx.edit_target_snapshot.reset();
+        ctx.edit_report_snapshot.reset();
         ctx.disk_native_element_edit_id_to_stable =
             ctx.native_element_edit_id_to_stable;
         ctx.disk_source_hashes_for_stable_ids.clear();
@@ -3479,6 +3373,7 @@ void reparse_context_with_overrides(MapContext& ctx,
                                     const std::array<double, 3>& arbitrary_distribution) {
     const std::uint64_t next_content_revision = ctx.content_revision + 1;
     const std::uint64_t next_geometry_revision = ctx.geometry_revision + 1;
+    const std::uint64_t next_scene_revision = ctx.scene_revision + 1;
     const auto disk_identities = ctx.disk_native_element_edit_id_to_stable;
     const auto disk_source_hashes = ctx.disk_source_hashes_for_stable_ids;
     std::string entry_file_path = ctx.entry_file_path;
@@ -3514,7 +3409,11 @@ void reparse_context_with_overrides(MapContext& ctx,
     ctx = std::move(*next);
     ctx.content_revision = next_content_revision;
     ctx.geometry_revision = next_geometry_revision;
-    ctx.preview_snapshot.reset();
+    ctx.scene_revision = next_scene_revision;
+    ctx.map_snapshot.reset();
+    ctx.scene_snapshot.reset();
+    ctx.edit_target_snapshot.reset();
+    ctx.edit_report_snapshot.reset();
 }
 
 void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report) {
@@ -3523,10 +3422,15 @@ void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report) {
     }
     const std::uint64_t next_content_revision = ctx.content_revision + 1;
     const std::uint64_t next_geometry_revision = ctx.geometry_revision + 1;
+    const std::uint64_t next_scene_revision = ctx.scene_revision + 1;
     ctx = std::move(*report.validated_context);
     ctx.content_revision = next_content_revision;
     ctx.geometry_revision = next_geometry_revision;
-    ctx.preview_snapshot.reset();
+    ctx.scene_revision = next_scene_revision;
+    ctx.map_snapshot.reset();
+    ctx.scene_snapshot.reset();
+    ctx.edit_target_snapshot.reset();
+    ctx.edit_report_snapshot.reset();
     ctx.edit_validation_fingerprint = report.validation_fingerprint;
     ctx.edit_validation_current = true;
 }
@@ -3712,7 +3616,8 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
                 file.source_key, file.source_hash);
         }
         populate_committed_edit_state(ctx, report);
-        invalidate_preview_snapshot(ctx, true, false);
+        invalidate_map_snapshot(ctx, true, false);
+        invalidate_scene_geometry_snapshot(ctx, false);
     }
     return report;
 }

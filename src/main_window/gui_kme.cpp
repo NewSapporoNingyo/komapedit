@@ -12,7 +12,6 @@
 #include "kme.h"
 #include "app_settings.h"
 #include "debug_headless.h"
-#include "json.h"
 #include "touch_input.h"
 
 #include "canvas3D.h"
@@ -133,10 +132,6 @@ void set_move_cursor() {
     ::SetCursor(::LoadCursor(nullptr, IDC_SIZEALL));
 }
 
-void append_gui_json_string(std::ostringstream& out, const std::string& text) {
-    kme::json::append_string(out, text);
-}
-
 std::string edit_field_buffer_text(const MapElementEditFieldState& field) {
     return std::string(field.value);
 }
@@ -200,9 +195,20 @@ std::string narrow_path(const std::filesystem::path& path) {
 
 std::string format_double(double value, int precision) {
     if (!std::isfinite(value)) return "";
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(precision) << value;
-    std::string s = out.str();
+    precision = std::max(0, precision);
+    std::array<char, 128> stack_buffer{};
+    int written = std::snprintf(stack_buffer.data(), stack_buffer.size(), "%.*f",
+                                precision, value);
+    if (written < 0) return {};
+    std::string s;
+    if (static_cast<size_t>(written) < stack_buffer.size()) {
+        s.assign(stack_buffer.data(), static_cast<size_t>(written));
+    } else {
+        std::vector<char> buffer(static_cast<size_t>(written) + 1u);
+        written = std::snprintf(buffer.data(), buffer.size(), "%.*f", precision, value);
+        if (written < 0) return {};
+        s.assign(buffer.data(), static_cast<size_t>(written));
+    }
     size_t dot = s.find('.');
     if (dot != std::string::npos) {
         while (s.size() > dot + 1 && s.back() == '0') s.pop_back();
@@ -331,30 +337,6 @@ std::string sanitize_filename(std::string text) {
     return text;
 }
 
-using JsonValue = kme::json::Value;
-
-std::string table_cell_text(const JsonValue& value) {
-    if (value.is_array()) {
-        std::string text;
-        for (size_t i = 0; i < value.array.size(); ++i) {
-            if (i) text += ", ";
-            text += table_cell_text(value.array[i]);
-        }
-        return text;
-    }
-    return value.scalar_text_fixed(6);
-}
-
-EditSourceInfo edit_source_from_json(const JsonValue& value) {
-    EditSourceInfo source;
-    if (!value.is_object()) return source;
-    source.file_path = value.at("filePath").scalar_text_fixed(6);
-    source.line = static_cast<int>(value.at("line").number);
-    source.column = static_cast<int>(value.at("column").number);
-    source.raw_text_preview = value.at("rawTextPreview").scalar_text_fixed(6);
-    return source;
-}
-
 std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& nodes) {
     std::uint64_t hash = 1469598103934665603ull;
     auto mix_byte = [&hash](unsigned char byte) {
@@ -379,41 +361,6 @@ std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& node
     return hash;
 }
 
-void hydrate_file_structure(MapModel& model, const JsonValue& value,
-                            const std::string& fallback_entry_path) {
-    if (value.is_array()) {
-        model.file_structure.reserve(value.array.size());
-        for (const JsonValue& item : value.array) {
-            if (!item.is_object()) continue;
-            FileStructureNode node;
-            node.include_path = item.at("includePath").scalar_text_fixed(6);
-            node.absolute_path = item.at("absolutePath").scalar_text_fixed(6);
-            node.display_name = display_name_from_path(node.absolute_path);
-            if (node.display_name.empty()) node.display_name = node.include_path;
-
-            if (!model.file_structure.empty()) {
-                const JsonValue& parent = item.at("parentIndex");
-                if (parent.is_number() && std::isfinite(parent.number) && parent.number >= 0.0 &&
-                    parent.number < static_cast<double>(model.file_structure.size())) {
-                    node.parent_index = static_cast<size_t>(parent.number);
-                } else {
-                    node.parent_index = 0;
-                }
-            }
-
-            model.file_structure.push_back(std::move(node));
-        }
-    }
-
-    if (model.file_structure.empty() && !fallback_entry_path.empty()) {
-        FileStructureNode root;
-        root.absolute_path = fallback_entry_path;
-        root.display_name = display_name_from_path(fallback_entry_path);
-        model.file_structure.push_back(std::move(root));
-    }
-    model.file_structure_revision = file_structure_revision(model.file_structure);
-}
-
 bool row_kind_has_source_distance_string(const std::string& row_kind);
 
 std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
@@ -426,25 +373,30 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
         return std::nullopt;
     }
 
-    const char* raw = kv_get_edit_target_info(handle, edit_id.c_str());
-    if (!raw) {
+    KvEditTargetSnapshot target{};
+    const KvUtf8View edit_id_view{edit_id.data(), static_cast<std::uint64_t>(edit_id.size())};
+    if (!kv_get_edit_target_typed(handle, edit_id_view, &target, sizeof(target))) {
         if (error_message) {
             const char* err = kv_get_last_error();
-            *error_message = err ? err : "kv_get_edit_target_info failed";
+            *error_message = err ? err : "kv_get_edit_target_typed failed";
         }
         return std::nullopt;
     }
-
-    std::string json(raw);
-    kv_free_string(raw);
     try {
-        auto root = kme::json::parse(json);
-        if (!root.at("ok").boolean) {
-            if (error_message) *error_message = root.at("error").scalar_text_fixed(6);
-            return std::nullopt;
+        if (target.version != KV_EDIT_TARGET_SNAPSHOT_VERSION ||
+            target.structure_size < sizeof(KvEditTargetSnapshot)) {
+            throw std::runtime_error("edit target snapshot version or size mismatch");
         }
+        auto text = [&](KvStringRef ref) {
+            if (!target.string_data || ref.offset > target.string_size ||
+                ref.length > target.string_size - ref.offset) {
+                return std::string{};
+            }
+            return std::string(target.string_data + static_cast<size_t>(ref.offset),
+                               static_cast<size_t>(ref.length));
+        };
         InspectorTargetMetadata info;
-        info.row_kind = root.at("rowKind").scalar_text_fixed(6);
+        info.row_kind = text(target.row_kind);
         if (!expected_row_kind.empty() && info.row_kind != expected_row_kind) {
             if (error_message) {
                 *error_message = "edit target row kind changed from " +
@@ -452,77 +404,26 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
             }
             return std::nullopt;
         }
-        info.row_index = static_cast<size_t>(std::max(0.0, root.at("rowIndex").number));
-        info.elements_for_statement = static_cast<int>(root.at("elementsForStatement").number);
-        info.statement_kind = root.at("statementKind").scalar_text_fixed(6);
-        info.source_hash = root.at("sourceHash").scalar_text_fixed(6);
-        info.expected_source_hash = root.at("expectedSourceHash").scalar_text_fixed(6);
-        info.source = edit_source_from_json(root.at("source"));
-        info.raw_statement = root.at("rawText").scalar_text_fixed(6);
-        info.raw_arguments = root.at("rawArguments").scalar_text_fixed(6);
+        info.row_index = static_cast<size_t>(target.row_index);
+        info.elements_for_statement = static_cast<int>(target.elements_for_statement);
+        info.statement_kind = text(target.statement_kind);
+        info.source_hash = text(target.source_hash);
+        info.expected_source_hash = text(target.expected_source_hash);
+        info.source.file_path = text(target.source_file_path);
+        info.source.line = target.source.line;
+        info.source.column = target.source.column;
+        info.source.raw_text_preview = text(target.raw_text_preview);
+        info.raw_statement = text(target.raw_text);
+        info.raw_arguments = text(target.raw_arguments);
         if (row_kind_has_source_distance_string(info.row_kind)) {
-            info.source_distance_string = root.at("distanceExpression").scalar_text_fixed(6);
+            info.source_distance_string = text(target.distance_expression);
         }
-        info.distance_value = root.at("distanceValue").number;
+        info.distance_value = target.distance_value;
         return info;
     } catch (const std::exception& e) {
         if (error_message) *error_message = e.what();
         return std::nullopt;
     }
-}
-
-DistanceResolutionRequest distance_resolution_request_from_json(
-    const JsonValue& value) {
-    DistanceResolutionRequest request;
-    if (!value.is_object()) return request;
-    request.resolution_key = value.at("resolutionKey").scalar_text_fixed(6);
-    request.reason = value.at("reason").scalar_text_fixed(6);
-    request.source_file = value.at("sourceFile").scalar_text_fixed(6);
-    request.target_distance = value.at("targetDistance").scalar_text_fixed(6);
-    request.variable_name = value.at("variableName").scalar_text_fixed(6);
-    request.suggested_expression = value.at("suggestedExpression").scalar_text_fixed(6);
-    request.insertion_preview = value.at("insertionPreview").scalar_text_fixed(6);
-    request.can_confirm_reuse = value.at("canConfirmReuse").boolean;
-
-    const JsonValue& include_stack = value.at("includeStack");
-    if (include_stack.is_array()) {
-        request.include_stack.reserve(include_stack.array.size());
-        for (const JsonValue& item : include_stack.array) {
-            request.include_stack.push_back(item.scalar_text_fixed(6));
-        }
-    }
-    const JsonValue& section = value.at("sourceSection");
-    if (section.is_object()) {
-        request.source_section_direction = section.at("direction").scalar_text_fixed(6);
-    }
-    const JsonValue& boundaries = value.at("allowedBoundaries");
-    if (boundaries.is_array()) {
-        request.allowed_boundaries.reserve(boundaries.array.size());
-        for (const JsonValue& item : boundaries.array) {
-            if (!item.is_object()) continue;
-            DistanceResolutionBoundary boundary;
-            boundary.token = item.at("token").scalar_text_fixed(6);
-            boundary.line = static_cast<int>(item.at("line").number);
-            boundary.column = static_cast<int>(item.at("column").number);
-            boundary.recommended = item.at("recommended").boolean;
-            if (!boundary.token.empty()) request.allowed_boundaries.push_back(std::move(boundary));
-        }
-    }
-    const JsonValue& affected_edit_ids = value.at("affectedEditIds");
-    if (affected_edit_ids.is_array()) {
-        request.affected_edit_ids.reserve(affected_edit_ids.array.size());
-        for (const JsonValue& item : affected_edit_ids.array) {
-            std::string edit_id = item.scalar_text_fixed(6);
-            if (!edit_id.empty()) request.affected_edit_ids.push_back(std::move(edit_id));
-        }
-    }
-    return request;
-}
-
-void apply_table_row_edit_metadata(TableRow& row, const JsonValue& value) {
-    if (!value.is_object()) return;
-    row.edit_id = value.at("editId").scalar_text_fixed(6);
-    row.source = edit_source_from_json(value.at("source"));
 }
 
 Matrix copy_buffer(KvDoubleBuffer buffer) {
@@ -535,115 +436,8 @@ Matrix copy_buffer(KvDoubleBuffer buffer) {
     return m;
 }
 
-std::string snapshot_string(const KvPreviewSnapshot& snapshot, KvStringRef ref) {
-    if (!snapshot.string_data || ref.offset > snapshot.string_size ||
-        ref.length > snapshot.string_size - ref.offset) {
-        return {};
-    }
-    return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
-                       static_cast<size_t>(ref.length));
-}
-
-bool snapshot_span_valid(KvPreviewSpan span, std::uint64_t size) {
-    return span.offset <= size && span.count <= size - span.offset;
-}
-
-std::string snapshot_value_text(const KvPreviewSnapshot& snapshot,
-                                const KvPreviewValue& value) {
-    switch (value.kind) {
-        case KV_PREVIEW_VALUE_BOOL:
-            return value.boolean_value ? "true" : "false";
-        case KV_PREVIEW_VALUE_NUMBER:
-            return kme::json::number_text_fixed(value.number_value, 6);
-        case KV_PREVIEW_VALUE_STRING:
-            return snapshot_string(snapshot, value.string_value);
-        case KV_PREVIEW_VALUE_ARRAY: {
-            if (!snapshot_span_valid(value.array_values, snapshot.array_value_count) ||
-                (!snapshot.array_values && value.array_values.count != 0)) {
-                return {};
-            }
-            std::string text;
-            for (std::uint64_t i = 0; i < value.array_values.count; ++i) {
-                if (i) text += ", ";
-                text += snapshot_value_text(
-                    snapshot, snapshot.array_values[value.array_values.offset + i]);
-            }
-            return text;
-        }
-        case KV_PREVIEW_VALUE_NULL:
-        default:
-            return {};
-    }
-}
-
-const KvPreviewTable* snapshot_table(const KvPreviewSnapshot& snapshot,
-                                     std::uint32_t kind) {
-    if (!snapshot.tables) return nullptr;
-    for (std::uint64_t i = 0; i < snapshot.table_count; ++i) {
-        if (snapshot.tables[i].kind == kind) return &snapshot.tables[i];
-    }
-    return nullptr;
-}
-
-const KvPreviewValue* snapshot_row_value(const KvPreviewSnapshot& snapshot,
-                                         const KvPreviewRow& row,
-                                         std::string_view key) {
-    if (!snapshot_span_valid(row.cells, snapshot.cell_count) ||
-        (!snapshot.cells && row.cells.count != 0)) {
-        return nullptr;
-    }
-    for (std::uint64_t i = 0; i < row.cells.count; ++i) {
-        const KvPreviewCell& cell = snapshot.cells[row.cells.offset + i];
-        KvStringRef ref = cell.key;
-        if (ref.length != key.size() || !snapshot.string_data ||
-            ref.offset > snapshot.string_size || ref.length > snapshot.string_size - ref.offset) {
-            continue;
-        }
-        if (std::memcmp(snapshot.string_data + static_cast<size_t>(ref.offset),
-                        key.data(), key.size()) == 0) {
-            return &cell.value;
-        }
-    }
-    return nullptr;
-}
-
-void apply_snapshot_row_metadata(TableRow& output, const KvPreviewSnapshot& snapshot,
-                                 const KvPreviewRow& input) {
-    output.edit_id = snapshot_string(snapshot, input.edit_id);
-    output.source.file_path = snapshot_string(snapshot, input.source_file_path);
-    output.source.line = input.source_line;
-    output.source.column = input.source_column;
-    output.source.raw_text_preview = snapshot_string(snapshot, input.source_raw_text_preview);
-}
-
-std::vector<TableRow> snapshot_table_rows(const KvPreviewSnapshot& snapshot,
-                                          std::uint32_t kind) {
-    std::vector<TableRow> output;
-    const KvPreviewTable* table = snapshot_table(snapshot, kind);
-    if (!table || !snapshot_span_valid(table->rows, snapshot.row_count) ||
-        (!snapshot.rows && table->rows.count != 0)) {
-        return output;
-    }
-    output.reserve(static_cast<size_t>(table->rows.count));
-    for (std::uint64_t i = 0; i < table->rows.count; ++i) {
-        const KvPreviewRow& input = snapshot.rows[table->rows.offset + i];
-        TableRow row;
-        if (snapshot_span_valid(input.cells, snapshot.cell_count) &&
-            (snapshot.cells || input.cells.count == 0)) {
-            for (std::uint64_t j = 0; j < input.cells.count; ++j) {
-                const KvPreviewCell& cell = snapshot.cells[input.cells.offset + j];
-                row.cells[snapshot_string(snapshot, cell.key)] =
-                    snapshot_value_text(snapshot, cell.value);
-            }
-        }
-        apply_snapshot_row_metadata(row, snapshot, input);
-        output.push_back(std::move(row));
-    }
-    return output;
-}
-
 ImVec4 other_track_palette_color(size_t index) {
-    static const ImVec4 palette[] = {
+    static constexpr ImVec4 palette[] = {
         ImVec4(0.12f, 0.47f, 0.71f, 1.0f), ImVec4(1.00f, 0.50f, 0.05f, 1.0f),
         ImVec4(0.17f, 0.63f, 0.17f, 1.0f), ImVec4(0.84f, 0.15f, 0.16f, 1.0f),
         ImVec4(0.58f, 0.40f, 0.74f, 1.0f), ImVec4(0.55f, 0.34f, 0.29f, 1.0f),
@@ -653,28 +447,101 @@ ImVec4 other_track_palette_color(size_t index) {
     return palette[index % (sizeof(palette) / sizeof(palette[0]))];
 }
 
-MapModel hydrate_preview_snapshot(const KvPreviewSnapshot& snapshot,
-                                  const std::string& path,
-                                  double snapshot_build_seconds) {
-    auto hydrate_started_at = std::chrono::steady_clock::now();
+std::string map_snapshot_string(const KvMapSnapshot& snapshot, KvStringRef ref) {
+    if (!snapshot.string_data || ref.offset > snapshot.string_size ||
+        ref.length > snapshot.string_size - ref.offset) {
+        return {};
+    }
+    return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
+                       static_cast<size_t>(ref.length));
+}
+
+bool map_snapshot_span_valid(KvSpan span, std::uint64_t size) {
+    return span.offset <= size && span.count <= size - span.offset;
+}
+
+std::string map_snapshot_value_text(const KvMapSnapshot& snapshot, const KvValue& value) {
+    switch (value.kind) {
+        case KV_VALUE_NUMBER: return format_double(value.number_value, 6);
+        case KV_VALUE_STRING: return map_snapshot_string(snapshot, value.string_value);
+        case KV_VALUE_CONTINUE: return "c";
+        case KV_VALUE_NULL:
+        default: return {};
+    }
+}
+
+std::string map_snapshot_value_span_text(const KvMapSnapshot& snapshot, KvSpan span) {
+    if (!map_snapshot_span_valid(span, snapshot.value_count) ||
+        (span.count != 0 && !snapshot.values)) {
+        return {};
+    }
+    std::string output;
+    for (std::uint64_t i = 0; i < span.count; ++i) {
+        if (i) output += ", ";
+        output += map_snapshot_value_text(snapshot, snapshot.values[span.offset + i]);
+    }
+    return output;
+}
+
+std::string map_snapshot_string_span_text(const KvMapSnapshot& snapshot, KvSpan span) {
+    if (!map_snapshot_span_valid(span, snapshot.string_ref_count) ||
+        (span.count != 0 && !snapshot.string_refs)) {
+        return {};
+    }
+    std::string output;
+    for (std::uint64_t i = 0; i < span.count; ++i) {
+        if (i) output += ", ";
+        output += map_snapshot_string(snapshot, snapshot.string_refs[span.offset + i]);
+    }
+    return output;
+}
+
+void apply_map_row_metadata(TableRow& output, const KvMapSnapshot& snapshot,
+                            const KvRowMetadata& metadata,
+                            bool include_legacy_cells = true) {
+    output.edit_id = map_snapshot_string(snapshot, metadata.edit_id);
+    if (include_legacy_cells && !output.edit_id.empty()) {
+        output.cells["editId"] = output.edit_id;
+        output.cells["source"] = {};
+    }
+    if (metadata.source_file_index < snapshot.source_file_count && snapshot.source_files) {
+        output.source.file_path = map_snapshot_string(
+            snapshot, snapshot.source_files[metadata.source_file_index].file_path);
+    }
+    output.source.line = metadata.line;
+    output.source.column = metadata.column;
+    output.source.raw_text_preview = map_snapshot_string(snapshot, metadata.raw_text_preview);
+}
+
+template <typename Row>
+void put_map_common_event_cells(TableRow& output, const KvMapSnapshot& snapshot,
+                                const Row& input) {
+    output.cells["distance"] = format_double(input.distance, 6);
+    output.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+    output.cells["order"] = std::to_string(input.order);
+}
+
+MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
+                              const std::string& path,
+                              double snapshot_call_seconds) {
+    const auto hydrate_started_at = std::chrono::steady_clock::now();
     MapModel model;
     model.path = path;
-    model.load_transport = "typed_snapshot";
-    model.snapshot_build_seconds = snapshot_build_seconds;
+    model.snapshot_build_seconds = snapshot.build_seconds > 0.0
+        ? snapshot.build_seconds : snapshot_call_seconds;
 
     model.file_structure.reserve(static_cast<size_t>(snapshot.file_structure_count));
     for (std::uint64_t i = 0; i < snapshot.file_structure_count; ++i) {
-        const KvPreviewFileStructure& input = snapshot.file_structure[i];
+        const KvFileStructureRow& input = snapshot.file_structure[i];
         FileStructureNode node;
-        node.include_path = snapshot_string(snapshot, input.include_path);
-        node.absolute_path = snapshot_string(snapshot, input.absolute_path);
+        node.include_path = map_snapshot_string(snapshot, input.include_path);
+        node.absolute_path = map_snapshot_string(snapshot, input.absolute_path);
         node.display_name = display_name_from_path(node.absolute_path);
         if (node.display_name.empty()) node.display_name = node.include_path;
         if (!model.file_structure.empty()) {
             node.parent_index = input.parent_index >= 0 &&
                     static_cast<std::uint64_t>(input.parent_index) < model.file_structure.size()
-                ? static_cast<size_t>(input.parent_index)
-                : 0;
+                ? static_cast<size_t>(input.parent_index) : 0;
         }
         model.file_structure.push_back(std::move(node));
     }
@@ -688,33 +555,66 @@ MapModel hydrate_preview_snapshot(const KvPreviewSnapshot& snapshot,
 
     model.edit_files.reserve(static_cast<size_t>(snapshot.source_file_count));
     for (std::uint64_t i = 0; i < snapshot.source_file_count; ++i) {
-        const KvPreviewSourceFile& input = snapshot.source_files[i];
+        const KvSourceFileRow& input = snapshot.source_files[i];
         EditSourceFileInfo file;
-        file.file_path = snapshot_string(snapshot, input.file_path);
-        file.display_path = snapshot_string(snapshot, input.display_path);
-        file.encoding = snapshot_string(snapshot, input.encoding);
-        file.newline = snapshot_string(snapshot, input.newline);
-        file.source_hash = snapshot_string(snapshot, input.source_hash);
+        file.file_path = map_snapshot_string(snapshot, input.file_path);
+        file.display_path = map_snapshot_string(snapshot, input.display_path);
+        file.encoding = map_snapshot_string(snapshot, input.encoding);
+        file.newline = map_snapshot_string(snapshot, input.newline);
+        file.source_hash = map_snapshot_string(snapshot, input.source_hash);
         file.byte_length = static_cast<size_t>(input.byte_length);
         model.edit_files.push_back(std::move(file));
+    }
+    model.edit_statements.reserve(static_cast<size_t>(snapshot.statement_count));
+    for (std::uint64_t i = 0; i < snapshot.statement_count; ++i) {
+        const KvStatementRow& input = snapshot.statements[i];
+        EditStatementInfo row;
+        row.edit_id = map_snapshot_string(snapshot, input.edit_id);
+        row.statement_kind = map_snapshot_string(snapshot, input.statement_kind);
+        if (input.source.source_file_index < snapshot.source_file_count && snapshot.source_files) {
+            row.source.file_path = map_snapshot_string(
+                snapshot, snapshot.source_files[input.source.source_file_index].file_path);
+        }
+        row.source.line = input.source.line;
+        row.source.column = input.source.column;
+        row.source.raw_text_preview = map_snapshot_string(snapshot, input.raw_text_preview);
+        row.raw_text = map_snapshot_string(snapshot, input.raw_text);
+        row.raw_arguments = map_snapshot_string(snapshot, input.raw_arguments);
+        row.distance_expression = map_snapshot_string(snapshot, input.distance_expression);
+        row.distance_value = input.distance_value;
+        row.global_order = input.global_order;
+        model.edit_statements.push_back(std::move(row));
+    }
+    model.edit_elements.reserve(static_cast<size_t>(snapshot.element_count));
+    for (std::uint64_t i = 0; i < snapshot.element_count; ++i) {
+        const KvElementRow& input = snapshot.elements[i];
+        EditElementInfo row;
+        row.edit_id = map_snapshot_string(snapshot, input.edit_id);
+        row.row_kind = map_snapshot_string(snapshot, input.row_kind);
+        row.row_index = static_cast<size_t>(input.row_index);
+        if (input.source_file_index < snapshot.source_file_count && snapshot.source_files) {
+            row.source_file_path = map_snapshot_string(
+                snapshot, snapshot.source_files[input.source_file_index].file_path);
+        }
+        row.global_order = input.global_order;
+        model.edit_elements.push_back(std::move(row));
     }
 
     double buffer_copy_seconds = 0.0;
     auto copy_buffer_timed = [&buffer_copy_seconds](KvDoubleBuffer buffer) {
-        auto started_at = std::chrono::steady_clock::now();
+        const auto started_at = std::chrono::steady_clock::now();
         Matrix matrix = copy_buffer(buffer);
         buffer_copy_seconds += std::chrono::duration<double>(
             std::chrono::steady_clock::now() - started_at).count();
         return matrix;
     };
-    model.own = copy_buffer_timed(snapshot.owntrack);
-    model.curve = copy_buffer_timed(snapshot.curve_radius);
+    model.own = copy_buffer_timed(snapshot.own_track_geometry);
+    model.curve = copy_buffer_timed(snapshot.curve_radius_geometry);
     if (snapshot.controlpoints && snapshot.controlpoint_count != 0) {
         model.controlpoints.assign(snapshot.controlpoints,
                                    snapshot.controlpoints + snapshot.controlpoint_count);
     }
     for (size_t i = 0; i < 3; ++i) model.cp_arb[i] = snapshot.cp_arbdistribution[i];
-
     if (!model.own.empty()) {
         model.distance_origin = model.own.at(0, 0);
         model.height_origin = model.own.at(0, 3);
@@ -723,9 +623,9 @@ MapModel hydrate_preview_snapshot(const KvPreviewSnapshot& snapshot,
 
     model.other_tracks.reserve(static_cast<size_t>(snapshot.other_track_count));
     for (std::uint64_t i = 0; i < snapshot.other_track_count; ++i) {
-        const KvPreviewOtherTrack& input = snapshot.other_tracks[i];
+        const KvOtherTrackRow& input = snapshot.other_tracks[i];
         OtherTrack track;
-        track.key = snapshot_string(snapshot, input.key);
+        track.key = map_snapshot_string(snapshot, input.key);
         track.color = other_track_palette_color(static_cast<size_t>(i));
         track.range_min = input.range_min;
         track.range_max = input.range_max;
@@ -736,174 +636,353 @@ MapModel hydrate_preview_snapshot(const KvPreviewSnapshot& snapshot,
         }
         model.other_tracks.push_back(std::move(track));
     }
-
     model.own_events.reserve(static_cast<size_t>(snapshot.own_track_event_count));
     for (std::uint64_t i = 0; i < snapshot.own_track_event_count; ++i) {
-        const KvPreviewOwnTrackEvent& input = snapshot.own_track_events[i];
+        const KvTrackEventRow& input = snapshot.own_track_events[i];
         TrackEvent event;
         event.distance = input.distance;
-        event.key = snapshot_string(snapshot, input.key);
-        event.flag = snapshot_string(snapshot, input.flag);
-        if (input.value.kind == KV_PREVIEW_VALUE_NUMBER) {
+        event.key = map_snapshot_string(snapshot, input.key);
+        event.flag = map_snapshot_string(snapshot, input.flag);
+        if (input.value.kind == KV_VALUE_NUMBER) {
             event.value_number = true;
             event.number = input.value.number_value;
         } else {
-            event.text = snapshot_value_text(snapshot, input.value);
+            event.text = map_snapshot_value_text(snapshot, input.value);
         }
         model.own_events.push_back(std::move(event));
     }
-
     model.speedlimits.reserve(static_cast<size_t>(snapshot.speed_limit_count));
     for (std::uint64_t i = 0; i < snapshot.speed_limit_count; ++i) {
-        const KvPreviewSpeedLimit& input = snapshot.speed_limits[i];
+        const KvSpeedLimitRow& input = snapshot.speed_limits[i];
         SpeedLimit speed;
         speed.distance = input.distance;
-        if (input.speed.kind == KV_PREVIEW_VALUE_NUMBER) {
+        if (input.speed.kind == KV_VALUE_NUMBER) {
             speed.has_speed = true;
             speed.speed = input.speed.number_value;
         }
         model.speedlimits.push_back(speed);
     }
-
     for (std::uint64_t i = 0; i < snapshot.station_name_count; ++i) {
-        const KvPreviewStationName& input = snapshot.station_names[i];
-        model.station_names[snapshot_string(snapshot, input.key)] =
-            snapshot_string(snapshot, input.name);
+        const KvStationNameRow& input = snapshot.station_names[i];
+        model.station_names[map_snapshot_string(snapshot, input.key)] =
+            map_snapshot_string(snapshot, input.name);
     }
     std::set<std::string> seen_stations;
     size_t own_index = 0;
     model.stations.reserve(static_cast<size_t>(snapshot.station_position_count));
     for (std::uint64_t i = 0; i < snapshot.station_position_count; ++i) {
-        const KvPreviewStationPosition& input = snapshot.station_positions[i];
+        const KvStationPositionRow& input = snapshot.station_positions[i];
         Station station;
         station.distance = input.distance;
-        station.key = snapshot_string(snapshot, input.key);
+        station.key = map_snapshot_string(snapshot, input.key);
         auto name = model.station_names.find(station.key);
         if (name != model.station_names.end()) station.name = name->second;
         if (station.name.empty()) station.name = station.key;
         station.mileage = station.distance - model.distance_origin;
         if (!model.own.empty()) {
-            while (own_index + 1 < model.own.rows &&
-                   model.own.at(own_index, 0) < station.distance) {
+            while (own_index + 1 < model.own.rows && model.own.at(own_index, 0) < station.distance) {
                 ++own_index;
             }
             station.x = model.own.at(own_index, 1);
             station.y = model.own.at(own_index, 2);
             station.z = model.own.at(own_index, 3);
         }
-        if (seen_stations.insert(station.key).second) {
-            model.stations.push_back(std::move(station));
-        }
+        if (seen_stations.insert(station.key).second) model.stations.push_back(std::move(station));
     }
 
-    model.structures = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_STRUCTURE);
-    model.structure_models = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_STRUCTURE_MODEL);
-    model.other_trains = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN);
-    model.other_train_stops = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN_STOP);
-    model.other_train_structure_keys = snapshot_table_rows(
-        snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN_STRUCTURE_KEY);
-    model.other_train_sound_3d_keys = snapshot_table_rows(
-        snapshot, KV_PREVIEW_TABLE_OTHER_TRAIN_SOUND_3D_KEY);
-    model.sound_list = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_SOUND_LIST);
-    model.structures_between = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_STRUCTURE_BETWEEN);
-    model.repeaters = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_REPEATER);
-    model.signals = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_SIGNAL);
-    model.beacons = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_BEACON);
-    model.pretrains = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_PRETRAIN);
-    model.irregularities = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_IRREGULARITY);
-    model.map_sounds = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_MAP_SOUND);
-    model.map_sound_3d = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_MAP_SOUND_3D);
-    model.rolling_noises = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_ROLLING_NOISE);
-    model.flange_noises = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_FLANGE_NOISE);
-    model.joint_noises = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_JOINT_NOISE);
-    model.backgrounds = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_BACKGROUND);
-    model.adhesions = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_ADHESION);
-    model.cab_illuminance = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_CAB_ILLUMINANCE);
-    model.fogs = snapshot_table_rows(snapshot, KV_PREVIEW_TABLE_FOG);
-
-    const KvPreviewTable* aspects = snapshot_table(snapshot, KV_PREVIEW_TABLE_SIGNAL_ASPECT);
-    if (aspects && snapshot_span_valid(aspects->rows, snapshot.row_count)) {
-        model.signal_aspects.reserve(static_cast<size_t>(aspects->rows.count));
-        for (std::uint64_t i = 0; i < aspects->rows.count; ++i) {
-            const KvPreviewRow& input = snapshot.rows[aspects->rows.offset + i];
+    auto add_structure_put = [&](const KvStructurePutRow& input) {
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["method"] = map_snapshot_string(snapshot, input.method);
+        row.cells["structureKey"] = map_snapshot_value_text(snapshot, input.structure_key);
+        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
+        row.cells["z"] = format_double(input.z, 6); row.cells["rx"] = format_double(input.rx, 6);
+        row.cells["ry"] = format_double(input.ry, 6); row.cells["rz"] = format_double(input.rz, 6);
+        row.cells["tilt"] = format_double(input.tilt, 6);
+        row.cells["span"] = format_double(input.span, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.structures.push_back(std::move(row));
+    };
+    model.structures.reserve(static_cast<size_t>(snapshot.structure_put_count));
+    for (std::uint64_t i = 0; i < snapshot.structure_put_count; ++i) {
+        add_structure_put(snapshot.structure_puts[i]);
+    }
+    model.structures_between.reserve(static_cast<size_t>(snapshot.structure_between_count));
+    for (std::uint64_t i = 0; i < snapshot.structure_between_count; ++i) {
+        const KvStructureBetweenRow& input = snapshot.structure_betweens[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["method"] = map_snapshot_string(snapshot, input.method);
+        row.cells["structureKey"] = map_snapshot_value_text(snapshot, input.structure_key);
+        row.cells["trackKey1"] = map_snapshot_value_text(snapshot, input.track_key1);
+        row.cells["trackKey2"] = map_snapshot_value_text(snapshot, input.track_key2);
+        row.cells["flag"] = format_double(input.flag, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.structures_between.push_back(std::move(row));
+    }
+    model.structure_models.reserve(static_cast<size_t>(snapshot.structure_model_count));
+    for (std::uint64_t i = 0; i < snapshot.structure_model_count; ++i) {
+        const KvStructureModelRow& input = snapshot.structure_models[i];
+        TableRow row;
+        row.cells["structureKey"] = map_snapshot_string(snapshot, input.structure_key);
+        row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.structure_models.push_back(std::move(row));
+    }
+    model.other_trains.reserve(static_cast<size_t>(snapshot.other_train_definition_count));
+    for (std::uint64_t i = 0; i < snapshot.other_train_definition_count; ++i) {
+        const KvOtherTrainDefinitionRow& input = snapshot.other_train_definitions[i];
+        TableRow row;
+        row.cells["distance"] = format_double(input.distance, 6);
+        row.cells["method"] = map_snapshot_string(snapshot, input.method);
+        row.cells["trainKey"] = map_snapshot_value_text(snapshot, input.train_key);
+        row.cells["filePath"] = map_snapshot_value_text(snapshot, input.load_file_path);
+        row.cells["resolvedFilePath"] = map_snapshot_string(snapshot, input.resolved_file_path);
+        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["direction"] = map_snapshot_value_text(snapshot, input.direction);
+        row.cells["sourceFilePath"] = map_snapshot_string(snapshot, input.source_file_path);
+        row.cells["order"] = std::to_string(input.order);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.other_trains.push_back(std::move(row));
+    }
+    model.other_train_stops.reserve(static_cast<size_t>(snapshot.other_train_stop_count));
+    for (std::uint64_t i = 0; i < snapshot.other_train_stop_count; ++i) {
+        const KvOtherTrainStopRow& input = snapshot.other_train_stops[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["trainKey"] = map_snapshot_value_text(snapshot, input.train_key);
+        row.cells["decelerate"] = map_snapshot_value_text(snapshot, input.decelerate);
+        row.cells["stopTime"] = map_snapshot_value_text(snapshot, input.stop_time);
+        row.cells["accelerate"] = map_snapshot_value_text(snapshot, input.accelerate);
+        row.cells["speed"] = map_snapshot_value_text(snapshot, input.speed);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.other_train_stops.push_back(std::move(row));
+    }
+    auto add_referenced_keys = [&](const KvReferencedKeyRow* inputs, std::uint64_t count,
+                                   std::vector<TableRow>& output) {
+        output.reserve(static_cast<size_t>(count));
+        for (std::uint64_t i = 0; i < count; ++i) {
             TableRow row;
-            if (const KvPreviewValue* key = snapshot_row_value(
-                    snapshot, input, "signalAspectKey")) {
-                row.cells["signalAspectKey"] = snapshot_value_text(snapshot, *key);
-            }
-            size_t structure_key_count = 0;
-            if (const KvPreviewValue* keys = snapshot_row_value(snapshot, input, "structureKeys")) {
-                if (keys->kind == KV_PREVIEW_VALUE_ARRAY &&
-                    snapshot_span_valid(keys->array_values, snapshot.array_value_count)) {
-                    structure_key_count = static_cast<size_t>(keys->array_values.count);
-                    for (std::uint64_t j = 0; j < keys->array_values.count; ++j) {
-                        row.cells["structureKey" + std::to_string(j + 1)] = snapshot_value_text(
-                            snapshot, snapshot.array_values[keys->array_values.offset + j]);
-                    }
-                }
-            }
-            row.cells["_structureKeyCount"] = std::to_string(structure_key_count);
-            apply_snapshot_row_metadata(row, snapshot, input);
-            model.signal_aspects.push_back(std::move(row));
+            row.cells["key"] = map_snapshot_string(snapshot, inputs[i].key);
+            row.cells["filePath"] = map_snapshot_string(snapshot, inputs[i].file_path);
+            apply_map_row_metadata(row, snapshot, inputs[i].metadata);
+            output.push_back(std::move(row));
         }
+    };
+    add_referenced_keys(snapshot.other_train_structure_keys,
+                        snapshot.other_train_structure_key_count,
+                        model.other_train_structure_keys);
+    add_referenced_keys(snapshot.other_train_sound_3d_keys,
+                        snapshot.other_train_sound_3d_key_count,
+                        model.other_train_sound_3d_keys);
+    model.sound_list.reserve(static_cast<size_t>(snapshot.sound_list_count));
+    for (std::uint64_t i = 0; i < snapshot.sound_list_count; ++i) {
+        const KvSoundListRow& input = snapshot.sound_list[i];
+        TableRow row;
+        row.cells["soundKey"] = map_snapshot_string(snapshot, input.sound_key);
+        row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        row.cells["bufferCount"] = std::to_string(input.buffer_count);
+        row.cells["is3D"] = input.is_3d ? "true" : "false";
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.sound_list.push_back(std::move(row));
+    }
+    model.repeaters.reserve(static_cast<size_t>(snapshot.repeater_count));
+    for (std::uint64_t i = 0; i < snapshot.repeater_count; ++i) {
+        const KvRepeaterRow& input = snapshot.repeaters[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["method"] = map_snapshot_string(snapshot, input.method);
+        row.cells["repeaterKey"] = map_snapshot_value_text(snapshot, input.repeater_key);
+        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
+        row.cells["z"] = format_double(input.z, 6); row.cells["rx"] = format_double(input.rx, 6);
+        row.cells["ry"] = format_double(input.ry, 6); row.cells["rz"] = format_double(input.rz, 6);
+        row.cells["tilt"] = format_double(input.tilt, 6);
+        row.cells["span"] = format_double(input.span, 6);
+        row.cells["interval"] = format_double(input.interval, 6);
+        row.cells["structureKeys"] = map_snapshot_value_span_text(snapshot, input.structure_keys);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.repeaters.push_back(std::move(row));
+    }
+    model.signal_aspects.reserve(static_cast<size_t>(snapshot.signal_aspect_count));
+    for (std::uint64_t i = 0; i < snapshot.signal_aspect_count; ++i) {
+        const KvSignalAspectRow& input = snapshot.signal_aspects[i];
+        TableRow row;
+        row.cells["signalAspectKey"] = map_snapshot_string(snapshot, input.signal_aspect_key);
+        if (map_snapshot_span_valid(input.structure_keys, snapshot.string_ref_count) &&
+            (input.structure_keys.count == 0 || snapshot.string_refs)) {
+            for (std::uint64_t j = 0; j < input.structure_keys.count; ++j) {
+                row.cells["structureKey" + std::to_string(j + 1)] = map_snapshot_string(
+                    snapshot, snapshot.string_refs[input.structure_keys.offset + j]);
+            }
+        }
+        row.cells["_structureKeyCount"] = std::to_string(input.structure_keys.count);
+        apply_map_row_metadata(row, snapshot, input.metadata, false);
+        model.signal_aspects.push_back(std::move(row));
+    }
+    model.signals.reserve(static_cast<size_t>(snapshot.signal_put_count));
+    for (std::uint64_t i = 0; i < snapshot.signal_put_count; ++i) {
+        const KvSignalPutRow& input = snapshot.signal_puts[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["signalAspectKey"] = map_snapshot_value_text(snapshot, input.signal_aspect_key);
+        row.cells["section"] = map_snapshot_value_text(snapshot, input.section);
+        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
+        row.cells["z"] = format_double(input.z, 6); row.cells["rx"] = format_double(input.rx, 6);
+        row.cells["ry"] = format_double(input.ry, 6); row.cells["rz"] = format_double(input.rz, 6);
+        row.cells["tilt"] = format_double(input.tilt, 6);
+        row.cells["span"] = format_double(input.span, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.signals.push_back(std::move(row));
+    }
+    model.beacons.reserve(static_cast<size_t>(snapshot.beacon_count));
+    for (std::uint64_t i = 0; i < snapshot.beacon_count; ++i) {
+        const KvBeaconRow& input = snapshot.beacons[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["type"] = map_snapshot_value_text(snapshot, input.type);
+        row.cells["section"] = map_snapshot_value_text(snapshot, input.section);
+        row.cells["sendData"] = map_snapshot_value_text(snapshot, input.send_data);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.beacons.push_back(std::move(row));
+    }
+    model.pretrains.reserve(static_cast<size_t>(snapshot.pretrain_count));
+    for (std::uint64_t i = 0; i < snapshot.pretrain_count; ++i) {
+        const KvPreTrainRow& input = snapshot.pretrains[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["passTime"] = map_snapshot_value_text(snapshot, input.pass_time);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.pretrains.push_back(std::move(row));
+    }
+    model.irregularities.reserve(static_cast<size_t>(snapshot.irregularity_count));
+    for (std::uint64_t i = 0; i < snapshot.irregularity_count; ++i) {
+        const KvIrregularityRow& input = snapshot.irregularities[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
+        row.cells["r"] = format_double(input.r, 6); row.cells["lx"] = format_double(input.lx, 6);
+        row.cells["ly"] = format_double(input.ly, 6); row.cells["lr"] = format_double(input.lr, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.irregularities.push_back(std::move(row));
+    }
+    model.map_sounds.reserve(static_cast<size_t>(snapshot.map_sound_count));
+    for (std::uint64_t i = 0; i < snapshot.map_sound_count; ++i) {
+        const KvMapSoundRow& input = snapshot.map_sounds[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["soundKey"] = map_snapshot_value_text(snapshot, input.sound_key);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.map_sounds.push_back(std::move(row));
+    }
+    model.map_sound_3d.reserve(static_cast<size_t>(snapshot.map_sound_3d_count));
+    for (std::uint64_t i = 0; i < snapshot.map_sound_3d_count; ++i) {
+        const KvMapSound3DRow& input = snapshot.map_sounds_3d[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["soundKey"] = map_snapshot_value_text(snapshot, input.sound_key);
+        row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.map_sound_3d.push_back(std::move(row));
+    }
+    auto add_noises = [&](const KvNoiseRow* inputs, std::uint64_t count,
+                          std::vector<TableRow>& output) {
+        output.reserve(static_cast<size_t>(count));
+        for (std::uint64_t i = 0; i < count; ++i) {
+            TableRow row;
+            put_map_common_event_cells(row, snapshot, inputs[i]);
+            row.cells["index"] = map_snapshot_value_text(snapshot, inputs[i].index);
+            apply_map_row_metadata(row, snapshot, inputs[i].metadata);
+            output.push_back(std::move(row));
+        }
+    };
+    add_noises(snapshot.rolling_noises, snapshot.rolling_noise_count, model.rolling_noises);
+    add_noises(snapshot.flange_noises, snapshot.flange_noise_count, model.flange_noises);
+    add_noises(snapshot.joint_noises, snapshot.joint_noise_count, model.joint_noises);
+    model.backgrounds.reserve(static_cast<size_t>(snapshot.background_count));
+    for (std::uint64_t i = 0; i < snapshot.background_count; ++i) {
+        const KvBackgroundRow& input = snapshot.backgrounds[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["structureKey"] = map_snapshot_value_text(snapshot, input.structure_key);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.backgrounds.push_back(std::move(row));
+    }
+    model.adhesions.reserve(static_cast<size_t>(snapshot.adhesion_count));
+    for (std::uint64_t i = 0; i < snapshot.adhesion_count; ++i) {
+        const KvAdhesionRow& input = snapshot.adhesions[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["a"] = map_snapshot_value_text(snapshot, input.a);
+        row.cells["b"] = map_snapshot_value_text(snapshot, input.b);
+        row.cells["c"] = map_snapshot_value_text(snapshot, input.c);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.adhesions.push_back(std::move(row));
+    }
+    model.cab_illuminance.reserve(static_cast<size_t>(snapshot.cab_illuminance_count));
+    for (std::uint64_t i = 0; i < snapshot.cab_illuminance_count; ++i) {
+        const KvCabIlluminanceRow& input = snapshot.cab_illuminance[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["value"] = map_snapshot_value_text(snapshot, input.value);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.cab_illuminance.push_back(std::move(row));
+    }
+    model.fogs.reserve(static_cast<size_t>(snapshot.fog_count));
+    for (std::uint64_t i = 0; i < snapshot.fog_count; ++i) {
+        const KvFogRow& input = snapshot.fogs[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["density"] = map_snapshot_value_text(snapshot, input.density);
+        row.cells["red"] = map_snapshot_value_text(snapshot, input.red);
+        row.cells["green"] = map_snapshot_value_text(snapshot, input.green);
+        row.cells["blue"] = map_snapshot_value_text(snapshot, input.blue);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.fogs.push_back(std::move(row));
     }
 
+    static const char* station_keys[] = {
+        "stationKey", "stationName", "arrivalTime", "depertureTime", "stoppageTime",
+        "defaultTime", "signalFlag", "alightingTime", "passengers", "arrivalSoundKey",
+        "depertureSoundKey", "doorReopen", "stuckInDoor"
+    };
     std::map<std::string, TableRow> station_rows_by_key;
-    const KvPreviewTable* station_list = snapshot_table(snapshot, KV_PREVIEW_TABLE_STATION_LIST);
-    if (station_list && snapshot_span_valid(station_list->rows, snapshot.row_count)) {
-        for (std::uint64_t i = 0; i < station_list->rows.count; ++i) {
-            const KvPreviewRow& input = snapshot.rows[station_list->rows.offset + i];
-            TableRow row;
-            if (snapshot_span_valid(input.cells, snapshot.cell_count)) {
-                for (std::uint64_t j = 0; j < input.cells.count; ++j) {
-                    const KvPreviewCell& cell = snapshot.cells[input.cells.offset + j];
-                    row.cells[snapshot_string(snapshot, cell.key)] =
-                        snapshot_value_text(snapshot, cell.value);
-                }
-            }
-            apply_snapshot_row_metadata(row, snapshot, input);
-            const std::string object_key = snapshot_string(snapshot, input.object_key);
-            if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = object_key;
-            station_rows_by_key[ascii_lower(object_key)] = std::move(row);
+    for (std::uint64_t i = 0; i < snapshot.station_list_count; ++i) {
+        const KvStationListRow& input = snapshot.station_list[i];
+        TableRow row;
+        for (size_t field = 0; field < 13; ++field) {
+            row.cells[station_keys[field]] = map_snapshot_string(snapshot, input.fields[field]);
         }
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        const std::string object_key = map_snapshot_string(snapshot, input.object_key);
+        if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = object_key;
+        station_rows_by_key[ascii_lower(object_key)] = std::move(row);
     }
-    auto append_station_table_row = [&](TableRow row, const std::string& key) {
+    model.station_list_rows.reserve(static_cast<size_t>(snapshot.station_put_count));
+    for (std::uint64_t i = 0; i < snapshot.station_put_count; ++i) {
+        const KvStationPutRow& input = snapshot.station_puts[i];
+        const std::string key = map_snapshot_value_text(snapshot, input.station_key);
+        TableRow row;
+        row.cells["_distance"] = format_double(input.distance, 6);
+        row.cells["_order"] = std::to_string(input.order);
+        row.cells["dist"] = format_double(input.distance - model.distance_origin, 0);
+        row.cells["posKey"] = key;
+        row.cells["door"] = map_snapshot_value_text(snapshot, input.door);
+        row.cells["margin1"] = map_snapshot_value_text(snapshot, input.margin1);
+        row.cells["margin2"] = map_snapshot_value_text(snapshot, input.margin2);
+        apply_map_row_metadata(row, snapshot, input.metadata);
         auto existing = station_rows_by_key.find(ascii_lower(key));
         if (existing != station_rows_by_key.end()) {
             for (const auto& cell : existing->second.cells) row.cells[cell.first] = cell.second;
         }
         model.station_list_rows.push_back(std::move(row));
-    };
-    const KvPreviewTable* station_put = snapshot_table(snapshot, KV_PREVIEW_TABLE_STATION_PUT);
-    if (station_put && snapshot_span_valid(station_put->rows, snapshot.row_count)) {
-        model.station_list_rows.reserve(static_cast<size_t>(station_put->rows.count));
-        for (std::uint64_t i = 0; i < station_put->rows.count; ++i) {
-            const KvPreviewRow& input = snapshot.rows[station_put->rows.offset + i];
-            const KvPreviewValue* distance_value = snapshot_row_value(snapshot, input, "distance");
-            const double distance = distance_value && distance_value->kind == KV_PREVIEW_VALUE_NUMBER
-                ? distance_value->number_value : 0.0;
-            const KvPreviewValue* key_value = snapshot_row_value(snapshot, input, "stationKey");
-            const std::string key = key_value ? snapshot_value_text(snapshot, *key_value) : std::string{};
-            TableRow row;
-            row.cells["_distance"] = format_double(distance);
-            if (const KvPreviewValue* value = snapshot_row_value(snapshot, input, "order")) {
-                row.cells["_order"] = snapshot_value_text(snapshot, *value);
-            }
-            row.cells["dist"] = format_double(distance - model.distance_origin, 0);
-            row.cells["posKey"] = key;
-            for (const char* field : {"door", "margin1", "margin2"}) {
-                if (const KvPreviewValue* value = snapshot_row_value(snapshot, input, field)) {
-                    row.cells[field] = snapshot_value_text(snapshot, *value);
-                }
-            }
-            apply_snapshot_row_metadata(row, snapshot, input);
-            append_station_table_row(std::move(row), key);
-        }
     }
     std::stable_sort(model.station_list_rows.begin(), model.station_list_rows.end(),
                      [](const TableRow& a, const TableRow& b) {
-        double da = table_cell_number(a, "_distance");
-        double db = table_cell_number(b, "_distance");
+        const double da = table_cell_number(a, "_distance");
+        const double db = table_cell_number(b, "_distance");
         if (da != db) return da < db;
         return table_cell_number(a, "_order") < table_cell_number(b, "_order");
     });
@@ -928,7 +1007,6 @@ MapModel hydrate_preview_snapshot(const KvPreviewSnapshot& snapshot,
         model.default_min = model.own.at(0, 0);
         model.default_max = model.own.at(model.own.rows - 1, 0);
     }
-
     model.buffer_copy_seconds = buffer_copy_seconds;
     model.snapshot_hydrate_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - hydrate_started_at).count();
@@ -1203,23 +1281,12 @@ void App::apply_load_result(LoadResult result) {
     std::ostringstream timing;
     timing << std::fixed << std::setprecision(3)
            << "profile=" << result.load_profile
-           << ", transport=" << model_.load_transport
            << ", maploader=" << result.maploader_seconds << "s"
-           << ", model=" << result.model_build_seconds << "s";
-    if (model_.load_transport == "typed_snapshot") {
-        timing << ", snapshot_build=" << model_.snapshot_build_seconds << "s"
-               << ", snapshot_hydrate=" << model_.snapshot_hydrate_seconds << "s"
-               << ", ir_json=0.000s, json_parse=0.000s";
-    } else {
-        timing << ", ir_json=" << model_.ir_json_seconds << "s"
-               << ", json_parse=" << model_.json_parse_seconds << "s"
-               << ", hydrate=" << model_.model_hydrate_seconds << "s";
-    }
-    timing << ", buffer copy=" << model_.buffer_copy_seconds << "s";
+           << ", model=" << result.model_build_seconds << "s"
+           << ", snapshot_build=" << model_.snapshot_build_seconds << "s"
+           << ", snapshot_hydrate=" << model_.snapshot_hydrate_seconds << "s"
+           << ", buffer copy=" << model_.buffer_copy_seconds << "s";
     add_log("Load timing: " + timing.str());
-    if (!model_.transport_warning.empty()) {
-        add_log(LogSeverity::Warning, model_.transport_warning);
-    }
     for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
     add_log("Map loaded: " + result.path);
     if (result.background_to_restore) {
@@ -1503,362 +1570,26 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path) {
 
 MapModel App::build_model_from_handle(void* handle, const std::string& path,
                                       LoadModelOptions options) {
-    std::string snapshot_fallback_warning;
-    if (!options.full_edit_registry && !options.force_json_transport) {
-        if (maploader_preview_snapshot_available()) {
-            KvPreviewSnapshot snapshot{};
-            auto snapshot_started_at = std::chrono::steady_clock::now();
-            if (kv_get_preview_snapshot(handle, KV_PREVIEW_SNAPSHOT_VERSION,
-                                        &snapshot, sizeof(snapshot)) &&
-                snapshot.version == KV_PREVIEW_SNAPSHOT_VERSION) {
-                const double snapshot_build_seconds = std::chrono::duration<double>(
-                    std::chrono::steady_clock::now() - snapshot_started_at).count();
-                return hydrate_preview_snapshot(snapshot, path, snapshot_build_seconds);
-            }
-            const char* error = kv_get_last_error();
-            snapshot_fallback_warning =
-                "Typed preview snapshot unavailable or version-mismatched; falling back to compact JSON";
-            if (error && *error) snapshot_fallback_warning += std::string(": ") + error;
-        } else {
-            snapshot_fallback_warning =
-                "Typed preview snapshot entry point is missing; falling back to compact JSON";
-        }
+    KvMapSnapshot snapshot{};
+    const auto snapshot_started_at = std::chrono::steady_clock::now();
+    if (!kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION,
+                             &snapshot, sizeof(snapshot))) {
+        const char* error = kv_get_last_error();
+        throw std::runtime_error(std::string("kv_get_map_snapshot failed") +
+            (error && *error ? ": " + std::string(error) : std::string{}));
     }
+    if (snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
+        snapshot.structure_size < sizeof(KvMapSnapshot)) {
+        throw std::runtime_error("map snapshot version or structure size mismatch");
+    }
+    if (options.full_edit_registry &&
+        (snapshot.capabilities & KV_MAP_CAP_EDIT_METADATA) == 0) {
+        throw std::runtime_error("map snapshot does not contain edit metadata");
+    }
+    const double snapshot_call_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - snapshot_started_at).count();
+    return hydrate_map_snapshot(snapshot, path, snapshot_call_seconds);
 
-    auto json_started_at = std::chrono::steady_clock::now();
-    unsigned ir_flags = options.full_edit_registry
-        ? (KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE)
-        : KV_IR_JSON_COMPACT;
-    const char* raw = kv_get_ir_json_ex(handle, ir_flags);
-    if (!raw) throw std::runtime_error("kv_get_ir_json_ex failed");
-    std::string json(raw);
-    kv_free_string(raw);
-    double ir_json_seconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - json_started_at).count();
-
-    auto parse_started_at = std::chrono::steady_clock::now();
-    auto root = kme::json::parse(json);
-    double json_parse_seconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - parse_started_at).count();
-
-    auto hydrate_started_at = std::chrono::steady_clock::now();
-    MapModel model;
-    model.path = path;
-    model.load_transport = options.full_edit_registry
-        ? "json_edit"
-        : (options.force_json_transport ? "json_baseline" : "json_fallback");
-    model.transport_warning = std::move(snapshot_fallback_warning);
-    hydrate_file_structure(model, root.at("fileStructure"), path);
-    const auto& edit = root.at("edit");
-    const auto& edit_files = edit.at("files");
-    if (edit_files.is_array()) {
-        model.edit_files.reserve(edit_files.array.size());
-        for (const auto& item : edit_files.array) {
-            if (!item.is_object()) continue;
-            EditSourceFileInfo file;
-            file.file_path = item.at("filePath").scalar_text_fixed(6);
-            file.display_path = item.at("displayPath").scalar_text_fixed(6);
-            file.encoding = item.at("encoding").scalar_text_fixed(6);
-            file.newline = item.at("newline").scalar_text_fixed(6);
-            file.source_hash = item.at("sourceHash").scalar_text_fixed(6);
-            file.byte_length = static_cast<size_t>(std::max(0.0, item.at("byteLength").number));
-            model.edit_files.push_back(std::move(file));
-        }
-    }
-    const auto& edit_statements = edit.at("statements");
-    if (edit_statements.is_array()) {
-        model.edit_statements.reserve(edit_statements.array.size());
-        for (const auto& item : edit_statements.array) {
-            if (!item.is_object()) continue;
-            EditStatementInfo statement;
-            statement.edit_id = item.at("editId").scalar_text_fixed(6);
-            statement.statement_kind = item.at("statementKind").scalar_text_fixed(6);
-            statement.source = edit_source_from_json(item.at("source"));
-            statement.raw_text = item.at("rawText").scalar_text_fixed(6);
-            statement.raw_arguments = item.at("rawArguments").scalar_text_fixed(6);
-            statement.distance_expression = item.at("distanceExpression").scalar_text_fixed(6);
-            statement.distance_value = item.at("distanceValue").number;
-            statement.global_order = static_cast<int>(item.at("globalOrder").number);
-            model.edit_statements.push_back(std::move(statement));
-        }
-    }
-    const auto& edit_elements = edit.at("elements");
-    if (edit_elements.is_array()) {
-        model.edit_elements.reserve(edit_elements.array.size());
-        for (const auto& item : edit_elements.array) {
-            if (!item.is_object()) continue;
-            EditElementInfo element;
-            element.edit_id = item.at("editId").scalar_text_fixed(6);
-            element.row_kind = item.at("rowKind").scalar_text_fixed(6);
-            element.row_index = static_cast<size_t>(std::max(0.0, item.at("rowIndex").number));
-            element.source_file_path = item.at("sourceFilePath").scalar_text_fixed(6);
-            element.global_order = static_cast<int>(item.at("globalOrder").number);
-            model.edit_elements.push_back(std::move(element));
-        }
-    }
-    double buffer_copy_seconds = 0.0;
-    auto copy_buffer_timed = [&buffer_copy_seconds](KvDoubleBuffer buffer) {
-        auto started_at = std::chrono::steady_clock::now();
-        Matrix matrix = copy_buffer(buffer);
-        buffer_copy_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
-        return matrix;
-    };
-    model.own = copy_buffer_timed(kv_get_owntrack_buffer(handle));
-    model.curve = copy_buffer_timed(kv_get_curveradius_buffer(handle));
-
-    const auto& cps = root.at("controlpoints");
-    if (cps.is_array()) {
-        for (const auto& v : cps.array) if (v.is_number()) model.controlpoints.push_back(v.number);
-    }
-
-    const auto& cp_arb = root.at("cp_arbdistribution");
-    if (cp_arb.is_array() && cp_arb.array.size() >= 3) {
-        model.cp_arb[0] = cp_arb.array[0].number;
-        model.cp_arb[1] = cp_arb.array[1].number;
-        model.cp_arb[2] = cp_arb.array[2].number;
-    }
-
-    if (!model.own.empty()) {
-        model.distance_origin = model.own.at(0, 0);
-        model.height_origin = model.own.at(0, 3);
-        model.origin_angle = model.own.at(0, 4);
-    }
-
-    const auto& other = root.at("othertrack");
-    const auto& order = other.at("order");
-    const auto& ranges = other.at("cp_range");
-    if (order.is_array()) {
-        for (size_t i = 0; i < order.array.size(); ++i) {
-            std::string key = order.array[i].scalar_text_fixed(6);
-            OtherTrack t;
-            t.key = key;
-            t.color = other_track_palette_color(i);
-            t.range_min = 0.0;
-            t.range_max = 0.0;
-            const auto& range = ranges.at(key);
-            if (range.is_object()) {
-                t.range_min = range.at("min").number;
-                t.range_max = range.at("max").number;
-            }
-            Matrix points;
-            KvDoubleBuffer buf = kv_get_othertrack_buffer(handle, key.c_str());
-            points = copy_buffer_timed(buf);
-            t.points = std::move(points);
-            if (!t.points.empty() && (t.range_min == t.range_max)) {
-                t.range_min = t.points.at(0, 0);
-                t.range_max = t.points.at(t.points.rows - 1, 0);
-            }
-            model.other_tracks.push_back(std::move(t));
-        }
-    }
-
-    const auto& own_track = root.at("own_track");
-    if (own_track.is_array()) {
-        for (const auto& row : own_track.array) {
-            TrackEvent e;
-            e.distance = row.at("distance").number;
-            e.key = row.at("key").scalar_text_fixed(6);
-            e.flag = row.at("flag").scalar_text_fixed(6);
-            const auto& val = row.at("value");
-            if (val.is_number()) {
-                e.value_number = true;
-                e.number = val.number;
-            } else {
-                e.text = val.scalar_text_fixed(6);
-            }
-            model.own_events.push_back(std::move(e));
-        }
-    }
-
-    const auto& speed = root.at("speedlimit");
-    if (speed.is_array()) {
-        for (const auto& row : speed.array) {
-            SpeedLimit s;
-            s.distance = row.at("distance").number;
-            const auto& v = row.at("speed");
-            if (v.is_number()) {
-                s.has_speed = true;
-                s.speed = v.number;
-            }
-            model.speedlimits.push_back(s);
-        }
-    }
-
-    const auto& station = root.at("station");
-    const auto& positions = station.at("position");
-    const auto& names = station.at("stationkey");
-    if (names.is_object()) {
-        for (const auto& entry : names.object) {
-            model.station_names[entry.first] = entry.second.scalar_text_fixed(6);
-        }
-    }
-    if (positions.is_array()) {
-        std::set<std::string> seen;
-        for (const auto& item : positions.array) {
-            if (!item.is_array() || item.array.size() < 2) continue;
-            Station s;
-            s.distance = item.array[0].number;
-            s.key = item.array[1].scalar_text_fixed(6);
-            auto station_name = model.station_names.find(s.key);
-            if (station_name != model.station_names.end()) s.name = station_name->second;
-            if (s.name.empty()) s.name = s.key;
-            s.mileage = s.distance - model.distance_origin;
-            if (!model.own.empty()) {
-                size_t idx = 0;
-                while (idx + 1 < model.own.rows && model.own.at(idx, 0) < s.distance) ++idx;
-                if (idx >= model.own.rows) idx = model.own.rows - 1;
-                s.x = model.own.at(idx, 1);
-                s.y = model.own.at(idx, 2);
-                s.z = model.own.at(idx, 3);
-            }
-            if (seen.insert(s.key).second) model.stations.push_back(std::move(s));
-        }
-    }
-
-    auto make_table_rows = [](const JsonValue& array) {
-        std::vector<TableRow> rows;
-        if (!array.is_array()) return rows;
-        for (const auto& v : array.array) {
-            TableRow r;
-            if (v.is_object()) {
-                for (const auto& kv : v.object) r.cells[kv.first] = table_cell_text(kv.second);
-                apply_table_row_edit_metadata(r, v);
-            }
-            rows.push_back(std::move(r));
-        }
-        return rows;
-    };
-    const auto& structure = root.at("structure");
-    model.structures = make_table_rows(structure.at("data"));
-    model.structure_models = make_table_rows(structure.at("models"));
-    const auto& other_train = root.at("otherTrain");
-    model.other_trains = make_table_rows(other_train.at("definitions"));
-    model.other_train_stops = make_table_rows(other_train.at("stop"));
-    model.other_train_structure_keys = make_table_rows(other_train.at("structureKeys"));
-    model.other_train_sound_3d_keys = make_table_rows(other_train.at("sound3DKeys"));
-    const auto& signal = root.at("signal");
-    const auto& signal_aspects = signal.at("aspects");
-    if (signal_aspects.is_array()) {
-        for (const auto& item : signal_aspects.array) {
-            if (!item.is_object()) continue;
-            TableRow row;
-            row.cells["signalAspectKey"] = item.at("signalAspectKey").scalar_text_fixed(6);
-            const auto& structure_keys = item.at("structureKeys");
-            size_t structure_key_count = 0;
-            if (structure_keys.is_array()) {
-                structure_key_count = structure_keys.array.size();
-                for (size_t i = 0; i < structure_keys.array.size(); ++i) {
-                    row.cells["structureKey" + std::to_string(i + 1)] =
-                        structure_keys.array[i].scalar_text_fixed(6);
-                }
-            }
-            row.cells["_structureKeyCount"] = std::to_string(structure_key_count);
-            apply_table_row_edit_metadata(row, item);
-            model.signal_aspects.push_back(std::move(row));
-        }
-    }
-    model.signals = make_table_rows(signal.at("data"));
-    model.beacons = make_table_rows(root.at("beacon"));
-    model.pretrains = make_table_rows(root.at("preTrain"));
-    model.sound_list = make_table_rows(root.at("soundList"));
-    model.structures_between = make_table_rows(structure.at("between_data"));
-    model.repeaters = make_table_rows(root.at("repeater"));
-    model.irregularities = make_table_rows(root.at("irregularity"));
-    model.map_sounds = make_table_rows(root.at("mapSound"));
-    model.map_sound_3d = make_table_rows(root.at("mapSound3D"));
-    model.rolling_noises = make_table_rows(root.at("rollingNoise"));
-    model.flange_noises = make_table_rows(root.at("flangeNoise"));
-    model.joint_noises = make_table_rows(root.at("jointNoise"));
-    model.backgrounds = make_table_rows(root.at("background"));
-    model.adhesions = make_table_rows(root.at("adhesion"));
-    model.cab_illuminance = make_table_rows(root.at("cabIlluminance"));
-    model.fogs = make_table_rows(root.at("fog"));
-
-    std::map<std::string, TableRow> station_rows_by_key;
-    const auto& station_list = station.at("list");
-    if (station_list.is_object()) {
-        for (const auto& kv : station_list.object) {
-            TableRow row;
-            if (kv.second.is_object()) {
-                for (const auto& cell : kv.second.object) row.cells[cell.first] = table_cell_text(cell.second);
-                apply_table_row_edit_metadata(row, kv.second);
-            }
-            if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = kv.first;
-            station_rows_by_key[ascii_lower(kv.first)] = std::move(row);
-        }
-    }
-    auto append_station_table_row = [&](TableRow row, const std::string& key) {
-        auto it = station_rows_by_key.find(ascii_lower(key));
-        if (it != station_rows_by_key.end()) {
-            for (const auto& cell : it->second.cells) row.cells[cell.first] = cell.second;
-        }
-        model.station_list_rows.push_back(std::move(row));
-    };
-    const auto& station_puts = station.at("put");
-    if (station_puts.is_array()) {
-        for (const auto& item : station_puts.array) {
-            if (!item.is_object()) continue;
-            std::string key = item.at("stationKey").scalar_text_fixed(6);
-            double distance = item.at("distance").number;
-            TableRow row;
-            row.cells["_distance"] = format_double(distance);
-            row.cells["_order"] = item.at("order").scalar_text_fixed(6);
-            row.cells["dist"] = format_double(distance - model.distance_origin, 0);
-            row.cells["posKey"] = key;
-            row.cells["door"] = item.at("door").scalar_text_fixed(6);
-            row.cells["margin1"] = item.at("margin1").scalar_text_fixed(6);
-            row.cells["margin2"] = item.at("margin2").scalar_text_fixed(6);
-            apply_table_row_edit_metadata(row, item);
-            append_station_table_row(std::move(row), key);
-        }
-    } else if (positions.is_array()) {
-        int order_index = 0;
-        for (const auto& item : positions.array) {
-            if (!item.is_array() || item.array.size() < 2) continue;
-            std::string key = item.array[1].scalar_text_fixed(6);
-            double distance = item.array[0].number;
-            TableRow row;
-            row.cells["_distance"] = format_double(distance);
-            row.cells["_order"] = std::to_string(++order_index);
-            row.cells["dist"] = format_double(distance - model.distance_origin, 0);
-            row.cells["posKey"] = key;
-            append_station_table_row(std::move(row), key);
-        }
-    }
-    std::stable_sort(model.station_list_rows.begin(), model.station_list_rows.end(), [](const TableRow& a, const TableRow& b) {
-        double da = table_cell_number(a, "_distance");
-        double db = table_cell_number(b, "_distance");
-        if (da != db) return da < db;
-        return table_cell_number(a, "_order") < table_cell_number(b, "_order");
-    });
-    for (size_t i = 0; i < model.station_list_rows.size(); ++i) {
-        model.station_list_rows[i].cells["rowNumber"] = std::to_string(i + 1);
-    }
-
-    if (!model.stations.empty()) {
-        double mn = model.stations.front().distance;
-        double mx = model.stations.front().distance;
-        for (const auto& s : model.stations) {
-            mn = std::min(mn, s.distance);
-            mx = std::max(mx, s.distance);
-        }
-        model.default_min = round_to_100(mn) - 500.0;
-        model.default_max = round_to_100(mx) + 500.0;
-    } else if (!model.controlpoints.empty()) {
-        auto [mn, mx] = std::minmax_element(model.controlpoints.begin(), model.controlpoints.end());
-        model.default_min = round_to_100(*mn) - 500.0;
-        model.default_max = round_to_100(*mx) + 500.0;
-    } else if (!model.own.empty()) {
-        model.default_min = model.own.at(0, 0);
-        model.default_max = model.own.at(model.own.rows - 1, 0);
-    }
-    model.buffer_copy_seconds = buffer_copy_seconds;
-    model.ir_json_seconds = ir_json_seconds;
-    model.json_parse_seconds = json_parse_seconds;
-    model.model_hydrate_seconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - hydrate_started_at).count();
-    annotate_scene_track_key_warnings(model);
-    return model;
 }
 
 std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
@@ -2709,6 +2440,105 @@ void App::delete_inspector_target() {
     }
 }
 
+KvUtf8View edit_utf8_view(const std::string& text) {
+    return {text.empty() ? nullptr : text.data(), static_cast<std::uint64_t>(text.size())};
+}
+
+struct TypedEditBatchStorage {
+    std::vector<KvEditChange> changes;
+    std::vector<KvEditField> fields;
+
+    KvEditBatch view() const {
+        return {changes.empty() ? nullptr : changes.data(),
+                static_cast<std::uint64_t>(changes.size()),
+                fields.empty() ? nullptr : fields.data(),
+                static_cast<std::uint64_t>(fields.size())};
+    }
+};
+
+TypedEditBatchStorage typed_edit_batch(
+    const std::map<std::string, MapElementPendingChange>& inputs) {
+    TypedEditBatchStorage storage;
+    storage.changes.reserve(inputs.size());
+    size_t field_count = 0;
+    for (const auto& input : inputs) field_count += input.second.field_changes.size();
+    storage.fields.reserve(field_count);
+    for (const auto& input : inputs) {
+        const MapElementPendingChange& source = input.second;
+        KvEditChange change{};
+        change.change_id = edit_utf8_view(source.change_id);
+        change.edit_id = edit_utf8_view(source.edit_id);
+        if (source.operation == "update") change.operation = KV_EDIT_UPDATE;
+        else if (source.operation == "insert") change.operation = KV_EDIT_INSERT;
+        else if (source.operation == "delete") change.operation = KV_EDIT_DELETE;
+        else throw std::runtime_error("unsupported GUI edit operation: " + source.operation);
+        if (source.confirm_environment_mismatch) {
+            change.flags |= KV_EDIT_CHANGE_CONFIRM_ENVIRONMENT_MISMATCH;
+        }
+        change.fields.offset = static_cast<std::uint64_t>(storage.fields.size());
+        change.fields.count = static_cast<std::uint64_t>(source.field_changes.size());
+        for (const auto& field : source.field_changes) {
+            storage.fields.push_back({edit_utf8_view(field.first), edit_utf8_view(field.second)});
+        }
+        change.expected_source_hash = edit_utf8_view(source.expected_source_hash);
+        change.distance_resolution_key = edit_utf8_view(source.distance_resolution_key);
+        change.distance_boundary_token = edit_utf8_view(source.distance_boundary_token);
+        change.distance_expression = edit_utf8_view(source.distance_expression);
+        storage.changes.push_back(change);
+    }
+    return storage;
+}
+
+std::string edit_report_string(const KvEditReportSnapshot& report, KvStringRef ref) {
+    if (!report.string_data || ref.offset > report.string_size ||
+        ref.length > report.string_size - ref.offset) {
+        return {};
+    }
+    return std::string(report.string_data + static_cast<size_t>(ref.offset),
+                       static_cast<size_t>(ref.length));
+}
+
+bool edit_report_span_valid(KvSpan span, std::uint64_t size) {
+    return span.offset <= size && span.count <= size - span.offset;
+}
+
+DistanceResolutionRequest distance_resolution_request_from_typed(
+    const KvEditReportSnapshot& report, const KvDistanceResolutionRow& input) {
+    DistanceResolutionRequest request;
+    request.resolution_key = edit_report_string(report, input.resolution_key);
+    request.reason = edit_report_string(report, input.reason);
+    request.source_file = edit_report_string(report, input.source_file);
+    request.target_distance = format_double(input.target_distance, 6);
+    request.variable_name = edit_report_string(report, input.variable_name);
+    request.suggested_expression = edit_report_string(report, input.suggested_expression);
+    request.insertion_preview = edit_report_string(report, input.insertion_preview);
+    request.can_confirm_reuse = input.can_confirm_reuse != 0;
+    request.source_section_direction = edit_report_string(
+        report, input.source_section_direction);
+    auto append_strings = [&](KvSpan span, std::vector<std::string>& output) {
+        if (!edit_report_span_valid(span, report.string_ref_count) ||
+            (span.count != 0 && !report.string_refs)) return;
+        output.reserve(static_cast<size_t>(span.count));
+        for (std::uint64_t i = 0; i < span.count; ++i) {
+            output.push_back(edit_report_string(report, report.string_refs[span.offset + i]));
+        }
+    };
+    append_strings(input.include_stack, request.include_stack);
+    append_strings(input.affected_edit_ids, request.affected_edit_ids);
+    if (edit_report_span_valid(input.allowed_boundaries, report.boundary_count) &&
+        (input.allowed_boundaries.count == 0 || report.boundaries)) {
+        request.allowed_boundaries.reserve(static_cast<size_t>(input.allowed_boundaries.count));
+        for (std::uint64_t i = 0; i < input.allowed_boundaries.count; ++i) {
+            const KvDistanceBoundaryRow& source =
+                report.boundaries[input.allowed_boundaries.offset + i];
+            request.allowed_boundaries.push_back({edit_report_string(report, source.token),
+                                                   source.line, source.column,
+                                                   source.recommended != 0});
+        }
+    }
+    return request;
+}
+
 struct CommittedEditFileState {
     std::string file_path;
     std::string source_hash;
@@ -2722,40 +2552,44 @@ struct CommittedEditRowState {
     EditSourceInfo source;
 };
 
-bool apply_committed_edit_state(MapModel& model, const JsonValue& report,
+bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& report,
                                 std::string& error) {
-    const JsonValue& files = report.at("committedFiles");
-    if (!files.is_array() || files.array.empty()) return true;
+    if (report.committed_file_count == 0) return true;
+    if (!report.committed_files) {
+        error = "edit commit report has a null committed-file array";
+        return false;
+    }
 
     std::vector<CommittedEditFileState> file_states;
-    file_states.reserve(files.array.size());
-    for (const JsonValue& item : files.array) {
-        if (!item.is_object()) continue;
+    file_states.reserve(static_cast<size_t>(report.committed_file_count));
+    for (std::uint64_t i = 0; i < report.committed_file_count; ++i) {
+        const KvEditCommittedFileRow& item = report.committed_files[i];
         CommittedEditFileState state;
-        state.file_path = item.at("filePath").scalar_text_fixed(6);
-        state.source_hash = item.at("sourceHash").scalar_text_fixed(6);
-        state.byte_length = static_cast<size_t>(std::max(0.0, item.at("byteLength").number));
+        state.file_path = edit_report_string(report, item.file_path);
+        state.source_hash = edit_report_string(report, item.source_hash);
+        state.byte_length = static_cast<size_t>(item.byte_length);
         file_states.push_back(std::move(state));
     }
 
-    const JsonValue& rows = report.at("committedRows");
-    if (!rows.is_array()) {
+    if (report.committed_row_count != 0 && !report.committed_rows) {
         error = "edit commit report is missing committed row metadata";
         return false;
     }
     std::map<std::string, std::vector<CommittedEditRowState>> rows_by_kind;
-    for (const JsonValue& item : rows.array) {
-        if (!item.is_object()) continue;
+    for (std::uint64_t i = 0; i < report.committed_row_count; ++i) {
+        const KvEditCommittedRow& item = report.committed_rows[i];
         CommittedEditRowState state;
-        state.row_kind = item.at("rowKind").scalar_text_fixed(6);
-        const JsonValue& row_index = item.at("rowIndex");
-        if (!row_index.is_number() || !std::isfinite(row_index.number) || row_index.number < 0.0) {
+        state.row_kind = edit_report_string(report, item.row_kind);
+        if (item.row_index > static_cast<std::uint64_t>(std::numeric_limits<size_t>::max())) {
             error = "edit commit report contains an invalid row index";
             return false;
         }
-        state.row_index = static_cast<size_t>(row_index.number);
-        state.edit_id = item.at("editId").scalar_text_fixed(6);
-        state.source = edit_source_from_json(item.at("source"));
+        state.row_index = static_cast<size_t>(item.row_index);
+        state.edit_id = edit_report_string(report, item.edit_id);
+        state.source.file_path = edit_report_string(report, item.file_path);
+        state.source.line = item.line;
+        state.source.column = item.column;
+        state.source.raw_text_preview = edit_report_string(report, item.raw_text_preview);
         if (mutable_inspector_rows_for_kind(model, state.row_kind)) {
             rows_by_kind[state.row_kind].push_back(std::move(state));
         }
@@ -2835,92 +2669,78 @@ bool apply_committed_edit_state(MapModel& model, const JsonValue& report,
 }
 
 bool apply_committed_edit_report_to_model(MapModel& model,
-                                          const std::string& report_json,
+                                          const KvEditReportSnapshot& report,
                                           std::string& error_message) {
     error_message.clear();
-    try {
-        const JsonValue report = kme::json::parse(report_json);
-        if (!report.at("ok").boolean) {
-            error_message = "edit commit report is not successful";
-            return false;
-        }
-        return apply_committed_edit_state(model, report, error_message);
-    } catch (const std::exception& e) {
-        error_message = e.what();
+    if (report.version != KV_EDIT_REPORT_SNAPSHOT_VERSION ||
+        report.structure_size < sizeof(KvEditReportSnapshot)) {
+        error_message = "edit commit report version or size mismatch";
         return false;
     }
+    if (!report.ok) {
+        error_message = "edit commit report is not successful";
+        return false;
+    }
+    return apply_committed_edit_state(model, report, error_message);
 }
 
-bool App::parse_and_log_edit_report(const std::string& report_text,
+bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
                                     const std::string& success_prefix,
                                     int* update_count,
                                     int* delete_count,
                                     int* changed_file_count,
                                     std::vector<DistanceResolutionRequest>* resolution_requests) {
     if (resolution_requests) resolution_requests->clear();
-    bool ok = false;
-    try {
-        auto report = kme::json::parse(report_text);
-        ok = report.at("ok").boolean;
-        const auto& requests = report.at("resolutionRequests");
-        if (resolution_requests && requests.is_array()) {
-            resolution_requests->reserve(requests.array.size());
-            for (const auto& item : requests.array) {
-                DistanceResolutionRequest request = distance_resolution_request_from_json(item);
-                if (!request.resolution_key.empty()) {
-                    resolution_requests->push_back(std::move(request));
-                }
-            }
-        }
-        const auto& warnings = report.at("warnings");
-        if (warnings.is_array()) {
-            for (const auto& item : warnings.array) {
-                add_log("[warn]gui_kme.cpp: " + item.scalar_text_fixed(6));
-            }
-        }
-        const auto& errors = report.at("blockingErrors");
-        if (errors.is_array()) {
-            for (const auto& item : errors.array) {
-                add_log("[error]gui_kme.cpp: " + item.scalar_text_fixed(6));
-            }
-        }
-        const int updates = static_cast<int>(report.at("updateCount").number);
-        const int deletes = static_cast<int>(report.at("deleteCount").number);
-        const auto& changed_files = report.at("changedFiles");
-        const int files = changed_files.is_array()
-            ? static_cast<int>(changed_files.array.size())
-            : 0;
-        if (update_count) *update_count = updates;
-        if (delete_count) *delete_count = deletes;
-        if (changed_file_count) *changed_file_count = files;
-        if (ok) {
-            std::string committed_state_error;
-            if (!apply_committed_edit_state(model_, report, committed_state_error)) {
-                add_log("[error]gui_kme.cpp: saved edit metadata refresh failed; Reload is required: " +
-                        committed_state_error);
-                // The disk commit has already completed, so retaining the old
-                // GUI ledger or inspector would make a later Save target stale
-                // session identities. Disable editing until a full Reload
-                // rebuilds the model and edit registry from the committed file.
-                clear_pending_edit_state();
-                edit_registry_loaded_ = false;
-                ok = false;
-            }
-        }
-        if (ok && !success_prefix.empty()) {
-            add_log(success_prefix + ": updates=" + std::to_string(updates) +
-                    ", deletes=" + std::to_string(deletes) +
-                    ", files=" + std::to_string(files));
-        }
-    } catch (const std::exception& e) {
-        add_log(std::string("[error]gui_kme.cpp: failed to parse edit report: ") + e.what());
-        add_log(LogSeverity::Error, report_text);
+    if (report.version != KV_EDIT_REPORT_SNAPSHOT_VERSION ||
+        report.structure_size < sizeof(KvEditReportSnapshot)) {
+        add_log("[error]gui_kme.cpp: edit report version or size mismatch");
         return false;
+    }
+    if (resolution_requests && report.resolution_request_count != 0 &&
+        report.resolution_requests) {
+        resolution_requests->reserve(static_cast<size_t>(report.resolution_request_count));
+        for (std::uint64_t i = 0; i < report.resolution_request_count; ++i) {
+            DistanceResolutionRequest request = distance_resolution_request_from_typed(
+                report, report.resolution_requests[i]);
+            if (!request.resolution_key.empty()) resolution_requests->push_back(std::move(request));
+        }
+    }
+    if (report.warnings) {
+        for (std::uint64_t i = 0; i < report.warning_count; ++i) {
+            add_log("[warn]gui_kme.cpp: " + edit_report_string(report, report.warnings[i]));
+        }
+    }
+    if (report.blocking_errors) {
+        for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
+            add_log("[error]gui_kme.cpp: " +
+                    edit_report_string(report, report.blocking_errors[i]));
+        }
+    }
+    const int updates = report.update_count;
+    const int deletes = report.delete_count;
+    const int files = static_cast<int>(std::min<std::uint64_t>(
+        report.changed_file_count, static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
+    if (update_count) *update_count = updates;
+    if (delete_count) *delete_count = deletes;
+    if (changed_file_count) *changed_file_count = files;
+    bool ok = report.ok != 0;
+    if (ok) {
+        std::string committed_state_error;
+        if (!apply_committed_edit_state(model_, report, committed_state_error)) {
+            add_log("[error]gui_kme.cpp: saved edit metadata refresh failed; Reload is required: " +
+                    committed_state_error);
+            clear_pending_edit_state();
+            edit_registry_loaded_ = false;
+            ok = false;
+        }
+    }
+    if (ok && !success_prefix.empty()) {
+        add_log(success_prefix + ": updates=" + std::to_string(updates) +
+                ", deletes=" + std::to_string(deletes) +
+                ", files=" + std::to_string(files));
     }
     return ok;
 }
-
-std::string edit_changes_json(const std::map<std::string, MapElementPendingChange>& changes);
 
 bool App::sync_edit_memory_with_ledger(
     const std::map<std::string, MapElementPendingChange>& changes,
@@ -2942,19 +2762,18 @@ bool App::sync_edit_memory_with_ledger(
         return true;
     }
 
-    std::string json = edit_changes_json(changes);
-    const char* raw = kv_edit_apply_to_memory(handle_, json.c_str());
-    if (!raw) {
+    TypedEditBatchStorage batch_storage = typed_edit_batch(changes);
+    const KvEditBatch batch = batch_storage.view();
+    KvEditReportSnapshot report{};
+    if (!kv_edit_apply_to_memory_typed(handle_, &batch, &report, sizeof(report))) {
         edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit memory apply failed: ") +
                 (err ? err : "unknown error"));
         return false;
     }
-    std::string report_text(raw);
-    kv_free_string(raw);
 
-    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit memory updated",
+    if (!parse_and_log_edit_report(report, "[info]gui_kme.cpp: edit memory updated",
                                    nullptr, nullptr, nullptr, resolution_requests)) {
         edit_memory_matches_pending_ledger_ = false;
         return false;
@@ -3281,49 +3100,6 @@ bool App::apply_pending_edits_to_preview() {
     return apply_edit_ledger_to_preview(pending_edit_changes_, std::move(reload_request), applying_delete);
 }
 
-std::string edit_changes_json(const std::map<std::string, MapElementPendingChange>& changes) {
-    std::ostringstream out;
-    out << "{\"changes\":[";
-    bool first_change = true;
-    for (const auto& kv : changes) {
-        const MapElementPendingChange& change = kv.second;
-        if (!first_change) out << ",";
-        first_change = false;
-        out << "{\"changeId\":";
-        append_gui_json_string(out, change.change_id);
-        out << ",\"editId\":";
-        append_gui_json_string(out, change.edit_id);
-        out << ",\"operation\":";
-        append_gui_json_string(out, change.operation);
-        out << ",\"expectedSourceHash\":";
-        append_gui_json_string(out, change.expected_source_hash);
-        out << ",\"distanceResolutionKey\":";
-        append_gui_json_string(out, change.distance_resolution_key);
-        out << ",\"distanceBoundaryToken\":";
-        append_gui_json_string(out, change.distance_boundary_token);
-        out << ",\"distanceExpression\":";
-        append_gui_json_string(out, change.distance_expression);
-        out << ",\"confirmEnvironmentMismatch\":"
-            << (change.confirm_environment_mismatch ? "true" : "false");
-        out << ",\"fieldChanges\":{";
-        bool first_field = true;
-        for (const auto& field : change.field_changes) {
-            if (!first_field) out << ",";
-            first_field = false;
-            append_gui_json_string(out, field.first);
-            out << ":";
-            append_gui_json_string(out, field.second);
-        }
-        out << "}}";
-    }
-    out << "]}";
-    return out.str();
-}
-
-std::string App::pending_changes_json() const {
-    return edit_changes_json(pending_edit_changes_);
-}
-
 bool App::save_pending_edits(bool refresh_inspector) {
     if (!edit_actions_available()) return false;
     if (!handle_ || !has_pending_edits() || load_state_.running) return false;
@@ -3346,17 +3122,15 @@ bool App::save_pending_edits(bool refresh_inspector) {
     // Apply/Revert/Delete keep the maploader working copy synchronized with the
     // pending ledger. Save is only the disk-write boundary; resetting, replaying,
     // or rebuilding the GUI model here would parse the same map state again.
-    const char* raw = kv_edit_commit(handle_);
-    if (!raw) {
+    KvEditReportSnapshot report{};
+    if (!kv_edit_commit_typed(handle_, &report, sizeof(report))) {
         const char* err = kv_get_last_error();
         add_log(std::string("[error]gui_kme.cpp: edit save failed: ") + (err ? err : "unknown error"));
         return false;
     }
-    std::string report_text(raw);
-    kv_free_string(raw);
 
     int committed_file_count = 0;
-    if (!parse_and_log_edit_report(report_text, "[info]gui_kme.cpp: edit save committed",
+    if (!parse_and_log_edit_report(report, "[info]gui_kme.cpp: edit save committed",
                                    nullptr, nullptr, &committed_file_count)) {
         return false;
     }
@@ -5682,9 +5456,7 @@ int main(int, char**) {
         if (!open_bench.error.empty()) {
             std::cerr << open_bench.error << "\n"
                       << "usage: komapedit.exe --debug-headless-open-bench <map-path> "
-                      << "[--repeat N] [--unit-distance M] "
-                      << "[--transport typed_snapshot|json|both] "
-                      << "[--no-snapshot-parity] [--headless-output FILE]\n";
+                      << "[--repeat N] [--unit-distance M] [--headless-output FILE]\n";
             return 1;
         }
         return App::run_debug_headless_open_benchmark(open_bench);
@@ -5711,7 +5483,6 @@ int main(int, char**) {
             std::cerr << headless.error << "\n"
                       << "usage: komapedit.exe --headless-load-map <map-path> "
                       << "[--repeat N] [--unit-distance M] [--load-profile preview|edit] "
-                      << "[--ir-json-mode compact|full] "
                       << "[--headless-output FILE]\n";
             return 1;
         }

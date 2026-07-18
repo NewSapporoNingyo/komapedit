@@ -1094,7 +1094,6 @@ void generate_geometry(MapContext& ctx, double unitdist,
     ctx.othertrack_buffers.clear();
     ctx.timing.owntrack_seconds = 0.0;
     ctx.timing.othertrack_seconds.clear();
-    ctx.timing.json_seconds = 0.0;
     ctx.timing.snapshot_seconds = 0.0;
     ctx.load_timing_logged = false;
     {
@@ -1122,7 +1121,6 @@ void generate_geometry(MapContext& ctx, double unitdist,
         }
     }
     if (generate_auxiliary_buffers) build_structure_put_buffer(ctx);
-    ctx.ir_json_cache_by_flags.clear();
 }
 
 

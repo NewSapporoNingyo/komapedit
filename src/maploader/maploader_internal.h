@@ -10,7 +10,6 @@
 
 #pragma once
 
-#include "json.h"
 #include "maploader.h"
 
 #include "diagnostics.h"
@@ -70,7 +69,6 @@ struct LoadTiming {
     double parse_seconds = 0.0;
     double relocate_seconds = 0.0;
     double owntrack_seconds = 0.0;
-    double json_seconds = 0.0;
     double snapshot_seconds = 0.0;
     std::vector<std::pair<std::string, double>> othertrack_seconds;
 };
@@ -111,9 +109,7 @@ std::string ascii_lower(std::string s);
 std::string trim_copy(const std::string& s);
 std::string trim_field_copy(const std::string& s);
 bool ascii_ieq(const std::string& a, const std::string& b);
-void append_json_string(std::ostringstream& out, const std::string& s);
-std::string json_escape(const std::string& s);
-std::string json_number(double value);
+std::string canonical_number(double value);
 std::uint64_t stable_hash64(const std::string& text);
 std::string hex64(std::uint64_t value);
 double parse_first_version(const std::string& header);
@@ -198,7 +194,6 @@ double as_number(const Value& value, double fallback = 0.0);
 std::string as_text(const Value& value);
 std::string key_text(const Value& value);
 const Value& arg_or_null(const std::vector<Value>& values, size_t index = 0);
-std::string json_value(const Value& value);
 std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_hash);
 void trim_trailing_empty_fields(std::vector<std::string>& fields);
 std::string strip_ini_comment_copy(const std::string& line);
@@ -589,20 +584,76 @@ struct Matrix {
     }
 };
 
-struct PreviewSnapshotStorage {
-    KvPreviewSnapshot view{};
+struct MapSnapshotStorage {
+    KvMapSnapshot view{};
     std::string string_arena;
-    std::vector<KvPreviewFileStructure> file_structure;
-    std::vector<KvPreviewSourceFile> source_files;
-    std::vector<KvPreviewOtherTrack> other_tracks;
-    std::vector<KvPreviewOwnTrackEvent> own_track_events;
-    std::vector<KvPreviewSpeedLimit> speed_limits;
-    std::vector<KvPreviewStationPosition> station_positions;
-    std::vector<KvPreviewStationName> station_names;
-    std::vector<KvPreviewTable> tables;
-    std::vector<KvPreviewRow> rows;
-    std::vector<KvPreviewCell> cells;
-    std::vector<KvPreviewValue> array_values;
+    std::vector<KvValue> values;
+    std::vector<KvStringRef> string_refs;
+    std::vector<KvFileStructureRow> file_structure;
+    std::vector<KvSourceFileRow> source_files;
+    std::vector<KvOtherTrackRow> other_tracks;
+    std::vector<KvTrackEventRow> own_track_events;
+    std::vector<KvTrackEventRow> other_track_events;
+    std::vector<KvStationPositionRow> station_positions;
+    std::vector<KvStationNameRow> station_names;
+    std::vector<KvStationPutRow> station_puts;
+    std::vector<KvStationListRow> station_list;
+    std::vector<KvStructureLoadRow> structure_loads;
+    std::vector<KvStructurePutRow> structure_puts;
+    std::vector<KvStructureBetweenRow> structure_betweens;
+    std::vector<KvStructureModelRow> structure_models;
+    std::vector<KvOtherTrainDefinitionRow> other_train_definitions;
+    std::vector<KvReferencedKeyRow> other_train_structure_keys;
+    std::vector<KvReferencedKeyRow> other_train_sound_3d_keys;
+    std::vector<KvOtherTrainEnableRow> other_train_enables;
+    std::vector<KvOtherTrainStopRow> other_train_stops;
+    std::vector<KvSectionRow> section_begins;
+    std::vector<KvSectionRow> section_speed_limits;
+    std::vector<KvSignalAspectRow> signal_aspects;
+    std::vector<KvSignalPutRow> signal_puts;
+    std::vector<KvBeaconRow> beacons;
+    std::vector<KvPreTrainRow> pretrains;
+    std::vector<KvSoundListRow> sound_list;
+    std::vector<KvMapSoundRow> map_sounds;
+    std::vector<KvMapSound3DRow> map_sounds_3d;
+    std::vector<KvNoiseRow> rolling_noises;
+    std::vector<KvNoiseRow> flange_noises;
+    std::vector<KvNoiseRow> joint_noises;
+    std::vector<KvRepeaterRow> repeaters;
+    std::vector<KvIrregularityRow> irregularities;
+    std::vector<KvBackgroundRow> backgrounds;
+    std::vector<KvAdhesionRow> adhesions;
+    std::vector<KvCabIlluminanceRow> cab_illuminance;
+    std::vector<KvFogRow> fogs;
+    std::vector<KvSpeedLimitRow> speed_limits;
+    std::vector<KvStatementRow> statements;
+    std::vector<KvElementRow> elements;
+};
+
+struct SceneGeometrySnapshotStorage {
+    KvSceneGeometrySnapshot view{};
+    std::string string_arena;
+    std::vector<KvSceneTrackRow> other_tracks;
+};
+
+struct EditTargetSnapshotStorage {
+    KvEditTargetSnapshot view{};
+    std::string string_arena;
+    std::vector<KvStringRef> string_refs;
+};
+
+struct EditReportSnapshotStorage {
+    KvEditReportSnapshot view{};
+    std::string string_arena;
+    std::vector<KvStringRef> string_refs;
+    std::vector<KvDistanceBoundaryRow> boundaries;
+    std::vector<KvStringRef> changed_files;
+    std::vector<KvEditCommittedFileRow> committed_files;
+    std::vector<KvEditCommittedRow> committed_rows;
+    std::vector<KvStringRef> warnings;
+    std::vector<KvStringRef> blocking_errors;
+    std::vector<KvDistanceResolutionRow> resolution_requests;
+    std::vector<KvEditPreviewRow> previews;
 };
 
 struct MapContext {
@@ -676,10 +727,14 @@ struct MapContext {
     std::array<double, 2> cp_defaultrange{0.0, 0.0};
     bool has_cp_arbdistribution = false;
     bool cp_arbdistribution_explicit = false;
-    std::map<unsigned, std::string> ir_json_cache_by_flags;
-    std::unique_ptr<PreviewSnapshotStorage> preview_snapshot;
+    std::unique_ptr<MapSnapshotStorage> map_snapshot;
+    std::unique_ptr<SceneGeometrySnapshotStorage> scene_snapshot;
+    std::unique_ptr<EditTargetSnapshotStorage> edit_target_snapshot;
+    std::unique_ptr<EditReportSnapshotStorage> edit_report_snapshot;
     std::uint64_t content_revision = 1;
     std::uint64_t geometry_revision = 1;
+    std::uint64_t scene_revision = 1;
+    std::uint64_t edit_report_revision = 0;
     LoadTiming timing;
     bool load_timing_logged = false;
     MapParseOptions parse_options;
@@ -849,18 +904,16 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
                                                        double max_angle_degrees,
                                                        double max_chord_error);
 
-unsigned normalize_ir_json_flags(unsigned flags);
-std::string build_ir_json(MapContext& ctx, unsigned flags);
-const KvPreviewSnapshot& build_preview_snapshot(MapContext& ctx);
-void invalidate_preview_snapshot(MapContext& ctx, bool content_changed,
-                                 bool geometry_changed);
+const KvMapSnapshot& build_map_snapshot(MapContext& ctx);
+const KvSceneGeometrySnapshot& build_scene_geometry_snapshot(MapContext& ctx);
+void invalidate_map_snapshot(MapContext& ctx, bool content_changed,
+                             bool geometry_changed);
+void invalidate_scene_geometry_snapshot(MapContext& ctx, bool scene_changed);
 std::string statement_edit_id(MapContext& ctx, ParsedStatement& statement);
 std::string native_element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
                                    const std::string& row_kind);
 std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
                             const std::string& row_kind);
-void append_edit_fields(std::ostringstream& out, const MapContext& ctx,
-                        const EditSourceRef& ref, const std::string& row_kind);
 struct MapEditChange {
     std::string change_id;
     std::string edit_id;
@@ -875,6 +928,25 @@ struct MapEditChange {
     std::string distance_expression;
     bool confirm_environment_mismatch = false;
 };
+
+struct SemanticElementSnapshot {
+    std::string edit_id;
+    std::string row_kind;
+    std::string container_path;
+    size_t row_index = 0;
+    std::string source_file;
+    std::string canonical;
+};
+
+struct SemanticMapSnapshot {
+    std::vector<SemanticElementSnapshot> elements;
+    std::string full_fingerprint;
+};
+
+SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx);
+std::string expected_target_semantic(MapContext& ctx,
+                                     const SemanticElementSnapshot& target,
+                                     const MapEditChange& change);
 
 struct DistanceResolutionBoundary {
     std::string token;
@@ -979,12 +1051,14 @@ struct MapEditReport {
     }
 };
 
-std::vector<MapEditChange> parse_edit_changes_json(const char* changes_json);
-std::string edit_target_info_json(MapContext& ctx, const std::string& edit_id);
+std::vector<MapEditChange> copy_edit_batch(const KvEditBatch& batch);
+const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
+                                                       const std::string& edit_id);
 MapEditReport build_edit_report(MapContext& ctx,
                                 const std::vector<MapEditChange>& changes,
                                 bool write_files);
-std::string report_json(const MapEditReport& report);
+const KvEditReportSnapshot& build_edit_report_snapshot(MapContext& ctx,
+                                                       const MapEditReport& report);
 void apply_patched_files_to_overrides(SourceTextOverrides& overrides,
                                       const MapEditReport& report);
 void reparse_context_with_overrides(MapContext& ctx,

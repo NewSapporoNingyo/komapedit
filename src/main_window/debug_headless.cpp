@@ -12,7 +12,6 @@
 #include "kme.h"
 #include "canvas3D.h"
 #include "debug_headless.h"
-#include "json.h"
 #include "maploader.h"
 #include "touch_input.h"
 
@@ -233,19 +232,6 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
                                      [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-        } else if (arg == "--ir-json-mode") {
-            const std::string* value = take_option_value(
-                args, i, arg, "compact or full", options.error);
-            if (!value) return options;
-            const std::string& mode = *value;
-            if (mode == "compact") {
-                options.full_ir_json = false;
-            } else if (mode == "full") {
-                options.full_ir_json = true;
-            } else {
-                options.error = "--ir-json-mode must be compact or full";
-                return options;
-            }
         } else if (arg == "--load-profile") {
             const std::string* value = take_option_value(
                 args, i, arg, "preview or edit", options.error);
@@ -338,22 +324,6 @@ HeadlessOpenBenchmarkOptions parse_headless_open_benchmark_options(
                                      [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
-        } else if (arg == "--transport") {
-            const std::string* value = take_option_value(
-                args, i, arg, "typed_snapshot, json, or both", options.error);
-            if (!value) return options;
-            if (*value == "typed_snapshot" || *value == "snapshot") {
-                options.transport = "typed_snapshot";
-            } else if (*value == "json" || *value == "json_baseline") {
-                options.transport = "json";
-            } else if (*value == "both") {
-                options.transport = "both";
-            } else {
-                options.error = "--transport must be typed_snapshot, json, or both";
-                return options;
-            }
-        } else if (arg == "--no-snapshot-parity") {
-            options.snapshot_parity = false;
         } else if (arg == "--headless-output") {
             const std::string* value = take_option_value(args, i, arg, "a path", options.error);
             if (!value) return options;
@@ -642,8 +612,7 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
     *out << "komapedit headless-load-map path=\"" << options.path
          << "\" repeat=" << options.repeat
          << " unit_distance=" << format_double(options.unit_distance, 3)
-         << " load_profile=" << options.load_profile
-         << " ir_json_mode=" << (options.full_ir_json ? "full" : "compact") << "\n";
+         << " load_profile=" << options.load_profile << "\n";
 
     for (int run = 1; run <= options.repeat; ++run) {
         auto started_at = std::chrono::steady_clock::now();
@@ -657,39 +626,54 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
                       << (err ? err : "maploader failed") << "\n";
             return 2;
         }
-        unsigned ir_flags = options.full_ir_json
-            ? (KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE)
-            : KV_IR_JSON_COMPACT;
-        const char* json = kv_get_ir_json_ex(handle, ir_flags);
-        const size_t json_bytes = json ? std::strlen(json) : 0;
-        if (json) kv_free_string(json);
-        auto json_at = std::chrono::steady_clock::now();
 
-        HeadlessBufferSummary own = summarize_headless_buffer(kv_get_owntrack_buffer(handle));
-        HeadlessBufferSummary curve = summarize_headless_buffer(kv_get_curveradius_buffer(handle));
-        HeadlessBufferSummary structures = summarize_headless_buffer(kv_get_structure_puts(handle));
-        const size_t other_count = kv_get_othertrack_count(handle);
+        KvMapSnapshot snapshot{};
+        if (!kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION,
+                                 &snapshot, sizeof(snapshot))) {
+            const char* err = kv_get_last_error();
+            std::cerr << "headless run " << run << " snapshot failed: "
+                      << (err ? err : "typed snapshot unavailable") << "\n";
+            kv_free(handle);
+            return 2;
+        }
+        auto snapshot_at = std::chrono::steady_clock::now();
+
+        HeadlessBufferSummary own = summarize_headless_buffer(snapshot.own_track_geometry);
+        HeadlessBufferSummary curve = summarize_headless_buffer(snapshot.curve_radius_geometry);
+        HeadlessBufferSummary structures = summarize_headless_buffer(snapshot.structure_put_geometry);
+        const size_t other_count = static_cast<size_t>(snapshot.other_track_count);
         HeadlessBufferSummary other_total;
-        other_total.rows = 0;
         other_total.cols = 8;
         for (size_t i = 0; i < other_count; ++i) {
-            const char* key = kv_get_othertrack_key(handle, i);
-            HeadlessBufferSummary item = summarize_headless_buffer(kv_get_othertrack_buffer(handle, key));
+            HeadlessBufferSummary item = summarize_headless_buffer(snapshot.other_tracks[i].points);
             other_total.rows += item.rows;
             other_total.finite = other_total.finite && item.finite;
-            other_total.hash ^= item.hash + 0x9e3779b97f4a7c15ULL + (other_total.hash << 6) + (other_total.hash >> 2);
+            other_total.hash ^= item.hash + 0x9e3779b97f4a7c15ULL +
+                (other_total.hash << 6) + (other_total.hash >> 2);
         }
+
+        const uint64_t string_bytes = snapshot.string_size;
+        const uint64_t content_revision = snapshot.content_revision;
+        const uint64_t geometry_revision = snapshot.geometry_revision;
+        const uint64_t statement_count = snapshot.statement_count;
+        const uint64_t element_count = snapshot.element_count;
+        const double snapshot_build_seconds = snapshot.build_seconds;
         kv_free(handle);
         auto finished_at = std::chrono::steady_clock::now();
 
         const double load_seconds = std::chrono::duration<double>(loaded_at - started_at).count();
-        const double json_seconds = std::chrono::duration<double>(json_at - loaded_at).count();
+        const double snapshot_seconds = std::chrono::duration<double>(snapshot_at - loaded_at).count();
         const double total_seconds = std::chrono::duration<double>(finished_at - started_at).count();
         *out << "headless run " << run
              << " load=" << std::fixed << std::setprecision(3) << load_seconds << "s"
-             << " json=" << json_seconds << "s"
+             << " snapshot=" << snapshot_seconds << "s"
              << " total=" << total_seconds << "s"
-             << " json_bytes=" << json_bytes
+             << " snapshot_build=" << snapshot_build_seconds << "s"
+             << " snapshot_string_bytes=" << string_bytes
+             << " content_revision=" << content_revision
+             << " geometry_revision=" << geometry_revision
+             << " statements=" << statement_count
+             << " elements=" << element_count
              << " othertracks=" << other_count;
         print_headless_buffer_summary(*out, "own", own);
         print_headless_buffer_summary(*out, "curve", curve);
@@ -699,7 +683,6 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
     }
     return 0;
 }
-
 int App::run_debug_headless_table_find(const std::string& output_path) {
     std::ofstream output_file;
     std::ostream* out = &std::cout;
@@ -1000,6 +983,312 @@ int App::run_debug_headless_source_anchors(const std::string& path, double unit_
     return duplicate_edit_id_count == 0 && invalid_source_span_count == 0 ? 0 : 3;
 }
 
+namespace typed_edit_headless {
+
+struct Field {
+    std::string name;
+    std::string value;
+};
+
+struct Change {
+    std::string change_id;
+    std::string edit_id;
+    std::uint32_t operation = KV_EDIT_UPDATE;
+    std::uint32_t flags = 0;
+    std::vector<Field> fields;
+    std::string replacement_statement;
+    std::string target_file_path;
+    std::string insert_before_edit_id;
+    std::string expected_source_hash;
+    std::string distance_resolution_key;
+    std::string distance_boundary_token;
+    std::string distance_expression;
+};
+
+struct Boundary {
+    std::string token;
+    int line = 0;
+    int column = 0;
+    bool recommended = false;
+};
+
+struct Resolution {
+    std::string resolution_key;
+    std::string reason;
+    std::string source_file;
+    std::vector<std::string> include_stack;
+    double target_distance = 0.0;
+    std::string variable_name;
+    std::vector<std::string> affected_edit_ids;
+    std::string suggested_expression;
+    std::string insertion_preview;
+    bool can_confirm_reuse = false;
+    int source_section_first_line = 0;
+    int source_section_last_line = 0;
+    std::string source_section_direction;
+    std::vector<Boundary> allowed_boundaries;
+};
+
+struct Preview {
+    std::string file_path;
+    std::string before;
+    std::string after;
+};
+
+struct CommittedFile {
+    std::string file_path;
+    std::string source_hash;
+    std::uint64_t byte_length = 0;
+};
+
+struct CommittedRow {
+    std::string row_kind;
+    std::uint64_t row_index = 0;
+    std::string edit_id;
+    std::string file_path;
+    int line = 0;
+    int column = 0;
+    std::string raw_text_preview;
+};
+
+struct Report {
+    bool ok = false;
+    int update_count = 0;
+    int insert_count = 0;
+    int delete_count = 0;
+    bool full_reparse_ok = false;
+    int target_distance_match_count = 0;
+    int non_target_changed_count = 0;
+    int created_distance_block_count = 0;
+    int reused_distance_block_count = 0;
+    int distance_group_count = 0;
+    std::string validation_fingerprint;
+    std::vector<std::string> changed_files;
+    std::vector<CommittedFile> committed_files;
+    std::vector<CommittedRow> committed_rows;
+    std::vector<std::string> warnings;
+    std::vector<std::string> blocking_errors;
+    std::vector<Resolution> resolution_requests;
+    std::vector<Preview> previews;
+};
+
+KvUtf8View view(const std::string& text) {
+    return {text.empty() ? nullptr : text.data(), static_cast<std::uint64_t>(text.size())};
+}
+
+class Batch {
+public:
+    explicit Batch(const std::vector<Change>& input) {
+        size_t field_count = 0;
+        for (const Change& change : input) field_count += change.fields.size();
+        changes_.reserve(input.size());
+        fields_.reserve(field_count);
+        for (const Change& change : input) {
+            KvEditChange output{};
+            output.change_id = view(change.change_id);
+            output.edit_id = view(change.edit_id);
+            output.operation = change.operation;
+            output.flags = change.flags;
+            output.fields.offset = static_cast<std::uint64_t>(fields_.size());
+            output.fields.count = static_cast<std::uint64_t>(change.fields.size());
+            output.replacement_statement = view(change.replacement_statement);
+            output.target_file_path = view(change.target_file_path);
+            output.insert_before_edit_id = view(change.insert_before_edit_id);
+            output.expected_source_hash = view(change.expected_source_hash);
+            output.distance_resolution_key = view(change.distance_resolution_key);
+            output.distance_boundary_token = view(change.distance_boundary_token);
+            output.distance_expression = view(change.distance_expression);
+            for (const Field& field : change.fields) {
+                fields_.push_back({view(field.name), view(field.value)});
+            }
+            changes_.push_back(output);
+        }
+        batch_.changes = changes_.empty() ? nullptr : changes_.data();
+        batch_.change_count = static_cast<std::uint64_t>(changes_.size());
+        batch_.fields = fields_.empty() ? nullptr : fields_.data();
+        batch_.field_count = static_cast<std::uint64_t>(fields_.size());
+    }
+
+    const KvEditBatch* get() const { return &batch_; }
+
+private:
+    std::vector<KvEditChange> changes_;
+    std::vector<KvEditField> fields_;
+    KvEditBatch batch_{};
+};
+
+Report copy_report(const KvEditReportSnapshot& input) {
+    if (input.version != KV_EDIT_REPORT_SNAPSHOT_VERSION ||
+        input.structure_size < sizeof(KvEditReportSnapshot)) {
+        throw std::runtime_error("typed edit report version or size mismatch");
+    }
+    auto text = [&](KvStringRef ref) {
+        if (ref.length == 0) return std::string{};
+        if (!input.string_data || ref.offset > input.string_size ||
+            ref.length > input.string_size - ref.offset) {
+            throw std::runtime_error("typed edit report string reference is out of range");
+        }
+        return std::string(input.string_data + static_cast<size_t>(ref.offset),
+                           static_cast<size_t>(ref.length));
+    };
+    auto strings = [&](KvSpan span) {
+        if (span.offset > input.string_ref_count ||
+            span.count > input.string_ref_count - span.offset ||
+            (span.count != 0 && !input.string_refs)) {
+            throw std::runtime_error("typed edit report string span is out of range");
+        }
+        std::vector<std::string> output;
+        output.reserve(static_cast<size_t>(span.count));
+        for (std::uint64_t i = 0; i < span.count; ++i) {
+            output.push_back(text(input.string_refs[span.offset + i]));
+        }
+        return output;
+    };
+    auto check_pointer = [](const void* pointer, std::uint64_t count, const char* label) {
+        if (count != 0 && !pointer) {
+            throw std::runtime_error(std::string("typed edit report has null ") + label);
+        }
+    };
+    check_pointer(input.changed_files, input.changed_file_count, "changed-files array");
+    check_pointer(input.committed_files, input.committed_file_count, "committed-files array");
+    check_pointer(input.committed_rows, input.committed_row_count, "committed-rows array");
+    check_pointer(input.warnings, input.warning_count, "warnings array");
+    check_pointer(input.blocking_errors, input.blocking_error_count, "errors array");
+    check_pointer(input.resolution_requests, input.resolution_request_count,
+                  "resolution array");
+    check_pointer(input.preview_snippets, input.preview_snippet_count, "preview array");
+
+    Report output;
+    output.ok = input.ok != 0;
+    output.update_count = input.update_count;
+    output.insert_count = input.insert_count;
+    output.delete_count = input.delete_count;
+    output.full_reparse_ok = input.full_reparse_ok != 0;
+    output.target_distance_match_count = input.target_distance_match_count;
+    output.non_target_changed_count = input.non_target_changed_count;
+    output.created_distance_block_count = input.created_distance_block_count;
+    output.reused_distance_block_count = input.reused_distance_block_count;
+    output.distance_group_count = input.distance_group_count;
+    output.validation_fingerprint = text(input.validation_fingerprint);
+    output.changed_files.reserve(static_cast<size_t>(input.changed_file_count));
+    for (std::uint64_t i = 0; i < input.changed_file_count; ++i) {
+        output.changed_files.push_back(text(input.changed_files[i]));
+    }
+    output.committed_files.reserve(static_cast<size_t>(input.committed_file_count));
+    for (std::uint64_t i = 0; i < input.committed_file_count; ++i) {
+        const KvEditCommittedFileRow& row = input.committed_files[i];
+        output.committed_files.push_back({text(row.file_path), text(row.source_hash),
+                                          row.byte_length});
+    }
+    output.committed_rows.reserve(static_cast<size_t>(input.committed_row_count));
+    for (std::uint64_t i = 0; i < input.committed_row_count; ++i) {
+        const KvEditCommittedRow& row = input.committed_rows[i];
+        output.committed_rows.push_back({text(row.row_kind), row.row_index, text(row.edit_id),
+                                         text(row.file_path), row.line, row.column,
+                                         text(row.raw_text_preview)});
+    }
+    output.warnings.reserve(static_cast<size_t>(input.warning_count));
+    for (std::uint64_t i = 0; i < input.warning_count; ++i) {
+        output.warnings.push_back(text(input.warnings[i]));
+    }
+    output.blocking_errors.reserve(static_cast<size_t>(input.blocking_error_count));
+    for (std::uint64_t i = 0; i < input.blocking_error_count; ++i) {
+        output.blocking_errors.push_back(text(input.blocking_errors[i]));
+    }
+    output.resolution_requests.reserve(static_cast<size_t>(input.resolution_request_count));
+    for (std::uint64_t i = 0; i < input.resolution_request_count; ++i) {
+        const KvDistanceResolutionRow& row = input.resolution_requests[i];
+        if (row.allowed_boundaries.offset > input.boundary_count ||
+            row.allowed_boundaries.count > input.boundary_count - row.allowed_boundaries.offset ||
+            (row.allowed_boundaries.count != 0 && !input.boundaries)) {
+            throw std::runtime_error("typed edit report boundary span is out of range");
+        }
+        Resolution resolution;
+        resolution.resolution_key = text(row.resolution_key);
+        resolution.reason = text(row.reason);
+        resolution.source_file = text(row.source_file);
+        resolution.include_stack = strings(row.include_stack);
+        resolution.target_distance = row.target_distance;
+        resolution.variable_name = text(row.variable_name);
+        resolution.affected_edit_ids = strings(row.affected_edit_ids);
+        resolution.suggested_expression = text(row.suggested_expression);
+        resolution.insertion_preview = text(row.insertion_preview);
+        resolution.can_confirm_reuse = row.can_confirm_reuse != 0;
+        resolution.source_section_first_line = row.source_section_first_line;
+        resolution.source_section_last_line = row.source_section_last_line;
+        resolution.source_section_direction = text(row.source_section_direction);
+        resolution.allowed_boundaries.reserve(
+            static_cast<size_t>(row.allowed_boundaries.count));
+        for (std::uint64_t j = 0; j < row.allowed_boundaries.count; ++j) {
+            const KvDistanceBoundaryRow& boundary =
+                input.boundaries[row.allowed_boundaries.offset + j];
+            resolution.allowed_boundaries.push_back({text(boundary.token), boundary.line,
+                                                      boundary.column,
+                                                      boundary.recommended != 0});
+        }
+        output.resolution_requests.push_back(std::move(resolution));
+    }
+    output.previews.reserve(static_cast<size_t>(input.preview_snippet_count));
+    for (std::uint64_t i = 0; i < input.preview_snippet_count; ++i) {
+        const KvEditPreviewRow& row = input.preview_snippets[i];
+        output.previews.push_back({text(row.file_path), text(row.before_text),
+                                   text(row.after_text)});
+    }
+    return output;
+}
+
+Report dry_run(void* handle, const std::vector<Change>& changes) {
+    Batch batch(changes);
+    KvEditReportSnapshot output{};
+    if (!kv_edit_dry_run_typed(handle, batch.get(), &output, sizeof(output))) {
+        const char* error = kv_get_last_error();
+        throw std::runtime_error(error ? error : "typed edit dry-run failed");
+    }
+    return copy_report(output);
+}
+
+Report apply_to_memory(void* handle, const std::vector<Change>& changes) {
+    Batch batch(changes);
+    KvEditReportSnapshot output{};
+    if (!kv_edit_apply_to_memory_typed(handle, batch.get(), &output, sizeof(output))) {
+        const char* error = kv_get_last_error();
+        throw std::runtime_error(error ? error : "typed memory apply failed");
+    }
+    return copy_report(output);
+}
+
+Report direct_apply(void* handle, const std::vector<Change>& changes) {
+    Batch batch(changes);
+    KvEditReportSnapshot output{};
+    if (!kv_edit_apply_typed(handle, batch.get(), &output, sizeof(output))) {
+        const char* error = kv_get_last_error();
+        throw std::runtime_error(error ? error : "typed direct apply failed");
+    }
+    return copy_report(output);
+}
+
+Report commit(void* handle) {
+    KvEditReportSnapshot output{};
+    if (!kv_edit_commit_typed(handle, &output, sizeof(output))) {
+        const char* error = kv_get_last_error();
+        throw std::runtime_error(error ? error : "typed edit commit failed");
+    }
+    return copy_report(output);
+}
+
+Change update(std::string change_id, std::string edit_id,
+              std::string expected_source_hash,
+              std::vector<Field> fields) {
+    Change change;
+    change.change_id = std::move(change_id);
+    change.edit_id = std::move(edit_id);
+    change.expected_source_hash = std::move(expected_source_hash);
+    change.fields = std::move(fields);
+    return change;
+}
+
+} // namespace typed_edit_headless
+
 int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_distance,
                                            const std::string& output_path) {
     std::ofstream output_file;
@@ -1014,64 +1303,28 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         out = &output_file;
     }
 
-    auto append_json_string = [](std::ostringstream& json, const std::string& text) {
-        kme::json::append_string(json, text);
-    };
+    using typed_edit_headless::Change;
+    using typed_edit_headless::Field;
+    using typed_edit_headless::Report;
     auto source_hash_for_path = [](const MapModel& model, const std::string& file_path) {
         for (const EditSourceFileInfo& file : model.edit_files) {
             if (file.file_path == file_path) return file.source_hash;
         }
         return std::string{};
     };
-    auto make_update_json = [&](const TableRow& row, const MapModel& model,
-                                const std::map<std::string, std::string>& fields,
-                                const std::string& expected_hash_override = {}) {
+    auto make_update = [&](const TableRow& row, const MapModel& model,
+                           const std::map<std::string, std::string>& fields,
+                           const std::string& expected_hash_override = {}) {
         std::string expected_hash = expected_hash_override.empty()
             ? source_hash_for_path(model, row.source.file_path)
             : expected_hash_override;
-        std::ostringstream json;
-        json << "{\"changes\":[{\"changeId\":\"headless-update\",\"editId\":";
-        append_json_string(json, row.edit_id);
-        json << ",\"operation\":\"update\",\"expectedSourceHash\":";
-        append_json_string(json, expected_hash);
-        json << ",\"fieldChanges\":{";
-        bool first = true;
+        std::vector<Field> typed_fields;
+        typed_fields.reserve(fields.size());
         for (const auto& field : fields) {
-            if (!first) json << ",";
-            first = false;
-            append_json_string(json, field.first);
-            json << ":";
-            append_json_string(json, field.second);
+            typed_fields.push_back({field.first, field.second});
         }
-        json << "}}]}";
-        return json.str();
-    };
-    auto report_ok = [](const std::string& report) {
-        return report.find("\"ok\":true") != std::string::npos;
-    };
-    auto call_dry_run = [](void* handle, const std::string& changes) {
-        const char* raw = kv_edit_dry_run(handle, changes.c_str());
-        std::string text = raw ? raw : "";
-        if (raw) kv_free_string(raw);
-        return text;
-    };
-    auto call_apply_to_memory = [](void* handle, const std::string& changes) {
-        const char* raw = kv_edit_apply_to_memory(handle, changes.c_str());
-        std::string text = raw ? raw : "";
-        if (raw) kv_free_string(raw);
-        return text;
-    };
-    auto call_direct_apply = [](void* handle, const std::string& changes) {
-        const char* raw = kv_edit_apply(handle, changes.c_str());
-        std::string text = raw ? raw : "";
-        if (raw) kv_free_string(raw);
-        return text;
-    };
-    auto call_commit = [](void* handle) {
-        const char* raw = kv_edit_commit(handle);
-        std::string text = raw ? raw : "";
-        if (raw) kv_free_string(raw);
-        return text;
+        return std::vector<Change>{typed_edit_headless::update(
+            "headless-update", row.edit_id, expected_hash, std::move(typed_fields))};
     };
     auto find_structure_by_edit_id = [](const MapModel& model,
                                         const std::string& edit_id) -> const TableRow* {
@@ -1133,10 +1386,10 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         std::filesystem::remove_all(temp_root);
         return 2;
     }
-    KvPreviewSnapshot baseline_snapshot{};
-    KvPreviewSnapshot applied_snapshot{};
-    const bool baseline_snapshot_ok = kv_get_preview_snapshot(
-        load.handle, KV_PREVIEW_SNAPSHOT_VERSION,
+    KvMapSnapshot baseline_snapshot{};
+    KvMapSnapshot applied_snapshot{};
+    const bool baseline_snapshot_ok = kv_get_map_snapshot(
+        load.handle, KV_MAP_SNAPSHOT_VERSION,
         &baseline_snapshot, sizeof(baseline_snapshot)) != 0;
     *out << "snapshot_baseline_ok=" << (baseline_snapshot_ok ? 1 : 0) << "\n";
     if (!baseline_snapshot_ok) exit_code = 4;
@@ -1184,41 +1437,46 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
                 baseline_non_target_metadata_error << "\n";
         exit_code = 4;
     }
-    std::string changes = make_update_json(structure_row, load.model, {
+    std::vector<Change> changes = make_update(structure_row, load.model, {
         {"distance", "125"},
         {"x", "9"},
         {"y", "2"},
         {"z", "3"}
     });
-    std::string dry_report = call_dry_run(load.handle, changes);
-    const bool dry_ok = report_ok(dry_report);
+    Report dry_report = typed_edit_headless::dry_run(load.handle, changes);
+    const bool dry_ok = dry_report.ok;
     *out << "dry_run_ok=" << (dry_ok ? 1 : 0) << "\n";
     if (!dry_ok) {
-        *out << "dry_run_report=" << dry_report << "\n";
+        *out << "dry_run_error_count=" << dry_report.blocking_errors.size() << "\n";
         exit_code = 4;
     }
 
-    std::string stale_changes = make_update_json(structure_row, load.model, {{"x", "11"}}, "bad-hash");
-    std::string stale_report = call_dry_run(load.handle, stale_changes);
-    const bool stale_blocked = !report_ok(stale_report) &&
-        stale_report.find("source file changed externally") != std::string::npos;
+    std::vector<Change> stale_changes = make_update(
+        structure_row, load.model, {{"x", "11"}}, "bad-hash");
+    Report stale_report = typed_edit_headless::dry_run(load.handle, stale_changes);
+    const bool stale_blocked = !stale_report.ok && std::any_of(
+        stale_report.blocking_errors.begin(), stale_report.blocking_errors.end(),
+        [](const std::string& error) {
+            return error.find("source file changed externally") != std::string::npos;
+        });
     *out << "stale_hash_blocked=" << (stale_blocked ? 1 : 0) << "\n";
     if (!stale_blocked) {
-        *out << "stale_hash_report=" << stale_report << "\n";
+        *out << "stale_hash_error_count=" << stale_report.blocking_errors.size() << "\n";
         exit_code = 5;
     }
 
-    std::string apply_memory_report;
+    Report apply_memory_report;
     if (exit_code == 0) {
-        apply_memory_report = call_apply_to_memory(load.handle, changes);
-        const bool apply_memory_ok = report_ok(apply_memory_report);
+        apply_memory_report = typed_edit_headless::apply_to_memory(load.handle, changes);
+        const bool apply_memory_ok = apply_memory_report.ok;
         *out << "apply_to_memory_ok=" << (apply_memory_ok ? 1 : 0) << "\n";
         if (!apply_memory_ok) {
-            *out << "apply_to_memory_report=" << apply_memory_report << "\n";
+            *out << "apply_to_memory_error_count="
+                 << apply_memory_report.blocking_errors.size() << "\n";
             exit_code = 6;
         } else {
-            const bool applied_snapshot_ok = kv_get_preview_snapshot(
-                load.handle, KV_PREVIEW_SNAPSHOT_VERSION,
+            const bool applied_snapshot_ok = kv_get_map_snapshot(
+                load.handle, KV_MAP_SNAPSHOT_VERSION,
                 &applied_snapshot, sizeof(applied_snapshot)) != 0;
             const bool apply_snapshot_invalidated = baseline_snapshot_ok && applied_snapshot_ok &&
                 applied_snapshot.content_revision > baseline_snapshot.content_revision &&
@@ -1292,9 +1550,9 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
 
     if (exit_code == 0) {
         const bool reset_ok = kv_edit_reset_memory(load.handle) != 0;
-        KvPreviewSnapshot reset_snapshot{};
-        const bool reset_snapshot_ok = kv_get_preview_snapshot(
-            load.handle, KV_PREVIEW_SNAPSHOT_VERSION,
+        KvMapSnapshot reset_snapshot{};
+        const bool reset_snapshot_ok = kv_get_map_snapshot(
+            load.handle, KV_MAP_SNAPSHOT_VERSION,
             &reset_snapshot, sizeof(reset_snapshot)) != 0;
         const bool reset_snapshot_invalidated = reset_ok && reset_snapshot_ok &&
             reset_snapshot.content_revision > applied_snapshot.content_revision &&
@@ -1318,18 +1576,20 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
     }
 
     if (exit_code == 0) {
-        std::string reapply_report = call_apply_to_memory(load.handle, changes);
-        const bool reapply_ok = report_ok(reapply_report);
+        Report reapply_report = typed_edit_headless::apply_to_memory(load.handle, changes);
+        const bool reapply_ok = reapply_report.ok;
         *out << "reapply_to_memory_ok=" << (reapply_ok ? 1 : 0) << "\n";
         if (!reapply_ok) {
-            *out << "reapply_report=" << reapply_report << "\n";
+            *out << "reapply_error_count=" << reapply_report.blocking_errors.size() << "\n";
             exit_code = 8;
         }
     }
 
     if (exit_code == 0) {
-        std::string commit_report = call_commit(load.handle);
-        const bool commit_ok = report_ok(commit_report);
+        KvEditReportSnapshot commit_report{};
+        const bool commit_call_ok = kv_edit_commit_typed(
+            load.handle, &commit_report, sizeof(commit_report)) != 0;
+        const bool commit_ok = commit_call_ok && commit_report.ok != 0;
         std::string commit_metadata_error;
         bool commit_metadata_merge_ok = commit_ok &&
             apply_committed_edit_report_to_model(
@@ -1359,7 +1619,9 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         *out << "commit_metadata_merge_ok=" <<
             (commit_metadata_merge_ok ? 1 : 0) << "\n";
         if (!commit_ok || !commit_metadata_merge_ok) {
-            *out << "commit_report=" << commit_report << "\n";
+            *out << "commit_report_ok=" << (commit_report.ok ? 1 : 0)
+                 << " committed_files=" << commit_report.committed_file_count
+                 << " blocking_errors=" << commit_report.blocking_error_count << "\n";
             *out << "commit_metadata_error=" << commit_metadata_error << "\n"
                  << "committed_target_metadata_error=" <<
                     committed_target_metadata_error << "\n"
@@ -1381,15 +1643,15 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
         const std::string committed_source_hash = committed_target
             ? source_hash_for_path(committed_model, committed_target->source.file_path)
             : std::string{};
-        std::string second_batch_changes;
+        std::vector<Change> second_batch_changes;
         if (committed_non_target) {
-            second_batch_changes = make_update_json(
+            second_batch_changes = make_update(
                 *committed_non_target, committed_model, {{"x", "10"}});
         }
-        const std::string second_batch_report = second_batch_changes.empty()
-            ? std::string{}
-            : call_apply_to_memory(load.handle, second_batch_changes);
-        const bool second_batch_ok = report_ok(second_batch_report);
+        const Report second_batch_report = second_batch_changes.empty()
+            ? Report{}
+            : typed_edit_headless::apply_to_memory(load.handle, second_batch_changes);
+        const bool second_batch_ok = second_batch_report.ok;
         MapModel second_batch_model = build_model_from_handle(
             load.handle, wide_to_utf8(temp_map.wstring()), LoadModelOptions{true});
         const TableRow* second_batch_target =
@@ -1460,7 +1722,8 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             !discarded_identity_stable || !discarded_value_ok ||
             !discarded_metadata_ok) {
             if (!second_batch_ok) {
-                *out << "second_batch_report=" << second_batch_report << "\n";
+                *out << "second_batch_error_count="
+                     << second_batch_report.blocking_errors.size() << "\n";
             }
             if (!second_batch_metadata_ok) {
                 *out << "second_batch_target_error=" << second_batch_target_error << "\n"
@@ -1509,13 +1772,15 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
             *out << "direct_load_error=" << direct_load.error << "\n";
             exit_code = 12;
         } else {
-            std::string direct_changes = make_update_json(
+            std::vector<Change> direct_changes = make_update(
                 *direct_target, direct_load.model, {{"x", "12"}});
-            std::string direct_report = call_direct_apply(direct_load.handle, direct_changes);
-            const bool direct_ok = report_ok(direct_report);
+            Report direct_report = typed_edit_headless::direct_apply(
+                direct_load.handle, direct_changes);
+            const bool direct_ok = direct_report.ok;
             *out << "direct_apply_ok=" << (direct_ok ? 1 : 0) << "\n";
             if (!direct_ok) {
-                *out << "direct_apply_report=" << direct_report << "\n";
+                *out << "direct_apply_error_count="
+                     << direct_report.blocking_errors.size() << "\n";
                 exit_code = 13;
             }
         }
@@ -1549,7 +1814,10 @@ int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_
 
 namespace distance_batch_headless {
 
-using JsonValue = kme::json::Value;
+using EditChange = typed_edit_headless::Change;
+using EditField = typed_edit_headless::Field;
+using EditReport = typed_edit_headless::Report;
+using EditResolution = typed_edit_headless::Resolution;
 
 struct MapHandle {
     void* value = nullptr;
@@ -1566,39 +1834,6 @@ struct MapHandle {
         return *this;
     }
 };
-
-std::string take_owned_json(const char* raw, const char* operation) {
-    if (!raw) throw std::runtime_error(std::string(operation) + " returned null");
-    std::string text(raw);
-    kv_free_string(raw);
-    return text;
-}
-
-std::string compact_ir_json(void* handle) {
-    return take_owned_json(kv_get_ir_json_ex(handle, KV_IR_JSON_COMPACT),
-                           "kv_get_ir_json_ex");
-}
-
-std::string dry_run_json(void* handle, const std::string& changes) {
-    return take_owned_json(kv_edit_dry_run(handle, changes.c_str()), "kv_edit_dry_run");
-}
-
-std::string apply_memory_json(void* handle, const std::string& changes) {
-    return take_owned_json(kv_edit_apply_to_memory(handle, changes.c_str()),
-                           "kv_edit_apply_to_memory");
-}
-
-std::string commit_json(void* handle) {
-    return take_owned_json(kv_edit_commit(handle), "kv_edit_commit");
-}
-
-std::string direct_apply_json(void* handle, const std::string& changes) {
-    return take_owned_json(kv_edit_apply(handle, changes.c_str()), "kv_edit_apply");
-}
-
-std::string json_escape(const std::string& text) {
-    return kme::json::quote(text);
-}
 
 std::string edit_number(double value) {
     std::ostringstream out;
@@ -1671,128 +1906,147 @@ struct ReportFacts {
     std::string validation_fingerprint;
 };
 
-ReportFacts report_facts(const JsonValue& report) {
+ReportFacts report_facts(const EditReport& report) {
     ReportFacts facts;
-    const JsonValue& ok = report.at("ok");
-    const JsonValue& full = report.at("fullReparseOk");
-    facts.ok = ok.is_bool() && ok.boolean;
-    facts.full_reparse_ok = full.is_bool() && full.boolean;
-    facts.target_distance_match_count = static_cast<int>(report.at("targetDistanceMatchCount").number);
-    facts.non_target_changed_count = static_cast<int>(report.at("nonTargetChangedCount").number);
-    facts.created_distance_block_count = static_cast<int>(report.at("createdDistanceBlockCount").number);
-    facts.reused_distance_block_count = static_cast<int>(report.at("reusedDistanceBlockCount").number);
-    facts.distance_group_count = static_cast<int>(report.at("distanceGroupCount").number);
-    facts.blocking_error_count = report.at("blockingErrors").array.size();
-    facts.resolution_request_count = report.at("resolutionRequests").array.size();
-    facts.changed_file_count = report.at("changedFiles").array.size();
-    facts.preview_count = report.at("previewSnippets").array.size();
-    facts.validation_fingerprint = report.at("validationFingerprint").scalar_text();
+    facts.ok = report.ok;
+    facts.full_reparse_ok = report.full_reparse_ok;
+    facts.target_distance_match_count = report.target_distance_match_count;
+    facts.non_target_changed_count = report.non_target_changed_count;
+    facts.created_distance_block_count = report.created_distance_block_count;
+    facts.reused_distance_block_count = report.reused_distance_block_count;
+    facts.distance_group_count = report.distance_group_count;
+    facts.blocking_error_count = report.blocking_errors.size();
+    facts.resolution_request_count = report.resolution_requests.size();
+    facts.changed_file_count = report.changed_files.size();
+    facts.preview_count = report.previews.size();
+    facts.validation_fingerprint = report.validation_fingerprint;
     return facts;
 }
 
-bool request_affects(const JsonValue& request, const std::string& edit_id) {
-    for (const JsonValue& value : request.at("affectedEditIds").array) {
-        if (value.scalar_text() == edit_id) return true;
-    }
-    return false;
+bool request_affects(const EditResolution& request, const std::string& edit_id) {
+    return std::find(request.affected_edit_ids.begin(), request.affected_edit_ids.end(),
+                     edit_id) != request.affected_edit_ids.end();
 }
 
-std::string recommended_boundary_token(const JsonValue& request) {
-    for (const JsonValue& boundary : request.at("allowedBoundaries").array) {
-        const JsonValue& recommended = boundary.at("recommended");
-        if (recommended.is_bool() && recommended.boolean) {
-            return boundary.at("token").scalar_text();
-        }
+std::string recommended_boundary_token(const EditResolution& request) {
+    for (const typed_edit_headless::Boundary& boundary : request.allowed_boundaries) {
+        if (boundary.recommended) return boundary.token;
     }
     return {};
 }
 
-std::string first_blocking_error(const JsonValue& report) {
-    const JsonValue& errors = report.at("blockingErrors");
-    return errors.array.empty() ? std::string{} : errors.array.front().scalar_text();
+std::string first_blocking_error(const EditReport& report) {
+    return report.blocking_errors.empty() ? std::string{} : report.blocking_errors.front();
 }
 
-std::string build_changes_json(
+std::vector<EditChange> build_changes(
     const std::vector<StructureEdit>& edits,
     const std::map<std::string, ResolutionChoice>& resolutions = {}) {
-    std::ostringstream json;
-    json << "{\"changes\":[";
+    std::vector<EditChange> output;
+    output.reserve(edits.size());
     for (size_t i = 0; i < edits.size(); ++i) {
-        if (i) json << ",";
         const StructureEdit& edit = edits[i];
-        json << "{\"changeId\":" << json_escape("headless-distance-" + std::to_string(i))
-             << ",\"editId\":" << json_escape(edit.edit_id)
-             << ",\"operation\":\"update\",\"expectedSourceHash\":"
-             << json_escape(edit.expected_source_hash)
-             << ",\"fieldChanges\":{\"distance\":"
-             << json_escape(edit_number(edit.target_distance)) << "}";
+        EditChange change = typed_edit_headless::update(
+            "headless-distance-" + std::to_string(i), edit.edit_id,
+            edit.expected_source_hash, {{"distance", edit_number(edit.target_distance)}});
         auto resolution = resolutions.find(edit.edit_id);
         if (resolution != resolutions.end()) {
             const ResolutionChoice& choice = resolution->second;
-            if (!choice.resolution_key.empty()) {
-                json << ",\"distanceResolutionKey\":" << json_escape(choice.resolution_key);
-            }
-            if (!choice.boundary_token.empty()) {
-                json << ",\"distanceBoundaryToken\":" << json_escape(choice.boundary_token);
-            }
-            if (!choice.distance_expression.empty()) {
-                json << ",\"distanceExpression\":" << json_escape(choice.distance_expression);
-            }
+            change.distance_resolution_key = choice.resolution_key;
+            change.distance_boundary_token = choice.boundary_token;
+            change.distance_expression = choice.distance_expression;
             if (choice.confirm_environment_mismatch) {
-                json << ",\"confirmEnvironmentMismatch\":true";
+                change.flags |= KV_EDIT_CHANGE_CONFIRM_ENVIRONMENT_MISMATCH;
             }
         }
-        json << "}";
+        output.push_back(std::move(change));
     }
-    json << "]}";
-    return json.str();
+    return output;
 }
 
-std::string build_field_updates_json(const std::vector<StructureEdit>& edits,
-                                     const std::string& field,
-                                     const std::vector<std::string>& values) {
+std::vector<EditChange> build_field_updates(
+    const std::vector<StructureEdit>& edits,
+    const std::string& field,
+    const std::vector<std::string>& values) {
     if (edits.size() != values.size()) {
         throw std::runtime_error("field-update fixture input sizes differ");
     }
-    std::ostringstream json;
-    json << "{\"changes\":[";
+    std::vector<EditChange> output;
+    output.reserve(edits.size());
     for (size_t i = 0; i < edits.size(); ++i) {
-        if (i) json << ",";
-        json << "{\"changeId\":"
-             << json_escape("headless-field-update-" + std::to_string(i))
-             << ",\"editId\":" << json_escape(edits[i].edit_id)
-             << ",\"operation\":\"update\",\"expectedSourceHash\":"
-             << json_escape(edits[i].expected_source_hash)
-             << ",\"fieldChanges\":{" << json_escape(field) << ":"
-             << json_escape(values[i]) << "}}";
+        output.push_back(typed_edit_headless::update(
+            "headless-field-update-" + std::to_string(i), edits[i].edit_id,
+            edits[i].expected_source_hash, {{field, values[i]}}));
     }
-    json << "]}";
-    return json.str();
+    return output;
 }
 
-std::string build_single_field_update_json(const StructureEdit& edit,
-                                           const std::string& field,
-                                           const std::string& value) {
-    return build_field_updates_json({edit}, field, {value});
+std::vector<EditChange> build_single_field_update(
+    const StructureEdit& edit, const std::string& field, const std::string& value) {
+    return build_field_updates({edit}, field, {value});
 }
 
-std::vector<StructureEdit> structure_rows_from_ir(const std::string& ir_json) {
-    JsonValue root = kme::json::parse(ir_json);
-    const JsonValue& rows = root.at("structure").at("data");
-    if (!rows.is_array()) throw std::runtime_error("IR has no structure.data array");
+KvMapSnapshot current_map_snapshot(void* handle) {
+    KvMapSnapshot snapshot{};
+    if (!kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION,
+                             &snapshot, sizeof(snapshot))) {
+        const char* error = kv_get_last_error();
+        throw std::runtime_error(error ? error : "typed map snapshot failed");
+    }
+    if (snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
+        snapshot.structure_size < sizeof(KvMapSnapshot)) {
+        throw std::runtime_error("typed map snapshot version or size mismatch");
+    }
+    return snapshot;
+}
+
+std::string snapshot_text(const KvMapSnapshot& snapshot, KvStringRef ref) {
+    if (ref.length == 0) return {};
+    if (!snapshot.string_data || ref.offset > snapshot.string_size ||
+        ref.length > snapshot.string_size - ref.offset) {
+        throw std::runtime_error("typed map snapshot string reference is out of range");
+    }
+    return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
+                       static_cast<size_t>(ref.length));
+}
+
+std::string snapshot_value_text(const KvMapSnapshot& snapshot, const KvValue& value) {
+    switch (value.kind) {
+        case KV_VALUE_NUMBER: return edit_number(value.number_value);
+        case KV_VALUE_STRING: return snapshot_text(snapshot, value.string_value);
+        case KV_VALUE_CONTINUE: return "c";
+        default: return {};
+    }
+}
+
+std::string metadata_source_file(const KvMapSnapshot& snapshot,
+                                 const KvRowMetadata& metadata) {
+    if (metadata.source_file_index == KV_INDEX_NONE) return {};
+    if (!snapshot.source_files ||
+        metadata.source_file_index >= snapshot.source_file_count) {
+        throw std::runtime_error("typed map snapshot source index is out of range");
+    }
+    return snapshot_text(
+        snapshot, snapshot.source_files[metadata.source_file_index].file_path);
+}
+
+std::vector<StructureEdit> structure_rows_from_snapshot(void* handle) {
+    const KvMapSnapshot snapshot = current_map_snapshot(handle);
+    if (snapshot.structure_put_count != 0 && !snapshot.structure_puts) {
+        throw std::runtime_error("typed map snapshot has null structure array");
+    }
     std::vector<StructureEdit> result;
-    result.reserve(rows.array.size());
-    for (const JsonValue& row : rows.array) {
-        if (!row.is_object() || !row.at("distance").is_number()) continue;
-        const JsonValue& source = row.at("source");
+    result.reserve(static_cast<size_t>(snapshot.structure_put_count));
+    for (std::uint64_t i = 0; i < snapshot.structure_put_count; ++i) {
+        const KvStructurePutRow& row = snapshot.structure_puts[i];
         StructureEdit edit;
-        edit.edit_id = row.at("editId").scalar_text();
+        edit.edit_id = snapshot_text(snapshot, row.metadata.edit_id);
         edit.row_kind = "structure.put";
-        edit.source_file = source.at("filePath").scalar_text();
-        edit.source_line = static_cast<int>(source.at("line").number);
-        edit.raw_text_preview = source.at("rawTextPreview").scalar_text();
-        edit.structure_key = row.at("structureKey").scalar_text();
-        edit.old_distance = row.at("distance").number;
+        edit.source_file = metadata_source_file(snapshot, row.metadata);
+        edit.source_line = row.metadata.line;
+        edit.raw_text_preview = snapshot_text(snapshot, row.metadata.raw_text_preview);
+        edit.structure_key = snapshot_value_text(snapshot, row.structure_key);
+        edit.old_distance = row.distance;
         if (!edit.edit_id.empty() && !edit.source_file.empty()) result.push_back(std::move(edit));
     }
     std::stable_sort(result.begin(), result.end(), [](const StructureEdit& a,
@@ -1804,23 +2058,23 @@ std::vector<StructureEdit> structure_rows_from_ir(const std::string& ir_json) {
     return result;
 }
 
-std::vector<StructureEdit> station_put_rows_from_ir(const std::string& ir_json) {
-    JsonValue root = kme::json::parse(ir_json);
-    const JsonValue& rows = root.at("station").at("put");
-    if (!rows.is_array()) throw std::runtime_error("IR has no station.put array");
+std::vector<StructureEdit> station_put_rows_from_snapshot(void* handle) {
+    const KvMapSnapshot snapshot = current_map_snapshot(handle);
+    if (snapshot.station_put_count != 0 && !snapshot.station_puts) {
+        throw std::runtime_error("typed map snapshot has null station-put array");
+    }
     std::vector<StructureEdit> result;
-    result.reserve(rows.array.size());
-    for (const JsonValue& row : rows.array) {
-        if (!row.is_object() || !row.at("distance").is_number()) continue;
-        const JsonValue& source = row.at("source");
+    result.reserve(static_cast<size_t>(snapshot.station_put_count));
+    for (std::uint64_t i = 0; i < snapshot.station_put_count; ++i) {
+        const KvStationPutRow& row = snapshot.station_puts[i];
         StructureEdit edit;
-        edit.edit_id = row.at("editId").scalar_text();
+        edit.edit_id = snapshot_text(snapshot, row.metadata.edit_id);
         edit.row_kind = "station.put";
-        edit.source_file = source.at("filePath").scalar_text();
-        edit.source_line = static_cast<int>(source.at("line").number);
-        edit.raw_text_preview = source.at("rawTextPreview").scalar_text();
-        edit.structure_key = row.at("stationKey").scalar_text();
-        edit.old_distance = row.at("distance").number;
+        edit.source_file = metadata_source_file(snapshot, row.metadata);
+        edit.source_line = row.metadata.line;
+        edit.raw_text_preview = snapshot_text(snapshot, row.metadata.raw_text_preview);
+        edit.structure_key = snapshot_value_text(snapshot, row.station_key);
+        edit.old_distance = row.distance;
         if (!edit.edit_id.empty() && !edit.source_file.empty()) result.push_back(std::move(edit));
     }
     std::stable_sort(result.begin(), result.end(), [](const StructureEdit& a,
@@ -1829,6 +2083,26 @@ std::vector<StructureEdit> station_put_rows_from_ir(const std::string& ir_json) 
         return a.source_line < b.source_line;
     });
     return result;
+}
+
+std::string source_snapshot_fingerprint(void* handle) {
+    const KvMapSnapshot snapshot = current_map_snapshot(handle);
+    if (snapshot.source_file_count != 0 && !snapshot.source_files) {
+        throw std::runtime_error("typed map snapshot has null source-file array");
+    }
+    std::string content;
+    for (std::uint64_t i = 0; i < snapshot.source_file_count; ++i) {
+        const std::string path = snapshot_text(snapshot, snapshot.source_files[i].file_path);
+        const char* raw = kv_get_source_text(handle, path.c_str());
+        if (!raw) throw std::runtime_error("source text lookup failed while fingerprinting");
+        const std::string text(raw);
+        kv_free_string(raw);
+        content.append(std::to_string(path.size())).push_back(':');
+        content.append(path);
+        content.append(std::to_string(text.size())).push_back(':');
+        content.append(text);
+    }
+    return hash_text(content);
 }
 
 bool populate_target_info(void* handle, StructureEdit& edit, std::string& error) {
@@ -1845,24 +2119,23 @@ bool populate_target_info(void* handle, StructureEdit& edit, std::string& error)
     return true;
 }
 
-bool candidate_has_recommended_resolution(const JsonValue& report,
+bool candidate_has_recommended_resolution(const EditReport& report,
                                           const StructureEdit& candidate,
                                           int& score) {
     score = 99;
-    if (!report.at("blockingErrors").array.empty()) return false;
+    if (!report.blocking_errors.empty()) return false;
     ReportFacts facts = report_facts(report);
     if (facts.ok && facts.full_reparse_ok && facts.target_distance_match_count == 1 &&
         facts.non_target_changed_count == 0) {
         score = 0;
         return true;
     }
-    for (const JsonValue& request : report.at("resolutionRequests").array) {
+    for (const EditResolution& request : report.resolution_requests) {
         if (!request_affects(request, candidate.edit_id) ||
             recommended_boundary_token(request).empty()) {
             continue;
         }
-        const std::string reason = request.at("reason").scalar_text();
-        score = reason == "variableHasMultipleContextValues" ? 1 : 2;
+        score = request.reason == "variableHasMultipleContextValues" ? 1 : 2;
         return true;
     }
     return false;
@@ -1878,11 +2151,10 @@ bool choose_candidate_target(void* handle, StructureEdit& candidate,
         StructureEdit trial = candidate;
         trial.increment = increment;
         trial.target_distance = trial.old_distance + static_cast<double>(increment);
-        std::string report_text;
         try {
             ++dry_run_attempts;
-            report_text = dry_run_json(handle, build_changes_json({trial}));
-            JsonValue report = kme::json::parse(report_text);
+            EditReport report = typed_edit_headless::dry_run(
+                handle, build_changes({trial}));
             int score = 99;
             if (candidate_has_recommended_resolution(report, trial, score) && score < best_score) {
                 best = std::move(trial);
@@ -1901,7 +2173,7 @@ bool choose_candidate_target(void* handle, StructureEdit& candidate,
 }
 
 bool inject_report_resolutions(
-    const JsonValue& report,
+    const EditReport& report,
     const std::vector<StructureEdit>& edits,
     std::map<std::string, ResolutionChoice>& resolutions,
     int& variable_expression_resolution_count,
@@ -1909,16 +2181,15 @@ bool inject_report_resolutions(
     std::map<std::string, const StructureEdit*> by_id;
     for (const StructureEdit& edit : edits) by_id[edit.edit_id] = &edit;
     bool added = false;
-    for (const JsonValue& request : report.at("resolutionRequests").array) {
-        const std::string key = request.at("resolutionKey").scalar_text();
-        const std::string reason = request.at("reason").scalar_text();
+    for (const EditResolution& request : report.resolution_requests) {
+        const std::string& key = request.resolution_key;
+        const std::string& reason = request.reason;
         const std::string boundary = recommended_boundary_token(request);
         if (key.empty() || boundary.empty()) {
             error = "resolution request has no recommended parser boundary: " + reason;
             return false;
         }
-        for (const JsonValue& affected : request.at("affectedEditIds").array) {
-            const std::string edit_id = affected.scalar_text();
+        for (const std::string& edit_id : request.affected_edit_ids) {
             auto target = by_id.find(edit_id);
             if (target == by_id.end()) {
                 error = "resolution request references an unselected editId";
@@ -1934,24 +2205,23 @@ bool inject_report_resolutions(
                 choice.distance_expression = edit_number(target->second->target_distance);
                 ++variable_expression_resolution_count;
             }
-            const JsonValue& can_confirm = request.at("canConfirmReuse");
-            choice.confirm_environment_mismatch = can_confirm.is_bool() && can_confirm.boolean;
+            choice.confirm_environment_mismatch = request.can_confirm_reuse;
             added = true;
         }
     }
     return added;
 }
 
-bool preview_has_local_wrapper(const JsonValue& report,
+bool preview_has_local_wrapper(const EditReport& report,
                                const std::vector<StructureEdit>& edits) {
-    for (const JsonValue& warning : report.at("warnings").array) {
-        if (warning.scalar_text().find("preserves the original distance expression") !=
+    for (const std::string& warning : report.warnings) {
+        if (warning.find("preserves the original distance expression") !=
             std::string::npos) {
             return true;
         }
     }
-    for (const JsonValue& preview : report.at("previewSnippets").array) {
-        std::string after = preview.at("after").scalar_text();
+    for (const typed_edit_headless::Preview& preview : report.previews) {
+        const std::string& after = preview.after;
         std::vector<std::string> lines;
         size_t start = 0;
         while (start <= after.size()) {
@@ -1978,10 +2248,10 @@ bool preview_has_local_wrapper(const JsonValue& report,
     return false;
 }
 
-size_t count_preview_occurrences(const JsonValue& report, const std::string& needle) {
+size_t count_preview_occurrences(const EditReport& report, const std::string& needle) {
     size_t count = 0;
-    for (const JsonValue& preview : report.at("previewSnippets").array) {
-        const std::string after = preview.at("after").scalar_text();
+    for (const typed_edit_headless::Preview& preview : report.previews) {
+        const std::string& after = preview.after;
         size_t position = 0;
         while ((position = after.find(needle, position)) != std::string::npos) {
             ++count;
@@ -2146,9 +2416,9 @@ MapHandle load_edit_map(const std::filesystem::path& path, double unit_distance)
     return handle;
 }
 
-bool report_has_reason(const JsonValue& report, const std::string& reason) {
-    for (const JsonValue& request : report.at("resolutionRequests").array) {
-        if (request.at("reason").scalar_text() == reason) return true;
+bool report_has_reason(const EditReport& report, const std::string& reason) {
+    for (const EditResolution& request : report.resolution_requests) {
+        if (request.reason == reason) return true;
     }
     return false;
 }
@@ -2177,7 +2447,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "200;\n");
         {
             MapHandle handle = load_edit_map(increasing_map, unit_distance);
-            std::vector<StructureEdit> edits = structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = structure_rows_from_snapshot(handle.value);
             if (edits.size() != 2) throw std::runtime_error("increasing fixture did not yield two structures");
             for (StructureEdit& edit : edits) {
                 std::string error;
@@ -2185,7 +2455,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 edit.target_distance = 150.0;
                 edit.increment = static_cast<int>(edit.target_distance - edit.old_distance);
             }
-            JsonValue report = kme::json::parse(dry_run_json(handle.value, build_changes_json(edits)));
+            EditReport report = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits));
             ReportFacts summary = report_facts(report);
             facts.increasing_target_match_count = summary.target_distance_match_count;
             facts.increasing_same_target_one_block =
@@ -2212,8 +2483,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "Structure['pole'].Put('',2,0,0,,,,,);\n");
         {
             MapHandle handle = load_edit_map(terminal_reuse_map, unit_distance);
-            std::vector<StructureEdit> edits =
-                structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = structure_rows_from_snapshot(handle.value);
             if (edits.size() != 2) {
                 throw std::runtime_error(
                     "terminal reuse fixture did not yield two structures");
@@ -2224,8 +2494,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 throw std::runtime_error(error);
             }
             target.target_distance = 100.0;
-            JsonValue report = kme::json::parse(
-                dry_run_json(handle.value, build_changes_json({target})));
+            EditReport report = typed_edit_headless::dry_run(
+                handle.value, build_changes({target}));
             ReportFacts summary = report_facts(report);
             facts.terminal_unique_target_reused =
                 summary.ok && summary.full_reparse_ok &&
@@ -2257,8 +2527,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "$base+30;\n");
         {
             MapHandle handle = load_edit_map(repeated_include_map, unit_distance);
-            std::vector<StructureEdit> edits =
-                structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = structure_rows_from_snapshot(handle.value);
             if (edits.size() != 2) {
                 throw std::runtime_error(
                     "repeated Include fixture did not yield two structures");
@@ -2271,8 +2540,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 edit.target_distance = edit.old_distance + 5.0;
             }
 
-            JsonValue partial = kme::json::parse(dry_run_json(
-                handle.value, build_changes_json({edits.front()})));
+            EditReport partial = typed_edit_headless::dry_run(
+                handle.value, build_changes({edits.front()}));
             ReportFacts partial_summary = report_facts(partial);
             facts.repeated_include_partial_blocked =
                 !partial_summary.ok && partial_summary.resolution_request_count > 0 &&
@@ -2280,8 +2549,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 report_has_reason(
                     partial, "physicalSourceHasIncompatibleIncludeContexts");
 
-            JsonValue complete = kme::json::parse(
-                dry_run_json(handle.value, build_changes_json(edits)));
+            EditReport complete = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits));
             ReportFacts complete_summary = report_facts(complete);
             facts.repeated_include_all_targets_coalesced =
                 complete_summary.ok && complete_summary.full_reparse_ok &&
@@ -2303,12 +2572,13 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "200;\n");
         {
             MapHandle handle = load_edit_map(unordered_map, unit_distance);
-            std::vector<StructureEdit> edits = structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = structure_rows_from_snapshot(handle.value);
             if (edits.size() != 1) throw std::runtime_error("unordered fixture did not yield one structure");
             std::string error;
             if (!populate_target_info(handle.value, edits.front(), error)) throw std::runtime_error(error);
             edits.front().target_distance = 75.0;
-            JsonValue report = kme::json::parse(dry_run_json(handle.value, build_changes_json(edits)));
+            EditReport report = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits));
             ReportFacts summary = report_facts(report);
             facts.unordered_resolution_count = static_cast<int>(summary.resolution_request_count);
             facts.unordered_requires_resolution_without_patch =
@@ -2330,12 +2600,13 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "200;\n");
         {
             MapHandle handle = load_edit_map(environment_map, unit_distance);
-            std::vector<StructureEdit> edits = structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = structure_rows_from_snapshot(handle.value);
             if (edits.size() != 1) throw std::runtime_error("environment fixture did not yield one structure");
             std::string error;
             if (!populate_target_info(handle.value, edits.front(), error)) throw std::runtime_error(error);
             edits.front().target_distance = 150.0;
-            JsonValue initial = kme::json::parse(dry_run_json(handle.value, build_changes_json(edits)));
+            EditReport initial = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits));
             std::map<std::string, ResolutionChoice> resolutions;
             int expression_count = 0;
             if (!report_has_reason(initial, "variableHasMultipleContextValues") ||
@@ -2344,8 +2615,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                     ? "environment fixture did not request the expected variable resolution"
                     : error);
             }
-            JsonValue forced = kme::json::parse(
-                dry_run_json(handle.value, build_changes_json(edits, resolutions)));
+            EditReport forced = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits, resolutions));
             ReportFacts summary = report_facts(forced);
             facts.environment_blocking_error_count = static_cast<int>(summary.blocking_error_count);
             facts.variable_environment_change_blocked =
@@ -2367,8 +2638,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "200;\n");
         {
             MapHandle handle = load_edit_map(station_collision_map, unit_distance);
-            std::vector<StructureEdit> edits =
-                station_put_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = station_put_rows_from_snapshot(handle.value);
             if (edits.size() != 2) {
                 throw std::runtime_error(
                     "station collision fixture did not yield two station puts");
@@ -2379,8 +2649,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 throw std::runtime_error(error);
             }
             target.target_distance = 100.0;
-            JsonValue report = kme::json::parse(
-                dry_run_json(handle.value, build_changes_json({target})));
+            EditReport report = typed_edit_headless::dry_run(
+                handle.value, build_changes({target}));
             ReportFacts summary = report_facts(report);
             facts.derived_state_blocking_error_count =
                 static_cast<int>(summary.blocking_error_count);
@@ -2409,8 +2679,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             const std::string entry_before = read_fixture_file(transaction_entry_map);
             const std::string child_before = read_fixture_file(transaction_child_map);
             MapHandle handle = load_edit_map(transaction_entry_map, unit_distance);
-            std::vector<StructureEdit> edits =
-                structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = structure_rows_from_snapshot(handle.value);
             if (edits.size() != 2) {
                 throw std::runtime_error(
                     "transaction fixture did not yield two cross-file structures");
@@ -2428,11 +2697,10 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 throw std::runtime_error(
                     "transaction fixture could not lock the second source file");
             }
-            JsonValue report;
+            EditReport report;
             try {
-                report = kme::json::parse(direct_apply_json(
-                    handle.value,
-                    build_field_updates_json(edits, "x", {"11", "22"})));
+                report = typed_edit_headless::direct_apply(
+                    handle.value, build_field_updates(edits, "x", {"11", "22"}));
             } catch (...) {
                 CloseHandle(locked_child);
                 throw;
@@ -2444,9 +2712,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 read_fixture_file(transaction_entry_map) == entry_before &&
                 read_fixture_file(transaction_child_map) == child_before;
 
-            JsonValue success_report = kme::json::parse(direct_apply_json(
-                handle.value,
-                build_field_updates_json(edits, "x", {"11", "22"})));
+            EditReport success_report = typed_edit_headless::direct_apply(
+                handle.value, build_field_updates(edits, "x", {"11", "22"}));
             ReportFacts success_summary = report_facts(success_report);
             bool transaction_artifacts_remain = false;
             for (const auto& directory_entry :
@@ -2481,8 +2748,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "300;\n");
         {
             MapHandle handle = load_edit_map(staged_variable_map, unit_distance);
-            std::vector<StructureEdit> rows =
-                structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> rows = structure_rows_from_snapshot(handle.value);
             auto selected = std::find_if(rows.begin(), rows.end(), [](const StructureEdit& row) {
                 return std::fabs(row.old_distance - 70.0) < 1e-9;
             });
@@ -2497,8 +2763,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             }
             edits.front().target_distance = 75.0;
 
-            JsonValue section_request = kme::json::parse(
-                dry_run_json(handle.value, build_changes_json(edits)));
+            EditReport section_request = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits));
             if (!report_has_reason(section_request, "ambiguousSourceSection")) {
                 throw std::runtime_error(
                     "staged variable fixture did not first request a source boundary");
@@ -2511,13 +2777,13 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                     ? "staged variable fixture could not select a parser boundary"
                     : error);
             }
-            JsonValue expression_request = kme::json::parse(
-                dry_run_json(handle.value, build_changes_json(edits, resolutions)));
+            EditReport expression_request = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits, resolutions));
             const bool requested_manual_expression =
                 report_has_reason(expression_request, "variableHasMultipleContextValues") ||
                 report_has_reason(expression_request, "distanceExpressionRequiresManualEdit");
             facts.staged_variable_resolution_count = static_cast<int>(
-                expression_request.at("resolutionRequests").array.size());
+                expression_request.resolution_requests.size());
             if (!requested_manual_expression ||
                 !inject_report_resolutions(expression_request, edits, resolutions,
                                            expression_count, error)) {
@@ -2531,8 +2797,8 @@ FixtureFacts run_fixture_checks(double unit_distance) {
                 throw std::runtime_error(
                     "staged variable fixture did not inject the numeric distance expression");
             }
-            JsonValue resolved = kme::json::parse(
-                dry_run_json(handle.value, build_changes_json(edits, resolutions)));
+            EditReport resolved = typed_edit_headless::dry_run(
+                handle.value, build_changes(edits, resolutions));
             ReportFacts summary = report_facts(resolved);
             facts.staged_variable_resolution_succeeded =
                 summary.ok && summary.full_reparse_ok &&
@@ -2552,8 +2818,7 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             "200;\n");
         {
             MapHandle handle = load_edit_map(direct_state_map, unit_distance);
-            std::vector<StructureEdit> edits =
-                structure_rows_from_ir(compact_ir_json(handle.value));
+            std::vector<StructureEdit> edits = structure_rows_from_snapshot(handle.value);
             if (edits.size() != 1) {
                 throw std::runtime_error(
                     "direct apply fixture did not yield one structure");
@@ -2562,33 +2827,29 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             if (!populate_target_info(handle.value, edits.front(), error)) {
                 throw std::runtime_error(error);
             }
-            JsonValue first_report = kme::json::parse(direct_apply_json(
-                handle.value,
-                build_single_field_update_json(edits.front(), "x", "12")));
+            EditReport first_report = typed_edit_headless::direct_apply(
+                handle.value, build_single_field_update(edits.front(), "x", "12"));
             ReportFacts first_summary = report_facts(first_report);
             if (first_summary.ok && first_summary.full_reparse_ok) {
-                const std::string first_ir = compact_ir_json(handle.value);
-                JsonValue first_root = kme::json::parse(first_ir);
-                std::vector<StructureEdit> first_rows = structure_rows_from_ir(first_ir);
-                const JsonValue& first_data = first_root.at("structure").at("data");
-                const double first_x = first_data.array.empty()
+                const KvMapSnapshot first_snapshot = current_map_snapshot(handle.value);
+                std::vector<StructureEdit> first_rows =
+                    structure_rows_from_snapshot(handle.value);
+                const double first_x = first_snapshot.structure_put_count == 0
                     ? std::numeric_limits<double>::quiet_NaN()
-                    : first_data.array.front().at("x").number;
+                    : first_snapshot.structure_puts[0].x;
                 facts.direct_apply_handle_advanced =
                     first_rows.size() == 1 && std::fabs(first_x - 12.0) < 1e-9;
 
                 if (first_rows.size() == 1 &&
                     populate_target_info(handle.value, first_rows.front(), error)) {
-                    JsonValue second_report = kme::json::parse(direct_apply_json(
+                    EditReport second_report = typed_edit_headless::direct_apply(
                         handle.value,
-                        build_single_field_update_json(first_rows.front(), "x", "13")));
+                        build_single_field_update(first_rows.front(), "x", "13"));
                     ReportFacts second_summary = report_facts(second_report);
-                    const std::string second_ir = compact_ir_json(handle.value);
-                    JsonValue second_root = kme::json::parse(second_ir);
-                    const JsonValue& second_data = second_root.at("structure").at("data");
-                    const double second_x = second_data.array.empty()
+                    const KvMapSnapshot second_snapshot = current_map_snapshot(handle.value);
+                    const double second_x = second_snapshot.structure_put_count == 0
                         ? std::numeric_limits<double>::quiet_NaN()
-                        : second_data.array.front().at("x").number;
+                        : second_snapshot.structure_puts[0].x;
                     facts.direct_apply_second_update_succeeded =
                         second_summary.ok && second_summary.full_reparse_ok &&
                         std::fabs(second_x - 13.0) < 1e-9;
@@ -2625,9 +2886,9 @@ struct BatchRunFacts {
     int post_apply_metadata_fallback_required_count = 0;
     bool no_local_wrapper = false;
     bool reset_ok = false;
-    bool reset_ir_fingerprint_restored = false;
-    std::string initial_ir_fingerprint;
-    std::string reset_ir_fingerprint;
+    bool reset_snapshot_fingerprint_restored = false;
+    std::string initial_source_fingerprint;
+    std::string reset_source_fingerprint;
     bool commit_attempted = false;
     bool commit_ok = false;
     std::vector<StructureEdit> selected;
@@ -2645,115 +2906,108 @@ struct BatchRunFacts {
                post_apply_metadata_fallback_required_count == 0 &&
                distance_group_count == 5 &&
                created_distance_block_count + reused_distance_block_count == distance_group_count &&
-               no_local_wrapper && reset_ok && reset_ir_fingerprint_restored &&
+               no_local_wrapper && reset_ok && reset_snapshot_fingerprint_restored &&
                fixtures.passed() && (!commit_requested || (commit_attempted && commit_ok));
     }
 };
 
 void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
-    auto boolean = [](bool value) { return value ? "true" : "false"; };
-    out << "{\n"
-        << "  \"command\": \"debug-headless-distance-edit-batch\",\n"
-        << "  \"path\": " << json_escape(facts.path) << ",\n"
-        << "  \"commitRequested\": " << boolean(facts.commit_requested) << ",\n"
-        << "  \"candidateDryRunAttempts\": " << facts.candidate_dry_run_attempts << ",\n"
-        << "  \"selectedCount\": " << facts.selected.size() << ",\n"
-        << "  \"selectedSigContextCount\": " << facts.selected_sig_context_count << ",\n"
-        << "  \"initialResolutionRequestCount\": " << facts.initial_resolution_request_count << ",\n"
-        << "  \"initialResolutionReasons\": [";
+    auto boolean = [](bool value) { return value ? 1 : 0; };
+    out << "command=debug-headless-distance-edit-batch\n"
+        << "path=" << facts.path << "\n"
+        << "commit_requested=" << boolean(facts.commit_requested) << "\n"
+        << "candidate_dry_run_attempts=" << facts.candidate_dry_run_attempts << "\n"
+        << "selected_count=" << facts.selected.size() << "\n"
+        << "selected_sig_context_count=" << facts.selected_sig_context_count << "\n"
+        << "initial_resolution_request_count="
+        << facts.initial_resolution_request_count << "\n";
     for (size_t i = 0; i < facts.initial_resolution_reasons.size(); ++i) {
-        if (i) out << ",";
-        out << json_escape(facts.initial_resolution_reasons[i]);
+        out << "initial_resolution_reason." << i << "="
+            << facts.initial_resolution_reasons[i] << "\n";
     }
-    out << "],\n"
-        << "  \"resolutionRoundCount\": " << facts.resolution_round_count << ",\n"
-        << "  \"variableExpressionResolutionCount\": "
-        << facts.variable_expression_resolution_count << ",\n"
-        << "  \"finalDryRunOk\": " << boolean(facts.final_dry_run_ok) << ",\n"
-        << "  \"applyToMemoryOk\": " << boolean(facts.apply_to_memory_ok) << ",\n"
-        << "  \"fullReparseOk\": " << boolean(facts.full_reparse_ok) << ",\n"
-        << "  \"targetDistanceMatchCount\": " << facts.target_distance_match_count << ",\n"
-        << "  \"nonTargetChangedCount\": " << facts.non_target_changed_count << ",\n"
-        << "  \"distanceGroupCount\": " << facts.distance_group_count << ",\n"
-        << "  \"createdDistanceBlockCount\": " << facts.created_distance_block_count << ",\n"
-        << "  \"reusedDistanceBlockCount\": " << facts.reused_distance_block_count << ",\n"
-        << "  \"postApplyMetadataResolvedCount\": "
-        << facts.post_apply_metadata_resolved_count << ",\n"
-        << "  \"postApplySourceDistanceStringCount\": "
-        << facts.post_apply_source_distance_string_count << ",\n"
-        << "  \"postApplyMetadataDistanceMatchCount\": "
-        << facts.post_apply_metadata_distance_match_count << ",\n"
-        << "  \"postApplyMetadataIdentityMatchCount\": "
-        << facts.post_apply_metadata_identity_match_count << ",\n"
-        << "  \"postApplyMetadataFallbackRequiredCount\": "
-        << facts.post_apply_metadata_fallback_required_count << ",\n"
-        << "  \"noLocalWrapper\": " << boolean(facts.no_local_wrapper) << ",\n"
-        << "  \"resetOk\": " << boolean(facts.reset_ok) << ",\n"
-        << "  \"resetIrFingerprintRestored\": "
-        << boolean(facts.reset_ir_fingerprint_restored) << ",\n"
-        << "  \"initialIrFingerprint\": " << json_escape(facts.initial_ir_fingerprint) << ",\n"
-        << "  \"resetIrFingerprint\": " << json_escape(facts.reset_ir_fingerprint) << ",\n"
-        << "  \"commitAttempted\": " << boolean(facts.commit_attempted) << ",\n"
-        << "  \"commitOk\": " << boolean(facts.commit_ok) << ",\n"
-        << "  \"selected\": [";
+    out << "resolution_round_count=" << facts.resolution_round_count << "\n"
+        << "variable_expression_resolution_count="
+        << facts.variable_expression_resolution_count << "\n"
+        << "final_dry_run_ok=" << boolean(facts.final_dry_run_ok) << "\n"
+        << "apply_to_memory_ok=" << boolean(facts.apply_to_memory_ok) << "\n"
+        << "full_reparse_ok=" << boolean(facts.full_reparse_ok) << "\n"
+        << "target_distance_match_count=" << facts.target_distance_match_count << "\n"
+        << "non_target_changed_count=" << facts.non_target_changed_count << "\n"
+        << "distance_group_count=" << facts.distance_group_count << "\n"
+        << "created_distance_block_count=" << facts.created_distance_block_count << "\n"
+        << "reused_distance_block_count=" << facts.reused_distance_block_count << "\n"
+        << "post_apply_metadata_resolved_count="
+        << facts.post_apply_metadata_resolved_count << "\n"
+        << "post_apply_source_distance_string_count="
+        << facts.post_apply_source_distance_string_count << "\n"
+        << "post_apply_metadata_distance_match_count="
+        << facts.post_apply_metadata_distance_match_count << "\n"
+        << "post_apply_metadata_identity_match_count="
+        << facts.post_apply_metadata_identity_match_count << "\n"
+        << "post_apply_metadata_fallback_required_count="
+        << facts.post_apply_metadata_fallback_required_count << "\n"
+        << "no_local_wrapper=" << boolean(facts.no_local_wrapper) << "\n"
+        << "reset_ok=" << boolean(facts.reset_ok) << "\n"
+        << "reset_snapshot_fingerprint_restored="
+        << boolean(facts.reset_snapshot_fingerprint_restored) << "\n"
+        << "initial_source_fingerprint=" << facts.initial_source_fingerprint << "\n"
+        << "reset_source_fingerprint=" << facts.reset_source_fingerprint << "\n"
+        << "commit_attempted=" << boolean(facts.commit_attempted) << "\n"
+        << "commit_ok=" << boolean(facts.commit_ok) << "\n";
     for (size_t i = 0; i < facts.selected.size(); ++i) {
-        if (i) out << ",";
         const StructureEdit& edit = facts.selected[i];
-        out << "\n    {\"editId\":" << json_escape(edit.edit_id)
-            << ",\"sourceFile\":" << json_escape(edit.source_file)
-            << ",\"sourceLine\":" << edit.source_line
-            << ",\"structureKey\":" << json_escape(edit.structure_key)
-            << ",\"oldDistance\":" << edit_number(edit.old_distance)
-            << ",\"targetDistance\":" << edit_number(edit.target_distance)
-            << ",\"increment\":" << edit.increment
-            << ",\"selectionScore\":" << edit.selection_score
-            << ",\"distanceExpression\":"
-            << json_escape(edit.original_distance_expression) << "}";
+        out << "selected." << i << ".edit_id=" << edit.edit_id << "\n"
+            << "selected." << i << ".source_file=" << edit.source_file << "\n"
+            << "selected." << i << ".source_line=" << edit.source_line << "\n"
+            << "selected." << i << ".structure_key=" << edit.structure_key << "\n"
+            << "selected." << i << ".old_distance="
+            << edit_number(edit.old_distance) << "\n"
+            << "selected." << i << ".target_distance="
+            << edit_number(edit.target_distance) << "\n"
+            << "selected." << i << ".increment=" << edit.increment << "\n"
+            << "selected." << i << ".selection_score=" << edit.selection_score << "\n"
+            << "selected." << i << ".distance_expression="
+            << edit.original_distance_expression << "\n";
     }
-    if (!facts.selected.empty()) out << "\n  ";
-    out << "],\n"
-        << "  \"fixtures\": {\n"
-        << "    \"increasingSameTargetOneBlock\": "
-        << boolean(facts.fixtures.increasing_same_target_one_block) << ",\n"
-        << "    \"canonicalIdenticalSameTargetOneBlock\": "
-        << boolean(facts.fixtures.canonical_identical_same_target_one_block) << ",\n"
-        << "    \"terminalUniqueTargetReused\": "
-        << boolean(facts.fixtures.terminal_unique_target_reused) << ",\n"
-        << "    \"repeatedIncludePartialBlocked\": "
-        << boolean(facts.fixtures.repeated_include_partial_blocked) << ",\n"
-        << "    \"repeatedIncludeAllTargetsCoalesced\": "
-        << boolean(facts.fixtures.repeated_include_all_targets_coalesced) << ",\n"
-        << "    \"increasingTargetMatchCount\": "
-        << facts.fixtures.increasing_target_match_count << ",\n"
-        << "    \"unorderedRequiresResolutionWithoutPatch\": "
-        << boolean(facts.fixtures.unordered_requires_resolution_without_patch) << ",\n"
-        << "    \"unorderedResolutionCount\": "
-        << facts.fixtures.unordered_resolution_count << ",\n"
-        << "    \"variableEnvironmentChangeBlocked\": "
-        << boolean(facts.fixtures.variable_environment_change_blocked) << ",\n"
-        << "    \"environmentBlockingErrorCount\": "
-        << facts.fixtures.environment_blocking_error_count << ",\n"
-        << "    \"derivedStationCollisionBlocked\": "
-        << boolean(facts.fixtures.derived_station_collision_blocked) << ",\n"
-        << "    \"derivedStateBlockingErrorCount\": "
-        << facts.fixtures.derived_state_blocking_error_count << ",\n"
-        << "    \"stagedVariableResolutionSucceeded\": "
-        << boolean(facts.fixtures.staged_variable_resolution_succeeded) << ",\n"
-        << "    \"stagedVariableResolutionCount\": "
-        << facts.fixtures.staged_variable_resolution_count << ",\n"
-        << "    \"directApplyHandleAdvanced\": "
-        << boolean(facts.fixtures.direct_apply_handle_advanced) << ",\n"
-        << "    \"directApplySecondUpdateSucceeded\": "
-        << boolean(facts.fixtures.direct_apply_second_update_succeeded) << ",\n"
-        << "    \"transactionalApplyFailurePreservedFiles\": "
-        << boolean(facts.fixtures.transactional_apply_failure_preserved_files) << ",\n"
-        << "    \"transactionalTwoFileApplySucceeded\": "
-        << boolean(facts.fixtures.transactional_two_file_apply_succeeded) << ",\n"
-        << "    \"error\": " << json_escape(facts.fixtures.error) << "\n"
-        << "  },\n"
-        << "  \"error\": " << json_escape(facts.error) << ",\n"
-        << "  \"result\": " << json_escape(facts.passed() ? "PASS" : "FAIL") << "\n"
-        << "}\n";
+    out << "fixture.increasing_same_target_one_block="
+        << boolean(facts.fixtures.increasing_same_target_one_block) << "\n"
+        << "fixture.canonical_identical_same_target_one_block="
+        << boolean(facts.fixtures.canonical_identical_same_target_one_block) << "\n"
+        << "fixture.terminal_unique_target_reused="
+        << boolean(facts.fixtures.terminal_unique_target_reused) << "\n"
+        << "fixture.repeated_include_partial_blocked="
+        << boolean(facts.fixtures.repeated_include_partial_blocked) << "\n"
+        << "fixture.repeated_include_all_targets_coalesced="
+        << boolean(facts.fixtures.repeated_include_all_targets_coalesced) << "\n"
+        << "fixture.increasing_target_match_count="
+        << facts.fixtures.increasing_target_match_count << "\n"
+        << "fixture.unordered_requires_resolution_without_patch="
+        << boolean(facts.fixtures.unordered_requires_resolution_without_patch) << "\n"
+        << "fixture.unordered_resolution_count="
+        << facts.fixtures.unordered_resolution_count << "\n"
+        << "fixture.variable_environment_change_blocked="
+        << boolean(facts.fixtures.variable_environment_change_blocked) << "\n"
+        << "fixture.environment_blocking_error_count="
+        << facts.fixtures.environment_blocking_error_count << "\n"
+        << "fixture.derived_station_collision_blocked="
+        << boolean(facts.fixtures.derived_station_collision_blocked) << "\n"
+        << "fixture.derived_state_blocking_error_count="
+        << facts.fixtures.derived_state_blocking_error_count << "\n"
+        << "fixture.staged_variable_resolution_succeeded="
+        << boolean(facts.fixtures.staged_variable_resolution_succeeded) << "\n"
+        << "fixture.staged_variable_resolution_count="
+        << facts.fixtures.staged_variable_resolution_count << "\n"
+        << "fixture.direct_apply_handle_advanced="
+        << boolean(facts.fixtures.direct_apply_handle_advanced) << "\n"
+        << "fixture.direct_apply_second_update_succeeded="
+        << boolean(facts.fixtures.direct_apply_second_update_succeeded) << "\n"
+        << "fixture.transactional_apply_failure_preserved_files="
+        << boolean(facts.fixtures.transactional_apply_failure_preserved_files) << "\n"
+        << "fixture.transactional_two_file_apply_succeeded="
+        << boolean(facts.fixtures.transactional_two_file_apply_succeeded) << "\n"
+        << "fixture.error=" << facts.fixtures.error << "\n"
+        << "error=" << facts.error << "\n"
+        << "result=" << (facts.passed() ? "PASS" : "FAIL") << "\n";
 }
 
 } // namespace distance_batch_headless
@@ -2784,25 +3038,23 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
             throw std::runtime_error(error ? error : "real map load failed");
         }
 
-        const std::string initial_ir = compact_ir_json(handle.value);
-        facts.initial_ir_fingerprint = hash_text(initial_ir);
-        std::vector<StructureEdit> rows = structure_rows_from_ir(initial_ir);
+        facts.initial_source_fingerprint = source_snapshot_fingerprint(handle.value);
+        std::vector<StructureEdit> rows = structure_rows_from_snapshot(handle.value);
         facts.selected = select_real_map_edits(
             handle.value, rows, facts.candidate_dry_run_attempts,
             facts.selected_sig_context_count);
 
         std::map<std::string, ResolutionChoice> resolutions;
-        std::string final_changes = build_changes_json(facts.selected, resolutions);
-        JsonValue final_report = kme::json::parse(dry_run_json(handle.value, final_changes));
+        std::vector<EditChange> final_changes = build_changes(facts.selected, resolutions);
+        EditReport final_report = typed_edit_headless::dry_run(handle.value, final_changes);
         facts.initial_resolution_request_count = static_cast<int>(
-            final_report.at("resolutionRequests").array.size());
-        for (const JsonValue& request : final_report.at("resolutionRequests").array) {
-            std::string summary = request.at("reason").scalar_text();
-            const std::string variable = request.at("variableName").scalar_text();
-            if (!variable.empty()) summary += ":" + variable;
+            final_report.resolution_requests.size());
+        for (const EditResolution& request : final_report.resolution_requests) {
+            std::string summary = request.reason;
+            if (!request.variable_name.empty()) summary += ":" + request.variable_name;
             facts.initial_resolution_reasons.push_back(std::move(summary));
         }
-        while (!final_report.at("resolutionRequests").array.empty()) {
+        while (!final_report.resolution_requests.empty()) {
             if (facts.resolution_round_count >= 6) {
                 throw std::runtime_error("distance resolution did not converge after six rounds");
             }
@@ -2815,8 +3067,8 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
                     : resolution_error);
             }
             ++facts.resolution_round_count;
-            final_changes = build_changes_json(facts.selected, resolutions);
-            final_report = kme::json::parse(dry_run_json(handle.value, final_changes));
+            final_changes = build_changes(facts.selected, resolutions);
+            final_report = typed_edit_headless::dry_run(handle.value, final_changes);
         }
 
         ReportFacts dry = report_facts(final_report);
@@ -2830,8 +3082,8 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
         }
         const bool dry_without_wrapper = !preview_has_local_wrapper(final_report, facts.selected);
 
-        JsonValue apply_report = kme::json::parse(
-            apply_memory_json(handle.value, final_changes));
+        EditReport apply_report = typed_edit_headless::apply_to_memory(
+            handle.value, final_changes);
         ReportFacts applied = report_facts(apply_report);
         facts.apply_to_memory_ok = applied.ok;
         facts.full_reparse_ok = applied.full_reparse_ok;
@@ -2895,24 +3147,13 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
             const char* error = kv_get_last_error();
             throw std::runtime_error(error ? error : "kv_edit_reset_memory failed");
         }
-        const std::string reset_ir = compact_ir_json(handle.value);
-        facts.reset_ir_fingerprint = hash_text(reset_ir);
-        facts.reset_ir_fingerprint_restored =
-            facts.reset_ir_fingerprint == facts.initial_ir_fingerprint && reset_ir == initial_ir;
+        facts.reset_source_fingerprint = source_snapshot_fingerprint(handle.value);
+        facts.reset_snapshot_fingerprint_restored =
+            facts.reset_source_fingerprint == facts.initial_source_fingerprint;
 
         facts.fixtures = run_fixture_checks(options.unit_distance);
-        if (!facts.reset_ir_fingerprint_restored) {
-            size_t first_difference = 0;
-            const size_t common_size = std::min(initial_ir.size(), reset_ir.size());
-            while (first_difference < common_size &&
-                   initial_ir[first_difference] == reset_ir[first_difference]) {
-                ++first_difference;
-            }
-            const size_t context_begin = first_difference > 80 ? first_difference - 80 : 0;
-            throw std::runtime_error(
-                "reset compact-IR differs at byte " + std::to_string(first_difference) +
-                " (initial=" + json_escape(initial_ir.substr(context_begin, 160)) +
-                ", reset=" + json_escape(reset_ir.substr(context_begin, 160)) + ")");
+        if (!facts.reset_snapshot_fingerprint_restored) {
+            throw std::runtime_error("reset source snapshot fingerprint differs from baseline");
         }
 
         if (!facts.fixtures.passed()) {
@@ -2923,8 +3164,8 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
 
         if (options.commit) {
             facts.commit_attempted = true;
-            JsonValue commit_apply = kme::json::parse(
-                apply_memory_json(handle.value, final_changes));
+            EditReport commit_apply = typed_edit_headless::apply_to_memory(
+                handle.value, final_changes);
             ReportFacts reapplied = report_facts(commit_apply);
             if (!reapplied.ok || !reapplied.full_reparse_ok ||
                 reapplied.target_distance_match_count != 5 ||
@@ -2934,7 +3175,7 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
                     ? "pre-commit apply-to-memory validation failed"
                     : detail);
             }
-            JsonValue commit_report = kme::json::parse(commit_json(handle.value));
+            EditReport commit_report = typed_edit_headless::commit(handle.value);
             ReportFacts committed = report_facts(commit_report);
             facts.commit_ok = committed.ok && committed.full_reparse_ok;
             if (!facts.commit_ok) {
@@ -2954,15 +3195,12 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
 namespace {
 
 struct OpenBenchSample {
-    std::string transport;
     double ready_seconds = 0.0;
     double load_worker_seconds = 0.0;
     double maploader_seconds = 0.0;
     double model_seconds = 0.0;
     double snapshot_build_seconds = 0.0;
     double snapshot_hydrate_seconds = 0.0;
-    double ir_json_seconds = 0.0;
-    double json_parse_seconds = 0.0;
     double hydrate_seconds = 0.0;
     double buffer_copy_seconds = 0.0;
     double overlay_seconds = 0.0;
@@ -2975,7 +3213,6 @@ struct OpenBenchSample {
     std::uint64_t geometry_hash = 0;
     std::uint64_t overlay_hash = 0;
 };
-
 struct DebugHash64 {
     std::uint64_t value = 1469598103934665603ULL;
 
@@ -3018,156 +3255,6 @@ std::uint64_t model_geometry_hash(const MapModel& model) {
         hash_matrix(hash, track.points);
     }
     return hash.value;
-}
-
-bool edit_source_equal(const EditSourceInfo& a, const EditSourceInfo& b) {
-    return a.file_path == b.file_path && a.line == b.line && a.column == b.column &&
-        a.raw_text_preview == b.raw_text_preview;
-}
-
-bool table_rows_equal(const std::vector<TableRow>& a, const std::vector<TableRow>& b,
-                      const char* label, std::string& mismatch) {
-    if (a.size() != b.size()) {
-        mismatch = std::string(label) + " row count";
-        return false;
-    }
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (a[i].cells != b[i].cells) {
-            mismatch = std::string(label) + " cells at row " + std::to_string(i);
-            return false;
-        }
-        if (a[i].edit_id != b[i].edit_id || !edit_source_equal(a[i].source, b[i].source)) {
-            mismatch = std::string(label) + " edit/source metadata at row " + std::to_string(i);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool preview_models_equal(const MapModel& snapshot, const MapModel& json,
-                          std::string& mismatch) {
-    auto fail = [&](const char* text) {
-        mismatch = text;
-        return false;
-    };
-    auto matrix_equal = [](const Matrix& a, const Matrix& b) {
-        return a.rows == b.rows && a.cols == b.cols && a.data == b.data;
-    };
-
-    if (snapshot.file_structure.size() != json.file_structure.size()) return fail("file structure count");
-    for (size_t i = 0; i < snapshot.file_structure.size(); ++i) {
-        const FileStructureNode& a = snapshot.file_structure[i];
-        const FileStructureNode& b = json.file_structure[i];
-        if (a.parent_index != b.parent_index || a.include_path != b.include_path ||
-            a.absolute_path != b.absolute_path || a.display_name != b.display_name) {
-            mismatch = "file structure row " + std::to_string(i);
-            return false;
-        }
-    }
-    if (snapshot.file_structure_revision != json.file_structure_revision) {
-        return fail("file structure revision");
-    }
-    if (snapshot.edit_files.size() != json.edit_files.size()) return fail("source file count");
-    for (size_t i = 0; i < snapshot.edit_files.size(); ++i) {
-        const EditSourceFileInfo& a = snapshot.edit_files[i];
-        const EditSourceFileInfo& b = json.edit_files[i];
-        if (a.file_path != b.file_path || a.display_path != b.display_path ||
-            a.encoding != b.encoding || a.newline != b.newline ||
-            a.source_hash != b.source_hash || a.byte_length != b.byte_length) {
-            mismatch = "source file row " + std::to_string(i);
-            return false;
-        }
-    }
-    if (!matrix_equal(snapshot.own, json.own)) return fail("own geometry");
-    if (!matrix_equal(snapshot.curve, json.curve)) return fail("curve geometry");
-    if (snapshot.other_tracks.size() != json.other_tracks.size()) return fail("other track count");
-    for (size_t i = 0; i < snapshot.other_tracks.size(); ++i) {
-        const OtherTrack& a = snapshot.other_tracks[i];
-        const OtherTrack& b = json.other_tracks[i];
-        if (a.key != b.key || a.range_min != b.range_min || a.range_max != b.range_max ||
-            !matrix_equal(a.points, b.points)) {
-            mismatch = "other track row " + std::to_string(i);
-            return false;
-        }
-    }
-    if (snapshot.controlpoints != json.controlpoints) return fail("controlpoints");
-    for (size_t i = 0; i < 3; ++i) {
-        if (snapshot.cp_arb[i] != json.cp_arb[i]) return fail("arbitrary controlpoint range");
-    }
-    if (snapshot.station_names != json.station_names) return fail("station names");
-    if (snapshot.stations.size() != json.stations.size()) return fail("station count");
-    for (size_t i = 0; i < snapshot.stations.size(); ++i) {
-        const Station& a = snapshot.stations[i];
-        const Station& b = json.stations[i];
-        if (a.key != b.key || a.name != b.name || a.distance != b.distance ||
-            a.mileage != b.mileage || a.x != b.x || a.y != b.y || a.z != b.z) {
-            mismatch = "station row " + std::to_string(i);
-            return false;
-        }
-    }
-    if (snapshot.own_events.size() != json.own_events.size()) return fail("own event count");
-    for (size_t i = 0; i < snapshot.own_events.size(); ++i) {
-        const TrackEvent& a = snapshot.own_events[i];
-        const TrackEvent& b = json.own_events[i];
-        if (a.distance != b.distance || a.key != b.key || a.flag != b.flag ||
-            a.value_number != b.value_number || a.number != b.number || a.text != b.text) {
-            mismatch = "own event row " + std::to_string(i);
-            return false;
-        }
-    }
-    if (snapshot.speedlimits.size() != json.speedlimits.size()) return fail("speed limit count");
-    for (size_t i = 0; i < snapshot.speedlimits.size(); ++i) {
-        const SpeedLimit& a = snapshot.speedlimits[i];
-        const SpeedLimit& b = json.speedlimits[i];
-        if (a.distance != b.distance || a.has_speed != b.has_speed || a.speed != b.speed) {
-            mismatch = "speed limit row " + std::to_string(i);
-            return false;
-        }
-    }
-    if (snapshot.distance_origin != json.distance_origin ||
-        snapshot.height_origin != json.height_origin ||
-        snapshot.origin_angle != json.origin_angle ||
-        snapshot.default_min != json.default_min || snapshot.default_max != json.default_max) {
-        return fail("derived model ranges/origin");
-    }
-
-    struct TablePair {
-        const char* label;
-        const std::vector<TableRow>* snapshot_rows;
-        const std::vector<TableRow>* json_rows;
-    };
-    const TablePair tables[] = {
-        {"station.list", &snapshot.station_list_rows, &json.station_list_rows},
-        {"structure.data", &snapshot.structures, &json.structures},
-        {"structure.models", &snapshot.structure_models, &json.structure_models},
-        {"otherTrain.definitions", &snapshot.other_trains, &json.other_trains},
-        {"otherTrain.stop", &snapshot.other_train_stops, &json.other_train_stops},
-        {"otherTrain.structureKeys", &snapshot.other_train_structure_keys, &json.other_train_structure_keys},
-        {"otherTrain.sound3DKeys", &snapshot.other_train_sound_3d_keys, &json.other_train_sound_3d_keys},
-        {"soundList", &snapshot.sound_list, &json.sound_list},
-        {"structure.between", &snapshot.structures_between, &json.structures_between},
-        {"repeater", &snapshot.repeaters, &json.repeaters},
-        {"signal.aspects", &snapshot.signal_aspects, &json.signal_aspects},
-        {"signal.data", &snapshot.signals, &json.signals},
-        {"beacon", &snapshot.beacons, &json.beacons},
-        {"preTrain", &snapshot.pretrains, &json.pretrains},
-        {"irregularity", &snapshot.irregularities, &json.irregularities},
-        {"mapSound", &snapshot.map_sounds, &json.map_sounds},
-        {"mapSound3D", &snapshot.map_sound_3d, &json.map_sound_3d},
-        {"rollingNoise", &snapshot.rolling_noises, &json.rolling_noises},
-        {"flangeNoise", &snapshot.flange_noises, &json.flange_noises},
-        {"jointNoise", &snapshot.joint_noises, &json.joint_noises},
-        {"background", &snapshot.backgrounds, &json.backgrounds},
-        {"adhesion", &snapshot.adhesions, &json.adhesions},
-        {"cabIlluminance", &snapshot.cab_illuminance, &json.cab_illuminance},
-        {"fog", &snapshot.fogs, &json.fogs},
-    };
-    for (const TablePair& table : tables) {
-        if (!table_rows_equal(*table.snapshot_rows, *table.json_rows, table.label, mismatch)) {
-            return false;
-        }
-    }
-    return true;
 }
 
 struct MetricSummary {
@@ -3217,9 +3304,7 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
 
     *out << "komapedit debug-headless-open-bench path=\"" << options.path
          << "\" repeat=" << options.repeat
-         << " unit_distance=" << format_double(options.unit_distance, 3)
-         << " transport=" << options.transport
-         << " snapshot_parity=" << (options.snapshot_parity ? "on" : "off") << "\n";
+         << " unit_distance=" << format_double(options.unit_distance, 3) << "\n";
 
     ImGui::CreateContext();
     ImPlot::CreateContext();
@@ -3315,43 +3400,32 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
         return hash.value;
     };
 
-    std::vector<OpenBenchSample> snapshot_samples;
-    std::vector<OpenBenchSample> json_samples;
-    std::optional<MapModel> parity_snapshot_model;
-    std::optional<MapModel> parity_json_model;
-    std::uint64_t parity_snapshot_overlay_hash = 0;
-    std::uint64_t parity_json_overlay_hash = 0;
+    std::vector<OpenBenchSample> samples;
     bool benchmark_ok = true;
     bool workflow_ok = true;
 
-    auto run_one = [&](bool force_json, int run, bool emit_sample) -> std::optional<OpenBenchSample> {
+    auto run_one = [&](int run) -> std::optional<OpenBenchSample> {
         const auto ready_started_at = std::chrono::steady_clock::now();
         LoadModelOptions load_options;
         load_options.full_edit_registry = false;
-        load_options.force_json_transport = force_json;
         load_options.load_profile = "preview";
         LoadResult result = load_map_worker(options.path, options.unit_distance,
                                             false, 0.0, 0.0, 25.0, load_options);
         if (!result.ok) {
             *out << "open_bench_error run=" << run
-                 << " requested_transport=" << (force_json ? "json" : "typed_snapshot")
                  << " message=\"" << result.error << "\"\n";
             benchmark_ok = false;
             return std::nullopt;
         }
 
         OpenBenchSample sample;
-        sample.transport = result.model.load_transport;
         sample.load_worker_seconds = result.elapsed_seconds;
         sample.maploader_seconds = result.maploader_seconds;
         sample.model_seconds = result.model_build_seconds;
         sample.snapshot_build_seconds = result.model.snapshot_build_seconds;
         sample.snapshot_hydrate_seconds = result.model.snapshot_hydrate_seconds;
-        sample.ir_json_seconds = result.model.ir_json_seconds;
-        sample.json_parse_seconds = result.model.json_parse_seconds;
         sample.hydrate_seconds = result.model.model_hydrate_seconds;
         sample.buffer_copy_seconds = result.model.buffer_copy_seconds;
-        if (!force_json && sample.transport != "typed_snapshot") benchmark_ok = false;
 
         app.model_ = std::move(result.model);
         app.file_path_ = options.path;
@@ -3412,180 +3486,230 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
 
         if (result.handle) kv_free(result.handle);
 
-        if (!force_json && !parity_snapshot_model) {
-            parity_snapshot_model = app.model_;
-            parity_snapshot_overlay_hash = sample.overlay_hash;
-        }
-        if (force_json && !parity_json_model) {
-            parity_json_model = app.model_;
-            parity_json_overlay_hash = sample.overlay_hash;
-        }
-
-        if (emit_sample) {
-            *out << std::fixed << std::setprecision(6)
-                 << "open_bench_run run=" << run
-                 << " transport=" << sample.transport
-                 << " maploader=" << sample.maploader_seconds << "s"
-                 << " model=" << sample.model_seconds << "s"
-                 << " snapshot_build=" << sample.snapshot_build_seconds << "s"
-                 << " snapshot_hydrate=" << sample.snapshot_hydrate_seconds << "s"
-                 << " ir_json=" << sample.ir_json_seconds << "s"
-                 << " json_parse=" << sample.json_parse_seconds << "s"
-                 << " hydrate=" << sample.hydrate_seconds << "s"
-                 << " buffer_copy=" << sample.buffer_copy_seconds << "s"
-                 << " overlay=" << sample.overlay_seconds << "s"
-                 << " plan_data=" << sample.plan_data_seconds << "s"
-                 << " plan_draw=" << sample.plan_draw_seconds << "s"
-                 << " profile_data=" << sample.profile_data_seconds << "s"
-                 << " profile_draw=" << sample.profile_draw_seconds << "s"
-                 << " radius_draw=" << sample.radius_draw_seconds << "s"
-                 << " first_2d_frame=" << sample.first_2d_frame_seconds << "s"
-                 << " ready_total=" << sample.ready_seconds << "s"
-                 << " geometry_hash=" << hex_u64(sample.geometry_hash)
-                 << " overlay_hash=" << hex_u64(sample.overlay_hash) << "\n";
-            out->flush();
-        }
+        *out << std::fixed << std::setprecision(6)
+             << "open_bench_run run=" << run
+             << " transport=typed_snapshot"
+             << " maploader=" << sample.maploader_seconds << "s"
+             << " model=" << sample.model_seconds << "s"
+             << " snapshot_build=" << sample.snapshot_build_seconds << "s"
+             << " snapshot_hydrate=" << sample.snapshot_hydrate_seconds << "s"
+             << " hydrate=" << sample.hydrate_seconds << "s"
+             << " buffer_copy=" << sample.buffer_copy_seconds << "s"
+             << " overlay=" << sample.overlay_seconds << "s"
+             << " plan_data=" << sample.plan_data_seconds << "s"
+             << " plan_draw=" << sample.plan_draw_seconds << "s"
+             << " profile_data=" << sample.profile_data_seconds << "s"
+             << " profile_draw=" << sample.profile_draw_seconds << "s"
+             << " radius_draw=" << sample.radius_draw_seconds << "s"
+             << " first_2d_frame=" << sample.first_2d_frame_seconds << "s"
+             << " ready_total=" << sample.ready_seconds << "s"
+             << " geometry_hash=" << hex_u64(sample.geometry_hash)
+             << " overlay_hash=" << hex_u64(sample.overlay_hash) << "\n";
+        out->flush();
         return sample;
     };
 
     for (int run = 1; run <= options.repeat && benchmark_ok; ++run) {
-        if (options.transport == "typed_snapshot" || options.transport == "both") {
-            if (auto sample = run_one(false, run, true)) snapshot_samples.push_back(*sample);
-        }
-        if (options.transport == "json" || options.transport == "both") {
-            if (auto sample = run_one(true, run, true)) json_samples.push_back(*sample);
-        }
+        if (auto sample = run_one(run)) samples.push_back(*sample);
     }
 
-    if (options.snapshot_parity && benchmark_ok) {
-        if (!parity_snapshot_model) (void)run_one(false, 0, false);
-        if (!parity_json_model) (void)run_one(true, 0, false);
+    auto ref_valid = [](const char* data, std::uint64_t size, KvStringRef ref) {
+        return ref.offset <= size && ref.length <= size - ref.offset &&
+            (ref.length == 0 || data != nullptr);
+    };
+    auto span_valid = [](KvSpan span, std::uint64_t size) {
+        return span.offset <= size && span.count <= size - span.offset;
+    };
+    auto pointer_valid = [](const void* data, std::uint64_t count) {
+        return count == 0 || data != nullptr;
+    };
+    auto string_view = [&](const char* data, std::uint64_t size, KvStringRef ref) {
+        if (!ref_valid(data, size, ref)) return std::string_view{};
+        return std::string_view(data ? data + ref.offset : "", static_cast<size_t>(ref.length));
+    };
+
+    bool metadata_ok = false;
+    void* metadata_handle = kv_load_map_ex(
+        options.path.c_str(), options.unit_distance,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA);
+    if (metadata_handle) {
+        KvMapSnapshot metadata{};
+        metadata_ok = kv_get_map_snapshot(metadata_handle, KV_MAP_SNAPSHOT_VERSION,
+                                           &metadata, sizeof(metadata)) != 0 &&
+            metadata.version == KV_MAP_SNAPSHOT_VERSION &&
+            metadata.structure_size == sizeof(KvMapSnapshot) &&
+            (metadata.capabilities & KV_MAP_CAP_EDIT_METADATA) != 0 &&
+            (metadata.capabilities & KV_MAP_CAP_FULL_STATEMENT_SOURCE) != 0 &&
+            metadata.source_file_count != 0 && metadata.statement_count != 0 &&
+            metadata.element_count != 0 &&
+            pointer_valid(metadata.source_files, metadata.source_file_count) &&
+            pointer_valid(metadata.statements, metadata.statement_count) &&
+            pointer_valid(metadata.elements, metadata.element_count);
+        for (std::uint64_t i = 0; metadata_ok && i < metadata.statement_count; ++i) {
+            const KvStatementRow& row = metadata.statements[i];
+            metadata_ok = row.source.source_file_index < metadata.source_file_count &&
+                ref_valid(metadata.string_data, metadata.string_size, row.edit_id) &&
+                ref_valid(metadata.string_data, metadata.string_size, row.statement_kind) &&
+                ref_valid(metadata.string_data, metadata.string_size, row.raw_text) &&
+                ref_valid(metadata.string_data, metadata.string_size, row.raw_text_preview) &&
+                ref_valid(metadata.string_data, metadata.string_size, row.raw_arguments) &&
+                ref_valid(metadata.string_data, metadata.string_size, row.distance_expression) &&
+                span_valid(row.evaluated_values, metadata.value_count) &&
+                span_valid(row.source.include_stack, metadata.string_ref_count);
+        }
+        for (std::uint64_t i = 0; metadata_ok && i < metadata.element_count; ++i) {
+            const KvElementRow& row = metadata.elements[i];
+            metadata_ok = row.source_file_index < metadata.source_file_count &&
+                ref_valid(metadata.string_data, metadata.string_size, row.edit_id) &&
+                ref_valid(metadata.string_data, metadata.string_size, row.row_kind);
+        }
     }
+    *out << "snapshot_metadata_contract result=" << (metadata_ok ? "PASS" : "FAIL") << "\n";
+    if (metadata_handle) kv_free(metadata_handle);
 
-    bool parity_ok = true;
-    bool metadata_parity_ok = true;
-    std::string parity_mismatch;
-    bool snapshot_contract_ok = true;
-    if (options.snapshot_parity) {
-        parity_ok = parity_snapshot_model && parity_json_model &&
-            preview_models_equal(*parity_snapshot_model, *parity_json_model, parity_mismatch) &&
-            parity_snapshot_overlay_hash == parity_json_overlay_hash &&
-            model_geometry_hash(*parity_snapshot_model) == model_geometry_hash(*parity_json_model);
-        if (parity_mismatch.empty() && parity_snapshot_overlay_hash != parity_json_overlay_hash) {
-            parity_mismatch = "overlay deterministic hash";
-        }
-        if (parity_mismatch.empty() && parity_snapshot_model && parity_json_model &&
-            model_geometry_hash(*parity_snapshot_model) != model_geometry_hash(*parity_json_model)) {
-            parity_mismatch = "geometry deterministic hash";
-        }
-        *out << "snapshot_parity model=" << (parity_mismatch.empty() ? "PASS" : "FAIL")
-             << " geometry_hash="
-             << ((parity_snapshot_model && parity_json_model &&
-                  model_geometry_hash(*parity_snapshot_model) == model_geometry_hash(*parity_json_model))
-                    ? "PASS" : "FAIL")
-             << " overlay_hash="
-             << (parity_snapshot_overlay_hash == parity_json_overlay_hash ? "PASS" : "FAIL")
-             << " snapshot_geometry="
-             << (parity_snapshot_model ? hex_u64(model_geometry_hash(*parity_snapshot_model)) : "missing")
-             << " json_geometry="
-             << (parity_json_model ? hex_u64(model_geometry_hash(*parity_json_model)) : "missing")
-             << " snapshot_overlay=" << hex_u64(parity_snapshot_overlay_hash)
-             << " json_overlay=" << hex_u64(parity_json_overlay_hash)
-             << " mismatch=\"" << parity_mismatch << "\""
-             << " result=" << (parity_ok ? "PASS" : "FAIL") << "\n";
+    void* contract_handle = kv_load_map_ex(
+        options.path.c_str(), options.unit_distance, KV_LOAD_PREVIEW);
+    KvMapSnapshot first_map{};
+    KvMapSnapshot cached_map{};
+    KvMapSnapshot map_after_scene{};
+    KvMapSnapshot map_after_scene_rebuild{};
+    KvMapSnapshot regenerated_map{};
+    KvSceneGeometrySnapshot scene_before_generation{};
+    KvSceneGeometrySnapshot first_scene{};
+    KvSceneGeometrySnapshot cached_scene{};
+    KvSceneGeometrySnapshot rebuilt_scene{};
 
-        void* metadata_handle = kv_load_map_ex(
-            options.path.c_str(), options.unit_distance,
-            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA);
-        std::string metadata_mismatch;
-        bool metadata_present = false;
-        if (!metadata_handle) {
-            metadata_parity_ok = false;
-            const char* error = kv_get_last_error();
-            metadata_mismatch = error ? error : "metadata map load failed";
-        } else {
-            try {
-                LoadModelOptions snapshot_options;
-                MapModel snapshot_metadata = build_model_from_handle(
-                    metadata_handle, options.path, snapshot_options);
-                LoadModelOptions json_options;
-                json_options.force_json_transport = true;
-                MapModel json_metadata = build_model_from_handle(
-                    metadata_handle, options.path, json_options);
-                metadata_present = !snapshot_metadata.edit_files.empty() &&
-                    std::any_of(snapshot_metadata.structures.begin(),
-                                snapshot_metadata.structures.end(),
-                                [](const TableRow& row) {
-                                    return !row.edit_id.empty() && !row.source.file_path.empty();
-                                });
-                metadata_parity_ok = snapshot_metadata.load_transport == "typed_snapshot" &&
-                    metadata_present && preview_models_equal(
-                        snapshot_metadata, json_metadata, metadata_mismatch);
-            } catch (const std::exception& error) {
-                metadata_parity_ok = false;
-                metadata_mismatch = error.what();
-            }
-        }
-        if (metadata_handle) kv_free(metadata_handle);
-        parity_ok = parity_ok && metadata_parity_ok;
-        *out << "snapshot_metadata_parity present="
-             << (metadata_present ? "PASS" : "FAIL")
-             << " rows_and_sources=" << (metadata_parity_ok ? "PASS" : "FAIL")
-             << " mismatch=\"" << metadata_mismatch << "\""
-             << " result=" << (metadata_parity_ok ? "PASS" : "FAIL") << "\n";
+    const bool null_handle_rejected = !kv_get_map_snapshot(
+        nullptr, KV_MAP_SNAPSHOT_VERSION, &first_map, sizeof(first_map));
+    const bool null_output_rejected = contract_handle && !kv_get_map_snapshot(
+        contract_handle, KV_MAP_SNAPSHOT_VERSION, nullptr, sizeof(first_map));
+    const bool wrong_version_rejected = contract_handle && !kv_get_map_snapshot(
+        contract_handle, KV_MAP_SNAPSHOT_VERSION + 1u, &first_map, sizeof(first_map));
+    const bool short_output_rejected = contract_handle && !kv_get_map_snapshot(
+        contract_handle, KV_MAP_SNAPSHOT_VERSION, &first_map, sizeof(first_map) - 1u);
+    const bool first_map_ok = contract_handle && kv_get_map_snapshot(
+        contract_handle, KV_MAP_SNAPSHOT_VERSION, &first_map, sizeof(first_map)) &&
+        first_map.version == KV_MAP_SNAPSHOT_VERSION &&
+        first_map.structure_size == sizeof(KvMapSnapshot) &&
+        (first_map.capabilities & KV_MAP_CAP_PREVIEW_DATA) != 0 &&
+        (first_map.capabilities & KV_MAP_CAP_REGULAR_GEOMETRY) != 0 &&
+        (first_map.capabilities & KV_MAP_CAP_EDIT_METADATA) == 0 &&
+        ref_valid(first_map.string_data, first_map.string_size, first_map.root_path) &&
+        pointer_valid(first_map.other_tracks, first_map.other_track_count) &&
+        pointer_valid(first_map.own_track_events, first_map.own_track_event_count) &&
+        pointer_valid(first_map.speed_limits, first_map.speed_limit_count) &&
+        pointer_valid(first_map.own_track_geometry.data,
+                      first_map.own_track_geometry.rows * first_map.own_track_geometry.cols);
+    const bool cached_map_ok = first_map_ok && kv_get_map_snapshot(
+        contract_handle, KV_MAP_SNAPSHOT_VERSION, &cached_map, sizeof(cached_map));
+    const bool map_reused = cached_map_ok &&
+        cached_map.content_revision == first_map.content_revision &&
+        cached_map.geometry_revision == first_map.geometry_revision &&
+        cached_map.string_data == first_map.string_data &&
+        cached_map.values == first_map.values &&
+        cached_map.string_refs == first_map.string_refs &&
+        cached_map.other_tracks == first_map.other_tracks &&
+        cached_map.own_track_geometry.data == first_map.own_track_geometry.data;
 
-        void* contract_handle = kv_load_map_ex(
-            options.path.c_str(), options.unit_distance, KV_LOAD_PREVIEW);
-        KvPreviewSnapshot first_snapshot{};
-        KvPreviewSnapshot cached_snapshot{};
-        KvPreviewSnapshot regenerated_snapshot{};
-        const bool first_ok = contract_handle && kv_get_preview_snapshot(
-            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
-            &first_snapshot, sizeof(first_snapshot));
-        const bool wrong_version_rejected = contract_handle && !kv_get_preview_snapshot(
-            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION + 1u,
-            &cached_snapshot, sizeof(cached_snapshot));
-        const bool short_output_rejected = contract_handle && !kv_get_preview_snapshot(
-            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
-            &cached_snapshot, sizeof(cached_snapshot) - 1u);
-        const bool cached_ok = contract_handle && kv_get_preview_snapshot(
-            contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
-            &cached_snapshot, sizeof(cached_snapshot));
-        const bool cache_reused = first_ok && cached_ok &&
-            first_snapshot.content_revision == cached_snapshot.content_revision &&
-            first_snapshot.geometry_revision == cached_snapshot.geometry_revision &&
-            first_snapshot.rows == cached_snapshot.rows &&
-            first_snapshot.cells == cached_snapshot.cells &&
-            first_snapshot.string_data == cached_snapshot.string_data;
-        const bool regenerate_ok = contract_handle && kv_generate_geometry(
-            contract_handle, options.unit_distance, 0, 0.0, 0.0, 0.0) &&
-            kv_get_preview_snapshot(contract_handle, KV_PREVIEW_SNAPSHOT_VERSION,
-                                    &regenerated_snapshot, sizeof(regenerated_snapshot));
-        const bool revision_changed = regenerate_ok && first_ok &&
-            regenerated_snapshot.content_revision == first_snapshot.content_revision &&
-            regenerated_snapshot.geometry_revision > first_snapshot.geometry_revision;
-        snapshot_contract_ok = first_ok && wrong_version_rejected && short_output_rejected &&
-            cache_reused && regenerate_ok && revision_changed;
-        *out << "snapshot_contract version=" << (first_ok ? "PASS" : "FAIL")
-             << " wrong_version=" << (wrong_version_rejected ? "PASS" : "FAIL")
-             << " short_output=" << (short_output_rejected ? "PASS" : "FAIL")
-             << " lazy_reuse=" << (cache_reused ? "PASS" : "FAIL")
-             << " geometry_invalidation=" << (revision_changed ? "PASS" : "FAIL")
-             << " result=" << (snapshot_contract_ok ? "PASS" : "FAIL") << "\n";
-        if (contract_handle) kv_free(contract_handle);
+    const bool scene_requires_generation = contract_handle &&
+        !kv_get_scene_geometry_snapshot(
+            contract_handle, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+            &scene_before_generation, sizeof(scene_before_generation));
+    const bool scene_generate_ok = contract_handle && kv_generate_scene_geometry(
+        contract_handle, options.unit_distance, 1.0, 25.0, 1.0, 0.01);
+    const bool first_scene_ok = scene_generate_ok && kv_get_scene_geometry_snapshot(
+        contract_handle, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+        &first_scene, sizeof(first_scene)) &&
+        first_scene.version == KV_SCENE_GEOMETRY_SNAPSHOT_VERSION &&
+        first_scene.structure_size == sizeof(KvSceneGeometrySnapshot) &&
+        first_scene.content_revision == first_map.content_revision &&
+        first_scene.other_track_count == first_map.other_track_count &&
+        pointer_valid(first_scene.other_tracks, first_scene.other_track_count) &&
+        pointer_valid(first_scene.own_track.data,
+                      first_scene.own_track.rows * first_scene.own_track.cols);
+    bool scene_order_ok = first_scene_ok;
+    for (std::uint64_t i = 0; scene_order_ok && i < first_scene.other_track_count; ++i) {
+        scene_order_ok = string_view(first_scene.string_data, first_scene.string_size,
+                                     first_scene.other_tracks[i].key) ==
+            string_view(first_map.string_data, first_map.string_size,
+                        first_map.other_tracks[i].key);
     }
+    const bool cached_scene_ok = first_scene_ok && kv_get_scene_geometry_snapshot(
+        contract_handle, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+        &cached_scene, sizeof(cached_scene));
+    const bool scene_reused = cached_scene_ok &&
+        cached_scene.content_revision == first_scene.content_revision &&
+        cached_scene.scene_revision == first_scene.scene_revision &&
+        cached_scene.string_data == first_scene.string_data &&
+        cached_scene.other_tracks == first_scene.other_tracks &&
+        cached_scene.own_track.data == first_scene.own_track.data;
+    const bool map_unchanged_by_scene = first_scene_ok && kv_get_map_snapshot(
+        contract_handle, KV_MAP_SNAPSHOT_VERSION,
+        &map_after_scene, sizeof(map_after_scene)) &&
+        map_after_scene.content_revision == first_map.content_revision &&
+        map_after_scene.geometry_revision == first_map.geometry_revision &&
+        map_after_scene.string_data == first_map.string_data;
 
-    if (options.snapshot_parity && benchmark_ok && app.has_model_) {
-        const auto hashes_consistent = [](const std::vector<OpenBenchSample>& samples) {
-            if (samples.empty()) return true;
-            return std::all_of(samples.begin() + 1, samples.end(), [&](const OpenBenchSample& sample) {
-                return sample.geometry_hash == samples.front().geometry_hash &&
-                    sample.overlay_hash == samples.front().overlay_hash;
-            });
-        };
-        const bool repeated_load_hash_ok = (!snapshot_samples.empty() || !json_samples.empty()) &&
-            hashes_consistent(snapshot_samples) && hashes_consistent(json_samples);
+    const bool scene_rebuild_ok = first_scene_ok && kv_generate_scene_geometry(
+        contract_handle, options.unit_distance, 1.0, 20.0, 1.0, 0.005) &&
+        kv_get_scene_geometry_snapshot(
+            contract_handle, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+            &rebuilt_scene, sizeof(rebuilt_scene));
+    const bool scene_revision_changed = scene_rebuild_ok &&
+        rebuilt_scene.content_revision == first_scene.content_revision &&
+        rebuilt_scene.scene_revision > first_scene.scene_revision;
+    const bool map_unchanged_by_scene_rebuild = scene_rebuild_ok && kv_get_map_snapshot(
+        contract_handle, KV_MAP_SNAPSHOT_VERSION,
+        &map_after_scene_rebuild, sizeof(map_after_scene_rebuild)) &&
+        map_after_scene_rebuild.content_revision == first_map.content_revision &&
+        map_after_scene_rebuild.geometry_revision == first_map.geometry_revision;
 
+    const bool regular_generate_ok = contract_handle && kv_generate_geometry(
+        contract_handle, options.unit_distance, 0, 0.0, 0.0, 0.0) &&
+        kv_get_map_snapshot(contract_handle, KV_MAP_SNAPSHOT_VERSION,
+                            &regenerated_map, sizeof(regenerated_map));
+    const bool regular_revision_changed = regular_generate_ok &&
+        regenerated_map.content_revision == first_map.content_revision &&
+        regenerated_map.geometry_revision > first_map.geometry_revision;
+    const bool regular_invalidates_scene = regular_generate_ok &&
+        !kv_get_scene_geometry_snapshot(
+            contract_handle, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+            &rebuilt_scene, sizeof(rebuilt_scene));
+
+    const bool snapshot_contract_ok = null_handle_rejected && null_output_rejected &&
+        wrong_version_rejected && short_output_rejected && first_map_ok && map_reused &&
+        scene_requires_generation && first_scene_ok && scene_order_ok && scene_reused &&
+        map_unchanged_by_scene && scene_revision_changed &&
+        map_unchanged_by_scene_rebuild && regular_revision_changed &&
+        regular_invalidates_scene;
+    *out << "snapshot_contract"
+         << " null_handle=" << (null_handle_rejected ? "PASS" : "FAIL")
+         << " null_output=" << (null_output_rejected ? "PASS" : "FAIL")
+         << " wrong_version=" << (wrong_version_rejected ? "PASS" : "FAIL")
+         << " short_output=" << (short_output_rejected ? "PASS" : "FAIL")
+         << " map_v2=" << (first_map_ok ? "PASS" : "FAIL")
+         << " map_reuse=" << (map_reused ? "PASS" : "FAIL")
+         << " scene_requires_generate=" << (scene_requires_generation ? "PASS" : "FAIL")
+         << " scene_v1=" << (first_scene_ok ? "PASS" : "FAIL")
+         << " scene_order=" << (scene_order_ok ? "PASS" : "FAIL")
+         << " scene_reuse=" << (scene_reused ? "PASS" : "FAIL")
+         << " scene_independent=" << (map_unchanged_by_scene ? "PASS" : "FAIL")
+         << " scene_rebuild=" << (scene_revision_changed ? "PASS" : "FAIL")
+         << " scene_rebuild_independent="
+         << (map_unchanged_by_scene_rebuild ? "PASS" : "FAIL")
+         << " regular_invalidation=" << (regular_revision_changed ? "PASS" : "FAIL")
+         << " regular_invalidates_scene=" << (regular_invalidates_scene ? "PASS" : "FAIL")
+         << " result=" << (snapshot_contract_ok ? "PASS" : "FAIL") << "\n";
+    if (contract_handle) kv_free(contract_handle);
+
+    const auto hashes_consistent = [](const std::vector<OpenBenchSample>& values) {
+        if (values.empty()) return false;
+        return std::all_of(values.begin() + 1, values.end(), [&](const OpenBenchSample& sample) {
+            return sample.geometry_hash == values.front().geometry_hash &&
+                sample.overlay_hash == values.front().overlay_hash;
+        });
+    };
+    const bool repeated_load_hash_ok = hashes_consistent(samples);
         bool station_jump_ok = false;
         bool measure_ok = false;
         if (!app.model_.stations.empty()) {
@@ -3672,21 +3796,19 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
             std::abs(app.repeater_marker_cache_.front().segment.first_point.x - 10.0) < 1e-9 &&
             std::abs(app.repeater_marker_cache_.front().segment.last_point.x - 20.0) < 1e-9;
 
-        workflow_ok = repeated_load_hash_ok && station_jump_ok && measure_ok && csv_export_ok &&
-            repeater_alias_fallback_ok;
-        *out << "headless_ui_workflow repeated_load_hash="
-             << (repeated_load_hash_ok ? "PASS" : "FAIL")
-             << " station_jump=" << (station_jump_ok ? "PASS" : "FAIL")
-             << " measure=" << (measure_ok ? "PASS" : "FAIL")
-             << " csv_export=" << (csv_export_ok ? "PASS" : "FAIL")
-             << " csv_temp_cleanup=" << (csv_cleanup_ok ? "PASS" : "FAIL")
-             << " repeater_alias_fallback="
-             << (repeater_alias_fallback_ok ? "PASS" : "FAIL")
-             << " result=" << (workflow_ok ? "PASS" : "FAIL") << "\n";
-    }
+    workflow_ok = repeated_load_hash_ok && station_jump_ok && measure_ok && csv_export_ok &&
+        repeater_alias_fallback_ok;
+    *out << "headless_ui_workflow repeated_load_hash="
+         << (repeated_load_hash_ok ? "PASS" : "FAIL")
+         << " station_jump=" << (station_jump_ok ? "PASS" : "FAIL")
+         << " measure=" << (measure_ok ? "PASS" : "FAIL")
+         << " csv_export=" << (csv_export_ok ? "PASS" : "FAIL")
+         << " csv_temp_cleanup=" << (csv_cleanup_ok ? "PASS" : "FAIL")
+         << " repeater_alias_fallback="
+         << (repeater_alias_fallback_ok ? "PASS" : "FAIL")
+         << " result=" << (workflow_ok ? "PASS" : "FAIL") << "\n";
 
-    auto write_summary = [&](const char* transport, const std::vector<OpenBenchSample>& samples) {
-        if (samples.empty()) return;
+    if (!samples.empty()) {
         const OpenBenchSample& first = samples.front();
         const MetricSummary ready_all = summarize_samples(samples, 0,
             [](const OpenBenchSample& sample) { return sample.ready_seconds; });
@@ -3700,7 +3822,7 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
         const MetricSummary frame_steady = summarize_samples(samples, steady_first,
             [](const OpenBenchSample& sample) { return sample.first_2d_frame_seconds; });
         *out << std::fixed << std::setprecision(6)
-             << "open_bench_summary transport=" << transport
+             << "open_bench_summary transport=typed_snapshot"
              << " runs=" << samples.size()
              << " first_ready=" << first.ready_seconds << "s"
              << " first_overlay=" << first.overlay_seconds << "s"
@@ -3715,47 +3837,10 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
              << " steady_overlay_p95=" << overlay_steady.p95 << "s"
              << " steady_first_2d_frame_median=" << frame_steady.median << "s"
              << " steady_first_2d_frame_p95=" << frame_steady.p95 << "s\n";
-    };
-    write_summary("typed_snapshot", snapshot_samples);
-    write_summary("json_baseline", json_samples);
-
-    bool performance_ok = true;
-    if (!snapshot_samples.empty()) {
-        for (const OpenBenchSample& sample : snapshot_samples) {
-            performance_ok = performance_ok && sample.transport == "typed_snapshot" &&
-                sample.ir_json_seconds == 0.0 && sample.json_parse_seconds == 0.0;
-        }
-    }
-    if (!snapshot_samples.empty() && !json_samples.empty()) {
-        const size_t snapshot_first = snapshot_samples.size() > 1 ? 1 : 0;
-        const size_t json_first = json_samples.size() > 1 ? 1 : 0;
-        const MetricSummary snapshot_ready = summarize_samples(snapshot_samples, snapshot_first,
-            [](const OpenBenchSample& sample) { return sample.ready_seconds; });
-        const MetricSummary json_ready = summarize_samples(json_samples, json_first,
-            [](const OpenBenchSample& sample) { return sample.ready_seconds; });
-        const MetricSummary snapshot_overlay = summarize_samples(snapshot_samples, snapshot_first,
-            [](const OpenBenchSample& sample) { return sample.overlay_seconds; });
-        const MetricSummary json_overlay = summarize_samples(json_samples, json_first,
-            [](const OpenBenchSample& sample) { return sample.overlay_seconds; });
-        auto reduction = [](double optimized, double baseline) {
-            return baseline > 0.0 ? (baseline - optimized) * 100.0 / baseline : 0.0;
-        };
-        const double ready_median_reduction = reduction(snapshot_ready.median, json_ready.median);
-        const double ready_p95_reduction = reduction(snapshot_ready.p95, json_ready.p95);
-        *out << std::fixed << std::setprecision(2)
-             << "open_bench_comparison ready_median_reduction=" << ready_median_reduction << "%"
-             << " ready_p95_reduction=" << ready_p95_reduction << "%"
-             << " transport_result="
-             << ((ready_median_reduction >= 20.0 && ready_p95_reduction >= 20.0) ? "PASS" : "FAIL")
-             << " baseline_overlay_median=" << json_overlay.median << "s"
-             << " baseline_overlay_p95=" << json_overlay.p95 << "s"
-             << " optimized_overlay_median=" << snapshot_overlay.median << "s"
-             << " optimized_overlay_p95=" << snapshot_overlay.p95 << "s\n";
-        performance_ok = performance_ok && ready_median_reduction >= 20.0 &&
-            ready_p95_reduction >= 20.0;
     }
 
-    const bool passed = benchmark_ok && parity_ok && snapshot_contract_ok &&
+    const bool performance_ok = samples.size() == static_cast<size_t>(options.repeat);
+    const bool passed = benchmark_ok && metadata_ok && snapshot_contract_ok &&
         workflow_ok && performance_ok;
     *out << "open_bench result=" << (passed ? "PASS" : "FAIL") << "\n";
     out->flush();
@@ -3763,7 +3848,6 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
     ImGui::DestroyContext();
     return passed ? 0 : 3;
 }
-
 int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                            double unit_distance, double pan_pixels,
                                            double max_frame_ms, const std::string& output_path,

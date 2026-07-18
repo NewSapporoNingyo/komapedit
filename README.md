@@ -12,9 +12,11 @@ komapedit is a lightweight viewer and editor for BVE Trainsim map files. It rewo
 
 The application has three main runtime components:
 
-- `maploader.dll`: loads `BveTs Map` files, parses part of the BVE Map syntax, generates own-track and other-track geometry, and exposes an intermediate JSON representation.
+- `maploader.dll`: loads `BveTs Map` files, parses part of the BVE Map syntax, generates own-track and other-track geometry, and exposes versioned typed snapshots through a fixed-width C ABI.
 - `model_loader.dll`: loads Structure model files through Assimp and exposes mesh/material data for the 3D previews.
 - `komapedit.exe`: the desktop GUI, built with Dear ImGui, ImPlot, Win32, DirectX 11, and WIC.
+
+The bundled executable and `maploader.dll` use maploader API v2. `KvMapSnapshot` v2 carries all map, regular-geometry, source, and edit metadata; the independently invalidated `KvSceneGeometrySnapshot` v1 carries dense 3D own/other-track geometry. Typed edit batches and handle-owned typed reports cover dry-run, in-memory Apply, direct Apply, Save/commit, and target lookup. These views are process-memory only: Open and Reload always read the current route sources, and no route snapshot or geometry cache is written to disk.
 
 At this stage, komapedit provides source-backed editing for Structure model-list entries, `Structure.Put`/`Put0`/`PutBetween`, and `Station.Put`, including live X/Y/Z Structure placement edits in the 3D scene. It is not yet a full map editor: curve/gradient, Repeater, sound, environmental-effect, and new-element editing are still planned.
 
@@ -28,7 +30,7 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 - [x] Support `$variable = expression;`, the predefined `distance` variable, and basic math functions.
 - [x] Support `#` and `//` comments.
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
-- [x] Expose source anchors and stable edit metadata for editable map/list statements while keeping compact `kv_get_ir_json_ex()` consumers compatible.
+- [x] Expose source anchors and stable edit metadata for editable map/list statements through the versioned typed map snapshot.
 - [x] Apply supported updates/deletions to an in-memory working copy and save them to source map/include/list files, preserving include structure, distance semantics, original encodings, and line endings where possible.
 - [ ] Add new-element insertion and extend source-backed editing beyond the currently supported Structure and `Station.Put` rows.
 
@@ -246,6 +248,7 @@ komapedit/
 ├─ include/
 │  ├─ canvas3D.h                   # 3D preview canvas interface
 │  ├─ maploader.h                  # maploader C ABI
+│  ├─ maploader_snapshot.h         # Fixed-width typed snapshot/edit ABI structures
 │  ├─ model_loader.h               # model_loader C ABI
 │  └─ multilanguage.h              # UI localization strings
 ├─ src/
@@ -273,8 +276,11 @@ komapedit/
 │  │  ├─ maploader_core.cpp        # Common parsing/value/source-span utilities and MapContext helpers
 │  │  ├─ maploader_parser.cpp      # BVE Map/list parsing, Include handling, variables, and source anchors
 │  │  ├─ maploader_geometry.cpp    # Own/other-track geometry, relocation, curves, and scene control points
-│  │  ├─ maploader_ir_json.cpp     # IR JSON serialization plus edit/source metadata fields
+│  │  ├─ maploader_identity.cpp    # Stable edit identities and deterministic hashing
+│  │  ├─ maploader_snapshot.cpp    # Map/scene snapshot construction and revision invalidation
+│  │  ├─ maploader_semantic.cpp    # Typed semantic edit validation and fingerprints
 │  │  ├─ maploader_edits.cpp       # Edit dry-run, in-memory apply, source patching, and commit/writeback
+│  │  ├─ tests/                     # Typed snapshot/edit C ABI contract tests
 │  │  ├─ text_decoder.cpp/.h       # File reading, UTF-8 paths, and text decoding
 │  │  ├─ diagnostics.cpp/.h        # Loader logs and last-error state
 │  │  └─ c_api.cpp/.h              # C ABI allocation helpers

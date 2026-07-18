@@ -6,9 +6,11 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 
 程序由三个运行时核心部分组成：
 
-- `maploader.dll`：读取 `BveTs Map` 文件、解析部分 BVE Map 语法、生成自轨道/他轨道几何数据，并输出中间 JSON。
+- `maploader.dll`：读取 `BveTs Map` 文件、解析部分 BVE Map 语法、生成自轨道/他轨道几何数据，并通过固定宽度 C ABI 输出带版本的强类型快照。
 - `model_loader.dll`：通过 Assimp 读取布景模型文件，并向 3D 预览提供网格/材质数据。
 - `komapedit.exe`：基于 Dear ImGui、ImPlot、Win32、DirectX 11 和 WIC 的桌面 GUI。
+
+随程序提供的 EXE 与 `maploader.dll` 统一使用 maploader API v2。`KvMapSnapshot` v2 传递全部地图数据、常规几何、source/edit metadata；独立失效的 `KvSceneGeometrySnapshot` v1 传递稠密 3D 自轨道/他轨道几何。编辑目标、dry-run、内存 Apply、direct Apply 和 Save/commit 均使用 typed batch 与由 map handle 持有的 typed report。所有快照只存在于进程内存中；Open/Reload 始终重新读取当前线路源文件，不向磁盘写入线路快照或几何缓存。
 
 当前项目已经支持布景模型列表、`Structure.Put`/`Put0`/`PutBetween` 和 `Station.Put` 的源文件关联编辑，并可在 3D 场景中实时拖动布景的 X/Y/Z 位置；但尚不是完整的地图编辑器，自轨道曲线/坡度、连续布景、声音、环境效果和新建元素等编辑仍在开发计划中。
 
@@ -22,7 +24,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - [x] 支持 `$变量 = 表达式;`、`distance` 预定义变量和基础数学函数
 - [x] 支持 `#`、`//` 注释
 - [x] 支持异步加载地图，并在控制台窗口显示加载日志、警告和错误
-- [x] 为可编辑 map/list 语句提供源锚点和稳定编辑 metadata，同时保持精简模式 `kv_get_ir_json_ex()` 的现有消费者兼容
+- [x] 通过带版本的 typed map snapshot 为可编辑 map/list 语句提供源锚点和稳定编辑 metadata
 - [x] 将已支持的修改/删除先应用到内存工作副本，再保存到源 map/include/list 文件，并尽量保留 include 结构、距离语义、原始编码和换行
 - [ ] 支持新建元素，并将源文件关联编辑扩展到当前布景和 `Station.Put` 以外的元素
 
@@ -238,6 +240,7 @@ komapedit/
 ├─ include/
 │  ├─ canvas3D.h                   # 3D 预览画布接口
 │  ├─ maploader.h                  # maploader C ABI
+│  ├─ maploader_snapshot.h         # 固定宽度 typed snapshot/edit ABI 结构
 │  ├─ model_loader.h               # model_loader C ABI
 │  └─ multilanguage.h              # 界面多语言文本
 ├─ src/
@@ -265,8 +268,11 @@ komapedit/
 │  │  ├─ maploader_core.cpp        # 通用解析/value/source-span 工具和 MapContext 辅助逻辑
 │  │  ├─ maploader_parser.cpp      # BVE Map/list 解析、Include、变量表达式和源锚点收集
 │  │  ├─ maploader_geometry.cpp    # 自轨道/他轨道几何、relocate、曲线和场景控制点
-│  │  ├─ maploader_ir_json.cpp     # IR JSON 序列化和 edit/source metadata 字段
+│  │  ├─ maploader_identity.cpp    # 稳定 edit identity 与确定性哈希
+│  │  ├─ maploader_snapshot.cpp    # map/scene 快照构建和 revision 失效
+│  │  ├─ maploader_semantic.cpp    # typed 编辑语义验证与 fingerprint
 │  │  ├─ maploader_edits.cpp       # edit dry-run、内存应用、源文件 patch 和 commit/writeback
+│  │  ├─ tests/                     # typed snapshot/edit C ABI contract 测试
 │  │  ├─ text_decoder.cpp/.h       # 文件读取、UTF-8 路径和文本解码
 │  │  ├─ diagnostics.cpp/.h        # 加载器日志与最后错误状态
 │  │  └─ c_api.cpp/.h              # C ABI 分配辅助代码

@@ -1785,20 +1785,45 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         bool scene_geometry_ok =
             kv_generate_scene_geometry(options.map_handle, options.unit_distance, 1.0, max_step, 1.0, 0.01) != 0;
         if (scene_geometry_ok) {
-            Matrix dense_own = copy_scene_buffer(kv_get_scene_owntrack_buffer(options.map_handle));
+            KvSceneGeometrySnapshot snapshot{};
+            scene_geometry_ok = kv_get_scene_geometry_snapshot(
+                options.map_handle, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+                &snapshot, sizeof(snapshot)) != 0;
+            Matrix dense_own = scene_geometry_ok
+                ? copy_scene_buffer(snapshot.own_track) : Matrix{};
             std::vector<OtherTrack> dense_other_tracks;
             dense_other_tracks.reserve(model.other_tracks.size());
-            for (const OtherTrack& track : model.other_tracks) {
+            const bool matching_track_count = scene_geometry_ok &&
+                snapshot.other_track_count == model.other_tracks.size();
+            auto snapshot_key = [&](KvStringRef ref) {
+                if (!snapshot.string_data || ref.offset > snapshot.string_size ||
+                    ref.length > snapshot.string_size - ref.offset) {
+                    return std::string{};
+                }
+                return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
+                                   static_cast<size_t>(ref.length));
+            };
+            bool matching_track_order = matching_track_count;
+            for (size_t i = 0; i < model.other_tracks.size(); ++i) {
+                const OtherTrack& track = model.other_tracks[i];
                 OtherTrack dense = track;
-                dense.points = copy_scene_buffer(
-                    kv_get_scene_othertrack_buffer(options.map_handle, track.key.c_str()));
+                if (matching_track_count) {
+                    const KvSceneTrackRow& input = snapshot.other_tracks[i];
+                    matching_track_order = matching_track_order &&
+                        snapshot_key(input.key) == track.key;
+                    dense.points = copy_scene_buffer(input.points);
+                }
                 dense_other_tracks.push_back(std::move(dense));
             }
-            if (!dense_own.empty()) {
+            if (!dense_own.empty() && matching_track_order) {
                 scene_own = std::move(dense_own);
                 scene_other_tracks = std::move(dense_other_tracks);
+            } else if (scene_geometry_ok && !matching_track_order) {
+                result.log_messages.push_back(
+                    "[warn]canvas3D.cpp: 3D scene snapshot track order mismatch");
             }
-        } else {
+        }
+        if (!scene_geometry_ok) {
             const char* err = kv_get_last_error();
             result.log_messages.push_back(std::string("[warn]canvas3D.cpp: 3D scene preview adaptive geometry failed: ") +
                                           (err ? err : "geometry failed"));

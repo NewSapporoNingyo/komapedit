@@ -78,15 +78,7 @@ bool ascii_ieq(const std::string& a, const std::string& b) {
     return ascii_lower(a) == ascii_lower(b);
 }
 
-void append_json_string(std::ostringstream& out, const std::string& s) {
-    kme::json::append_string(out, s);
-}
-
-std::string json_escape(const std::string& s) {
-    return kme::json::escape(s);
-}
-
-std::string json_number(double value) {
+std::string canonical_number(double value) {
     if (std::isnan(value)) {
         return "null";
     }
@@ -178,7 +170,7 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
         throw std::runtime_error(path_to_utf8(path) + " is not " + head_str);
     }
     if (parse_first_version(header) < min_version) {
-        throw std::runtime_error(path_to_utf8(path) + " is under Ver." + json_number(min_version));
+        throw std::runtime_error(path_to_utf8(path) + " is under Ver." + canonical_number(min_version));
     }
     size_t body_offset = line_end == std::string::npos ? text.size() : line_end + 1;
     std::string body = line_end == std::string::npos ? std::string() : text.substr(body_offset);
@@ -299,16 +291,6 @@ std::string key_text(const Value& value) {
 const Value& arg_or_null(const std::vector<Value>& values, size_t index) {
     static const Value null_value = Value::null();
     return index < values.size() ? values[index] : null_value;
-}
-
-std::string json_value(const Value& value) {
-    switch (value.kind) {
-        case ValueKind::Null: return "null";
-        case ValueKind::ContinueValue: return "\"c\"";
-        case ValueKind::Number: return json_number(value.number);
-        case ValueKind::String: return "\"" + json_escape(value.text) + "\"";
-    }
-    return "null";
 }
 
 std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_hash) {
@@ -769,7 +751,6 @@ void log_load_timing(const MapContext& ctx) {
              ", parse=" + format_seconds(ctx.timing.parse_seconds) +
              ", relocate=" + format_seconds(ctx.timing.relocate_seconds) +
              ", owntrack=" + format_seconds(ctx.timing.owntrack_seconds) +
-             ", JSON=" + format_seconds(ctx.timing.json_seconds) +
              ", snapshot=" + format_seconds(ctx.timing.snapshot_seconds));
     for (const auto& item : ctx.timing.othertrack_seconds) {
         log_info("load timing: othertrack[" + item.first + "]=" + format_seconds(item.second));

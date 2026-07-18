@@ -16,7 +16,6 @@ struct HeadlessLoadOptions {
     std::string output_path;
     int repeat = 1;
     double unit_distance = 25.0;
-    bool full_ir_json = false;
     std::string load_profile = "preview";
     std::string error;
 };
@@ -53,8 +52,6 @@ struct HeadlessOpenBenchmarkOptions {
     std::string output_path;
     int repeat = 1;
     double unit_distance = 25.0;
-    std::string transport = "typed_snapshot";
-    bool snapshot_parity = true;
     std::string error;
 };
 

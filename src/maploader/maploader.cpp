@@ -31,10 +31,6 @@ using kme::maploader::detail::MapParseOptions;
 using kme::maploader::detail::Matrix;
 using kme::maploader::detail::SourceTextOverrides;
 
-KvDoubleBuffer make_buffer(const Matrix& m) {
-    return {m.data.empty() ? nullptr : m.data.data(), m.rows, m.cols};
-}
-
 MapParseOptions parse_options_from_load_flags(unsigned flags) {
     MapParseOptions options;
     const bool preview = (flags & KV_LOAD_PREVIEW) != 0;
@@ -49,6 +45,10 @@ extern "C" {
 
 KV_API void kv_set_log_callback(KvLogCallback callback) {
     set_log_callback(callback);
+}
+
+KV_API uint32_t kv_api_version(void) {
+    return KV_MAPLOADER_API_VERSION;
 }
 
 KV_API void* kv_load_map(const char* path, double unit_distance) {
@@ -80,7 +80,8 @@ KV_API int kv_generate_geometry(void* handle, double unit_distance,
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
-        kme::maploader::detail::invalidate_preview_snapshot(*ctx, false, true);
+        kme::maploader::detail::invalidate_map_snapshot(*ctx, false, true);
+        kme::maploader::detail::invalidate_scene_geometry_snapshot(*ctx, true);
         kme::maploader::detail::generate_geometry(*ctx, unit_distance, has_arbitrary_distribution != 0,
                                                   arbitrary_start, arbitrary_end, arbitrary_step);
         return 1;
@@ -103,6 +104,7 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
         if (ctx->scene_geometry_valid && ctx->scene_geometry_parameters == parameters) {
             return 1;
         }
+        kme::maploader::detail::invalidate_scene_geometry_snapshot(*ctx, true);
         if (ctx->owntrack_buffer.rows == 0) {
             kme::maploader::detail::generate_geometry(*ctx, unit_distance, false, 0.0, 0.0, 0.0);
         }
@@ -124,7 +126,6 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
             std::array<double, 2> cp_defaultrange;
             bool has_cp_arbdistribution;
             bool cp_arbdistribution_explicit;
-            std::map<unsigned, std::string> ir_json_cache_by_flags;
             kme::maploader::detail::LoadTiming timing;
             bool load_timing_logged;
         } regular{
@@ -138,7 +139,6 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
             ctx->cp_defaultrange,
             ctx->has_cp_arbdistribution,
             ctx->cp_arbdistribution_explicit,
-            std::move(ctx->ir_json_cache_by_flags),
             std::move(ctx->timing),
             ctx->load_timing_logged};
 
@@ -153,7 +153,6 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
             ctx->cp_defaultrange = regular.cp_defaultrange;
             ctx->has_cp_arbdistribution = regular.has_cp_arbdistribution;
             ctx->cp_arbdistribution_explicit = regular.cp_arbdistribution_explicit;
-            ctx->ir_json_cache_by_flags = std::move(regular.ir_json_cache_by_flags);
             ctx->timing = std::move(regular.timing);
             ctx->load_timing_logged = regular.load_timing_logged;
         };
@@ -178,71 +177,19 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
     }
 }
 
-KV_API KvDoubleBuffer kv_get_scene_owntrack_buffer(void* handle) {
-    if (!handle) return {nullptr, 0, 0};
-    auto* ctx = static_cast<MapContext*>(handle);
-    return ctx->scene_geometry_valid ? make_buffer(ctx->scene_owntrack_buffer)
-                                     : KvDoubleBuffer{nullptr, 0, 0};
-}
-
-KV_API KvDoubleBuffer kv_get_scene_othertrack_buffer(void* handle, const char* key) {
-    if (!handle || !key) return {nullptr, 0, 0};
-    auto* ctx = static_cast<MapContext*>(handle);
-    if (!ctx->scene_geometry_valid) return {nullptr, 0, 0};
-    auto it = ctx->scene_othertrack_buffers.find(key);
-    return it == ctx->scene_othertrack_buffers.end() ? KvDoubleBuffer{nullptr, 0, 0}
-                                                      : make_buffer(it->second);
-}
-
-KV_API KvDoubleBuffer kv_get_owntrack_buffer(void* handle) {
-    if (!handle) return {nullptr, 0, 0};
-    return make_buffer(static_cast<MapContext*>(handle)->owntrack_buffer);
-}
-
-KV_API KvDoubleBuffer kv_get_curveradius_buffer(void* handle) {
-    if (!handle) return {nullptr, 0, 0};
-    return make_buffer(static_cast<MapContext*>(handle)->curveradius_buffer);
-}
-
-KV_API size_t kv_get_othertrack_count(void* handle) {
-    if (!handle) return 0;
-    return static_cast<MapContext*>(handle)->othertrack_order.size();
-}
-
-KV_API const char* kv_get_othertrack_key(void* handle, size_t index) {
-    if (!handle) return nullptr;
-    auto* ctx = static_cast<MapContext*>(handle);
-    if (index >= ctx->othertrack_order.size()) return nullptr;
-    return ctx->othertrack_order[index].c_str();
-}
-
-KV_API KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key) {
-    if (!handle || !key) return {nullptr, 0, 0};
-    auto* ctx = static_cast<MapContext*>(handle);
-    std::string k = kme::maploader::detail::ascii_lower(key);
-    auto it = ctx->othertrack_buffers.find(k);
-    if (it == ctx->othertrack_buffers.end()) return {nullptr, 0, 0};
-    return make_buffer(it->second);
-}
-
-KV_API KvDoubleBuffer kv_get_structure_puts(void* handle) {
-    if (!handle) return {nullptr, 0, 0};
-    return make_buffer(static_cast<MapContext*>(handle)->structure_put_buffer);
-}
-
-KV_API int kv_get_preview_snapshot(void* handle, unsigned version,
-                                   KvPreviewSnapshot* out_snapshot, size_t out_size) {
+KV_API int kv_get_map_snapshot(void* handle, uint32_t version,
+                               KvMapSnapshot* out_snapshot, uint64_t out_size) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
-        if (!out_snapshot) throw std::runtime_error("preview snapshot output is null");
-        if (version != KV_PREVIEW_SNAPSHOT_VERSION) {
-            throw std::runtime_error("unsupported preview snapshot version");
+        if (!out_snapshot) throw std::runtime_error("map snapshot output is null");
+        if (version != KV_MAP_SNAPSHOT_VERSION) {
+            throw std::runtime_error("unsupported map snapshot version");
         }
-        if (out_size < sizeof(KvPreviewSnapshot)) {
-            throw std::runtime_error("preview snapshot output is too small");
+        if (out_size < sizeof(KvMapSnapshot)) {
+            throw std::runtime_error("map snapshot output is too small");
         }
         auto* ctx = static_cast<MapContext*>(handle);
-        *out_snapshot = kme::maploader::detail::build_preview_snapshot(*ctx);
+        *out_snapshot = kme::maploader::detail::build_map_snapshot(*ctx);
         if (!ctx->load_timing_logged) {
             kme::maploader::detail::log_load_timing(*ctx);
             ctx->load_timing_logged = true;
@@ -254,39 +201,52 @@ KV_API int kv_get_preview_snapshot(void* handle, unsigned version,
     }
 }
 
-KV_API const char* kv_get_ir_json_ex(void* handle, unsigned flags) {
+KV_API int kv_get_scene_geometry_snapshot(void* handle, uint32_t version,
+                                          KvSceneGeometrySnapshot* out_snapshot,
+                                          uint64_t out_size) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
+        if (!out_snapshot) throw std::runtime_error("scene snapshot output is null");
+        if (version != KV_SCENE_GEOMETRY_SNAPSHOT_VERSION) {
+            throw std::runtime_error("unsupported scene snapshot version");
+        }
+        if (out_size < sizeof(KvSceneGeometrySnapshot)) {
+            throw std::runtime_error("scene snapshot output is too small");
+        }
         auto* ctx = static_cast<MapContext*>(handle);
-        flags = kme::maploader::detail::normalize_ir_json_flags(flags);
-        auto& cache = ctx->ir_json_cache_by_flags[flags];
-        if (cache.empty()) {
-            kme::maploader::detail::ScopedTimer timer(&ctx->timing.json_seconds);
-            cache = kme::maploader::detail::build_ir_json(*ctx, flags);
+        if (!ctx->scene_geometry_valid) {
+            throw std::runtime_error("scene geometry has not been generated");
         }
-        if (!ctx->load_timing_logged) {
-            kme::maploader::detail::log_load_timing(*ctx);
-            ctx->load_timing_logged = true;
-        }
-        return copy_c_string(cache);
+        *out_snapshot = kme::maploader::detail::build_scene_geometry_snapshot(*ctx);
+        return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        return nullptr;
+        return 0;
     }
 }
 
-KV_API const char* kv_get_ir_json(void* handle) {
-    return kv_get_ir_json_ex(handle, KV_IR_JSON_FULL_EDIT | KV_IR_JSON_FULL_STATEMENT_SOURCE);
-}
-
-KV_API const char* kv_get_edit_target_info(void* handle, const char* edit_id) {
+KV_API int kv_get_edit_target_typed(void* handle, KvUtf8View edit_id,
+                                    KvEditTargetSnapshot* out_target,
+                                    uint64_t out_size) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
+        if (!out_target) throw std::runtime_error("edit target output is null");
+        if (out_size < sizeof(KvEditTargetSnapshot)) {
+            throw std::runtime_error("edit target output is too small");
+        }
+        if (edit_id.length != 0 && !edit_id.data) {
+            throw std::runtime_error("editId data is null");
+        }
+        if (edit_id.length > static_cast<std::uint64_t>(std::numeric_limits<size_t>::max())) {
+            throw std::runtime_error("editId is too large");
+        }
+        std::string id(edit_id.data ? edit_id.data : "", static_cast<size_t>(edit_id.length));
         auto* ctx = static_cast<MapContext*>(handle);
-        return copy_c_string(kme::maploader::detail::edit_target_info_json(*ctx, edit_id ? edit_id : ""));
+        *out_target = kme::maploader::detail::build_edit_target_snapshot(*ctx, id);
+        return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        return nullptr;
+        return 0;
     }
 }
 
@@ -302,24 +262,43 @@ KV_API const char* kv_get_source_text(void* handle, const char* file_path) {
     }
 }
 
-KV_API const char* kv_edit_dry_run(void* handle, const char* changes_json) {
+KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
+                                 KvEditReportSnapshot* out_report,
+                                 uint64_t out_size) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
+        if (!batch) throw std::runtime_error("edit batch is null");
+        if (!out_report) throw std::runtime_error("edit report output is null");
+        if (out_size < sizeof(KvEditReportSnapshot)) {
+            throw std::runtime_error("edit report output is too small");
+        }
         auto* ctx = static_cast<MapContext*>(handle);
-        std::vector<MapEditChange> changes = kme::maploader::detail::parse_edit_changes_json(changes_json);
+        ctx->edit_report_snapshot.reset();
+        ctx->edit_target_snapshot.reset();
+        std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
         MapEditReport report = kme::maploader::detail::build_edit_report(*ctx, changes, false);
-        return copy_c_string(kme::maploader::detail::report_json(report));
+        *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        return nullptr;
+        return 0;
     }
 }
 
-KV_API const char* kv_edit_apply_to_memory(void* handle, const char* changes_json) {
+KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
+                                         KvEditReportSnapshot* out_report,
+                                         uint64_t out_size) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
+        if (!batch) throw std::runtime_error("edit batch is null");
+        if (!out_report) throw std::runtime_error("edit report output is null");
+        if (out_size < sizeof(KvEditReportSnapshot)) {
+            throw std::runtime_error("edit report output is too small");
+        }
         auto* ctx = static_cast<MapContext*>(handle);
-        std::vector<MapEditChange> changes = kme::maploader::detail::parse_edit_changes_json(changes_json);
+        ctx->edit_report_snapshot.reset();
+        ctx->edit_target_snapshot.reset();
+        std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
         MapEditReport report = kme::maploader::detail::build_edit_report(*ctx, changes, false);
         if (report.ok()) {
             try {
@@ -328,10 +307,11 @@ KV_API const char* kv_edit_apply_to_memory(void* handle, const char* changes_jso
                 report.blocking_errors.push_back(std::string("edited cache reload failed: ") + e.what());
             }
         }
-        return copy_c_string(kme::maploader::detail::report_json(report));
+        *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        return nullptr;
+        return 0;
     }
 }
 
@@ -339,6 +319,8 @@ KV_API int kv_edit_reset_memory(void* handle) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
+        ctx->edit_report_snapshot.reset();
+        ctx->edit_target_snapshot.reset();
         kme::maploader::detail::reset_memory_edits(*ctx);
         return 1;
     } catch (const std::exception& e) {
@@ -347,28 +329,46 @@ KV_API int kv_edit_reset_memory(void* handle) {
     }
 }
 
-KV_API const char* kv_edit_apply(void* handle, const char* changes_json) {
+KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
+                               KvEditReportSnapshot* out_report,
+                               uint64_t out_size) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
+        if (!batch) throw std::runtime_error("edit batch is null");
+        if (!out_report) throw std::runtime_error("edit report output is null");
+        if (out_size < sizeof(KvEditReportSnapshot)) {
+            throw std::runtime_error("edit report output is too small");
+        }
         auto* ctx = static_cast<MapContext*>(handle);
-        std::vector<MapEditChange> changes = kme::maploader::detail::parse_edit_changes_json(changes_json);
+        ctx->edit_report_snapshot.reset();
+        ctx->edit_target_snapshot.reset();
+        std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
         MapEditReport report = kme::maploader::detail::build_edit_report(*ctx, changes, true);
-        return copy_c_string(kme::maploader::detail::report_json(report));
+        *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        return nullptr;
+        return 0;
     }
 }
 
-KV_API const char* kv_edit_commit(void* handle) {
+KV_API int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
+                                uint64_t out_size) {
     try {
         if (!handle) throw std::runtime_error("handle is null");
+        if (!out_report) throw std::runtime_error("edit report output is null");
+        if (out_size < sizeof(KvEditReportSnapshot)) {
+            throw std::runtime_error("edit report output is too small");
+        }
         auto* ctx = static_cast<MapContext*>(handle);
+        ctx->edit_report_snapshot.reset();
+        ctx->edit_target_snapshot.reset();
         MapEditReport report = kme::maploader::detail::commit_memory_edits(*ctx);
-        return copy_c_string(kme::maploader::detail::report_json(report));
+        *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
+        return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        return nullptr;
+        return 0;
     }
 }
 

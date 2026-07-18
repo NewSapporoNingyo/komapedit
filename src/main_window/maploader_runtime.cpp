@@ -18,23 +18,15 @@ namespace {
     X(load_map_ex, kv_load_map_ex) \
     X(generate_geometry, kv_generate_geometry) \
     X(generate_scene_geometry, kv_generate_scene_geometry) \
-    X(get_scene_owntrack_buffer, kv_get_scene_owntrack_buffer) \
-    X(get_scene_othertrack_buffer, kv_get_scene_othertrack_buffer) \
-    X(get_owntrack_buffer, kv_get_owntrack_buffer) \
-    X(get_curveradius_buffer, kv_get_curveradius_buffer) \
-    X(get_othertrack_count, kv_get_othertrack_count) \
-    X(get_othertrack_key, kv_get_othertrack_key) \
-    X(get_othertrack_buffer, kv_get_othertrack_buffer) \
-    X(get_structure_puts, kv_get_structure_puts) \
-    X(get_ir_json_ex, kv_get_ir_json_ex) \
-    X(get_ir_json, kv_get_ir_json) \
-    X(get_edit_target_info, kv_get_edit_target_info) \
+    X(get_map_snapshot, kv_get_map_snapshot) \
+    X(get_scene_geometry_snapshot, kv_get_scene_geometry_snapshot) \
+    X(get_edit_target_typed, kv_get_edit_target_typed) \
     X(get_source_text, kv_get_source_text) \
-    X(edit_dry_run, kv_edit_dry_run) \
-    X(edit_apply_to_memory, kv_edit_apply_to_memory) \
+    X(edit_dry_run_typed, kv_edit_dry_run_typed) \
+    X(edit_apply_to_memory_typed, kv_edit_apply_to_memory_typed) \
     X(edit_reset_memory, kv_edit_reset_memory) \
-    X(edit_apply, kv_edit_apply) \
-    X(edit_commit, kv_edit_commit) \
+    X(edit_apply_typed, kv_edit_apply_typed) \
+    X(edit_commit_typed, kv_edit_commit_typed) \
     X(get_last_error, kv_get_last_error) \
     X(free_handle, kv_free) \
     X(free_string, kv_free_string)
@@ -56,6 +48,21 @@ public:
             return;
         }
 
+        if (!resolve(api_version, "kv_api_version")) {
+            FreeLibrary(library_);
+            library_ = nullptr;
+            return;
+        }
+        const std::uint32_t loaded_version = api_version();
+        if (loaded_version != KV_MAPLOADER_API_VERSION) {
+            load_error_ = "bin/maploader.dll API version mismatch: executable requires " +
+                std::to_string(KV_MAPLOADER_API_VERSION) + ", DLL provides " +
+                std::to_string(loaded_version);
+            FreeLibrary(library_);
+            library_ = nullptr;
+            return;
+        }
+
 #define KME_RESOLVE_FUNCTION(member, symbol) \
         if (!resolve(member, #symbol)) { \
             FreeLibrary(library_); \
@@ -64,8 +71,6 @@ public:
         }
         KME_MAPLOADER_FUNCTIONS(KME_RESOLVE_FUNCTION)
 #undef KME_RESOLVE_FUNCTION
-        get_preview_snapshot = runtime_paths::resolve_dll_function<
-            decltype(get_preview_snapshot)>(library_, "kv_get_preview_snapshot");
     }
 
     bool available() const {
@@ -79,7 +84,7 @@ public:
 #define KME_DECLARE_FUNCTION(member, symbol) decltype(&symbol) member = nullptr;
     KME_MAPLOADER_FUNCTIONS(KME_DECLARE_FUNCTION)
 #undef KME_DECLARE_FUNCTION
-    decltype(&kv_get_preview_snapshot) get_preview_snapshot = nullptr;
+    decltype(&kv_api_version) api_version = nullptr;
 
 private:
     template <typename Function>
@@ -103,12 +108,12 @@ MaploaderRuntime& maploader_runtime() {
 
 } // namespace
 
-bool maploader_preview_snapshot_available() {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() && runtime.get_preview_snapshot != nullptr;
-}
-
 extern "C" {
+
+uint32_t kv_api_version(void) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.api_version() : 0u;
+}
 
 void kv_set_log_callback(KvLogCallback callback) {
     MaploaderRuntime& runtime = maploader_runtime();
@@ -163,67 +168,30 @@ int kv_generate_scene_geometry(
         : 0;
 }
 
-KvDoubleBuffer kv_get_scene_owntrack_buffer(void* handle) {
+int kv_get_map_snapshot(void* handle, uint32_t version,
+                        KvMapSnapshot* out_snapshot, uint64_t out_size) {
     MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_scene_owntrack_buffer(handle) : KvDoubleBuffer{};
-}
-
-KvDoubleBuffer kv_get_scene_othertrack_buffer(void* handle, const char* key) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_scene_othertrack_buffer(handle, key) : KvDoubleBuffer{};
-}
-
-KvDoubleBuffer kv_get_owntrack_buffer(void* handle) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_owntrack_buffer(handle) : KvDoubleBuffer{};
-}
-
-KvDoubleBuffer kv_get_curveradius_buffer(void* handle) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_curveradius_buffer(handle) : KvDoubleBuffer{};
-}
-
-size_t kv_get_othertrack_count(void* handle) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_othertrack_count(handle) : 0;
-}
-
-const char* kv_get_othertrack_key(void* handle, size_t index) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_othertrack_key(handle, index) : nullptr;
-}
-
-KvDoubleBuffer kv_get_othertrack_buffer(void* handle, const char* key) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_othertrack_buffer(handle, key) : KvDoubleBuffer{};
-}
-
-KvDoubleBuffer kv_get_structure_puts(void* handle) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_structure_puts(handle) : KvDoubleBuffer{};
-}
-
-int kv_get_preview_snapshot(void* handle, unsigned version,
-                            KvPreviewSnapshot* out_snapshot, size_t out_size) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() && runtime.get_preview_snapshot
-        ? runtime.get_preview_snapshot(handle, version, out_snapshot, out_size)
+    return runtime.available()
+        ? runtime.get_map_snapshot(handle, version, out_snapshot, out_size)
         : 0;
 }
 
-const char* kv_get_ir_json_ex(void* handle, unsigned flags) {
+int kv_get_scene_geometry_snapshot(void* handle, uint32_t version,
+                                   KvSceneGeometrySnapshot* out_snapshot,
+                                   uint64_t out_size) {
     MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_ir_json_ex(handle, flags) : nullptr;
+    return runtime.available()
+        ? runtime.get_scene_geometry_snapshot(handle, version, out_snapshot, out_size)
+        : 0;
 }
 
-const char* kv_get_ir_json(void* handle) {
+int kv_get_edit_target_typed(void* handle, KvUtf8View edit_id,
+                             KvEditTargetSnapshot* out_target,
+                             uint64_t out_size) {
     MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_ir_json(handle) : nullptr;
-}
-
-const char* kv_get_edit_target_info(void* handle, const char* edit_id) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.get_edit_target_info(handle, edit_id) : nullptr;
+    return runtime.available()
+        ? runtime.get_edit_target_typed(handle, edit_id, out_target, out_size)
+        : 0;
 }
 
 const char* kv_get_source_text(void* handle, const char* file_path) {
@@ -231,14 +199,22 @@ const char* kv_get_source_text(void* handle, const char* file_path) {
     return runtime.available() ? runtime.get_source_text(handle, file_path) : nullptr;
 }
 
-const char* kv_edit_dry_run(void* handle, const char* changes_json) {
+int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
+                          KvEditReportSnapshot* out_report,
+                          uint64_t out_size) {
     MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.edit_dry_run(handle, changes_json) : nullptr;
+    return runtime.available()
+        ? runtime.edit_dry_run_typed(handle, batch, out_report, out_size)
+        : 0;
 }
 
-const char* kv_edit_apply_to_memory(void* handle, const char* changes_json) {
+int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
+                                  KvEditReportSnapshot* out_report,
+                                  uint64_t out_size) {
     MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.edit_apply_to_memory(handle, changes_json) : nullptr;
+    return runtime.available()
+        ? runtime.edit_apply_to_memory_typed(handle, batch, out_report, out_size)
+        : 0;
 }
 
 int kv_edit_reset_memory(void* handle) {
@@ -246,14 +222,21 @@ int kv_edit_reset_memory(void* handle) {
     return runtime.available() ? runtime.edit_reset_memory(handle) : 0;
 }
 
-const char* kv_edit_apply(void* handle, const char* changes_json) {
+int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
+                        KvEditReportSnapshot* out_report,
+                        uint64_t out_size) {
     MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.edit_apply(handle, changes_json) : nullptr;
+    return runtime.available()
+        ? runtime.edit_apply_typed(handle, batch, out_report, out_size)
+        : 0;
 }
 
-const char* kv_edit_commit(void* handle) {
+int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
+                         uint64_t out_size) {
     MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.edit_commit(handle) : nullptr;
+    return runtime.available()
+        ? runtime.edit_commit_typed(handle, out_report, out_size)
+        : 0;
 }
 
 const char* kv_get_last_error(void) {

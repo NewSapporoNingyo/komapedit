@@ -55,24 +55,6 @@ file(MAKE_DIRECTORY
     "${KOMAPEDIT_SETTINGS_OUTPUT_DIRECTORY}"
 )
 
-add_library(kme_json STATIC
-    src/common/json.cpp
-)
-target_compile_features(kme_json PRIVATE cxx_std_17)
-target_include_directories(kme_json PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/common
-)
-set_target_properties(kme_json PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-if(BUILD_TESTING)
-    add_executable(kme_json_tests
-        src/common/tests/json_tests.cpp
-    )
-    target_compile_features(kme_json_tests PRIVATE cxx_std_17)
-    target_link_libraries(kme_json_tests PRIVATE kme_json)
-    add_test(NAME kme_json_tests COMMAND kme_json_tests)
-endif()
-
 add_library(kme_text_decoder STATIC
     src/maploader/text_decoder.cpp
 )
@@ -95,8 +77,9 @@ add_library(maploader SHARED
     src/maploader/maploader_core.cpp
     src/maploader/maploader_parser.cpp
     src/maploader/maploader_geometry.cpp
-    src/maploader/maploader_ir_json.cpp
-    src/maploader/maploader_preview_snapshot.cpp
+    src/maploader/maploader_identity.cpp
+    src/maploader/maploader_snapshot.cpp
+    src/maploader/maploader_semantic.cpp
     src/maploader/maploader_edits.cpp
     src/maploader/diagnostics.cpp
     src/maploader/c_api.cpp
@@ -106,7 +89,7 @@ target_compile_features(maploader PRIVATE cxx_std_17)
 target_include_directories(maploader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(maploader PRIVATE kme_json kme_text_decoder)
+target_link_libraries(maploader PRIVATE kme_text_decoder)
 
 if(MINGW)
     target_link_libraries(maploader PRIVATE ole32)
@@ -119,6 +102,26 @@ set_target_properties(maploader PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
+
+if(BUILD_TESTING)
+    add_executable(typed_snapshot_tests
+        src/maploader/tests/typed_snapshot_tests.cpp
+    )
+    target_compile_features(typed_snapshot_tests PRIVATE cxx_std_17)
+    target_include_directories(typed_snapshot_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(typed_snapshot_tests PRIVATE maploader)
+    set_target_properties(typed_snapshot_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${KOMAPEDIT_DLL_OUTPUT_DIRECTORY}"
+    )
+    add_test(NAME typed_snapshot_contract
+        COMMAND $<TARGET_FILE:typed_snapshot_tests> snapshot
+    )
+    add_test(NAME typed_edit_contract
+        COMMAND $<TARGET_FILE:typed_snapshot_tests> edit
+    )
+endif()
 
 find_package(assimp CONFIG REQUIRED)
 
@@ -255,7 +258,6 @@ if(MSVC)
     target_link_options(komapedit PRIVATE /ENTRY:mainCRTStartup)
 endif()
 target_link_libraries(komapedit PRIVATE
-    kme_json
     kme_text_decoder
     implot
     imgui
@@ -272,11 +274,10 @@ target_link_libraries(komapedit PRIVATE
 )
 
 foreach(komapedit_owned_target IN ITEMS
-        kme_json
-        kme_json_tests
         kme_text_decoder
         maploader
         model_loader
+        typed_snapshot_tests
         komapedit)
     if(TARGET ${komapedit_owned_target})
         komapedit_enable_strict_warnings(${komapedit_owned_target})
