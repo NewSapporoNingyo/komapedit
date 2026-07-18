@@ -1056,6 +1056,8 @@ public:
     static int run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
                                                     double unit_distance, double max_frame_ms,
                                                     double window_back_m, double window_forward_m,
+                                                    int scene_model_workers,
+                                                    bool disable_scene_texture_cache,
                                                     const std::string& output_path);
     static int run_debug_headless_scene_camera_transfer(const std::string& path, double unit_distance,
                                                         bool has_camera_distance, double camera_distance,
@@ -1548,7 +1550,7 @@ private:
     void reload_model_preview();
     void start_scene_preview();
     void stop_scene_preview();
-    void rebuild_scene_preview(bool preserve_loaded_models = false, bool preserve_camera = false);
+    double rebuild_scene_preview(bool preserve_loaded_models = false, bool preserve_camera = false);
     void finish_pending_scene_preview_load_timing();
     void reload_scene_preview_models();
     void sync_scene_preview_track_visibility();

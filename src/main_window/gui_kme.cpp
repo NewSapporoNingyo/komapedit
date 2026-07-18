@@ -550,7 +550,7 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     kv_set_log_callback(&App::log_callback);
     model_preview_canvas_ = std::make_unique<Canvas3D>(device_);
     model_preview_canvas_->set_background_color(model_preview_bg_color_);
-    scene_preview_canvas_ = std::make_unique<Canvas3D>(device_);
+    scene_preview_canvas_ = std::make_unique<Canvas3D>(device_, wake_main_window);
     scene_preview_canvas_->set_background_color(ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
     lang_ = settings_.language;
     font_size_ = clamp_font_size(settings_.font_size);
@@ -4655,10 +4655,10 @@ void App::stop_scene_preview() {
     add_log("[INFO]3D scene preview stopped");
 }
 
-void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camera) {
+double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camera) {
     if (!scene_preview_canvas_ || !scene_preview_started_) {
         pending_scene_preview_started_at_.reset();
-        return;
+        return 0.0;
     }
     if (!has_model_ || model_.own.empty()) {
         scene_preview_canvas_->clear_scene();
@@ -4667,7 +4667,7 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
         scene_preview_preserve_camera_on_rebuild_ = false;
         pending_scene_preview_started_at_.reset();
         add_log("[warn]gui_kme.cpp: 3D scene preview has no map geometry loaded");
-        return;
+        return 0.0;
     }
     add_log(preserve_loaded_models
                 ? "[info]gui_kme.cpp: reloading 3D scene preview track geometry with preserved models"
@@ -4681,7 +4681,10 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
     options.control_point_interval = cp_interval_;
     options.station_index = station_jump_index_;
     options.show_own_track_markers = show_scene_owntrack_markers_;
+    const auto scene_build_started_at = std::chrono::steady_clock::now();
     Canvas3DSceneBuildResult build_result = build_canvas3d_scene_preview(options);
+    const double scene_build_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - scene_build_started_at).count();
     for (const std::string& message : build_result.log_messages) add_log(message);
 
     size_t track_point_count = 0;
@@ -4702,12 +4705,19 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
         scene_preview_preserve_models_on_rebuild_ = false;
         scene_preview_preserve_camera_on_rebuild_ = false;
         pending_scene_preview_started_at_.reset();
-        return;
+        return scene_build_seconds;
     }
+    Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
+    std::ostringstream stage_timing;
+    stage_timing << std::fixed << std::setprecision(3)
+                 << "[info]gui_kme.cpp: 3D scene preview stage timing: scene_build="
+                 << scene_build_seconds << " s track_gpu_setup="
+                 << stats.track_gpu_setup_seconds << " s model_queue="
+                 << stats.model_queue_seconds << " s";
+    add_log(stage_timing.str());
     scene_preview_dirty_ = false;
     scene_preview_preserve_models_on_rebuild_ = false;
     scene_preview_preserve_camera_on_rebuild_ = false;
-    Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
     if (preserve_loaded_models) {
         add_log("[info]gui_kme.cpp: 3D scene preview line geometry reloaded: models_preserved=" +
                 std::to_string(stats.model_ready_count) +
@@ -4719,6 +4729,7 @@ void App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_camer
     add_log("[info]gui_kme.cpp: 3D scene preview started: chunks=" + std::to_string(stats.chunk_count) +
             " instances=" + std::to_string(stats.instance_count) +
             " models=" + std::to_string(stats.model_path_count));
+    return scene_build_seconds;
 }
 
 void App::finish_pending_scene_preview_load_timing() {
@@ -4760,6 +4771,7 @@ void App::sync_scene_preview_track_visibility() {
 }
 
 void App::render_scene_preview_window() {
+    if (scene_preview_canvas_) scene_preview_canvas_->process_scene_loading();
     auto drain_scene_preview_logs = [this]() {
         if (!scene_preview_canvas_) return;
         for (std::string& message : scene_preview_canvas_->drain_scene_load_messages()) {
@@ -5165,13 +5177,17 @@ int main(int, char**) {
             std::cerr << scene3d_bench.error << "\n"
                       << "usage: komapedit.exe --debug-headless-scene3d-bench <map-path> "
                       << "[--frames N] [--unit-distance M] [--max-frame-ms MS] "
-                      << "[--window-back-m M] [--window-forward-m M] [--headless-output FILE]\n";
+                      << "[--window-back-m M] [--window-forward-m M] "
+                      << "[--scene-model-workers N] [--disable-scene-texture-cache] "
+                      << "[--headless-output FILE]\n";
             return 1;
         }
         return App::run_debug_headless_scene3d_benchmark(scene3d_bench.path, scene3d_bench.frames,
                                                          scene3d_bench.unit_distance, scene3d_bench.max_frame_ms,
                                                          scene3d_bench.window_back_m,
                                                          scene3d_bench.window_forward_m,
+                                                         scene3d_bench.scene_model_workers,
+                                                         scene3d_bench.disable_scene_texture_cache,
                                                          scene3d_bench.output_path);
     }
 

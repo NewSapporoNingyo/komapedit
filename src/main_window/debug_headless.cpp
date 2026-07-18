@@ -54,6 +54,25 @@ void release_com(T*& p) {
     }
 }
 
+class ScopedComApartment {
+public:
+    ScopedComApartment() : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {
+        should_uninitialize_ = SUCCEEDED(result_);
+    }
+
+    ~ScopedComApartment() {
+        if (should_uninitialize_) CoUninitialize();
+    }
+
+    bool ready() const {
+        return SUCCEEDED(result_) || result_ == RPC_E_CHANGED_MODE;
+    }
+
+private:
+    HRESULT result_ = E_FAIL;
+    bool should_uninitialize_ = false;
+};
+
 std::vector<std::string> command_line_args_utf8() {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -339,6 +358,12 @@ HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const s
                                      [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
+        } else if (arg == "--scene-model-workers") {
+            if (!parse_integer_option(args, i, arg, 1, 8,
+                                      "--scene-model-workers must be between 1 and 8",
+                                      options.scene_model_workers, options.error)) return options;
+        } else if (arg == "--disable-scene-texture-cache") {
+            options.disable_scene_texture_cache = true;
         } else if (arg == "--headless-output") {
             const std::string* value = take_option_value(args, i, arg, "a path", options.error);
             if (!value) return options;
@@ -3230,7 +3255,14 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
 int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
                                               double unit_distance, double max_frame_ms,
                                               double window_back_m, double window_forward_m,
+                                              int scene_model_workers,
+                                              bool disable_scene_texture_cache,
                                               const std::string& output_path) {
+    ScopedComApartment com_apartment;
+    if (!com_apartment.ready()) {
+        std::cerr << "debug headless scene3d benchmark failed: COM initialization\n";
+        return 6;
+    }
     std::ofstream output_file;
     std::ostream* out = &std::cout;
     if (!output_path.empty()) {
@@ -3248,7 +3280,9 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
          << " unit_distance=" << format_double(unit_distance, 3)
          << " max_frame_ms=" << format_double(max_frame_ms, 3)
          << " window_back_m=" << format_double(window_back_m, 3)
-         << " window_forward_m=" << format_double(window_forward_m, 3) << "\n";
+         << " window_forward_m=" << format_double(window_forward_m, 3)
+         << " scene_model_workers=" << scene_model_workers
+         << " texture_cache=" << (disable_scene_texture_cache ? "disabled" : "enabled") << "\n";
     *out << "stage=d3d-create-start\n";
     out->flush();
 
@@ -3302,7 +3336,11 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         app.reset_marker_visibility();
         app.scene_preview_started_ = true;
         app.scene_preview_canvas_->set_scene_window(window_back_m, window_forward_m);
-        app.rebuild_scene_preview();
+        app.scene_preview_canvas_->set_debug_scene_loading_tuning(
+            static_cast<size_t>(std::max(scene_model_workers, 0)),
+            !disable_scene_texture_cache);
+        const auto preview_load_started_at = std::chrono::steady_clock::now();
+        const double scene_build_seconds = app.rebuild_scene_preview();
         Canvas3DSceneStats initial_stats = app.scene_preview_canvas_->scene_stats();
         *out << "stage=scene-ready"
              << " chunks=" << initial_stats.chunk_count
@@ -3329,15 +3367,31 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
 
         *out << "stage=warmup-start\n";
         out->flush();
+        constexpr auto kSceneLoadTimeout = std::chrono::seconds(120);
         int warmup_frames = 0;
-        for (; warmup_frames < 900; ++warmup_frames) {
+        bool load_completed = false;
+        auto preview_load_finished_at = std::chrono::steady_clock::now();
+        for (;; ++warmup_frames) {
             render_frame();
             Canvas3DSceneStats stats = app.scene_preview_canvas_->scene_stats();
-            if (!stats.loading && stats.model_ready_count + stats.model_failed_count >= stats.model_path_count) break;
+            if (!stats.loading && stats.model_ready_count + stats.model_failed_count >= stats.model_path_count) {
+                load_completed = true;
+                preview_load_finished_at = std::chrono::steady_clock::now();
+                break;
+            }
+            if (std::chrono::steady_clock::now() - preview_load_started_at >= kSceneLoadTimeout) {
+                preview_load_finished_at = std::chrono::steady_clock::now();
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         for (int i = 0; i < 5; ++i) render_frame();
         Canvas3DSceneStats warmed_stats = app.scene_preview_canvas_->scene_stats();
+        const double scene_build_ms = scene_build_seconds * 1000.0;
+        const double preview_load_ms = std::chrono::duration<double, std::milli>(
+            preview_load_finished_at - preview_load_started_at).count();
+        const bool terminal_model_state =
+            warmed_stats.model_ready_count + warmed_stats.model_failed_count >= warmed_stats.model_path_count;
         *out << "stage=warmup-complete"
              << " warmup_frames=" << warmup_frames
              << " model_ready=" << warmed_stats.model_ready_count
@@ -3345,6 +3399,20 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
              << " model_total=" << warmed_stats.model_path_count
              << " drawn_instances=" << warmed_stats.drawn_instance_count
              << " drawn_track_chunks=" << warmed_stats.drawn_track_chunk_count << "\n";
+        *out << std::fixed << std::setprecision(3)
+             << "scene3d_load scene_build_ms=" << scene_build_ms
+             << " track_gpu_ms=" << warmed_stats.track_gpu_setup_seconds * 1000.0
+             << " model_queue_ms=" << warmed_stats.model_queue_seconds * 1000.0
+             << " model_load_ms=" << warmed_stats.model_load_seconds * 1000.0
+             << " preview_load_ms=" << preview_load_ms
+             << " wait_frames=" << warmup_frames
+             << " worker_count=" << warmed_stats.model_worker_count
+             << " texture_cache_hits=" << warmed_stats.texture_cache_hit_count
+             << " texture_cache_misses=" << warmed_stats.texture_cache_miss_count
+             << " model_ready=" << warmed_stats.model_ready_count
+             << " model_failed=" << warmed_stats.model_failed_count
+             << " model_total=" << warmed_stats.model_path_count
+             << " result=" << (load_completed && terminal_model_state ? "PASS" : "TIMEOUT") << "\n";
         out->flush();
 
         std::vector<double> frame_ms;
@@ -3359,7 +3427,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         out->flush();
 
         const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
-        bool pass = timing.p95_ms <= max_frame_ms;
+        bool pass = load_completed && terminal_model_state && timing.p95_ms <= max_frame_ms;
         Canvas3DSceneStats final_stats = app.scene_preview_canvas_->scene_stats();
 
         *out << std::fixed << std::setprecision(3)

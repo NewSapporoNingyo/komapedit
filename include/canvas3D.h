@@ -172,6 +172,12 @@ struct Canvas3DSceneStats {
     size_t instance_count = 0;
     size_t drawn_instance_count = 0;
     size_t drawn_track_chunk_count = 0;
+    size_t model_worker_count = 0;
+    size_t texture_cache_hit_count = 0;
+    size_t texture_cache_miss_count = 0;
+    double track_gpu_setup_seconds = 0.0;
+    double model_queue_seconds = 0.0;
+    double model_load_seconds = 0.0;
     double camera_distance = 0.0;
     double window_back_m = 100.0;
     double window_forward_m = 1200.0;
@@ -270,6 +276,8 @@ struct Canvas3DSceneFrameResult {
     std::optional<Canvas3DStructureDragUpdate> structure_drag;
 };
 
+using Canvas3DWakeCallback = void (*)();
+
 Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOptions& options);
 std::vector<Canvas3DTrackVisibility> build_canvas3d_scene_track_visibility(
     const MapModel& model,
@@ -277,7 +285,7 @@ std::vector<Canvas3DTrackVisibility> build_canvas3d_scene_track_visibility(
 
 class Canvas3D {
 public:
-    explicit Canvas3D(ID3D11Device* device);
+    explicit Canvas3D(ID3D11Device* device, Canvas3DWakeCallback wake_callback = nullptr);
     ~Canvas3D();
 
     Canvas3D(const Canvas3D&) = delete;
@@ -306,6 +314,10 @@ public:
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
     Canvas3DSceneInteractionMode scene_interaction_mode() const;
     Canvas3DSceneStats scene_stats() const;
+    void process_scene_loading();
+#ifndef NDEBUG
+    void set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled);
+#endif
     std::vector<std::string> drain_scene_load_messages();
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);

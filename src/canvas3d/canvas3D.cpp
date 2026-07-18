@@ -72,6 +72,7 @@ constexpr float kSceneGizmoArrowLengthPx = 11.0f;
 constexpr float kSceneGizmoArrowHalfWidthPx = 5.5f;
 constexpr float kSceneGizmoCenterRadiusPx = 4.0f;
 constexpr double kSceneRouteDisplayZeroEpsilon = 0.0000005;
+constexpr size_t kSceneModelMaxWorkers = 8;
 
 enum class SceneOverlayCorner {
     TopLeft,
@@ -476,6 +477,11 @@ struct GpuMaterial {
     float diffuse[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool has_texture = false;
     bool texture_has_alpha = false;
+};
+
+struct SceneTextureCacheEntry {
+    ID3D11ShaderResourceView* texture = nullptr;
+    bool has_alpha = false;
 };
 
 struct CpuMaterial {
@@ -926,6 +932,29 @@ std::optional<Canvas3DTrackPoint> scene_sample_track_path_points(const Canvas3DT
     out.gradient = a.gradient + (b.gradient - a.gradient) * t;
     out.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
     return out;
+}
+
+std::string normalized_texture_cache_key(const std::string& path) {
+    try {
+        std::filesystem::path normalized = utf8_to_wide_local(path);
+        std::error_code ec;
+        if (normalized.is_relative()) {
+            std::filesystem::path absolute = std::filesystem::absolute(normalized, ec);
+            if (!ec) normalized = std::move(absolute);
+        }
+        std::string key = wide_to_utf8_local(normalized.lexically_normal().wstring());
+        return key.empty() ? path : key;
+    } catch (...) {
+        return path;
+    }
+}
+
+size_t scene_model_worker_count_for(size_t source_count) {
+    if (source_count == 0) return 0;
+    size_t available = std::thread::hardware_concurrency();
+    if (available == 0) available = 4;
+    if (available > 2) --available;
+    return std::max<size_t>(1, std::min({source_count, available, kSceneModelMaxWorkers}));
 }
 
 const Canvas3DTrackPath* scene_own_track_path(const Canvas3DScene& scene) {
@@ -1682,6 +1711,10 @@ public:
     // CRT/DLL teardown can leave stale cleanup callbacks in some dependency builds.
     ~ModelLoaderClient() = default;
 
+    bool prepare(std::string& error) {
+        return ensure_loaded(error);
+    }
+
     bool load(const std::string& path, MlMeshData& data, std::string& error) {
         if (!ensure_loaded(error)) return false;
         if (!load_model_(path.c_str(), &data)) {
@@ -1811,7 +1844,8 @@ std::vector<Canvas3DTrackVisibility> build_canvas3d_scene_track_visibility(
 }
 
 struct Canvas3D::Impl {
-    explicit Impl(ID3D11Device* device) : device(device) {
+    explicit Impl(ID3D11Device* device, Canvas3DWakeCallback wake_callback)
+        : wake_callback(wake_callback), device(device) {
         if (device) {
             device->AddRef();
             device->GetImmediateContext(&context);
@@ -2002,6 +2036,7 @@ struct Canvas3D::Impl {
             clear_pending_scene_model_uploads();
             scene_last_error.clear();
             scene_stats_value = {};
+            scene_model_worker_count_value.store(0);
             scene_load_summary_pending = false;
         } else {
             release_scene_resources();
@@ -2035,12 +2070,16 @@ struct Canvas3D::Impl {
         }
         scene_active = true;
 
+        const auto track_gpu_setup_started_at = std::chrono::steady_clock::now();
         build_scene_chunks();
         if (!build_scene_track_chunks(error)) {
             clear_scene();
             return false;
         }
+        scene_stats_value.track_gpu_setup_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - track_gpu_setup_started_at).count();
 
+        const auto model_queue_started_at = std::chrono::steady_clock::now();
         std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
         std::vector<SceneModelLoadRequest> requests_to_load;
         requests_to_load.reserve(requests.size());
@@ -2075,6 +2114,8 @@ struct Canvas3D::Impl {
         scene_stats_value.camera_distance = scene_camera_distance;
         reset_scene_fps_counter();
         start_scene_model_worker(std::move(requests_to_load));
+        scene_stats_value.model_queue_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - model_queue_started_at).count();
         return true;
     }
 
@@ -2216,6 +2257,7 @@ struct Canvas3D::Impl {
         scene_hover_highlight_batch.clear();
         clear_scene_focus_highlight();
         scene_stats_value = {};
+        scene_model_worker_count_value.store(0);
         reset_scene_fps_counter();
     }
 
@@ -2239,6 +2281,7 @@ struct Canvas3D::Impl {
             auto request_it = requests.find(kv.first);
             if (request_it != requests.end()) requests_to_load.push_back(request_it->second);
         }
+        release_scene_texture_cache();
         scene_last_error.clear();
         scene_stats_value.model_path_count = scene_models.size();
         scene_load_summary_pending = false;
@@ -2304,6 +2347,7 @@ struct Canvas3D::Impl {
         stats.chunk_count = scene_chunks.size();
         stats.model_path_count = scene_models.size();
         stats.instance_count = scene_stats_value.instance_count;
+        stats.model_worker_count = scene_model_worker_count_value.load();
         stats.window_back_m = scene_window_back_m;
         stats.window_forward_m = scene_window_forward_m;
         stats.model_ready_count = 0;
@@ -2919,6 +2963,43 @@ fail:
         return false;
     }
 
+    bool load_scene_texture(const std::string& path,
+                            ID3D11ShaderResourceView** out_srv,
+                            std::string& error,
+                            bool* out_has_alpha = nullptr) {
+        if (!scene_texture_cache_enabled) return load_texture(path, out_srv, error, out_has_alpha);
+        if (!out_srv) return false;
+        *out_srv = nullptr;
+        if (out_has_alpha) *out_has_alpha = false;
+
+        const std::string key = normalized_texture_cache_key(path);
+        auto cached = scene_texture_cache.find(key);
+        if (cached != scene_texture_cache.end() && cached->second.texture) {
+            cached->second.texture->AddRef();
+            *out_srv = cached->second.texture;
+            if (out_has_alpha) *out_has_alpha = cached->second.has_alpha;
+            ++scene_stats_value.texture_cache_hit_count;
+            return true;
+        }
+
+        ++scene_stats_value.texture_cache_miss_count;
+        bool has_alpha = false;
+        if (!load_texture(path, out_srv, error, &has_alpha)) return false;
+
+        SceneTextureCacheEntry entry;
+        entry.texture = *out_srv;
+        entry.has_alpha = has_alpha;
+        entry.texture->AddRef();
+        scene_texture_cache.emplace(key, entry);
+        if (out_has_alpha) *out_has_alpha = has_alpha;
+        return true;
+    }
+
+    void release_scene_texture_cache() {
+        for (auto& entry : scene_texture_cache) release_com(entry.second.texture);
+        scene_texture_cache.clear();
+    }
+
     void release_scene_model(SceneModelGpu& model) {
         for (GpuMaterial& material : model.materials) {
             release_com(material.texture);
@@ -2956,14 +3037,33 @@ fail:
         scene_track_chunks.clear();
     }
 
+    void notify_scene_loading_progress() {
+        if (!wake_callback) return;
+        bool expected = false;
+        if (scene_wake_pending.compare_exchange_strong(expected, true)) wake_callback();
+    }
+
+    void queue_scene_model_uploads(std::vector<CpuModelData> outputs) {
+        if (outputs.empty()) return;
+        {
+            std::lock_guard<std::mutex> lock(scene_upload_mutex);
+            for (CpuModelData& output : outputs) {
+                scene_pending_uploads.push_back(std::move(output));
+            }
+        }
+        notify_scene_loading_progress();
+    }
+
     void clear_pending_scene_model_uploads() {
         std::lock_guard<std::mutex> lock(scene_upload_mutex);
         scene_pending_uploads.clear();
+        scene_wake_pending.store(false);
     }
 
     void release_scene_resources() {
         for (auto& kv : scene_models) release_scene_model(kv.second);
         scene_models.clear();
+        release_scene_texture_cache();
         release_scene_track_chunks();
         scene_chunks.clear();
         scene_structure_locations.clear();
@@ -2971,7 +3071,9 @@ fail:
         clear_pending_scene_model_uploads();
         scene_last_error.clear();
         scene_stats_value = {};
+        scene_model_worker_count_value.store(0);
         scene_load_summary_pending = false;
+        scene_model_load_timer_active = false;
     }
 
     void stop_scene_loader() {
@@ -3042,90 +3144,179 @@ fail:
             requests_by_source[request.source_path].push_back(std::move(request));
         }
         if (requests_by_source.empty()) return;
-        scene_load_summary_pending = true;
-        scene_worker_running.store(true);
-        scene_worker = std::thread([this, requests_by_source = std::move(requests_by_source)]() mutable {
-            size_t source_index = 0;
-            for (auto& source_entry : requests_by_source) {
-                const std::string& path = source_entry.first;
-                std::vector<SceneModelLoadRequest>& source_requests = source_entry.second;
-                if (scene_cancel.load()) break;
-                const std::string progress = std::to_string(++source_index) + "/" +
-                    std::to_string(requests_by_source.size());
-                CpuModelData source_cpu;
-                source_cpu.path = path;
-                source_cpu.scene_key = path;
-                MlMeshData data = {};
-                std::string error;
-                if (scene_loader.load(path, data, error)) {
-                    source_cpu = copy_cpu_model(path, data);
-                    scene_loader.free_model(data);
-                    if (!source_cpu.ok) {
-                        push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
-                                            path + ": " + source_cpu.error);
-                    }
-                } else {
-                    source_cpu.error = error;
-                    push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
-                                        path + ": " + error);
-                }
-                if (scene_cancel.load()) break;
 
-                std::vector<CpuModelData> outputs;
-                outputs.reserve(source_requests.size());
-                if (!source_cpu.ok) {
-                    for (const SceneModelLoadRequest& request : source_requests) {
-                        CpuModelData failed;
-                        failed.path = path;
-                        failed.scene_key = request.key;
-                        failed.error = source_cpu.error;
-                        outputs.push_back(std::move(failed));
-                    }
-                } else {
-                    const SceneModelLoadRequest* regular_request = nullptr;
-                    std::vector<CpuModelData> derived_models;
-                    derived_models.reserve(source_requests.size());
-                    for (const SceneModelLoadRequest& request : source_requests) {
-                        if (!request.put_between.enabled) {
-                            regular_request = &request;
-                            continue;
+        using SceneModelRequestGroup = std::pair<std::string, std::vector<SceneModelLoadRequest>>;
+        std::vector<SceneModelRequestGroup> request_groups;
+        request_groups.reserve(requests_by_source.size());
+        for (auto& entry : requests_by_source) {
+            request_groups.emplace_back(entry.first, std::move(entry.second));
+        }
+
+        scene_load_summary_pending = true;
+        scene_model_load_started_at = std::chrono::steady_clock::now();
+        scene_model_load_timer_active = true;
+        scene_stats_value.model_load_seconds = 0.0;
+        scene_stats_value.model_worker_count = scene_model_worker_count_for(request_groups.size());
+        if (scene_model_worker_limit > 0) {
+            scene_stats_value.model_worker_count = std::min(
+                scene_stats_value.model_worker_count,
+                std::max<size_t>(1, scene_model_worker_limit));
+        }
+        scene_model_worker_count_value.store(scene_stats_value.model_worker_count);
+        scene_stats_value.texture_cache_hit_count = 0;
+        scene_stats_value.texture_cache_miss_count = 0;
+        scene_worker_running.store(true);
+        try {
+            const size_t requested_worker_count = scene_stats_value.model_worker_count;
+            scene_worker = std::thread(
+                [this, request_groups = std::move(request_groups), requested_worker_count]() mutable {
+                    std::string loader_error;
+                    if (!scene_loader.prepare(loader_error)) {
+                        push_scene_load_log("[warn]canvas3D.cpp: scene model loader initialization failed: " +
+                                            loader_error);
+                        if (!scene_cancel.load()) {
+                            for (const SceneModelRequestGroup& group : request_groups) {
+                                std::vector<CpuModelData> outputs;
+                                outputs.reserve(group.second.size());
+                                for (const SceneModelLoadRequest& request : group.second) {
+                                    CpuModelData failed;
+                                    failed.path = group.first;
+                                    failed.scene_key = request.key;
+                                    failed.error = loader_error;
+                                    outputs.push_back(std::move(failed));
+                                }
+                                queue_scene_model_uploads(std::move(outputs));
+                            }
                         }
-                        CpuModelData derived = derive_put_between_model(source_cpu, request);
-                        if (!derived.ok) {
-                            push_scene_load_log("[warn]canvas3D.cpp: failed to deform PutBetween model: " +
-                                                path + ": " + derived.error);
+                        scene_model_worker_count_value.store(1);
+                        scene_worker_running.store(false);
+                        notify_scene_loading_progress();
+                        return;
+                    }
+
+                    std::atomic<size_t> next_group{0};
+                    auto process_groups = [this, &request_groups, &next_group]() {
+                        while (!scene_cancel.load()) {
+                            const size_t group_index = next_group.fetch_add(1);
+                            if (group_index >= request_groups.size()) return;
+
+                            SceneModelRequestGroup& group = request_groups[group_index];
+                            const std::string& path = group.first;
+                            std::vector<SceneModelLoadRequest>& source_requests = group.second;
+                            const std::string progress = std::to_string(group_index + 1) + "/" +
+                                std::to_string(request_groups.size());
+                            CpuModelData source_cpu;
+                            source_cpu.path = path;
+                            source_cpu.scene_key = path;
+                            MlMeshData data = {};
+                            std::string error;
+                            if (scene_loader.load(path, data, error)) {
+                                source_cpu = copy_cpu_model(path, data);
+                                scene_loader.free_model(data);
+                                if (!source_cpu.ok) {
+                                    push_scene_load_log(
+                                        "[warn]canvas3D.cpp: failed to read scene model " + progress + ": " +
+                                        path + ": " + source_cpu.error);
+                                }
+                            } else {
+                                source_cpu.error = error;
+                                push_scene_load_log("[warn]canvas3D.cpp: failed to read scene model " + progress +
+                                                    ": " + path + ": " + error);
+                            }
+                            if (scene_cancel.load()) return;
+
+                            std::vector<CpuModelData> outputs;
+                            outputs.reserve(source_requests.size());
+                            if (!source_cpu.ok) {
+                                for (const SceneModelLoadRequest& request : source_requests) {
+                                    CpuModelData failed;
+                                    failed.path = path;
+                                    failed.scene_key = request.key;
+                                    failed.error = source_cpu.error;
+                                    outputs.push_back(std::move(failed));
+                                }
+                            } else {
+                                const SceneModelLoadRequest* regular_request = nullptr;
+                                std::vector<CpuModelData> derived_models;
+                                derived_models.reserve(source_requests.size());
+                                for (const SceneModelLoadRequest& request : source_requests) {
+                                    if (!request.put_between.enabled) {
+                                        regular_request = &request;
+                                        continue;
+                                    }
+                                    CpuModelData derived = derive_put_between_model(source_cpu, request);
+                                    if (!derived.ok) {
+                                        push_scene_load_log(
+                                            "[warn]canvas3D.cpp: failed to deform PutBetween model: " + path +
+                                            ": " + derived.error);
+                                    }
+                                    derived_models.push_back(std::move(derived));
+                                    if (scene_cancel.load()) return;
+                                }
+                                if (regular_request) {
+                                    source_cpu.scene_key = regular_request->key;
+                                    outputs.push_back(std::move(source_cpu));
+                                }
+                                for (CpuModelData& derived : derived_models) {
+                                    outputs.push_back(std::move(derived));
+                                }
+                            }
+                            queue_scene_model_uploads(std::move(outputs));
                         }
-                        derived_models.push_back(std::move(derived));
-                        if (scene_cancel.load()) break;
+                    };
+
+                    std::vector<std::thread> helpers;
+                    helpers.reserve(requested_worker_count > 0 ? requested_worker_count - 1 : 0);
+                    for (size_t worker = 1; worker < requested_worker_count; ++worker) {
+                        try {
+                            helpers.emplace_back(process_groups);
+                        } catch (const std::exception& e) {
+                            push_scene_load_log(
+                                "[warn]canvas3D.cpp: scene model worker count reduced: " + std::string(e.what()));
+                            break;
+                        }
                     }
-                    if (scene_cancel.load()) break;
-                    if (regular_request) {
-                        source_cpu.scene_key = regular_request->key;
-                        outputs.push_back(std::move(source_cpu));
-                    }
-                    for (CpuModelData& derived : derived_models) {
-                        outputs.push_back(std::move(derived));
-                    }
-                }
-                {
-                    std::lock_guard<std::mutex> lock(scene_upload_mutex);
-                    for (CpuModelData& output : outputs) {
-                        scene_pending_uploads.push_back(std::move(output));
-                    }
-                }
+                    scene_model_worker_count_value.store(helpers.size() + 1);
+                    process_groups();
+                    for (std::thread& helper : helpers) helper.join();
+                    scene_worker_running.store(false);
+                    notify_scene_loading_progress();
+                });
+        } catch (const std::exception& e) {
+            const std::string error = "failed to start scene model worker: " + std::string(e.what());
+            for (auto& entry : scene_models) {
+                if (entry.second.state != SceneModelGpu::State::Pending) continue;
+                entry.second.state = SceneModelGpu::State::Failed;
+                entry.second.error = error;
             }
+            scene_model_worker_count_value.store(0);
             scene_worker_running.store(false);
-        });
+            push_scene_load_log("[warn]canvas3D.cpp: " + error);
+            notify_scene_loading_progress();
+        }
     }
 
     void maybe_log_scene_model_load_summary() {
         if (!scene_load_summary_pending || scene_worker_running.load()) return;
         Canvas3DSceneStats stats = scene_stats();
         if (stats.model_ready_count + stats.model_failed_count < stats.model_path_count) return;
-        push_scene_load_log("[info]canvas3D.cpp: scene model loading finished: loaded=" +
+        if (scene_model_load_timer_active) {
+            scene_stats_value.model_load_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - scene_model_load_started_at).count();
+            scene_model_load_timer_active = false;
+            stats.model_load_seconds = scene_stats_value.model_load_seconds;
+        }
+        char elapsed[64] = {};
+        std::snprintf(elapsed, sizeof(elapsed), "%.3f", stats.model_load_seconds);
+        push_scene_load_log("[info]canvas3D.cpp: scene model loading finished in " +
+                            std::string(elapsed) + " s: workers=" +
+                            std::to_string(stats.model_worker_count) +
+                            " loaded=" +
                             std::to_string(stats.model_ready_count) +
                             " failed=" + std::to_string(stats.model_failed_count) +
-                            " total=" + std::to_string(stats.model_path_count));
+                            " total=" + std::to_string(stats.model_path_count) +
+                            " texture_cache_hits=" + std::to_string(stats.texture_cache_hit_count) +
+                            " texture_cache_misses=" + std::to_string(stats.texture_cache_miss_count));
         scene_load_summary_pending = false;
     }
 
@@ -3206,7 +3397,8 @@ fail:
                 if (!src->texture_path.empty()) {
                     std::string texture_error;
                     bool texture_has_alpha = false;
-                    if (load_texture(src->texture_path, &model.materials[i].texture, texture_error, &texture_has_alpha)) {
+                    if (load_scene_texture(src->texture_path, &model.materials[i].texture,
+                                           texture_error, &texture_has_alpha)) {
                         model.materials[i].has_texture = true;
                         model.materials[i].texture_has_alpha = texture_has_alpha;
                     } else if (scene_last_error.empty()) {
@@ -3226,6 +3418,7 @@ fail:
     }
 
     void upload_pending_scene_models() {
+        scene_wake_pending.store(false);
         std::vector<CpuModelData> pending;
         {
             std::lock_guard<std::mutex> lock(scene_upload_mutex);
@@ -5772,6 +5965,7 @@ fail:
         render_height = 0;
     }
 
+    Canvas3DWakeCallback wake_callback = nullptr;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
     ID3D11Texture2D* render_texture = nullptr;
@@ -5833,14 +6027,21 @@ fail:
     float scene_edit_component_scale = 1.0f;
     std::vector<SceneTrackChunkGpu> scene_track_chunks;
     std::map<std::string, SceneModelGpu> scene_models;
+    std::unordered_map<std::string, SceneTextureCacheEntry> scene_texture_cache;
+    size_t scene_model_worker_limit = 0;
+    bool scene_texture_cache_enabled = true;
     std::mutex scene_upload_mutex;
     std::vector<CpuModelData> scene_pending_uploads;
+    std::atomic<bool> scene_wake_pending{false};
     std::mutex scene_log_mutex;
     std::vector<std::string> scene_pending_logs;
     bool scene_load_summary_pending = false;
+    std::chrono::steady_clock::time_point scene_model_load_started_at{};
+    bool scene_model_load_timer_active = false;
     std::thread scene_worker;
     std::atomic<bool> scene_cancel{false};
     std::atomic<bool> scene_worker_running{false};
+    std::atomic<size_t> scene_model_worker_count_value{0};
     DVec3 scene_camera_pos;
     float scene_camera_yaw = 0.0f;
     float scene_camera_pitch = 0.0f;
@@ -5878,7 +6079,8 @@ fail:
     ModelLoaderClient scene_loader;
 };
 
-Canvas3D::Canvas3D(ID3D11Device* device) : impl_(std::make_unique<Impl>(device)) {
+Canvas3D::Canvas3D(ID3D11Device* device, Canvas3DWakeCallback wake_callback)
+    : impl_(std::make_unique<Impl>(device, wake_callback)) {
 }
 
 Canvas3D::~Canvas3D() = default;
@@ -5964,6 +6166,17 @@ Canvas3DSceneInteractionMode Canvas3D::scene_interaction_mode() const {
 Canvas3DSceneStats Canvas3D::scene_stats() const {
     return impl_->scene_stats();
 }
+
+void Canvas3D::process_scene_loading() {
+    impl_->upload_pending_scene_models();
+}
+
+#ifndef NDEBUG
+void Canvas3D::set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled) {
+    impl_->scene_model_worker_limit = worker_limit;
+    impl_->scene_texture_cache_enabled = texture_cache_enabled;
+}
+#endif
 
 std::vector<std::string> Canvas3D::drain_scene_load_messages() {
     return impl_->drain_scene_load_messages();

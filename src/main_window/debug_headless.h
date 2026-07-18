@@ -42,6 +42,8 @@ struct HeadlessScene3DBenchmarkOptions {
     double max_frame_ms = 16.667;
     double window_back_m = 100.0;
     double window_forward_m = 1200.0;
+    int scene_model_workers = 0;
+    bool disable_scene_texture_cache = false;
     std::string error;
 };
 
