@@ -108,7 +108,6 @@ private:
 std::string ascii_lower(std::string s);
 std::string trim_copy(const std::string& s);
 std::string trim_field_copy(const std::string& s);
-bool ascii_ieq(const std::string& a, const std::string& b);
 std::string canonical_number(double value);
 std::uint64_t stable_hash64(const std::string& text);
 std::string hex64(std::uint64_t value);

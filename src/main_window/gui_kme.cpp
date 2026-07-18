@@ -363,6 +363,20 @@ std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& node
 
 bool row_kind_has_source_distance_string(const std::string& row_kind);
 
+template <typename Snapshot>
+std::string typed_snapshot_string(const Snapshot& snapshot, KvStringRef ref) {
+    if (!snapshot.string_data || ref.offset > snapshot.string_size ||
+        ref.length > snapshot.string_size - ref.offset) {
+        return {};
+    }
+    return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
+                       static_cast<size_t>(ref.length));
+}
+
+bool typed_snapshot_span_valid(KvSpan span, std::uint64_t size) {
+    return span.offset <= size && span.count <= size - span.offset;
+}
+
 std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
     void* handle, const std::string& edit_id,
     const std::string& expected_row_kind,
@@ -387,16 +401,8 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
             target.structure_size < sizeof(KvEditTargetSnapshot)) {
             throw std::runtime_error("edit target snapshot version or size mismatch");
         }
-        auto text = [&](KvStringRef ref) {
-            if (!target.string_data || ref.offset > target.string_size ||
-                ref.length > target.string_size - ref.offset) {
-                return std::string{};
-            }
-            return std::string(target.string_data + static_cast<size_t>(ref.offset),
-                               static_cast<size_t>(ref.length));
-        };
         InspectorTargetMetadata info;
-        info.row_kind = text(target.row_kind);
+        info.row_kind = typed_snapshot_string(target, target.row_kind);
         if (!expected_row_kind.empty() && info.row_kind != expected_row_kind) {
             if (error_message) {
                 *error_message = "edit target row kind changed from " +
@@ -406,17 +412,17 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
         }
         info.row_index = static_cast<size_t>(target.row_index);
         info.elements_for_statement = static_cast<int>(target.elements_for_statement);
-        info.statement_kind = text(target.statement_kind);
-        info.source_hash = text(target.source_hash);
-        info.expected_source_hash = text(target.expected_source_hash);
-        info.source.file_path = text(target.source_file_path);
+        info.statement_kind = typed_snapshot_string(target, target.statement_kind);
+        info.source_hash = typed_snapshot_string(target, target.source_hash);
+        info.expected_source_hash = typed_snapshot_string(target, target.expected_source_hash);
+        info.source.file_path = typed_snapshot_string(target, target.source_file_path);
         info.source.line = target.source.line;
         info.source.column = target.source.column;
-        info.source.raw_text_preview = text(target.raw_text_preview);
-        info.raw_statement = text(target.raw_text);
-        info.raw_arguments = text(target.raw_arguments);
+        info.source.raw_text_preview = typed_snapshot_string(target, target.raw_text_preview);
+        info.raw_statement = typed_snapshot_string(target, target.raw_text);
+        info.raw_arguments = typed_snapshot_string(target, target.raw_arguments);
         if (row_kind_has_source_distance_string(info.row_kind)) {
-            info.source_distance_string = text(target.distance_expression);
+            info.source_distance_string = typed_snapshot_string(target, target.distance_expression);
         }
         info.distance_value = target.distance_value;
         return info;
@@ -448,16 +454,11 @@ ImVec4 other_track_palette_color(size_t index) {
 }
 
 std::string map_snapshot_string(const KvMapSnapshot& snapshot, KvStringRef ref) {
-    if (!snapshot.string_data || ref.offset > snapshot.string_size ||
-        ref.length > snapshot.string_size - ref.offset) {
-        return {};
-    }
-    return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
-                       static_cast<size_t>(ref.length));
+    return typed_snapshot_string(snapshot, ref);
 }
 
 bool map_snapshot_span_valid(KvSpan span, std::uint64_t size) {
-    return span.offset <= size && span.count <= size - span.offset;
+    return typed_snapshot_span_valid(span, size);
 }
 
 std::string map_snapshot_value_text(const KvMapSnapshot& snapshot, const KvValue& value) {
@@ -497,13 +498,8 @@ std::string map_snapshot_string_span_text(const KvMapSnapshot& snapshot, KvSpan 
 }
 
 void apply_map_row_metadata(TableRow& output, const KvMapSnapshot& snapshot,
-                            const KvRowMetadata& metadata,
-                            bool include_legacy_cells = true) {
+                            const KvRowMetadata& metadata) {
     output.edit_id = map_snapshot_string(snapshot, metadata.edit_id);
-    if (include_legacy_cells && !output.edit_id.empty()) {
-        output.cells["editId"] = output.edit_id;
-        output.cells["source"] = {};
-    }
     if (metadata.source_file_index < snapshot.source_file_count && snapshot.source_files) {
         output.source.file_path = map_snapshot_string(
             snapshot, snapshot.source_files[metadata.source_file_index].file_path);
@@ -818,7 +814,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
             }
         }
         row.cells["_structureKeyCount"] = std::to_string(input.structure_keys.count);
-        apply_map_row_metadata(row, snapshot, input.metadata, false);
+        apply_map_row_metadata(row, snapshot, input.metadata);
         model.signal_aspects.push_back(std::move(row));
     }
     model.signals.reserve(static_cast<size_t>(snapshot.signal_put_count));
@@ -1010,7 +1006,6 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
     model.buffer_copy_seconds = buffer_copy_seconds;
     model.snapshot_hydrate_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - hydrate_started_at).count();
-    model.model_hydrate_seconds = model.snapshot_hydrate_seconds;
     annotate_scene_track_key_warnings(model);
     return model;
 }
@@ -2490,16 +2485,11 @@ TypedEditBatchStorage typed_edit_batch(
 }
 
 std::string edit_report_string(const KvEditReportSnapshot& report, KvStringRef ref) {
-    if (!report.string_data || ref.offset > report.string_size ||
-        ref.length > report.string_size - ref.offset) {
-        return {};
-    }
-    return std::string(report.string_data + static_cast<size_t>(ref.offset),
-                       static_cast<size_t>(ref.length));
+    return typed_snapshot_string(report, ref);
 }
 
 bool edit_report_span_valid(KvSpan span, std::uint64_t size) {
-    return span.offset <= size && span.count <= size - span.offset;
+    return typed_snapshot_span_valid(span, size);
 }
 
 DistanceResolutionRequest distance_resolution_request_from_typed(

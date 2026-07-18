@@ -461,7 +461,6 @@ struct MapModel {
     double buffer_copy_seconds = 0.0;
     double snapshot_build_seconds = 0.0;
     double snapshot_hydrate_seconds = 0.0;
-    double model_hydrate_seconds = 0.0;
     bool has_cp_arb = false;
 };
 

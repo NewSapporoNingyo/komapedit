@@ -3424,7 +3424,7 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
         sample.model_seconds = result.model_build_seconds;
         sample.snapshot_build_seconds = result.model.snapshot_build_seconds;
         sample.snapshot_hydrate_seconds = result.model.snapshot_hydrate_seconds;
-        sample.hydrate_seconds = result.model.model_hydrate_seconds;
+        sample.hydrate_seconds = result.model.snapshot_hydrate_seconds;
         sample.buffer_copy_seconds = result.model.buffer_copy_seconds;
 
         app.model_ = std::move(result.model);

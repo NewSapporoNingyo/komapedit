@@ -74,10 +74,6 @@ std::string trim_field_copy(const std::string& s) {
     return s.substr(begin, end - begin);
 }
 
-bool ascii_ieq(const std::string& a, const std::string& b) {
-    return ascii_lower(a) == ascii_lower(b);
-}
-
 std::string canonical_number(double value) {
     if (std::isnan(value)) {
         return "null";
