@@ -693,11 +693,6 @@ bool is_scene_own_track_alias(const std::string& normalized_key) {
         normalized_key == "\\" || normalized_key == "own" || normalized_key == "main";
 }
 
-bool is_scene_own_track_placement_key(const std::string& normalized_key) {
-    // BVE Structure/Repeater placement uses empty trackKey or trackKey 0 for the own track.
-    return normalized_key.empty() || normalized_key == "0";
-}
-
 int scene_tilt_flags(double tilt) {
     if (!std::isfinite(tilt)) return 0;
     return static_cast<int>(tilt);
@@ -1015,7 +1010,7 @@ const Canvas3DTrackPath* scene_other_track_path_for_key(const Canvas3DScene& sce
 const Canvas3DTrackPath* scene_placement_track_path_for_key(const Canvas3DScene& scene,
                                                             const std::string& key) {
     const std::string normalized_key = normalize_scene_track_key(key);
-    if (is_scene_own_track_placement_key(normalized_key)) return scene_own_track_path(scene);
+    if (is_own_track_placement_key(normalized_key)) return scene_own_track_path(scene);
     if (const Canvas3DTrackPath* other =
             scene_other_track_path_for_key(scene, normalized_key)) {
         return other;

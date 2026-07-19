@@ -340,7 +340,9 @@ void App::rebuild_marker_overlay_cache() {
     auto sample_placement_track = [&](const std::string& key, double distance,
                                       double lateral, double forward) -> std::optional<TrackPoint> {
         const std::string normalized_key = normalize_track_lookup_key(key);
-        std::optional<TrackSource> source = find_track_source(normalized_key);
+        std::optional<TrackSource> source = is_own_track_placement_key(normalized_key)
+            ? std::optional<TrackSource>{own_source}
+            : find_track_source(normalized_key);
         if (!source) source = own_source;
         auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
         if (!sampled) return std::nullopt;
@@ -705,8 +707,12 @@ void App::rebuild_marker_overlay_cache() {
             next.lateral = table_cell_number(row, "x");
             next.forward = table_cell_number(row, "z");
             const std::string normalized_track_key = normalize_track_lookup_key(next.track_key);
-            next.own_track_alias = is_own_track_lookup_alias(normalized_track_key);
-            next.track_source = find_track_source(normalized_track_key);
+            const bool own_placement_key = is_own_track_placement_key(normalized_track_key);
+            next.own_track_alias = own_placement_key ||
+                is_own_track_lookup_alias(normalized_track_key);
+            next.track_source = own_placement_key
+                ? std::optional<TrackSource>{own_source}
+                : find_track_source(normalized_track_key);
             if (!next.track_source) {
                 next.track_source = own_source;
                 next.own_track_alias = true;

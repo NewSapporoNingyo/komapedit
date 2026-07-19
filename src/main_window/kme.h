@@ -90,6 +90,10 @@ inline bool is_own_track_lookup_alias(const std::string& normalized_key) {
     return false;
 }
 
+inline bool is_own_track_placement_key(const std::string& normalized_key) {
+    return normalized_key.empty() || normalized_key == "0" || normalized_key == "''";
+}
+
 struct CanvasLineWidthSettings {
     float own_track_px = kDefaultOwnTrackLineWidthPx;
     float other_track_px = kDefaultOtherTrackLineWidthPx;

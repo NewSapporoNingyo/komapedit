@@ -929,7 +929,7 @@ double table_cell_number(const TableRow& row, const std::string& key) {
 namespace {
 
 bool is_scene_table_own_track_key(const std::string& normalized_key) {
-    return normalized_key.empty() || normalized_key == "0";
+    return is_own_track_placement_key(normalized_key);
 }
 
 bool is_scene_table_track_key_valid(const std::string& raw_key,
