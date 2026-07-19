@@ -1012,6 +1012,17 @@ const Canvas3DTrackPath* scene_other_track_path_for_key(const Canvas3DScene& sce
     return nullptr;
 }
 
+const Canvas3DTrackPath* scene_placement_track_path_for_key(const Canvas3DScene& scene,
+                                                            const std::string& key) {
+    const std::string normalized_key = normalize_scene_track_key(key);
+    if (is_scene_own_track_placement_key(normalized_key)) return scene_own_track_path(scene);
+    if (const Canvas3DTrackPath* other =
+            scene_other_track_path_for_key(scene, normalized_key)) {
+        return other;
+    }
+    return scene_own_track_path(scene);
+}
+
 void append_scene_model_key_field(std::string& key, const std::string& value) {
     const size_t size = value.size();
     key.append(reinterpret_cast<const char*>(&size), sizeof(size));
@@ -1339,14 +1350,8 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
     scene.max_distance = own_path->points.back().distance;
 
     auto sample_placement_track = [&](const std::string& key, double distance) -> std::optional<Canvas3DTrackPoint> {
-        std::string normalized_key = normalize_scene_track_key(key);
-        if (is_scene_own_track_placement_key(normalized_key)) {
-            return scene_sample_track_path_points(*own_path, distance);
-        }
-        if (const Canvas3DTrackPath* other = scene_other_track_path_for_key(scene, normalized_key)) {
-            return scene_sample_track_path_points(*other, distance);
-        }
-        return std::nullopt;
+        const Canvas3DTrackPath* path = scene_placement_track_path_for_key(scene, key);
+        return path ? scene_sample_track_path_points(*path, distance) : std::nullopt;
     };
 
     std::map<std::string, std::string> model_paths;
@@ -4779,9 +4784,7 @@ fail:
     }
 
     const Canvas3DTrackPath* placement_track_path_for_key(const std::string& key) const {
-        std::string normalized = normalize_scene_track_key(key);
-        if (is_scene_own_track_placement_key(normalized)) return own_track_path();
-        return other_track_path_for_normalized_key(normalized);
+        return scene_placement_track_path_for_key(scene_data, key);
     }
 
     bool sample_scene_placement_track(const std::string& key, double distance, Canvas3DTrackPoint& out) const {

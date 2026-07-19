@@ -337,6 +337,16 @@ void App::rebuild_marker_overlay_cache() {
         return offset_track_point(*sampled, lateral, forward);
     };
 
+    auto sample_placement_track = [&](const std::string& key, double distance,
+                                      double lateral, double forward) -> std::optional<TrackPoint> {
+        const std::string normalized_key = normalize_track_lookup_key(key);
+        std::optional<TrackSource> source = find_track_source(normalized_key);
+        if (!source) source = own_source;
+        auto sampled = sample_matrix_track_point(*source->points, distance, source->has_theta_column);
+        if (!sampled) return std::nullopt;
+        return offset_track_point(*sampled, lateral, forward);
+    };
+
     auto make_marker = [](double distance, const TrackPoint& p, const std::string& label,
                           const std::string& edit_id, size_t row_index) {
         PlanStructureMarker marker;
@@ -354,7 +364,8 @@ void App::rebuild_marker_overlay_cache() {
         double distance = table_cell_number(row, "distance");
         double lateral = table_cell_number(row, "x");
         double forward = table_cell_number(row, "z");
-        if (auto p = sample_track(table_cell(row, "trackKey"), distance, lateral, forward)) {
+        if (auto p = sample_placement_track(table_cell(row, "trackKey"), distance,
+                                            lateral, forward)) {
             structure_marker_cache_.push_back(make_marker(distance, *p, table_cell(row, "structureKey"),
                                                           row.edit_id,
                                                           structure_marker_cache_.size()));
@@ -364,8 +375,8 @@ void App::rebuild_marker_overlay_cache() {
     }
     for (const auto& row : model_.structures_between) {
         double distance = table_cell_number(row, "distance");
-        auto p1 = sample_track(table_cell(row, "trackKey1"), distance, 0.0, 0.0);
-        auto p2 = sample_track(table_cell(row, "trackKey2"), distance, 0.0, 0.0);
+        auto p1 = sample_placement_track(table_cell(row, "trackKey1"), distance, 0.0, 0.0);
+        auto p2 = sample_placement_track(table_cell(row, "trackKey2"), distance, 0.0, 0.0);
         if (!p1 && !p2) {
             structure_marker_cache_.push_back(std::nullopt);
             continue;
@@ -389,8 +400,8 @@ void App::rebuild_marker_overlay_cache() {
         for (const TableRow& row : rows) {
             const double distance = table_cell_number(row, "distance");
             std::optional<TrackPoint> point = use_row_placement
-                ? sample_track(table_cell(row, "trackKey"), distance,
-                               table_cell_number(row, "x"), table_cell_number(row, "z"))
+                ? sample_placement_track(table_cell(row, "trackKey"), distance,
+                                         table_cell_number(row, "x"), table_cell_number(row, "z"))
                 : sample_track("", distance, 0.0, 0.0);
             if (!point) {
                 cache.push_back(std::nullopt);
@@ -696,8 +707,9 @@ void App::rebuild_marker_overlay_cache() {
             const std::string normalized_track_key = normalize_track_lookup_key(next.track_key);
             next.own_track_alias = is_own_track_lookup_alias(normalized_track_key);
             next.track_source = find_track_source(normalized_track_key);
-            if (!next.track_source && next.own_track_alias) {
+            if (!next.track_source) {
                 next.track_source = own_source;
+                next.own_track_alias = true;
             }
 
             RepeaterOverlayRow overlay;

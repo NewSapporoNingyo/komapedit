@@ -59,6 +59,26 @@ public:
         }
     }
 
+    void value(const Value& input) {
+        byte('v');
+        switch (input.kind) {
+            case ValueKind::Null:
+                byte(static_cast<unsigned char>(KV_VALUE_NULL));
+                break;
+            case ValueKind::Number:
+                byte(static_cast<unsigned char>(KV_VALUE_NUMBER));
+                number(input.number);
+                break;
+            case ValueKind::String:
+                byte(static_cast<unsigned char>(KV_VALUE_STRING));
+                string(input.text);
+                break;
+            case ValueKind::ContinueValue:
+                byte(static_cast<unsigned char>(KV_VALUE_CONTINUE));
+                break;
+        }
+    }
+
     void string_value(std::string_view value) {
         byte('v');
         byte(static_cast<unsigned char>(KV_VALUE_STRING));
@@ -220,6 +240,18 @@ void changed_value(SemanticWriter& out, const KvMapSnapshot& snapshot,
     }
 }
 
+void changed_track_key(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                       const MapEditChange* change, const char* key,
+                       const KvValue& fallback) {
+    out.label(key);
+    const std::string* input = changed_field(change, key);
+    if (input) {
+        out.value(track_key_from_display_text(*input));
+    } else {
+        out.value(snapshot, fallback);
+    }
+}
+
 void write_structure_model(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const KvStructureModelRow& row,
                            const MapEditChange* change = nullptr) {
@@ -233,7 +265,7 @@ void write_structure_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "distance", changed_number(change, "distance", row.distance));
     field(out, "method", changed_string(snapshot, change, "method", row.method));
     changed_value(out, snapshot, change, "structureKey", row.structure_key);
-    changed_value(out, snapshot, change, "trackKey", row.track_key);
+    changed_track_key(out, snapshot, change, "trackKey", row.track_key);
     field(out, "x", changed_number(change, "x", row.x));
     field(out, "y", changed_number(change, "y", row.y));
     field(out, "z", changed_number(change, "z", row.z));
@@ -251,8 +283,8 @@ void write_structure_between(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "distance", changed_number(change, "distance", row.distance));
     field(out, "method", changed_string(snapshot, change, "method", row.method));
     changed_value(out, snapshot, change, "structureKey", row.structure_key);
-    changed_value(out, snapshot, change, "trackKey1", row.track_key1);
-    changed_value(out, snapshot, change, "trackKey2", row.track_key2);
+    changed_track_key(out, snapshot, change, "trackKey1", row.track_key1);
+    changed_track_key(out, snapshot, change, "trackKey2", row.track_key2);
     field(out, "flag", changed_number(change, "flag", row.flag));
     field(out, "filePath", text(snapshot, row.file_path));
 }

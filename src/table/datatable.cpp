@@ -955,12 +955,11 @@ void append_scene_track_key_warning(MapModel& model,
                                     TableRow& row,
                                     const std::string& item_label,
                                     size_t display_row,
-                                    const std::string& column_key,
                                     const std::string& track_key) {
     mark_invalid_track_key_row(row);
     std::string message = "[WARN]datatable.cpp: " + item_label + " #" +
-        std::to_string(display_row) + " was placed on nonexistent track \"" + track_key + "\"";
-    if (!column_key.empty()) message += " (" + column_key + ")";
+        std::to_string(display_row) + " was placed on nonexistent track [" + track_key +
+        "] and will be placed on owntrack";
     model.scene_track_key_warnings.push_back(std::move(message));
 }
 
@@ -972,7 +971,7 @@ void check_scene_track_key(MapModel& model,
                            const std::string& column_key) {
     const std::string& key = table_cell(row, column_key);
     if (is_scene_table_track_key_valid(key, other_track_keys)) return;
-    append_scene_track_key_warning(model, row, item_label, display_row, column_key, key);
+    append_scene_track_key_warning(model, row, item_label, display_row, key);
 }
 
 } // namespace
@@ -2228,7 +2227,7 @@ void App::render_structure_rows_window(bool put_between) {
                     if (i == kStructureDistanceColumn) {
                         bool can_locate = marker_index < structure_marker_cache_.size() &&
                             structure_marker_cache_[marker_index].has_value();
-                        const bool can_locate_scene = can_locate_scene_preview && !row.invalid_track_key;
+                        const bool can_locate_scene = can_locate_scene_preview;
                         TextCellContextAction action = render_text_cell_with_context_actions(
                             value,
                             tr("menu.locate_on_plan"),
@@ -2718,7 +2717,7 @@ void App::render_repeaters_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < repeater_marker_cache_.size() &&
                             repeater_marker_cache_[marker_index].begin_marker.has_value();
-                        const bool can_locate_scene = can_locate_scene_preview && !row.invalid_track_key;
+                        const bool can_locate_scene = can_locate_scene_preview;
                         TextCellContextAction action = render_text_cell_with_context_actions(
                             value,
                             tr("menu.locate_on_plan"),

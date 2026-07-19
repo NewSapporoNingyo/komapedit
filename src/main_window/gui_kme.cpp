@@ -471,6 +471,22 @@ std::string map_snapshot_value_text(const KvMapSnapshot& snapshot, const KvValue
     }
 }
 
+std::string map_snapshot_track_key_text(const KvMapSnapshot& snapshot, const KvValue& value) {
+    if (value.kind == KV_VALUE_STRING) {
+        return "'" + map_snapshot_string(snapshot, value.string_value) + "'";
+    }
+    if (value.kind == KV_VALUE_NUMBER) {
+        if (value.number_value == 0.0) return "0";
+        std::array<char, 64> buffer{};
+        const int written = std::snprintf(buffer.data(), buffer.size(), "%.17g",
+                                          value.number_value);
+        if (written > 0 && static_cast<size_t>(written) < buffer.size()) {
+            return std::string(buffer.data(), static_cast<size_t>(written));
+        }
+    }
+    return map_snapshot_value_text(snapshot, value);
+}
+
 std::string map_snapshot_value_span_text(const KvMapSnapshot& snapshot, KvSpan span) {
     if (!map_snapshot_span_valid(span, snapshot.value_count) ||
         (span.count != 0 && !snapshot.values)) {
@@ -691,7 +707,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         put_map_common_event_cells(row, snapshot, input);
         row.cells["method"] = map_snapshot_string(snapshot, input.method);
         row.cells["structureKey"] = map_snapshot_value_text(snapshot, input.structure_key);
-        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["trackKey"] = map_snapshot_track_key_text(snapshot, input.track_key);
         row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
         row.cells["z"] = format_double(input.z, 6); row.cells["rx"] = format_double(input.rx, 6);
         row.cells["ry"] = format_double(input.ry, 6); row.cells["rz"] = format_double(input.rz, 6);
@@ -711,8 +727,8 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         put_map_common_event_cells(row, snapshot, input);
         row.cells["method"] = map_snapshot_string(snapshot, input.method);
         row.cells["structureKey"] = map_snapshot_value_text(snapshot, input.structure_key);
-        row.cells["trackKey1"] = map_snapshot_value_text(snapshot, input.track_key1);
-        row.cells["trackKey2"] = map_snapshot_value_text(snapshot, input.track_key2);
+        row.cells["trackKey1"] = map_snapshot_track_key_text(snapshot, input.track_key1);
+        row.cells["trackKey2"] = map_snapshot_track_key_text(snapshot, input.track_key2);
         row.cells["flag"] = format_double(input.flag, 6);
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.structures_between.push_back(std::move(row));
@@ -735,7 +751,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         row.cells["trainKey"] = map_snapshot_value_text(snapshot, input.train_key);
         row.cells["filePath"] = map_snapshot_value_text(snapshot, input.load_file_path);
         row.cells["resolvedFilePath"] = map_snapshot_string(snapshot, input.resolved_file_path);
-        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["trackKey"] = map_snapshot_track_key_text(snapshot, input.track_key);
         row.cells["direction"] = map_snapshot_value_text(snapshot, input.direction);
         row.cells["sourceFilePath"] = map_snapshot_string(snapshot, input.source_file_path);
         row.cells["order"] = std::to_string(input.order);
@@ -790,7 +806,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         put_map_common_event_cells(row, snapshot, input);
         row.cells["method"] = map_snapshot_string(snapshot, input.method);
         row.cells["repeaterKey"] = map_snapshot_value_text(snapshot, input.repeater_key);
-        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["trackKey"] = map_snapshot_track_key_text(snapshot, input.track_key);
         row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
         row.cells["z"] = format_double(input.z, 6); row.cells["rx"] = format_double(input.rx, 6);
         row.cells["ry"] = format_double(input.ry, 6); row.cells["rz"] = format_double(input.rz, 6);
@@ -824,7 +840,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         put_map_common_event_cells(row, snapshot, input);
         row.cells["signalAspectKey"] = map_snapshot_value_text(snapshot, input.signal_aspect_key);
         row.cells["section"] = map_snapshot_value_text(snapshot, input.section);
-        row.cells["trackKey"] = map_snapshot_value_text(snapshot, input.track_key);
+        row.cells["trackKey"] = map_snapshot_track_key_text(snapshot, input.track_key);
         row.cells["x"] = format_double(input.x, 6); row.cells["y"] = format_double(input.y, 6);
         row.cells["z"] = format_double(input.z, 6); row.cells["rx"] = format_double(input.rx, 6);
         row.cells["ry"] = format_double(input.ry, 6); row.cells["rz"] = format_double(input.rz, 6);

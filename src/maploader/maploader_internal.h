@@ -192,6 +192,8 @@ using VariableEnvironmentSnapshot = std::shared_ptr<const VariableEnvironment>;
 double as_number(const Value& value, double fallback = 0.0);
 std::string as_text(const Value& value);
 std::string key_text(const Value& value);
+std::string track_key_display_text(const Value& value);
+Value track_key_from_display_text(const std::string& text);
 const Value& arg_or_null(const std::vector<Value>& values, size_t index = 0);
 std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_hash);
 void trim_trailing_empty_fields(std::vector<std::string>& fields);

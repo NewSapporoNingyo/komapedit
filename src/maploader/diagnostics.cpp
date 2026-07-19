@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace kme::maploader {
@@ -48,6 +49,16 @@ void log_warn(const std::string& message) {
 
 void log_error(const std::string& message) {
     emit_log("[ERROR]maploader.cpp: " + message);
+}
+
+void log_load_failure(const std::string& message) {
+    const std::string_view view(message);
+    if (view.rfind("File not found at specified path:", 0) == 0 ||
+        view.rfind("File open error", 0) == 0) {
+        log_error(message);
+        return;
+    }
+    log_warn(message);
 }
 
 } // namespace kme::maploader

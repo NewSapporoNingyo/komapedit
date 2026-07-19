@@ -25,6 +25,23 @@
 #endif
 
 namespace kme::maploader {
+namespace {
+
+std::string file_open_failure_message(const std::filesystem::path& path) {
+    const std::string path_text = path_to_utf8(path);
+    std::error_code error;
+    const bool exists = std::filesystem::exists(path, error);
+    if (!error && !exists) {
+        return "File not found at specified path: " + path_text;
+    }
+    if (!error) {
+        return "File open error; file exists but cannot be opened: " + path_text;
+    }
+    return "File open error; file status could not be determined: " + path_text;
+}
+
+} // namespace
+
 std::string path_to_utf8(const std::filesystem::path& path) {
 #if defined(__cpp_char8_t)
     auto s = path.u8string();
@@ -65,7 +82,7 @@ std::string read_binary_file(const std::filesystem::path& path) {
 #if defined(_WIN32)
     FILE* input = _wfopen(path.wstring().c_str(), L"rb");
     if (!input) {
-        throw std::runtime_error("File open error: " + path_to_utf8(path));
+        throw std::runtime_error(file_open_failure_message(path));
     }
     std::string result;
     char buffer[8192];
@@ -85,7 +102,7 @@ std::string read_binary_file(const std::filesystem::path& path) {
 #else
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("File open error: " + path_to_utf8(path));
+        throw std::runtime_error(file_open_failure_message(path));
     }
     std::ostringstream buffer;
     buffer << input.rdbuf();

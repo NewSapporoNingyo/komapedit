@@ -19,5 +19,6 @@ const char* last_error_c_str();
 void log_info(const std::string& message);
 void log_warn(const std::string& message);
 void log_error(const std::string& message);
+void log_load_failure(const std::string& message);
 
 } // namespace kme::maploader

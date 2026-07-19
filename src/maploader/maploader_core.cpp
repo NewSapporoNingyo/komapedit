@@ -284,6 +284,42 @@ std::string key_text(const Value& value) {
     return ascii_lower(as_text(value));
 }
 
+std::string track_key_display_text(const Value& value) {
+    switch (value.kind) {
+        case ValueKind::Null:
+            return {};
+        case ValueKind::Number:
+            return value.number == 0.0 ? "0" : canonical_number(value.number);
+        case ValueKind::String:
+            return "'" + value.text + "'";
+        case ValueKind::ContinueValue:
+            return "c";
+    }
+    return {};
+}
+
+Value track_key_from_display_text(const std::string& text) {
+    const std::string trimmed = trim_field_copy(text);
+    if (trimmed.empty()) return Value::null();
+    if (trimmed.front() == '\'' || trimmed.back() == '\'') {
+        if (trimmed.size() < 2 || trimmed.front() != '\'' || trimmed.back() != '\'' ||
+            trimmed.substr(1, trimmed.size() - 2).find('\'') != std::string::npos) {
+            throw std::runtime_error("invalid quoted track key: " + text);
+        }
+        return Value::str(trimmed.substr(1, trimmed.size() - 2));
+    }
+    if (trimmed == "c") return Value::cont();
+
+    const char* begin = trimmed.c_str();
+    char* end = nullptr;
+    errno = 0;
+    const double number = std::strtod(begin, &end);
+    if (end != begin && end && *end == '\0' && errno != ERANGE && std::isfinite(number)) {
+        return Value::num(number);
+    }
+    return Value::str(trimmed);
+}
+
 const Value& arg_or_null(const std::vector<Value>& values, size_t index) {
     static const Value null_value = Value::null();
     return index < values.size() ? values[index] : null_value;
@@ -785,7 +821,9 @@ void ensure_othertrack(MapContext& ctx, const std::string& key) {
 void put_other(MapContext& ctx, const Value& track_key, const std::string& element_key,
                const Value& value, const std::string& flag) {
     note_distance_use(ctx);
-    std::string key = key_text(track_key);
+    // The legacy containers use text keys, so retain the BVE value kind in that text:
+    // numeric 1 is "1", while string '1' remains "'1'".
+    std::string key = ascii_lower(track_key_display_text(track_key));
     ensure_othertrack(ctx, key);
     Value stored = value.is_null() ? Value::cont() : value;
     OtherTrackEvent row;

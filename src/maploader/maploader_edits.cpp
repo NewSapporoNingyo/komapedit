@@ -565,14 +565,15 @@ std::string numeric_field(const MapEditChange& change, const std::string& key,
     return fallback_edit_number(fallback);
 }
 
-std::string value_field_as_bve_arg(const MapEditChange& change, const std::string& key,
-                                   const Value& fallback, const std::string* raw_fallback = nullptr) {
+std::string track_key_field_as_bve_arg(const MapEditChange& change, const std::string& key,
+                                       const Value& fallback,
+                                       const std::string* raw_fallback = nullptr) {
     auto it = change.field_changes.find(key);
     if (it == change.field_changes.end()) {
         if (raw_fallback) return trim_field_copy(*raw_fallback);
     }
     if (it == change.field_changes.end()) return value_to_bve_arg(fallback);
-    return quoted_bve_string(trim_field_copy(it->second));
+    return value_to_bve_arg(track_key_from_display_text(it->second));
 }
 
 std::string csv_field(const std::string& text) {
@@ -626,15 +627,15 @@ std::string build_structure_put_statement(const MapEditChange& change,
     std::ostringstream out;
     out << "Structure[" << quoted_bve_string(structure_key) << "]." << output_method << "(";
     if (between) {
-        out << value_field_as_bve_arg(change, "trackKey1", row.track_key1, raw_arg_at(raw_args, 0)) << ","
-            << value_field_as_bve_arg(change, "trackKey2", row.track_key2, raw_arg_at(raw_args, 1)) << ","
+        out << track_key_field_as_bve_arg(change, "trackKey1", row.track_key1, raw_arg_at(raw_args, 0)) << ","
+            << track_key_field_as_bve_arg(change, "trackKey2", row.track_key2, raw_arg_at(raw_args, 1)) << ","
             << numeric_field(change, "flag", row.flag, raw_arg_at(raw_args, 2));
     } else if (source_put0 && !converted_put0) {
-        out << value_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
+        out << track_key_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
             << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1)) << ","
             << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2));
     } else if (converted_put0) {
-        out << value_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
+        out << track_key_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
             << numeric_field(change, "x", 0.0) << ","
             << numeric_field(change, "y", 0.0) << ","
             << numeric_field(change, "z", 0.0) << ","
@@ -644,7 +645,7 @@ std::string build_structure_put_statement(const MapEditChange& change,
             << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1)) << ","
             << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2));
     } else {
-        out << value_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
+        out << track_key_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
             << numeric_field(change, "x", row.x, raw_arg_at(raw_args, 1)) << ","
             << numeric_field(change, "y", row.y, raw_arg_at(raw_args, 2)) << ","
             << numeric_field(change, "z", row.z, raw_arg_at(raw_args, 3)) << ","

@@ -13,7 +13,7 @@
 namespace kme::maploader::detail {
 
 using kme::maploader::log_info;
-using kme::maploader::log_warn;
+using kme::maploader::log_load_failure;
 using kme::maploader::path_to_utf8;
 
 std::string resolve_loaded_asset_path(const std::filesystem::path& root,
@@ -603,7 +603,7 @@ private:
                     make_child_seed(pending.path, pending.include_path,
                                     pending.include_invocation_key), pending.path);
                 if (!result.error.empty()) {
-                    log_warn(result.error);
+                    log_load_failure(result.error);
                     continue;
                 }
             } else if (include_result_is_stale(pending, result.context)) {
@@ -611,7 +611,7 @@ private:
                     make_child_seed(pending.path, pending.include_path,
                                     pending.include_invocation_key), pending.path);
                 if (!result.error.empty()) {
-                    log_warn(result.error);
+                    log_load_failure(result.error);
                     continue;
                 }
             }
@@ -1220,7 +1220,7 @@ private:
                 LoadedText loaded = load_header_text(ctx_, path, "BveTs Signal Aspects List ", 2.0);
                 parse_signal_aspect_list(loaded);
             } catch (const std::exception& e) {
-                log_warn(e.what());
+                log_load_failure(e.what());
             }
         } else if (fn == "speedlimit" && !has_signal_key) {
             note_distance_use(ctx_);
@@ -1299,7 +1299,7 @@ private:
                     LoadedText loaded = load_header_text(ctx_, path, "BveTs Structure List ", 1.0);
                     parse_structure_list(loaded);
                 } catch (const std::exception& e) {
-                    log_warn(e.what());
+                    log_load_failure(e.what());
                 }
             }
         } else if (fn == "put" && a.size() >= 10) {
@@ -1354,7 +1354,7 @@ private:
                 LoadedText loaded = load_header_text(ctx_, path, "BveTs Sound List ", 2.0);
                 parse_sound_list(loaded, is_3d);
             } catch (const std::exception& e) {
-                log_warn(e.what());
+                log_load_failure(e.what());
             }
         } else if (!is_3d && fn == "play" && has_key) {
             note_distance_use(ctx_);
@@ -1407,7 +1407,7 @@ private:
             try {
                 parse_other_train_file(path);
             } catch (const std::exception& e) {
-                log_warn(e.what());
+                log_load_failure(e.what());
             }
         }
 
