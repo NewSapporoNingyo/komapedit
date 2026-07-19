@@ -1080,6 +1080,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
     pending_scene_edit_component_size_percent_ = scene_edit_component_size_percent_;
     scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
+    pending_scene_fog_enabled_ = scene_fog_enabled_;
+    scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -3745,6 +3747,7 @@ View3DSettings App::current_view_3d_settings() const {
     View3DSettings view;
     view.show_scene_owntrack_markers = show_scene_owntrack_markers_;
     view.show_scene_current_position_on_plan = show_scene_current_position_on_plan_;
+    view.scene_fog_enabled = scene_fog_enabled_;
     view.scene_draw_distance_m = scene_draw_distance_m_;
     view.scene_edit_component_size_percent = scene_edit_component_size_percent_;
     return view;
@@ -3753,11 +3756,13 @@ View3DSettings App::current_view_3d_settings() const {
 void App::apply_view_3d_settings(const View3DSettings& settings) {
     show_scene_owntrack_markers_ = settings.show_scene_owntrack_markers;
     show_scene_current_position_on_plan_ = settings.show_scene_current_position_on_plan;
+    scene_fog_enabled_ = settings.scene_fog_enabled;
     scene_draw_distance_m_ = clamp_scene_draw_distance(settings.scene_draw_distance_m);
     scene_edit_component_size_percent_ =
         clamp_scene_edit_component_size_percent(settings.scene_edit_component_size_percent);
     apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
     apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+    apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
 }
 
 void App::apply_scene_draw_distance_to_canvas(int distance_m) {
@@ -3772,6 +3777,10 @@ void App::apply_scene_edit_component_size_to_canvas(int size_percent) {
         scene_preview_canvas_->set_scene_edit_component_scale(
             static_cast<float>(clamp_scene_edit_component_size_percent(size_percent)) / 100.0f);
     }
+}
+
+void App::apply_scene_fog_effect_to_canvas(bool enabled) {
+    if (scene_preview_canvas_) scene_preview_canvas_->set_scene_fog_enabled(enabled);
 }
 
 void App::save_runtime_settings_if_changed() {
@@ -3870,6 +3879,8 @@ void App::render_menu() {
             scene_draw_distance_before_dialog_m_ = scene_draw_distance_m_;
             pending_scene_edit_component_size_percent_ = scene_edit_component_size_percent_;
             scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
+            pending_scene_fog_enabled_ = scene_fog_enabled_;
+            scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
             popups_.canvas_3d_settings = true;
         }
         ImGui::EndMenu();
@@ -4584,6 +4595,9 @@ void App::render_popups() {
     }
     bool canvas_3d_settings_popup_open = true;
     if (ImGui::BeginPopupModal(tr("dialog.canvas_3d_settings").c_str(), &canvas_3d_settings_popup_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::Checkbox(tr("label.scene_fog_effect").c_str(), &pending_scene_fog_enabled_)) {
+            apply_scene_fog_effect_to_canvas(pending_scene_fog_enabled_);
+        }
         int draw_distance_chunks = clamp_scene_draw_distance(pending_scene_draw_distance_m_) / kSceneDrawDistanceStepM;
         ImGui::SetNextItemWidth(300.0f);
         if (ImGui::SliderInt(tr("label.scene_draw_distance").c_str(),
@@ -4619,8 +4633,11 @@ void App::render_popups() {
                 pending_scene_edit_component_size_percent_);
             pending_scene_edit_component_size_percent_ = scene_edit_component_size_percent_;
             scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
+            scene_fog_enabled_ = pending_scene_fog_enabled_;
+            scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
             apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+            apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
             sync_runtime_settings_before_save();
             save_user_settings(settings_);
             ImGui::CloseCurrentPopup();
@@ -4630,8 +4647,10 @@ void App::render_popups() {
             pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
             pending_scene_edit_component_size_percent_ =
                 scene_edit_component_size_before_dialog_percent_;
+            pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
             apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+            apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -4640,8 +4659,10 @@ void App::render_popups() {
         pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
         pending_scene_edit_component_size_percent_ =
             scene_edit_component_size_before_dialog_percent_;
+        pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
         apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
         apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+        apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
     }
 
     if (popups_.range) {

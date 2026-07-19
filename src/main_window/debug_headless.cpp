@@ -4401,6 +4401,97 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         bool pass = load_completed && terminal_model_state && timing.p95_ms <= max_frame_ms;
         Canvas3DSceneStats final_stats = app.scene_preview_canvas_->scene_stats();
 
+        const size_t fog_row_count = app.model_.fogs.size();
+        const Canvas3DSceneFogDebugState initial_fog_state =
+            app.scene_preview_canvas_->debug_scene_fog_state();
+        Canvas3DSceneFogDebugState probed_fog_state = initial_fog_state;
+        size_t fog_changed_pixel_count = 0;
+        std::uint64_t fog_total_abs_rgb_difference = 0;
+        unsigned fog_max_channel_difference = 0;
+        std::string fog_probe_result = "SKIP_NO_ROWS";
+        std::string fog_probe_error;
+        if (fog_row_count > 0 && initial_fog_state.keyframe_count == 0) {
+            fog_probe_result = "FAIL_NO_KEYFRAMES";
+            pass = false;
+        } else if (initial_fog_state.keyframe_count > 0 && initial_fog_state.max_density <= 0.0f) {
+            fog_probe_result = "SKIP_ZERO_DENSITY";
+        } else if (initial_fog_state.max_density > 0.0f) {
+            const bool previous_fog_enabled = initial_fog_state.setting_enabled;
+            const bool jumped = app.scene_preview_canvas_->jump_scene_camera_to_distance(
+                initial_fog_state.max_density_distance);
+            std::vector<std::uint8_t> fog_off_pixels;
+            std::vector<std::uint8_t> fog_on_pixels;
+            int fog_off_width = 0;
+            int fog_off_height = 0;
+            int fog_on_width = 0;
+            int fog_on_height = 0;
+            bool captured_off = false;
+            bool captured_on = false;
+            if (jumped) {
+                app.scene_preview_canvas_->set_scene_fog_enabled(false);
+                render_frame();
+                captured_off = app.scene_preview_canvas_->debug_read_scene_render_pixels(
+                    fog_off_pixels, fog_off_width, fog_off_height, fog_probe_error);
+                app.scene_preview_canvas_->set_scene_fog_enabled(true);
+                render_frame();
+                probed_fog_state = app.scene_preview_canvas_->debug_scene_fog_state();
+                if (captured_off) {
+                    captured_on = app.scene_preview_canvas_->debug_read_scene_render_pixels(
+                        fog_on_pixels, fog_on_width, fog_on_height, fog_probe_error);
+                }
+            } else {
+                fog_probe_error = "failed to jump scene camera to maximum-density fog keyframe";
+            }
+            app.scene_preview_canvas_->set_scene_fog_enabled(previous_fog_enabled);
+
+            const bool matching_pixels = captured_off && captured_on &&
+                fog_off_width == fog_on_width && fog_off_height == fog_on_height &&
+                fog_off_pixels.size() == fog_on_pixels.size();
+            if (matching_pixels) {
+                for (size_t offset = 0; offset + 3 < fog_off_pixels.size(); offset += 4) {
+                    bool pixel_changed = false;
+                    for (size_t channel = 0; channel < 3; ++channel) {
+                        const unsigned off = fog_off_pixels[offset + channel];
+                        const unsigned on = fog_on_pixels[offset + channel];
+                        const unsigned difference = off > on ? off - on : on - off;
+                        fog_total_abs_rgb_difference += difference;
+                        fog_max_channel_difference = std::max(fog_max_channel_difference, difference);
+                        pixel_changed = pixel_changed || difference != 0;
+                    }
+                    if (pixel_changed) ++fog_changed_pixel_count;
+                }
+            }
+
+            constexpr unsigned kMinimumVisibleFogChannelDifference = 8;
+            const bool fog_probe_pass = matching_pixels && probed_fog_state.sampled_enabled &&
+                probed_fog_state.shader_ready && probed_fog_state.fog_draw_part_count > 0 &&
+                fog_changed_pixel_count > 0 &&
+                fog_max_channel_difference >= kMinimumVisibleFogChannelDifference;
+            fog_probe_result = fog_probe_pass ? "PASS" : "FAIL";
+            if (!fog_probe_pass) pass = false;
+        }
+
+        *out << std::fixed << std::setprecision(6)
+             << "scene3d_fog rows=" << fog_row_count
+             << " keyframes=" << initial_fog_state.keyframe_count
+             << " initial_distance=" << initial_fog_state.camera_distance
+             << " initial_density=" << initial_fog_state.density
+             << " probe_distance=" << probed_fog_state.camera_distance
+             << " density=" << probed_fog_state.density
+             << " color=" << probed_fog_state.color.x << ","
+             << probed_fog_state.color.y << "," << probed_fog_state.color.z
+             << " max_density=" << initial_fog_state.max_density
+             << " max_density_distance=" << initial_fog_state.max_density_distance
+             << " shader_ready=" << (probed_fog_state.shader_ready ? "true" : "false")
+             << " fog_draw_parts=" << probed_fog_state.fog_draw_part_count
+             << " changed_pixels=" << fog_changed_pixel_count
+             << " total_abs_rgb_diff=" << fog_total_abs_rgb_difference
+             << " max_channel_diff=" << fog_max_channel_difference
+             << " min_visible_channel_diff=8"
+             << " result=" << fog_probe_result;
+        if (!fog_probe_error.empty()) *out << " error=\"" << fog_probe_error << "\"";
+        *out << "\n";
+
         *out << std::fixed << std::setprecision(3)
              << "scene3d_bench avg_ms=" << timing.average_ms
              << " min_ms=" << timing.minimum_ms

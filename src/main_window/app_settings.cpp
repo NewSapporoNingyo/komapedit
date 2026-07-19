@@ -408,6 +408,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "\n[View3D]\n";
     out << "show_scene_owntrack_markers=" << bool_to_string(settings.view_3d.show_scene_owntrack_markers) << "\n";
     out << "show_scene_current_position_on_plan=" << bool_to_string(settings.view_3d.show_scene_current_position_on_plan) << "\n";
+    out << "scene_fog_enabled=" << bool_to_string(settings.view_3d.scene_fog_enabled) << "\n";
     out << "scene_draw_distance_m=" << clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m) << "\n";
     out << "scene_edit_component_size_percent="
         << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
@@ -657,6 +658,10 @@ UserSettings load_user_settings() {
             view_3d_keys_seen.insert("show_scene_current_position_on_plan");
             settings.view_3d.show_scene_current_position_on_plan =
                 parse_bool(value, settings.view_3d.show_scene_current_position_on_plan);
+        } else if (key == "scene_fog_enabled") {
+            view_3d_keys_seen.insert("scene_fog_enabled");
+            settings.view_3d.scene_fog_enabled =
+                parse_bool(value, settings.view_3d.scene_fog_enabled);
         } else if (key == "scene_draw_distance_m" ||
                    key == "scene_draw_distance" ||
                    key == "scene_window_forward_m" ||
@@ -690,7 +695,7 @@ UserSettings load_user_settings() {
     settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m);
     settings.view_3d.scene_edit_component_size_percent =
         clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent);
-    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 4) {
+    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 5) {
         save_user_settings(settings);
     }
     return settings;

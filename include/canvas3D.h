@@ -9,6 +9,7 @@
 #include "imgui.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -116,6 +117,12 @@ struct Canvas3DBackgroundChange {
     std::string model_path;
 };
 
+struct Canvas3DSceneFogKeyframe {
+    double distance = 0.0;
+    float density = 0.001f;
+    ImVec4 color = ImVec4(0.875f, 0.875f, 0.875f, 1.0f);
+};
+
 enum class Canvas3DSceneRouteEventKind {
     Value,
     BeginTransition,
@@ -156,6 +163,7 @@ struct Canvas3DScene {
     std::vector<Canvas3DModelInstance> instances;
     std::vector<Canvas3DRepeaterSegment> repeaters;
     std::vector<Canvas3DBackgroundChange> backgrounds;
+    std::vector<Canvas3DSceneFogKeyframe> fog_keyframes;
     Canvas3DSceneRouteInfo route_info;
     Canvas3DCameraStart camera;
     double min_distance = 0.0;
@@ -223,6 +231,21 @@ struct Canvas3DSceneUiText {
     const char* next_station = "Next sta. :";
     const char* no_station_ahead = "No station ahead";
 };
+
+#ifndef NDEBUG
+struct Canvas3DSceneFogDebugState {
+    size_t keyframe_count = 0;
+    size_t fog_draw_part_count = 0;
+    bool setting_enabled = false;
+    bool sampled_enabled = false;
+    bool shader_ready = false;
+    double camera_distance = 0.0;
+    double max_density_distance = 0.0;
+    float density = 0.0f;
+    float max_density = 0.0f;
+    ImVec4 color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+};
+#endif
 
 struct Canvas3DSceneContextMenuOptions {
     bool element_properties_enabled = false;
@@ -312,11 +335,16 @@ public:
     void set_scene_window(double back_m, double forward_m);
     void set_scene_edit_component_scale(float scale);
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
+    void set_scene_fog_enabled(bool enabled);
     Canvas3DSceneInteractionMode scene_interaction_mode() const;
     Canvas3DSceneStats scene_stats() const;
     void process_scene_loading();
 #ifndef NDEBUG
     void set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled);
+    Canvas3DSceneFogDebugState debug_scene_fog_state() const;
+    bool debug_read_scene_render_pixels(std::vector<std::uint8_t>& rgba,
+                                        int& width, int& height,
+                                        std::string& error);
 #endif
     std::vector<std::string> drain_scene_load_messages();
     Canvas3DSceneCameraPose scene_camera_pose() const;

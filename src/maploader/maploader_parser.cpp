@@ -1580,11 +1580,12 @@ private:
     }
 
     void dispatch_fog(const std::string& fn, const std::vector<Value>& a) {
-        if ((fn != "interpolate" && fn != "set") || a.empty()) return;
+        if (fn != "interpolate" && fn != "set") return;
+        if (fn == "set" && (a.empty() || a[0].is_null())) return;
         note_distance_use(ctx_);
         FogChange row;
         row.distance = ctx_.distance;
-        row.density = a[0];
+        if (!a.empty()) row.density = a[0];
         if (a.size() > 1) row.red = a[1];
         if (a.size() > 2) row.green = a[2];
         if (a.size() > 3) row.blue = a[3];

@@ -97,7 +97,7 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 - [x] 3D preview for Structure models.
 - [x] Load model geometry, materials, and diffuse textures through `model_loader.dll`/Assimp.
 - [x] Rotate and zoom the Structure model preview.
-- [x] 3D scene preview canvas for track paths, Structures, repeaters, signals, and background changes.
+- [x] 3D scene preview canvas for track paths, Structures, repeaters, signals, background changes, and interpolated BVE fog effects.
 - [x] Jump the 3D scene camera from station selections and numeric distance jumps, and show the current 3D position on the plan view.
 - [x] Locate Structure and Repeater table rows in the 3D scene preview, and locate picked scene objects back in their tables.
 - [ ] 3D scene quality settings for render scale, MSAA, texture filtering, and outline quality.
@@ -164,7 +164,7 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 | `SpeedLimit.Begin` / `SpeedLimit.End`         |    √    |       ✕       |         ✕         | Feeds the speed-limit model, list, and markers                                                                           |
 | `PreTrain.Pass`                               |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
 | `Light.Ambient/Diffuse/Direction`             |    -    |       -       |         -         | Lighting syntax is not supported                                                                                        |
-| `Fog.Set`                                     |    √    |       ✕       |         ✕         | Feeds tables/markers, but the visual fog effect is not fully simulated                                                   |
+| `Fog.Interpolate` / `Fog.Set`                 |    √    |       ✕       |         ✕         | Feeds tables/markers and linearly interpolated exponential fog in the 3D scene preview; fog editing is not supported     |
 | `DrawDistance.Set`                            |    ✕    |       ✕       |         ✕         | Not supported                                                                                                           |
 | `CabIlluminance.Set`                          |    √    |       ✕       |         ✕         | Feeds lists/markers, but cab brightness is not simulated                                                                 |
 | `Irregularity.Change`                         |    √    |       ✕       |         ✕         | Feeds lists/markers, but vehicle vibration is not simulated                                                              |
@@ -226,7 +226,7 @@ of overwriting either file.
    - Turn on `Enable Edit` to use `Properties/Edit` on supported `Station.Put`, Structure model-list, and Structure placement rows. `Apply` updates the in-memory preview; the toolbar `Save` writes pending changes to source files, while `Reload` reads the map from disk again.
 9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
-11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, and next-station information. In select mode, scene objects can be located back in their Structure or Repeater tables. With edit mode enabled, right-click a Structure and choose `Properties/Edit` to edit its fields; supported `Structure.Put` coordinates can also be dragged with the X/Y/Z gizmo.
+11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, and next-station information. `Options -> 3D Canvas Settings -> Fog effect` immediately toggles route fog in the scene preview and is enabled by default. In select mode, scene objects can be located back in their Structure or Repeater tables. With edit mode enabled, right-click a Structure and choose `Properties/Edit` to edit its fields; supported `Structure.Put` coordinates can also be dragged with the X/Y/Z gizmo.
 12. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
 13. Press `F5` or use `File -> Reload` to reload the current map.
 

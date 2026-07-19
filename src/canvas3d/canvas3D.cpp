@@ -73,6 +73,8 @@ constexpr float kSceneGizmoArrowHalfWidthPx = 5.5f;
 constexpr float kSceneGizmoCenterRadiusPx = 4.0f;
 constexpr double kSceneRouteDisplayZeroEpsilon = 0.0000005;
 constexpr size_t kSceneModelMaxWorkers = 8;
+constexpr double kDefaultSceneFogDensity = 0.001;
+constexpr double kDefaultSceneFogColor = 0.875;
 
 enum class SceneOverlayCorner {
     TopLeft,
@@ -447,6 +449,7 @@ struct SceneViewConstants {
     Mat4 view_proj;
     float material_color[4];
     float use_texture[4];
+    float fog_color_density[4];
 };
 
 struct SceneOutlineConstants {
@@ -1275,6 +1278,97 @@ void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& mo
     scene.route_info = std::move(route_info);
 }
 
+double resolve_canvas3d_scene_fog_component(const TableRow& row,
+                                            const char* key,
+                                            double previous_value) {
+    if (table_cell(row, key).empty()) return previous_value;
+    const double value = table_cell_number(row, key);
+    if (std::isnan(value)) return previous_value;
+    return std::clamp(value, 0.0, 1.0);
+}
+
+void populate_canvas3d_scene_fog(Canvas3DScene& scene, const MapModel& model) {
+    scene.fog_keyframes.clear();
+    if (model.fogs.empty()) return;
+
+    std::vector<const TableRow*> rows;
+    rows.reserve(model.fogs.size());
+    for (const TableRow& row : model.fogs) {
+        if (std::isfinite(table_cell_number(row, "distance"))) rows.push_back(&row);
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const TableRow* a, const TableRow* b) {
+        const double a_distance = table_cell_number(*a, "distance");
+        const double b_distance = table_cell_number(*b, "distance");
+        if (a_distance != b_distance) return a_distance < b_distance;
+        return table_cell_number(*a, "order") < table_cell_number(*b, "order");
+    });
+
+    scene.fog_keyframes.reserve(rows.size());
+    double density = kDefaultSceneFogDensity;
+    double red = kDefaultSceneFogColor;
+    double green = kDefaultSceneFogColor;
+    double blue = kDefaultSceneFogColor;
+    for (const TableRow* row : rows) {
+        density = resolve_canvas3d_scene_fog_component(*row, "density", density);
+        red = resolve_canvas3d_scene_fog_component(*row, "red", red);
+        green = resolve_canvas3d_scene_fog_component(*row, "green", green);
+        blue = resolve_canvas3d_scene_fog_component(*row, "blue", blue);
+
+        Canvas3DSceneFogKeyframe keyframe;
+        keyframe.distance = table_cell_number(*row, "distance");
+        keyframe.density = static_cast<float>(density);
+        keyframe.color = ImVec4(static_cast<float>(red), static_cast<float>(green),
+                                static_cast<float>(blue), 1.0f);
+        if (!scene.fog_keyframes.empty() &&
+            scene.fog_keyframes.back().distance == keyframe.distance) {
+            scene.fog_keyframes.back() = keyframe;
+        } else {
+            scene.fog_keyframes.push_back(keyframe);
+        }
+    }
+}
+
+struct SceneFogSample {
+    bool enabled = false;
+    float density = 0.0f;
+    ImVec4 color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+};
+
+SceneFogSample sample_canvas3d_scene_fog(
+    const std::vector<Canvas3DSceneFogKeyframe>& keyframes,
+    double distance,
+    bool enabled) {
+    SceneFogSample sample;
+    if (!enabled || keyframes.empty()) return sample;
+
+    auto next = std::upper_bound(
+        keyframes.begin(), keyframes.end(), distance,
+        [](double value, const Canvas3DSceneFogKeyframe& keyframe) {
+            return value < keyframe.distance;
+        });
+    if (next == keyframes.begin()) {
+        sample.density = next->density;
+        sample.color = next->color;
+    } else if (next == keyframes.end()) {
+        sample.density = keyframes.back().density;
+        sample.color = keyframes.back().color;
+    } else {
+        const Canvas3DSceneFogKeyframe& previous = *(next - 1);
+        const double interval = next->distance - previous.distance;
+        const float ratio = interval > 0.0
+            ? static_cast<float>(std::clamp((distance - previous.distance) / interval, 0.0, 1.0))
+            : 1.0f;
+        sample.density = previous.density + (next->density - previous.density) * ratio;
+        sample.color = ImVec4(
+            previous.color.x + (next->color.x - previous.color.x) * ratio,
+            previous.color.y + (next->color.y - previous.color.y) * ratio,
+            previous.color.z + (next->color.z - previous.color.z) * ratio,
+            1.0f);
+    }
+    sample.enabled = sample.density > 0.0f;
+    return sample;
+}
+
 enum class SceneRouteValueMode {
     Constant,
     Transition,
@@ -1614,6 +1708,7 @@ cbuffer SceneViewConstants : register(b0)
     row_major float4x4 viewProj;
     float4 materialColor;
     float4 useTexture;
+    float4 fogColorDensity;
 };
 
 Texture2D diffuseTexture : register(t0);
@@ -1633,26 +1728,41 @@ struct VSInput
 struct VSOutput
 {
     float4 position : SV_POSITION;
-    float2 texcoord : TEXCOORD0;
+    float3 texcoord_eye_depth : TEXCOORD0;
 };
 
 VSOutput vs_main(VSInput input)
 {
     float4x4 world = float4x4(input.world0, input.world1, input.world2, input.world3);
     VSOutput output;
-    output.position = mul(mul(float4(input.position, 1.0), world), viewProj);
-    output.texcoord = input.texcoord;
+    float4 clipPosition = mul(mul(float4(input.position, 1.0), world), viewProj);
+    output.position = clipPosition;
+    output.texcoord_eye_depth = float3(input.texcoord, clipPosition.w);
     return output;
+}
+
+float4 sample_material(VSOutput input)
+{
+    float4 color = materialColor;
+    if (useTexture.x > 0.5)
+        color *= diffuseTexture.Sample(diffuseSampler, input.texcoord_eye_depth.xy);
+    clip(color.a - 0.1);
+    if (useTexture.y > 0.5)
+        color.a = 1.0;
+    return color;
 }
 
 float4 ps_main(VSOutput input) : SV_TARGET
 {
-    float4 color = materialColor;
-    if (useTexture.x > 0.5)
-        color *= diffuseTexture.Sample(diffuseSampler, input.texcoord);
-    clip(color.a - 0.1);
-    if (useTexture.y > 0.5)
-        color.a = 1.0;
+    return sample_material(input);
+}
+
+float4 ps_fog_main(VSOutput input) : SV_TARGET
+{
+    float4 color = sample_material(input);
+    float eyeDepth = max(input.texcoord_eye_depth.z, 0.0);
+    float fogFactor = saturate(exp2(-1.44269504089 * fogColorDensity.w * eyeDepth));
+    color.rgb = lerp(fogColorDensity.rgb, color.rgb, fogFactor);
     return color;
 }
 )";
@@ -1922,6 +2032,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         }
     }
     populate_canvas3d_scene_route_info(scene, model);
+    populate_canvas3d_scene_fog(scene, model);
     if (!populate_canvas3d_scene_dynamic_content(scene, model, options.station_index)) {
         result.log_messages.push_back("[warn]canvas3D.cpp: 3D scene preview dynamic content could not be built");
     }
@@ -1957,6 +2068,7 @@ struct Canvas3D::Impl {
         release_com(scene_input_layout);
         release_com(scene_vertex_shader);
         release_com(scene_pixel_shader);
+        release_com(scene_fog_pixel_shader);
         release_com(scene_constant_buffer);
         release_com(scene_depth_state);
         release_com(scene_depth_read_state);
@@ -2432,6 +2544,82 @@ struct Canvas3D::Impl {
         scene_context_object_index = -1;
         scene_hover_highlight_batch.clear();
     }
+
+    void set_scene_fog_enabled(bool enabled) {
+        scene_fog_enabled = enabled;
+    }
+
+#ifndef NDEBUG
+    Canvas3DSceneFogDebugState debug_scene_fog_state() const {
+        Canvas3DSceneFogDebugState state;
+        state.keyframe_count = scene_data.fog_keyframes.size();
+        state.fog_draw_part_count = debug_scene_fog_draw_part_count;
+        state.setting_enabled = scene_fog_enabled;
+        state.shader_ready = scene_fog_pixel_shader != nullptr;
+        state.camera_distance = scene_camera_distance;
+        const SceneFogSample sample = sample_canvas3d_scene_fog(
+            scene_data.fog_keyframes, scene_camera_distance, scene_fog_enabled);
+        state.sampled_enabled = sample.enabled;
+        state.density = sample.density;
+        state.color = sample.color;
+        for (const Canvas3DSceneFogKeyframe& keyframe : scene_data.fog_keyframes) {
+            if (keyframe.density > state.max_density) {
+                state.max_density = keyframe.density;
+                state.max_density_distance = keyframe.distance;
+            }
+        }
+        return state;
+    }
+
+    bool debug_read_scene_render_pixels(std::vector<std::uint8_t>& rgba,
+                                        int& width, int& height,
+                                        std::string& error) {
+        rgba.clear();
+        width = 0;
+        height = 0;
+        if (!device || !context || !render_texture) {
+            error = "3D scene render target is not available";
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC desc = {};
+        render_texture->GetDesc(&desc);
+        D3D11_TEXTURE2D_DESC staging_desc = desc;
+        staging_desc.Usage = D3D11_USAGE_STAGING;
+        staging_desc.BindFlags = 0;
+        staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        staging_desc.MiscFlags = 0;
+        ID3D11Texture2D* staging = nullptr;
+        HRESULT hr = device->CreateTexture2D(&staging_desc, nullptr, &staging);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateTexture2D(scene debug readback)", hr);
+            return false;
+        }
+
+        context->CopyResource(staging, render_texture);
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        hr = context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
+        if (FAILED(hr)) {
+            error = hresult_text("Map(scene debug readback)", hr);
+            release_com(staging);
+            return false;
+        }
+
+        width = static_cast<int>(desc.Width);
+        height = static_cast<int>(desc.Height);
+        const size_t row_bytes = static_cast<size_t>(desc.Width) * 4;
+        rgba.resize(row_bytes * static_cast<size_t>(desc.Height));
+        for (UINT y = 0; y < desc.Height; ++y) {
+            std::memcpy(rgba.data() + static_cast<size_t>(y) * row_bytes,
+                        static_cast<const std::uint8_t*>(mapped.pData) +
+                            static_cast<size_t>(y) * mapped.RowPitch,
+                        row_bytes);
+        }
+        context->Unmap(staging, 0);
+        release_com(staging);
+        return true;
+    }
+#endif
 
     Canvas3DSceneInteractionMode scene_interaction_mode_value() const {
         return scene_interaction_mode;
@@ -3666,7 +3854,8 @@ fail:
             error = "Direct3D device is not available";
             return false;
         }
-        if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
+        if (scene_vertex_shader && scene_pixel_shader && scene_fog_pixel_shader &&
+            scene_input_layout && scene_constant_buffer &&
             scene_depth_state && scene_depth_read_state && rasterizer_state && alpha_mask_rasterizer_state &&
             track_rasterizer_state && sampler_state && blend_state &&
             scene_outline_vertex_shader && scene_outline_pixel_shader &&
@@ -3675,13 +3864,21 @@ fail:
 
         if (!ensure_pipeline(error)) return false;
         if (!ensure_scene_depth_states(error)) return false;
-        if (scene_vertex_shader && scene_pixel_shader && scene_input_layout && scene_constant_buffer &&
+        if (scene_vertex_shader && scene_pixel_shader && scene_fog_pixel_shader &&
+            scene_input_layout && scene_constant_buffer &&
             track_rasterizer_state && sampler_state && blend_state) {
             return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error);
         }
 
+        release_com(scene_input_layout);
+        release_com(scene_vertex_shader);
+        release_com(scene_pixel_shader);
+        release_com(scene_fog_pixel_shader);
+        release_com(scene_constant_buffer);
+
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
+        ID3DBlob* fog_ps_blob = nullptr;
         ID3DBlob* errors = nullptr;
         HRESULT hr = D3DCompile(kSceneShaderSource, std::strlen(kSceneShaderSource), nullptr, nullptr, nullptr,
                                 "vs_main", "vs_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
@@ -3702,11 +3899,23 @@ fail:
         }
         release_com(errors);
 
+        hr = D3DCompile(kSceneShaderSource, std::strlen(kSceneShaderSource), nullptr, nullptr, nullptr,
+                        "ps_fog_main", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &fog_ps_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene fog pixel shader)", hr);
+            release_com(errors);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            return false;
+        }
+        release_com(errors);
+
         hr = device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &scene_vertex_shader);
         if (FAILED(hr)) {
             error = hresult_text("CreateVertexShader(scene)", hr);
             release_com(vs_blob);
             release_com(ps_blob);
+            release_com(fog_ps_blob);
             return false;
         }
         hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &scene_pixel_shader);
@@ -3714,6 +3923,19 @@ fail:
             error = hresult_text("CreatePixelShader(scene)", hr);
             release_com(vs_blob);
             release_com(ps_blob);
+            release_com(fog_ps_blob);
+            release_com(scene_vertex_shader);
+            return false;
+        }
+        hr = device->CreatePixelShader(fog_ps_blob->GetBufferPointer(), fog_ps_blob->GetBufferSize(), nullptr,
+                                       &scene_fog_pixel_shader);
+        if (FAILED(hr)) {
+            error = hresult_text("CreatePixelShader(scene fog)", hr);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            release_com(fog_ps_blob);
+            release_com(scene_vertex_shader);
+            release_com(scene_pixel_shader);
             return false;
         }
 
@@ -3729,8 +3951,12 @@ fail:
         hr = device->CreateInputLayout(layout, 7, vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &scene_input_layout);
         release_com(vs_blob);
         release_com(ps_blob);
+        release_com(fog_ps_blob);
         if (FAILED(hr)) {
             error = hresult_text("CreateInputLayout(scene)", hr);
+            release_com(scene_vertex_shader);
+            release_com(scene_pixel_shader);
+            release_com(scene_fog_pixel_shader);
             return false;
         }
 
@@ -3741,6 +3967,10 @@ fail:
         hr = device->CreateBuffer(&cb_desc, nullptr, &scene_constant_buffer);
         if (FAILED(hr)) {
             error = hresult_text("CreateBuffer(scene constants)", hr);
+            release_com(scene_input_layout);
+            release_com(scene_vertex_shader);
+            release_com(scene_pixel_shader);
+            release_com(scene_fog_pixel_shader);
             return false;
         }
         return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error);
@@ -3856,12 +4086,14 @@ fail:
                          UINT instance_count,
                          const Mat4& view_proj,
                          ID3D11RasterizerState* base_rasterizer,
-                         bool mask_pass = false) {
+                         bool mask_pass = false,
+                         const SceneFogSample* fog = nullptr) {
         if (!vb || !ib || !instance_buffer || instance_count == 0) return;
 
         bind_scene_instanced_mesh(vb, ib, instance_buffer);
         context->VSSetShader(scene_vertex_shader, nullptr, 0);
-        context->PSSetShader(scene_pixel_shader, nullptr, 0);
+        const bool fog_active = !mask_pass && fog && fog->enabled && scene_fog_pixel_shader;
+        context->PSSetShader(fog_active ? scene_fog_pixel_shader : scene_pixel_shader, nullptr, 0);
         context->VSSetConstantBuffers(0, 1, &scene_constant_buffer);
         context->PSSetConstantBuffers(0, 1, &scene_constant_buffer);
         context->PSSetSamplers(0, 1, &sampler_state);
@@ -3886,10 +4118,19 @@ fail:
             constants.material_color[3] = material ? material->diffuse[3] : 1.0f;
             constants.use_texture[0] = material && material->has_texture ? 1.0f : 0.0f;
             constants.use_texture[1] = translucent ? 0.0f : 1.0f;
+            if (fog_active) {
+                constants.fog_color_density[0] = fog->color.x;
+                constants.fog_color_density[1] = fog->color.y;
+                constants.fog_color_density[2] = fog->color.z;
+                constants.fog_color_density[3] = fog->density;
+            }
             context->UpdateSubresource(scene_constant_buffer, 0, nullptr, &constants, 0, 0);
             ID3D11ShaderResourceView* texture = material && material->has_texture ? material->texture : nullptr;
             context->PSSetShaderResources(0, 1, &texture);
             context->DrawIndexedInstanced(part.index_count, instance_count, part.start_index, 0, 0);
+#ifndef NDEBUG
+            if (fog_active) ++debug_scene_fog_draw_part_count;
+#endif
         }
         ID3D11ShaderResourceView* null_srv = nullptr;
         context->PSSetShaderResources(0, 1, &null_srv);
@@ -3898,7 +4139,10 @@ fail:
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
     }
 
-    void draw_scene_model(SceneModelGpu& model, const std::vector<SceneInstanceData>& instances, const Mat4& view_proj) {
+    void draw_scene_model(SceneModelGpu& model,
+                          const std::vector<SceneInstanceData>& instances,
+                          const Mat4& view_proj,
+                          const SceneFogSample* fog = nullptr) {
         if (model.state != SceneModelGpu::State::Ready || instances.empty()) return;
         std::string error;
         if (!ensure_instance_buffer(model.instance_buffer, model.instance_capacity, instances, error)) {
@@ -3906,7 +4150,8 @@ fail:
             return;
         }
         draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
-                        model.parts, model.materials, static_cast<UINT>(instances.size()), view_proj, rasterizer_state);
+                        model.parts, model.materials, static_cast<UINT>(instances.size()),
+                        view_proj, rasterizer_state, false, fog);
     }
 
     bool draw_scene_pick_model(SceneModelGpu& model,
@@ -4194,7 +4439,8 @@ fail:
                                 DVec3 render_origin,
                                 const Mat4& view_proj,
                                 std::vector<SceneInstanceData>& track_instance,
-                                std::string& error) {
+                                std::string& error,
+                                const SceneFogSample* fog = nullptr) {
         if (!track.vertex_buffer || !track.index_buffer || track.index_count == 0) return;
 
         track_instance[0] = make_chunk_instance_data(track.origin, render_origin);
@@ -4203,7 +4449,8 @@ fail:
             return;
         }
         draw_scene_mesh(track.vertex_buffer, track.index_buffer, track.instance_buffer,
-                        track.parts, track.materials, 1, view_proj, track_rasterizer_state);
+                        track.parts, track.materials, 1, view_proj,
+                        track_rasterizer_state, false, fog);
         ++scene_stats_value.drawn_track_chunk_count;
     }
 
@@ -5424,14 +5671,14 @@ fail:
         return path;
     }
 
-    void draw_background_model(const Mat4& view_proj) {
+    void draw_background_model(const Mat4& view_proj, const SceneFogSample* fog) {
         std::string path = current_background_path();
         if (path.empty()) return;
         auto it = scene_models.find(path);
         if (it == scene_models.end() || it->second.state != SceneModelGpu::State::Ready) return;
         Mat4 world = identity();
         std::vector<SceneInstanceData> instances{make_instance_data(world)};
-        draw_scene_model(it->second, instances, view_proj);
+        draw_scene_model(it->second, instances, view_proj, fog);
     }
 
     float scene_far_z() const {
@@ -5453,6 +5700,14 @@ fail:
             return;
         }
         upload_pending_scene_models();
+
+#ifndef NDEBUG
+        debug_scene_fog_draw_part_count = 0;
+#endif
+
+        const SceneFogSample fog = sample_canvas3d_scene_fog(
+            scene_data.fog_keyframes, scene_camera_distance, scene_fog_enabled);
+        const SceneFogSample* fog_ptr = fog.enabled ? &fog : nullptr;
 
         const ImVec4 bg = clamp_background_color(background_color_value);
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
@@ -5477,7 +5732,7 @@ fail:
         float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
         Mat4 background_proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect, kSceneBackgroundNearZ, kSceneBackgroundFarZ);
         Mat4 background_view_proj = multiply(view, background_proj);
-        draw_background_model(background_view_proj);
+        draw_background_model(background_view_proj, fog_ptr);
         context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
 
         Mat4 proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect, kSceneNearZ, scene_far_z());
@@ -5522,7 +5777,7 @@ fail:
         for (auto& kv : visible_instances) {
             auto model_it = scene_models.find(kv.first);
             if (model_it == scene_models.end()) continue;
-            draw_scene_model(model_it->second, kv.second, view_proj);
+            draw_scene_model(model_it->second, kv.second, view_proj, fog_ptr);
             if (model_it->second.state == SceneModelGpu::State::Ready) {
                 scene_stats_value.drawn_instance_count += kv.second.size();
             }
@@ -5567,7 +5822,8 @@ fail:
         update_scene_focus_highlight_batch(render_origin, view_proj, width, height);
         for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
             if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
-            draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj, track_instance, error);
+            draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj,
+                                   track_instance, error, fog_ptr);
         }
         draw_scene_highlight_batch(scene_focus_highlight_batch, view_proj, width, height);
         draw_scene_highlight_batch(scene_hover_highlight_batch, view_proj, width, height);
@@ -6076,6 +6332,7 @@ fail:
     ID3D11ShaderResourceView* scene_highlight_mask_srv = nullptr;
     ID3D11VertexShader* scene_vertex_shader = nullptr;
     ID3D11PixelShader* scene_pixel_shader = nullptr;
+    ID3D11PixelShader* scene_fog_pixel_shader = nullptr;
     ID3D11InputLayout* scene_input_layout = nullptr;
     ID3D11Buffer* scene_constant_buffer = nullptr;
     ID3D11VertexShader* scene_outline_vertex_shader = nullptr;
@@ -6116,6 +6373,10 @@ fail:
     Canvas3DScene scene_data;
     size_t scene_geometry_generation = 0;
     bool scene_active = false;
+    bool scene_fog_enabled = true;
+#ifndef NDEBUG
+    size_t debug_scene_fog_draw_part_count = 0;
+#endif
     std::vector<SceneChunk> scene_chunks;
     std::unordered_map<std::string, SceneStructureInstanceLocation> scene_structure_locations;
     SceneStructureEditState scene_structure_edit;
@@ -6254,6 +6515,10 @@ void Canvas3D::set_scene_interaction_mode(Canvas3DSceneInteractionMode mode) {
     impl_->set_scene_interaction_mode(mode);
 }
 
+void Canvas3D::set_scene_fog_enabled(bool enabled) {
+    impl_->set_scene_fog_enabled(enabled);
+}
+
 Canvas3DSceneInteractionMode Canvas3D::scene_interaction_mode() const {
     return impl_->scene_interaction_mode_value();
 }
@@ -6270,6 +6535,16 @@ void Canvas3D::process_scene_loading() {
 void Canvas3D::set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled) {
     impl_->scene_model_worker_limit = worker_limit;
     impl_->scene_texture_cache_enabled = texture_cache_enabled;
+}
+
+Canvas3DSceneFogDebugState Canvas3D::debug_scene_fog_state() const {
+    return impl_->debug_scene_fog_state();
+}
+
+bool Canvas3D::debug_read_scene_render_pixels(std::vector<std::uint8_t>& rgba,
+                                              int& width, int& height,
+                                              std::string& error) {
+    return impl_->debug_read_scene_render_pixels(rgba, width, height, error);
 }
 #endif
 

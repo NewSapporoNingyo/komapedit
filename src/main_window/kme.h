@@ -72,6 +72,7 @@ inline constexpr int kMinSceneEditComponentSizePercent = 50;
 inline constexpr int kMaxSceneEditComponentSizePercent = 500;
 inline constexpr int kSceneEditComponentSizeStepPercent = 10;
 inline constexpr double kSceneWindowBackDistanceM = 100.0;
+inline constexpr bool kDefaultSceneFogEnabled = true;
 inline constexpr size_t kMaxRecentMaps = 10;
 inline constexpr const char* kOwnTrackLookupAliases[] = {"", "0", "1", "\\", "own", "main"};
 
@@ -866,12 +867,14 @@ struct View2DSettings {
 struct View3DSettings {
     bool show_scene_owntrack_markers = kDefaultNonStationAuxInfoVisible;
     bool show_scene_current_position_on_plan = kDefaultNonStationAuxInfoVisible;
+    bool scene_fog_enabled = kDefaultSceneFogEnabled;
     int scene_draw_distance_m = kDefaultSceneDrawDistanceM;
     int scene_edit_component_size_percent = kDefaultSceneEditComponentSizePercent;
 
     bool operator==(const View3DSettings& other) const {
         return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
             show_scene_current_position_on_plan == other.show_scene_current_position_on_plan &&
+            scene_fog_enabled == other.scene_fog_enabled &&
             scene_draw_distance_m == other.scene_draw_distance_m &&
             scene_edit_component_size_percent == other.scene_edit_component_size_percent;
     }
@@ -1101,6 +1104,9 @@ private:
     int scene_edit_component_size_percent_ = kDefaultSceneEditComponentSizePercent;
     int pending_scene_edit_component_size_percent_ = kDefaultSceneEditComponentSizePercent;
     int scene_edit_component_size_before_dialog_percent_ = kDefaultSceneEditComponentSizePercent;
+    bool scene_fog_enabled_ = kDefaultSceneFogEnabled;
+    bool pending_scene_fog_enabled_ = kDefaultSceneFogEnabled;
+    bool scene_fog_enabled_before_dialog_ = kDefaultSceneFogEnabled;
     ImVec4 theme_color_ = default_theme_color();
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
@@ -1576,6 +1582,7 @@ private:
     void apply_view_3d_settings(const View3DSettings& settings);
     void apply_scene_draw_distance_to_canvas(int distance_m);
     void apply_scene_edit_component_size_to_canvas(int size_percent);
+    void apply_scene_fog_effect_to_canvas(bool enabled);
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
