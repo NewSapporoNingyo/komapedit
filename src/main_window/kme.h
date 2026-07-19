@@ -92,7 +92,8 @@ inline bool is_own_track_lookup_alias(const std::string& normalized_key) {
 }
 
 inline bool is_own_track_placement_key(const std::string& normalized_key) {
-    return normalized_key.empty() || normalized_key == "0" || normalized_key == "''";
+    return normalized_key.empty() || normalized_key == "0" ||
+        normalized_key == "''" || normalized_key == "'0'";
 }
 
 struct CanvasLineWidthSettings {
