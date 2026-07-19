@@ -851,17 +851,55 @@ std::string scene_model_key(std::string key) {
     return key;
 }
 
-Matrix copy_scene_buffer(KvDoubleBuffer buffer) {
-    Matrix m;
-    m.rows = buffer.rows;
-    m.cols = buffer.cols;
-    if (buffer.data && buffer.rows > 0 && buffer.cols > 0) {
-        m.data.assign(buffer.data, buffer.data + buffer.rows * buffer.cols);
+struct SceneTrackBufferView {
+    const double* data = nullptr;
+    size_t rows = 0;
+    size_t cols = 0;
+
+    double at(size_t row, size_t col) const {
+        return data[row * cols + col];
     }
-    return m;
+
+    bool empty() const {
+        return rows == 0 || cols == 0;
+    }
+};
+
+std::optional<SceneTrackBufferView> scene_track_buffer_view(const Matrix& points) {
+    if (points.rows == 0) return SceneTrackBufferView{nullptr, 0, points.cols};
+    if (points.cols == 0 || points.rows > std::numeric_limits<size_t>::max() / points.cols) {
+        return std::nullopt;
+    }
+    if (points.data.size() < points.rows * points.cols) return std::nullopt;
+    return SceneTrackBufferView{points.data.data(), points.rows, points.cols};
 }
 
-Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool has_theta_column) {
+std::optional<SceneTrackBufferView> scene_track_buffer_view(KvDoubleBuffer points) {
+    constexpr std::uint64_t max_size = static_cast<std::uint64_t>(std::numeric_limits<size_t>::max());
+    if (points.rows > max_size || points.cols > max_size) return std::nullopt;
+    const size_t rows = static_cast<size_t>(points.rows);
+    const size_t cols = static_cast<size_t>(points.cols);
+    if (rows == 0) return SceneTrackBufferView{nullptr, 0, cols};
+    if (!points.data || cols == 0 || rows > std::numeric_limits<size_t>::max() / cols) {
+        return std::nullopt;
+    }
+    return SceneTrackBufferView{points.data, rows, cols};
+}
+
+double scene_track_tangent(const SceneTrackBufferView& points, size_t row) {
+    if (points.rows < 2 || points.cols < 3) return 0.0;
+    size_t first = row == 0 ? 0 : row - 1;
+    size_t last = row + 1 < points.rows ? row + 1 : row;
+    if (first == last && last + 1 < points.rows) ++last;
+    if (first == last) return 0.0;
+    const double dx = points.at(last, 1) - points.at(first, 1);
+    const double dy = points.at(last, 2) - points.at(first, 2);
+    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
+    return std::atan2(dy, dx);
+}
+
+Canvas3DTrackPoint scene_track_row_point(const SceneTrackBufferView& points, size_t row,
+                                         bool has_theta_column) {
     constexpr double default_gauge = 1067.0;
     auto cant_angle = [default_gauge](double cant, double gauge) {
         if (!std::isfinite(cant)) return 0.0;
@@ -874,7 +912,7 @@ Canvas3DTrackPoint scene_matrix_row_point(const Matrix& points, size_t row, bool
     p.x = points.at(row, 2);
     p.z = -points.at(row, 1);
     p.y = points.cols > 3 ? points.at(row, 3) : 0.0;
-    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : matrix_track_tangent(points, row);
+    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_track_tangent(points, row);
     p.gradient = has_theta_column && points.cols > 6 ? points.at(row, 6) : 0.0;
     if (has_theta_column) {
         double cant = points.cols > 8 ? points.at(row, 8) : 0.0;
@@ -1775,8 +1813,22 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
     if (!options.model || options.model->own.empty()) return result;
 
     const MapModel& model = *options.model;
-    Matrix scene_own = model.own;
-    std::vector<OtherTrack> scene_other_tracks = model.other_tracks;
+    scene.tracks.reserve(model.other_tracks.size() + 1);
+    auto append_track_path = [&](const std::string& key, const SceneTrackBufferView& points,
+                                 bool has_theta, ImVec4 color, bool visible) {
+        if (points.empty() || points.cols < 3) return;
+        Canvas3DTrackPath path;
+        path.key = key;
+        path.color = color;
+        path.visible = visible;
+        path.points.reserve(points.rows);
+        for (size_t row = 0; row < points.rows; ++row) {
+            path.points.push_back(scene_track_row_point(points, row, has_theta));
+        }
+        scene.tracks.push_back(std::move(path));
+    };
+
+    bool used_scene_geometry = false;
     if (options.map_handle) {
         const double max_step = std::clamp(
             options.control_point_interval > 0.0 ? options.control_point_interval : 25.0,
@@ -1789,38 +1841,65 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
             scene_geometry_ok = kv_get_scene_geometry_snapshot(
                 options.map_handle, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
                 &snapshot, sizeof(snapshot)) != 0;
-            Matrix dense_own = scene_geometry_ok
-                ? copy_scene_buffer(snapshot.own_track) : Matrix{};
-            std::vector<OtherTrack> dense_other_tracks;
-            dense_other_tracks.reserve(model.other_tracks.size());
-            const bool matching_track_count = scene_geometry_ok &&
-                snapshot.other_track_count == model.other_tracks.size();
-            auto snapshot_key = [&](KvStringRef ref) {
-                if (!snapshot.string_data || ref.offset > snapshot.string_size ||
-                    ref.length > snapshot.string_size - ref.offset) {
-                    return std::string{};
+            if (scene_geometry_ok) {
+                std::string validation_error;
+                std::optional<SceneTrackBufferView> own_points;
+                std::vector<SceneTrackBufferView> other_points;
+                if (snapshot.version != KV_SCENE_GEOMETRY_SNAPSHOT_VERSION ||
+                    snapshot.structure_size < sizeof(KvSceneGeometrySnapshot)) {
+                    validation_error = "ABI mismatch";
+                } else {
+                    own_points = scene_track_buffer_view(snapshot.own_track);
+                    if (!own_points || own_points->empty() || own_points->cols < 3) {
+                        validation_error = "invalid own-track buffer";
+                    } else if (snapshot.other_track_count != model.other_tracks.size() ||
+                               (snapshot.other_track_count > 0 && !snapshot.other_tracks)) {
+                        validation_error = "track count mismatch";
+                    }
                 }
-                return std::string(snapshot.string_data + static_cast<size_t>(ref.offset),
-                                   static_cast<size_t>(ref.length));
-            };
-            bool matching_track_order = matching_track_count;
-            for (size_t i = 0; i < model.other_tracks.size(); ++i) {
-                const OtherTrack& track = model.other_tracks[i];
-                OtherTrack dense = track;
-                if (matching_track_count) {
-                    const KvSceneTrackRow& input = snapshot.other_tracks[i];
-                    matching_track_order = matching_track_order &&
-                        snapshot_key(input.key) == track.key;
-                    dense.points = copy_scene_buffer(input.points);
+                if (validation_error.empty()) {
+                    other_points.reserve(model.other_tracks.size());
+                    for (size_t i = 0; i < model.other_tracks.size(); ++i) {
+                        const OtherTrack& track = model.other_tracks[i];
+                        const KvSceneTrackRow& input = snapshot.other_tracks[i];
+                        const bool key_bounds_valid =
+                            input.key.offset <= snapshot.string_size &&
+                            input.key.length <= snapshot.string_size - input.key.offset;
+                        const bool key_size_valid =
+                            input.key.length <= std::numeric_limits<size_t>::max() &&
+                            input.key.length == track.key.size();
+                        const bool key_matches = key_bounds_valid && key_size_valid &&
+                            (input.key.length == 0 ||
+                             (snapshot.string_data &&
+                              std::memcmp(snapshot.string_data + static_cast<size_t>(input.key.offset),
+                                          track.key.data(), track.key.size()) == 0));
+                        if (!key_matches) {
+                            validation_error = "track order mismatch";
+                            break;
+                        }
+                        std::optional<SceneTrackBufferView> points =
+                            scene_track_buffer_view(input.points);
+                        if (!points || (!points->empty() && points->cols < 3)) {
+                            validation_error = "invalid other-track buffer";
+                            break;
+                        }
+                        other_points.push_back(*points);
+                    }
                 }
-                dense_other_tracks.push_back(std::move(dense));
-            }
-            if (!dense_own.empty() && matching_track_order) {
-                scene_own = std::move(dense_own);
-                scene_other_tracks = std::move(dense_other_tracks);
-            } else if (scene_geometry_ok && !matching_track_order) {
-                result.log_messages.push_back(
-                    "[warn]canvas3D.cpp: 3D scene snapshot track order mismatch");
+                if (validation_error.empty()) {
+                    append_track_path("own", *own_points, true,
+                                      ImVec4(0.78f, 0.78f, 0.76f, 1.0f),
+                                      options.show_own_track_markers);
+                    for (size_t i = 0; i < model.other_tracks.size(); ++i) {
+                        const OtherTrack& track = model.other_tracks[i];
+                        append_track_path(track.key, other_points[i], false,
+                                          track.color, track.visible);
+                    }
+                    used_scene_geometry = true;
+                } else {
+                    result.log_messages.push_back(
+                        "[warn]canvas3D.cpp: 3D scene snapshot " + validation_error);
+                }
             }
         }
         if (!scene_geometry_ok) {
@@ -1828,26 +1907,19 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
             result.log_messages.push_back(std::string("[warn]canvas3D.cpp: 3D scene preview adaptive geometry failed: ") +
                                           (err ? err : "geometry failed"));
         }
-
     }
 
-    auto append_track_path = [&](const std::string& key, const Matrix& points, bool has_theta, ImVec4 color,
-                                 bool visible) {
-        if (points.empty() || points.cols < 3) return;
-        Canvas3DTrackPath path;
-        path.key = key;
-        path.color = color;
-        path.visible = visible;
-        path.points.reserve(points.rows);
-        for (size_t row = 0; row < points.rows; ++row) {
-            path.points.push_back(scene_matrix_row_point(points, row, has_theta));
+    if (!used_scene_geometry) {
+        if (std::optional<SceneTrackBufferView> own_points = scene_track_buffer_view(model.own)) {
+            append_track_path("own", *own_points, true,
+                              ImVec4(0.78f, 0.78f, 0.76f, 1.0f),
+                              options.show_own_track_markers);
         }
-        scene.tracks.push_back(std::move(path));
-    };
-    append_track_path("own", scene_own, true, ImVec4(0.78f, 0.78f, 0.76f, 1.0f),
-                      options.show_own_track_markers);
-    for (const OtherTrack& track : scene_other_tracks) {
-        append_track_path(track.key, track.points, false, track.color, track.visible);
+        for (const OtherTrack& track : model.other_tracks) {
+            if (std::optional<SceneTrackBufferView> points = scene_track_buffer_view(track.points)) {
+                append_track_path(track.key, *points, false, track.color, track.visible);
+            }
+        }
     }
     populate_canvas3d_scene_route_info(scene, model);
     if (!populate_canvas3d_scene_dynamic_content(scene, model, options.station_index)) {

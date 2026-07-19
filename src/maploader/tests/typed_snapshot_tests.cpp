@@ -279,6 +279,16 @@ int snapshot_contract() {
               scene.other_tracks == scene_cached.other_tracks &&
               scene.own_track.data == scene_cached.own_track.data,
           "scene snapshot reused");
+    check(kv_generate_scene_geometry(handle.value, 25.0, 1.0, 25.0, 1.0, 0.01) != 0,
+          "same-parameter scene cache hit");
+    KvSceneGeometrySnapshot scene_parameter_cached{};
+    check(kv_get_scene_geometry_snapshot(handle.value, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+                                         &scene_parameter_cached, sizeof(scene_parameter_cached)) != 0 &&
+              scene.scene_revision == scene_parameter_cached.scene_revision &&
+              scene.string_data == scene_parameter_cached.string_data &&
+              scene.other_tracks == scene_parameter_cached.other_tracks &&
+              scene.own_track.data == scene_parameter_cached.own_track.data,
+          "same-parameter scene geometry reused");
     KvMapSnapshot after_scene{};
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                               &after_scene, sizeof(after_scene)) != 0 &&

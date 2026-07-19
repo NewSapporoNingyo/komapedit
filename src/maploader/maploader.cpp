@@ -160,9 +160,11 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
         try {
             kme::maploader::detail::generate_geometry(
                 *ctx, unit_distance, has_arb, arb[0], arb[1], arb[2], &extra, false);
-            ctx->scene_owntrack_buffer = std::move(ctx->owntrack_buffer);
-            ctx->scene_othertrack_buffers = std::move(ctx->othertrack_buffers);
+            Matrix generated_owntrack = std::move(ctx->owntrack_buffer);
+            std::map<std::string, Matrix> generated_othertracks = std::move(ctx->othertrack_buffers);
             restore_regular_geometry();
+            std::swap(ctx->scene_owntrack_buffer, generated_owntrack);
+            ctx->scene_othertrack_buffers.swap(generated_othertracks);
         } catch (...) {
             restore_regular_geometry();
             throw;

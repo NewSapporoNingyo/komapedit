@@ -719,8 +719,14 @@ void invalidate_map_snapshot(MapContext& ctx, bool content_changed,
 }
 
 void invalidate_scene_geometry_snapshot(MapContext& ctx, bool scene_changed) {
-    if (scene_changed) ++ctx.scene_revision;
     ctx.scene_snapshot.reset();
+    if (!scene_changed) return;
+
+    ++ctx.scene_revision;
+    ctx.scene_geometry_valid = false;
+    ctx.scene_geometry_parameters = {};
+    ctx.scene_owntrack_buffer = {};
+    ctx.scene_othertrack_buffers.clear();
 }
 
 const KvMapSnapshot& build_map_snapshot(MapContext& ctx) {
