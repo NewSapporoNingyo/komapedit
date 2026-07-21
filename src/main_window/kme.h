@@ -1136,6 +1136,7 @@ private:
     std::string last_log_;
     int error_count_ = 0;
     int warn_count_ = 0;
+    const char* program_status_key_ = "status.ready";
 
     struct LoadResult {
         bool ok = false;
@@ -1514,6 +1515,7 @@ private:
     void handle_shortcuts();
     void render_menu();
     void render_toolbar();
+    void render_status_bar();
     void render_mode_grid_controls();
     void render_station_jump_combo();
     void render_distance_jump_control();

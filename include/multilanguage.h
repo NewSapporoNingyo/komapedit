@@ -19,6 +19,8 @@ struct Translation {
 
     Translation() {
         en = {
+            {"status.map_loading", "Loading map..."}, {"status.map_loaded", "Map loaded"}, {"status.map_load_failed", "Map load failed"},
+            {"status.no_errors_warnings", "No errors or warnings"}, {"frame.errors_warnings", "Errors and Warnings"},
             {"scene.route_info.straight", "Straight"}, {"scene.route_info.interpolate_unsupported", "interpolate(unsupported)"}, {"scene.route_info.next_station", "Next sta. :"}, {"scene.route_info.no_station_ahead", "No station ahead"},
             {"dialog.distance_expression_message", "Edit the distance source expression manually?"},
             {"dialog.structure_put0_convert_title", "Convert Put0"}, {"dialog.structure_put0_convert_message", "This Structure uses Put0, so its coordinates cannot be edited directly. Convert it to Put?"},
@@ -95,6 +97,8 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
         zh = {
+            {"status.map_loading", "正在加载地图..."}, {"status.map_loaded", "地图加载完成"}, {"status.map_load_failed", "地图加载失败"},
+            {"status.no_errors_warnings", "没有错误或警告"}, {"frame.errors_warnings", "错误与警告"},
             {"scene.route_info.straight", "Straight"}, {"scene.route_info.interpolate_unsupported", "interpolate(unsupported)"}, {"scene.route_info.next_station", "Next sta. :"}, {"scene.route_info.no_station_ahead", "No station ahead"},
             {"dialog.distance_expression_message", "是否手动编辑距离源字符串？"},
             {"dialog.structure_put0_convert_title", "转换 Put0"}, {"dialog.structure_put0_convert_message", "当前structure使用put0方法，无法直接编辑坐标，是否转换为Put？"},
@@ -171,6 +175,8 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
         ja = {
+            {"status.map_loading", "マップを読み込み中..."}, {"status.map_loaded", "マップの読み込みが完了しました"}, {"status.map_load_failed", "マップの読み込みに失敗しました"},
+            {"status.no_errors_warnings", "エラーまたは警告はありません"}, {"frame.errors_warnings", "エラーと警告"},
             {"scene.route_info.straight", "Straight"}, {"scene.route_info.interpolate_unsupported", "interpolate(unsupported)"}, {"scene.route_info.next_station", "Next sta. :"}, {"scene.route_info.no_station_ahead", "No station ahead"},
             {"dialog.distance_expression_message", "距離のソース文字列を手動で編集しますか？"},
             {"dialog.structure_put0_convert_title", "Put0 の変換"}, {"dialog.structure_put0_convert_message", "この Structure は Put0 を使用しているため、座標を直接編集できません。Put に変換しますか？"},

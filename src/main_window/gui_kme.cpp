@@ -121,6 +121,26 @@ LogSeverity classify_log_severity(std::string_view text) noexcept {
     return LogSeverity::Info;
 }
 
+ImVec4 main_bar_background_color() {
+    ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    background.x = std::min(background.x + 0.035f, 1.0f);
+    background.y = std::min(background.y + 0.035f, 1.0f);
+    background.z = std::min(background.z + 0.035f, 1.0f);
+    return background;
+}
+
+ImVec4 darkened_theme_color(ImVec4 color) noexcept {
+    constexpr float kDarkenFactor = 0.40f;
+    return ImVec4(color.x * kDarkenFactor, color.y * kDarkenFactor,
+                  color.z * kDarkenFactor, 1.0f);
+}
+
+ImVec4 log_severity_color(LogSeverity severity) noexcept {
+    if (severity == LogSeverity::Error) return ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+    if (severity == LogSeverity::Warning) return ImVec4(1.0f, 0.78f, 0.25f, 1.0f);
+    return ImVec4(0.88f, 0.88f, 0.88f, 1.0f);
+}
+
 } // namespace
 
 void set_crosshair_cursor() {
@@ -1159,6 +1179,7 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     }
     load_state_.running = true;
     load_state_.pending_started_at.reset();
+    program_status_key_ = "status.map_loading";
     add_log(std::string("Start loading file: ") + path);
 
     bool has_cp = preserve_settings && has_model_ && model_.has_cp_arb;
@@ -1211,6 +1232,7 @@ void App::begin_edit_metadata_load() {
     stop_loader();
     load_state_.running = true;
     load_state_.pending_started_at.reset();
+    program_status_key_ = "status.edit.loading_metadata";
     add_log("[info]gui_kme.cpp: loading edit metadata");
 
     LoadModelOptions load_options;
@@ -1239,6 +1261,7 @@ void App::apply_load_result(LoadResult result) {
     if (!result.ok) {
         load_state_.pending_started_at.reset();
         pending_scene_preview_started_at_.reset();
+        program_status_key_ = "status.map_load_failed";
         add_log(LogSeverity::Error, "Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
@@ -1302,6 +1325,7 @@ void App::apply_load_result(LoadResult result) {
     add_log("Load timing: " + timing.str());
     for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
     add_log("Map loaded: " + result.path);
+    program_status_key_ = "status.map_loaded";
     if (result.background_to_restore) {
         apply_background_history(*result.background_to_restore);
     } else if (!result.preserve_settings) {
@@ -1415,6 +1439,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
 
 void App::apply_edit_metadata_result(LoadResult result) {
     if (!result.ok) {
+        program_status_key_ = "status.map_loaded";
         add_log("[error]gui_kme.cpp: edit metadata load failed: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
@@ -1428,6 +1453,7 @@ void App::apply_edit_metadata_result(LoadResult result) {
         // error set by helper
     }
     if (!error.empty()) {
+        program_status_key_ = "status.map_loaded";
         add_log("[warn]gui_kme.cpp: edit metadata discarded: " + error);
         add_log("[warn]gui_kme.cpp: reload from disk before editing this map");
         if (result.handle) kv_free(result.handle);
@@ -1457,6 +1483,7 @@ void App::apply_edit_metadata_result(LoadResult result) {
         }
     }
     add_log("[info]gui_kme.cpp: edit metadata loaded");
+    program_status_key_ = "status.map_loaded";
 }
 
 void App::finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at) {
@@ -4063,10 +4090,7 @@ void App::render_menu() {
 
 void App::render_toolbar() {
     ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 toolbar_bg = style.Colors[ImGuiCol_WindowBg];
-    toolbar_bg.x = std::min(toolbar_bg.x + 0.035f, 1.0f);
-    toolbar_bg.y = std::min(toolbar_bg.y + 0.035f, 1.0f);
-    toolbar_bg.z = std::min(toolbar_bg.z + 0.035f, 1.0f);
+    const ImVec4 toolbar_bg = main_bar_background_color();
 
     const float button_height = ImGui::GetFrameHeight();
     const float toolbar_padding_y = button_height * 0.25f;
@@ -4118,6 +4142,103 @@ void App::render_toolbar() {
     }
     ImGui::End();
     ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+void App::render_status_bar() {
+    constexpr float kFontScale = 0.80f;
+    constexpr float kHeightScale = 1.20f;
+    const float status_font_size = ImGui::GetFontSize() * kFontScale;
+    const float status_bar_height = status_font_size * kHeightScale;
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoNavInputs;
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, main_bar_background_color());
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.0f, 0.0f));
+    const bool visible = ImGui::BeginViewportSideBar(
+        "##MainStatusBar", ImGui::GetMainViewport(), ImGuiDir_Down, status_bar_height, flags);
+    if (visible) {
+        ImGui::SetWindowFontScale(kFontScale);
+
+        int error_count = 0;
+        int warning_count = 0;
+        {
+            std::lock_guard<std::mutex> lock(log_mutex_);
+            error_count = error_count_;
+            warning_count = warn_count_;
+        }
+
+        std::array<char, 32> error_text{};
+        std::array<char, 32> warning_text{};
+        std::snprintf(error_text.data(), error_text.size(), "Err %d", error_count);
+        std::snprintf(warning_text.data(), warning_text.size(), "Warn %d", warning_count);
+        const ImVec2 error_text_size = ImGui::CalcTextSize(error_text.data());
+        const ImVec2 warning_text_size = ImGui::CalcTextSize(warning_text.data());
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float horizontal_padding = style.ItemSpacing.x;
+        const float count_spacing = style.ItemInnerSpacing.x;
+        const ImVec2 count_region_size(error_text_size.x + count_spacing + warning_text_size.x +
+                                           horizontal_padding * 2.0f,
+                                       status_bar_height);
+        const ImVec2 count_region_min = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##StatusDiagnosticsButton", count_region_size);
+        const bool count_region_hovered = ImGui::IsItemHovered();
+        const bool open_diagnostics = ImGui::IsItemClicked();
+
+        const ImVec4 count_background = darkened_theme_color(theme_color_);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddRectFilled(count_region_min,
+                                 ImVec2(count_region_min.x + count_region_size.x,
+                                        count_region_min.y + count_region_size.y),
+                                 ImGui::GetColorU32(count_background));
+        const float text_y = count_region_min.y +
+                             (status_bar_height - error_text_size.y) * 0.5f;
+        const float error_text_x = count_region_min.x + horizontal_padding;
+        const float warning_text_x = error_text_x + error_text_size.x + count_spacing;
+        draw_list->AddText(ImVec2(error_text_x, text_y),
+                           ImGui::GetColorU32(log_severity_color(LogSeverity::Error)),
+                           error_text.data());
+        draw_list->AddText(ImVec2(warning_text_x, text_y),
+                           ImGui::GetColorU32(log_severity_color(LogSeverity::Warning)),
+                           warning_text.data());
+        if (count_region_hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (open_diagnostics) ImGui::OpenPopup("##StatusDiagnosticsPopup");
+
+        ImGui::SameLine(0.0f, horizontal_padding);
+        ImGui::SetCursorPosY((status_bar_height - status_font_size) * 0.5f);
+        ImGui::TextUnformatted(tr(program_status_key_).c_str());
+
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 popup_size(
+            std::max(280.0f * dpi_scale_, std::min(720.0f * dpi_scale_, viewport->WorkSize.x * 0.60f)),
+            std::max(160.0f * dpi_scale_, std::min(360.0f * dpi_scale_, viewport->WorkSize.y * 0.40f)));
+        ImGui::SetNextWindowSize(popup_size, ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("##StatusDiagnosticsPopup")) {
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::TextUnformatted(tr("frame.errors_warnings").c_str());
+            ImGui::Separator();
+            ImGui::BeginChild("##StatusDiagnosticsList", ImVec2(0.0f, 0.0f), false,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+            bool has_diagnostics = false;
+            {
+                std::lock_guard<std::mutex> lock(log_mutex_);
+                for (const LogLine& line : logs_) {
+                    if (line.severity == LogSeverity::Info) continue;
+                    has_diagnostics = true;
+                    ImGui::TextColored(log_severity_color(line.severity), "%s", line.text.c_str());
+                }
+            }
+            if (!has_diagnostics) {
+                ImGui::TextDisabled("%s", tr("status.no_errors_warnings").c_str());
+            }
+            ImGui::EndChild();
+            ImGui::EndPopup();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
 }
 
@@ -4218,9 +4339,9 @@ void App::render_console() {
         ImGui::SetClipboardText(console_text.c_str());
     }
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "E %d", error_count_);
+    ImGui::TextColored(log_severity_color(LogSeverity::Error), "E %d", error_count_);
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "W %d", warn_count_);
+    ImGui::TextColored(log_severity_color(LogSeverity::Warning), "W %d", warn_count_);
     ImGui::Separator();
     ImGui::BeginChild("console_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
     const bool was_at_bottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
@@ -4233,12 +4354,7 @@ void App::render_console() {
         (console_rect.Contains(touch.single_start_pos) || console_rect.Contains(touch.single_pos));
     std::lock_guard<std::mutex> lock(log_mutex_);
     for (const auto& line : logs_) {
-        ImVec4 color = line.severity == LogSeverity::Error
-                         ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
-                     : line.severity == LogSeverity::Warning
-                         ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f)
-                         : ImVec4(0.88f, 0.88f, 0.88f, 1.0f);
-        ImGui::TextColored(color, "%s", line.text.c_str());
+        ImGui::TextColored(log_severity_color(line.severity), "%s", line.text.c_str());
     }
     if (was_at_bottom && !touch_vertical_scroll) ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
@@ -5258,6 +5374,7 @@ void App::render() {
     handle_shortcuts();
     render_menu();
     render_toolbar();
+    render_status_bar();
     ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
     setup_initial_dockspace(dockspace_id);
     render_othertracks_window();
