@@ -1691,6 +1691,12 @@ bool App::edit_actions_available() const {
 
 void App::set_edit_mode_enabled(bool enabled) {
     if (enabled == edit_mode_enabled_) return;
+    if (enabled && !settings_.edit_mode_warning_suppressed) {
+        edit_mode_warning_dont_show_ = false;
+        popups_.edit_mode_warning = true;
+        wake_main_window();
+        return;
+    }
     if (!enabled && has_pending_edits()) {
         request_close_action(PendingCloseAction::DisableEditMode);
         return;
@@ -4395,6 +4401,35 @@ void App::render_popups() {
         settings_.view_3d = current_view_3d_settings();
         last_saved_view_3d_settings_ = settings_.view_3d;
     };
+
+    if (popups_.edit_mode_warning) {
+        ImGui::OpenPopup(tr("dialog.edit_mode_warning_title").c_str());
+        popups_.edit_mode_warning = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal(tr("dialog.edit_mode_warning_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+        ImGui::TextUnformatted(tr("dialog.edit_mode_warning_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Checkbox(tr("chk.edit_mode_warning_dont_show").c_str(),
+                        &edit_mode_warning_dont_show_);
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            if (edit_mode_warning_dont_show_) {
+                settings_.edit_mode_warning_suppressed = true;
+            }
+            apply_edit_mode_enabled(true);
+            edit_mode_warning_dont_show_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            edit_mode_warning_dont_show_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     if (inspector_.open && inspector_.put0_prompt_requested) {
         ImGui::OpenPopup(tr("dialog.structure_put0_convert_title").c_str());

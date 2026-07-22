@@ -351,6 +351,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "background_grid_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.background_grid_px << "\n";
     out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
     out << "edit_mode_enabled=" << bool_to_string(settings.edit_mode_enabled) << "\n";
+    out << "edit_mode_warning_suppressed=" << bool_to_string(settings.edit_mode_warning_suppressed) << "\n";
     out << "\n[WindowVisibility]\n";
     out << "show_othertracks_window=" << bool_to_string(settings.window_visibility.show_othertracks_window) << "\n";
     out << "show_station_list_window=" << bool_to_string(settings.window_visibility.show_station_list_window) << "\n";
@@ -516,6 +517,9 @@ UserSettings load_user_settings() {
         } else if (key == "edit_mode_enabled" || key == "enable_edit" || key == "edit_mode") {
             edit_mode_key_seen = true;
             settings.edit_mode_enabled = parse_bool(value, settings.edit_mode_enabled);
+        } else if (key == "edit_mode_warning_suppressed") {
+            settings.edit_mode_warning_suppressed =
+                parse_bool(value, settings.edit_mode_warning_suppressed);
         } else if (key == "show_othertracks_window") {
             settings.window_visibility.show_othertracks_window = parse_bool(value, settings.window_visibility.show_othertracks_window);
         } else if (key == "show_station_list_window") {

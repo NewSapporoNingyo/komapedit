@@ -893,6 +893,7 @@ struct UserSettings {
     CanvasLineWidthSettings canvas_line_widths;
     ImVec4 theme_color = default_theme_color();
     bool edit_mode_enabled = false;
+    bool edit_mode_warning_suppressed = false;
     WindowVisibilitySettings window_visibility;
     View2DSettings view_2d;
     View3DSettings view_3d;
@@ -1122,6 +1123,7 @@ private:
     bool has_model_ = false;
     std::string file_path_;
     bool edit_mode_enabled_ = false;
+    bool edit_mode_warning_dont_show_ = false;
     bool edit_registry_loaded_ = false;
     std::map<std::string, MapElementPendingChange> pending_edit_changes_;
     bool edit_memory_matches_pending_ledger_ = true;
@@ -1297,6 +1299,7 @@ private:
         bool canvas_3d_settings = false;
         bool reload_unsaved_confirm = false;
         bool close_unsaved_confirm = false;
+        bool edit_mode_warning = false;
     };
     enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
     enum class PendingCloseAction { None, DisableEditMode, ExitApplication };
