@@ -32,6 +32,7 @@ struct EditableTarget {
     int element_index = 0;
     const StructurePut* structure_put = nullptr;
     const StationPut* station_put = nullptr;
+    const RepeaterEvent* repeater = nullptr;
     int elements_for_statement = 0;
 };
 
@@ -659,6 +660,113 @@ std::string build_structure_put_statement(const MapEditChange& change,
     return out.str();
 }
 
+std::string repeater_key_bve_arg(const RepeaterEvent& row) {
+    const std::string key = value_to_bve_arg(row.repeater_key);
+    if (key.empty()) throw std::runtime_error("Repeater key is empty");
+    return key;
+}
+
+bool repeater_has_field_change(const MapEditChange& change, const char* key) {
+    return has_field_change(change, key);
+}
+
+void reject_repeater_position_fields(const MapEditChange& change,
+                                     const std::string& message) {
+    for (const char* field : {"x", "y", "z", "rx", "ry", "rz"}) {
+        if (repeater_has_field_change(change, field)) {
+            throw std::runtime_error(message);
+        }
+    }
+}
+
+void append_repeater_structure_keys(std::ostringstream& out,
+                                    const RepeaterStructureKeyEdit& edited_keys,
+                                    const std::vector<Value>& fallback_keys,
+                                    const std::vector<std::string>& raw_args,
+                                    size_t raw_start) {
+    if (edited_keys.changed) {
+        for (const std::string& key : edited_keys.values) {
+            out << "," << quoted_bve_string(key);
+        }
+        return;
+    }
+    for (size_t index = 0; index < fallback_keys.size(); ++index) {
+        const std::string* raw = raw_arg_at(raw_args, raw_start + index);
+        out << "," << (raw ? trim_field_copy(*raw) : value_to_bve_arg(fallback_keys[index]));
+    }
+}
+
+std::string build_repeater_statement(const MapEditChange& change,
+                                     const ParsedStatement& statement,
+                                     const RepeaterEvent& row) {
+    validate_repeater_edit_fields(change);
+    const RepeaterStructureKeyEdit edited_keys = parse_repeater_structure_key_edit(change);
+    const std::string source_method = ascii_lower(row.method);
+    const std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
+    const std::string key = repeater_key_bve_arg(row);
+
+    if (source_method == "end") {
+        for (const auto& field : change.field_changes) {
+            if (field.first != "distance") {
+                throw std::runtime_error("only distance can be edited on Repeater.End");
+            }
+        }
+        return "Repeater[" + key + "].End();";
+    }
+    if (source_method != "begin" && source_method != "begin0") {
+        throw std::runtime_error("unsupported Repeater method: " + row.method);
+    }
+
+    const bool source_begin0 = source_method == "begin0";
+    bool converted_begin0 = false;
+    if (has_field_change(change, "method")) {
+        const std::string requested_method = ascii_lower(
+            trim_field_copy(field_text_or(change, "method", row.method)));
+        if (!source_begin0 || requested_method != "begin") {
+            throw std::runtime_error("unsupported Repeater method conversion");
+        }
+        converted_begin0 = true;
+    }
+    if (source_begin0 && !converted_begin0) {
+        reject_repeater_position_fields(
+            change, "Repeater.Begin0 requires conversion to Begin before editing position");
+    }
+
+    std::ostringstream out;
+    out << "Repeater[" << key << "]." << (converted_begin0 ? "Begin" : row.method) << "("
+        << track_key_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0));
+    if (source_begin0 && !converted_begin0) {
+        out << "," << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1))
+            << "," << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2))
+            << "," << numeric_field(change, "interval", row.interval, raw_arg_at(raw_args, 3));
+        append_repeater_structure_keys(out, edited_keys, row.structure_keys, raw_args, 4);
+    } else if (converted_begin0) {
+        out << "," << numeric_field(change, "x", 0.0)
+            << "," << numeric_field(change, "y", 0.0)
+            << "," << numeric_field(change, "z", 0.0)
+            << "," << numeric_field(change, "rx", 0.0)
+            << "," << numeric_field(change, "ry", 0.0)
+            << "," << numeric_field(change, "rz", 0.0)
+            << "," << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1))
+            << "," << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2))
+            << "," << numeric_field(change, "interval", row.interval, raw_arg_at(raw_args, 3));
+        append_repeater_structure_keys(out, edited_keys, row.structure_keys, raw_args, 4);
+    } else {
+        out << "," << numeric_field(change, "x", row.x, raw_arg_at(raw_args, 1))
+            << "," << numeric_field(change, "y", row.y, raw_arg_at(raw_args, 2))
+            << "," << numeric_field(change, "z", row.z, raw_arg_at(raw_args, 3))
+            << "," << numeric_field(change, "rx", row.rx, raw_arg_at(raw_args, 4))
+            << "," << numeric_field(change, "ry", row.ry, raw_arg_at(raw_args, 5))
+            << "," << numeric_field(change, "rz", row.rz, raw_arg_at(raw_args, 6))
+            << "," << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 7))
+            << "," << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 8))
+            << "," << numeric_field(change, "interval", row.interval, raw_arg_at(raw_args, 9));
+        append_repeater_structure_keys(out, edited_keys, row.structure_keys, raw_args, 10);
+    }
+    out << ");";
+    return out.str();
+}
+
 void count_statement_ref(const EditSourceRef& ref, size_t statement_index, int& count) {
     if (ref.valid() && ref.statement_index == statement_index) ++count;
 }
@@ -669,6 +777,7 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     for (const auto& row : ctx.structure_models) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_betweens) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.repeaters) count_statement_ref(row.edit_ref, statement_index, count);
     return count;
 }
 
@@ -737,6 +846,13 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
         const StationPut& row = ctx.station_puts[i];
         if (match_edit_ref(ctx, row, "station.put", i, edit_id, target)) {
             target.station_put = &row;
+            return target;
+        }
+    }
+    for (size_t i = 0; i < ctx.repeaters.size(); ++i) {
+        const RepeaterEvent& row = ctx.repeaters[i];
+        if (match_edit_ref(ctx, row, "repeater", i, edit_id, target)) {
+            target.repeater = &row;
             return target;
         }
     }
@@ -826,6 +942,9 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "station.put" && target.station_put) {
         return build_station_put_statement(change, statement, *target.station_put);
+    }
+    if (target.row_kind == "repeater" && target.repeater) {
+        return build_repeater_statement(change, statement, *target.repeater);
     }
     throw std::runtime_error("unsupported editable target: " + target.row_kind);
 }
@@ -2084,6 +2203,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->structure_puts, "structure.put");
         collect_candidate_rows(candidate->structure_betweens, "structure.between");
         collect_candidate_rows(candidate->station_puts, "station.put");
+        collect_candidate_rows(candidate->repeaters, "repeater");
     } catch (const std::exception& e) {
         report.blocking_errors.push_back(
             std::string("failed to resolve edited target source provenance: ") + e.what());
@@ -2786,6 +2906,11 @@ MapEditReport build_edit_report(MapContext& ctx,
             }
             edit.operation = operation;
             if (operation == "delete") {
+                if (target.row_kind == "repeater") {
+                    report.blocking_errors.push_back(
+                        "delete is not supported for Repeater statements: " + change.edit_id);
+                    continue;
+                }
                 if (target.elements_for_statement != 1) {
                     report.blocking_errors.push_back("delete is blocked because the source statement maps to multiple elements: " + change.edit_id);
                     continue;
@@ -3484,6 +3609,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "structure.model", ctx.structure_models);
     append_committed_rows(ctx, report, "structure.put", ctx.structure_puts);
     append_committed_rows(ctx, report, "structure.between", ctx.structure_betweens);
+    append_committed_rows(ctx, report, "repeater", ctx.repeaters);
 
     std::vector<size_t> station_order;
     station_order.reserve(ctx.station_puts.size());

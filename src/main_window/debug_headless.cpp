@@ -13,6 +13,7 @@
 #include "canvas3D.h"
 #include "debug_headless.h"
 #include "maploader.h"
+#include "repeater_linkage.h"
 #include "touch_input.h"
 
 #include "imgui.h"
@@ -498,6 +499,38 @@ HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     for (size_t i = 1; i < args.size(); ++i) {
         const std::string& arg = args[i];
         if (arg == "--debug-headless-distance-edit-batch") {
+            options.requested = true;
+            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
+                options.path = args[++i];
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (options.requested && options.path.empty()) options.path = kDefaultMapPath;
+    return options;
+}
+
+HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
+    const std::vector<std::string>& args) {
+    static constexpr const char* kDefaultMapPath =
+        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
+        "Config_Map121M-ATSP+Ps_Ask.txt";
+    HeadlessRepeaterEditBatchOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-repeater-edit-batch") {
             options.requested = true;
             if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
                 options.path = args[++i];
@@ -3181,6 +3214,377 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
             if (!facts.commit_ok) {
                 std::string detail = first_blocking_error(commit_report);
                 throw std::runtime_error(detail.empty() ? "commit validation failed" : detail);
+            }
+        }
+    } catch (const std::exception& e) {
+        facts.error = e.what();
+    }
+
+    write_batch_result(*out, facts);
+    out->flush();
+    return facts.passed() ? 0 : 20;
+}
+
+namespace repeater_batch_headless {
+
+using EditChange = typed_edit_headless::Change;
+using EditReport = typed_edit_headless::Report;
+using MapHandle = distance_batch_headless::MapHandle;
+
+struct RepeaterSegmentEdit {
+    std::string repeater_key;
+    std::string begin_edit_id;
+    std::string end_edit_id;
+    std::string begin_expected_source_hash;
+    std::string end_expected_source_hash;
+    std::string begin_source_file;
+    std::string end_source_file;
+    int begin_line = 0;
+    int end_line = 0;
+    double begin_distance = 0.0;
+    double end_distance = 0.0;
+    double x = 0.0;
+    double target_begin_distance = 0.0;
+    double target_end_distance = 0.0;
+    double target_x = 0.0;
+};
+
+struct BatchRunFacts {
+    std::string path;
+    bool commit_requested = false;
+    bool dry_run_ok = false;
+    bool apply_to_memory_ok = false;
+    bool full_reparse_ok = false;
+    bool snapshot_after_apply_ok = false;
+    int metadata_after_apply_count = 0;
+    int target_distance_match_count = 0;
+    int non_target_changed_count = 0;
+    bool reset_ok = false;
+    bool commit_attempted = false;
+    bool commit_ok = false;
+    size_t commit_changed_file_count = 0;
+    std::vector<RepeaterSegmentEdit> selected;
+    std::string error;
+
+    bool passed() const {
+        return error.empty() && selected.size() == 5 && dry_run_ok &&
+            apply_to_memory_ok && full_reparse_ok && snapshot_after_apply_ok &&
+            metadata_after_apply_count == 10 && target_distance_match_count == 10 &&
+            non_target_changed_count == 0 && reset_ok &&
+            (!commit_requested || (commit_attempted && commit_ok));
+    }
+};
+
+std::vector<RepeaterSegmentEdit> collect_repeater_segments(void* handle) {
+    const KvMapSnapshot snapshot = distance_batch_headless::current_map_snapshot(handle);
+    if (snapshot.repeater_count != 0 && !snapshot.repeaters) {
+        throw std::runtime_error("typed map snapshot has null repeater array");
+    }
+
+    std::vector<repeater_linkage::Event> events;
+    events.reserve(static_cast<size_t>(snapshot.repeater_count));
+    for (std::uint64_t i = 0; i < snapshot.repeater_count; ++i) {
+        const KvRepeaterRow& row = snapshot.repeaters[i];
+        repeater_linkage::Event event;
+        event.source_index = static_cast<size_t>(i);
+        event.distance = row.distance;
+        event.order = static_cast<double>(row.order);
+        event.key = distance_batch_headless::snapshot_value_text(snapshot, row.repeater_key);
+        const std::string method = distance_batch_headless::snapshot_text(snapshot, row.method);
+        if (method == "Begin" || method == "Begin0") {
+            event.kind = repeater_linkage::EventKind::Begin;
+        } else if (method == "End") {
+            event.kind = repeater_linkage::EventKind::End;
+        }
+        events.push_back(std::move(event));
+    }
+
+    std::vector<RepeaterSegmentEdit> result;
+    for (const repeater_linkage::Segment& segment : repeater_linkage::pair_segments(std::move(events))) {
+        if (segment.boundary_kind != repeater_linkage::BoundaryKind::ExplicitEnd ||
+            !segment.boundary_source_index ||
+            segment.begin_source_index >= snapshot.repeater_count ||
+            *segment.boundary_source_index >= snapshot.repeater_count) {
+            continue;
+        }
+        const KvRepeaterRow& begin = snapshot.repeaters[segment.begin_source_index];
+        const KvRepeaterRow& end = snapshot.repeaters[*segment.boundary_source_index];
+        const std::string method = distance_batch_headless::snapshot_text(snapshot, begin.method);
+        if (method != "Begin" || segment.end_distance - segment.begin_distance <= 0.1) {
+            continue;
+        }
+
+        const std::string begin_edit_id =
+            distance_batch_headless::snapshot_text(snapshot, begin.metadata.edit_id);
+        const std::string end_edit_id =
+            distance_batch_headless::snapshot_text(snapshot, end.metadata.edit_id);
+        if (begin_edit_id.empty() || end_edit_id.empty()) continue;
+
+        std::string begin_error;
+        std::string end_error;
+        const std::optional<InspectorTargetMetadata> begin_info =
+            resolve_inspector_target_metadata(handle, begin_edit_id, "repeater", &begin_error);
+        const std::optional<InspectorTargetMetadata> end_info =
+            resolve_inspector_target_metadata(handle, end_edit_id, "repeater", &end_error);
+        if (!begin_info || !end_info || begin_info->expected_source_hash.empty() ||
+            end_info->expected_source_hash.empty()) {
+            continue;
+        }
+
+        RepeaterSegmentEdit edit;
+        edit.repeater_key = distance_batch_headless::snapshot_value_text(
+            snapshot, begin.repeater_key);
+        edit.begin_edit_id = begin_edit_id;
+        edit.end_edit_id = end_edit_id;
+        edit.begin_expected_source_hash = begin_info->expected_source_hash;
+        edit.end_expected_source_hash = end_info->expected_source_hash;
+        edit.begin_source_file = begin_info->source.file_path;
+        edit.end_source_file = end_info->source.file_path;
+        edit.begin_line = begin_info->source.line;
+        edit.end_line = end_info->source.line;
+        edit.begin_distance = begin.distance;
+        edit.end_distance = end.distance;
+        edit.x = begin.x;
+        edit.target_begin_distance = begin.distance + 0.001;
+        edit.target_end_distance = end.distance + 0.002;
+        edit.target_x = begin.x + 0.001;
+        result.push_back(std::move(edit));
+    }
+    std::stable_sort(result.begin(), result.end(), [](const RepeaterSegmentEdit& left,
+                                                       const RepeaterSegmentEdit& right) {
+        if (left.begin_distance != right.begin_distance) {
+            return left.begin_distance < right.begin_distance;
+        }
+        if (left.begin_source_file != right.begin_source_file) {
+            return left.begin_source_file < right.begin_source_file;
+        }
+        return left.begin_line < right.begin_line;
+    });
+    return result;
+}
+
+std::vector<EditChange> build_changes(const std::vector<RepeaterSegmentEdit>& selected) {
+    std::vector<EditChange> changes;
+    changes.reserve(selected.size() * 2);
+    for (size_t index = 0; index < selected.size(); ++index) {
+        const RepeaterSegmentEdit& edit = selected[index];
+        changes.push_back(typed_edit_headless::update(
+            "headless-repeater-begin-" + std::to_string(index), edit.begin_edit_id,
+            edit.begin_expected_source_hash,
+            {{"distance", distance_batch_headless::edit_number(edit.target_begin_distance)},
+             {"x", distance_batch_headless::edit_number(edit.target_x)}}));
+        changes.push_back(typed_edit_headless::update(
+            "headless-repeater-end-" + std::to_string(index), edit.end_edit_id,
+            edit.end_expected_source_hash,
+            {{"distance", distance_batch_headless::edit_number(edit.target_end_distance)}}));
+    }
+    return changes;
+}
+
+bool has_minimum_spacing(const std::vector<RepeaterSegmentEdit>& selected,
+                         double candidate_distance, double minimum_spacing) {
+    return std::all_of(selected.begin(), selected.end(), [&](const RepeaterSegmentEdit& edit) {
+        return std::fabs(edit.begin_distance - candidate_distance) >= minimum_spacing;
+    });
+}
+
+bool report_matches_selection(const EditReport& report, size_t selected_count) {
+    return report.ok && report.full_reparse_ok && report.resolution_requests.empty() &&
+        report.target_distance_match_count == static_cast<int>(selected_count * 2) &&
+        report.non_target_changed_count == 0;
+}
+
+std::vector<RepeaterSegmentEdit> select_real_map_repeater_edits(
+    void* handle, const std::vector<RepeaterSegmentEdit>& candidates) {
+    if (candidates.empty()) {
+        throw std::runtime_error("real map has no editable Repeater.Begin/End segments");
+    }
+    std::vector<RepeaterSegmentEdit> selected;
+    std::string last_error;
+    for (double minimum_spacing : {500.0, 50.0, 1.0, 0.0}) {
+        for (const RepeaterSegmentEdit& candidate : candidates) {
+            if (selected.size() == 5) break;
+            if (!has_minimum_spacing(selected, candidate.begin_distance, minimum_spacing)) continue;
+            selected.push_back(candidate);
+            try {
+                const EditReport report = typed_edit_headless::dry_run(
+                    handle, build_changes(selected));
+                if (report_matches_selection(report, selected.size())) continue;
+                if (!report.blocking_errors.empty()) last_error = report.blocking_errors.front();
+            } catch (const std::exception& e) {
+                last_error = e.what();
+            }
+            selected.pop_back();
+        }
+        if (selected.size() == 5) break;
+    }
+    if (selected.size() != 5) {
+        throw std::runtime_error(
+            "could not select five resolvable Repeater Begin/End edit pairs" +
+            (last_error.empty() ? std::string{} : ": " + last_error));
+    }
+    return selected;
+}
+
+bool snapshot_matches_selected(void* handle, const std::vector<RepeaterSegmentEdit>& selected) {
+    const KvMapSnapshot snapshot = distance_batch_headless::current_map_snapshot(handle);
+    for (const RepeaterSegmentEdit& edit : selected) {
+        bool begin_found = false;
+        bool end_found = false;
+        for (std::uint64_t index = 0; index < snapshot.repeater_count; ++index) {
+            const KvRepeaterRow& row = snapshot.repeaters[index];
+            const std::string edit_id =
+                distance_batch_headless::snapshot_text(snapshot, row.metadata.edit_id);
+            if (edit_id == edit.begin_edit_id) {
+                begin_found = std::fabs(row.distance - edit.target_begin_distance) <= 1e-8 &&
+                    std::fabs(row.x - edit.target_x) <= 1e-8;
+            } else if (edit_id == edit.end_edit_id) {
+                end_found = std::fabs(row.distance - edit.target_end_distance) <= 1e-8;
+            }
+        }
+        if (!begin_found || !end_found) return false;
+    }
+    return true;
+}
+
+int metadata_matches_selected(void* handle, const std::vector<RepeaterSegmentEdit>& selected) {
+    int matched = 0;
+    auto count_match = [&](const std::string& edit_id, double target_distance) {
+        std::string error;
+        const std::optional<InspectorTargetMetadata> info =
+            resolve_inspector_target_metadata(handle, edit_id, "repeater", &error);
+        if (info && !info->source_distance_string.empty() &&
+            std::isfinite(info->distance_value) &&
+            std::fabs(info->distance_value - target_distance) <= 1e-8) {
+            ++matched;
+        }
+    };
+    for (const RepeaterSegmentEdit& edit : selected) {
+        count_match(edit.begin_edit_id, edit.target_begin_distance);
+        count_match(edit.end_edit_id, edit.target_end_distance);
+    }
+    return matched;
+}
+
+void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
+    auto boolean = [](bool value) { return value ? 1 : 0; };
+    out << "command=debug-headless-repeater-edit-batch\n"
+        << "path=" << facts.path << "\n"
+        << "commit_requested=" << boolean(facts.commit_requested) << "\n"
+        << "selected_count=" << facts.selected.size() << "\n"
+        << "dry_run_ok=" << boolean(facts.dry_run_ok) << "\n"
+        << "apply_to_memory_ok=" << boolean(facts.apply_to_memory_ok) << "\n"
+        << "full_reparse_ok=" << boolean(facts.full_reparse_ok) << "\n"
+        << "snapshot_after_apply_ok=" << boolean(facts.snapshot_after_apply_ok) << "\n"
+        << "metadata_after_apply_count=" << facts.metadata_after_apply_count << "\n"
+        << "target_distance_match_count=" << facts.target_distance_match_count << "\n"
+        << "non_target_changed_count=" << facts.non_target_changed_count << "\n"
+        << "reset_ok=" << boolean(facts.reset_ok) << "\n"
+        << "commit_attempted=" << boolean(facts.commit_attempted) << "\n"
+        << "commit_ok=" << boolean(facts.commit_ok) << "\n"
+        << "commit_changed_file_count=" << facts.commit_changed_file_count << "\n";
+    for (size_t index = 0; index < facts.selected.size(); ++index) {
+        const RepeaterSegmentEdit& edit = facts.selected[index];
+        out << "selected." << index << ".repeater_key=" << edit.repeater_key << "\n"
+            << "selected." << index << ".begin_edit_id=" << edit.begin_edit_id << "\n"
+            << "selected." << index << ".end_edit_id=" << edit.end_edit_id << "\n"
+            << "selected." << index << ".begin_source_file=" << edit.begin_source_file << "\n"
+            << "selected." << index << ".begin_line=" << edit.begin_line << "\n"
+            << "selected." << index << ".end_source_file=" << edit.end_source_file << "\n"
+            << "selected." << index << ".end_line=" << edit.end_line << "\n"
+            << "selected." << index << ".begin_distance="
+            << distance_batch_headless::edit_number(edit.begin_distance) << "\n"
+            << "selected." << index << ".target_begin_distance="
+            << distance_batch_headless::edit_number(edit.target_begin_distance) << "\n"
+            << "selected." << index << ".end_distance="
+            << distance_batch_headless::edit_number(edit.end_distance) << "\n"
+            << "selected." << index << ".target_end_distance="
+            << distance_batch_headless::edit_number(edit.target_end_distance) << "\n"
+            << "selected." << index << ".x="
+            << distance_batch_headless::edit_number(edit.x) << "\n"
+            << "selected." << index << ".target_x="
+            << distance_batch_headless::edit_number(edit.target_x) << "\n";
+    }
+    out << "error=" << facts.error << "\n"
+        << "result=" << (facts.passed() ? "PASS" : "FAIL") << "\n";
+}
+
+} // namespace repeater_batch_headless
+
+int run_debug_headless_repeater_edit_batch(const HeadlessRepeaterEditBatchOptions& options) {
+    using namespace repeater_batch_headless;
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    BatchRunFacts facts;
+    facts.path = options.path;
+    facts.commit_requested = options.commit;
+    try {
+        MapHandle handle;
+        handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "real map load failed");
+        }
+
+        facts.selected = select_real_map_repeater_edits(
+            handle.value, collect_repeater_segments(handle.value));
+        const std::vector<EditChange> changes = build_changes(facts.selected);
+        const EditReport dry_report = typed_edit_headless::dry_run(handle.value, changes);
+        facts.dry_run_ok = report_matches_selection(dry_report, facts.selected.size());
+        if (!facts.dry_run_ok) {
+            throw std::runtime_error(dry_report.blocking_errors.empty()
+                ? "Repeater dry-run assertions did not match"
+                : dry_report.blocking_errors.front());
+        }
+
+        const EditReport apply_report = typed_edit_headless::apply_to_memory(handle.value, changes);
+        facts.apply_to_memory_ok = apply_report.ok;
+        facts.full_reparse_ok = apply_report.full_reparse_ok;
+        facts.target_distance_match_count = apply_report.target_distance_match_count;
+        facts.non_target_changed_count = apply_report.non_target_changed_count;
+        facts.snapshot_after_apply_ok = snapshot_matches_selected(handle.value, facts.selected);
+        facts.metadata_after_apply_count = metadata_matches_selected(handle.value, facts.selected);
+        if (!facts.apply_to_memory_ok || !facts.full_reparse_ok ||
+            facts.target_distance_match_count != 10 || facts.non_target_changed_count != 0 ||
+            !facts.snapshot_after_apply_ok || facts.metadata_after_apply_count != 10) {
+            throw std::runtime_error(apply_report.blocking_errors.empty()
+                ? "Repeater apply-to-memory assertions did not match"
+                : apply_report.blocking_errors.front());
+        }
+
+        facts.reset_ok = kv_edit_reset_memory(handle.value) != 0;
+        if (!facts.reset_ok) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "kv_edit_reset_memory failed");
+        }
+
+        if (options.commit) {
+            facts.commit_attempted = true;
+            const EditReport commit_apply = typed_edit_headless::apply_to_memory(
+                handle.value, changes);
+            if (!report_matches_selection(commit_apply, facts.selected.size())) {
+                throw std::runtime_error(commit_apply.blocking_errors.empty()
+                    ? "Repeater pre-commit apply-to-memory assertions did not match"
+                    : commit_apply.blocking_errors.front());
+            }
+            const EditReport commit_report = typed_edit_headless::commit(handle.value);
+            facts.commit_ok = commit_report.ok && commit_report.full_reparse_ok;
+            facts.commit_changed_file_count = commit_report.changed_files.size();
+            if (!facts.commit_ok) {
+                throw std::runtime_error(commit_report.blocking_errors.empty()
+                    ? "Repeater commit validation failed"
+                    : commit_report.blocking_errors.front());
             }
         }
     } catch (const std::exception& e) {

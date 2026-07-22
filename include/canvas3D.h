@@ -95,6 +95,7 @@ struct Canvas3DModelInstance {
 };
 
 struct Canvas3DRepeaterSegment {
+    std::string edit_id;
     std::string track_key;
     std::vector<std::string> model_paths;
     double begin_distance = 0.0;
@@ -265,7 +266,13 @@ struct Canvas3DSceneContextAction {
     std::string row_kind;
 };
 
+enum class Canvas3DSceneEditKind {
+    Structure,
+    Repeater,
+};
+
 struct Canvas3DStructureEditTarget {
+    Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure;
     std::string edit_id;
     std::string track_key;
     double distance = 0.0;
@@ -287,6 +294,7 @@ enum class Canvas3DSceneDragAxis {
 };
 
 struct Canvas3DStructureDragUpdate {
+    Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure;
     std::string edit_id;
     Canvas3DSceneDragAxis axis = Canvas3DSceneDragAxis::None;
     double x = 0.0;
@@ -353,6 +361,9 @@ public:
     bool set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
                                          bool show_gizmo);
     bool update_scene_structure_instance(const Canvas3DStructureEditTarget& target);
+    bool set_scene_repeater_edit_target(const Canvas3DStructureEditTarget& target,
+                                        bool show_gizmo);
+    bool update_scene_repeater_segment(const Canvas3DStructureEditTarget& target);
     void clear_scene_structure_edit_target();
     Canvas3DSceneFrameResult render_scene_preview(
         ImVec2 size,

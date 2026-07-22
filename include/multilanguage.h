@@ -19,6 +19,12 @@ struct Translation {
 
     Translation() {
         en = {
+            {"dialog.repeater_begin0_convert_title", "Convert Begin0"},
+            {"dialog.repeater_begin0_convert_message", "This Repeater uses Begin0, so its coordinates cannot be edited directly. Convert it to Begin?"},
+            {"label.repeater_end_source", "End source:"},
+            {"label.repeater_structure_keys", "Structure keys"},
+            {"status.repeater_multiple_begins", "This Repeater has multiple Begin statements."},
+            {"status.repeater_no_end", "End position is empty because this Repeater has no End statement."},
             {"status.map_loading", "Loading map..."}, {"status.map_loaded", "Map loaded"}, {"status.map_load_failed", "Map load failed"},
             {"status.scene_preview_loading", "Loading 3D scene preview..."}, {"status.scene_preview_loaded", "3D scene preview loaded"}, {"status.scene_preview_failed", "3D scene preview failed"}, {"status.scene_preview_stopped", "3D scene preview stopped"},
             {"status.no_errors_warnings", "No errors or warnings"}, {"frame.errors_warnings", "Errors and Warnings"},
@@ -101,6 +107,12 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
         zh = {
+            {"dialog.repeater_begin0_convert_title", "转换 Begin0"},
+            {"dialog.repeater_begin0_convert_message", "此 Repeater 使用 Begin0，无法直接编辑坐标。是否转换为 Begin？"},
+            {"label.repeater_end_source", "结束位置源："},
+            {"label.repeater_structure_keys", "结构键列表"},
+            {"status.repeater_multiple_begins", "此Repeater存在多个Begin语句"},
+            {"status.repeater_no_end", "此 Repeater 没有 End 语句，因此结束位置留空。"},
             {"status.map_loading", "正在加载地图..."}, {"status.map_loaded", "地图加载完成"}, {"status.map_load_failed", "地图加载失败"},
             {"status.scene_preview_loading", "正在加载3D场景预览..."}, {"status.scene_preview_loaded", "3D场景预览已加载"}, {"status.scene_preview_failed", "3D场景预览加载失败"}, {"status.scene_preview_stopped", "3D场景预览已停止"},
             {"status.no_errors_warnings", "没有错误或警告"}, {"frame.errors_warnings", "错误与警告"},
@@ -183,6 +195,12 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
         ja = {
+            {"dialog.repeater_begin0_convert_title", "Begin0 の変換"},
+            {"dialog.repeater_begin0_convert_message", "この Repeater は Begin0 を使用しているため、座標を直接編集できません。Begin に変換しますか？"},
+            {"label.repeater_end_source", "終了位置のソース："},
+            {"label.repeater_structure_keys", "構造物キー"},
+            {"status.repeater_multiple_begins", "この Repeater には複数の Begin 文があります。"},
+            {"status.repeater_no_end", "この Repeater には End 文がないため、終了位置は空です。"},
             {"status.map_loading", "マップを読み込み中..."}, {"status.map_loaded", "マップの読み込みが完了しました"}, {"status.map_load_failed", "マップの読み込みに失敗しました"},
             {"status.scene_preview_loading", "3Dシーンプレビューを読み込み中..."}, {"status.scene_preview_loaded", "3Dシーンプレビューの読み込みが完了しました"}, {"status.scene_preview_failed", "3Dシーンプレビューの読み込みに失敗しました"}, {"status.scene_preview_stopped", "3Dシーンプレビューを停止しました"},
             {"status.no_errors_warnings", "エラーまたは警告はありません"}, {"frame.errors_warnings", "エラーと警告"},

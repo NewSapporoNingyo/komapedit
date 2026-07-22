@@ -930,6 +930,113 @@ struct MapEditChange {
     bool confirm_environment_mismatch = false;
 };
 
+// Repeater structure keys are represented as a list in the snapshot but as
+// individual typed fields in the edit ABI. Keeping the validation and decoding
+// here prevents the source writer and semantic validator from drifting apart.
+struct RepeaterStructureKeyEdit {
+    bool changed = false;
+    std::vector<std::string> values;
+};
+
+inline bool is_repeater_structure_key_edit_field(const std::string& field) {
+    return field == "structureKeys.count" ||
+           (field.size() > 14 && field.compare(0, 14, "structureKeys.") == 0);
+}
+
+inline bool is_repeater_edit_field(const std::string& field) {
+    return field == "distance" || field == "method" || field == "trackKey" ||
+           field == "x" || field == "y" || field == "z" ||
+           field == "rx" || field == "ry" || field == "rz" ||
+           field == "tilt" || field == "span" || field == "interval" ||
+           is_repeater_structure_key_edit_field(field);
+}
+
+inline size_t repeater_structure_key_index(const std::string& field) {
+    constexpr size_t kPrefixSize = 14;
+    if (field.size() <= kPrefixSize ||
+        field.compare(0, kPrefixSize, "structureKeys.") != 0) {
+        throw std::runtime_error("invalid Repeater structure key field: " + field);
+    }
+    size_t result = 0;
+    for (size_t pos = kPrefixSize; pos < field.size(); ++pos) {
+        const unsigned char ch = static_cast<unsigned char>(field[pos]);
+        if (!std::isdigit(ch) ||
+            result > (std::numeric_limits<size_t>::max() - 9) / 10) {
+            throw std::runtime_error("invalid Repeater structure key field: " + field);
+        }
+        result = result * 10 + static_cast<size_t>(ch - '0');
+    }
+    return result;
+}
+
+inline RepeaterStructureKeyEdit parse_repeater_structure_key_edit(
+    const MapEditChange& change) {
+    RepeaterStructureKeyEdit result;
+    const auto count_it = change.field_changes.find("structureKeys.count");
+    bool has_indexed_field = false;
+    for (const auto& entry : change.field_changes) {
+        if (entry.first == "structureKeys.count") continue;
+        if (!is_repeater_structure_key_edit_field(entry.first)) continue;
+        has_indexed_field = true;
+        (void)repeater_structure_key_index(entry.first);
+    }
+    if (count_it == change.field_changes.end() && !has_indexed_field) return result;
+    if (count_it == change.field_changes.end()) {
+        throw std::runtime_error(
+            "Repeater structure key edits require structureKeys.count");
+    }
+
+    const std::string count_text = trim_field_copy(count_it->second);
+    if (count_text.empty()) {
+        throw std::runtime_error("Repeater structureKeys.count is empty");
+    }
+    size_t count = 0;
+    for (char raw : count_text) {
+        const unsigned char ch = static_cast<unsigned char>(raw);
+        if (!std::isdigit(ch) ||
+            count > (std::numeric_limits<size_t>::max() - 9) / 10) {
+            throw std::runtime_error("invalid Repeater structureKeys.count: " + count_text);
+        }
+        count = count * 10 + static_cast<size_t>(ch - '0');
+    }
+    if (count == 0) {
+        throw std::runtime_error("Repeater requires at least one structure key");
+    }
+
+    result.changed = true;
+    result.values.reserve(count);
+    for (size_t index = 0; index < count; ++index) {
+        const std::string field = "structureKeys." + std::to_string(index);
+        const auto value_it = change.field_changes.find(field);
+        if (value_it == change.field_changes.end()) {
+            throw std::runtime_error("missing Repeater structure key field: " + field);
+        }
+        const std::string value = trim_field_copy(value_it->second);
+        if (value.empty()) {
+            throw std::runtime_error("Repeater structure key is empty: " + field);
+        }
+        result.values.push_back(value);
+    }
+    for (const auto& entry : change.field_changes) {
+        if (entry.first == "structureKeys.count") continue;
+        if (!is_repeater_structure_key_edit_field(entry.first)) continue;
+        if (repeater_structure_key_index(entry.first) >= count) {
+            throw std::runtime_error("Repeater structure key index is out of range: " +
+                                     entry.first);
+        }
+    }
+    return result;
+}
+
+inline void validate_repeater_edit_fields(const MapEditChange& change) {
+    for (const auto& entry : change.field_changes) {
+        if (!is_repeater_edit_field(entry.first)) {
+            throw std::runtime_error("unsupported Repeater edit field: " + entry.first);
+        }
+    }
+    (void)parse_repeater_structure_key_edit(change);
+}
+
 struct SemanticElementSnapshot {
     std::string edit_id;
     std::string row_kind;

@@ -9,6 +9,7 @@
  */
 
 #include "maploader_internal.h"
+#include "repeater_linkage.h"
 
 namespace kme::maploader::detail {
 
@@ -1040,44 +1041,41 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
         append_controlpoint_if_in_range(values, row.distance, min_distance, max_distance);
     }
 
-    struct ActiveRepeater {
-        double begin = 0.0;
-        double interval = 0.0;
-        double span = 0.0;
-    };
-    auto append_repeater_range = [&](const ActiveRepeater& repeater, double end_distance) {
-        if (end_distance < repeater.begin) return;
-        append_scene_model_distance(values, repeater.begin, repeater.span, min_distance, max_distance);
+    auto append_repeater_range = [&](const RepeaterEvent& repeater, double end_distance) {
+        if (end_distance < repeater.distance) return;
+        append_scene_model_distance(values, repeater.distance, repeater.span, min_distance, max_distance);
         append_scene_model_distance(values, end_distance, repeater.span, min_distance, max_distance);
         if (repeater.interval <= 1e-9 || !std::isfinite(repeater.interval)) return;
 
         size_t guard = 0;
-        for (double distance = repeater.begin; distance < end_distance + 1e-6; distance += repeater.interval) {
+        for (double distance = repeater.distance; distance < end_distance + 1e-6; distance += repeater.interval) {
             append_scene_model_distance(values, distance, repeater.span, min_distance, max_distance);
             if (++guard > 1000000) break;
         }
     };
 
-    std::map<std::string, ActiveRepeater> active_repeaters;
-    for (const RepeaterEvent& row : ctx.repeaters) {
-        std::string key = key_text(row.repeater_key);
-        if (key.empty()) continue;
+    std::vector<repeater_linkage::Event> repeater_events;
+    repeater_events.reserve(ctx.repeaters.size());
+    for (size_t index = 0; index < ctx.repeaters.size(); ++index) {
+        const RepeaterEvent& row = ctx.repeaters[index];
+        repeater_linkage::Event event;
+        event.source_index = index;
+        event.distance = row.distance;
+        event.order = static_cast<double>(row.order);
+        event.key = key_text(row.repeater_key);
         if (row.method == "Begin" || row.method == "Begin0") {
-            auto existing = active_repeaters.find(key);
-            if (existing != active_repeaters.end()) {
-                append_repeater_range(existing->second, row.distance);
-                active_repeaters.erase(existing);
-            }
-            active_repeaters[key] = ActiveRepeater{row.distance, row.interval, row.span};
+            event.kind = repeater_linkage::EventKind::Begin;
         } else if (row.method == "End") {
-            auto existing = active_repeaters.find(key);
-            if (existing == active_repeaters.end()) continue;
-            append_repeater_range(existing->second, row.distance);
-            active_repeaters.erase(existing);
+            event.kind = repeater_linkage::EventKind::End;
         }
+        repeater_events.push_back(std::move(event));
     }
-    for (const auto& kv : active_repeaters) {
-        append_repeater_range(kv.second, max_distance);
+    for (const repeater_linkage::Segment& segment :
+         repeater_linkage::pair_segments(std::move(repeater_events))) {
+        if (segment.begin_source_index >= ctx.repeaters.size()) continue;
+        const double end_distance = segment.boundary_kind == repeater_linkage::BoundaryKind::Open
+            ? max_distance : segment.end_distance;
+        append_repeater_range(ctx.repeaters[segment.begin_source_index], end_distance);
     }
 
     return values;

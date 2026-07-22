@@ -300,6 +300,36 @@ void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                    const KvRepeaterRow& row,
+                    const MapEditChange* change = nullptr) {
+    if (change) validate_repeater_edit_fields(*change);
+    const RepeaterStructureKeyEdit structure_keys = change
+        ? parse_repeater_structure_key_edit(*change)
+        : RepeaterStructureKeyEdit{};
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    field(out, "method", changed_string(snapshot, change, "method", row.method));
+    field(out, snapshot, "repeaterKey", row.repeater_key);
+    changed_track_key(out, snapshot, change, "trackKey", row.track_key);
+    field(out, "x", changed_number(change, "x", row.x));
+    field(out, "y", changed_number(change, "y", row.y));
+    field(out, "z", changed_number(change, "z", row.z));
+    field(out, "rx", changed_number(change, "rx", row.rx));
+    field(out, "ry", changed_number(change, "ry", row.ry));
+    field(out, "rz", changed_number(change, "rz", row.rz));
+    field(out, "tilt", changed_number(change, "tilt", row.tilt));
+    field(out, "span", changed_number(change, "span", row.span));
+    field(out, "interval", changed_number(change, "interval", row.interval));
+    if (!structure_keys.changed) {
+        value_span(out, snapshot, "structureKeys", row.structure_keys);
+    } else {
+        out.label("structureKeys");
+        out.signed_integer(static_cast<std::int64_t>(structure_keys.values.size()));
+        for (const std::string& value : structure_keys.values) out.string_value(value);
+    }
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void reject_unknown_target_fields(const SemanticElementSnapshot& target,
                                   const MapEditChange& change) {
     std::set<std::string> allowed;
@@ -312,6 +342,10 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "method", "structureKey", "trackKey1", "trackKey2", "flag"};
     } else if (target.row_kind == "station.put") {
         allowed = {"distance", "stationKey", "door", "margin1", "margin2"};
+    }
+    if (target.row_kind == "repeater") {
+        validate_repeater_edit_fields(change);
+        return;
     }
     for (const auto& input : change.field_changes) {
         if (allowed.find(input.first) == allowed.end()) {
@@ -732,6 +766,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("station.put target row is out of bounds");
         }
         write_station_put(out, snapshot, snapshot.station_puts[target.row_index], &change);
+    } else if (target.row_kind == "repeater") {
+        if (target.row_index >= snapshot.repeater_count || !snapshot.repeaters) {
+            throw std::runtime_error("repeater target row is out of bounds");
+        }
+        write_repeater(out, snapshot, snapshot.repeaters[target.row_index], &change);
     } else {
         throw std::runtime_error("unsupported semantic edit target: " + target.row_kind);
     }

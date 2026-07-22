@@ -925,11 +925,16 @@ enum class MapElementNumericConstraint {
 
 struct MapElementEditFieldState {
     std::string key;
+    std::string backend_key;
+    std::string target_edit_id;
+    std::string expected_source_hash;
     std::string label;
     std::string original_value;
+    std::string source_distance_string;
     char value[256] = {};
     MapElementNumericConstraint numeric_constraint = MapElementNumericConstraint::None;
     bool required = true;
+    bool read_only = false;
 };
 
 struct MapElementPendingChange {
@@ -963,6 +968,14 @@ struct MapElementInspectorState {
     int line = 0;
     int column = 0;
     std::string raw_statement;
+    std::string end_source_file;
+    std::string end_source_file_name;
+    std::string end_expected_source_hash;
+    std::string end_source_distance_string;
+    std::string end_raw_statement;
+    int end_line = 0;
+    int end_column = 0;
+    std::string repeater_boundary_kind;
     std::string status_message;
     bool delete_supported = false;
     bool pending_delete = false;
@@ -971,6 +984,8 @@ struct MapElementInspectorState {
     bool put0_prompt_requested = false;
     bool z_rebase_prompt_requested = false;
     std::vector<MapElementEditFieldState> fields;
+    std::vector<std::string> owned_edit_ids;
+    std::vector<std::string> repeater_structure_keys_original;
 };
 
 struct MapElementInspectorRequest {
@@ -1489,8 +1504,10 @@ private:
     void cancel_distance_resolution_workflow();
     void process_distance_resolution_retry();
     bool apply_pending_edits_to_preview();
-    bool apply_local_preview_change(const MapElementPendingChange& change);
-    bool restore_local_preview_change(const std::string& edit_id, const std::string& row_kind);
+    bool apply_local_preview_change(const MapElementPendingChange& change,
+                                    bool refresh_preview = true);
+    bool restore_local_preview_change(const std::string& edit_id, const std::string& row_kind,
+                                      bool refresh_preview = true);
     bool snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind);
     void refresh_local_preview_after_edit(const std::string& row_kind,
                                           const std::string& edit_id = {});
@@ -1513,6 +1530,7 @@ private:
     void sync_scene_structure_edit_from_inspector();
     void apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& update);
     bool update_scene_structure_instance_from_model(const std::string& edit_id);
+    bool update_scene_repeater_segment_from_model(const std::string& edit_id);
     void clear_scene_structure_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
     void render_element_inspector();

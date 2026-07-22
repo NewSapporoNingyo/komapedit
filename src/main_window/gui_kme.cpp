@@ -16,6 +16,7 @@
 
 #include "canvas3D.h"
 #include "maploader.h"
+#include "repeater_linkage.h"
 #include "resource.h"
 
 #include "imgui.h"
@@ -1761,7 +1762,8 @@ bool App::snapshot_local_preview_row(const std::string& edit_id, const std::stri
     return true;
 }
 
-bool App::restore_local_preview_change(const std::string& edit_id, const std::string& row_kind) {
+bool App::restore_local_preview_change(const std::string& edit_id, const std::string& row_kind,
+                                       bool refresh_preview) {
     auto snapshot = original_edit_rows_.find(edit_id);
     if (snapshot == original_edit_rows_.end()) return true;
     const std::string effective_row_kind = row_kind.empty() ? snapshot->second.row_kind : row_kind;
@@ -1783,12 +1785,15 @@ bool App::restore_local_preview_change(const std::string& edit_id, const std::st
             pending->second.field_changes.end();
     }
     original_edit_rows_.erase(snapshot);
-    refresh_local_preview_after_edit(
-        effective_row_kind, requires_full_scene_refresh ? std::string{} : edit_id);
+    if (refresh_preview) {
+        refresh_local_preview_after_edit(
+            effective_row_kind, requires_full_scene_refresh ? std::string{} : edit_id);
+    }
     return true;
 }
 
-bool App::apply_local_preview_change(const MapElementPendingChange& change) {
+bool App::apply_local_preview_change(const MapElementPendingChange& change,
+                                     bool refresh_preview) {
     if (change.edit_id.empty() || change.row_kind.empty()) return false;
     std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, change.row_kind);
     if (!rows) return false;
@@ -1800,7 +1805,7 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change) {
 
     if (change.operation == "delete") {
         if (row_found) rows->erase(rows->begin() + static_cast<std::ptrdiff_t>(row_index));
-        refresh_local_preview_after_edit(change.row_kind);
+        if (refresh_preview) refresh_local_preview_after_edit(change.row_kind);
         return true;
     }
 
@@ -1812,13 +1817,17 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change) {
     const bool requires_full_scene_refresh =
         change.row_kind == "structure.put" &&
         change.field_changes.find("structureKey") != change.field_changes.end();
-    refresh_local_preview_after_edit(
-        change.row_kind, requires_full_scene_refresh ? std::string{} : change.edit_id);
+    if (refresh_preview) {
+        refresh_local_preview_after_edit(
+            change.row_kind, requires_full_scene_refresh ? std::string{} : change.edit_id);
+    }
     return true;
 }
 
-Canvas3DStructureEditTarget scene_structure_target_from_row(const TableRow& row) {
+Canvas3DStructureEditTarget scene_edit_target_from_row(
+    const TableRow& row, Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure) {
     Canvas3DStructureEditTarget target;
+    target.kind = kind;
     target.edit_id = row.edit_id;
     target.track_key = table_cell(row, "trackKey");
     target.distance = table_cell_number(row, "distance");
@@ -1838,7 +1847,16 @@ bool App::update_scene_structure_instance_from_model(const std::string& edit_id)
     size_t row_index = 0;
     if (!find_row_index_by_edit_id(model_.structures, edit_id, row_index)) return false;
     return scene_preview_canvas_->update_scene_structure_instance(
-        scene_structure_target_from_row(model_.structures[row_index]));
+        scene_edit_target_from_row(model_.structures[row_index]));
+}
+
+bool App::update_scene_repeater_segment_from_model(const std::string& edit_id) {
+    if (!scene_preview_started_ || !scene_preview_canvas_) return true;
+    size_t row_index = 0;
+    if (!find_row_index_by_edit_id(model_.repeaters, edit_id, row_index)) return false;
+    return scene_preview_canvas_->update_scene_repeater_segment(
+        scene_edit_target_from_row(model_.repeaters[row_index],
+                                   Canvas3DSceneEditKind::Repeater));
 }
 
 void App::refresh_local_preview_after_edit(const std::string& row_kind,
@@ -1857,9 +1875,24 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     if (row_kind == "structure.put" && !edit_id.empty()) {
         structure_instance_synced = update_scene_structure_instance_from_model(edit_id);
     }
+    bool repeater_segment_synced = false;
+    if (row_kind == "repeater" && !edit_id.empty()) {
+        const auto pending = pending_edit_changes_.find(edit_id);
+        const bool position_only = pending != pending_edit_changes_.end() &&
+            !pending->second.field_changes.empty() &&
+            std::all_of(pending->second.field_changes.begin(),
+                        pending->second.field_changes.end(),
+                        [](const auto& field) {
+                            return field.first == "x" || field.first == "y" || field.first == "z";
+                        });
+        if (position_only) {
+            repeater_segment_synced = update_scene_repeater_segment_from_model(edit_id);
+        }
+    }
     const bool affects_scene_dynamic =
         (row_kind == "structure.put" && !structure_instance_synced) ||
-        row_kind == "structure.between" || row_kind == "structure.model";
+        row_kind == "structure.between" || row_kind == "structure.model" ||
+        (row_kind == "repeater" && !repeater_segment_synced);
     if (affects_scene_dynamic && scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, error)) {
@@ -1921,6 +1954,7 @@ const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
     if (row_kind == "structure.put") return &model.structures;
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
+    if (row_kind == "repeater") return &model.repeaters;
     return nullptr;
 }
 
@@ -1930,6 +1964,7 @@ std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
     if (row_kind == "structure.put") return &model.structures;
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
+    if (row_kind == "repeater") return &model.repeaters;
     return nullptr;
 }
 
@@ -1970,6 +2005,31 @@ void set_inspector_row_field_value(TableRow& row,
         }
         if (field_key == "stationKey") {
             row.cells["posKey"] = value;
+            return;
+        }
+    }
+    if (row_kind == "repeater") {
+        constexpr std::string_view kStructureKeyPrefix = "structureKeys.";
+        if (field_key.rfind(kStructureKeyPrefix.data(), 0) == 0) {
+            if (field_key == "structureKeys.count") {
+                double parsed_count = 0.0;
+                if (!parse_gui_edit_number(value, &parsed_count) || parsed_count < 1.0 ||
+                    std::trunc(parsed_count) != parsed_count) {
+                    return;
+                }
+                const size_t count = static_cast<size_t>(parsed_count);
+                std::string joined;
+                for (size_t index = 0; index < count; ++index) {
+                    const std::string key = "_structureKeys." + std::to_string(index);
+                    const auto item = row.cells.find(key);
+                    if (item == row.cells.end() || item->second.empty()) return;
+                    if (!joined.empty()) joined += ",";
+                    joined += item->second;
+                }
+                row.cells["structureKeys"] = std::move(joined);
+            } else {
+                row.cells["_" + field_key] = value;
+            }
             return;
         }
     }
@@ -2096,13 +2156,43 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 3> kDistanceRowKinds = {
+    static constexpr std::array<const char*, 4> kDistanceRowKinds = {
         "station.put",
         "structure.put",
         "structure.between",
+        "repeater",
     };
     return std::any_of(kDistanceRowKinds.begin(), kDistanceRowKinds.end(),
                        [&](const char* value) { return row_kind == value; });
+}
+
+bool is_repeater_structure_key_field(const MapElementEditFieldState& field) {
+    return field.key.rfind("structureKeys.", 0) == 0;
+}
+
+std::vector<std::string> split_repeater_structure_keys(const std::string& text) {
+    std::vector<std::string> keys;
+    size_t begin = 0;
+    while (begin <= text.size()) {
+        const size_t end = text.find(',', begin);
+        const std::string key = trim_gui_ascii_copy(
+            text.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
+        if (!key.empty()) keys.push_back(key);
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return keys;
+}
+
+void reindex_repeater_structure_key_fields(MapElementInspectorState& inspector) {
+    size_t index = 0;
+    for (MapElementEditFieldState& field : inspector.fields) {
+        if (!is_repeater_structure_key_field(field)) continue;
+        field.key = "structureKeys." + std::to_string(index);
+        field.backend_key = field.key;
+        field.label = "structureKey[" + std::to_string(index + 1) + "]";
+        ++index;
+    }
 }
 
 MapElementInspectorRequest make_inspector_reload_request(const MapElementInspectorState& inspector) {
@@ -2113,7 +2203,12 @@ MapElementInspectorRequest make_inspector_reload_request(const MapElementInspect
     request.line = inspector.line;
     request.column = inspector.column;
     for (const MapElementEditFieldState& field : inspector.fields) {
-        request.field_values[field.key] = trim_gui_ascii_copy(edit_field_buffer_text(field));
+        if (field.read_only ||
+            (!field.target_edit_id.empty() && field.target_edit_id != inspector.edit_id)) {
+            continue;
+        }
+        const std::string& backend_key = field.backend_key.empty() ? field.key : field.backend_key;
+        request.field_values[backend_key] = trim_gui_ascii_copy(edit_field_buffer_text(field));
     }
     return request;
 }
@@ -2170,6 +2265,11 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         ? target_info->raw_statement
         : source.raw_text_preview;
     next.delete_supported = true;
+    next.owned_edit_ids.push_back(edit_id);
+    if (next.expected_source_hash.empty()) {
+        const EditSourceFileInfo* source_file = find_model_source_file(model_, next.source_file);
+        if (source_file) next.expected_source_hash = source_file->source_hash;
+    }
 
     const TableRow* original_row = row;
     auto snapshot = original_edit_rows_.find(edit_id);
@@ -2182,8 +2282,12 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                          MapElementNumericConstraint numeric_constraint, bool required) {
         MapElementEditFieldState field;
         field.key = key;
+        field.backend_key = key;
+        field.target_edit_id = edit_id;
+        field.expected_source_hash = next.expected_source_hash;
         field.label = label;
         field.original_value = original_value;
+        if (key == "distance") field.source_distance_string = next.source_distance_string;
         field.numeric_constraint = numeric_constraint;
         field.required = required;
         set_edit_field_buffer(field, value);
@@ -2195,6 +2299,20 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                   inspector_row_field_value(*row, request.row_kind, key),
                   inspector_row_field_value(*original_row, request.row_kind, key),
                   numeric_constraint, required);
+    };
+    auto add_related_field = [&](const std::string& key, const std::string& backend_key,
+                                 const std::string& label, const std::string& value,
+                                 const std::string& original_value,
+                                 MapElementNumericConstraint numeric_constraint, bool required,
+                                 const std::string& target_edit_id,
+                                 const std::string& expected_source_hash,
+                                 const std::string& source_distance_string) {
+        add_field(key, label, value, original_value, numeric_constraint, required);
+        MapElementEditFieldState& field = next.fields.back();
+        field.backend_key = backend_key;
+        field.target_edit_id = target_edit_id;
+        field.expected_source_hash = expected_source_hash;
+        field.source_distance_string = source_distance_string;
     };
 
     if (request.row_kind == "structure.model") {
@@ -2225,16 +2343,136 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     } else if (request.row_kind == "station.put") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("stationKey", "stationKey", MapElementNumericConstraint::None, true);
+    } else if (request.row_kind == "repeater") {
+        std::vector<repeater_linkage::Event> events;
+        events.reserve(model_.repeaters.size());
+        for (size_t row_index = 0; row_index < model_.repeaters.size(); ++row_index) {
+            const TableRow& event_row = model_.repeaters[row_index];
+            repeater_linkage::Event event;
+            event.source_index = row_index;
+            event.distance = table_cell_number(event_row, "distance");
+            event.order = table_cell_number(event_row, "order");
+            event.key = table_cell(event_row, "repeaterKey");
+            const std::string& method = table_cell(event_row, "method");
+            if (method == "Begin" || method == "Begin0") {
+                event.kind = repeater_linkage::EventKind::Begin;
+            } else if (method == "End") {
+                event.kind = repeater_linkage::EventKind::End;
+            }
+            events.push_back(std::move(event));
+        }
+        const std::vector<repeater_linkage::Segment> segments =
+            repeater_linkage::pair_segments(std::move(events));
+        const auto linked = std::find_if(
+            segments.begin(), segments.end(), [&](const repeater_linkage::Segment& segment) {
+                return segment.begin_source_index < model_.repeaters.size() &&
+                    model_.repeaters[segment.begin_source_index].edit_id == edit_id;
+            });
+        if (linked == segments.end()) {
+            add_log("[warn]gui_kme.cpp: Repeater inspector target is not a Begin statement: " +
+                    edit_id);
+            return false;
+        }
+
+        const std::string method = table_cell(*row, "method");
+        const std::string original_method = table_cell(*original_row, "method");
+        next.source_method_put0 = ascii_lower(original_method) == "begin0";
+        next.put0_conversion_draft = next.source_method_put0 && ascii_lower(method) != "begin0";
+        next.put0_prompt_requested = ascii_lower(method) == "begin0";
+        next.delete_supported = false;
+        next.repeater_boundary_kind =
+            linked->boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
+            linked->boundary_kind == repeater_linkage::BoundaryKind::NextBegin ? "change" : "open";
+
+        add_row_field("method", "method", MapElementNumericConstraint::None, true);
+        next.fields.back().read_only = true;
+        add_row_field("repeaterKey", "repeaterKey", MapElementNumericConstraint::None, true);
+        next.fields.back().read_only = true;
+        add_row_field("distance", "beginDistance", MapElementNumericConstraint::Finite, true);
+        add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, false);
+        if (ascii_lower(method) != "begin0") {
+            for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
+                add_row_field(key, key, structure_edit_numeric_constraint(key), true);
+            }
+        }
+        add_row_field("tilt", "tilt", structure_edit_numeric_constraint("tilt"), true);
+        add_row_field("span", "span", structure_edit_numeric_constraint("span"), true);
+        add_row_field("interval", "interval", MapElementNumericConstraint::Finite, true);
+
+        const std::vector<std::string> current_keys =
+            split_repeater_structure_keys(table_cell(*row, "structureKeys"));
+        next.repeater_structure_keys_original =
+            split_repeater_structure_keys(table_cell(*original_row, "structureKeys"));
+        for (size_t key_index = 0; key_index < current_keys.size(); ++key_index) {
+            const std::string original_key = key_index < next.repeater_structure_keys_original.size()
+                ? next.repeater_structure_keys_original[key_index]
+                : std::string{};
+            add_row_field("structureKeys." + std::to_string(key_index),
+                          "structureKey[" + std::to_string(key_index + 1) + "]",
+                          MapElementNumericConstraint::None, true);
+            MapElementEditFieldState& field = next.fields.back();
+            field.original_value = original_key;
+            set_edit_field_buffer(field, current_keys[key_index]);
+        }
+
+        if (linked->boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd &&
+            linked->boundary_source_index &&
+            *linked->boundary_source_index < model_.repeaters.size()) {
+            const TableRow& end_row = model_.repeaters[*linked->boundary_source_index];
+            const TableRow* original_end_row = &end_row;
+            const auto end_snapshot = original_edit_rows_.find(end_row.edit_id);
+            if (end_snapshot != original_edit_rows_.end()) {
+                original_end_row = &end_snapshot->second.row;
+            }
+            std::string end_info_error;
+            const std::optional<InspectorTargetMetadata> end_info =
+                resolve_inspector_target_metadata(handle_, end_row.edit_id, "repeater",
+                                                  &end_info_error);
+            if (!end_info && !end_info_error.empty()) {
+                add_log("[warn]gui_kme.cpp: Repeater End metadata fallback: " + end_info_error);
+            }
+            EditSourceInfo end_source = end_info ? end_info->source : end_row.source;
+            if (end_source.file_path.empty()) end_source = end_row.source;
+            next.end_source_file = end_source.file_path;
+            next.end_source_file_name = display_name_from_path(next.end_source_file);
+            next.end_line = end_source.line;
+            next.end_column = end_source.column;
+            next.end_raw_statement = end_info && !end_info->raw_statement.empty()
+                ? end_info->raw_statement
+                : end_source.raw_text_preview;
+            next.end_source_distance_string = end_info ? end_info->source_distance_string : "";
+            next.end_expected_source_hash = end_info ? end_info->expected_source_hash : "";
+            if (next.end_expected_source_hash.empty()) {
+                const EditSourceFileInfo* end_file =
+                    find_model_source_file(model_, next.end_source_file);
+                if (end_file) next.end_expected_source_hash = end_file->source_hash;
+            }
+            next.owned_edit_ids.push_back(end_row.edit_id);
+            add_related_field("endDistance", "distance", "endDistance",
+                              inspector_row_field_value(end_row, "repeater", "distance"),
+                              inspector_row_field_value(*original_end_row, "repeater", "distance"),
+                              MapElementNumericConstraint::Finite, true, end_row.edit_id,
+                              next.end_expected_source_hash,
+                              next.end_source_distance_string);
+        }
     }
 
-    auto pending = pending_edit_changes_.find(edit_id);
-    if (pending != pending_edit_changes_.end()) {
-        next.pending_delete = pending->second.operation == "delete";
-        for (MapElementEditFieldState& field : next.fields) {
-            auto field_it = pending->second.field_changes.find(field.key);
-            if (field_it != pending->second.field_changes.end()) {
-                set_edit_field_buffer(field, field_it->second);
-            }
+    for (const std::string& owned_edit_id : next.owned_edit_ids) {
+        const auto pending = pending_edit_changes_.find(owned_edit_id);
+        if (pending != pending_edit_changes_.end() && pending->second.operation == "delete") {
+            next.pending_delete = true;
+        }
+    }
+    for (MapElementEditFieldState& field : next.fields) {
+        const std::string& field_edit_id = field.target_edit_id.empty()
+            ? edit_id
+            : field.target_edit_id;
+        const auto pending = pending_edit_changes_.find(field_edit_id);
+        if (pending == pending_edit_changes_.end()) continue;
+        const std::string& backend_key = field.backend_key.empty() ? field.key : field.backend_key;
+        const auto field_it = pending->second.field_changes.find(backend_key);
+        if (field_it != pending->second.field_changes.end()) {
+            set_edit_field_buffer(field, field_it->second);
         }
     }
 
@@ -2244,6 +2482,11 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     if (inspector_.expected_source_hash.empty() && target_info) {
         inspector_.expected_source_hash = target_info->source_hash;
     }
+    for (MapElementEditFieldState& field : inspector_.fields) {
+        if (field.target_edit_id == inspector_.edit_id && field.expected_source_hash.empty()) {
+            field.expected_source_hash = inspector_.expected_source_hash;
+        }
+    }
     return true;
 }
 
@@ -2252,7 +2495,9 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
 }
 
 void App::enable_inspector_put0_conversion() {
-    if (!inspector_.open || inspector_.row_kind != "structure.put" ||
+    const bool supported_row_kind = inspector_.row_kind == "structure.put" ||
+        inspector_.row_kind == "repeater";
+    if (!inspector_.open || !supported_row_kind ||
         !inspector_.source_method_put0 || inspector_.put0_conversion_draft) {
         inspector_.put0_prompt_requested = false;
         return;
@@ -2269,6 +2514,9 @@ void App::enable_inspector_put0_conversion() {
     for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
         MapElementEditFieldState field;
         field.key = key;
+        field.backend_key = key;
+        field.target_edit_id = inspector_.edit_id;
+        field.expected_source_hash = inspector_.expected_source_hash;
         field.label = key;
         field.original_value = "0";
         field.numeric_constraint = structure_edit_numeric_constraint(key);
@@ -2290,19 +2538,26 @@ void App::clear_scene_structure_edit_target() {
 }
 
 void App::sync_scene_structure_edit_from_inspector() {
+    const bool structure_target = inspector_.row_kind == "structure.put";
+    const bool repeater_target = inspector_.row_kind == "repeater";
     if (!scene_preview_started_ || !scene_preview_canvas_ || !inspector_.open ||
-        inspector_.pending_delete || inspector_.row_kind != "structure.put") {
+        inspector_.pending_delete || (!structure_target && !repeater_target)) {
         clear_scene_structure_edit_target();
         return;
     }
 
     size_t row_index = 0;
-    if (!find_row_index_by_edit_id(model_.structures, inspector_.edit_id, row_index)) {
+    const std::vector<TableRow>& rows = structure_target ? model_.structures : model_.repeaters;
+    if (!find_row_index_by_edit_id(rows, inspector_.edit_id, row_index)) {
         clear_scene_structure_edit_target();
         return;
     }
     Canvas3DStructureEditTarget target =
-        scene_structure_target_from_row(model_.structures[row_index]);
+        scene_edit_target_from_row(rows[row_index], repeater_target
+            ? Canvas3DSceneEditKind::Repeater
+            : Canvas3DSceneEditKind::Structure);
+    const double model_distance = target.distance;
+    const std::string model_track_key = target.track_key;
     if (const MapElementEditFieldState* distance_field =
             find_inspector_field(inspector_, "distance")) {
         if (!parse_gui_edit_number(edit_field_buffer_text(*distance_field), &target.distance)) return;
@@ -2333,13 +2588,26 @@ void App::sync_scene_structure_edit_from_inspector() {
         else if (std::strcmp(key, "tilt") == 0) target.tilt = value;
         else if (std::strcmp(key, "span") == 0) target.span = value;
     }
+    if (repeater_target &&
+        (std::fabs(target.distance - model_distance) > 1e-9 ||
+         target.track_key != model_track_key)) {
+        clear_scene_structure_edit_target();
+        return;
+    }
     const bool show_gizmo = !inspector_.source_method_put0 ||
         inspector_.put0_conversion_draft;
-    scene_preview_canvas_->set_scene_structure_edit_target(target, show_gizmo);
+    if (repeater_target) {
+        scene_preview_canvas_->set_scene_repeater_edit_target(target, show_gizmo);
+    } else {
+        scene_preview_canvas_->set_scene_structure_edit_target(target, show_gizmo);
+    }
 }
 
 void App::apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& update) {
-    if (!inspector_.open || inspector_.row_kind != "structure.put" ||
+    const bool matching_kind =
+        (update.kind == Canvas3DSceneEditKind::Structure && inspector_.row_kind == "structure.put") ||
+        (update.kind == Canvas3DSceneEditKind::Repeater && inspector_.row_kind == "repeater");
+    if (!inspector_.open || !matching_kind ||
         inspector_.edit_id != update.edit_id) {
         return;
     }
@@ -2375,15 +2643,34 @@ void App::apply_inspector_changes() {
         return;
     }
 
-    MapElementPendingChange change;
-    change.change_id = "change-" + inspector_.edit_id;
-    change.edit_id = inspector_.edit_id;
-    change.row_kind = inspector_.row_kind;
-    change.operation = "update";
-    change.expected_source_hash =
-        inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
+    std::map<std::string, MapElementPendingChange> replacements;
+    auto change_for = [&](const MapElementEditFieldState& field)
+        -> MapElementPendingChange& {
+        const std::string target_edit_id = field.target_edit_id.empty()
+            ? inspector_.edit_id
+            : field.target_edit_id;
+        auto [it, inserted] = replacements.try_emplace(target_edit_id);
+        MapElementPendingChange& change = it->second;
+        if (inserted) {
+            change.change_id = "change-" + target_edit_id;
+            change.edit_id = target_edit_id;
+            change.row_kind = inspector_.row_kind;
+            change.operation = "update";
+            change.expected_source_hash = field.expected_source_hash;
+            if (change.expected_source_hash.empty() && target_edit_id == inspector_.edit_id) {
+                change.expected_source_hash =
+                    inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
+            }
+            if (change.expected_source_hash.empty() && target_edit_id != inspector_.edit_id) {
+                change.expected_source_hash = inspector_.end_expected_source_hash;
+            }
+        }
+        return change;
+    };
 
+    std::vector<std::string> repeater_structure_keys;
     for (MapElementEditFieldState& field : inspector_.fields) {
+        if (field.read_only) continue;
         std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
         if (field.required && value.empty()) {
             inspector_.status_message = tr("status.edit.required_field");
@@ -2395,13 +2682,41 @@ void App::apply_inspector_changes() {
             return;
         }
         value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+        if (inspector_.row_kind == "repeater" && is_repeater_structure_key_field(field)) {
+            repeater_structure_keys.push_back(value);
+            continue;
+        }
         if (value != field.original_value) {
-            change.field_changes[field.key] = value;
+            MapElementPendingChange& change = change_for(field);
+            const std::string& backend_key = field.backend_key.empty() ? field.key : field.backend_key;
+            change.field_changes[backend_key] = value;
         }
     }
 
-    if (inspector_.row_kind == "structure.put" && inspector_.put0_conversion_draft) {
-        change.field_changes["method"] = "Put";
+    if (inspector_.row_kind == "repeater" &&
+        repeater_structure_keys != inspector_.repeater_structure_keys_original) {
+        if (repeater_structure_keys.empty()) {
+            inspector_.status_message = tr("status.edit.required_field");
+            return;
+        }
+        MapElementEditFieldState primary_field;
+        primary_field.target_edit_id = inspector_.edit_id;
+        primary_field.expected_source_hash = inspector_.expected_source_hash;
+        MapElementPendingChange& change = change_for(primary_field);
+        change.field_changes["structureKeys.count"] =
+            std::to_string(repeater_structure_keys.size());
+        for (size_t index = 0; index < repeater_structure_keys.size(); ++index) {
+            change.field_changes["structureKeys." + std::to_string(index)] =
+                repeater_structure_keys[index];
+        }
+    }
+
+    if (inspector_.source_method_put0 && inspector_.put0_conversion_draft) {
+        MapElementEditFieldState primary_field;
+        primary_field.target_edit_id = inspector_.edit_id;
+        primary_field.expected_source_hash = inspector_.expected_source_hash;
+        MapElementPendingChange& change = change_for(primary_field);
+        change.field_changes["method"] = inspector_.row_kind == "repeater" ? "Begin" : "Put";
     }
 
     if (inspector_.row_kind == "structure.put") {
@@ -2414,17 +2729,21 @@ void App::apply_inspector_changes() {
         }
     }
 
-    if (change.field_changes.empty()) {
-        std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-        candidate.erase(inspector_.edit_id);
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
+        candidate.erase(owned_edit_id);
+    }
+    if (replacements.empty()) {
         if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
             inspector_.status_message = tr("status.edit.no_changes");
         }
         return;
     }
 
-    auto existing_change = pending_edit_changes_.find(change.edit_id);
-    if (existing_change != pending_edit_changes_.end()) {
+    for (auto& item : replacements) {
+        MapElementPendingChange& change = item.second;
+        auto existing_change = pending_edit_changes_.find(change.edit_id);
+        if (existing_change == pending_edit_changes_.end()) continue;
         auto old_distance = existing_change->second.field_changes.find("distance");
         auto new_distance = change.field_changes.find("distance");
         if (old_distance != existing_change->second.field_changes.end() &&
@@ -2438,8 +2757,9 @@ void App::apply_inspector_changes() {
         }
     }
 
-    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-    candidate[change.edit_id] = std::move(change);
+    for (auto& item : replacements) {
+        candidate[item.first] = std::move(item.second);
+    }
     std::optional<MapElementInspectorRequest> reload_request =
         make_inspector_reload_request(inspector_);
     if (!apply_edit_ledger_to_preview(candidate, std::move(reload_request), false,
@@ -2459,10 +2779,21 @@ void App::revert_inspector_changes() {
         cancel_distance_resolution_workflow();
     }
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-    candidate.erase(inspector_.edit_id);
+    for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
+        candidate.erase(owned_edit_id);
+    }
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
-        original_edit_rows_.erase(inspector_.edit_id);
+        for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
+            original_edit_rows_.erase(owned_edit_id);
+        }
         inspector_.pending_delete = false;
+        if (inspector_.row_kind == "repeater") {
+            if (open_element_inspector(inspector_.edit_id, inspector_.row_kind)) {
+                inspector_.status_message = tr("status.edit.reverted");
+            }
+            clear_scene_structure_edit_target();
+            return;
+        }
         for (MapElementEditFieldState& field : inspector_.fields) {
             set_edit_field_buffer(field, field.original_value);
         }
@@ -2654,8 +2985,8 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 4> kCommittedRowKinds = {
-        "structure.model", "structure.put", "structure.between", "station.put",
+    static constexpr std::array<const char*, 5> kCommittedRowKinds = {
+        "structure.model", "structure.put", "structure.between", "station.put", "repeater",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -2902,21 +3233,48 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         return false;
     };
 
+    std::map<std::string, std::vector<std::string>> refresh_targets;
+    auto note_refresh_target = [&](const std::string& row_kind, const std::string& edit_id,
+                                   bool force_full_refresh) {
+        std::vector<std::string>& targets = refresh_targets[row_kind];
+        if (force_full_refresh) {
+            targets.assign(1, std::string{});
+            return;
+        }
+        if (!targets.empty() && targets.front().empty()) return;
+        targets.push_back(edit_id);
+    };
+
     for (const auto& kv : pending_edit_changes_) {
         if (changes.find(kv.first) != changes.end()) continue;
-        if (!restore_local_preview_change(kv.first, kv.second.row_kind)) {
+        if (!restore_local_preview_change(kv.first, kv.second.row_kind, false)) {
             add_log("[error]gui_kme.cpp: failed to restore local edit preview: " + kv.first);
             return rollback_local_preview();
         }
+        const bool force_full_refresh = kv.second.operation == "delete" ||
+            (kv.second.row_kind == "structure.put" &&
+             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end());
+        note_refresh_target(kv.second.row_kind, kv.first, force_full_refresh);
     }
 
     for (const auto& kv : changes) {
-        if (!apply_local_preview_change(kv.second)) {
+        if (!apply_local_preview_change(kv.second, false)) {
             add_log("[error]gui_kme.cpp: failed to apply local edit preview: " + kv.first);
             return rollback_local_preview();
         }
+        const bool force_full_refresh = kv.second.operation == "delete" ||
+            (kv.second.row_kind == "structure.put" &&
+             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end());
+        note_refresh_target(kv.second.row_kind, kv.first, force_full_refresh);
     }
     pending_edit_changes_ = changes;
+    for (auto& entry : refresh_targets) {
+        std::vector<std::string>& targets = entry.second;
+        std::sort(targets.begin(), targets.end());
+        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+        const std::string edit_id = targets.size() == 1 ? targets.front() : std::string{};
+        refresh_local_preview_after_edit(entry.first, edit_id);
+    }
     if (ended_batch) {
         distance_resolution_choices_.clear();
     }
@@ -3272,9 +3630,18 @@ void App::render_element_inspector() {
         return;
     }
 
-    const bool dirty = row_has_pending_edit(inspector_.edit_id);
+    const bool dirty = std::any_of(inspector_.owned_edit_ids.begin(),
+                                   inspector_.owned_edit_ids.end(),
+                                   [&](const std::string& edit_id) {
+                                       return row_has_pending_edit(edit_id);
+                                   });
     if (dirty) {
-        ImGui::TextUnformatted(tr(row_is_pending_delete(inspector_.edit_id)
+        const bool pending_delete = std::any_of(inspector_.owned_edit_ids.begin(),
+                                                inspector_.owned_edit_ids.end(),
+                                                [&](const std::string& edit_id) {
+                                                    return row_is_pending_delete(edit_id);
+                                                });
+        ImGui::TextUnformatted(tr(pending_delete
             ? "status.edit.pending_delete"
             : "status.edit.pending").c_str());
     }
@@ -3294,24 +3661,106 @@ void App::render_element_inspector() {
         ImGui::TextUnformatted(tr("label.raw_statement").c_str());
         ImGui::TextWrapped("%s", inspector_.raw_statement.c_str());
     }
+    if (inspector_.row_kind == "repeater") {
+        if (inspector_.repeater_boundary_kind == "change") {
+            ImGui::TextUnformatted(tr("status.repeater_multiple_begins").c_str());
+        } else if (inspector_.repeater_boundary_kind == "open") {
+            ImGui::TextUnformatted(tr("status.repeater_no_end").c_str());
+        } else if (!inspector_.end_source_file_name.empty()) {
+            ImGui::Text("%s %s %d:%d", tr("label.repeater_end_source").c_str(),
+                        inspector_.end_source_file_name.c_str(), inspector_.end_line,
+                        inspector_.end_column);
+            if (!inspector_.end_raw_statement.empty()) {
+                ImGui::TextWrapped("%s", inspector_.end_raw_statement.c_str());
+            }
+        }
+    }
 
     ImGui::Separator();
     ImGui::BeginDisabled(inspector_.pending_delete);
     for (size_t field_index = 0; field_index < inspector_.fields.size(); ++field_index) {
         MapElementEditFieldState& field = inspector_.fields[field_index];
+        if (inspector_.row_kind == "repeater" && is_repeater_structure_key_field(field)) {
+            continue;
+        }
         if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
         const bool changed = edit_field_buffer_text(field) != field.original_value;
         if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
         ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
+        ImGui::BeginDisabled(field.read_only);
         ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
+        ImGui::EndDisabled();
         if (ImGui::IsItemDeactivatedAfterEdit() &&
             !validate_and_canonicalize_edit_field(field, true)) {
             inspector_.status_message = tr("status.edit.invalid_number");
         }
         if (changed) ImGui::PopStyleColor();
-        if (field.key == "distance" && !inspector_.source_distance_string.empty()) {
+        if (!field.source_distance_string.empty()) {
             render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
-                                       inspector_.source_distance_string);
+                                       field.source_distance_string);
+        }
+    }
+    if (inspector_.row_kind == "repeater") {
+        ImGui::Separator();
+        ImGui::TextUnformatted(tr("label.repeater_structure_keys").c_str());
+        std::vector<size_t> key_field_indices;
+        for (size_t index = 0; index < inspector_.fields.size(); ++index) {
+            if (is_repeater_structure_key_field(inspector_.fields[index])) {
+                key_field_indices.push_back(index);
+            }
+        }
+        std::optional<size_t> remove_key_index;
+        std::optional<size_t> move_key_from;
+        std::optional<size_t> move_key_to;
+        for (size_t list_index = 0; list_index < key_field_indices.size(); ++list_index) {
+            MapElementEditFieldState& field = inspector_.fields[key_field_indices[list_index]];
+            const bool changed = edit_field_buffer_text(field) != field.original_value;
+            if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
+            ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f));
+            ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
+            if (changed) ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(list_index == 0);
+            if (ImGui::SmallButton(("^##RepeaterKey" + std::to_string(list_index)).c_str())) {
+                move_key_from = list_index;
+                move_key_to = list_index - 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(list_index + 1 >= key_field_indices.size());
+            if (ImGui::SmallButton(("v##RepeaterKey" + std::to_string(list_index)).c_str())) {
+                move_key_from = list_index;
+                move_key_to = list_index + 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(key_field_indices.size() <= 1);
+            if (ImGui::SmallButton(("-##RepeaterKey" + std::to_string(list_index)).c_str())) {
+                remove_key_index = list_index;
+            }
+            ImGui::EndDisabled();
+        }
+        if (ImGui::SmallButton("+##RepeaterKey")) {
+            MapElementEditFieldState field;
+            field.key = "structureKeys." + std::to_string(key_field_indices.size());
+            field.backend_key = field.key;
+            field.target_edit_id = inspector_.edit_id;
+            field.expected_source_hash = inspector_.expected_source_hash;
+            field.label = "structureKey[" + std::to_string(key_field_indices.size() + 1) + "]";
+            field.required = true;
+            inspector_.fields.push_back(std::move(field));
+        }
+        if (remove_key_index && *remove_key_index < key_field_indices.size()) {
+            inspector_.fields.erase(inspector_.fields.begin() + static_cast<std::ptrdiff_t>(
+                key_field_indices[*remove_key_index]));
+        } else if (move_key_from && move_key_to &&
+                   *move_key_from < key_field_indices.size() &&
+                   *move_key_to < key_field_indices.size()) {
+            std::swap(inspector_.fields[key_field_indices[*move_key_from]],
+                      inspector_.fields[key_field_indices[*move_key_to]]);
+        }
+        if (remove_key_index || move_key_from) {
+            reindex_repeater_structure_key_fields(inspector_);
         }
     }
     ImGui::EndDisabled();
@@ -4431,14 +4880,21 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
+    const bool repeater_begin0 = inspector_.open && inspector_.row_kind == "repeater";
+    const char* begin0_title_key = repeater_begin0
+        ? "dialog.repeater_begin0_convert_title"
+        : "dialog.structure_put0_convert_title";
+    const char* begin0_message_key = repeater_begin0
+        ? "dialog.repeater_begin0_convert_message"
+        : "dialog.structure_put0_convert_message";
     if (inspector_.open && inspector_.put0_prompt_requested) {
-        ImGui::OpenPopup(tr("dialog.structure_put0_convert_title").c_str());
+        ImGui::OpenPopup(tr(begin0_title_key).c_str());
         inspector_.put0_prompt_requested = false;
     }
-    if (ImGui::BeginPopupModal(tr("dialog.structure_put0_convert_title").c_str(), nullptr,
+    if (ImGui::BeginPopupModal(tr(begin0_title_key).c_str(), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 480.0f);
-        ImGui::TextUnformatted(tr("dialog.structure_put0_convert_message").c_str());
+        ImGui::TextUnformatted(tr(begin0_message_key).c_str());
         ImGui::PopTextWrapPos();
         ImGui::Separator();
         if (ImGui::Button(tr("button.ok").c_str())) {
@@ -5643,6 +6099,18 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_distance_edit_batch(distance_edit_batch);
+    }
+
+    HeadlessRepeaterEditBatchOptions repeater_edit_batch =
+        parse_headless_repeater_edit_batch_options(args);
+    if (repeater_edit_batch.requested) {
+        if (!repeater_edit_batch.error.empty()) {
+            std::cerr << repeater_edit_batch.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-repeater-edit-batch [map-path] "
+                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_repeater_edit_batch(repeater_edit_batch);
     }
 
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);

@@ -14,6 +14,7 @@
 
 #include "canvas3D.h"
 #include "imgui.h"
+#include "repeater_linkage.h"
 
 #include <windows.h>
 
@@ -1312,59 +1313,59 @@ std::string format_repeater_file_path_tooltip(const std::string& begin_path, con
 }
 
 std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
-    std::vector<TableRow> ordered_rows = data;
-    std::stable_sort(ordered_rows.begin(), ordered_rows.end(), repeater_event_distance_order_less);
-
-    std::vector<TableRow> merged_rows;
-    std::map<std::string, size_t> open_rows;
-    int display_index = 1;
-
-    for (const auto& row : ordered_rows) {
-        const std::string& key = table_cell(row, "repeaterKey");
+    std::vector<repeater_linkage::Event> events;
+    events.reserve(data.size());
+    for (size_t index = 0; index < data.size(); ++index) {
+        const TableRow& row = data[index];
+        repeater_linkage::Event event;
+        event.source_index = index;
+        event.distance = table_cell_number(row, "distance");
+        event.order = table_cell_number(row, "order");
+        event.key = table_cell(row, "repeaterKey");
         const std::string& method = table_cell(row, "method");
-
         if (method == "Begin" || method == "Begin0") {
-            auto open_it = open_rows.find(key);
-            if (open_it != open_rows.end()) {
-                TableRow& previous = merged_rows[open_it->second];
-                previous.cells["distance"] = format_changed_distance(table_cell(previous, "_beginDistance"), display_index);
-                previous.cells["filePath"] = format_repeater_file_path(table_cell(previous, "_beginFilePath"));
-                previous.cells["_openFilePath"] = table_cell(previous, "_beginFilePath");
-                previous.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(table_cell(previous, "_beginFilePath"));
-                open_rows.erase(open_it);
-            }
-
-            TableRow new_row = row;
-            const std::string& begin_distance = table_cell(row, "distance");
-            const std::string& begin_file_path = table_cell(row, "filePath");
-            new_row.cells["rowNumber"] = std::to_string(display_index);
-            new_row.cells["_beginDistance"] = begin_distance;
-            new_row.cells["_beginFilePath"] = begin_file_path;
-            new_row.cells["_openFilePath"] = begin_file_path;
-            new_row.cells["distance"] = format_distance_range(begin_distance, "NO END");
-            new_row.cells["filePath"] = format_repeater_file_path(begin_file_path);
-            new_row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path);
-            open_rows[key] = merged_rows.size();
-            merged_rows.push_back(std::move(new_row));
-            ++display_index;
+            event.kind = repeater_linkage::EventKind::Begin;
         } else if (method == "End") {
-            auto open_it = open_rows.find(key);
-            if (open_it != open_rows.end()) {
-                TableRow& begin_row = merged_rows[open_it->second];
-                const std::string& begin_file_path = table_cell(begin_row, "_beginFilePath");
-                const std::string& end_file_path = table_cell(row, "filePath");
-                begin_row.cells["distance"] = format_distance_range(table_cell(begin_row, "_beginDistance"), table_cell(row, "distance"));
-                begin_row.cells["filePath"] = format_repeater_file_path(begin_file_path, end_file_path);
-                begin_row.cells["_openFilePath"] = begin_file_path.empty() ? end_file_path : begin_file_path;
-                begin_row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path, end_file_path);
-                open_rows.erase(open_it);
-            }
+            event.kind = repeater_linkage::EventKind::End;
         }
+        events.push_back(std::move(event));
     }
-
-    for (auto& row : merged_rows) {
-        row.cells.erase("_beginDistance");
-        row.cells.erase("_beginFilePath");
+    std::vector<TableRow> merged_rows;
+    const std::vector<repeater_linkage::Segment> segments =
+        repeater_linkage::pair_segments(std::move(events));
+    merged_rows.reserve(segments.size());
+    for (const repeater_linkage::Segment& segment : segments) {
+        if (segment.begin_source_index >= data.size()) continue;
+        const TableRow& begin = data[segment.begin_source_index];
+        TableRow row = begin;
+        const std::string& begin_distance = table_cell(begin, "distance");
+        const std::string& begin_file_path = table_cell(begin, "filePath");
+        row.cells["rowNumber"] = std::to_string(segment.display_index);
+        row.cells["_openFilePath"] = begin_file_path;
+        row.cells["_repeaterBoundaryKind"] =
+            segment.boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
+            segment.boundary_kind == repeater_linkage::BoundaryKind::NextBegin ? "change" : "open";
+        if (segment.boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd &&
+            segment.boundary_source_index && *segment.boundary_source_index < data.size()) {
+            const TableRow& end = data[*segment.boundary_source_index];
+            const std::string& end_file_path = table_cell(end, "filePath");
+            row.cells["_endEditId"] = end.edit_id;
+            row.cells["_endDistance"] = table_cell(end, "distance");
+            row.cells["distance"] = format_distance_range(begin_distance, table_cell(end, "distance"));
+            row.cells["filePath"] = format_repeater_file_path(begin_file_path, end_file_path);
+            row.cells["_openFilePath"] = begin_file_path.empty() ? end_file_path : begin_file_path;
+            row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path, end_file_path);
+        } else if (segment.boundary_kind == repeater_linkage::BoundaryKind::NextBegin) {
+            row.cells["distance"] = format_changed_distance(
+                begin_distance, static_cast<int>(segment.next_begin_display_index.value_or(0)));
+            row.cells["filePath"] = format_repeater_file_path(begin_file_path);
+            row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path);
+        } else {
+            row.cells["distance"] = format_distance_range(begin_distance, "NO END");
+            row.cells["filePath"] = format_repeater_file_path(begin_file_path);
+            row.cells["_filePathTooltip"] = format_repeater_file_path_tooltip(begin_file_path);
+        }
+        merged_rows.push_back(std::move(row));
     }
     return merged_rows;
 }
@@ -2723,11 +2724,19 @@ void App::render_repeaters_window() {
                             tr("menu.locate_on_plan"),
                             can_locate,
                             tr("menu.locate_in_scene_preview"),
-                            can_locate_scene);
+                            can_locate_scene,
+                            tr("dialog.element_properties"),
+                            edit_actions_available() && !row.edit_id.empty());
                         if (action == TextCellContextAction::Primary) {
                             locate_repeater_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_repeater_row_in_scene_preview(marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(row.edit_id, "repeater");
+                        }
+                        if (ImGui::IsItemHovered() &&
+                            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                            request_element_inspector(row.edit_id, "repeater");
                         }
                         continue;
                     }

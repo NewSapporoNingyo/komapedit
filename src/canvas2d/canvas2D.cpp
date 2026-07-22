@@ -12,6 +12,7 @@
 #include "kme.h"
 #include "canvas3D.h"
 #include "touch_input.h"
+#include "repeater_linkage.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -665,80 +666,66 @@ void App::rebuild_marker_overlay_cache() {
         }
     };
 
-    struct RepeaterEventRef {
-        const TableRow* row = nullptr;
-        double distance = 0.0;
-        double order = 0.0;
-    };
-    std::vector<RepeaterEventRef> repeater_events;
+    std::vector<repeater_linkage::Event> repeater_events;
     repeater_events.reserve(model_.repeaters.size());
-    for (const TableRow& row : model_.repeaters) {
-        repeater_events.push_back(
-            RepeaterEventRef{&row, table_cell_number(row, "distance"),
-                             table_cell_number(row, "order")});
-    }
-    std::stable_sort(repeater_events.begin(), repeater_events.end(),
-                     [](const RepeaterEventRef& a, const RepeaterEventRef& b) {
-        if (a.distance < b.distance) return true;
-        if (a.distance > b.distance) return false;
-        return a.order < b.order;
-    });
-
-    std::map<std::string, RepeaterBeginState> active_repeaters;
-    repeater_marker_cache_.reserve(model_.repeaters.size());
-    for (const RepeaterEventRef& event : repeater_events) {
-        const TableRow& row = *event.row;
-        std::string key = table_cell(row, "repeaterKey");
-        if (key.empty()) continue;
-        std::string method = table_cell(row, "method");
-        double distance = event.distance;
+    for (size_t index = 0; index < model_.repeaters.size(); ++index) {
+        const TableRow& row = model_.repeaters[index];
+        repeater_linkage::Event event;
+        event.source_index = index;
+        event.distance = table_cell_number(row, "distance");
+        event.order = table_cell_number(row, "order");
+        event.key = table_cell(row, "repeaterKey");
+        const std::string& method = table_cell(row, "method");
         if (method == "Begin" || method == "Begin0") {
-            auto open_it = active_repeaters.find(key);
-            if (open_it != active_repeaters.end()) {
-                finish_repeater(open_it->second, distance, key);
-                active_repeaters.erase(open_it);
-            }
-
-            RepeaterBeginState next;
-            next.row_index = repeater_marker_cache_.size();
-            next.distance = distance;
-            next.track_key = table_cell(row, "trackKey");
-            next.edit_id = row.edit_id;
-            next.lateral = table_cell_number(row, "x");
-            next.forward = table_cell_number(row, "z");
-            const std::string normalized_track_key = normalize_track_lookup_key(next.track_key);
-            const bool own_placement_key = is_own_track_placement_key(normalized_track_key);
-            next.own_track_alias = own_placement_key ||
-                is_own_track_lookup_alias(normalized_track_key);
-            next.track_source = own_placement_key
-                ? std::optional<TrackSource>{own_source}
-                : find_track_source(normalized_track_key);
-            if (!next.track_source) {
-                next.track_source = own_source;
-                next.own_track_alias = true;
-            }
-
-            RepeaterOverlayRow overlay;
-            if (next.track_source) {
-                auto base = sample_matrix_track_point(
-                    *next.track_source->points, distance, next.track_source->has_theta_column);
-                if (!base && next.own_track_alias) {
-                    base = sample_matrix_track_point(
-                        *own_source.points, distance, own_source.has_theta_column);
-                }
-                if (base) {
-                    TrackPoint p = offset_track_point(*base, next.lateral, next.forward);
-                    overlay.begin_marker = make_repeater_marker(
-                        distance, p, key, next.edit_id, next.row_index);
-                }
-            }
-            repeater_marker_cache_.push_back(std::move(overlay));
-            active_repeaters[key] = std::move(next);
+            event.kind = repeater_linkage::EventKind::Begin;
         } else if (method == "End") {
-            auto open_it = active_repeaters.find(key);
-            if (open_it == active_repeaters.end()) continue;
-            finish_repeater(open_it->second, distance, key);
-            active_repeaters.erase(open_it);
+            event.kind = repeater_linkage::EventKind::End;
+        }
+        repeater_events.push_back(std::move(event));
+    }
+
+    repeater_marker_cache_.reserve(model_.repeaters.size());
+    for (const repeater_linkage::Segment& segment :
+         repeater_linkage::pair_segments(std::move(repeater_events))) {
+        if (segment.begin_source_index >= model_.repeaters.size()) continue;
+        const TableRow& row = model_.repeaters[segment.begin_source_index];
+        const std::string key = table_cell(row, "repeaterKey");
+        RepeaterBeginState begin;
+        begin.row_index = repeater_marker_cache_.size();
+        begin.distance = table_cell_number(row, "distance");
+        begin.track_key = table_cell(row, "trackKey");
+        begin.edit_id = row.edit_id;
+        begin.lateral = table_cell_number(row, "x");
+        begin.forward = table_cell_number(row, "z");
+        const std::string normalized_track_key = normalize_track_lookup_key(begin.track_key);
+        const bool own_placement_key = is_own_track_placement_key(normalized_track_key);
+        begin.own_track_alias = own_placement_key ||
+            is_own_track_lookup_alias(normalized_track_key);
+        begin.track_source = own_placement_key
+            ? std::optional<TrackSource>{own_source}
+            : find_track_source(normalized_track_key);
+        if (!begin.track_source) {
+            begin.track_source = own_source;
+            begin.own_track_alias = true;
+        }
+
+        RepeaterOverlayRow overlay;
+        if (begin.track_source) {
+            auto base = sample_matrix_track_point(
+                *begin.track_source->points, begin.distance, begin.track_source->has_theta_column);
+            if (!base && begin.own_track_alias) {
+                base = sample_matrix_track_point(
+                    *own_source.points, begin.distance, own_source.has_theta_column);
+            }
+            if (base) {
+                TrackPoint p = offset_track_point(*base, begin.lateral, begin.forward);
+                overlay.begin_marker = make_repeater_marker(
+                    begin.distance, p, key, begin.edit_id, begin.row_index);
+            }
+        }
+        repeater_marker_cache_.push_back(std::move(overlay));
+        if (segment.boundary_kind != repeater_linkage::BoundaryKind::Open) {
+            finish_repeater(begin, segment.end_distance, key);
         }
     }
 }
@@ -3202,6 +3189,17 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_repeater_list").c_str()) && can_locate) {
             locate_repeater_row_in_list(static_cast<size_t>(plan_repeater_popup_row_));
+        }
+        ImGui::EndDisabled();
+        const PlanRepeaterMarker* marker = nullptr;
+        if (can_locate) {
+            marker = repeater_marker_cache_[static_cast<size_t>(plan_repeater_popup_row_)].begin_marker
+                ? &*repeater_marker_cache_[static_cast<size_t>(plan_repeater_popup_row_)].begin_marker
+                : nullptr;
+        }
+        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
+            request_element_inspector(marker->edit_id, "repeater");
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();
