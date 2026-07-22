@@ -2384,11 +2384,9 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             linked->boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
             linked->boundary_kind == repeater_linkage::BoundaryKind::NextBegin ? "change" : "open";
 
-        add_row_field("method", "method", MapElementNumericConstraint::None, true);
-        next.fields.back().read_only = true;
+        add_row_field("distance", "beginDistance", MapElementNumericConstraint::Finite, true);
         add_row_field("repeaterKey", "repeaterKey", MapElementNumericConstraint::None, true);
         next.fields.back().read_only = true;
-        add_row_field("distance", "beginDistance", MapElementNumericConstraint::Finite, true);
         add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, false);
         if (ascii_lower(method) != "begin0") {
             for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
@@ -3661,7 +3659,8 @@ void App::render_element_inspector() {
         ImGui::TextUnformatted(tr("label.raw_statement").c_str());
         ImGui::TextWrapped("%s", inspector_.raw_statement.c_str());
     }
-    if (inspector_.row_kind == "repeater") {
+    const bool repeater_inspector = inspector_.row_kind == "repeater";
+    const auto render_repeater_end_source = [&] {
         if (inspector_.repeater_boundary_kind == "change") {
             ImGui::TextUnformatted(tr("status.repeater_multiple_begins").c_str());
         } else if (inspector_.repeater_boundary_kind == "open") {
@@ -3674,16 +3673,17 @@ void App::render_element_inspector() {
                 ImGui::TextWrapped("%s", inspector_.end_raw_statement.c_str());
             }
         }
-    }
+    };
 
     ImGui::Separator();
     ImGui::BeginDisabled(inspector_.pending_delete);
     for (size_t field_index = 0; field_index < inspector_.fields.size(); ++field_index) {
         MapElementEditFieldState& field = inspector_.fields[field_index];
-        if (inspector_.row_kind == "repeater" && is_repeater_structure_key_field(field)) {
+        if (repeater_inspector && is_repeater_structure_key_field(field)) {
             continue;
         }
         if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
+        if (repeater_inspector && field.key == "repeaterKey") ImGui::Separator();
         const bool changed = edit_field_buffer_text(field) != field.original_value;
         if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
         ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
@@ -3699,8 +3699,12 @@ void App::render_element_inspector() {
             render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
                                        field.source_distance_string);
         }
+        if (repeater_inspector && field.key == "interval") {
+            ImGui::Separator();
+            render_repeater_end_source();
+        }
     }
-    if (inspector_.row_kind == "repeater") {
+    if (repeater_inspector) {
         ImGui::Separator();
         ImGui::TextUnformatted(tr("label.repeater_structure_keys").c_str());
         std::vector<size_t> key_field_indices;
@@ -3712,23 +3716,28 @@ void App::render_element_inspector() {
         std::optional<size_t> remove_key_index;
         std::optional<size_t> move_key_from;
         std::optional<size_t> move_key_to;
+        const float structure_key_input_x = ImGui::GetCursorPosX();
+        const float structure_key_input_width =
+            std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f);
+        const float add_structure_key_button_width =
+            std::max(80.0f, structure_key_input_width * 0.5f);
         for (size_t list_index = 0; list_index < key_field_indices.size(); ++list_index) {
             MapElementEditFieldState& field = inspector_.fields[key_field_indices[list_index]];
             const bool changed = edit_field_buffer_text(field) != field.original_value;
             if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
-            ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f));
+            ImGui::SetNextItemWidth(structure_key_input_width);
             ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
             if (changed) ImGui::PopStyleColor();
             ImGui::SameLine();
             ImGui::BeginDisabled(list_index == 0);
-            if (ImGui::SmallButton(("^##RepeaterKey" + std::to_string(list_index)).c_str())) {
+            if (ImGui::SmallButton((u8"\u2191##RepeaterKey" + std::to_string(list_index)).c_str())) {
                 move_key_from = list_index;
                 move_key_to = list_index - 1;
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(list_index + 1 >= key_field_indices.size());
-            if (ImGui::SmallButton(("v##RepeaterKey" + std::to_string(list_index)).c_str())) {
+            if (ImGui::SmallButton((u8"\u2193##RepeaterKey" + std::to_string(list_index)).c_str())) {
                 move_key_from = list_index;
                 move_key_to = list_index + 1;
             }
@@ -3740,7 +3749,9 @@ void App::render_element_inspector() {
             }
             ImGui::EndDisabled();
         }
-        if (ImGui::SmallButton("+##RepeaterKey")) {
+        ImGui::SetCursorPosX(structure_key_input_x +
+                             (structure_key_input_width - add_structure_key_button_width) * 0.5f);
+        if (ImGui::Button("+##RepeaterKey", ImVec2(add_structure_key_button_width, 0.0f))) {
             MapElementEditFieldState field;
             field.key = "structureKeys." + std::to_string(key_field_indices.size());
             field.backend_key = field.key;
