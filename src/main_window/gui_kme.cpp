@@ -141,6 +141,12 @@ ImVec4 log_severity_color(LogSeverity severity) noexcept {
     return ImVec4(0.88f, 0.88f, 0.88f, 1.0f);
 }
 
+std::string format_elapsed_seconds_value(double elapsed_seconds) {
+    std::ostringstream elapsed;
+    elapsed << std::fixed << std::setprecision(2) << elapsed_seconds;
+    return elapsed.str();
+}
+
 } // namespace
 
 void set_crosshair_cursor() {
@@ -1158,6 +1164,16 @@ void App::poll_loader() {
     if (result) apply_load_result(std::move(*result));
 }
 
+void App::set_program_status(const char* key, std::string_view elapsed_seconds) {
+    program_status_key_ = key;
+    program_status_elapsed_suffix_.clear();
+    if (elapsed_seconds.empty()) return;
+
+    program_status_elapsed_suffix_ = " (";
+    program_status_elapsed_suffix_.append(elapsed_seconds);
+    program_status_elapsed_suffix_ += "s)";
+}
+
 void App::begin_load(std::string path, bool preserve_settings, bool record_history,
                      std::optional<BackgroundHistory> background_to_restore,
                      bool preserve_scene_preview_models,
@@ -1179,7 +1195,7 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     }
     load_state_.running = true;
     load_state_.pending_started_at.reset();
-    program_status_key_ = "status.map_loading";
+    set_program_status("status.map_loading");
     add_log(std::string("Start loading file: ") + path);
 
     bool has_cp = preserve_settings && has_model_ && model_.has_cp_arb;
@@ -1232,7 +1248,7 @@ void App::begin_edit_metadata_load() {
     stop_loader();
     load_state_.running = true;
     load_state_.pending_started_at.reset();
-    program_status_key_ = "status.edit.loading_metadata";
+    set_program_status("status.edit.loading_metadata");
     add_log("[info]gui_kme.cpp: loading edit metadata");
 
     LoadModelOptions load_options;
@@ -1261,7 +1277,7 @@ void App::apply_load_result(LoadResult result) {
     if (!result.ok) {
         load_state_.pending_started_at.reset();
         pending_scene_preview_started_at_.reset();
-        program_status_key_ = "status.map_load_failed";
+        set_program_status("status.map_load_failed");
         add_log(LogSeverity::Error, "Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
@@ -1325,7 +1341,7 @@ void App::apply_load_result(LoadResult result) {
     add_log("Load timing: " + timing.str());
     for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
     add_log("Map loaded: " + result.path);
-    program_status_key_ = "status.map_loaded";
+    set_program_status("status.map_loaded");
     if (result.background_to_restore) {
         apply_background_history(*result.background_to_restore);
     } else if (!result.preserve_settings) {
@@ -1439,7 +1455,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
 
 void App::apply_edit_metadata_result(LoadResult result) {
     if (!result.ok) {
-        program_status_key_ = "status.map_loaded";
+        set_program_status("status.map_loaded");
         add_log("[error]gui_kme.cpp: edit metadata load failed: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
@@ -1453,7 +1469,7 @@ void App::apply_edit_metadata_result(LoadResult result) {
         // error set by helper
     }
     if (!error.empty()) {
-        program_status_key_ = "status.map_loaded";
+        set_program_status("status.map_loaded");
         add_log("[warn]gui_kme.cpp: edit metadata discarded: " + error);
         add_log("[warn]gui_kme.cpp: reload from disk before editing this map");
         if (result.handle) kv_free(result.handle);
@@ -1483,7 +1499,7 @@ void App::apply_edit_metadata_result(LoadResult result) {
         }
     }
     add_log("[info]gui_kme.cpp: edit metadata loaded");
-    program_status_key_ = "status.map_loaded";
+    set_program_status(edit_mode_enabled_ ? "status.edit.mode_enabled" : "status.map_loaded");
 }
 
 void App::finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at) {
@@ -1493,9 +1509,9 @@ void App::finish_pending_load_timing(std::chrono::steady_clock::time_point finis
         finished_at - *load_state_.pending_started_at).count();
     load_state_.pending_started_at.reset();
 
-    std::ostringstream elapsed;
-    elapsed << std::fixed << std::setprecision(2) << elapsed_seconds;
-    add_log("Map loaded in " + elapsed.str() + "s");
+    const std::string elapsed = format_elapsed_seconds_value(elapsed_seconds);
+    add_log("Map loaded in " + elapsed + "s");
+    set_program_status("status.map_loaded", elapsed);
 }
 
 void App::regenerate_geometry() {
@@ -1696,10 +1712,12 @@ void App::apply_edit_mode_enabled(bool enabled) {
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
         text_preview_.placement = TextPreviewPlacementState{};
         edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
+        set_program_status("status.edit.mode_disabled");
         add_log("[info]gui_kme.cpp: edit mode disabled");
         return;
     }
 
+    set_program_status("status.edit.mode_enabled");
     add_log("[info]gui_kme.cpp: edit mode enabled");
     if (has_model_ && !file_path_.empty() && !edit_registry_loaded_ && !load_state_.running) {
         begin_edit_metadata_load();
@@ -2823,6 +2841,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
                                        std::string resolution_origin_edit_id) {
     if (!edit_actions_available()) return false;
     const bool ended_batch = !pending_edit_changes_.empty() && changes.empty();
+    const bool reapplies_inspector_change = reload_request.has_value();
 
     // The backend working copy and the locally patched table rows form one
     // preview transaction. Back up only the row kinds touched by either ledger
@@ -2902,6 +2921,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     } else if (!pending_edit_changes_.empty() && inspector_.open) {
         inspector_.status_message = tr("status.edit.applied_to_preview");
     }
+    if (reapplies_inspector_change) set_program_status("status.edit.applied_to_preview");
     refresh_text_preview_from_working_copy();
     return true;
 }
@@ -3191,6 +3211,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     } else if (inspector_.open) {
         inspector_.status_message = tr("status.edit.saved");
     }
+    set_program_status("status.edit.saved");
     return true;
 }
 
@@ -4209,6 +4230,10 @@ void App::render_status_bar() {
         ImGui::SameLine(0.0f, horizontal_padding);
         ImGui::SetCursorPosY((status_bar_height - status_font_size) * 0.5f);
         ImGui::TextUnformatted(tr(program_status_key_).c_str());
+        if (!program_status_elapsed_suffix_.empty()) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(program_status_elapsed_suffix_.c_str());
+        }
 
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         const ImVec2 popup_size(
@@ -4991,6 +5016,7 @@ void App::start_scene_preview() {
     scene_preview_preserve_models_on_rebuild_ = false;
     scene_preview_preserve_camera_on_rebuild_ = false;
     pending_scene_preview_started_at_ = std::chrono::steady_clock::now();
+    set_program_status("status.scene_preview_loading");
     add_log("[info]gui_kme.cpp: starting 3D scene preview");
     rebuild_scene_preview(false, false);
 }
@@ -5002,6 +5028,7 @@ void App::stop_scene_preview() {
     scene_preview_preserve_camera_on_rebuild_ = false;
     pending_scene_preview_started_at_.reset();
     if (scene_preview_canvas_) scene_preview_canvas_->clear_scene();
+    set_program_status("status.scene_preview_stopped");
     add_log("[INFO]3D scene preview stopped");
 }
 
@@ -5055,6 +5082,7 @@ double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_cam
         scene_preview_preserve_models_on_rebuild_ = false;
         scene_preview_preserve_camera_on_rebuild_ = false;
         pending_scene_preview_started_at_.reset();
+        set_program_status("status.scene_preview_failed");
         return scene_build_seconds;
     }
     Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
@@ -5091,9 +5119,9 @@ void App::finish_pending_scene_preview_load_timing() {
         std::chrono::steady_clock::now() - *pending_scene_preview_started_at_).count();
     pending_scene_preview_started_at_.reset();
 
-    std::ostringstream elapsed;
-    elapsed << std::fixed << std::setprecision(2) << elapsed_seconds;
-    add_log("3D preview loaded in " + elapsed.str() + " s");
+    const std::string elapsed = format_elapsed_seconds_value(elapsed_seconds);
+    add_log("3D preview loaded in " + elapsed + " s");
+    set_program_status("status.scene_preview_loaded", elapsed);
 }
 
 void App::reload_scene_preview_models() {
@@ -5129,6 +5157,7 @@ void App::render_scene_preview_window() {
         }
     };
     drain_scene_preview_logs();
+    finish_pending_scene_preview_load_timing();
     if (!show_scene_preview_window_) return;
     if (dock_main_id_) ImGui::SetNextWindowDockID(dock_main_id_, ImGuiCond_FirstUseEver);
     if (focus_scene_preview_next_) ImGui::SetNextWindowFocus();
@@ -5209,7 +5238,6 @@ void App::render_scene_preview_window() {
             request_element_inspector(scene_action.edit_id, scene_action.row_kind);
         }
         drain_scene_preview_logs();
-        finish_pending_scene_preview_load_timing();
     }
     focus_scene_preview_next_ = false;
     ImGui::End();

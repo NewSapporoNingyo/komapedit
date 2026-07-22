@@ -1137,6 +1137,7 @@ private:
     int error_count_ = 0;
     int warn_count_ = 0;
     const char* program_status_key_ = "status.ready";
+    std::string program_status_elapsed_suffix_;
 
     struct LoadResult {
         bool ok = false;
@@ -1441,6 +1442,7 @@ private:
 
     void stop_loader();
     void poll_loader();
+    void set_program_status(const char* key, std::string_view elapsed_seconds = {});
     void finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at);
     void finish_pending_load_timing_after_plan_data_ready();
     void begin_load(std::string path, bool preserve_settings, bool record_history = false,
