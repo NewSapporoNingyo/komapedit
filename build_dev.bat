@@ -66,4 +66,12 @@ echo kobushiCPP dev built: %cd%\build
 echo Runtime DLLs: %cd%\build\bin
 echo Settings: %cd%\build\settings
 
+rem --- Build completion notification ---
+powershell -Command "if (Get-Module -ListAvailable -Name BurntToast) { exit 0 } else { exit 1 }" >nul 2>&1
+if errorlevel 1 (
+    msg %USERNAME% /time:10 "build finished" >nul 2>&1
+) else (
+    powershell -Command "New-BurntToastNotification -Text 'Build finished'"
+)
+
 pause
