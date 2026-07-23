@@ -131,9 +131,9 @@ ImVec4 main_bar_background_color() {
 }
 
 ImVec4 darkened_theme_color(ImVec4 color) noexcept {
-    constexpr float kDarkenFactor = 0.40f;
-    return ImVec4(color.x * kDarkenFactor, color.y * kDarkenFactor,
-                  color.z * kDarkenFactor, 1.0f);
+    constexpr float k_darken_factor = 0.40f;
+    return ImVec4(color.x * k_darken_factor, color.y * k_darken_factor,
+                  color.z * k_darken_factor, 1.0f);
 }
 
 ImVec4 log_severity_color(LogSeverity severity) noexcept {
@@ -299,10 +299,10 @@ bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,
 
 MapElementNumericConstraint structure_edit_numeric_constraint(const std::string& key) {
     if (key == "tilt") return MapElementNumericConstraint::Integer;
-    static constexpr std::array<const char*, 7> kTruncatedFields = {
+    static constexpr std::array<const char*, 7> k_truncated_fields = {
         "x", "y", "z", "rx", "ry", "rz", "span"
     };
-    if (std::any_of(kTruncatedFields.begin(), kTruncatedFields.end(),
+    if (std::any_of(k_truncated_fields.begin(), k_truncated_fields.end(),
                     [&](const char* field) { return key == field; })) {
         return MapElementNumericConstraint::Truncate3;
     }
@@ -310,10 +310,10 @@ MapElementNumericConstraint structure_edit_numeric_constraint(const std::string&
 }
 
 bool is_structure_coordinate_field(const std::string& key) {
-    static constexpr std::array<const char*, 6> kCoordinateFields = {
+    static constexpr std::array<const char*, 6> k_coordinate_fields = {
         "x", "y", "z", "rx", "ry", "rz"
     };
-    return std::any_of(kCoordinateFields.begin(), kCoordinateFields.end(),
+    return std::any_of(k_coordinate_fields.begin(), k_coordinate_fields.end(),
                        [&](const char* field) { return key == field; });
 }
 
@@ -379,7 +379,7 @@ std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& node
     };
 
     for (const FileStructureNode& node : nodes) {
-        const std::uint64_t parent = node.parent_index == kNoFileStructureParent
+        const std::uint64_t parent = node.parent_index == k_no_file_structure_parent
             ? std::numeric_limits<std::uint64_t>::max()
             : static_cast<std::uint64_t>(node.parent_index);
         for (unsigned shift = 0; shift < 64; shift += 8) {
@@ -1071,10 +1071,10 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
 
 App* g_app = nullptr;
 HWND g_main_hwnd = nullptr;
-constexpr UINT kAppWakeMessage = WM_APP + 1;
+constexpr UINT k_app_wake_message = WM_APP + 1;
 
 void wake_main_window() {
-    if (g_main_hwnd) PostMessageW(g_main_hwnd, kAppWakeMessage, 0, 0);
+    if (g_main_hwnd) PostMessageW(g_main_hwnd, k_app_wake_message, 0, 0);
 }
 
 App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool viewports_enabled, bool has_saved_layout)
@@ -2034,8 +2034,8 @@ void set_inspector_row_field_value(TableRow& row,
         }
     }
     if (row_kind == "repeater") {
-        constexpr std::string_view kStructureKeyPrefix = "structureKeys.";
-        if (field_key.rfind(kStructureKeyPrefix.data(), 0) == 0) {
+        constexpr std::string_view k_structure_key_prefix = "structureKeys.";
+        if (field_key.rfind(k_structure_key_prefix.data(), 0) == 0) {
             if (field_key == "structureKeys.count") {
                 double parsed_count = 0.0;
                 if (!parse_gui_edit_number(value, &parsed_count) || parsed_count < 1.0 ||
@@ -2181,13 +2181,13 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 4> kDistanceRowKinds = {
+    static constexpr std::array<const char*, 4> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
         "repeater",
     };
-    return std::any_of(kDistanceRowKinds.begin(), kDistanceRowKinds.end(),
+    return std::any_of(k_distance_row_kinds.begin(), k_distance_row_kinds.end(),
                        [&](const char* value) { return row_kind == value; });
 }
 
@@ -3137,12 +3137,12 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 5> kCommittedRowKinds = {
+    static constexpr std::array<const char*, 5> k_committed_row_kinds = {
         "structure.model", "structure.put", "structure.between", "station.put", "repeater",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
-    for (const char* row_kind : kCommittedRowKinds) {
+    for (const char* row_kind : k_committed_row_kinds) {
         std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
         const std::vector<CommittedEditRowState>& states = rows_by_kind[row_kind];
         if (!target_rows || states.size() != target_rows->size()) {
@@ -3185,7 +3185,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         file->source_hash = state.source_hash;
         file->byte_length = state.byte_length;
     }
-    for (const char* row_kind : kCommittedRowKinds) {
+    for (const char* row_kind : k_committed_row_kinds) {
         std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
         for (size_t row_index = 0; row_index < target_rows->size(); ++row_index) {
             TableRow& row = (*target_rows)[row_index];
@@ -4018,7 +4018,7 @@ void App::upsert_recent_map(const std::string& path,
     }
     if (background) selected.background = *background;
     kept.insert(kept.begin(), std::move(selected));
-    if (kept.size() > kMaxRecentMaps) kept.resize(kMaxRecentMaps);
+    if (kept.size() > k_max_recent_maps) kept.resize(k_max_recent_maps);
     recent_maps_ = std::move(kept);
     save_history();
 }
@@ -4431,8 +4431,8 @@ void App::apply_view_3d_settings(const View3DSettings& settings) {
     scene_edit_component_size_percent_ =
         clamp_scene_edit_component_size_percent(settings.scene_edit_component_size_percent);
     scene_camera_speed_percent_ = std::clamp(settings.scene_camera_speed_percent,
-                                              kMinSceneCameraSpeedPercent,
-                                              kMaxSceneCameraSpeedPercent);
+                                              k_min_scene_camera_speed_percent,
+                                              k_max_scene_camera_speed_percent);
     apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
     apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
     apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
@@ -4442,7 +4442,7 @@ void App::apply_view_3d_settings(const View3DSettings& settings) {
 
 void App::apply_scene_draw_distance_to_canvas(int distance_m) {
     if (scene_preview_canvas_) {
-        scene_preview_canvas_->set_scene_window(kSceneWindowBackDistanceM,
+        scene_preview_canvas_->set_scene_window(k_scene_window_back_distance_m,
                                                 static_cast<double>(clamp_scene_draw_distance(distance_m)));
     }
 }
@@ -4575,7 +4575,7 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 29> kMapInfoMenuEntries = {{
+        static constexpr std::array<MapInfoMenuEntry, 29> k_map_info_menu_entries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
@@ -4607,7 +4607,7 @@ void App::render_menu() {
             {"menu.map_info.draw_distances", &App::show_draw_distances_window_},
         }};
         bool has_category = false;
-        for (const MapInfoMenuEntry& entry : kMapInfoMenuEntries) {
+        for (const MapInfoMenuEntry& entry : k_map_info_menu_entries) {
             if (!entry.window_visible) {
                 if (has_category) ImGui::Separator();
                 ImGui::MenuItem(tr(entry.label_key).c_str(), nullptr, false, false);
@@ -4806,10 +4806,10 @@ void App::render_toolbar() {
 }
 
 void App::render_status_bar() {
-    constexpr float kFontScale = 0.80f;
-    constexpr float kHeightScale = 1.20f;
-    const float status_font_size = ImGui::GetFontSize() * kFontScale;
-    const float status_bar_height = status_font_size * kHeightScale;
+    constexpr float k_font_scale = 0.80f;
+    constexpr float k_height_scale = 1.20f;
+    const float status_font_size = ImGui::GetFontSize() * k_font_scale;
+    const float status_bar_height = status_font_size * k_height_scale;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar |
                                    ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoNavInputs;
@@ -4820,7 +4820,7 @@ void App::render_status_bar() {
     const bool visible = ImGui::BeginViewportSideBar(
         "##MainStatusBar", ImGui::GetMainViewport(), ImGuiDir_Down, status_bar_height, flags);
     if (visible) {
-        ImGui::SetWindowFontScale(kFontScale);
+        ImGui::SetWindowFontScale(k_font_scale);
 
         int error_count = 0;
         int warning_count = 0;
@@ -5241,12 +5241,12 @@ void App::render_popups() {
             apply_ui_settings(pending_font_size_, pending_ui_component_size_, pending_theme_color_, dpi_scale_, viewports_enabled_);
         };
         ImGui::SetNextItemWidth(260.0f);
-        if (ImGui::SliderFloat(tr("label.font_size").c_str(), &pending_font_size_, kMinFontSize, kMaxFontSize, "%.0f px", ImGuiSliderFlags_AlwaysClamp)) {
+        if (ImGui::SliderFloat(tr("label.font_size").c_str(), &pending_font_size_, k_min_font_size, k_max_font_size, "%.0f px", ImGuiSliderFlags_AlwaysClamp)) {
             pending_font_size_ = clamp_font_size(pending_font_size_);
             apply_pending_ui_settings();
         }
         ImGui::SetNextItemWidth(260.0f);
-        if (ImGui::SliderFloat(tr("label.ui_component_size").c_str(), &pending_ui_component_size_, kMinUiComponentSize, kMaxUiComponentSize, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
+        if (ImGui::SliderFloat(tr("label.ui_component_size").c_str(), &pending_ui_component_size_, k_min_ui_component_size, k_max_ui_component_size, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
             pending_ui_component_size_ = clamp_ui_component_size(pending_ui_component_size_);
             apply_pending_ui_settings();
         }
@@ -5320,22 +5320,22 @@ void App::render_popups() {
     bool canvas_element_sizes_popup_open = true;
     if (ImGui::BeginPopupModal(tr("dialog.canvas_element_sizes").c_str(), &canvas_element_sizes_popup_open, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SetNextItemWidth(260.0f);
-        int marker_size_steps = static_cast<int>(clamp_marker_size_percent(pending_marker_size_percent_) / kMarkerSizePercentStep);
+        int marker_size_steps = static_cast<int>(clamp_marker_size_percent(pending_marker_size_percent_) / k_marker_size_percent_step);
         if (ImGui::SliderInt(tr("label.station_marker_size").c_str(),
                              &marker_size_steps,
-                             static_cast<int>(kMinMarkerSizePercent) / kMarkerSizePercentStep,
-                             static_cast<int>(kMaxMarkerSizePercent) / kMarkerSizePercentStep,
+                             static_cast<int>(k_min_marker_size_percent) / k_marker_size_percent_step,
+                             static_cast<int>(k_max_marker_size_percent) / k_marker_size_percent_step,
                              "%d0%%",
                              ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
-            pending_marker_size_percent_ = clamp_marker_size_percent(static_cast<float>(marker_size_steps * kMarkerSizePercentStep));
+            pending_marker_size_percent_ = clamp_marker_size_percent(static_cast<float>(marker_size_steps * k_marker_size_percent_step));
             marker_size_percent_ = pending_marker_size_percent_;
         }
         auto line_width_slider = [&](const char* label_key, float* value, float fallback) {
             ImGui::SetNextItemWidth(260.0f);
             int width_steps = static_cast<int>(std::round(clamp_canvas_line_width(*value, fallback) /
-                                                          kCanvasLineWidthStepPx));
-            const int min_steps = static_cast<int>(std::round(kMinCanvasLineWidthPx / kCanvasLineWidthStepPx));
-            const int max_steps = static_cast<int>(std::round(kMaxCanvasLineWidthPx / kCanvasLineWidthStepPx));
+                                                          k_canvas_line_width_step_px));
+            const int min_steps = static_cast<int>(std::round(k_min_canvas_line_width_px / k_canvas_line_width_step_px));
+            const int max_steps = static_cast<int>(std::round(k_max_canvas_line_width_px / k_canvas_line_width_step_px));
             std::string slider_id = std::string("##") + label_key;
             if (ImGui::SliderInt(slider_id.c_str(),
                                  &width_steps,
@@ -5343,7 +5343,7 @@ void App::render_popups() {
                                  max_steps,
                                  "",
                                  ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
-                *value = clamp_canvas_line_width(static_cast<float>(width_steps) * kCanvasLineWidthStepPx,
+                *value = clamp_canvas_line_width(static_cast<float>(width_steps) * k_canvas_line_width_step_px,
                                                  fallback);
                 pending_canvas_line_widths_ = clamp_canvas_line_widths(pending_canvas_line_widths_);
                 canvas_line_widths_ = pending_canvas_line_widths_;
@@ -5352,7 +5352,7 @@ void App::render_popups() {
             ImVec2 slider_max = ImGui::GetItemRectMax();
             std::string value_text = format_double(
                 static_cast<double>(clamp_canvas_line_width(static_cast<float>(width_steps) *
-                                                            kCanvasLineWidthStepPx,
+                                                            k_canvas_line_width_step_px,
                                                             fallback)),
                 1) + " px";
             ImVec2 value_size = ImGui::CalcTextSize(value_text.c_str());
@@ -5366,16 +5366,16 @@ void App::render_popups() {
         };
         line_width_slider("label.own_track_line_width",
                           &pending_canvas_line_widths_.own_track_px,
-                          kDefaultOwnTrackLineWidthPx);
+                          k_default_own_track_line_width_px);
         line_width_slider("label.other_track_line_width",
                           &pending_canvas_line_widths_.other_track_px,
-                          kDefaultOtherTrackLineWidthPx);
+                          k_default_other_track_line_width_px);
         line_width_slider("label.chart_marker_line_width",
                           &pending_canvas_line_widths_.chart_marker_px,
-                          kDefaultChartMarkerLineWidthPx);
+                          k_default_chart_marker_line_width_px);
         line_width_slider("label.background_grid_line_width",
                           &pending_canvas_line_widths_.background_grid_px,
-                          kDefaultBackgroundGridLineWidthPx);
+                          k_default_background_grid_line_width_px);
         if (ImGui::Button(tr("button.ok").c_str())) {
             marker_size_percent_ = clamp_marker_size_percent(pending_marker_size_percent_);
             marker_size_percent_before_dialog_ = marker_size_percent_;
@@ -5418,45 +5418,45 @@ void App::render_popups() {
                             &pending_scene_map_draw_distance_enabled_)) {
             apply_scene_map_draw_distance_to_canvas(pending_scene_map_draw_distance_enabled_);
         }
-        int draw_distance_chunks = clamp_scene_draw_distance(pending_scene_draw_distance_m_) / kSceneDrawDistanceStepM;
+        int draw_distance_chunks = clamp_scene_draw_distance(pending_scene_draw_distance_m_) / k_scene_draw_distance_step_m;
         ImGui::SetNextItemWidth(300.0f);
         if (ImGui::SliderInt(tr("label.scene_draw_distance").c_str(),
                              &draw_distance_chunks,
-                             kMinSceneDrawDistanceM / kSceneDrawDistanceStepM,
-                             kMaxSceneDrawDistanceM / kSceneDrawDistanceStepM,
+                             k_min_scene_draw_distance_m / k_scene_draw_distance_step_m,
+                             k_max_scene_draw_distance_m / k_scene_draw_distance_step_m,
                              "%d00 m",
                              ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
-            pending_scene_draw_distance_m_ = clamp_scene_draw_distance(draw_distance_chunks * kSceneDrawDistanceStepM);
+            pending_scene_draw_distance_m_ = clamp_scene_draw_distance(draw_distance_chunks * k_scene_draw_distance_step_m);
             apply_scene_draw_distance_to_canvas(pending_scene_draw_distance_m_);
         }
         int edit_component_size_steps =
             clamp_scene_edit_component_size_percent(pending_scene_edit_component_size_percent_) /
-            kSceneEditComponentSizeStepPercent;
+            k_scene_edit_component_size_step_percent;
         ImGui::SetNextItemWidth(300.0f);
         if (ImGui::SliderInt(
                 tr("label.scene_edit_component_size").c_str(),
                 &edit_component_size_steps,
-                kMinSceneEditComponentSizePercent / kSceneEditComponentSizeStepPercent,
-                kMaxSceneEditComponentSizePercent / kSceneEditComponentSizeStepPercent,
+                k_min_scene_edit_component_size_percent / k_scene_edit_component_size_step_percent,
+                k_max_scene_edit_component_size_percent / k_scene_edit_component_size_step_percent,
                 "%d0%%",
                 ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
             pending_scene_edit_component_size_percent_ =
                 clamp_scene_edit_component_size_percent(
-                    edit_component_size_steps * kSceneEditComponentSizeStepPercent);
+                    edit_component_size_steps * k_scene_edit_component_size_step_percent);
             apply_scene_edit_component_size_to_canvas(pending_scene_edit_component_size_percent_);
         }
         int camera_speed_steps =
-            pending_scene_camera_speed_percent_ / kSceneCameraSpeedStepPercent;
+            pending_scene_camera_speed_percent_ / k_scene_camera_speed_step_percent;
         ImGui::SetNextItemWidth(300.0f);
         if (ImGui::SliderInt(
                 tr("label.scene_camera_speed").c_str(),
                 &camera_speed_steps,
-                kMinSceneCameraSpeedPercent / kSceneCameraSpeedStepPercent,
-                kMaxSceneCameraSpeedPercent / kSceneCameraSpeedStepPercent,
+                k_min_scene_camera_speed_percent / k_scene_camera_speed_step_percent,
+                k_max_scene_camera_speed_percent / k_scene_camera_speed_step_percent,
                 "%d0%%",
                 ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
             pending_scene_camera_speed_percent_ =
-                camera_speed_steps * kSceneCameraSpeedStepPercent;
+                camera_speed_steps * k_scene_camera_speed_step_percent;
             apply_scene_camera_speed_to_canvas(pending_scene_camera_speed_percent_);
         }
         if (ImGui::Button(tr("button.ok").c_str())) {
@@ -6213,7 +6213,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (::ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) return true;
     if (touch_input::handle_message(hWnd, msg, wParam, lParam)) return 0;
     switch (msg) {
-        case kAppWakeMessage:
+        case k_app_wake_message:
             return 0;
         case WM_SIZE:
             if (wParam == SIZE_MINIMIZED) return 0;
@@ -6451,14 +6451,14 @@ int main(int, char**) {
     bool font_loaded = false;
     for (const char* font : font_candidates) {
         if (std::filesystem::exists(font)) {
-            io.Fonts->AddFontFromFileTTF(font, kDefaultFontSize * scale, nullptr,
+            io.Fonts->AddFontFromFileTTF(font, k_default_font_size * scale, nullptr,
                                          application_font_glyph_ranges(*io.Fonts));
             font_loaded = true;
             break;
         }
     }
     if (!font_loaded) io.Fonts->AddFontDefault();
-    merge_required_symbol_glyphs(*io.Fonts, kDefaultFontSize * scale);
+    merge_required_symbol_glyphs(*io.Fonts, k_default_font_size * scale);
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);

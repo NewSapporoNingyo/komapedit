@@ -144,7 +144,7 @@ private:
         storage_.file_structure.reserve(ctx_.file_structure.size());
         for (const FileStructureRecord& input : ctx_.file_structure) {
             KvFileStructureRow row{};
-            row.parent_index = input.parent_index == kNoSourceRef
+            row.parent_index = input.parent_index == k_no_source_ref
                 ? -1 : static_cast<std::int64_t>(input.parent_index);
             row.include_path = string_ref(input.include_path);
             row.absolute_path = string_ref(input.absolute_path);

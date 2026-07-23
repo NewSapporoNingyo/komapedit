@@ -83,19 +83,19 @@ std::string display_name_from_path(const std::string& path) {
 }
 
 float clamp_font_size(float value) {
-    if (!std::isfinite(value)) return kDefaultFontSize;
-    return std::clamp(value, kMinFontSize, kMaxFontSize);
+    if (!std::isfinite(value)) return k_default_font_size;
+    return std::clamp(value, k_min_font_size, k_max_font_size);
 }
 
 float clamp_ui_component_size(float value) {
-    if (!std::isfinite(value)) return kDefaultUiComponentSize;
-    return std::clamp(value, kMinUiComponentSize, kMaxUiComponentSize);
+    if (!std::isfinite(value)) return k_default_ui_component_size;
+    return std::clamp(value, k_min_ui_component_size, k_max_ui_component_size);
 }
 
 float clamp_marker_size_percent(float value) {
-    if (!std::isfinite(value)) return kDefaultMarkerSizePercent;
-    const int rounded = static_cast<int>(std::round(value / kMarkerSizePercentStep)) * kMarkerSizePercentStep;
-    return std::clamp(static_cast<float>(rounded), kMinMarkerSizePercent, kMaxMarkerSizePercent);
+    if (!std::isfinite(value)) return k_default_marker_size_percent;
+    const int rounded = static_cast<int>(std::round(value / k_marker_size_percent_step)) * k_marker_size_percent_step;
+    return std::clamp(static_cast<float>(rounded), k_min_marker_size_percent, k_max_marker_size_percent);
 }
 
 float marker_size_scale_from_percent(float value) {
@@ -104,35 +104,35 @@ float marker_size_scale_from_percent(float value) {
 
 float clamp_canvas_line_width(float value, float fallback) {
     if (!std::isfinite(value)) return fallback;
-    const float rounded = std::round(value / kCanvasLineWidthStepPx) * kCanvasLineWidthStepPx;
-    return std::clamp(rounded, kMinCanvasLineWidthPx, kMaxCanvasLineWidthPx);
+    const float rounded = std::round(value / k_canvas_line_width_step_px) * k_canvas_line_width_step_px;
+    return std::clamp(rounded, k_min_canvas_line_width_px, k_max_canvas_line_width_px);
 }
 
 CanvasLineWidthSettings clamp_canvas_line_widths(CanvasLineWidthSettings value) {
-    value.own_track_px = clamp_canvas_line_width(value.own_track_px, kDefaultOwnTrackLineWidthPx);
-    value.other_track_px = clamp_canvas_line_width(value.other_track_px, kDefaultOtherTrackLineWidthPx);
-    value.chart_marker_px = clamp_canvas_line_width(value.chart_marker_px, kDefaultChartMarkerLineWidthPx);
-    value.background_grid_px = clamp_canvas_line_width(value.background_grid_px, kDefaultBackgroundGridLineWidthPx);
+    value.own_track_px = clamp_canvas_line_width(value.own_track_px, k_default_own_track_line_width_px);
+    value.other_track_px = clamp_canvas_line_width(value.other_track_px, k_default_other_track_line_width_px);
+    value.chart_marker_px = clamp_canvas_line_width(value.chart_marker_px, k_default_chart_marker_line_width_px);
+    value.background_grid_px = clamp_canvas_line_width(value.background_grid_px, k_default_background_grid_line_width_px);
     return value;
 }
 
 int clamp_scene_draw_distance(double value) {
-    if (!std::isfinite(value)) return kDefaultSceneDrawDistanceM;
-    const int rounded = static_cast<int>(std::round(value / kSceneDrawDistanceStepM)) * kSceneDrawDistanceStepM;
-    return std::clamp(rounded, kMinSceneDrawDistanceM, kMaxSceneDrawDistanceM);
+    if (!std::isfinite(value)) return k_default_scene_draw_distance_m;
+    const int rounded = static_cast<int>(std::round(value / k_scene_draw_distance_step_m)) * k_scene_draw_distance_step_m;
+    return std::clamp(rounded, k_min_scene_draw_distance_m, k_max_scene_draw_distance_m);
 }
 
 int clamp_scene_edit_component_size_percent(double value) {
-    if (!std::isfinite(value)) return kDefaultSceneEditComponentSizePercent;
+    if (!std::isfinite(value)) return k_default_scene_edit_component_size_percent;
     value = std::clamp(value,
-                       static_cast<double>(kMinSceneEditComponentSizePercent),
-                       static_cast<double>(kMaxSceneEditComponentSizePercent));
+                       static_cast<double>(k_min_scene_edit_component_size_percent),
+                       static_cast<double>(k_max_scene_edit_component_size_percent));
     const int rounded = static_cast<int>(
-        std::round(value / kSceneEditComponentSizeStepPercent)) *
-        kSceneEditComponentSizeStepPercent;
+        std::round(value / k_scene_edit_component_size_step_percent)) *
+        k_scene_edit_component_size_step_percent;
     return std::clamp(rounded,
-                      kMinSceneEditComponentSizePercent,
-                      kMaxSceneEditComponentSizePercent);
+                      k_min_scene_edit_component_size_percent,
+                      k_max_scene_edit_component_size_percent);
 }
 
 ImVec4 default_theme_color() {
@@ -465,53 +465,53 @@ UserSettings load_user_settings() {
             try {
                 settings.font_size = clamp_font_size(std::stof(value));
             } catch (...) {
-                settings.font_size = kDefaultFontSize;
+                settings.font_size = k_default_font_size;
             }
         } else if (key == "ui_component_size" || key == "component_size" || key == "ui_scale" || key == "ui_component_scale") {
             try {
                 settings.ui_component_size = clamp_ui_component_size(std::stof(value));
             } catch (...) {
-                settings.ui_component_size = kDefaultUiComponentSize;
+                settings.ui_component_size = k_default_ui_component_size;
             }
         } else if (key == "marker_size_percent" || key == "marker_size_scale_percent" || key == "station_marker_size_percent") {
             try {
                 settings.marker_size_percent = clamp_marker_size_percent(std::stof(value));
             } catch (...) {
-                settings.marker_size_percent = kDefaultMarkerSizePercent;
+                settings.marker_size_percent = k_default_marker_size_percent;
             }
         } else if (key == "station_marker_size" || key == "station_marker_radius" || key == "station_size") {
             try {
                 float raw = std::stof(value);
-                settings.marker_size_percent = raw < kMinMarkerSizePercent
-                    ? clamp_marker_size_percent(raw / kDefaultStationMarkerSize * 100.0f)
+                settings.marker_size_percent = raw < k_min_marker_size_percent
+                    ? clamp_marker_size_percent(raw / k_default_station_marker_size * 100.0f)
                     : clamp_marker_size_percent(raw);
             } catch (...) {
-                settings.marker_size_percent = kDefaultMarkerSizePercent;
+                settings.marker_size_percent = k_default_marker_size_percent;
             }
         } else if (key == "own_track_line_width_px" ||
                    key == "own_track_line_width" ||
                    key == "canvas_own_track_line_width_px" ||
                    key == "canvas_own_track_line_width") {
             settings.canvas_line_widths.own_track_px =
-                parse_line_width(value, kDefaultOwnTrackLineWidthPx);
+                parse_line_width(value, k_default_own_track_line_width_px);
         } else if (key == "other_track_line_width_px" ||
                    key == "other_track_line_width" ||
                    key == "canvas_other_track_line_width_px" ||
                    key == "canvas_other_track_line_width") {
             settings.canvas_line_widths.other_track_px =
-                parse_line_width(value, kDefaultOtherTrackLineWidthPx);
+                parse_line_width(value, k_default_other_track_line_width_px);
         } else if (key == "chart_marker_line_width_px" ||
                    key == "chart_marker_line_width" ||
                    key == "canvas_chart_marker_line_width_px" ||
                    key == "canvas_chart_marker_line_width") {
             settings.canvas_line_widths.chart_marker_px =
-                parse_line_width(value, kDefaultChartMarkerLineWidthPx);
+                parse_line_width(value, k_default_chart_marker_line_width_px);
         } else if (key == "background_grid_line_width_px" ||
                    key == "background_grid_line_width" ||
                    key == "canvas_background_grid_line_width_px" ||
                    key == "canvas_background_grid_line_width") {
             settings.canvas_line_widths.background_grid_px =
-                parse_line_width(value, kDefaultBackgroundGridLineWidthPx);
+                parse_line_width(value, k_default_background_grid_line_width_px);
         } else if (is_theme_color_key) {
             if (auto color = parse_theme_color(value)) {
                 settings.theme_color = *color;
@@ -690,7 +690,7 @@ UserSettings load_user_settings() {
             try {
                 settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(std::stod(value));
             } catch (...) {
-                settings.view_3d.scene_draw_distance_m = kDefaultSceneDrawDistanceM;
+                settings.view_3d.scene_draw_distance_m = k_default_scene_draw_distance_m;
             }
         } else if (key == "scene_edit_component_size_percent" ||
                    key == "edit_component_size_percent") {
@@ -700,17 +700,17 @@ UserSettings load_user_settings() {
                     clamp_scene_edit_component_size_percent(std::stod(value));
             } catch (...) {
                 settings.view_3d.scene_edit_component_size_percent =
-                    kDefaultSceneEditComponentSizePercent;
+                    k_default_scene_edit_component_size_percent;
             }
         } else if (key == "scene_camera_speed_percent") {
             view_3d_keys_seen.insert("scene_camera_speed_percent");
             try {
                 settings.view_3d.scene_camera_speed_percent =
                     std::clamp(static_cast<int>(std::stod(value)),
-                               kMinSceneCameraSpeedPercent,
-                               kMaxSceneCameraSpeedPercent);
+                               k_min_scene_camera_speed_percent,
+                               k_max_scene_camera_speed_percent);
             } catch (...) {
-                settings.view_3d.scene_camera_speed_percent = kDefaultSceneCameraSpeedPercent;
+                settings.view_3d.scene_camera_speed_percent = k_default_scene_camera_speed_percent;
             }
         }
     }
@@ -726,7 +726,7 @@ UserSettings load_user_settings() {
         clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent);
     settings.view_3d.scene_camera_speed_percent =
         std::clamp(settings.view_3d.scene_camera_speed_percent,
-                   kMinSceneCameraSpeedPercent, kMaxSceneCameraSpeedPercent);
+                   k_min_scene_camera_speed_percent, k_max_scene_camera_speed_percent);
     if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 6 ||
         view_2d_keys_seen.count("show_draw_distance_markers") == 0 ||
         view_3d_keys_seen.count("scene_map_draw_distance_enabled") == 0) {
@@ -869,7 +869,7 @@ std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& pa
         std::string key = normalized_path_key(entry.path);
         if (!seen.insert(key).second) continue;
         entries.push_back(std::move(entry));
-        if (entries.size() >= kMaxRecentMaps) break;
+        if (entries.size() >= k_max_recent_maps) break;
     }
     return entries;
 }
@@ -878,7 +878,7 @@ bool save_history_entries(const std::filesystem::path& path, const std::vector<R
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) return false;
     if (entries.empty()) return true;
-    size_t count = std::min(entries.size(), kMaxRecentMaps);
+    size_t count = std::min(entries.size(), k_max_recent_maps);
     out << "[Recent]\n";
     out << "count=" << count << "\n\n";
     for (size_t i = 0; i < count; ++i) {
@@ -901,7 +901,7 @@ bool save_history_entries(const std::filesystem::path& path, const std::vector<R
 }
 
 void apply_ui_font_size(float font_size) {
-    ImGui::GetStyle().FontScaleMain = clamp_font_size(font_size) / kDefaultFontSize;
+    ImGui::GetStyle().FontScaleMain = clamp_font_size(font_size) / k_default_font_size;
 }
 
 void apply_ui_theme_color(ImVec4 theme_color) {

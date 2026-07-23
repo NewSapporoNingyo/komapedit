@@ -33,7 +33,7 @@ bool same_vec2(const ImVec2& a, const ImVec2& b) {
 }
 
 struct FileStructureLevelGroup {
-    size_t parent_index = kNoFileStructureParent;
+    size_t parent_index = k_no_file_structure_parent;
     std::vector<size_t> node_indices;
     float inner_width = 0.0f;
     float width = 0.0f;
@@ -85,7 +85,7 @@ void rebuild_file_structure_layout(const MapModel& model,
     if (cache.node_count == 0) return;
 
     std::vector<size_t> node_depths(cache.node_count, 0);
-    std::vector<size_t> effective_parents(cache.node_count, kNoFileStructureParent);
+    std::vector<size_t> effective_parents(cache.node_count, k_no_file_structure_parent);
     size_t max_depth = 0;
     for (size_t i = 1; i < cache.node_count; ++i) {
         size_t parent_index = model.file_structure[i].parent_index;
@@ -96,12 +96,12 @@ void rebuild_file_structure_layout(const MapModel& model,
     }
 
     std::vector<std::vector<FileStructureLevelGroup>> level_groups(max_depth + 1);
-    std::vector<size_t> group_index_by_parent(cache.node_count, kNoFileStructureParent);
+    std::vector<size_t> group_index_by_parent(cache.node_count, k_no_file_structure_parent);
     for (size_t i = 1; i < cache.node_count; ++i) {
         const size_t depth = node_depths[i];
         const size_t parent_index = effective_parents[i];
         size_t group_index = group_index_by_parent[parent_index];
-        if (group_index == kNoFileStructureParent) {
+        if (group_index == k_no_file_structure_parent) {
             group_index = level_groups[depth].size();
             group_index_by_parent[parent_index] = group_index;
             FileStructureLevelGroup group;

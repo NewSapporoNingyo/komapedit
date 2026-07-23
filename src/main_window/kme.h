@@ -45,41 +45,41 @@ struct HeadlessOpenBenchmarkOptions;
 #endif
 
 
-inline constexpr float kDefaultFontSize = 18.0f;
-inline constexpr float kMinFontSize = 6.0f;
-inline constexpr float kMaxFontSize = 32.0f;
-inline constexpr float kDefaultUiComponentSize = 100.0f;
-inline constexpr float kMinUiComponentSize = 50.0f;
-inline constexpr float kMaxUiComponentSize = 200.0f;
-inline constexpr float kDefaultStationMarkerSize = 4.0f;
-inline constexpr float kDefaultMarkerSizePercent = 100.0f;
-inline constexpr float kMinMarkerSizePercent = 20.0f;
-inline constexpr float kMaxMarkerSizePercent = 1000.0f;
-inline constexpr int kMarkerSizePercentStep = 10;
-inline constexpr float kDefaultOwnTrackLineWidthPx = 2.0f;
-inline constexpr float kDefaultOtherTrackLineWidthPx = 1.5f;
-inline constexpr float kDefaultChartMarkerLineWidthPx = 1.0f;
-inline constexpr float kDefaultBackgroundGridLineWidthPx = 1.0f;
-inline constexpr float kMinCanvasLineWidthPx = 1.0f;
-inline constexpr float kMaxCanvasLineWidthPx = 20.0f;
-inline constexpr float kCanvasLineWidthStepPx = 0.5f;
-inline constexpr int kDefaultSceneDrawDistanceM = 1200;
-inline constexpr int kMinSceneDrawDistanceM = 200;
-inline constexpr int kMaxSceneDrawDistanceM = 10000;
-inline constexpr int kSceneDrawDistanceStepM = 100;
-inline constexpr int kDefaultSceneEditComponentSizePercent = 100;
-inline constexpr int kMinSceneEditComponentSizePercent = 50;
-inline constexpr int kMaxSceneEditComponentSizePercent = 500;
-inline constexpr int kSceneEditComponentSizeStepPercent = 10;
-inline constexpr int kDefaultSceneCameraSpeedPercent = 100;
-inline constexpr int kMinSceneCameraSpeedPercent = 50;
-inline constexpr int kMaxSceneCameraSpeedPercent = 400;
-inline constexpr int kSceneCameraSpeedStepPercent = 10;
-inline constexpr double kSceneWindowBackDistanceM = 100.0;
-inline constexpr bool kDefaultSceneFogEnabled = true;
-inline constexpr bool kDefaultSceneMapDrawDistanceEnabled = true;
-inline constexpr size_t kMaxRecentMaps = 10;
-inline constexpr const char* kOwnTrackLookupAliases[] = {"", "0", "1", "\\", "own", "main"};
+inline constexpr float k_default_font_size = 18.0f;
+inline constexpr float k_min_font_size = 6.0f;
+inline constexpr float k_max_font_size = 32.0f;
+inline constexpr float k_default_ui_component_size = 100.0f;
+inline constexpr float k_min_ui_component_size = 50.0f;
+inline constexpr float k_max_ui_component_size = 200.0f;
+inline constexpr float k_default_station_marker_size = 4.0f;
+inline constexpr float k_default_marker_size_percent = 100.0f;
+inline constexpr float k_min_marker_size_percent = 20.0f;
+inline constexpr float k_max_marker_size_percent = 1000.0f;
+inline constexpr int k_marker_size_percent_step = 10;
+inline constexpr float k_default_own_track_line_width_px = 2.0f;
+inline constexpr float k_default_other_track_line_width_px = 1.5f;
+inline constexpr float k_default_chart_marker_line_width_px = 1.0f;
+inline constexpr float k_default_background_grid_line_width_px = 1.0f;
+inline constexpr float k_min_canvas_line_width_px = 1.0f;
+inline constexpr float k_max_canvas_line_width_px = 20.0f;
+inline constexpr float k_canvas_line_width_step_px = 0.5f;
+inline constexpr int k_default_scene_draw_distance_m = 1200;
+inline constexpr int k_min_scene_draw_distance_m = 200;
+inline constexpr int k_max_scene_draw_distance_m = 10000;
+inline constexpr int k_scene_draw_distance_step_m = 100;
+inline constexpr int k_default_scene_edit_component_size_percent = 100;
+inline constexpr int k_min_scene_edit_component_size_percent = 50;
+inline constexpr int k_max_scene_edit_component_size_percent = 500;
+inline constexpr int k_scene_edit_component_size_step_percent = 10;
+inline constexpr int k_default_scene_camera_speed_percent = 100;
+inline constexpr int k_min_scene_camera_speed_percent = 50;
+inline constexpr int k_max_scene_camera_speed_percent = 400;
+inline constexpr int k_scene_camera_speed_step_percent = 10;
+inline constexpr double k_scene_window_back_distance_m = 100.0;
+inline constexpr bool k_default_scene_fog_enabled = true;
+inline constexpr bool k_default_scene_map_draw_distance_enabled = true;
+inline constexpr size_t k_max_recent_maps = 10;
+inline constexpr const char* k_own_track_lookup_aliases[] = {"", "0", "1", "\\", "own", "main"};
 
 inline std::string normalize_track_lookup_key(std::string key) {
     key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char ch) {
@@ -90,7 +90,7 @@ inline std::string normalize_track_lookup_key(std::string key) {
 }
 
 inline bool is_own_track_lookup_alias(const std::string& normalized_key) {
-    for (const char* alias : kOwnTrackLookupAliases) {
+    for (const char* alias : k_own_track_lookup_aliases) {
         if (normalized_key == alias) return true;
     }
     return false;
@@ -102,10 +102,10 @@ inline bool is_own_track_placement_key(const std::string& normalized_key) {
 }
 
 struct CanvasLineWidthSettings {
-    float own_track_px = kDefaultOwnTrackLineWidthPx;
-    float other_track_px = kDefaultOtherTrackLineWidthPx;
-    float chart_marker_px = kDefaultChartMarkerLineWidthPx;
-    float background_grid_px = kDefaultBackgroundGridLineWidthPx;
+    float own_track_px = k_default_own_track_line_width_px;
+    float other_track_px = k_default_other_track_line_width_px;
+    float chart_marker_px = k_default_chart_marker_line_width_px;
+    float background_grid_px = k_default_background_grid_line_width_px;
 };
 
 std::wstring utf8_to_wide(const std::string& text);
@@ -192,17 +192,17 @@ struct EditSourceInfo {
     std::string raw_text_preview;
 };
 
-inline constexpr size_t kNoFileStructureParent = static_cast<size_t>(-1);
+inline constexpr size_t k_no_file_structure_parent = static_cast<size_t>(-1);
 
 struct FileStructureNode {
-    size_t parent_index = kNoFileStructureParent;
+    size_t parent_index = k_no_file_structure_parent;
     std::string include_path;
     std::string absolute_path;
     std::string display_name;
 };
 
 struct FileStructureDiagramGroupLayout {
-    size_t parent_index = kNoFileStructureParent;
+    size_t parent_index = k_no_file_structure_parent;
     bool draw_border = false;
     ImVec2 min;
     ImVec2 max;
@@ -818,31 +818,31 @@ struct WindowVisibilitySettings {
     }
 };
 
-inline constexpr bool kDefaultStationAuxInfoVisible = true;
-inline constexpr bool kDefaultNonStationAuxInfoVisible = false;
+inline constexpr bool k_default_station_aux_info_visible = true;
+inline constexpr bool k_default_non_station_aux_info_visible = false;
 
 struct View2DSettings {
-    bool show_stations = kDefaultStationAuxInfoVisible;
-    bool show_station_names = kDefaultStationAuxInfoVisible;
-    bool show_station_mileage = kDefaultStationAuxInfoVisible;
+    bool show_stations = k_default_station_aux_info_visible;
+    bool show_station_names = k_default_station_aux_info_visible;
+    bool show_station_mileage = k_default_station_aux_info_visible;
     bool show_gradient_pos = true;
     bool show_gradient_values = true;
-    bool show_curve_values = kDefaultNonStationAuxInfoVisible;
+    bool show_curve_values = k_default_non_station_aux_info_visible;
     bool show_profile_other = false;
-    bool show_speedlimits = kDefaultNonStationAuxInfoVisible;
-    bool show_irregularity_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_beacon_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_pretrain_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_map_sound_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_map_sound_3d_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_rolling_noise_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_flange_noise_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_joint_noise_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_background_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_adhesion_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_cab_illuminance_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_fog_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_draw_distance_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_speedlimits = k_default_non_station_aux_info_visible;
+    bool show_irregularity_markers = k_default_non_station_aux_info_visible;
+    bool show_beacon_markers = k_default_non_station_aux_info_visible;
+    bool show_pretrain_markers = k_default_non_station_aux_info_visible;
+    bool show_map_sound_markers = k_default_non_station_aux_info_visible;
+    bool show_map_sound_3d_markers = k_default_non_station_aux_info_visible;
+    bool show_rolling_noise_markers = k_default_non_station_aux_info_visible;
+    bool show_flange_noise_markers = k_default_non_station_aux_info_visible;
+    bool show_joint_noise_markers = k_default_non_station_aux_info_visible;
+    bool show_background_markers = k_default_non_station_aux_info_visible;
+    bool show_adhesion_markers = k_default_non_station_aux_info_visible;
+    bool show_cab_illuminance_markers = k_default_non_station_aux_info_visible;
+    bool show_fog_markers = k_default_non_station_aux_info_visible;
+    bool show_draw_distance_markers = k_default_non_station_aux_info_visible;
     bool show_profile_graph = true;
     bool show_radius_graph = true;
     bool show_background_image = true;
@@ -884,13 +884,13 @@ struct View2DSettings {
 };
 
 struct View3DSettings {
-    bool show_scene_owntrack_markers = kDefaultNonStationAuxInfoVisible;
-    bool show_scene_current_position_on_plan = kDefaultNonStationAuxInfoVisible;
-    bool scene_fog_enabled = kDefaultSceneFogEnabled;
-    bool scene_map_draw_distance_enabled = kDefaultSceneMapDrawDistanceEnabled;
-    int scene_draw_distance_m = kDefaultSceneDrawDistanceM;
-    int scene_edit_component_size_percent = kDefaultSceneEditComponentSizePercent;
-    int scene_camera_speed_percent = kDefaultSceneCameraSpeedPercent;
+    bool show_scene_owntrack_markers = k_default_non_station_aux_info_visible;
+    bool show_scene_current_position_on_plan = k_default_non_station_aux_info_visible;
+    bool scene_fog_enabled = k_default_scene_fog_enabled;
+    bool scene_map_draw_distance_enabled = k_default_scene_map_draw_distance_enabled;
+    int scene_draw_distance_m = k_default_scene_draw_distance_m;
+    int scene_edit_component_size_percent = k_default_scene_edit_component_size_percent;
+    int scene_camera_speed_percent = k_default_scene_camera_speed_percent;
 
     bool operator==(const View3DSettings& other) const {
         return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
@@ -909,9 +909,9 @@ struct View3DSettings {
 
 struct UserSettings {
     Language language = Language::Zh;
-    float font_size = kDefaultFontSize;
-    float ui_component_size = kDefaultUiComponentSize;
-    float marker_size_percent = kDefaultMarkerSizePercent;
+    float font_size = k_default_font_size;
+    float ui_component_size = k_default_ui_component_size;
+    float marker_size_percent = k_default_marker_size_percent;
     CanvasLineWidthSettings canvas_line_widths;
     ImVec4 theme_color = default_theme_color();
     bool edit_mode_enabled = false;
@@ -1142,33 +1142,33 @@ private:
     Translation i18n_;
     UserSettings settings_;
     Language lang_ = Language::Zh;
-    float font_size_ = kDefaultFontSize;
-    float pending_font_size_ = kDefaultFontSize;
-    float font_size_before_dialog_ = kDefaultFontSize;
-    float ui_component_size_ = kDefaultUiComponentSize;
-    float pending_ui_component_size_ = kDefaultUiComponentSize;
-    float ui_component_size_before_dialog_ = kDefaultUiComponentSize;
-    float marker_size_percent_ = kDefaultMarkerSizePercent;
-    float pending_marker_size_percent_ = kDefaultMarkerSizePercent;
-    float marker_size_percent_before_dialog_ = kDefaultMarkerSizePercent;
+    float font_size_ = k_default_font_size;
+    float pending_font_size_ = k_default_font_size;
+    float font_size_before_dialog_ = k_default_font_size;
+    float ui_component_size_ = k_default_ui_component_size;
+    float pending_ui_component_size_ = k_default_ui_component_size;
+    float ui_component_size_before_dialog_ = k_default_ui_component_size;
+    float marker_size_percent_ = k_default_marker_size_percent;
+    float pending_marker_size_percent_ = k_default_marker_size_percent;
+    float marker_size_percent_before_dialog_ = k_default_marker_size_percent;
     CanvasLineWidthSettings canvas_line_widths_;
     CanvasLineWidthSettings pending_canvas_line_widths_;
     CanvasLineWidthSettings canvas_line_widths_before_dialog_;
-    int scene_draw_distance_m_ = kDefaultSceneDrawDistanceM;
-    int pending_scene_draw_distance_m_ = kDefaultSceneDrawDistanceM;
-    int scene_draw_distance_before_dialog_m_ = kDefaultSceneDrawDistanceM;
-    int scene_edit_component_size_percent_ = kDefaultSceneEditComponentSizePercent;
-    int pending_scene_edit_component_size_percent_ = kDefaultSceneEditComponentSizePercent;
-    int scene_edit_component_size_before_dialog_percent_ = kDefaultSceneEditComponentSizePercent;
-    bool scene_fog_enabled_ = kDefaultSceneFogEnabled;
-    bool pending_scene_fog_enabled_ = kDefaultSceneFogEnabled;
-    bool scene_fog_enabled_before_dialog_ = kDefaultSceneFogEnabled;
-    bool scene_map_draw_distance_enabled_ = kDefaultSceneMapDrawDistanceEnabled;
-    bool pending_scene_map_draw_distance_enabled_ = kDefaultSceneMapDrawDistanceEnabled;
-    bool scene_map_draw_distance_enabled_before_dialog_ = kDefaultSceneMapDrawDistanceEnabled;
-    int scene_camera_speed_percent_ = kDefaultSceneCameraSpeedPercent;
-    int pending_scene_camera_speed_percent_ = kDefaultSceneCameraSpeedPercent;
-    int scene_camera_speed_percent_before_dialog_ = kDefaultSceneCameraSpeedPercent;
+    int scene_draw_distance_m_ = k_default_scene_draw_distance_m;
+    int pending_scene_draw_distance_m_ = k_default_scene_draw_distance_m;
+    int scene_draw_distance_before_dialog_m_ = k_default_scene_draw_distance_m;
+    int scene_edit_component_size_percent_ = k_default_scene_edit_component_size_percent;
+    int pending_scene_edit_component_size_percent_ = k_default_scene_edit_component_size_percent;
+    int scene_edit_component_size_before_dialog_percent_ = k_default_scene_edit_component_size_percent;
+    bool scene_fog_enabled_ = k_default_scene_fog_enabled;
+    bool pending_scene_fog_enabled_ = k_default_scene_fog_enabled;
+    bool scene_fog_enabled_before_dialog_ = k_default_scene_fog_enabled;
+    bool scene_map_draw_distance_enabled_ = k_default_scene_map_draw_distance_enabled;
+    bool pending_scene_map_draw_distance_enabled_ = k_default_scene_map_draw_distance_enabled;
+    bool scene_map_draw_distance_enabled_before_dialog_ = k_default_scene_map_draw_distance_enabled;
+    int scene_camera_speed_percent_ = k_default_scene_camera_speed_percent;
+    int pending_scene_camera_speed_percent_ = k_default_scene_camera_speed_percent;
+    int scene_camera_speed_percent_before_dialog_ = k_default_scene_camera_speed_percent;
     ImVec4 theme_color_ = default_theme_color();
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
@@ -1242,29 +1242,29 @@ private:
     double cp_interval_ = 25.0;
     double unit_distance_ = 25.0;
 
-    bool show_stations_ = kDefaultStationAuxInfoVisible;
-    bool show_station_names_ = kDefaultStationAuxInfoVisible;
-    bool show_station_mileage_ = kDefaultStationAuxInfoVisible;
+    bool show_stations_ = k_default_station_aux_info_visible;
+    bool show_station_names_ = k_default_station_aux_info_visible;
+    bool show_station_mileage_ = k_default_station_aux_info_visible;
     bool show_gradient_pos_ = true;
     bool show_gradient_values_ = true;
-    bool show_curve_values_ = kDefaultNonStationAuxInfoVisible;
+    bool show_curve_values_ = k_default_non_station_aux_info_visible;
     bool show_profile_other_ = false;
-    bool show_speedlimits_ = kDefaultNonStationAuxInfoVisible;
-    bool show_irregularity_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_beacon_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_pretrain_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_map_sound_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_map_sound_3d_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_rolling_noise_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_flange_noise_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_joint_noise_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_background_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_adhesion_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_cab_illuminance_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_fog_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_draw_distance_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_scene_owntrack_markers_ = kDefaultNonStationAuxInfoVisible;
-    bool show_scene_current_position_on_plan_ = kDefaultNonStationAuxInfoVisible;
+    bool show_speedlimits_ = k_default_non_station_aux_info_visible;
+    bool show_irregularity_markers_ = k_default_non_station_aux_info_visible;
+    bool show_beacon_markers_ = k_default_non_station_aux_info_visible;
+    bool show_pretrain_markers_ = k_default_non_station_aux_info_visible;
+    bool show_map_sound_markers_ = k_default_non_station_aux_info_visible;
+    bool show_map_sound_3d_markers_ = k_default_non_station_aux_info_visible;
+    bool show_rolling_noise_markers_ = k_default_non_station_aux_info_visible;
+    bool show_flange_noise_markers_ = k_default_non_station_aux_info_visible;
+    bool show_joint_noise_markers_ = k_default_non_station_aux_info_visible;
+    bool show_background_markers_ = k_default_non_station_aux_info_visible;
+    bool show_adhesion_markers_ = k_default_non_station_aux_info_visible;
+    bool show_cab_illuminance_markers_ = k_default_non_station_aux_info_visible;
+    bool show_fog_markers_ = k_default_non_station_aux_info_visible;
+    bool show_draw_distance_markers_ = k_default_non_station_aux_info_visible;
+    bool show_scene_owntrack_markers_ = k_default_non_station_aux_info_visible;
+    bool show_scene_current_position_on_plan_ = k_default_non_station_aux_info_visible;
     bool show_profile_graph_ = true;
     bool show_radius_graph_ = true;
     bool show_othertracks_window_ = true;

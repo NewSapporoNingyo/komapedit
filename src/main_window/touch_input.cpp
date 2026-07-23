@@ -28,14 +28,14 @@
 namespace touch_input {
 namespace {
 
-constexpr double kLongPressSeconds = 0.55;
-constexpr double kTapMaxSeconds = 0.45;
-constexpr float kMoveCancelPixels = 12.0f;
-constexpr float kMoveCancelPixelsSq = kMoveCancelPixels * kMoveCancelPixels;
-constexpr float kScrollStartPixels = 8.0f;
-constexpr float kScrollStartPixelsSq = kScrollStartPixels * kScrollStartPixels;
-constexpr float kAxisPinchMinPixels = 8.0f;
-constexpr double kTouchRecentSeconds = 2.0;
+constexpr double k_long_press_seconds = 0.55;
+constexpr double k_tap_max_seconds = 0.45;
+constexpr float k_move_cancel_pixels = 12.0f;
+constexpr float k_move_cancel_pixels_sq = k_move_cancel_pixels * k_move_cancel_pixels;
+constexpr float k_scroll_start_pixels = 8.0f;
+constexpr float k_scroll_start_pixels_sq = k_scroll_start_pixels * k_scroll_start_pixels;
+constexpr float k_axis_pinch_min_pixels = 8.0f;
+constexpr double k_touch_recent_seconds = 2.0;
 
 struct ActiveTouch {
     std::uint32_t id = 0;
@@ -153,7 +153,7 @@ struct TouchManager {
     static float axis_scale(float prev_delta, float next_delta) {
         float prev = std::abs(prev_delta);
         float next = std::abs(next_delta);
-        if (prev < kAxisPinchMinPixels || next < kAxisPinchMinPixels) return 1.0f;
+        if (prev < k_axis_pinch_min_pixels || next < k_axis_pinch_min_pixels) return 1.0f;
         return std::clamp(next / prev, 0.75f, 1.333f);
     }
 
@@ -217,7 +217,7 @@ struct TouchManager {
         if (id == imgui_mouse_id) submit_imgui_mouse_pos(pos);
         touch.max_move_sq = std::max(touch.max_move_sq, distance_sq(touch.start_pos, touch.pos));
 
-        if (touches.size() == 1 && id == primary_id && touch.max_move_sq >= kScrollStartPixelsSq) {
+        if (touches.size() == 1 && id == primary_id && touch.max_move_sq >= k_scroll_start_pixels_sq) {
             pending.single_drag = true;
             pending.single_pos = touch.pos;
             pending.single_start_pos = touch.start_pos;
@@ -244,7 +244,7 @@ struct TouchManager {
         }
         touch.max_move_sq = std::max(touch.max_move_sq, distance_sq(touch.start_pos, touch.pos));
         const double age = now() - touch.down_at;
-        if (!touch.long_press_sent && touch.max_move_sq < kMoveCancelPixelsSq && age <= kTapMaxSeconds) {
+        if (!touch.long_press_sent && touch.max_move_sq < k_move_cancel_pixels_sq && age <= k_tap_max_seconds) {
             pending.tap = true;
             pending.tap_pos = touch.pos;
         }
@@ -269,8 +269,8 @@ struct TouchManager {
     void emit_due_long_press() {
         ActiveTouch* touch = primary_touch();
         if (!touch || touches.size() != 1) return;
-        if (touch->long_press_sent || touch->max_move_sq >= kMoveCancelPixelsSq) return;
-        if (now() - touch->down_at < kLongPressSeconds) return;
+        if (touch->long_press_sent || touch->max_move_sq >= k_move_cancel_pixels_sq) return;
+        if (now() - touch->down_at < k_long_press_seconds) return;
         touch->long_press_sent = true;
         pending.long_press = true;
         pending.long_press_pos = touch->pos;
@@ -280,7 +280,7 @@ struct TouchManager {
         emit_due_long_press();
         frame = pending;
         frame.active_count = static_cast<int>(touches.size());
-        frame.touch_recent = frame.touch_recent || !touches.empty() || (now() - last_touch_at <= kTouchRecentSeconds);
+        frame.touch_recent = frame.touch_recent || !touches.empty() || (now() - last_touch_at <= k_touch_recent_seconds);
         if (ActiveTouch* touch = primary_touch()) {
             frame.single_pos = touch->pos;
             frame.single_start_pos = touch->start_pos;

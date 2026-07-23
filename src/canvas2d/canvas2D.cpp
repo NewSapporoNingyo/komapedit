@@ -165,19 +165,19 @@ size_t matrix_upper_bound_distance(const Matrix& points, double distance) {
     return lo;
 }
 
-constexpr size_t kRepeaterSegmentChunkPointLimit = 192;
-constexpr size_t kDenseRepeaterOverlayThreshold = 1200;
-constexpr double kDenseRepeaterOverviewScale = 0.04;
-constexpr double kDenseRepeaterSegmentScale = 0.05;
+constexpr size_t k_repeater_segment_chunk_point_limit = 192;
+constexpr size_t k_dense_repeater_overlay_threshold = 1200;
+constexpr double k_dense_repeater_overview_scale = 0.04;
+constexpr double k_dense_repeater_segment_scale = 0.05;
 
 bool dense_repeater_overview_lod(size_t visible_repeater_count, double scale) {
-    return visible_repeater_count > kDenseRepeaterOverlayThreshold &&
-        scale < kDenseRepeaterOverviewScale;
+    return visible_repeater_count > k_dense_repeater_overlay_threshold &&
+        scale < k_dense_repeater_overview_scale;
 }
 
 bool dense_repeater_segment_lod(size_t visible_repeater_count, double scale) {
-    return visible_repeater_count > kDenseRepeaterOverlayThreshold &&
-        scale < kDenseRepeaterSegmentScale;
+    return visible_repeater_count > k_dense_repeater_overlay_threshold &&
+        scale < k_dense_repeater_segment_scale;
 }
 
 void include_repeater_chunk_bounds(PlanRepeaterSegment::Chunk& chunk, const TrackPoint& p) {
@@ -239,13 +239,13 @@ void append_repeater_segment_point(PlanRepeaterSegment& segment, const TrackPoin
     }
 
     if (segment.chunks.empty() ||
-        segment.chunks.back().points.size() >= kRepeaterSegmentChunkPointLimit) {
+        segment.chunks.back().points.size() >= k_repeater_segment_chunk_point_limit) {
         std::optional<TrackPoint> tail;
         if (!segment.chunks.empty() && !segment.chunks.back().points.empty()) {
             tail = segment.chunks.back().points.back();
         }
         segment.chunks.emplace_back();
-        segment.chunks.back().points.reserve(kRepeaterSegmentChunkPointLimit);
+        segment.chunks.back().points.reserve(k_repeater_segment_chunk_point_limit);
         if (tail) {
             segment.chunks.back().points.push_back(*tail);
             include_repeater_chunk_bounds(segment.chunks.back(), *tail);
@@ -308,7 +308,7 @@ void App::rebuild_marker_overlay_cache() {
 
     std::map<std::string, TrackSource> track_sources;
     TrackSource own_source{&model_.own, true};
-    for (const char* key : kOwnTrackLookupAliases) {
+    for (const char* key : k_own_track_lookup_aliases) {
         track_sources[normalize_track_lookup_key(key)] = own_source;
     }
     for (const auto& track : model_.other_tracks) {
@@ -593,10 +593,10 @@ void App::rebuild_marker_overlay_cache() {
         const size_t first = matrix_upper_bound_distance(*source.points, start);
         const size_t last = matrix_lower_bound_distance(*source.points, end);
         const size_t candidate_points = (last > first ? last - first : 0) + 2;
-        const size_t points_per_following_chunk = kRepeaterSegmentChunkPointLimit - 1;
-        const size_t chunk_count = candidate_points <= kRepeaterSegmentChunkPointLimit
+        const size_t points_per_following_chunk = k_repeater_segment_chunk_point_limit - 1;
+        const size_t chunk_count = candidate_points <= k_repeater_segment_chunk_point_limit
             ? 1
-            : 1 + (candidate_points - kRepeaterSegmentChunkPointLimit +
+            : 1 + (candidate_points - k_repeater_segment_chunk_point_limit +
                    points_per_following_chunk - 1) / points_per_following_chunk;
         segment.chunks.reserve(chunk_count);
 
@@ -1424,8 +1424,8 @@ static ImU32 color_u32(const ImVec4& color) {
     return ImGui::ColorConvertFloat4ToU32(color);
 }
 
-constexpr size_t kPolylineChunkPointLimit = 4096;
-constexpr float kPolylineMinPixelStepSq = 0.64f;
+constexpr size_t k_polyline_chunk_point_limit = 4096;
+constexpr float k_polyline_min_pixel_step_sq = 0.64f;
 
 static bool finite_screen_point(ImVec2 p) {
     return std::isfinite(p.x) && std::isfinite(p.y);
@@ -1477,7 +1477,7 @@ class ScreenPolylineBuilder {
 public:
     ScreenPolylineBuilder(ImDrawList* draw, ImVec2 origin, ImVec2 size, ImU32 color, float thickness)
         : draw_(draw), origin_(origin), size_(size), color_(color), thickness_(thickness) {
-        points_.reserve(kPolylineChunkPointLimit);
+        points_.reserve(k_polyline_chunk_point_limit);
         reset_bounds();
     }
 
@@ -1498,11 +1498,11 @@ public:
 
         float dx = p.x - last_.x;
         float dy = p.y - last_.y;
-        if (dx * dx + dy * dy >= kPolylineMinPixelStepSq) {
+        if (dx * dx + dy * dy >= k_polyline_min_pixel_step_sq) {
             push_raw(p);
             last_ = p;
             has_pending_ = false;
-            if (points_.size() >= kPolylineChunkPointLimit) flush(true);
+            if (points_.size() >= k_polyline_chunk_point_limit) flush(true);
         } else {
             pending_ = p;
             has_pending_ = true;
@@ -2939,7 +2939,7 @@ void App::render_plan_canvas(ImVec2 size) {
     debug_plan_stage("other_train_paths");
 
     if (show_stations_) {
-        const float station_marker_radius = kDefaultStationMarkerSize * marker_size_scale;
+        const float station_marker_radius = k_default_station_marker_size * marker_size_scale;
         const float station_label_offset = std::max(8.0f, station_marker_radius + 4.0f);
         for (const auto& st : data.stations) {
             ImVec2 p = transform.plan_to_screen(st.x, st.y);
@@ -3113,7 +3113,7 @@ void App::render_plan_canvas(ImVec2 size) {
                                      dmin_, dmax_, transform, origin, avail, repeater_color, 1.25f * marker_size_scale);
         debug_plan_stage("repeater_segments");
         if (!dense_repeater_marker_lod) {
-            bool draw_repeater_labels = plan_view_.scale >= kDenseRepeaterOverviewScale ||
+            bool draw_repeater_labels = plan_view_.scale >= k_dense_repeater_overview_scale ||
                 data.repeater_markers.size() <= 600;
             for (const auto& marker : data.repeater_markers) {
                 ImVec2 p = transform.plan_to_screen(marker.x, marker.y);

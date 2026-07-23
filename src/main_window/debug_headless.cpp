@@ -492,7 +492,7 @@ HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::ve
 
 HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     const std::vector<std::string>& args) {
-    static constexpr const char* kDefaultMapPath =
+    static constexpr const char* k_default_map_path =
         "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
         "Config_Map121M-ATSP+Ps_Ask.txt";
     HeadlessDistanceEditBatchOptions options;
@@ -518,13 +518,13 @@ HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
             options.commit = true;
         }
     }
-    if (options.requested && options.path.empty()) options.path = kDefaultMapPath;
+    if (options.requested && options.path.empty()) options.path = k_default_map_path;
     return options;
 }
 
 HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
     const std::vector<std::string>& args) {
-    static constexpr const char* kDefaultMapPath =
+    static constexpr const char* k_default_map_path =
         "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
         "Config_Map121M-ATSP+Ps_Ask.txt";
     HeadlessRepeaterEditBatchOptions options;
@@ -550,7 +550,7 @@ HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
             options.commit = true;
         }
     }
-    if (options.requested && options.path.empty()) options.path = kDefaultMapPath;
+    if (options.requested && options.path.empty()) options.path = k_default_map_path;
     return options;
 }
 
@@ -4742,7 +4742,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
 
         *out << "stage=warmup-start\n";
         out->flush();
-        constexpr auto kSceneLoadTimeout = std::chrono::seconds(120);
+        constexpr auto k_scene_load_timeout = std::chrono::seconds(120);
         int warmup_frames = 0;
         bool load_completed = false;
         auto preview_load_finished_at = std::chrono::steady_clock::now();
@@ -4754,7 +4754,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
                 preview_load_finished_at = std::chrono::steady_clock::now();
                 break;
             }
-            if (std::chrono::steady_clock::now() - preview_load_started_at >= kSceneLoadTimeout) {
+            if (std::chrono::steady_clock::now() - preview_load_started_at >= k_scene_load_timeout) {
                 preview_load_finished_at = std::chrono::steady_clock::now();
                 break;
             }
@@ -4866,11 +4866,11 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
                 }
             }
 
-            constexpr unsigned kMinimumVisibleFogChannelDifference = 8;
+            constexpr unsigned k_minimum_visible_fog_channel_difference = 8;
             const bool fog_probe_pass = matching_pixels && probed_fog_state.sampled_enabled &&
                 probed_fog_state.shader_ready && probed_fog_state.fog_draw_part_count > 0 &&
                 fog_changed_pixel_count > 0 &&
-                fog_max_channel_difference >= kMinimumVisibleFogChannelDifference;
+                fog_max_channel_difference >= k_minimum_visible_fog_channel_difference;
             fog_probe_result = fog_probe_pass ? "PASS" : "FAIL";
             if (!fog_probe_pass) pass = false;
         }

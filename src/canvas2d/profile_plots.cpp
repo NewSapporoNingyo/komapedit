@@ -167,7 +167,7 @@ enum class ProfileMarkerDirection {
 
 static void draw_profile_vertical_marker(double x, double track_y, ProfileMarkerDirection direction,
                                          ImU32 line_color, float line_weight, bool draw_station_marker,
-                                         float station_marker_radius = kDefaultStationMarkerSize) {
+                                         float station_marker_radius = k_default_station_marker_size) {
     ImDrawList* draw = ImPlot::GetPlotDrawList();
     ImVec2 pos = ImPlot::GetPlotPos();
     ImVec2 size = ImPlot::GetPlotSize();
@@ -345,7 +345,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         }
         if (show_stations_) {
             const float station_marker_radius =
-                kDefaultStationMarkerSize * marker_size_scale_from_percent(marker_size_percent_);
+                k_default_station_marker_size * marker_size_scale_from_percent(marker_size_percent_);
             for (const auto& s : data.stations) {
                 double x = s.distance;
                 double y = s.z - model_.height_origin;

@@ -162,7 +162,7 @@ std::pair<double, double> integrate_unit_tangent_gauss8(double a, double b, int 
 std::pair<double, double> fresnel_cs_series(double x) {
     const double x2 = x * x;
     const double x4 = x2 * x2;
-    const double q = (kPi * kPi / 4.0) * x4;
+    const double q = (k_pi * k_pi / 4.0) * x4;
 
     double c_term = x;
     double c = c_term;
@@ -173,7 +173,7 @@ std::pair<double, double> fresnel_cs_series(double x) {
         if (std::fabs(c_term) <= std::fabs(c) * 1e-16) break;
     }
 
-    double s_term = (kPi / 2.0) * x * x2 / 3.0;
+    double s_term = (k_pi / 2.0) * x * x2 / 3.0;
     double s = s_term;
     for (int n = 1; n < 80; ++n) {
         s_term *= -q * (4.0 * n - 1.0) /
@@ -185,14 +185,14 @@ std::pair<double, double> fresnel_cs_series(double x) {
 }
 
 std::pair<double, double> fresnel_cs_asymptotic(double x) {
-    const double phi = kPi * x * x * 0.5;
-    const double px2 = kPi * x * x;
+    const double phi = k_pi * x * x * 0.5;
+    const double px2 = k_pi * x * x;
     const double px2_2 = px2 * px2;
     const double px2_4 = px2_2 * px2_2;
     const double px2_6 = px2_4 * px2_2;
-    const double f = (1.0 / (kPi * x)) *
+    const double f = (1.0 / (k_pi * x)) *
         (1.0 - 3.0 / px2_2 + 105.0 / px2_4 - 10395.0 / px2_6);
-    const double g = (1.0 / (kPi * kPi * x * x * x)) *
+    const double g = (1.0 / (k_pi * k_pi * x * x * x)) *
         (1.0 - 15.0 / px2_2 + 945.0 / px2_4 - 135135.0 / px2_6);
     return {0.5 + f * std::sin(phi) - g * std::cos(phi),
             0.5 - f * std::cos(phi) - g * std::sin(phi)};
@@ -210,7 +210,7 @@ std::pair<double, double> fresnel_cs(double x) {
     } else {
         const int panels = std::max(1, static_cast<int>(std::ceil(ax * ax * 2.0)));
         out = integrate_unit_tangent_gauss8(0.0, ax, panels, [](double t) {
-            return kPi * t * t * 0.5;
+            return k_pi * t * t * 0.5;
         });
     }
     return {sign * out.first, sign * out.second};
@@ -268,15 +268,15 @@ struct TransitionCurveKeyHash {
     }
 };
 
-constexpr size_t kMaxGeometryCacheEntries = 262144;
+constexpr size_t k_max_geometry_cache_entries = 262144;
 std::mutex g_geometry_cache_mutex;
 std::unordered_map<CircularCurveKey, CurveResult, CircularCurveKeyHash> g_circular_curve_cache;
 std::unordered_map<TransitionCurveKey, CurveResult, TransitionCurveKeyHash> g_transition_curve_cache;
 
 double radius_from_curvature(double curvature) {
-    if (curvature == 0.0) return kInf;
+    if (curvature == 0.0) return k_inf;
     double radius = 1.0 / curvature;
-    return std::fabs(radius) > 1e6 ? kInf : radius;
+    return std::fabs(radius) > 1e6 ? k_inf : radius;
 }
 
 CurveResult circular_curve_local_uncached(double R, double l_intermediate) {
@@ -300,7 +300,7 @@ CurveResult circular_curve_local(double R, double l_intermediate) {
     CurveResult result = circular_curve_local_uncached(R, l_intermediate);
     {
         std::lock_guard<std::mutex> lock(g_geometry_cache_mutex);
-        if (g_circular_curve_cache.size() >= kMaxGeometryCacheEntries) {
+        if (g_circular_curve_cache.size() >= k_max_geometry_cache_entries) {
             g_circular_curve_cache.clear();
         }
         g_circular_curve_cache.emplace(key, result);
@@ -322,13 +322,13 @@ struct HalfSinResult {
     double x = 0.0;
     double y = 0.0;
     double tau = 0.0;
-    double radius = kInf;
+    double radius = k_inf;
 };
 
 HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_intermediate, double dL = 1.0) {
     (void)dL;
     if (l_intermediate <= 0.0) {
-        return {0.0, 0.0, 0.0, r1 == 0.0 ? kInf : r1};
+        return {0.0, 0.0, 0.0, r1 == 0.0 ? k_inf : r1};
     }
     if (L == 0.0) return {0.0, 0.0, 0.0, r2};
 
@@ -336,13 +336,13 @@ HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_inte
     const double k1 = inv_radius(r2);
     const double dk = k1 - k0;
     auto tau_at = [=](double x) {
-        return k0 * x + 0.5 * dk * (x - L / kPi * std::sin(kPi * x / L));
+        return k0 * x + 0.5 * dk * (x - L / k_pi * std::sin(k_pi * x / L));
     };
     const double tau = tau_at(l_intermediate);
     const int panels = std::max(1, static_cast<int>(std::ceil(std::max(l_intermediate / 250.0,
                                                                          std::fabs(tau) / 0.25))));
     auto [X, Y] = integrate_unit_tangent_gauss8(0.0, l_intermediate, panels, tau_at);
-    const double k = k0 + 0.5 * dk * (1.0 - std::cos(kPi * l_intermediate / L));
+    const double k = k0 + 0.5 * dk * (1.0 - std::cos(k_pi * l_intermediate / L));
     double r = radius_from_curvature(k);
     return {X, Y, tau, r};
 }
@@ -358,12 +358,12 @@ CurveResult linear_transition_curve_local(double L, double r1, double r2, double
     const double rl = radius_from_curvature(k_at_l);
 
     if (std::fabs(a) * std::max(1.0, L * L) < 1e-12) {
-        CurveResult result = circular_curve_local(k0 != 0.0 ? 1.0 / k0 : kInf, l_intermediate);
+        CurveResult result = circular_curve_local(k0 != 0.0 ? 1.0 / k0 : k_inf, l_intermediate);
         result.radius = rl;
         return result;
     }
 
-    const double root = std::sqrt(std::fabs(a) / kPi);
+    const double root = std::sqrt(std::fabs(a) / k_pi);
     const double offset = k0 / a;
     const double u0 = root * offset;
     const double u1 = root * (l_intermediate + offset);
@@ -374,7 +374,7 @@ CurveResult linear_transition_curve_local(double L, double r1, double r2, double
     if (a < 0.0) ds = -ds;
 
     const double phase = -k0 * k0 / (2.0 * a);
-    const double scale = std::sqrt(kPi / std::fabs(a));
+    const double scale = std::sqrt(k_pi / std::fabs(a));
     const double x = scale * (std::cos(phase) * dc - std::sin(phase) * ds);
     const double y = scale * (std::sin(phase) * dc + std::cos(phase) * ds);
     const double turn = k0 * l_intermediate + 0.5 * a * l_intermediate * l_intermediate;
@@ -404,7 +404,7 @@ CurveResult transition_curve_local(double L, double r1, double r2,
 
     {
         std::lock_guard<std::mutex> lock(g_geometry_cache_mutex);
-        if (g_transition_curve_cache.size() >= kMaxGeometryCacheEntries) {
+        if (g_transition_curve_cache.size() >= k_max_geometry_cache_entries) {
             g_transition_curve_cache.clear();
         }
         g_transition_curve_cache.emplace(key, result);
@@ -414,10 +414,10 @@ CurveResult transition_curve_local(double L, double r1, double r2,
 
 CurveResult transition_curve(double L, double r1, double r2, double theta,
                              const std::string& func, double l_intermediate) {
-    r1 = r1 == 0.0 ? kInf : r1;
-    r2 = r2 == 0.0 ? kInf : r2;
-    r1 = std::fabs(r1) > 1e6 ? kInf : r1;
-    r2 = std::fabs(r2) > 1e6 ? kInf : r2;
+    r1 = r1 == 0.0 ? k_inf : r1;
+    r2 = r2 == 0.0 ? k_inf : r2;
+    r1 = std::fabs(r1) > 1e6 ? k_inf : r1;
+    r2 = std::fabs(r2) > 1e6 ? k_inf : r2;
 
     CurveResult local = transition_curve_local(L, r1, r2, func == "sin", l_intermediate);
     auto [x, y] = rotate_xy(local.x, local.y, theta);
@@ -478,7 +478,7 @@ private:
 
     double transition(double L, double c1, double c2, const std::string& func, double l) const {
         if (L == 0.0) return c2;
-        if (func == "sin") return (c2 - c1) / 2.0 * (std::sin(kPi / L * l - kPi / 2.0) + 1.0) + c1;
+        if (func == "sin") return (c2 - c1) / 2.0 * (std::sin(k_pi / L * l - k_pi / 2.0) + 1.0) + c1;
         return (c2 - c1) / L * l + c1;
     }
 
@@ -995,7 +995,7 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
 
     min_step = std::clamp(std::isfinite(min_step) ? min_step : 1.0, 0.25, 100.0);
     max_step = std::clamp(std::isfinite(max_step) ? max_step : 25.0, min_step, 200.0);
-    const double max_angle = std::max(0.001, (std::isfinite(max_angle_degrees) ? max_angle_degrees : 1.0) * kPi / 180.0);
+    const double max_angle = std::max(0.001, (std::isfinite(max_angle_degrees) ? max_angle_degrees : 1.0) * k_pi / 180.0);
     const double max_error = std::max(0.001, std::isfinite(max_chord_error) ? max_chord_error : 0.01);
     const double min_distance = matrix_value(baseline, 0, 0);
     const double max_distance = matrix_value(baseline, baseline.rows - 1, 0);

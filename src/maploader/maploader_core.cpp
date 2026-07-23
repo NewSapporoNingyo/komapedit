@@ -586,8 +586,8 @@ SourceSpan make_source_span(MapContext& ctx,
     span.source_file_index = register_source_file_index(ctx, loaded);
     span.include_stack_index = intern_include_stack(ctx, include_stack);
     if (ctx.current_include_invocation_key.empty()) {
-        ctx.current_include_invocation_key = kRootIncludeInvocationKey;
-        ctx.current_include_invocation_index = kNoSourceRef;
+        ctx.current_include_invocation_key = k_root_include_invocation_key;
+        ctx.current_include_invocation_index = k_no_source_ref;
     }
     if (ctx.current_include_invocation_index >= ctx.include_invocation_keys.size() ||
         ctx.include_invocation_keys[ctx.current_include_invocation_index] !=
@@ -644,7 +644,7 @@ size_t add_parsed_statement(MapContext& ctx,
                             std::vector<Value> evaluated_values,
                             std::string distance_expression,
                             double distance_value) {
-    if (!ctx.parse_options.collect_edit_metadata) return kNoSourceRef;
+    if (!ctx.parse_options.collect_edit_metadata) return k_no_source_ref;
     ParsedStatement statement;
     statement.statement_kind = std::move(kind);
     statement.source = std::move(source);
@@ -666,7 +666,7 @@ size_t add_parsed_statement(MapContext& ctx,
 
 EditSourceRef next_active_edit_ref(MapContext& ctx) {
     if (!ctx.parse_options.collect_edit_metadata) return {};
-    if (ctx.active_statement_index == kNoSourceRef) return {};
+    if (ctx.active_statement_index == k_no_source_ref) return {};
     EditSourceRef ref;
     ref.statement_index = ctx.active_statement_index;
     ref.element_index = ctx.active_statement_next_element_index++;
@@ -674,7 +674,7 @@ EditSourceRef next_active_edit_ref(MapContext& ctx) {
 }
 
 std::vector<size_t> merge_source_file_records(MapContext& dest, const MapContext& child) {
-    std::vector<size_t> index_map(child.source_files.size(), kNoSourceRef);
+    std::vector<size_t> index_map(child.source_files.size(), k_no_source_ref);
     for (size_t i = 0; i < child.source_files.size(); ++i) {
         const SourceFileRecord& record = child.source_files[i];
         auto existing = dest.source_file_indices.find(record.source_key);
@@ -691,7 +691,7 @@ std::vector<size_t> merge_source_file_records(MapContext& dest, const MapContext
 }
 
 std::vector<size_t> merge_include_stacks(MapContext& dest, const MapContext& child) {
-    std::vector<size_t> index_map(child.include_stacks.size(), kNoSourceRef);
+    std::vector<size_t> index_map(child.include_stacks.size(), k_no_source_ref);
     for (size_t i = 0; i < child.include_stacks.size(); ++i) {
         index_map[i] = intern_include_stack(dest, child.include_stacks[i]);
     }
@@ -699,7 +699,7 @@ std::vector<size_t> merge_include_stacks(MapContext& dest, const MapContext& chi
 }
 
 std::vector<size_t> merge_include_invocation_keys(MapContext& dest, const MapContext& child) {
-    std::vector<size_t> index_map(child.include_invocation_keys.size(), kNoSourceRef);
+    std::vector<size_t> index_map(child.include_invocation_keys.size(), k_no_source_ref);
     for (size_t i = 0; i < child.include_invocation_keys.size(); ++i) {
         index_map[i] = intern_include_invocation_key(dest, child.include_invocation_keys[i]);
     }

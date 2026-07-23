@@ -48,36 +48,36 @@
 
 namespace {
 
-constexpr float kDefaultSceneCameraHeight = 2.0f;
-constexpr double kSceneRepeaterDistanceEpsilon = 1e-6;
-constexpr long long kSceneRepeaterInstanceLimit = 1000000;
-constexpr float kSceneCameraFovY = 0.6108652382f;
-constexpr float kSceneNearZ = 0.2f;
-constexpr float kSceneBackgroundNearZ = 0.05f;
-constexpr float kSceneBackgroundFarZ = 5000.0f;
-constexpr float kSceneDepthClear = 0.0f;
-constexpr float kMaterialOpaqueAlphaThreshold = 0.98f;
-constexpr float kSceneTrackMarkerWidth = 0.5f;
-constexpr float kSceneTrackMarkerAlpha = 0.8f;
-constexpr float kSceneSelectionMinScreenRadius = 6.0f;
-constexpr float kSceneSelectionHitPadding = 4.0f;
-constexpr float kSceneHighlightOutlineWidthPx = 5.0f;
-constexpr float kModelPreviewFovY = 0.78539816339f;
-constexpr double kSceneObjectJumpBackM = 25.0;
-constexpr double kSceneFocusHighlightSeconds = 3.0;
+constexpr float k_default_scene_camera_height = 2.0f;
+constexpr double k_scene_repeater_distance_epsilon = 1e-6;
+constexpr long long k_scene_repeater_instance_limit = 1000000;
+constexpr float k_scene_camera_fov_y = 0.6108652382f;
+constexpr float k_scene_near_z = 0.2f;
+constexpr float k_scene_background_near_z = 0.05f;
+constexpr float k_scene_background_far_z = 5000.0f;
+constexpr float k_scene_depth_clear = 0.0f;
+constexpr float k_material_opaque_alpha_threshold = 0.98f;
+constexpr float k_scene_track_marker_width = 0.5f;
+constexpr float k_scene_track_marker_alpha = 0.8f;
+constexpr float k_scene_selection_min_screen_radius = 6.0f;
+constexpr float k_scene_selection_hit_padding = 4.0f;
+constexpr float k_scene_highlight_outline_width_px = 5.0f;
+constexpr float k_model_preview_fov_y = 0.78539816339f;
+constexpr double k_scene_object_jump_back_m = 25.0;
+constexpr double k_scene_focus_highlight_seconds = 3.0;
 // The event-driven canvas stops repainting while idle, so preserve the last active FPS across long gaps.
-constexpr double kSceneFpsIdleResetSeconds = 0.25;
-constexpr float kSceneFpsSmoothing = 0.15f;
-constexpr float kSceneGizmoLengthPx = 72.0f;
-constexpr float kSceneGizmoOriginGapPx = 9.0f;
-constexpr float kSceneGizmoHitRadiusPx = 8.0f;
-constexpr float kSceneGizmoArrowLengthPx = 11.0f;
-constexpr float kSceneGizmoArrowHalfWidthPx = 5.5f;
-constexpr float kSceneGizmoCenterRadiusPx = 4.0f;
-constexpr double kSceneRouteDisplayZeroEpsilon = 0.0000005;
-constexpr size_t kSceneModelMaxWorkers = 8;
-constexpr double kDefaultSceneFogDensity = 0.001;
-constexpr double kDefaultSceneFogColor = 0.875;
+constexpr double k_scene_fps_idle_reset_seconds = 0.25;
+constexpr float k_scene_fps_smoothing = 0.15f;
+constexpr float k_scene_gizmo_length_px = 72.0f;
+constexpr float k_scene_gizmo_origin_gap_px = 9.0f;
+constexpr float k_scene_gizmo_hit_radius_px = 8.0f;
+constexpr float k_scene_gizmo_arrow_length_px = 11.0f;
+constexpr float k_scene_gizmo_arrow_half_width_px = 5.5f;
+constexpr float k_scene_gizmo_center_radius_px = 4.0f;
+constexpr double k_scene_route_display_zero_epsilon = 0.0000005;
+constexpr size_t k_scene_model_max_workers = 8;
+constexpr double k_default_scene_fog_density = 0.001;
+constexpr double k_default_scene_fog_color = 0.875;
 
 enum class SceneOverlayCorner {
     TopLeft,
@@ -134,7 +134,7 @@ float clamp_color_component(float value) {
 float normalize_material_alpha(float value) {
     float alpha = clamp_color_component(value);
     // BVE .x models commonly use 0.99/0.999999 for opaque alpha-tested textures.
-    return alpha >= kMaterialOpaqueAlphaThreshold ? 1.0f : alpha;
+    return alpha >= k_material_opaque_alpha_threshold ? 1.0f : alpha;
 }
 
 ImVec4 clamp_background_color(ImVec4 color) {
@@ -707,7 +707,7 @@ int scene_tilt_flags(double tilt) {
 }
 
 bool scene_material_is_translucent(const GpuMaterial* material) {
-    return material && material->diffuse[3] < kMaterialOpaqueAlphaThreshold;
+    return material && material->diffuse[3] < k_material_opaque_alpha_threshold;
 }
 
 bool scene_material_uses_alpha_mask(const GpuMaterial* material) {
@@ -719,8 +719,8 @@ bool scene_repeater_has_interval(const Canvas3DRepeaterSegment& repeater) {
 }
 
 double scene_repeater_index_epsilon(const Canvas3DRepeaterSegment& repeater) {
-    if (!scene_repeater_has_interval(repeater)) return kSceneRepeaterDistanceEpsilon;
-    return std::min(kSceneRepeaterDistanceEpsilon, repeater.interval * 0.25);
+    if (!scene_repeater_has_interval(repeater)) return k_scene_repeater_distance_epsilon;
+    return std::min(k_scene_repeater_distance_epsilon, repeater.interval * 0.25);
 }
 
 bool scene_repeater_index_range(const Canvas3DRepeaterSegment& repeater,
@@ -731,7 +731,7 @@ bool scene_repeater_index_range(const Canvas3DRepeaterSegment& repeater,
     if (!scene_repeater_has_interval(repeater) || repeater.end_distance < repeater.begin_distance) return false;
     const double begin = std::max(range_min, repeater.begin_distance);
     const double end = std::min(range_max, repeater.end_distance);
-    if (end < begin - kSceneRepeaterDistanceEpsilon) return false;
+    if (end < begin - k_scene_repeater_distance_epsilon) return false;
 
     const double eps = scene_repeater_index_epsilon(repeater);
     const double first_index_d = std::ceil((begin - repeater.begin_distance - eps) / repeater.interval);
@@ -766,7 +766,7 @@ bool scene_repeater_index_range(const Canvas3DRepeaterSegment& repeater,
 size_t scene_repeater_index_count(const SceneRepeaterIndexRange& range) {
     if (range.last < range.first) return 0;
     double count = static_cast<double>(range.last - range.first) + 1.0;
-    return static_cast<size_t>(std::min<double>(count, static_cast<double>(kSceneRepeaterInstanceLimit)));
+    return static_cast<size_t>(std::min<double>(count, static_cast<double>(k_scene_repeater_instance_limit)));
 }
 
 size_t scene_repeater_instance_count(const Canvas3DRepeaterSegment& repeater) {
@@ -995,7 +995,7 @@ size_t scene_model_worker_count_for(size_t source_count) {
     size_t available = std::thread::hardware_concurrency();
     if (available == 0) available = 4;
     if (available > 2) --available;
-    return std::max<size_t>(1, std::min({source_count, available, kSceneModelMaxWorkers}));
+    return std::max<size_t>(1, std::min({source_count, available, k_scene_model_max_workers}));
 }
 
 const Canvas3DTrackPath* scene_own_track_path(const Canvas3DScene& scene) {
@@ -1309,10 +1309,10 @@ void populate_canvas3d_scene_fog(Canvas3DScene& scene, const MapModel& model) {
     });
 
     scene.fog_keyframes.reserve(rows.size());
-    double density = kDefaultSceneFogDensity;
-    double red = kDefaultSceneFogColor;
-    double green = kDefaultSceneFogColor;
-    double blue = kDefaultSceneFogColor;
+    double density = k_default_scene_fog_density;
+    double red = k_default_scene_fog_color;
+    double green = k_default_scene_fog_color;
+    double blue = k_default_scene_fog_color;
     for (const TableRow* row : rows) {
         density = resolve_canvas3d_scene_fog_component(*row, "density", density);
         red = resolve_canvas3d_scene_fog_component(*row, "red", red);
@@ -1357,8 +1357,8 @@ void populate_canvas3d_scene_draw_distances(Canvas3DScene& scene, const MapModel
         const double raw_value = table_cell_number(*row, "value");
         change.value = !std::isfinite(raw_value) || raw_value < 0.0
             ? 0.0
-            : std::round(raw_value / static_cast<double>(kSceneDrawDistanceStepM)) *
-                static_cast<double>(kSceneDrawDistanceStepM);
+            : std::round(raw_value / static_cast<double>(k_scene_draw_distance_step_m)) *
+                static_cast<double>(k_scene_draw_distance_step_m);
         if (!scene.draw_distance_changes.empty() &&
             scene.draw_distance_changes.back().distance == change.distance) {
             scene.draw_distance_changes.back() = change;
@@ -1455,7 +1455,7 @@ SceneRouteValueSample sample_scene_route_value(
 void format_scene_route_number(char* output, size_t output_size, double value) {
     if (!output || output_size == 0) return;
     if (!std::isfinite(value)) value = 0.0;
-    if (std::abs(value) <= kSceneRouteDisplayZeroEpsilon) value = 0.0;
+    if (std::abs(value) <= k_scene_route_display_zero_epsilon) value = 0.0;
     std::snprintf(output, output_size, "%.6f", value);
     char* end = output + std::strlen(output);
     char* decimal = std::strchr(output, '.');
@@ -1702,14 +1702,14 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
     if (!camera_point) camera_point = own_path->points.front();
     scene.camera.distance = camera_distance;
     scene.camera.x = camera_point->x;
-    scene.camera.y = camera_point->y + kDefaultSceneCameraHeight;
+    scene.camera.y = camera_point->y + k_default_scene_camera_height;
     scene.camera.z = camera_point->z;
     scene.camera.yaw = camera_point->theta;
     scene.camera.pitch = 0.0f;
     return true;
 }
 
-const char* kSceneShaderSource = R"(
+const char* k_scene_shader_source = R"(
 cbuffer SceneViewConstants : register(b0)
 {
     row_major float4x4 viewProj;
@@ -1774,7 +1774,7 @@ float4 ps_fog_main(VSOutput input) : SV_TARGET
 }
 )";
 
-const char* kScenePickShaderSource = R"(
+const char* k_scene_pick_shader_source = R"(
 cbuffer ScenePickConstants : register(b1)
 {
     float4 pickColor;
@@ -1800,7 +1800,7 @@ float4 ps_main(VSOutput input) : SV_TARGET
 }
 )";
 
-const char* kSceneHighlightOutlineShaderSource = R"(
+const char* k_scene_highlight_outline_shader_source = R"(
 cbuffer SceneOutlineConstants : register(b0)
 {
     float4 texelRadius;
@@ -3205,7 +3205,7 @@ struct Canvas3D::Impl {
         scene_focus_highlight_until =
             std::chrono::steady_clock::now() +
             std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(kSceneFocusHighlightSeconds));
+                std::chrono::duration<double>(k_scene_focus_highlight_seconds));
     }
 
     bool scene_focus_highlight_active_now() {
@@ -3251,11 +3251,11 @@ struct Canvas3D::Impl {
     }
 
     bool set_scene_camera_for_target(double distance, DVec3 target_center) {
-        scene_camera_distance = std::clamp(distance - kSceneObjectJumpBackM,
+        scene_camera_distance = std::clamp(distance - k_scene_object_jump_back_m,
                                            scene_data.min_distance,
                                            scene_data.max_distance);
         scene_camera_lateral_offset = 0.0;
-        scene_camera_vertical_offset = kDefaultSceneCameraHeight;
+        scene_camera_vertical_offset = k_default_scene_camera_height;
         scene_camera_yaw_offset = 0.0f;
         scene_camera_pitch = 0.0f;
         scene_rotating = false;
@@ -3895,7 +3895,7 @@ fail:
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
         ID3DBlob* errors = nullptr;
-        HRESULT hr = D3DCompile(kSceneHighlightOutlineShaderSource, std::strlen(kSceneHighlightOutlineShaderSource),
+        HRESULT hr = D3DCompile(k_scene_highlight_outline_shader_source, std::strlen(k_scene_highlight_outline_shader_source),
                                 nullptr, nullptr, nullptr, "vs_main", "vs_4_0",
                                 D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
         if (FAILED(hr)) {
@@ -3906,7 +3906,7 @@ fail:
         }
         release_com(errors);
 
-        hr = D3DCompile(kSceneHighlightOutlineShaderSource, std::strlen(kSceneHighlightOutlineShaderSource),
+        hr = D3DCompile(k_scene_highlight_outline_shader_source, std::strlen(k_scene_highlight_outline_shader_source),
                         nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
                         D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
         if (FAILED(hr)) {
@@ -3973,7 +3973,7 @@ fail:
 
         ID3DBlob* ps_blob = nullptr;
         ID3DBlob* errors = nullptr;
-        HRESULT hr = D3DCompile(kScenePickShaderSource, std::strlen(kScenePickShaderSource),
+        HRESULT hr = D3DCompile(k_scene_pick_shader_source, std::strlen(k_scene_pick_shader_source),
                                 nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
                                 D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
         if (FAILED(hr)) {
@@ -4037,7 +4037,7 @@ fail:
         ID3DBlob* ps_blob = nullptr;
         ID3DBlob* fog_ps_blob = nullptr;
         ID3DBlob* errors = nullptr;
-        HRESULT hr = D3DCompile(kSceneShaderSource, std::strlen(kSceneShaderSource), nullptr, nullptr, nullptr,
+        HRESULT hr = D3DCompile(k_scene_shader_source, std::strlen(k_scene_shader_source), nullptr, nullptr, nullptr,
                                 "vs_main", "vs_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
         if (FAILED(hr)) {
             error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene vertex shader)", hr);
@@ -4046,7 +4046,7 @@ fail:
         }
         release_com(errors);
 
-        hr = D3DCompile(kSceneShaderSource, std::strlen(kSceneShaderSource), nullptr, nullptr, nullptr,
+        hr = D3DCompile(k_scene_shader_source, std::strlen(k_scene_shader_source), nullptr, nullptr, nullptr,
                         "ps_main", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
         if (FAILED(hr)) {
             error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene pixel shader)", hr);
@@ -4056,7 +4056,7 @@ fail:
         }
         release_com(errors);
 
-        hr = D3DCompile(kSceneShaderSource, std::strlen(kSceneShaderSource), nullptr, nullptr, nullptr,
+        hr = D3DCompile(k_scene_shader_source, std::strlen(k_scene_shader_source), nullptr, nullptr, nullptr,
                         "ps_fog_main", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &fog_ps_blob, &errors);
         if (FAILED(hr)) {
             error = errors ? static_cast<const char*>(errors->GetBufferPointer()) : hresult_text("D3DCompile(scene fog pixel shader)", hr);
@@ -4461,7 +4461,7 @@ fail:
         SceneOutlineConstants constants = {};
         constants.texel_radius[0] = 1.0f / static_cast<float>(width);
         constants.texel_radius[1] = 1.0f / static_cast<float>(height);
-        constants.texel_radius[2] = kSceneHighlightOutlineWidthPx * 0.5f;
+        constants.texel_radius[2] = k_scene_highlight_outline_width_px * 0.5f;
         constants.texel_radius[3] = 0.0f;
         constants.color[0] = clamp_color_component(color.x);
         constants.color[1] = clamp_color_component(color.y);
@@ -4657,7 +4657,7 @@ fail:
             DVec3 world_point = transform_point_row(world, corner);
             DVec3 relative_point = world_point - render_origin;
             const double view_depth = dot(relative_point, forward);
-            if (!std::isfinite(view_depth) || view_depth <= static_cast<double>(kSceneNearZ)) continue;
+            if (!std::isfinite(view_depth) || view_depth <= static_cast<double>(k_scene_near_z)) continue;
             ImVec2 screen;
             if (!project_scene_point(relative_point, view_proj, width, height, screen)) continue;
             raw_min.x = std::min(raw_min.x, screen.x);
@@ -4668,7 +4668,7 @@ fail:
         }
         if (!projected) return false;
 
-        const float outline_padding = kSceneHighlightOutlineWidthPx + 2.0f;
+        const float outline_padding = k_scene_highlight_outline_width_px + 2.0f;
         out.screen_min = ImVec2(std::max(0.0f, raw_min.x - outline_padding),
                                 std::max(0.0f, raw_min.y - outline_padding));
         out.screen_max = ImVec2(std::min(static_cast<float>(width), raw_max.x + outline_padding),
@@ -4862,7 +4862,7 @@ fail:
                                      const Canvas3DTrackPoint& p0,
                                      const Canvas3DTrackPoint& p1) {
         constexpr float marker_lift = 0.035f;
-        constexpr float marker_half_width = kSceneTrackMarkerWidth * 0.5f;
+        constexpr float marker_half_width = k_scene_track_marker_width * 0.5f;
         Vec3 right0;
         Vec3 right1;
         Vec3 up0;
@@ -4938,7 +4938,7 @@ fail:
                 material.diffuse[0] = clamp_color_component(track.color.x);
                 material.diffuse[1] = clamp_color_component(track.color.y);
                 material.diffuse[2] = clamp_color_component(track.color.z);
-                material.diffuse[3] = kSceneTrackMarkerAlpha;
+                material.diffuse[3] = k_scene_track_marker_alpha;
                 gpu_chunk.materials.push_back(material);
 
                 for (size_t i = 1; i < track.points.size(); ++i) {
@@ -5343,7 +5343,7 @@ fail:
                                            std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
                                            std::map<int, std::vector<SceneVisibleInstanceRef>>* object_refs) const {
         double chunk_max = chunk.d_max;
-        if (chunk.d_max < scene_data.max_distance) chunk_max -= kSceneRepeaterDistanceEpsilon;
+        if (chunk.d_max < scene_data.max_distance) chunk_max -= k_scene_repeater_distance_epsilon;
         double range_min = std::max(visible_min, chunk.d_min);
         double range_max = std::min(visible_max, chunk_max);
         if (range_max < range_min) return;
@@ -5355,7 +5355,7 @@ fail:
 
             const double begin = std::max(range_min, repeater.begin_distance);
             const double end = std::min(range_max, repeater.end_distance);
-            if (end < begin - kSceneRepeaterDistanceEpsilon) continue;
+            if (end < begin - k_scene_repeater_distance_epsilon) continue;
 
             auto emit = [&](double distance, size_t model_index) {
                 const std::string& path = repeater.model_paths[model_index % repeater.model_paths.size()];
@@ -5379,8 +5379,8 @@ fail:
             };
 
             if (!scene_repeater_has_interval(repeater)) {
-                if (repeater.begin_distance >= begin - kSceneRepeaterDistanceEpsilon &&
-                    repeater.begin_distance <= end + kSceneRepeaterDistanceEpsilon) {
+                if (repeater.begin_distance >= begin - k_scene_repeater_distance_epsilon &&
+                    repeater.begin_distance <= end + k_scene_repeater_distance_epsilon) {
                     emit(repeater.begin_distance, 0);
                 }
                 continue;
@@ -5392,11 +5392,11 @@ fail:
             const double end_epsilon = scene_repeater_index_epsilon(repeater);
             for (long long index = range.first; index <= range.last; ++index) {
                 double distance = repeater.begin_distance + static_cast<double>(index) * repeater.interval;
-                if (distance < begin - kSceneRepeaterDistanceEpsilon) continue;
-                if (distance > end + kSceneRepeaterDistanceEpsilon) break;
+                if (distance < begin - k_scene_repeater_distance_epsilon) continue;
+                if (distance > end + k_scene_repeater_distance_epsilon) break;
                 if (distance >= repeater.end_distance - end_epsilon) break;
                 emit(distance, static_cast<size_t>(index));
-                if (++emitted >= kSceneRepeaterInstanceLimit) break;
+                if (++emitted >= k_scene_repeater_instance_limit) break;
             }
         }
     }
@@ -5416,7 +5416,7 @@ fail:
         if (!scene_active) return false;
         scene_camera_distance = std::clamp(distance, scene_data.min_distance, scene_data.max_distance);
         scene_camera_lateral_offset = 0.0;
-        scene_camera_vertical_offset = kDefaultSceneCameraHeight;
+        scene_camera_vertical_offset = k_default_scene_camera_height;
         scene_camera_yaw_offset = 0.0f;
         scene_camera_pitch = 0.0f;
         scene_rotating = false;
@@ -5426,7 +5426,7 @@ fail:
     void reset_scene_camera_tracking() {
         Canvas3DTrackPoint point;
         scene_camera_lateral_offset = 0.0;
-        scene_camera_vertical_offset = kDefaultSceneCameraHeight;
+        scene_camera_vertical_offset = k_default_scene_camera_height;
         scene_camera_yaw_offset = 0.0f;
         if (!sample_own_track(scene_camera_distance, point)) return;
 
@@ -5473,7 +5473,7 @@ fail:
         const double ndc_y = 1.0 - 2.0 * static_cast<double>(mouse_local.y) /
             static_cast<double>(height);
         const double aspect = static_cast<double>(width) / static_cast<double>(height);
-        const double tan_half_fov = std::tan(static_cast<double>(kSceneCameraFovY) * 0.5);
+        const double tan_half_fov = std::tan(static_cast<double>(k_scene_camera_fov_y) * 0.5);
         DVec3 forward = dvec3_from_vec3(scene_forward());
         DVec3 right = dvec3_from_vec3(scene_right());
         DVec3 up = normalize(cross(right, forward));
@@ -5527,14 +5527,14 @@ fail:
         const DVec3 relative_origin = scene_structure_edit.origin - scene_camera_pos;
         const DVec3 camera_forward = dvec3_from_vec3(scene_forward());
         const double depth = dot(relative_origin, camera_forward);
-        if (!std::isfinite(depth) || depth <= static_cast<double>(kSceneNearZ)) return false;
+        if (!std::isfinite(depth) || depth <= static_cast<double>(k_scene_near_z)) return false;
 
         Vec3 forward = scene_forward();
         Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, forward, {0.0f, 1.0f, 0.0f});
         const float aspect = static_cast<float>(width) /
             std::max(1.0f, static_cast<float>(height));
-        Mat4 proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect,
-                                                 kSceneNearZ,
+        Mat4 proj = perspective_fov_lh_reverse_z(k_scene_camera_fov_y, aspect,
+                                                 k_scene_near_z,
                                                  scene_far_z(effective_scene_window_forward_m()));
         Mat4 view_proj = multiply(view, proj);
         ImVec2 origin_screen;
@@ -5546,7 +5546,7 @@ fail:
         }
 
         const double generic_world_units_per_pixel =
-            2.0 * depth * std::tan(static_cast<double>(kSceneCameraFovY) * 0.5) /
+            2.0 * depth * std::tan(static_cast<double>(k_scene_camera_fov_y) * 0.5) /
             static_cast<double>(height);
         static constexpr std::array<ImVec2, 3> fallback_directions = {
             ImVec2(0.8660254f, 0.5f),
@@ -5578,11 +5578,11 @@ fail:
             axis_projection.world_direction = visual_axis;
             axis_projection.parameter_sign = parameter_sign;
             axis_projection.begin = ImVec2(
-                origin_screen.x + direction.x * kSceneGizmoOriginGapPx * gizmo_scale,
-                origin_screen.y + direction.y * kSceneGizmoOriginGapPx * gizmo_scale);
+                origin_screen.x + direction.x * k_scene_gizmo_origin_gap_px * gizmo_scale,
+                origin_screen.y + direction.y * k_scene_gizmo_origin_gap_px * gizmo_scale);
             axis_projection.end = ImVec2(
-                origin_screen.x + direction.x * kSceneGizmoLengthPx * gizmo_scale,
-                origin_screen.y + direction.y * kSceneGizmoLengthPx * gizmo_scale);
+                origin_screen.x + direction.x * k_scene_gizmo_length_px * gizmo_scale,
+                origin_screen.y + direction.y * k_scene_gizmo_length_px * gizmo_scale);
             axis_projection.world_units_per_pixel = projected_length >= 1.0f
                 ? 1.0 / static_cast<double>(projected_length)
                 : generic_world_units_per_pixel;
@@ -5604,7 +5604,7 @@ fail:
         if (scene_structure_edit.dragging_axis == Canvas3DSceneDragAxis::None) {
             scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
             if (canvas_hovered) {
-                const float hit_radius = kSceneGizmoHitRadiusPx * scene_edit_component_scale;
+                const float hit_radius = k_scene_gizmo_hit_radius_px * scene_edit_component_scale;
                 float best_distance_sq = hit_radius * hit_radius;
                 for (size_t i = 0; i < scene_structure_edit.projection.size(); ++i) {
                     const SceneGizmoAxisProjection& projection = scene_structure_edit.projection[i];
@@ -5745,8 +5745,8 @@ fail:
                        canvas_origin.y + projection.end.y);
             ImVec2 direction = projection.direction;
             ImVec2 perpendicular(-direction.y, direction.x);
-            const float arrow_length = kSceneGizmoArrowLengthPx * gizmo_scale;
-            const float arrow_half_width = kSceneGizmoArrowHalfWidthPx * gizmo_scale;
+            const float arrow_length = k_scene_gizmo_arrow_length_px * gizmo_scale;
+            const float arrow_half_width = k_scene_gizmo_arrow_half_width_px * gizmo_scale;
             ImVec2 arrow_base(end.x - direction.x * arrow_length,
                               end.y - direction.y * arrow_length);
             draw->AddLine(begin, end, color, (active ? 4.5f : 3.0f) * gizmo_scale);
@@ -5762,10 +5762,10 @@ fail:
         if (first.valid) {
             ImVec2 center(
                 canvas_origin.x + first.begin.x -
-                    first.direction.x * kSceneGizmoOriginGapPx * gizmo_scale,
+                    first.direction.x * k_scene_gizmo_origin_gap_px * gizmo_scale,
                 canvas_origin.y + first.begin.y -
-                    first.direction.y * kSceneGizmoOriginGapPx * gizmo_scale);
-            const float center_radius = kSceneGizmoCenterRadiusPx * gizmo_scale;
+                    first.direction.y * k_scene_gizmo_origin_gap_px * gizmo_scale);
+            const float center_radius = k_scene_gizmo_center_radius_px * gizmo_scale;
             draw->AddCircleFilled(center, center_radius, IM_COL32(245, 245, 245, 235));
             draw->AddCircle(center, center_radius, IM_COL32(30, 30, 30, 220), 0,
                             gizmo_scale);
@@ -5871,8 +5871,8 @@ fail:
 
     float scene_far_z(double window_forward_m) const {
         double far_z = scene_window_back_m + window_forward_m + scene_chunk_m * 2.0;
-        if (!std::isfinite(far_z)) far_z = kSceneBackgroundFarZ;
-        return static_cast<float>(std::clamp(far_z, 256.0, static_cast<double>(kSceneBackgroundFarZ)));
+        if (!std::isfinite(far_z)) far_z = k_scene_background_far_z;
+        return static_cast<float>(std::clamp(far_z, 256.0, static_cast<double>(k_scene_background_far_z)));
     }
 
     void render_scene_preview_target(int width, int height, ImVec2 mouse_local, bool pick_enabled) {
@@ -5901,7 +5901,7 @@ fail:
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, k_scene_depth_clear, 0);
 
         D3D11_VIEWPORT viewport = {};
         viewport.Width = static_cast<float>(width);
@@ -5918,14 +5918,14 @@ fail:
         Vec3 forward = scene_forward();
         Mat4 view = look_to_bve({0.0f, 0.0f, 0.0f}, forward, {0.0f, 1.0f, 0.0f});
         float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
-        Mat4 background_proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect, kSceneBackgroundNearZ, kSceneBackgroundFarZ);
+        Mat4 background_proj = perspective_fov_lh_reverse_z(k_scene_camera_fov_y, aspect, k_scene_background_near_z, k_scene_background_far_z);
         Mat4 background_view_proj = multiply(view, background_proj);
         draw_background_model(background_view_proj, fog_ptr);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, k_scene_depth_clear, 0);
 
         const double effective_window_forward_m = effective_scene_window_forward_m();
         Mat4 proj = perspective_fov_lh_reverse_z(
-            kSceneCameraFovY, aspect, kSceneNearZ,
+            k_scene_camera_fov_y, aspect, k_scene_near_z,
             scene_far_z(effective_window_forward_m));
         Mat4 view_proj = multiply(view, proj);
 
@@ -6037,10 +6037,10 @@ fail:
         const Clock::time_point now = Clock::now();
         if (scene_fps_last_frame_valid) {
             const double elapsed_seconds = std::chrono::duration<double>(now - scene_fps_last_frame_at).count();
-            if (elapsed_seconds > 0.0 && elapsed_seconds <= kSceneFpsIdleResetSeconds) {
+            if (elapsed_seconds > 0.0 && elapsed_seconds <= k_scene_fps_idle_reset_seconds) {
                 const float sample = static_cast<float>(1.0 / elapsed_seconds);
                 scene_fps_value = scene_fps_value > 0.0f
-                    ? scene_fps_value + (sample - scene_fps_value) * kSceneFpsSmoothing
+                    ? scene_fps_value + (sample - scene_fps_value) * k_scene_fps_smoothing
                     : sample;
             }
         }
@@ -6096,8 +6096,8 @@ fail:
         } else {
             const bool transition = radius.mode == SceneRouteValueMode::Transition;
             const bool use_transition_target =
-                !transition || std::abs(radius.to_value) > kSceneRouteDisplayZeroEpsilon ||
-                std::abs(radius.from_value) <= kSceneRouteDisplayZeroEpsilon;
+                !transition || std::abs(radius.to_value) > k_scene_route_display_zero_epsilon ||
+                std::abs(radius.from_value) <= k_scene_route_display_zero_epsilon;
             const double displayed_radius = transition
                 ? (use_transition_target ? radius.to_value : radius.from_value)
                 : radius.value;
@@ -6105,7 +6105,7 @@ fail:
                 ? (use_transition_target ? cant.to_value : cant.from_value)
                 : cant.value;
             const char* prefix = transition ? "[Tr.] " : "";
-            if (std::abs(displayed_radius) <= kSceneRouteDisplayZeroEpsilon) {
+            if (std::abs(displayed_radius) <= k_scene_route_display_zero_epsilon) {
                 std::snprintf(curve_line, sizeof(curve_line), "%s%s",
                               prefix, ui_text.straight);
             } else {
@@ -6122,8 +6122,8 @@ fail:
 
         const bool gradient_transition = gradient.mode != SceneRouteValueMode::Constant;
         const bool use_gradient_target =
-            !gradient_transition || std::abs(gradient.to_value) > kSceneRouteDisplayZeroEpsilon ||
-            std::abs(gradient.from_value) <= kSceneRouteDisplayZeroEpsilon;
+            !gradient_transition || std::abs(gradient.to_value) > k_scene_route_display_zero_epsilon ||
+            std::abs(gradient.from_value) <= k_scene_route_display_zero_epsilon;
         const double displayed_gradient = gradient_transition
             ? (use_gradient_target ? gradient.to_value : gradient.from_value)
             : gradient.value;
@@ -6132,7 +6132,7 @@ fail:
                                   std::abs(displayed_gradient));
         char gradient_line[160] = {};
         const char* gradient_prefix = gradient_transition ? "[Tr.] " : "";
-        if (std::abs(displayed_gradient) <= kSceneRouteDisplayZeroEpsilon) {
+        if (std::abs(displayed_gradient) <= k_scene_route_display_zero_epsilon) {
             std::snprintf(gradient_line, sizeof(gradient_line), "%s0‰", gradient_prefix);
         } else {
             std::snprintf(gradient_line, sizeof(gradient_line), "%s%s %s‰",
@@ -6371,7 +6371,7 @@ fail:
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
-        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
+        context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, k_scene_depth_clear, 0);
 
         if (has_model() && scene_vertex_shader && scene_pixel_shader &&
             scene_input_layout && scene_constant_buffer &&
@@ -6396,7 +6396,7 @@ fail:
             float aspect = static_cast<float>(width) / std::max(1.0f, static_cast<float>(height));
             float near_z = std::max(0.001f, radius * 0.001f);
             float far_z = std::max(distance + radius * 4.0f, radius * 50.0f);
-            Mat4 proj = perspective_fov_lh_reverse_z(kModelPreviewFovY, aspect, near_z, far_z);
+            Mat4 proj = perspective_fov_lh_reverse_z(k_model_preview_fov_y, aspect, near_z, far_z);
             Mat4 view_proj = multiply(view, proj);
 
             model_preview_instances.resize(1);

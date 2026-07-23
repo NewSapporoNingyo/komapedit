@@ -52,8 +52,8 @@ public:
             ctx_.include_stack.push_back(ctx_.current_file_path);
         }
         if (ctx_.current_include_invocation_key.empty()) {
-            ctx_.current_include_invocation_key = kRootIncludeInvocationKey;
-            ctx_.current_include_invocation_index = kNoSourceRef;
+            ctx_.current_include_invocation_key = k_root_include_invocation_key;
+            ctx_.current_include_invocation_index = k_no_source_ref;
         }
     }
 
@@ -266,7 +266,7 @@ private:
                 flush_pending_includes();
                 ParsedMapElement element = parse_map_element();
                 expect(';');
-                size_t statement_index = kNoSourceRef;
+                size_t statement_index = k_no_source_ref;
                 if (ctx_.parse_options.collect_edit_metadata) {
                     statement_index = add_parsed_statement(
                         ctx_, map_statement_kind(element.objects, element.function),
@@ -327,7 +327,7 @@ private:
         seed.parse_options = ctx_.parse_options;
         seed.unit_distance = ctx_.unit_distance;
         std::string child_path = normalized_source_path(child);
-        seed.file_structure.push_back({kNoSourceRef, include_path, child_path});
+        seed.file_structure.push_back({k_no_source_ref, include_path, child_path});
         if (seed.include_stack.empty() ||
             normalized_source_key(seed.include_stack.back()) != normalized_source_key(child_path)) {
             seed.include_stack.push_back(child_path);
@@ -410,7 +410,7 @@ private:
     void merge_file_structure(MapContext& child) {
         if (child.file_structure.empty()) return;
         if (ctx_.file_structure.empty()) {
-            ctx_.file_structure.push_back({kNoSourceRef, {}, ctx_.current_file_path});
+            ctx_.file_structure.push_back({k_no_source_ref, {}, ctx_.current_file_path});
         }
 
         const size_t child_root_index = ctx_.file_structure.size();
@@ -418,7 +418,7 @@ private:
             FileStructureRecord& record = child.file_structure[i];
             if (i == 0) {
                 record.parent_index = 0;
-            } else if (record.parent_index == kNoSourceRef || record.parent_index >= i) {
+            } else if (record.parent_index == k_no_source_ref || record.parent_index >= i) {
                 record.parent_index = child_root_index;
             } else {
                 record.parent_index += child_root_index;
@@ -824,7 +824,7 @@ private:
         if (op == '/') {
             double a = as_number(lhs);
             double b = as_number(rhs);
-            return Value::num(b != 0.0 ? a / b : std::copysign(kInf, a));
+            return Value::num(b != 0.0 ? a / b : std::copysign(k_inf, a));
         }
         if (op == '%') return Value::num(std::fmod(as_number(lhs), as_number(rhs)));
         throw std::runtime_error("Unknown operator");
@@ -1634,7 +1634,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     ctx->entry_file_path = loaded.normalized_path;
     ctx->current_file_path = loaded.normalized_path;
     ctx->include_stack.push_back(ctx->current_file_path);
-    ctx->file_structure.push_back({kNoSourceRef, {}, ctx->entry_file_path});
+    ctx->file_structure.push_back({k_no_source_ref, {}, ctx->entry_file_path});
 
     log_info("parsing syntax tree");
     {

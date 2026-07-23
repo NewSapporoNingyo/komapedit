@@ -547,20 +547,20 @@ float available_width_after_current_item(float right_padding) {
                         ImGui::GetStyle().ItemSpacing.x);
 }
 
-constexpr float kFindInputMinWidth = 80.0f;
-constexpr float kFindInputMaxWidth = 280.0f;
+constexpr float k_find_input_min_width = 80.0f;
+constexpr float k_find_input_max_width = 280.0f;
 
 float find_input_width(float available_width,
                        float all_controls_width,
                        float step_controls_width) {
     available_width = std::max(1.0f, available_width);
     float width = available_width;
-    if (available_width >= kFindInputMinWidth + all_controls_width) {
+    if (available_width >= k_find_input_min_width + all_controls_width) {
         width = available_width - all_controls_width;
-    } else if (available_width >= kFindInputMinWidth + step_controls_width) {
+    } else if (available_width >= k_find_input_min_width + step_controls_width) {
         width = available_width - step_controls_width;
     }
-    return std::max(1.0f, std::min(kFindInputMaxWidth, width));
+    return std::max(1.0f, std::min(k_find_input_max_width, width));
 }
 
 template <typename RunFindFn, typename RunUnusedFn, typename StepFn, typename StatusTextFn>
@@ -608,7 +608,7 @@ void render_table_find_panel(TableFindState& state,
         if (ImGui::Button(find_label.c_str())) run_find();
         float input_available_width = ImGui::GetContentRegionAvail().x - right_padding;
         const float available_after_find = available_width_after_current_item(right_padding);
-        if (available_after_find >= kFindInputMinWidth) {
+        if (available_after_find >= k_find_input_min_width) {
             input_available_width = available_after_find;
             ImGui::SameLine();
         }
@@ -654,23 +654,23 @@ void render_table_find_panel(TableFindState& state,
 
 } // namespace
 
-constexpr float kShowColumnWidth = 56.0f;
-constexpr ImU32 kFindMatchRowColor = IM_COL32(104, 184, 255, 96);
-constexpr ImU32 kUnusedStructureModelRowColor = IM_COL32(72, 196, 112, 120);
-constexpr ImU32 kInvalidTrackKeyRowColor = IM_COL32(255, 72, 72, 130);
-constexpr ImU32 kPendingEditRowColor = IM_COL32(255, 196, 64, 92);
-constexpr ImU32 kPendingDeleteRowColor = IM_COL32(255, 96, 64, 118);
-constexpr const char* kInvalidTrackKeyCell = "_invalidTrackKey";
+constexpr float k_show_column_width = 56.0f;
+constexpr ImU32 k_find_match_row_color = IM_COL32(104, 184, 255, 96);
+constexpr ImU32 k_unused_structure_model_row_color = IM_COL32(72, 196, 112, 120);
+constexpr ImU32 k_invalid_track_key_row_color = IM_COL32(255, 72, 72, 130);
+constexpr ImU32 k_pending_edit_row_color = IM_COL32(255, 196, 64, 92);
+constexpr ImU32 k_pending_delete_row_color = IM_COL32(255, 96, 64, 118);
+constexpr const char* k_invalid_track_key_cell = "_invalidTrackKey";
 
-static const TableColumnDef kStructureModelColumns[] = {
+static const TableColumnDef k_structure_model_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"structureKey", "structureKey", 120.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kStructureModelKeyColumn = 1;
-constexpr int kStructureModelFilePathColumn = IM_ARRAYSIZE(kStructureModelColumns) - 1;
+constexpr int k_structure_model_key_column = 1;
+constexpr int k_structure_model_file_path_column = IM_ARRAYSIZE(k_structure_model_columns) - 1;
 
-static const TableColumnDef kOtherTrainColumns[] = {
+static const TableColumnDef k_other_train_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"trainKey", "trainKey", 120.0f},
@@ -678,10 +678,10 @@ static const TableColumnDef kOtherTrainColumns[] = {
     {"trackKey", "trackKey", 90.0f},
     {"direction", "direction", 80.0f},
 };
-constexpr int kOtherTrainDistanceColumn = 1;
-constexpr int kOtherTrainFilePathColumn = 3;
+constexpr int k_other_train_distance_column = 1;
+constexpr int k_other_train_file_path_column = 3;
 
-static const TableColumnDef kOtherTrainStopColumns[] = {
+static const TableColumnDef k_other_train_stop_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"trainKey", "trainKey", 120.0f},
@@ -691,20 +691,20 @@ static const TableColumnDef kOtherTrainStopColumns[] = {
     {"speed", "speed", 80.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kOtherTrainStopDistanceColumn = 1;
-constexpr int kOtherTrainStopFilePathColumn = IM_ARRAYSIZE(kOtherTrainStopColumns) - 1;
+constexpr int k_other_train_stop_distance_column = 1;
+constexpr int k_other_train_stop_file_path_column = IM_ARRAYSIZE(k_other_train_stop_columns) - 1;
 
-static const TableColumnDef kSoundListColumns[] = {
+static const TableColumnDef k_sound_list_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"soundKey", "soundKey", 120.0f},
     {"filePath", "filePath", 200.0f},
     {"bufferCount", "bufferCount", 90.0f},
 };
-constexpr int kSoundListKeyColumn = 1;
-constexpr int kSoundListFilePathColumn = 2;
-constexpr int kSoundListBufferCountColumn = 3;
+constexpr int k_sound_list_key_column = 1;
+constexpr int k_sound_list_file_path_column = 2;
+constexpr int k_sound_list_buffer_count_column = 3;
 
-static const TableColumnDef kStructurePutColumns[] = {
+static const TableColumnDef k_structure_put_columns[] = {
     {"distance", "distance", 0.0f},
     {"method", "method", 0.0f},
     {"structureKey", "structureKey", 0.0f},
@@ -720,7 +720,7 @@ static const TableColumnDef kStructurePutColumns[] = {
     {"filePath", "filePath", 200.0f},
 };
 
-static const TableColumnDef kStructureBetweenColumns[] = {
+static const TableColumnDef k_structure_between_columns[] = {
     {"distance", "distance", 0.0f},
     {"method", "method", 0.0f},
     {"structureKey", "structureKey", 0.0f},
@@ -729,12 +729,12 @@ static const TableColumnDef kStructureBetweenColumns[] = {
     {"flag", "flag", 0.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kStructureDistanceColumn = 0;
-constexpr int kStructureKeyColumn = 2;
-constexpr int kStructurePutFilePathColumn = IM_ARRAYSIZE(kStructurePutColumns) - 1;
-constexpr int kStructureBetweenFilePathColumn = IM_ARRAYSIZE(kStructureBetweenColumns) - 1;
+constexpr int k_structure_distance_column = 0;
+constexpr int k_structure_key_column = 2;
+constexpr int k_structure_put_file_path_column = IM_ARRAYSIZE(k_structure_put_columns) - 1;
+constexpr int k_structure_between_file_path_column = IM_ARRAYSIZE(k_structure_between_columns) - 1;
 
-static const TableColumnDef kRepeaterColumns[] = {
+static const TableColumnDef k_repeater_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"method", "method", 0.0f},
@@ -752,22 +752,22 @@ static const TableColumnDef kRepeaterColumns[] = {
     {"structureKeys", "structureKeys", 120.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kRepeaterDistanceColumn = 1;
-constexpr int kRepeaterIntervalColumn = 13;
-constexpr int kRepeaterStructureKeysColumn = 14;
-constexpr int kRepeaterFilePathColumn = IM_ARRAYSIZE(kRepeaterColumns) - 1;
+constexpr int k_repeater_distance_column = 1;
+constexpr int k_repeater_interval_column = 13;
+constexpr int k_repeater_structure_keys_column = 14;
+constexpr int k_repeater_file_path_column = IM_ARRAYSIZE(k_repeater_columns) - 1;
 
-static const TableColumnDef kSignalAspectFixedColumns[] = {
+static const TableColumnDef k_signal_aspect_fixed_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"signalAspectKey", "signalAspectKey", 150.0f},
 };
-constexpr int kSignalAspectKeyColumn = 1;
-constexpr int kSignalAspectStructureKeyColumnOffset = IM_ARRAYSIZE(kSignalAspectFixedColumns);
-constexpr size_t kMaxSignalAspectTableColumns = 511;
-constexpr size_t kMaxSignalAspectStructureKeyColumns =
-    kMaxSignalAspectTableColumns - static_cast<size_t>(kSignalAspectStructureKeyColumnOffset);
+constexpr int k_signal_aspect_key_column = 1;
+constexpr int k_signal_aspect_structure_key_column_offset = IM_ARRAYSIZE(k_signal_aspect_fixed_columns);
+constexpr size_t k_max_signal_aspect_table_columns = 511;
+constexpr size_t k_max_signal_aspect_structure_key_columns =
+    k_max_signal_aspect_table_columns - static_cast<size_t>(k_signal_aspect_structure_key_column_offset);
 
-static const TableColumnDef kSignalColumns[] = {
+static const TableColumnDef k_signal_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"section", "section", 70.0f},
@@ -783,11 +783,11 @@ static const TableColumnDef kSignalColumns[] = {
     {"span", "span", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kSignalDistanceColumn = 1;
-constexpr int kSignalSignalAspectKeyColumn = 3;
-constexpr int kSignalFilePathColumn = IM_ARRAYSIZE(kSignalColumns) - 1;
+constexpr int k_signal_distance_column = 1;
+constexpr int k_signal_signal_aspect_key_column = 3;
+constexpr int k_signal_file_path_column = IM_ARRAYSIZE(k_signal_columns) - 1;
 
-static const TableColumnDef kBeaconColumns[] = {
+static const TableColumnDef k_beacon_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"type", "type", 70.0f},
@@ -795,10 +795,10 @@ static const TableColumnDef kBeaconColumns[] = {
     {"sendData", "sendData", 90.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kBeaconDistanceColumn = 1;
-constexpr int kBeaconFilePathColumn = IM_ARRAYSIZE(kBeaconColumns) - 1;
+constexpr int k_beacon_distance_column = 1;
+constexpr int k_beacon_file_path_column = IM_ARRAYSIZE(k_beacon_columns) - 1;
 
-static const TableColumnDef kIrregularityColumns[] = {
+static const TableColumnDef k_irregularity_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"x", "x", 70.0f},
@@ -809,57 +809,57 @@ static const TableColumnDef kIrregularityColumns[] = {
     {"lr", "lr", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kIrregularityDistanceColumn = 1;
-constexpr int kIrregularityFilePathColumn = IM_ARRAYSIZE(kIrregularityColumns) - 1;
+constexpr int k_irregularity_distance_column = 1;
+constexpr int k_irregularity_file_path_column = IM_ARRAYSIZE(k_irregularity_columns) - 1;
 
-static const TableColumnDef kMapSoundColumns[] = {
+static const TableColumnDef k_map_sound_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"soundKey", "soundKey", 120.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kMapSoundDistanceColumn = 1;
-constexpr int kMapSoundKeyColumn = 2;
-constexpr int kMapSoundFilePathColumn = IM_ARRAYSIZE(kMapSoundColumns) - 1;
+constexpr int k_map_sound_distance_column = 1;
+constexpr int k_map_sound_key_column = 2;
+constexpr int k_map_sound_file_path_column = IM_ARRAYSIZE(k_map_sound_columns) - 1;
 
-static const TableColumnDef kRollingNoiseColumns[] = {
+static const TableColumnDef k_rolling_noise_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"index", "index", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kRollingNoiseDistanceColumn = 1;
-constexpr int kRollingNoiseFilePathColumn = IM_ARRAYSIZE(kRollingNoiseColumns) - 1;
+constexpr int k_rolling_noise_distance_column = 1;
+constexpr int k_rolling_noise_file_path_column = IM_ARRAYSIZE(k_rolling_noise_columns) - 1;
 
-static const TableColumnDef kFlangeNoiseColumns[] = {
+static const TableColumnDef k_flange_noise_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"index", "index", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kFlangeNoiseDistanceColumn = 1;
-constexpr int kFlangeNoiseFilePathColumn = IM_ARRAYSIZE(kFlangeNoiseColumns) - 1;
+constexpr int k_flange_noise_distance_column = 1;
+constexpr int k_flange_noise_file_path_column = IM_ARRAYSIZE(k_flange_noise_columns) - 1;
 
-static const TableColumnDef kJointNoiseColumns[] = {
+static const TableColumnDef k_joint_noise_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"index", "index", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kJointNoiseDistanceColumn = 1;
-constexpr int kJointNoiseFilePathColumn = IM_ARRAYSIZE(kJointNoiseColumns) - 1;
+constexpr int k_joint_noise_distance_column = 1;
+constexpr int k_joint_noise_file_path_column = IM_ARRAYSIZE(k_joint_noise_columns) - 1;
 
-static const TableColumnDef kBackgroundColumns[] = {
+static const TableColumnDef k_background_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"structureKey", "structureKey", 120.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kBackgroundDistanceColumn = 1;
-constexpr int kBackgroundStructureKeyColumn = 2;
-constexpr int kBackgroundFilePathColumn = IM_ARRAYSIZE(kBackgroundColumns) - 1;
+constexpr int k_background_distance_column = 1;
+constexpr int k_background_structure_key_column = 2;
+constexpr int k_background_file_path_column = IM_ARRAYSIZE(k_background_columns) - 1;
 
-static const TableColumnDef kAdhesionColumns[] = {
+static const TableColumnDef k_adhesion_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"a", "a", 70.0f},
@@ -867,19 +867,19 @@ static const TableColumnDef kAdhesionColumns[] = {
     {"c", "c", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kAdhesionDistanceColumn = 1;
-constexpr int kAdhesionFilePathColumn = IM_ARRAYSIZE(kAdhesionColumns) - 1;
+constexpr int k_adhesion_distance_column = 1;
+constexpr int k_adhesion_file_path_column = IM_ARRAYSIZE(k_adhesion_columns) - 1;
 
-static const TableColumnDef kCabIlluminanceColumns[] = {
+static const TableColumnDef k_cab_illuminance_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"value", "value", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kCabIlluminanceDistanceColumn = 1;
-constexpr int kCabIlluminanceFilePathColumn = IM_ARRAYSIZE(kCabIlluminanceColumns) - 1;
+constexpr int k_cab_illuminance_distance_column = 1;
+constexpr int k_cab_illuminance_file_path_column = IM_ARRAYSIZE(k_cab_illuminance_columns) - 1;
 
-static const TableColumnDef kFogColumns[] = {
+static const TableColumnDef k_fog_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"density", "density", 80.0f},
@@ -888,19 +888,19 @@ static const TableColumnDef kFogColumns[] = {
     {"blue", "blue", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kFogDistanceColumn = 1;
-constexpr int kFogFilePathColumn = IM_ARRAYSIZE(kFogColumns) - 1;
+constexpr int k_fog_distance_column = 1;
+constexpr int k_fog_file_path_column = IM_ARRAYSIZE(k_fog_columns) - 1;
 
-static const TableColumnDef kDrawDistanceColumns[] = {
+static const TableColumnDef k_draw_distance_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
     {"value", "value", 70.0f},
     {"filePath", "filePath", 200.0f},
 };
-constexpr int kDrawDistanceDistanceColumn = 1;
-constexpr int kDrawDistanceFilePathColumn = IM_ARRAYSIZE(kDrawDistanceColumns) - 1;
+constexpr int k_draw_distance_distance_column = 1;
+constexpr int k_draw_distance_file_path_column = IM_ARRAYSIZE(k_draw_distance_columns) - 1;
 
-static const TableColumnDef kStationPositionColumns[] = {
+static const TableColumnDef k_station_position_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"dist", "dist", 70.0f},
     {"posKey", "key", 80.0f},
@@ -909,7 +909,7 @@ static const TableColumnDef kStationPositionColumns[] = {
     {"margin2", "front", 65.0f},
 };
 
-static const TableColumnDef kStationDefinitionColumns[] = {
+static const TableColumnDef k_station_definition_columns[] = {
     {"stationKey", "stKey", 80.0f},
     {"stationName", "name", 120.0f},
     {"arrivalTime", "arr", 70.0f},
@@ -953,15 +953,15 @@ bool is_scene_table_track_key_valid(const std::string& raw_key,
 }
 
 bool is_invalid_track_key_row(const TableRow& row) {
-    return table_cell(row, kInvalidTrackKeyCell) == "true";
+    return table_cell(row, k_invalid_track_key_cell) == "true";
 }
 
 void clear_invalid_track_key_flags(std::vector<TableRow>& rows) {
-    for (TableRow& row : rows) row.cells.erase(kInvalidTrackKeyCell);
+    for (TableRow& row : rows) row.cells.erase(k_invalid_track_key_cell);
 }
 
 void mark_invalid_track_key_row(TableRow& row) {
-    row.cells[kInvalidTrackKeyCell] = "true";
+    row.cells[k_invalid_track_key_cell] = "true";
 }
 
 void append_scene_track_key_warning(MapModel& model,
@@ -1255,17 +1255,17 @@ static void render_sound_list_table(const char* table_id,
                                     TableFindState& find_state,
                                     const std::string& file_name_header,
                                     const std::string& open_menu_label) {
-    if (ImGui::BeginTable(table_id, IM_ARRAYSIZE(kSoundListColumns),
+    if (ImGui::BeginTable(table_id, IM_ARRAYSIZE(k_sound_list_columns),
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
-        for (int i = 0; i < IM_ARRAYSIZE(kSoundListColumns); ++i) {
-            float width = kSoundListColumns[i].width;
-            if (i == kSoundListFilePathColumn) width = file_path_width;
-            if (i == kSoundListBufferCountColumn) width = buffer_count_width;
-            const char* header = i == kSoundListFilePathColumn
+        for (int i = 0; i < IM_ARRAYSIZE(k_sound_list_columns); ++i) {
+            float width = k_sound_list_columns[i].width;
+            if (i == k_sound_list_file_path_column) width = file_path_width;
+            if (i == k_sound_list_buffer_count_column) width = buffer_count_width;
+            const char* header = i == k_sound_list_file_path_column
                 ? file_name_header.c_str()
-                : kSoundListColumns[i].header;
+                : k_sound_list_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -1289,20 +1289,20 @@ static void render_sound_list_table(const char* table_id,
                     find_state.unused_row_matches[static_cast<size_t>(row_index)] != 0;
                 ImGui::TableNextRow();
                 if (is_unused) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kUnusedStructureModelRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
                 } else if (is_find_match) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
                 }
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.0f);
                     find_state.scroll_row = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kSoundListColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_sound_list_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
                     if (value.empty()) continue;
-                    if (i == kSoundListFilePathColumn) {
+                    if (i == k_sound_list_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            open_menu_label, row.open_path);
                     } else {
@@ -1412,9 +1412,9 @@ void App::ensure_table_cache() {
     cache.font_size = font_size;
     cache.cell_padding_x = cell_padding_x;
 
-    append_station_table_rows(model_.station_list_rows, kStationPositionColumns,
+    append_station_table_rows(model_.station_list_rows, k_station_position_columns,
                               cache.station_position_rows);
-    append_station_table_rows(model_.station_definition_rows, kStationDefinitionColumns,
+    append_station_table_rows(model_.station_definition_rows, k_station_definition_columns,
                               cache.station_definition_rows);
 
     cache.structure_model_rows.reserve(model_.structure_models.size());
@@ -1422,7 +1422,7 @@ void App::ensure_table_cache() {
         const TableRow& row = model_.structure_models[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kStructureModelColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_structure_model_columns));
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[1] = table_cell(row, "structureKey");
         cached.open_path = table_cell(row, "filePath");
@@ -1432,7 +1432,7 @@ void App::ensure_table_cache() {
     }
 
     cache.other_train_distance_width = 0.0f;
-    expand_width_for_text(cache.other_train_distance_width, kOtherTrainColumns[kOtherTrainDistanceColumn].header);
+    expand_width_for_text(cache.other_train_distance_width, k_other_train_columns[k_other_train_distance_column].header);
     std::vector<std::pair<std::string, std::string>> definition_train_keys;
     std::unordered_set<std::string> seen_definition_train_keys;
     cache.other_train_rows.reserve(model_.other_trains.size());
@@ -1440,32 +1440,32 @@ void App::ensure_table_cache() {
         const TableRow& row = model_.other_trains[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kOtherTrainColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_other_train_columns));
         cached.cells[0] = std::to_string(row_index + 1);
-        cached.cells[kOtherTrainDistanceColumn] = table_cell(row, "distance");
+        cached.cells[k_other_train_distance_column] = table_cell(row, "distance");
         cached.cells[2] = table_cell(row, "trainKey");
         std::string normalized_train_key = normalize_track_lookup_key(cached.cells[2]);
         if (seen_definition_train_keys.insert(normalized_train_key).second) {
             definition_train_keys.emplace_back(std::move(normalized_train_key), cached.cells[2]);
         }
-        cached.cells[kOtherTrainFilePathColumn] = table_cell(row, "filePath");
+        cached.cells[k_other_train_file_path_column] = table_cell(row, "filePath");
         cached.cells[4] = table_cell(row, "trackKey");
         cached.cells[5] = table_cell(row, "direction");
         cached.open_path = table_cell(row, "resolvedFilePath");
         cached.tooltip_text = cached.open_path;
         expand_width_for_text(cache.other_train_distance_width,
-                              cached.cells[kOtherTrainDistanceColumn]);
+                              cached.cells[k_other_train_distance_column]);
         expand_width_for_text(cache.other_train_file_path_width,
-                              cached.cells[kOtherTrainFilePathColumn]);
+                              cached.cells[k_other_train_file_path_column]);
         cache.other_train_rows.push_back(std::move(cached));
     }
 
     cache.other_train_stop_distance_width = 0.0f;
     cache.other_train_stop_file_path_width = 0.0f;
     expand_width_for_text(cache.other_train_stop_distance_width,
-                          kOtherTrainStopColumns[kOtherTrainStopDistanceColumn].header);
+                          k_other_train_stop_columns[k_other_train_stop_distance_column].header);
     expand_width_for_text(cache.other_train_stop_file_path_width,
-                          kOtherTrainStopColumns[kOtherTrainStopFilePathColumn].header);
+                          k_other_train_stop_columns[k_other_train_stop_file_path_column].header);
     std::vector<CachedOtherTrainStopGroup> stop_groups;
     std::unordered_map<std::string, size_t> stop_group_index_by_train_key;
     cache.other_train_stop_rows.reserve(model_.other_train_stops.size());
@@ -1473,8 +1473,8 @@ void App::ensure_table_cache() {
         const TableRow& row = model_.other_train_stops[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kOtherTrainStopColumns));
-        cached.cells[kOtherTrainStopDistanceColumn] = table_cell(row, "distance");
+        cached.cells.resize(IM_ARRAYSIZE(k_other_train_stop_columns));
+        cached.cells[k_other_train_stop_distance_column] = table_cell(row, "distance");
         cached.cells[2] = table_cell(row, "trainKey");
         std::string normalized_train_key = normalize_track_lookup_key(cached.cells[2]);
         auto group_it = stop_group_index_by_train_key.find(normalized_train_key);
@@ -1492,12 +1492,12 @@ void App::ensure_table_cache() {
         cached.cells[5] = table_cell(row, "accelerate");
         cached.cells[6] = table_cell(row, "speed");
         cached.open_path = table_cell(row, "filePath");
-        cached.cells[kOtherTrainStopFilePathColumn] = display_name_from_path(cached.open_path);
+        cached.cells[k_other_train_stop_file_path_column] = display_name_from_path(cached.open_path);
         cached.tooltip_text = cached.open_path;
         expand_width_for_text(cache.other_train_stop_distance_width,
-                              cached.cells[kOtherTrainStopDistanceColumn]);
+                              cached.cells[k_other_train_stop_distance_column]);
         expand_width_for_text(cache.other_train_stop_file_path_width,
-                              cached.cells[kOtherTrainStopFilePathColumn]);
+                              cached.cells[k_other_train_stop_file_path_column]);
         cache.other_train_stop_rows.push_back(std::move(cached));
     }
     cache.other_train_stop_groups.reserve(stop_groups.size());
@@ -1518,8 +1518,8 @@ void App::ensure_table_cache() {
 
     cache.sound_list_buffer_count_width = 0.0f;
     cache.sound_3d_list_buffer_count_width = 0.0f;
-    expand_width_for_text(cache.sound_list_buffer_count_width, kSoundListColumns[kSoundListBufferCountColumn].header);
-    expand_width_for_text(cache.sound_3d_list_buffer_count_width, kSoundListColumns[kSoundListBufferCountColumn].header);
+    expand_width_for_text(cache.sound_list_buffer_count_width, k_sound_list_columns[k_sound_list_buffer_count_column].header);
+    expand_width_for_text(cache.sound_3d_list_buffer_count_width, k_sound_list_columns[k_sound_list_buffer_count_column].header);
     cache.sound_list_rows.reserve(model_.sound_list.size());
     cache.sound_3d_list_rows.reserve(model_.sound_list.size());
     auto append_sound_list_row = [&](const TableRow& row,
@@ -1528,7 +1528,7 @@ void App::ensure_table_cache() {
                                      float& buffer_count_width) {
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kSoundListColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_sound_list_columns));
         cached.cells[0] = std::to_string(rows.size() + 1);
         cached.cells[1] = table_cell(row, "soundKey");
         cached.open_path = table_cell(row, "filePath");
@@ -1552,33 +1552,33 @@ void App::ensure_table_cache() {
     }
 
     append_structure_table_rows(model_.structures,
-                                kStructurePutColumns,
-                                kStructurePutFilePathColumn,
+                                k_structure_put_columns,
+                                k_structure_put_file_path_column,
                                 cache.structure_rows,
                                 cache.structure_file_path_width);
     append_structure_table_rows(model_.structures_between,
-                                kStructureBetweenColumns,
-                                kStructureBetweenFilePathColumn,
+                                k_structure_between_columns,
+                                k_structure_between_file_path_column,
                                 cache.structure_between_rows,
                                 cache.structure_between_file_path_width);
 
     cache.repeater_interval_width = 0.0f;
-    expand_width_for_text(cache.repeater_interval_width, kRepeaterColumns[kRepeaterIntervalColumn].header);
+    expand_width_for_text(cache.repeater_interval_width, k_repeater_columns[k_repeater_interval_column].header);
     std::vector<TableRow> repeater_rows = merged_repeater_rows(model_.repeaters);
     cache.repeater_rows.reserve(repeater_rows.size());
     for (const auto& row : repeater_rows) {
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kRepeaterColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_repeater_columns));
         cached.invalid_track_key = is_invalid_track_key_row(row);
         cached.open_path = table_cell(row, "_openFilePath");
         cached.tooltip_text = table_cell(row, "_filePathTooltip");
         if (cached.tooltip_text.empty()) cached.tooltip_text = cached.open_path;
-        for (int i = 0; i < IM_ARRAYSIZE(kRepeaterColumns); ++i) {
-            cached.cells[i] = table_cell(row, kRepeaterColumns[i].key);
+        for (int i = 0; i < IM_ARRAYSIZE(k_repeater_columns); ++i) {
+            cached.cells[i] = table_cell(row, k_repeater_columns[i].key);
         }
-        expand_width_for_text(cache.repeater_distance_width, cached.cells[kRepeaterDistanceColumn]);
-        expand_width_for_text(cache.repeater_file_path_width, cached.cells[kRepeaterFilePathColumn]);
+        expand_width_for_text(cache.repeater_distance_width, cached.cells[k_repeater_distance_column]);
+        expand_width_for_text(cache.repeater_file_path_width, cached.cells[k_repeater_file_path_column]);
         cache.repeater_rows.push_back(std::move(cached));
     }
 
@@ -1589,210 +1589,210 @@ void App::ensure_table_cache() {
             std::max(cache.signal_aspect_structure_key_columns, structure_key_count);
     }
     cache.signal_aspect_structure_key_columns =
-        std::min(cache.signal_aspect_structure_key_columns, kMaxSignalAspectStructureKeyColumns);
+        std::min(cache.signal_aspect_structure_key_columns, k_max_signal_aspect_structure_key_columns);
     cache.signal_aspect_structure_key_widths.assign(cache.signal_aspect_structure_key_columns, 120.0f);
     cache.signal_aspect_rows.reserve(model_.signal_aspects.size());
     for (size_t row_index = 0; row_index < model_.signal_aspects.size(); ++row_index) {
         const TableRow& row = model_.signal_aspects[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(kSignalAspectStructureKeyColumnOffset + cache.signal_aspect_structure_key_columns);
+        cached.cells.resize(k_signal_aspect_structure_key_column_offset + cache.signal_aspect_structure_key_columns);
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[1] = table_cell(row, "signalAspectKey");
         for (size_t key_index = 0; key_index < cache.signal_aspect_structure_key_columns; ++key_index) {
             std::string column_key = "structureKey" + std::to_string(key_index + 1);
             std::string value = table_cell(row, column_key);
-            cached.cells[kSignalAspectStructureKeyColumnOffset + key_index] = value;
+            cached.cells[k_signal_aspect_structure_key_column_offset + key_index] = value;
             expand_width_for_text(cache.signal_aspect_structure_key_widths[key_index], value);
         }
         cache.signal_aspect_rows.push_back(std::move(cached));
     }
 
     cache.signal_distance_width = 0.0f;
-    expand_width_for_text(cache.signal_distance_width, kSignalColumns[kSignalDistanceColumn].header);
+    expand_width_for_text(cache.signal_distance_width, k_signal_columns[k_signal_distance_column].header);
     cache.signal_rows.reserve(model_.signals.size());
     for (size_t row_index = 0; row_index < model_.signals.size(); ++row_index) {
         const TableRow& row = model_.signals[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kSignalColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_signal_columns));
         cached.open_path = table_cell(row, "filePath");
         cached.tooltip_text = cached.open_path;
-        for (int i = 0; i < IM_ARRAYSIZE(kSignalColumns); ++i) {
-            if (i == kSignalFilePathColumn) {
+        for (int i = 0; i < IM_ARRAYSIZE(k_signal_columns); ++i) {
+            if (i == k_signal_file_path_column) {
                 cached.cells[i] = display_name_from_path(cached.open_path);
                 expand_width_for_text(cache.signal_file_path_width, cached.cells[i]);
             } else {
-                cached.cells[i] = table_cell(row, kSignalColumns[i].key);
+                cached.cells[i] = table_cell(row, k_signal_columns[i].key);
             }
         }
         cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.signal_distance_width, cached.cells[kSignalDistanceColumn]);
+        expand_width_for_text(cache.signal_distance_width, cached.cells[k_signal_distance_column]);
         cache.signal_rows.push_back(std::move(cached));
     }
 
     cache.beacon_distance_width = 0.0f;
-    expand_width_for_text(cache.beacon_distance_width, kBeaconColumns[kBeaconDistanceColumn].header);
+    expand_width_for_text(cache.beacon_distance_width, k_beacon_columns[k_beacon_distance_column].header);
     cache.beacon_rows.reserve(model_.beacons.size());
     for (size_t row_index = 0; row_index < model_.beacons.size(); ++row_index) {
         const TableRow& row = model_.beacons[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kBeaconColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_beacon_columns));
         cached.open_path = table_cell(row, "filePath");
         cached.tooltip_text = cached.open_path;
-        for (int i = 0; i < IM_ARRAYSIZE(kBeaconColumns); ++i) {
-            if (i == kBeaconFilePathColumn) {
+        for (int i = 0; i < IM_ARRAYSIZE(k_beacon_columns); ++i) {
+            if (i == k_beacon_file_path_column) {
                 cached.cells[i] = display_name_from_path(cached.open_path);
                 expand_width_for_text(cache.beacon_file_path_width, cached.cells[i]);
             } else {
-                cached.cells[i] = table_cell(row, kBeaconColumns[i].key);
+                cached.cells[i] = table_cell(row, k_beacon_columns[i].key);
             }
         }
         cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.beacon_distance_width, cached.cells[kBeaconDistanceColumn]);
+        expand_width_for_text(cache.beacon_distance_width, cached.cells[k_beacon_distance_column]);
         cache.beacon_rows.push_back(std::move(cached));
     }
 
     cache.irregularity_distance_width = 0.0f;
-    expand_width_for_text(cache.irregularity_distance_width, kIrregularityColumns[kIrregularityDistanceColumn].header);
+    expand_width_for_text(cache.irregularity_distance_width, k_irregularity_columns[k_irregularity_distance_column].header);
     cache.irregularity_rows.reserve(model_.irregularities.size());
     for (size_t row_index = 0; row_index < model_.irregularities.size(); ++row_index) {
         const TableRow& row = model_.irregularities[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kIrregularityColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_irregularity_columns));
         cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(kIrregularityColumns); ++i) {
-            if (i == kIrregularityFilePathColumn) {
+        for (int i = 0; i < IM_ARRAYSIZE(k_irregularity_columns); ++i) {
+            if (i == k_irregularity_file_path_column) {
                 cached.cells[i] = display_name_from_path(cached.open_path);
                 expand_width_for_text(cache.irregularity_file_path_width, cached.cells[i]);
             } else {
-                cached.cells[i] = table_cell(row, kIrregularityColumns[i].key);
+                cached.cells[i] = table_cell(row, k_irregularity_columns[i].key);
             }
         }
         cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.irregularity_distance_width, cached.cells[kIrregularityDistanceColumn]);
+        expand_width_for_text(cache.irregularity_distance_width, cached.cells[k_irregularity_distance_column]);
         cache.irregularity_rows.push_back(std::move(cached));
     }
 
-    append_change_point_rows(model_.rolling_noises, kRollingNoiseColumns,
-                             kRollingNoiseDistanceColumn, kRollingNoiseFilePathColumn,
+    append_change_point_rows(model_.rolling_noises, k_rolling_noise_columns,
+                             k_rolling_noise_distance_column, k_rolling_noise_file_path_column,
                              cache.rolling_noise_rows,
                              cache.rolling_noise_distance_width,
                              cache.rolling_noise_file_path_width);
-    append_change_point_rows(model_.flange_noises, kFlangeNoiseColumns,
-                             kFlangeNoiseDistanceColumn, kFlangeNoiseFilePathColumn,
+    append_change_point_rows(model_.flange_noises, k_flange_noise_columns,
+                             k_flange_noise_distance_column, k_flange_noise_file_path_column,
                              cache.flange_noise_rows,
                              cache.flange_noise_distance_width,
                              cache.flange_noise_file_path_width);
-    append_change_point_rows(model_.joint_noises, kJointNoiseColumns,
-                             kJointNoiseDistanceColumn, kJointNoiseFilePathColumn,
+    append_change_point_rows(model_.joint_noises, k_joint_noise_columns,
+                             k_joint_noise_distance_column, k_joint_noise_file_path_column,
                              cache.joint_noise_rows,
                              cache.joint_noise_distance_width,
                              cache.joint_noise_file_path_width);
 
-    append_change_point_rows(model_.map_sounds, kMapSoundColumns,
-                             kMapSoundDistanceColumn, kMapSoundFilePathColumn,
+    append_change_point_rows(model_.map_sounds, k_map_sound_columns,
+                             k_map_sound_distance_column, k_map_sound_file_path_column,
                              cache.map_sound_rows,
                              cache.map_sound_distance_width,
                              cache.map_sound_file_path_width);
-    append_change_point_rows(model_.map_sound_3d, kMapSoundColumns,
-                             kMapSoundDistanceColumn, kMapSoundFilePathColumn,
+    append_change_point_rows(model_.map_sound_3d, k_map_sound_columns,
+                             k_map_sound_distance_column, k_map_sound_file_path_column,
                              cache.map_sound_3d_rows,
                              cache.map_sound_3d_distance_width,
                              cache.map_sound_3d_file_path_width);
-    append_change_point_rows(model_.draw_distances, kDrawDistanceColumns,
-                             kDrawDistanceDistanceColumn, kDrawDistanceFilePathColumn,
+    append_change_point_rows(model_.draw_distances, k_draw_distance_columns,
+                             k_draw_distance_distance_column, k_draw_distance_file_path_column,
                              cache.draw_distance_rows,
                              cache.draw_distance_distance_width,
                              cache.draw_distance_file_path_width);
 
     cache.background_distance_width = 0.0f;
-    expand_width_for_text(cache.background_distance_width, kBackgroundColumns[kBackgroundDistanceColumn].header);
+    expand_width_for_text(cache.background_distance_width, k_background_columns[k_background_distance_column].header);
     cache.background_rows.reserve(model_.backgrounds.size());
     for (size_t row_index = 0; row_index < model_.backgrounds.size(); ++row_index) {
         const TableRow& row = model_.backgrounds[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kBackgroundColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_background_columns));
         cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(kBackgroundColumns); ++i) {
-            if (i == kBackgroundFilePathColumn) {
+        for (int i = 0; i < IM_ARRAYSIZE(k_background_columns); ++i) {
+            if (i == k_background_file_path_column) {
                 cached.cells[i] = display_name_from_path(cached.open_path);
                 expand_width_for_text(cache.background_file_path_width, cached.cells[i]);
             } else {
-                cached.cells[i] = table_cell(row, kBackgroundColumns[i].key);
+                cached.cells[i] = table_cell(row, k_background_columns[i].key);
             }
         }
         cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.background_distance_width, cached.cells[kBackgroundDistanceColumn]);
+        expand_width_for_text(cache.background_distance_width, cached.cells[k_background_distance_column]);
         cache.background_rows.push_back(std::move(cached));
     }
 
     cache.adhesion_distance_width = 0.0f;
-    expand_width_for_text(cache.adhesion_distance_width, kAdhesionColumns[kAdhesionDistanceColumn].header);
+    expand_width_for_text(cache.adhesion_distance_width, k_adhesion_columns[k_adhesion_distance_column].header);
     cache.adhesion_rows.reserve(model_.adhesions.size());
     for (size_t row_index = 0; row_index < model_.adhesions.size(); ++row_index) {
         const TableRow& row = model_.adhesions[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kAdhesionColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_adhesion_columns));
         cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(kAdhesionColumns); ++i) {
-            if (i == kAdhesionFilePathColumn) {
+        for (int i = 0; i < IM_ARRAYSIZE(k_adhesion_columns); ++i) {
+            if (i == k_adhesion_file_path_column) {
                 cached.cells[i] = display_name_from_path(cached.open_path);
                 expand_width_for_text(cache.adhesion_file_path_width, cached.cells[i]);
             } else {
-                cached.cells[i] = table_cell(row, kAdhesionColumns[i].key);
+                cached.cells[i] = table_cell(row, k_adhesion_columns[i].key);
             }
         }
         cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.adhesion_distance_width, cached.cells[kAdhesionDistanceColumn]);
+        expand_width_for_text(cache.adhesion_distance_width, cached.cells[k_adhesion_distance_column]);
         cache.adhesion_rows.push_back(std::move(cached));
     }
 
     cache.cab_illuminance_distance_width = 0.0f;
-    expand_width_for_text(cache.cab_illuminance_distance_width, kCabIlluminanceColumns[kCabIlluminanceDistanceColumn].header);
+    expand_width_for_text(cache.cab_illuminance_distance_width, k_cab_illuminance_columns[k_cab_illuminance_distance_column].header);
     cache.cab_illuminance_rows.reserve(model_.cab_illuminance.size());
     for (size_t row_index = 0; row_index < model_.cab_illuminance.size(); ++row_index) {
         const TableRow& row = model_.cab_illuminance[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kCabIlluminanceColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_cab_illuminance_columns));
         cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(kCabIlluminanceColumns); ++i) {
-            if (i == kCabIlluminanceFilePathColumn) {
+        for (int i = 0; i < IM_ARRAYSIZE(k_cab_illuminance_columns); ++i) {
+            if (i == k_cab_illuminance_file_path_column) {
                 cached.cells[i] = display_name_from_path(cached.open_path);
                 expand_width_for_text(cache.cab_illuminance_file_path_width, cached.cells[i]);
             } else {
-                cached.cells[i] = table_cell(row, kCabIlluminanceColumns[i].key);
+                cached.cells[i] = table_cell(row, k_cab_illuminance_columns[i].key);
             }
         }
         cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.cab_illuminance_distance_width, cached.cells[kCabIlluminanceDistanceColumn]);
+        expand_width_for_text(cache.cab_illuminance_distance_width, cached.cells[k_cab_illuminance_distance_column]);
         cache.cab_illuminance_rows.push_back(std::move(cached));
     }
 
     cache.fog_distance_width = 0.0f;
-    expand_width_for_text(cache.fog_distance_width, kFogColumns[kFogDistanceColumn].header);
+    expand_width_for_text(cache.fog_distance_width, k_fog_columns[k_fog_distance_column].header);
     cache.fog_rows.reserve(model_.fogs.size());
     for (size_t row_index = 0; row_index < model_.fogs.size(); ++row_index) {
         const TableRow& row = model_.fogs[row_index];
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kFogColumns));
+        cached.cells.resize(IM_ARRAYSIZE(k_fog_columns));
         cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(kFogColumns); ++i) {
-            if (i == kFogFilePathColumn) {
+        for (int i = 0; i < IM_ARRAYSIZE(k_fog_columns); ++i) {
+            if (i == k_fog_file_path_column) {
                 cached.cells[i] = display_name_from_path(cached.open_path);
                 expand_width_for_text(cache.fog_file_path_width, cached.cells[i]);
             } else {
-                cached.cells[i] = table_cell(row, kFogColumns[i].key);
+                cached.cells[i] = table_cell(row, k_fog_columns[i].key);
             }
         }
         cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.fog_distance_width, cached.cells[kFogDistanceColumn]);
+        expand_width_for_text(cache.fog_distance_width, cached.cells[k_fog_distance_column]);
         cache.fog_rows.push_back(std::move(cached));
     }
 
@@ -1807,8 +1807,8 @@ void App::run_structure_model_find() {
     ensure_table_cache();
     run_table_find(structure_model_find_,
                    table_cache_.structure_model_rows,
-                   {static_cast<size_t>(kStructureModelKeyColumn),
-                    static_cast<size_t>(kStructureModelFilePathColumn)});
+                   {static_cast<size_t>(k_structure_model_key_column),
+                    static_cast<size_t>(k_structure_model_file_path_column)});
 }
 
 void App::run_unused_structure_model_search() {
@@ -1818,31 +1818,31 @@ void App::run_unused_structure_model_search() {
     run_unused_key_search(
         structure_model_find_,
         table_cache_.structure_model_rows,
-        static_cast<size_t>(kStructureModelKeyColumn),
+        static_cast<size_t>(k_structure_model_key_column),
         [this](auto& note_structure_key) {
             auto note_structure_rows = [&](const std::vector<CachedTableRow>& rows) {
                 for (const CachedTableRow& row : rows) {
-                    if (row.cells.size() > static_cast<size_t>(kStructureKeyColumn)) {
-                        note_structure_key(row.cells[static_cast<size_t>(kStructureKeyColumn)]);
+                    if (row.cells.size() > static_cast<size_t>(k_structure_key_column)) {
+                        note_structure_key(row.cells[static_cast<size_t>(k_structure_key_column)]);
                     }
                 }
             };
             note_structure_rows(table_cache_.structure_rows);
             note_structure_rows(table_cache_.structure_between_rows);
             for (const CachedTableRow& row : table_cache_.repeater_rows) {
-                if (row.cells.size() <= static_cast<size_t>(kRepeaterStructureKeysColumn)) continue;
+                if (row.cells.size() <= static_cast<size_t>(k_repeater_structure_keys_column)) continue;
                 for (const std::string& key :
-                     split_structure_key_list(row.cells[static_cast<size_t>(kRepeaterStructureKeysColumn)])) {
+                     split_structure_key_list(row.cells[static_cast<size_t>(k_repeater_structure_keys_column)])) {
                     note_structure_key(key);
                 }
             }
             for (const CachedTableRow& row : table_cache_.background_rows) {
-                if (row.cells.size() > static_cast<size_t>(kBackgroundStructureKeyColumn)) {
-                    note_structure_key(row.cells[static_cast<size_t>(kBackgroundStructureKeyColumn)]);
+                if (row.cells.size() > static_cast<size_t>(k_background_structure_key_column)) {
+                    note_structure_key(row.cells[static_cast<size_t>(k_background_structure_key_column)]);
                 }
             }
             for (const CachedTableRow& row : table_cache_.signal_aspect_rows) {
-                for (size_t i = kSignalAspectStructureKeyColumnOffset; i < row.cells.size(); ++i) {
+                for (size_t i = k_signal_aspect_structure_key_column_offset; i < row.cells.size(); ++i) {
                     note_structure_key(row.cells[i]);
                 }
             }
@@ -1890,7 +1890,7 @@ void App::run_signal_aspect_find() {
     ensure_table_cache();
     run_table_find(signal_aspect_find_,
                    table_cache_.signal_aspect_rows,
-                   {static_cast<size_t>(kSignalAspectKeyColumn)});
+                   {static_cast<size_t>(k_signal_aspect_key_column)});
 }
 
 void App::run_unused_signal_aspect_search() {
@@ -1900,11 +1900,11 @@ void App::run_unused_signal_aspect_search() {
     run_unused_key_search(
         signal_aspect_find_,
         table_cache_.signal_aspect_rows,
-        static_cast<size_t>(kSignalAspectKeyColumn),
+        static_cast<size_t>(k_signal_aspect_key_column),
         [this](auto& note_signal_aspect_key) {
             for (const CachedTableRow& row : table_cache_.signal_rows) {
-                if (row.cells.size() > static_cast<size_t>(kSignalSignalAspectKeyColumn)) {
-                    note_signal_aspect_key(row.cells[static_cast<size_t>(kSignalSignalAspectKeyColumn)]);
+                if (row.cells.size() > static_cast<size_t>(k_signal_signal_aspect_key_column)) {
+                    note_signal_aspect_key(row.cells[static_cast<size_t>(k_signal_signal_aspect_key_column)]);
                 }
             }
         },
@@ -1955,8 +1955,8 @@ void App::run_sound_file_find(bool is_3d) {
 
     run_table_find(state,
                    rows,
-                   {static_cast<size_t>(kSoundListKeyColumn),
-                    static_cast<size_t>(kSoundListFilePathColumn)});
+                   {static_cast<size_t>(k_sound_list_key_column),
+                    static_cast<size_t>(k_sound_list_file_path_column)});
 }
 
 void App::run_unused_sound_file_search(bool is_3d) {
@@ -1976,11 +1976,11 @@ void App::run_unused_sound_file_search(bool is_3d) {
     run_unused_key_search(
         state,
         file_rows,
-        static_cast<size_t>(kSoundListKeyColumn),
+        static_cast<size_t>(k_sound_list_key_column),
         [&](auto& note_sound_key) {
             for (const CachedTableRow& row : usage_rows) {
-                if (row.cells.size() > static_cast<size_t>(kMapSoundKeyColumn)) {
-                    note_sound_key(row.cells[static_cast<size_t>(kMapSoundKeyColumn)]);
+                if (row.cells.size() > static_cast<size_t>(k_map_sound_key_column)) {
+                    note_sound_key(row.cells[static_cast<size_t>(k_map_sound_key_column)]);
                 }
             }
             if (is_3d) {
@@ -2129,9 +2129,9 @@ void App::render_station_list_window() {
                 const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
                 if (allow_station_put_properties && row_is_pending_delete(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingDeleteRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
                 } else if (allow_station_put_properties && row_has_pending_edit(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingEditRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
                 }
                 ImGui::PushID(row_index);
                 for (int i = 0; i < column_count; ++i) {
@@ -2159,13 +2159,13 @@ void App::render_station_list_window() {
     };
 
     ImGui::TextUnformatted(tr("frame.station_positions").c_str());
-    render_station_table("station_positions", kStationPositionColumns,
-                         IM_ARRAYSIZE(kStationPositionColumns),
+    render_station_table("station_positions", k_station_position_columns,
+                         IM_ARRAYSIZE(k_station_position_columns),
                          table_cache_.station_position_rows, true);
     ImGui::Separator();
     ImGui::TextUnformatted(tr("frame.station_definitions").c_str());
-    render_station_table("station_definitions", kStationDefinitionColumns,
-                         IM_ARRAYSIZE(kStationDefinitionColumns),
+    render_station_table("station_definitions", k_station_definition_columns,
+                         IM_ARRAYSIZE(k_station_definition_columns),
                          table_cache_.station_definition_rows, false);
     ImGui::End();
 }
@@ -2187,10 +2187,10 @@ void App::render_structure_rows_window(bool put_between) {
     sync_marker_visibility_sizes();
     ensure_table_cache();
 
-    const TableColumnDef* columns = put_between ? kStructureBetweenColumns : kStructurePutColumns;
+    const TableColumnDef* columns = put_between ? k_structure_between_columns : k_structure_put_columns;
     const int column_count =
-        put_between ? IM_ARRAYSIZE(kStructureBetweenColumns) : IM_ARRAYSIZE(kStructurePutColumns);
-    const int file_path_column = put_between ? kStructureBetweenFilePathColumn : kStructurePutFilePathColumn;
+        put_between ? IM_ARRAYSIZE(k_structure_between_columns) : IM_ARRAYSIZE(k_structure_put_columns);
+    const int file_path_column = put_between ? k_structure_between_file_path_column : k_structure_put_file_path_column;
     const std::vector<CachedTableRow>& rows =
         put_between ? table_cache_.structure_between_rows : table_cache_.structure_rows;
     const float file_path_width =
@@ -2230,7 +2230,7 @@ void App::render_structure_rows_window(bool put_between) {
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
-        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, k_show_column_width);
         for (int i = 0; i < column_count; ++i) {
             float width = columns[i].width;
             if (i == file_path_column) width = file_path_width;
@@ -2254,11 +2254,11 @@ void App::render_structure_rows_window(bool put_between) {
                 const size_t marker_index = source_row_base + static_cast<size_t>(row_index);
                 ImGui::TableNextRow();
                 if (row_is_pending_delete(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingDeleteRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
                 } else if (row_has_pending_edit(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingEditRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
                 } else if (row.invalid_track_key) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kInvalidTrackKeyRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_invalid_track_key_row_color);
                 } else if (structure_list_highlight_row_ >= 0 &&
                            marker_index == static_cast<size_t>(structure_list_highlight_row_)) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
@@ -2279,7 +2279,7 @@ void App::render_structure_rows_window(bool put_between) {
                 for (int i = 0; i < column_count; ++i) {
                     ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kStructureDistanceColumn) {
+                    if (i == k_structure_distance_column) {
                         bool can_locate = marker_index < structure_marker_cache_.size() &&
                             structure_marker_cache_[marker_index].has_value();
                         const bool can_locate_scene = can_locate_scene_preview;
@@ -2304,7 +2304,7 @@ void App::render_structure_rows_window(bool put_between) {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kStructureKeyColumn) {
+                    if (i == k_structure_key_column) {
                         ImGui::PushID("structure_key");
                         if (render_text_cell_with_context(value, tr("menu.find_in_structure_models"), !blank_ascii(value))) {
                             find_structure_model_for_structure_key(value);
@@ -2360,12 +2360,12 @@ void App::render_structure_models_window() {
         [this](int delta) { step_structure_model_find(delta); },
         [this]() { return structure_model_find_status_text(); });
 
-    if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(kStructureModelColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+    if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(k_structure_model_columns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
-            float width = kStructureModelColumns[i].width;
-            if (i == kStructureModelFilePathColumn) width = table_cache_.structure_model_file_path_width;
-            const char* header = i == kStructureModelFilePathColumn ? file_name_header.c_str() : kStructureModelColumns[i].header;
+        for (int i = 0; i < IM_ARRAYSIZE(k_structure_model_columns); ++i) {
+            float width = k_structure_model_columns[i].width;
+            if (i == k_structure_model_file_path_column) width = table_cache_.structure_model_file_path_width;
+            const char* header = i == k_structure_model_file_path_column ? file_name_header.c_str() : k_structure_model_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -2394,23 +2394,23 @@ void App::render_structure_models_window() {
                     : ImGui::GetColorU32(ImGuiCol_Text);
                 ImGui::TableNextRow();
                 if (row_is_pending_delete(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingDeleteRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
                 } else if (row_has_pending_edit(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingEditRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
                 } else if (is_unused_model) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kUnusedStructureModelRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
                 } else if (is_find_match) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
                 }
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.0f);
                     structure_model_find_.scroll_row = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kStructureModelColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_structure_model_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kStructureModelKeyColumn) {
+                    if (i == k_structure_model_key_column) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         ImVec2 text_size = ImGui::CalcTextSize(value.c_str());
                         ImVec2 item_size(
@@ -2446,7 +2446,7 @@ void App::render_structure_models_window() {
                         }
                     } else if (value.empty()) {
                         continue;
-                    } else if (i == kStructureModelFilePathColumn) {
+                    } else if (i == k_structure_model_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"), row.open_path, row_text_color);
                     } else {
                         if (is_preview_model) ImGui::PushStyleColor(ImGuiCol_Text, preview_text_color);
@@ -2492,16 +2492,16 @@ void App::render_other_trains_window() {
     }
     const int definition_row_count = static_cast<int>(table_cache_.other_train_rows.size());
     ImVec2 definition_table_size(0.0f, scroll_x_table_height_for_rows(definition_row_count));
-    if (ImGui::BeginTable("other_trains", IM_ARRAYSIZE(kOtherTrainColumns) + 1,
+    if (ImGui::BeginTable("other_trains", IM_ARRAYSIZE(k_other_train_columns) + 1,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX,
                           definition_table_size)) {
-        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
-        for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainColumns); ++i) {
-            float width = kOtherTrainColumns[i].width;
-            if (i == kOtherTrainDistanceColumn) width = table_cache_.other_train_distance_width;
-            if (i == kOtherTrainFilePathColumn) width = table_cache_.other_train_file_path_width;
-            ImGui::TableSetupColumn(kOtherTrainColumns[i].header,
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, k_show_column_width);
+        for (int i = 0; i < IM_ARRAYSIZE(k_other_train_columns); ++i) {
+            float width = k_other_train_columns[i].width;
+            if (i == k_other_train_distance_column) width = table_cache_.other_train_distance_width;
+            if (i == k_other_train_file_path_column) width = table_cache_.other_train_file_path_width;
+            ImGui::TableSetupColumn(k_other_train_columns[i].header,
                                     width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
                                     width);
         }
@@ -2521,11 +2521,11 @@ void App::render_other_trains_window() {
                     static_cast<size_t>(row_index) < other_train_path_visible_.size()) {
                     other_train_path_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
                 }
-                for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_other_train_columns); ++i) {
                     ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
                     if (value.empty()) continue;
-                    if (i == kOtherTrainFilePathColumn) {
+                    if (i == k_other_train_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"),
                                                            row.tooltip_text);
@@ -2564,17 +2564,17 @@ void App::render_other_trains_window() {
             }
 
             std::string table_id = "other_train_stops_" + std::to_string(group_index);
-            if (!ImGui::BeginTable(table_id.c_str(), IM_ARRAYSIZE(kOtherTrainStopColumns),
+            if (!ImGui::BeginTable(table_id.c_str(), IM_ARRAYSIZE(k_other_train_stop_columns),
                                    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                    ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX,
                                    table_size)) {
                 continue;
             }
-            for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainStopColumns); ++i) {
-                float width = kOtherTrainStopColumns[i].width;
-                if (i == kOtherTrainStopDistanceColumn) width = table_cache_.other_train_stop_distance_width;
-                if (i == kOtherTrainStopFilePathColumn) width = table_cache_.other_train_stop_file_path_width;
-                ImGui::TableSetupColumn(kOtherTrainStopColumns[i].header,
+            for (int i = 0; i < IM_ARRAYSIZE(k_other_train_stop_columns); ++i) {
+                float width = k_other_train_stop_columns[i].width;
+                if (i == k_other_train_stop_distance_column) width = table_cache_.other_train_stop_distance_width;
+                if (i == k_other_train_stop_file_path_column) width = table_cache_.other_train_stop_file_path_width;
+                ImGui::TableSetupColumn(k_other_train_stop_columns[i].header,
                                         width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0,
                                         width);
             }
@@ -2593,17 +2593,17 @@ void App::render_other_trains_window() {
                     ImGui::TableNextRow();
                     if (other_train_stop_list_highlight_row_ >= 0 &&
                         stop_row_index == static_cast<size_t>(other_train_stop_list_highlight_row_)) {
-                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
                     }
                     if (group_row_index == scroll_target_group_row) {
                         ImGui::SetScrollHereY(0.5f);
                         other_train_stop_list_scroll_row_ = -1;
                     }
                     ImGui::PushID(static_cast<int>(stop_row_index));
-                    for (int i = 0; i < IM_ARRAYSIZE(kOtherTrainStopColumns); ++i) {
+                    for (int i = 0; i < IM_ARRAYSIZE(k_other_train_stop_columns); ++i) {
                         ImGui::TableSetColumnIndex(i);
                         const std::string& value = row.cells[static_cast<size_t>(i)];
-                        if (i == kOtherTrainStopDistanceColumn) {
+                        if (i == k_other_train_stop_distance_column) {
                             const size_t marker_index = stop_row_index;
                             const bool can_locate = marker_index < other_train_stop_marker_cache_.size() &&
                                 other_train_stop_marker_cache_[marker_index].has_value();
@@ -2618,7 +2618,7 @@ void App::render_other_trains_window() {
                             continue;
                         }
                         if (value.empty()) continue;
-                        if (i == kOtherTrainStopFilePathColumn) {
+                        if (i == k_other_train_stop_file_path_column) {
                             render_file_path_cell_with_context(value, row.open_path,
                                                                tr("menu.open_in_explorer"),
                                                                row.tooltip_text);
@@ -2722,14 +2722,14 @@ void App::render_repeaters_window() {
     }
     ImGui::EndDisabled();
     ensure_table_cache();
-    if (ImGui::BeginTable("repeaters", IM_ARRAYSIZE(kRepeaterColumns) + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
-        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
-        for (int i = 0; i < IM_ARRAYSIZE(kRepeaterColumns); ++i) {
-            float width = kRepeaterColumns[i].width;
-            if (i == kRepeaterDistanceColumn) width = table_cache_.repeater_distance_width;
-            if (i == kRepeaterIntervalColumn) width = table_cache_.repeater_interval_width;
-            if (i == kRepeaterFilePathColumn) width = table_cache_.repeater_file_path_width;
-            ImGui::TableSetupColumn(kRepeaterColumns[i].header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+    if (ImGui::BeginTable("repeaters", IM_ARRAYSIZE(k_repeater_columns) + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, k_show_column_width);
+        for (int i = 0; i < IM_ARRAYSIZE(k_repeater_columns); ++i) {
+            float width = k_repeater_columns[i].width;
+            if (i == k_repeater_distance_column) width = table_cache_.repeater_distance_width;
+            if (i == k_repeater_interval_column) width = table_cache_.repeater_interval_width;
+            if (i == k_repeater_file_path_column) width = table_cache_.repeater_file_path_width;
+            ImGui::TableSetupColumn(k_repeater_columns[i].header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
@@ -2749,7 +2749,7 @@ void App::render_repeaters_window() {
                 const CachedTableRow& row = table_cache_.repeater_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
                 if (row.invalid_track_key) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kInvalidTrackKeyRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_invalid_track_key_row_color);
                 } else if (row_index == repeater_list_highlight_row_) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
                 }
@@ -2765,10 +2765,10 @@ void App::render_repeaters_window() {
                     static_cast<size_t>(row_index) < repeater_row_visible_.size()) {
                     repeater_row_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
                 }
-                for (int i = 0; i < IM_ARRAYSIZE(kRepeaterColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_repeater_columns); ++i) {
                     ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kRepeaterDistanceColumn) {
+                    if (i == k_repeater_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < repeater_marker_cache_.size() &&
                             repeater_marker_cache_[marker_index].begin_marker.has_value();
@@ -2795,14 +2795,14 @@ void App::render_repeaters_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kRepeaterStructureKeysColumn) {
+                    if (i == k_repeater_structure_keys_column) {
                         ImGui::PushID("structure_keys");
                         std::vector<std::string> structure_keys = split_structure_key_list(value);
                         std::string selected_key = render_text_cell_with_submenu(
                             value, tr("menu.find_in_structure_models"), structure_keys);
                         if (!selected_key.empty()) find_structure_model_for_structure_key(selected_key);
                         ImGui::PopID();
-                    } else if (i == kRepeaterFilePathColumn) {
+                    } else if (i == k_repeater_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.tooltip_text);
                     } else {
@@ -2851,16 +2851,16 @@ void App::render_signal_aspects_window() {
         [this](int delta) { step_signal_aspect_find(delta); },
         [this]() { return signal_aspect_find_status_text(); });
 
-    const int column_count = static_cast<int>(kSignalAspectStructureKeyColumnOffset +
+    const int column_count = static_cast<int>(k_signal_aspect_structure_key_column_offset +
         table_cache_.signal_aspect_structure_key_columns);
     if (ImGui::BeginTable("signal_aspects", column_count,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
-        for (int i = 0; i < IM_ARRAYSIZE(kSignalAspectFixedColumns); ++i) {
-            ImGui::TableSetupColumn(kSignalAspectFixedColumns[i].header,
+        for (int i = 0; i < IM_ARRAYSIZE(k_signal_aspect_fixed_columns); ++i) {
+            ImGui::TableSetupColumn(k_signal_aspect_fixed_columns[i].header,
                                     ImGuiTableColumnFlags_WidthFixed,
-                                    kSignalAspectFixedColumns[i].width);
+                                    k_signal_aspect_fixed_columns[i].width);
         }
         std::vector<std::string> structure_headers;
         structure_headers.reserve(table_cache_.signal_aspect_structure_key_columns);
@@ -2893,9 +2893,9 @@ void App::render_signal_aspects_window() {
                     signal_aspect_find_.unused_row_matches[static_cast<size_t>(row_index)] != 0;
                 ImGui::TableNextRow();
                 if (is_unused) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kUnusedStructureModelRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
                 } else if (is_find_match) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kFindMatchRowColor);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
                 }
                 if (row_index == scroll_target_row) {
                     ImGui::SetScrollHereY(0.0f);
@@ -2905,7 +2905,7 @@ void App::render_signal_aspects_window() {
                 for (int i = 0; i < column_count; ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i >= kSignalAspectStructureKeyColumnOffset) {
+                    if (i >= k_signal_aspect_structure_key_column_offset) {
                         ImGui::PushID(i);
                         if (render_text_cell_with_context(value, tr("menu.find_in_structure_models"),
                                                           !blank_ascii(value))) {
@@ -2943,19 +2943,19 @@ void App::render_signals_window() {
     }
     ImGui::EndDisabled();
     ensure_table_cache();
-    if (ImGui::BeginTable("signals", IM_ARRAYSIZE(kSignalColumns) + 1,
+    if (ImGui::BeginTable("signals", IM_ARRAYSIZE(k_signal_columns) + 1,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, kShowColumnWidth);
-        for (int i = 0; i < IM_ARRAYSIZE(kSignalColumns); ++i) {
-            float width = kSignalColumns[i].width;
-            if (i == kSignalDistanceColumn) width = table_cache_.signal_distance_width;
-            if (i == kSignalFilePathColumn) width = table_cache_.signal_file_path_width;
-            const char* header = i == kSignalFilePathColumn
+        ImGui::TableSetupColumn(tr("column.show").c_str(), ImGuiTableColumnFlags_WidthFixed, k_show_column_width);
+        for (int i = 0; i < IM_ARRAYSIZE(k_signal_columns); ++i) {
+            float width = k_signal_columns[i].width;
+            if (i == k_signal_distance_column) width = table_cache_.signal_distance_width;
+            if (i == k_signal_file_path_column) width = table_cache_.signal_file_path_width;
+            const char* header = i == k_signal_file_path_column
                 ? file_name_header.c_str()
-                : kSignalColumns[i].header;
+                : k_signal_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -2989,10 +2989,10 @@ void App::render_signals_window() {
                     static_cast<size_t>(row_index) < signal_row_visible_.size()) {
                     signal_row_visible_[static_cast<size_t>(row_index)] = row_visible ? 1 : 0;
                 }
-                for (int i = 0; i < IM_ARRAYSIZE(kSignalColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_signal_columns); ++i) {
                     ImGui::TableSetColumnIndex(i + 1);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kSignalDistanceColumn) {
+                    if (i == k_signal_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < signal_marker_cache_.size() &&
                             signal_marker_cache_[marker_index].has_value();
@@ -3002,14 +3002,14 @@ void App::render_signals_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kSignalSignalAspectKeyColumn) {
+                    if (i == k_signal_signal_aspect_key_column) {
                         ImGui::PushID("signal_aspect_key");
                         if (render_text_cell_with_context(value, tr("menu.find_in_signal_aspects"),
                                                           !blank_ascii(value))) {
                             find_signal_aspect_for_signal_aspect_key(value);
                         }
                         ImGui::PopID();
-                    } else if (i == kSignalFilePathColumn) {
+                    } else if (i == k_signal_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.tooltip_text);
                     } else {
@@ -3042,18 +3042,18 @@ void App::render_beacons_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("beacons", IM_ARRAYSIZE(kBeaconColumns),
+    if (ImGui::BeginTable("beacons", IM_ARRAYSIZE(k_beacon_columns),
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(kBeaconColumns); ++i) {
-            float width = kBeaconColumns[i].width;
-            if (i == kBeaconDistanceColumn) width = table_cache_.beacon_distance_width;
-            if (i == kBeaconFilePathColumn) width = table_cache_.beacon_file_path_width;
-            const char* header = i == kBeaconFilePathColumn
+        for (int i = 0; i < IM_ARRAYSIZE(k_beacon_columns); ++i) {
+            float width = k_beacon_columns[i].width;
+            if (i == k_beacon_distance_column) width = table_cache_.beacon_distance_width;
+            if (i == k_beacon_file_path_column) width = table_cache_.beacon_file_path_width;
+            const char* header = i == k_beacon_file_path_column
                 ? file_name_header.c_str()
-                : kBeaconColumns[i].header;
+                : k_beacon_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -3080,10 +3080,10 @@ void App::render_beacons_window() {
                     beacon_list_scroll_row_ = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kBeaconColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_beacon_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kBeaconDistanceColumn) {
+                    if (i == k_beacon_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < beacon_marker_cache_.size() &&
                             beacon_marker_cache_[marker_index].has_value();
@@ -3093,7 +3093,7 @@ void App::render_beacons_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kBeaconFilePathColumn) {
+                    if (i == k_beacon_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.tooltip_text);
                     } else {
@@ -3126,18 +3126,18 @@ void App::render_irregularities_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("irregularities", IM_ARRAYSIZE(kIrregularityColumns),
+    if (ImGui::BeginTable("irregularities", IM_ARRAYSIZE(k_irregularity_columns),
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(kIrregularityColumns); ++i) {
-            float width = kIrregularityColumns[i].width;
-            if (i == kIrregularityDistanceColumn) width = table_cache_.irregularity_distance_width;
-            if (i == kIrregularityFilePathColumn) width = table_cache_.irregularity_file_path_width;
-            const char* header = i == kIrregularityFilePathColumn
+        for (int i = 0; i < IM_ARRAYSIZE(k_irregularity_columns); ++i) {
+            float width = k_irregularity_columns[i].width;
+            if (i == k_irregularity_distance_column) width = table_cache_.irregularity_distance_width;
+            if (i == k_irregularity_file_path_column) width = table_cache_.irregularity_file_path_width;
+            const char* header = i == k_irregularity_file_path_column
                 ? file_name_header.c_str()
-                : kIrregularityColumns[i].header;
+                : k_irregularity_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -3164,10 +3164,10 @@ void App::render_irregularities_window() {
                     irregularity_list_scroll_row_ = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kIrregularityColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_irregularity_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kIrregularityDistanceColumn) {
+                    if (i == k_irregularity_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < irregularity_marker_cache_.size() &&
                             irregularity_marker_cache_[marker_index].has_value();
@@ -3177,7 +3177,7 @@ void App::render_irregularities_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kIrregularityFilePathColumn) {
+                    if (i == k_irregularity_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.open_path);
                     } else {
@@ -3211,8 +3211,8 @@ void App::render_rolling_noises_window() {
     }
     ensure_table_cache();
     render_change_point_table(
-        "rolling_noises", kRollingNoiseColumns,
-        kRollingNoiseDistanceColumn, kRollingNoiseFilePathColumn,
+        "rolling_noises", k_rolling_noise_columns,
+        k_rolling_noise_distance_column, k_rolling_noise_file_path_column,
         table_cache_.rolling_noise_rows,
         table_cache_.rolling_noise_distance_width,
         table_cache_.rolling_noise_file_path_width,
@@ -3249,8 +3249,8 @@ void App::render_map_sounds_window() {
     }
     ensure_table_cache();
     render_map_sound_event_table(
-        "map_sounds", kMapSoundColumns,
-        kMapSoundDistanceColumn, kMapSoundKeyColumn, kMapSoundFilePathColumn,
+        "map_sounds", k_map_sound_columns,
+        k_map_sound_distance_column, k_map_sound_key_column, k_map_sound_file_path_column,
         table_cache_.map_sound_rows,
         table_cache_.map_sound_distance_width,
         table_cache_.map_sound_file_path_width,
@@ -3289,8 +3289,8 @@ void App::render_map_sound_3d_window() {
     }
     ensure_table_cache();
     render_map_sound_event_table(
-        "map_sound_3d", kMapSoundColumns,
-        kMapSoundDistanceColumn, kMapSoundKeyColumn, kMapSoundFilePathColumn,
+        "map_sound_3d", k_map_sound_columns,
+        k_map_sound_distance_column, k_map_sound_key_column, k_map_sound_file_path_column,
         table_cache_.map_sound_3d_rows,
         table_cache_.map_sound_3d_distance_width,
         table_cache_.map_sound_3d_file_path_width,
@@ -3329,8 +3329,8 @@ void App::render_flange_noises_window() {
     }
     ensure_table_cache();
     render_change_point_table(
-        "flange_noises", kFlangeNoiseColumns,
-        kFlangeNoiseDistanceColumn, kFlangeNoiseFilePathColumn,
+        "flange_noises", k_flange_noise_columns,
+        k_flange_noise_distance_column, k_flange_noise_file_path_column,
         table_cache_.flange_noise_rows,
         table_cache_.flange_noise_distance_width,
         table_cache_.flange_noise_file_path_width,
@@ -3367,8 +3367,8 @@ void App::render_joint_noises_window() {
     }
     ensure_table_cache();
     render_change_point_table(
-        "joint_noises", kJointNoiseColumns,
-        kJointNoiseDistanceColumn, kJointNoiseFilePathColumn,
+        "joint_noises", k_joint_noise_columns,
+        k_joint_noise_distance_column, k_joint_noise_file_path_column,
         table_cache_.joint_noise_rows,
         table_cache_.joint_noise_distance_width,
         table_cache_.joint_noise_file_path_width,
@@ -3404,18 +3404,18 @@ void App::render_backgrounds_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("backgrounds", IM_ARRAYSIZE(kBackgroundColumns),
+    if (ImGui::BeginTable("backgrounds", IM_ARRAYSIZE(k_background_columns),
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(kBackgroundColumns); ++i) {
-            float width = kBackgroundColumns[i].width;
-            if (i == kBackgroundDistanceColumn) width = table_cache_.background_distance_width;
-            if (i == kBackgroundFilePathColumn) width = table_cache_.background_file_path_width;
-            const char* header = i == kBackgroundFilePathColumn
+        for (int i = 0; i < IM_ARRAYSIZE(k_background_columns); ++i) {
+            float width = k_background_columns[i].width;
+            if (i == k_background_distance_column) width = table_cache_.background_distance_width;
+            if (i == k_background_file_path_column) width = table_cache_.background_file_path_width;
+            const char* header = i == k_background_file_path_column
                 ? file_name_header.c_str()
-                : kBackgroundColumns[i].header;
+                : k_background_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -3442,10 +3442,10 @@ void App::render_backgrounds_window() {
                     background_list_scroll_row_ = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kBackgroundColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_background_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kBackgroundDistanceColumn) {
+                    if (i == k_background_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < background_marker_cache_.size() &&
                             background_marker_cache_[marker_index].has_value();
@@ -3455,13 +3455,13 @@ void App::render_backgrounds_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kBackgroundStructureKeyColumn) {
+                    if (i == k_background_structure_key_column) {
                         ImGui::PushID("background_structure_key");
                         if (render_text_cell_with_context(value, tr("menu.find_in_structure_models"), !blank_ascii(value))) {
                             find_structure_model_for_structure_key(value);
                         }
                         ImGui::PopID();
-                    } else if (i == kBackgroundFilePathColumn) {
+                    } else if (i == k_background_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.open_path);
                     } else {
@@ -3494,18 +3494,18 @@ void App::render_adhesions_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("adhesions", IM_ARRAYSIZE(kAdhesionColumns),
+    if (ImGui::BeginTable("adhesions", IM_ARRAYSIZE(k_adhesion_columns),
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(kAdhesionColumns); ++i) {
-            float width = kAdhesionColumns[i].width;
-            if (i == kAdhesionDistanceColumn) width = table_cache_.adhesion_distance_width;
-            if (i == kAdhesionFilePathColumn) width = table_cache_.adhesion_file_path_width;
-            const char* header = i == kAdhesionFilePathColumn
+        for (int i = 0; i < IM_ARRAYSIZE(k_adhesion_columns); ++i) {
+            float width = k_adhesion_columns[i].width;
+            if (i == k_adhesion_distance_column) width = table_cache_.adhesion_distance_width;
+            if (i == k_adhesion_file_path_column) width = table_cache_.adhesion_file_path_width;
+            const char* header = i == k_adhesion_file_path_column
                 ? file_name_header.c_str()
-                : kAdhesionColumns[i].header;
+                : k_adhesion_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -3532,10 +3532,10 @@ void App::render_adhesions_window() {
                     adhesion_list_scroll_row_ = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kAdhesionColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_adhesion_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kAdhesionDistanceColumn) {
+                    if (i == k_adhesion_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < adhesion_marker_cache_.size() &&
                             adhesion_marker_cache_[marker_index].has_value();
@@ -3545,7 +3545,7 @@ void App::render_adhesions_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kAdhesionFilePathColumn) {
+                    if (i == k_adhesion_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.open_path);
                     } else {
@@ -3578,18 +3578,18 @@ void App::render_cab_illuminance_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("cab_illuminance", IM_ARRAYSIZE(kCabIlluminanceColumns),
+    if (ImGui::BeginTable("cab_illuminance", IM_ARRAYSIZE(k_cab_illuminance_columns),
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(kCabIlluminanceColumns); ++i) {
-            float width = kCabIlluminanceColumns[i].width;
-            if (i == kCabIlluminanceDistanceColumn) width = table_cache_.cab_illuminance_distance_width;
-            if (i == kCabIlluminanceFilePathColumn) width = table_cache_.cab_illuminance_file_path_width;
-            const char* header = i == kCabIlluminanceFilePathColumn
+        for (int i = 0; i < IM_ARRAYSIZE(k_cab_illuminance_columns); ++i) {
+            float width = k_cab_illuminance_columns[i].width;
+            if (i == k_cab_illuminance_distance_column) width = table_cache_.cab_illuminance_distance_width;
+            if (i == k_cab_illuminance_file_path_column) width = table_cache_.cab_illuminance_file_path_width;
+            const char* header = i == k_cab_illuminance_file_path_column
                 ? file_name_header.c_str()
-                : kCabIlluminanceColumns[i].header;
+                : k_cab_illuminance_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -3616,10 +3616,10 @@ void App::render_cab_illuminance_window() {
                     cab_illuminance_list_scroll_row_ = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kCabIlluminanceColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_cab_illuminance_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kCabIlluminanceDistanceColumn) {
+                    if (i == k_cab_illuminance_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < cab_illuminance_marker_cache_.size() &&
                             cab_illuminance_marker_cache_[marker_index].has_value();
@@ -3629,7 +3629,7 @@ void App::render_cab_illuminance_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kCabIlluminanceFilePathColumn) {
+                    if (i == k_cab_illuminance_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.open_path);
                     } else {
@@ -3662,18 +3662,18 @@ void App::render_fogs_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("fogs", IM_ARRAYSIZE(kFogColumns),
+    if (ImGui::BeginTable("fogs", IM_ARRAYSIZE(k_fog_columns),
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                           ImGuiTableFlags_ScrollY)) {
         std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(kFogColumns); ++i) {
-            float width = kFogColumns[i].width;
-            if (i == kFogDistanceColumn) width = table_cache_.fog_distance_width;
-            if (i == kFogFilePathColumn) width = table_cache_.fog_file_path_width;
-            const char* header = i == kFogFilePathColumn
+        for (int i = 0; i < IM_ARRAYSIZE(k_fog_columns); ++i) {
+            float width = k_fog_columns[i].width;
+            if (i == k_fog_distance_column) width = table_cache_.fog_distance_width;
+            if (i == k_fog_file_path_column) width = table_cache_.fog_file_path_width;
+            const char* header = i == k_fog_file_path_column
                 ? file_name_header.c_str()
-                : kFogColumns[i].header;
+                : k_fog_columns[i].header;
             ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
         }
         setup_fixed_table_header();
@@ -3700,10 +3700,10 @@ void App::render_fogs_window() {
                     fog_list_scroll_row_ = -1;
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kFogColumns); ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(k_fog_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == kFogDistanceColumn) {
+                    if (i == k_fog_distance_column) {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < fog_marker_cache_.size() &&
                             fog_marker_cache_[marker_index].has_value();
@@ -3713,7 +3713,7 @@ void App::render_fogs_window() {
                         continue;
                     }
                     if (value.empty()) continue;
-                    if (i == kFogFilePathColumn) {
+                    if (i == k_fog_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,
                                                            tr("menu.open_in_explorer"), row.open_path);
                     } else {
@@ -3747,8 +3747,8 @@ void App::render_draw_distances_window() {
     }
     ensure_table_cache();
     render_change_point_table(
-        "draw_distances", kDrawDistanceColumns,
-        kDrawDistanceDistanceColumn, kDrawDistanceFilePathColumn,
+        "draw_distances", k_draw_distance_columns,
+        k_draw_distance_distance_column, k_draw_distance_file_path_column,
         table_cache_.draw_distance_rows,
         table_cache_.draw_distance_distance_width,
         table_cache_.draw_distance_file_path_width,

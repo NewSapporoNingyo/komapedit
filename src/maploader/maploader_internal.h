@@ -62,8 +62,8 @@ constexpr unsigned int CP_UTF8 = 65001;
 
 using SteadyClock = std::chrono::steady_clock;
 
-constexpr double kInf = std::numeric_limits<double>::infinity();
-constexpr double kPi = 3.141592653589793238462643383279502884;
+constexpr double k_inf = std::numeric_limits<double>::infinity();
+constexpr double k_pi = 3.141592653589793238462643383279502884;
 struct LoadTiming {
     double read_decode_seconds = 0.0;
     double parse_seconds = 0.0;
@@ -201,8 +201,8 @@ std::string strip_ini_comment_copy(const std::string& line);
 std::string trim_matching_quotes(std::string text);
 int parse_sound_buffer_count(const std::string& text);
 
-constexpr size_t kNoSourceRef = std::numeric_limits<size_t>::max();
-inline constexpr const char* kRootIncludeInvocationKey = "root";
+constexpr size_t k_no_source_ref = std::numeric_limits<size_t>::max();
+inline constexpr const char* k_root_include_invocation_key = "root";
 struct SourceFileRecord {
     std::string file_path;
     std::string source_key;
@@ -214,15 +214,15 @@ struct SourceFileRecord {
 };
 
 struct FileStructureRecord {
-    size_t parent_index = kNoSourceRef;
+    size_t parent_index = k_no_source_ref;
     std::string include_path;
     std::string absolute_path;
 };
 
 struct SourceSpan {
-    size_t source_file_index = kNoSourceRef;
-    size_t include_stack_index = kNoSourceRef;
-    size_t include_invocation_index = kNoSourceRef;
+    size_t source_file_index = k_no_source_ref;
+    size_t include_stack_index = k_no_source_ref;
+    size_t include_invocation_index = k_no_source_ref;
     size_t byte_start = 0;
     size_t byte_end = 0;
     int line = 1;
@@ -254,11 +254,11 @@ struct MapElementRef {
 };
 
 struct EditSourceRef {
-    size_t statement_index = kNoSourceRef;
+    size_t statement_index = k_no_source_ref;
     int element_index = 0;
 
     bool valid() const {
-        return statement_index != kNoSourceRef;
+        return statement_index != k_no_source_ref;
     }
 };
 
@@ -674,7 +674,7 @@ struct MapContext {
     std::string current_file_path;
     std::vector<std::string> include_stack;
     std::string current_include_invocation_key;
-    size_t current_include_invocation_index = kNoSourceRef;
+    size_t current_include_invocation_index = k_no_source_ref;
     SourceTextOverrides source_overrides;
     double unit_distance = 25.0;
     double distance = 0.0;
@@ -765,7 +765,7 @@ struct MapContext {
     std::unordered_map<std::string, std::string> disk_source_hashes_for_stable_ids;
     mutable std::unordered_map<std::string, std::string> element_edit_id_cache;
     std::vector<ParsedStatement> parsed_statements;
-    size_t active_statement_index = kNoSourceRef;
+    size_t active_statement_index = k_no_source_ref;
     int active_statement_next_element_index = 0;
     std::string edit_validation_fingerprint;
     bool edit_validation_current = false;
@@ -833,7 +833,7 @@ void attach_active_edit_ref(MapContext& ctx, Row& row) {
 
 struct ActiveStatementScope {
     MapContext& ctx;
-    size_t old_index = kNoSourceRef;
+    size_t old_index = k_no_source_ref;
     int old_next_element = 0;
 
     ActiveStatementScope(MapContext& context, size_t statement_index)
@@ -963,13 +963,13 @@ inline bool is_repeater_edit_field(const std::string& field) {
 }
 
 inline size_t repeater_structure_key_index(const std::string& field) {
-    constexpr size_t kPrefixSize = 14;
-    if (field.size() <= kPrefixSize ||
-        field.compare(0, kPrefixSize, "structureKeys.") != 0) {
+    constexpr size_t k_prefix_size = 14;
+    if (field.size() <= k_prefix_size ||
+        field.compare(0, k_prefix_size, "structureKeys.") != 0) {
         throw std::runtime_error("invalid Repeater structure key field: " + field);
     }
     size_t result = 0;
-    for (size_t pos = kPrefixSize; pos < field.size(); ++pos) {
+    for (size_t pos = k_prefix_size; pos < field.size(); ++pos) {
         const unsigned char ch = static_cast<unsigned char>(field[pos]);
         if (!std::isdigit(ch) ||
             result > (std::numeric_limits<size_t>::max() - 9) / 10) {

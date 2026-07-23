@@ -26,7 +26,7 @@ SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
 }
 
 struct EditableTarget {
-    size_t statement_index = kNoSourceRef;
+    size_t statement_index = k_no_source_ref;
     std::string row_kind;
     size_t row_index = 0;
     int element_index = 0;
@@ -892,7 +892,7 @@ const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
                                                        const std::string& edit_id) {
     if (edit_id.empty()) throw std::runtime_error("editId is empty");
     EditableTarget target = find_editable_target(ctx, edit_id);
-    if (target.statement_index == kNoSourceRef ||
+    if (target.statement_index == k_no_source_ref ||
         target.statement_index >= ctx.parsed_statements.size()) {
         throw std::runtime_error("unsupported or unknown editId: " + edit_id);
     }
@@ -997,7 +997,7 @@ bool same_statement_context(const MapContext& ctx,
 
 struct DistanceSectionAnalysis {
     std::vector<size_t> anchors;
-    size_t origin_position = kNoSourceRef;
+    size_t origin_position = k_no_source_ref;
     size_t first_position = 0;
     size_t last_position = 0;
     std::string direction = "ambiguous";
@@ -1093,7 +1093,7 @@ DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
         if (source.byte_start < origin.source.byte_start) result.origin_position = pos;
         else break;
     }
-    if (result.origin_position == kNoSourceRef) {
+    if (result.origin_position == k_no_source_ref) {
         index.sections_by_statement.emplace(statement_index, result);
         return result;
     }
@@ -1169,8 +1169,8 @@ DistanceSectionAnalysis analyze_distance_section(const MapContext& ctx,
 }
 
 struct DistanceBoundaryPlan {
-    size_t before_anchor_position = kNoSourceRef;
-    size_t after_anchor_position = kNoSourceRef;
+    size_t before_anchor_position = k_no_source_ref;
+    size_t after_anchor_position = k_no_source_ref;
     size_t insert_offset = std::string::npos;
     std::string token;
     int line = 0;
@@ -1179,8 +1179,8 @@ struct DistanceBoundaryPlan {
     bool terminal_context_boundary = false;
 
     bool valid() const {
-        return before_anchor_position != kNoSourceRef &&
-               (after_anchor_position != kNoSourceRef || terminal_context_boundary) &&
+        return before_anchor_position != k_no_source_ref &&
+               (after_anchor_position != k_no_source_ref || terminal_context_boundary) &&
                insert_offset != std::string::npos;
     }
 };
@@ -1243,7 +1243,7 @@ DistanceBoundaryPlan terminal_boundary_for_last_anchor(
     boundary.terminal_context_boundary = true;
     boundary.variable_environment = before.variable_environment;
 
-    size_t terminal_statement_index = kNoSourceRef;
+    size_t terminal_statement_index = k_no_source_ref;
     for (size_t statement_index : index.statements_for(ctx, before.source)) {
         const ParsedStatement& statement = ctx.parsed_statements[statement_index];
         if (statement.source.byte_start > before.source.byte_end &&
@@ -1251,7 +1251,7 @@ DistanceBoundaryPlan terminal_boundary_for_last_anchor(
             terminal_statement_index = statement_index;
         }
     }
-    if (terminal_statement_index != kNoSourceRef) {
+    if (terminal_statement_index != k_no_source_ref) {
         const ParsedStatement& terminal = ctx.parsed_statements[terminal_statement_index];
         auto range = source_range_in_text(patch, terminal.source);
         size_t line_start = offset_from_line_column(patch.text, terminal.source.line, 1);
@@ -1407,7 +1407,7 @@ struct PreparedEdit {
     const MapEditChange* change = nullptr;
     size_t input_ordinal = 0;
     EditableTarget target;
-    size_t source_file_index = kNoSourceRef;
+    size_t source_file_index = k_no_source_ref;
     std::pair<size_t, size_t> source_range{};
     std::pair<size_t, size_t> removal_range{};
     std::string source_indent;
@@ -1421,7 +1421,7 @@ struct PreparedEdit {
 
 struct DistanceEditGroup {
     std::string key;
-    size_t source_file_index = kNoSourceRef;
+    size_t source_file_index = k_no_source_ref;
     double target_distance = 0.0;
     DistanceSectionAnalysis section;
     std::vector<size_t> member_indices;
@@ -2645,7 +2645,7 @@ bool resolve_distance_group(MapContext& ctx,
         return false;
     }
 
-    size_t destination_before_position = kNoSourceRef;
+    size_t destination_before_position = k_no_source_ref;
     bool create_distance_block = false;
     if (numeric_positions.size() == 1) {
         destination_before_position = numeric_positions.front();
@@ -2751,14 +2751,14 @@ bool physical_include_instances_are_compatible(
             DistanceSectionAnalysis section =
                 analyze_distance_section(ctx, statement_index, distance_index);
             if (!section.resolved) return false;
-            size_t before_position = kNoSourceRef;
+            size_t before_position = k_no_source_ref;
             bool create_block = false;
             if (user_selected_boundary) {
                 for (size_t pos = 0; pos + 1 < section.anchors.size(); ++pos) {
                     const ParsedStatement& after =
                         ctx.parsed_statements[section.anchors[pos + 1]];
                     if (after.source.byte_start != primary_after_byte) continue;
-                    if (before_position != kNoSourceRef) return false;
+                    if (before_position != k_no_source_ref) return false;
                     before_position = pos;
                 }
                 create_block = resolved.create_distance_block;
@@ -2783,7 +2783,7 @@ bool physical_include_instances_are_compatible(
                             ? before < group.target_distance && group.target_distance < after
                             : before > group.target_distance && group.target_distance > after;
                         if (!bracketed) continue;
-                        if (before_position != kNoSourceRef) return false;
+                        if (before_position != k_no_source_ref) return false;
                         before_position = pos;
                     }
                     create_block = true;
@@ -2791,7 +2791,7 @@ bool physical_include_instances_are_compatible(
                     return false;
                 }
             }
-            if (before_position == kNoSourceRef) return false;
+            if (before_position == k_no_source_ref) return false;
             DistanceBoundaryPlan boundary = boundary_after_anchor(
                 ctx, patch, section, before_position);
             if (!boundary.valid() && !create_block &&
@@ -2882,7 +2882,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         }
         std::string operation = ascii_lower(change.operation.empty() ? "update" : change.operation);
         EditableTarget target = find_editable_target(ctx, change.edit_id);
-        if (target.statement_index == kNoSourceRef ||
+        if (target.statement_index == k_no_source_ref ||
             target.statement_index >= ctx.parsed_statements.size()) {
             report.blocking_errors.push_back("unsupported or unknown editId: " + change.edit_id);
             continue;
