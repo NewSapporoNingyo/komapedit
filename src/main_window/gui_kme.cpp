@@ -1127,6 +1127,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
     pending_scene_map_draw_distance_enabled_ = scene_map_draw_distance_enabled_;
     scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
+    pending_scene_camera_speed_percent_ = scene_camera_speed_percent_;
+    scene_camera_speed_percent_before_dialog_ = scene_camera_speed_percent_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -4416,6 +4418,7 @@ View3DSettings App::current_view_3d_settings() const {
     view.scene_map_draw_distance_enabled = scene_map_draw_distance_enabled_;
     view.scene_draw_distance_m = scene_draw_distance_m_;
     view.scene_edit_component_size_percent = scene_edit_component_size_percent_;
+    view.scene_camera_speed_percent = scene_camera_speed_percent_;
     return view;
 }
 
@@ -4427,10 +4430,14 @@ void App::apply_view_3d_settings(const View3DSettings& settings) {
     scene_draw_distance_m_ = clamp_scene_draw_distance(settings.scene_draw_distance_m);
     scene_edit_component_size_percent_ =
         clamp_scene_edit_component_size_percent(settings.scene_edit_component_size_percent);
+    scene_camera_speed_percent_ = std::clamp(settings.scene_camera_speed_percent,
+                                              kMinSceneCameraSpeedPercent,
+                                              kMaxSceneCameraSpeedPercent);
     apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
     apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
     apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
     apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
+    apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);
 }
 
 void App::apply_scene_draw_distance_to_canvas(int distance_m) {
@@ -4453,6 +4460,10 @@ void App::apply_scene_fog_effect_to_canvas(bool enabled) {
 
 void App::apply_scene_map_draw_distance_to_canvas(bool enabled) {
     if (scene_preview_canvas_) scene_preview_canvas_->set_scene_map_draw_distance_enabled(enabled);
+}
+
+void App::apply_scene_camera_speed_to_canvas(int percent) {
+    if (scene_preview_canvas_) scene_preview_canvas_->set_scene_camera_speed_percent(percent);
 }
 
 void App::save_runtime_settings_if_changed() {
@@ -5434,6 +5445,20 @@ void App::render_popups() {
                     edit_component_size_steps * kSceneEditComponentSizeStepPercent);
             apply_scene_edit_component_size_to_canvas(pending_scene_edit_component_size_percent_);
         }
+        int camera_speed_steps =
+            pending_scene_camera_speed_percent_ / kSceneCameraSpeedStepPercent;
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::SliderInt(
+                tr("label.scene_camera_speed").c_str(),
+                &camera_speed_steps,
+                kMinSceneCameraSpeedPercent / kSceneCameraSpeedStepPercent,
+                kMaxSceneCameraSpeedPercent / kSceneCameraSpeedStepPercent,
+                "%d0%%",
+                ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
+            pending_scene_camera_speed_percent_ =
+                camera_speed_steps * kSceneCameraSpeedStepPercent;
+            apply_scene_camera_speed_to_canvas(pending_scene_camera_speed_percent_);
+        }
         if (ImGui::Button(tr("button.ok").c_str())) {
             scene_draw_distance_m_ = clamp_scene_draw_distance(pending_scene_draw_distance_m_);
             pending_scene_draw_distance_m_ = scene_draw_distance_m_;
@@ -5442,12 +5467,15 @@ void App::render_popups() {
                 pending_scene_edit_component_size_percent_);
             pending_scene_edit_component_size_percent_ = scene_edit_component_size_percent_;
             scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
+            scene_camera_speed_percent_ = pending_scene_camera_speed_percent_;
+            scene_camera_speed_percent_before_dialog_ = scene_camera_speed_percent_;
             scene_fog_enabled_ = pending_scene_fog_enabled_;
             scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
             scene_map_draw_distance_enabled_ = pending_scene_map_draw_distance_enabled_;
             scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
             apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+            apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);
             apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
             apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
             sync_runtime_settings_before_save();
@@ -5459,11 +5487,13 @@ void App::render_popups() {
             pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
             pending_scene_edit_component_size_percent_ =
                 scene_edit_component_size_before_dialog_percent_;
+            pending_scene_camera_speed_percent_ = scene_camera_speed_percent_before_dialog_;
             pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
             pending_scene_map_draw_distance_enabled_ =
                 scene_map_draw_distance_enabled_before_dialog_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
             apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+            apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);
             apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
             apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
             ImGui::CloseCurrentPopup();
@@ -5474,11 +5504,13 @@ void App::render_popups() {
         pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
         pending_scene_edit_component_size_percent_ =
             scene_edit_component_size_before_dialog_percent_;
+        pending_scene_camera_speed_percent_ = scene_camera_speed_percent_before_dialog_;
         pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
         pending_scene_map_draw_distance_enabled_ =
             scene_map_draw_distance_enabled_before_dialog_;
         apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
         apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+        apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);
         apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
         apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
     }

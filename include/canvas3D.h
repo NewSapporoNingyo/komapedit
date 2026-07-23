@@ -351,6 +351,7 @@ public:
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
     void set_scene_fog_enabled(bool enabled);
     void set_scene_map_draw_distance_enabled(bool enabled);
+    void set_scene_camera_speed_percent(int percent);
     Canvas3DSceneInteractionMode scene_interaction_mode() const;
     Canvas3DSceneStats scene_stats() const;
     void process_scene_loading();

@@ -417,6 +417,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "scene_edit_component_size_percent="
         << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
         << "\n";
+    out << "scene_camera_speed_percent=" << settings.view_3d.scene_camera_speed_percent << "\n";
     return true;
 }
 
@@ -701,6 +702,16 @@ UserSettings load_user_settings() {
                 settings.view_3d.scene_edit_component_size_percent =
                     kDefaultSceneEditComponentSizePercent;
             }
+        } else if (key == "scene_camera_speed_percent") {
+            view_3d_keys_seen.insert("scene_camera_speed_percent");
+            try {
+                settings.view_3d.scene_camera_speed_percent =
+                    std::clamp(static_cast<int>(std::stod(value)),
+                               kMinSceneCameraSpeedPercent,
+                               kMaxSceneCameraSpeedPercent);
+            } catch (...) {
+                settings.view_3d.scene_camera_speed_percent = kDefaultSceneCameraSpeedPercent;
+            }
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
@@ -713,7 +724,10 @@ UserSettings load_user_settings() {
     settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m);
     settings.view_3d.scene_edit_component_size_percent =
         clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent);
-    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 5 ||
+    settings.view_3d.scene_camera_speed_percent =
+        std::clamp(settings.view_3d.scene_camera_speed_percent,
+                   kMinSceneCameraSpeedPercent, kMaxSceneCameraSpeedPercent);
+    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 6 ||
         view_2d_keys_seen.count("show_draw_distance_markers") == 0 ||
         view_3d_keys_seen.count("scene_map_draw_distance_enabled") == 0) {
         save_user_settings(settings);

@@ -71,6 +71,10 @@ inline constexpr int kDefaultSceneEditComponentSizePercent = 100;
 inline constexpr int kMinSceneEditComponentSizePercent = 50;
 inline constexpr int kMaxSceneEditComponentSizePercent = 500;
 inline constexpr int kSceneEditComponentSizeStepPercent = 10;
+inline constexpr int kDefaultSceneCameraSpeedPercent = 100;
+inline constexpr int kMinSceneCameraSpeedPercent = 50;
+inline constexpr int kMaxSceneCameraSpeedPercent = 400;
+inline constexpr int kSceneCameraSpeedStepPercent = 10;
 inline constexpr double kSceneWindowBackDistanceM = 100.0;
 inline constexpr bool kDefaultSceneFogEnabled = true;
 inline constexpr bool kDefaultSceneMapDrawDistanceEnabled = true;
@@ -886,6 +890,7 @@ struct View3DSettings {
     bool scene_map_draw_distance_enabled = kDefaultSceneMapDrawDistanceEnabled;
     int scene_draw_distance_m = kDefaultSceneDrawDistanceM;
     int scene_edit_component_size_percent = kDefaultSceneEditComponentSizePercent;
+    int scene_camera_speed_percent = kDefaultSceneCameraSpeedPercent;
 
     bool operator==(const View3DSettings& other) const {
         return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
@@ -893,7 +898,8 @@ struct View3DSettings {
             scene_fog_enabled == other.scene_fog_enabled &&
             scene_map_draw_distance_enabled == other.scene_map_draw_distance_enabled &&
             scene_draw_distance_m == other.scene_draw_distance_m &&
-            scene_edit_component_size_percent == other.scene_edit_component_size_percent;
+            scene_edit_component_size_percent == other.scene_edit_component_size_percent &&
+            scene_camera_speed_percent == other.scene_camera_speed_percent;
     }
 
     bool operator!=(const View3DSettings& other) const {
@@ -1160,6 +1166,9 @@ private:
     bool scene_map_draw_distance_enabled_ = kDefaultSceneMapDrawDistanceEnabled;
     bool pending_scene_map_draw_distance_enabled_ = kDefaultSceneMapDrawDistanceEnabled;
     bool scene_map_draw_distance_enabled_before_dialog_ = kDefaultSceneMapDrawDistanceEnabled;
+    int scene_camera_speed_percent_ = kDefaultSceneCameraSpeedPercent;
+    int pending_scene_camera_speed_percent_ = kDefaultSceneCameraSpeedPercent;
+    int scene_camera_speed_percent_before_dialog_ = kDefaultSceneCameraSpeedPercent;
     ImVec4 theme_color_ = default_theme_color();
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
@@ -1655,6 +1664,7 @@ private:
     void apply_scene_edit_component_size_to_canvas(int size_percent);
     void apply_scene_fog_effect_to_canvas(bool enabled);
     void apply_scene_map_draw_distance_to_canvas(bool enabled);
+    void apply_scene_camera_speed_to_canvas(int percent);
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();

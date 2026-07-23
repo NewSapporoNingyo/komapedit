@@ -2565,6 +2565,10 @@ struct Canvas3D::Impl {
         scene_map_draw_distance_enabled = enabled;
     }
 
+    void set_scene_camera_speed_percent(int percent) {
+        scene_camera_speed_percent = std::clamp(percent, 50, 400);
+    }
+
 #ifndef NDEBUG
     Canvas3DSceneFogDebugState debug_scene_fog_state() const {
         Canvas3DSceneFogDebugState state;
@@ -5798,7 +5802,8 @@ fail:
 
         float dt = std::clamp(io.DeltaTime, 1.0f / 240.0f, 0.1f);
         bool fast = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
-        float step = scene_slow_speed_mps * (fast ? scene_fast_multiplier : 1.0f) * dt;
+        float speed_factor = static_cast<float>(scene_camera_speed_percent) / 100.0f;
+        float step = scene_slow_speed_mps * speed_factor * (fast ? scene_fast_multiplier : 1.0f) * dt;
         float distance_delta = 0.0f;
         float lateral_delta = 0.0f;
         float vertical_delta = 0.0f;
@@ -6625,6 +6630,7 @@ fail:
     double scene_window_forward_m = 1200.0;
     float scene_slow_speed_mps = 8.0f;
     float scene_fast_multiplier = 10.0f;
+    int scene_camera_speed_percent = 100;
     std::string scene_last_error;
     Canvas3DSceneStats scene_stats_value;
     std::chrono::steady_clock::time_point scene_fps_last_frame_at{};
@@ -6720,6 +6726,10 @@ void Canvas3D::set_scene_fog_enabled(bool enabled) {
 
 void Canvas3D::set_scene_map_draw_distance_enabled(bool enabled) {
     impl_->set_scene_map_draw_distance_enabled(enabled);
+}
+
+void Canvas3D::set_scene_camera_speed_percent(int percent) {
+    impl_->set_scene_camera_speed_percent(percent);
 }
 
 Canvas3DSceneInteractionMode Canvas3D::scene_interaction_mode() const {
