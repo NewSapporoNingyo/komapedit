@@ -279,6 +279,9 @@ const MapElementEditFieldState* find_inspector_field(const MapElementInspectorSt
 bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,
                                           bool canonicalize) {
     if (field.numeric_constraint == MapElementNumericConstraint::None) return true;
+    if (!field.required && trim_gui_ascii_copy(edit_field_buffer_text(field)).empty()) {
+        return true;
+    }
     double value = 0.0;
     if (!parse_gui_edit_number(edit_field_buffer_text(field), &value)) return false;
     if (field.numeric_constraint == MapElementNumericConstraint::Integer &&
@@ -2349,6 +2352,9 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     } else if (request.row_kind == "station.put") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("stationKey", "stationKey", MapElementNumericConstraint::None, true);
+        add_row_field("door", "door", MapElementNumericConstraint::Finite, false);
+        add_row_field("margin1", "back", MapElementNumericConstraint::Finite, false);
+        add_row_field("margin2", "front", MapElementNumericConstraint::Finite, false);
     } else if (request.row_kind == "repeater") {
         std::vector<repeater_linkage::Event> events;
         events.reserve(model_.repeaters.size());
@@ -2534,7 +2540,6 @@ void App::enable_inspector_put0_conversion() {
         std::make_move_iterator(coordinates.end()));
     inspector_.put0_conversion_draft = true;
     inspector_.put0_prompt_requested = false;
-    inspector_.status_message.clear();
 }
 
 void App::clear_scene_structure_edit_target() {
@@ -2632,7 +2637,6 @@ void App::apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& u
             set_edit_field_buffer(*field, format_gui_transform_number(value));
         }
     }
-    inspector_.status_message.clear();
 }
 
 void App::apply_inspector_changes() {
@@ -2677,12 +2681,12 @@ void App::apply_inspector_changes() {
         if (field.read_only) continue;
         std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
         if (field.required && value.empty()) {
-            inspector_.status_message = tr("status.edit.required_field");
+            set_program_status("status.edit.required_field");
             return;
         }
         const bool field_changed = value != field.original_value;
         if (!validate_and_canonicalize_edit_field(field, field_changed)) {
-            inspector_.status_message = tr("status.edit.invalid_number");
+            set_program_status("status.edit.invalid_number");
             return;
         }
         value = trim_gui_ascii_copy(edit_field_buffer_text(field));
@@ -2700,7 +2704,7 @@ void App::apply_inspector_changes() {
     if (inspector_.row_kind == "repeater" &&
         repeater_structure_keys != inspector_.repeater_structure_keys_original) {
         if (repeater_structure_keys.empty()) {
-            inspector_.status_message = tr("status.edit.required_field");
+            set_program_status("status.edit.required_field");
             return;
         }
         MapElementEditFieldState primary_field;
@@ -2739,7 +2743,7 @@ void App::apply_inspector_changes() {
     }
     if (replacements.empty()) {
         if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
-            inspector_.status_message = tr("status.edit.no_changes");
+            set_program_status("status.edit.no_changes");
         }
         return;
     }
@@ -2770,7 +2774,7 @@ void App::apply_inspector_changes() {
                                       inspector_.edit_id)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
             !distance_resolution_workflow_.retry_requested) {
-            inspector_.status_message = tr("status.edit.pending");
+            set_program_status("status.edit.pending");
         }
     }
 }
@@ -2793,7 +2797,7 @@ void App::revert_inspector_changes() {
         inspector_.pending_delete = false;
         if (inspector_.row_kind == "repeater") {
             if (open_element_inspector(inspector_.edit_id, inspector_.row_kind)) {
-                inspector_.status_message = tr("status.edit.reverted");
+                set_program_status("status.edit.reverted");
             }
             clear_scene_structure_edit_target();
             return;
@@ -2813,7 +2817,7 @@ void App::revert_inspector_changes() {
         }
         inspector_.z_rebase_prompt_requested = false;
         clear_scene_structure_edit_target();
-        inspector_.status_message = tr("status.edit.reverted");
+        set_program_status("status.edit.reverted");
     }
 }
 
@@ -2835,7 +2839,6 @@ void App::delete_inspector_target() {
     candidate[change.edit_id] = std::move(change);
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
         inspector_.pending_delete = true;
-        inspector_.status_message = tr("status.edit.pending_delete");
     }
 }
 
@@ -3285,9 +3288,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     if (reload_request) {
         pending_inspector_request_ = std::move(reload_request);
     } else if (applying_delete && inspector_.open) {
-        inspector_.status_message = tr("status.edit.pending_delete");
+        set_program_status("status.edit.pending_delete");
     } else if (!pending_edit_changes_.empty() && inspector_.open) {
-        inspector_.status_message = tr("status.edit.applied_to_preview");
+        set_program_status("status.edit.applied_to_preview");
     }
     if (reapplies_inspector_change) set_program_status("status.edit.applied_to_preview");
     refresh_text_preview_from_working_copy();
@@ -3408,7 +3411,7 @@ void App::begin_distance_resolution_workflow(
         : DistanceResolutionPhase::ConfirmAction;
     distance_resolution_workflow_.popup_requested = true;
     if (inspector_.open) {
-        inspector_.status_message = tr("status.edit.distance_resolution_required");
+        set_program_status("status.edit.distance_resolution_required");
     }
 }
 
@@ -3490,14 +3493,17 @@ void App::confirm_distance_resolution_boundary() {
 }
 
 void App::cancel_distance_resolution_workflow() {
+    const bool had_active_workflow =
+        distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
+        distance_resolution_workflow_.retry_requested;
     if (!distance_resolution_workflow_.request.resolution_key.empty()) {
         distance_resolution_choices_.erase(
             distance_resolution_workflow_.request.resolution_key);
     }
     text_preview_.placement = TextPreviewPlacementState{};
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
-    if (inspector_.open) {
-        inspector_.status_message = tr("status.edit.distance_resolution_cancelled");
+    if (had_active_workflow && inspector_.open) {
+        set_program_status("status.edit.distance_resolution_cancelled");
     }
 }
 
@@ -3573,11 +3579,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     if (refresh_inspector && inspector_target_deleted) {
         inspector_.open = false;
     } else if (inspector_request) {
-        if (open_element_inspector(*inspector_request)) {
-            inspector_.status_message = tr("status.edit.saved");
-        }
-    } else if (inspector_.open) {
-        inspector_.status_message = tr("status.edit.saved");
+        open_element_inspector(*inspector_request);
     }
     set_program_status("status.edit.saved");
     return true;
@@ -3634,21 +3636,6 @@ void App::render_element_inspector() {
         return;
     }
 
-    const bool dirty = std::any_of(inspector_.owned_edit_ids.begin(),
-                                   inspector_.owned_edit_ids.end(),
-                                   [&](const std::string& edit_id) {
-                                       return row_has_pending_edit(edit_id);
-                                   });
-    if (dirty) {
-        const bool pending_delete = std::any_of(inspector_.owned_edit_ids.begin(),
-                                                inspector_.owned_edit_ids.end(),
-                                                [&](const std::string& edit_id) {
-                                                    return row_is_pending_delete(edit_id);
-                                                });
-        ImGui::TextUnformatted(tr(pending_delete
-            ? "status.edit.pending_delete"
-            : "status.edit.pending").c_str());
-    }
     ImGui::TextUnformatted(tr("label.source_file").c_str());
     ImGui::SameLine();
     ImGui::TextUnformatted(inspector_.source_file_name.c_str());
@@ -3698,7 +3685,7 @@ void App::render_element_inspector() {
         ImGui::EndDisabled();
         if (ImGui::IsItemDeactivatedAfterEdit() &&
             !validate_and_canonicalize_edit_field(field, true)) {
-            inspector_.status_message = tr("status.edit.invalid_number");
+            set_program_status("status.edit.invalid_number");
         }
         if (changed) ImGui::PopStyleColor();
         if (!field.source_distance_string.empty()) {
@@ -3781,10 +3768,6 @@ void App::render_element_inspector() {
         }
     }
     ImGui::EndDisabled();
-
-    if (!inspector_.status_message.empty()) {
-        ImGui::TextUnformatted(inspector_.status_message.c_str());
-    }
 
     if (ImGui::Button(tr("button.apply").c_str())) apply_inspector_changes();
     ImGui::SameLine();
@@ -4945,7 +4928,7 @@ void App::render_popups() {
             if (!distance_field || !z_field ||
                 !parse_gui_edit_number(edit_field_buffer_text(*distance_field), &distance) ||
                 !parse_gui_edit_number(edit_field_buffer_text(*z_field), &z)) {
-                inspector_.status_message = tr("status.edit.invalid_number");
+                set_program_status("status.edit.invalid_number");
                 ImGui::CloseCurrentPopup();
             } else {
                 z = truncate_gui_thousandths(z);

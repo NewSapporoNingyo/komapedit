@@ -566,6 +566,18 @@ std::string numeric_field(const MapEditChange& change, const std::string& key,
     return fallback_edit_number(fallback);
 }
 
+std::string optional_numeric_value_field(const MapEditChange& change, const std::string& key,
+                                         const Value& fallback,
+                                         const std::string* raw_fallback = nullptr) {
+    auto it = change.field_changes.find(key);
+    if (it != change.field_changes.end()) {
+        const std::string value = trim_field_copy(it->second);
+        return value.empty() ? std::string{} : normalized_number_arg(value);
+    }
+    if (raw_fallback) return trim_field_copy(*raw_fallback);
+    return value_to_bve_arg(fallback);
+}
+
 std::string track_key_field_as_bve_arg(const MapEditChange& change, const std::string& key,
                                        const Value& fallback,
                                        const std::string* raw_fallback = nullptr) {
@@ -602,6 +614,23 @@ std::string build_station_put_statement(const MapEditChange& change,
                                         const StationPut& row) {
     std::string station_key = required_string_field(change, "stationKey", value_to_edit_text(row.station_key));
     std::string raw_args = trim_field_copy(statement.raw_arguments);
+    const bool parameter_change = has_field_change(change, "door") ||
+        has_field_change(change, "margin1") || has_field_change(change, "margin2");
+    if (parameter_change) {
+        std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+        if (args.size() < 3) args.resize(3);
+        args[0] = optional_numeric_value_field(change, "door", row.door, raw_arg_at(args, 0));
+        args[1] = optional_numeric_value_field(change, "margin1", row.margin1,
+                                               raw_arg_at(args, 1));
+        args[2] = optional_numeric_value_field(change, "margin2", row.margin2,
+                                               raw_arg_at(args, 2));
+        while (!args.empty() && args.back().empty()) args.pop_back();
+        raw_args.clear();
+        for (size_t index = 0; index < args.size(); ++index) {
+            if (index) raw_args += ",";
+            raw_args += args[index];
+        }
+    }
     std::ostringstream out;
     out << "Station[" << quoted_bve_string(station_key) << "].Put("
         << raw_args << ");";

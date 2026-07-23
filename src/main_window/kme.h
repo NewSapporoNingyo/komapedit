@@ -978,7 +978,6 @@ struct MapElementInspectorState {
     int end_line = 0;
     int end_column = 0;
     std::string repeater_boundary_kind;
-    std::string status_message;
     bool delete_supported = false;
     bool pending_delete = false;
     bool source_method_put0 = false;

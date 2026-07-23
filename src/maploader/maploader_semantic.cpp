@@ -207,19 +207,38 @@ const std::string* changed_field(const MapEditChange* change, const char* key) {
     return found == change->field_changes.end() ? nullptr : &found->second;
 }
 
-double changed_number(const MapEditChange* change, const char* key, double fallback) {
-    const std::string* input = changed_field(change, key);
-    if (!input) return fallback;
-    const std::string trimmed = trim_field_copy(*input);
+double parse_changed_number(const std::string& input, const char* key) {
+    const std::string trimmed = trim_field_copy(input);
     if (trimmed.empty()) throw std::runtime_error(std::string("empty numeric edit field: ") + key);
     const char* begin = trimmed.c_str();
     char* end = nullptr;
     errno = 0;
     const double value = std::strtod(begin, &end);
     if (end == begin || !end || *end != '\0' || errno == ERANGE || !std::isfinite(value)) {
-        throw std::runtime_error(std::string("invalid numeric edit field ") + key + ": " + *input);
+        throw std::runtime_error(std::string("invalid numeric edit field ") + key + ": " + input);
     }
     return value;
+}
+
+double changed_number(const MapEditChange* change, const char* key, double fallback) {
+    const std::string* input = changed_field(change, key);
+    return input ? parse_changed_number(*input, key) : fallback;
+}
+
+void changed_optional_number(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                             const MapEditChange* change, const char* key,
+                             const KvValue& fallback) {
+    out.label(key);
+    const std::string* input = changed_field(change, key);
+    if (!input) {
+        out.value(snapshot, fallback);
+        return;
+    }
+    if (trim_field_copy(*input).empty()) {
+        out.value(Value::null());
+        return;
+    }
+    out.value(Value::num(parse_changed_number(*input, key)));
 }
 
 std::string changed_string(const KvMapSnapshot& snapshot, const MapEditChange* change,
@@ -294,9 +313,9 @@ void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
                        const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
     changed_value(out, snapshot, change, "stationKey", row.station_key);
-    changed_value(out, snapshot, change, "door", row.door);
-    changed_value(out, snapshot, change, "margin1", row.margin1);
-    changed_value(out, snapshot, change, "margin2", row.margin2);
+    changed_optional_number(out, snapshot, change, "door", row.door);
+    changed_optional_number(out, snapshot, change, "margin1", row.margin1);
+    changed_optional_number(out, snapshot, change, "margin2", row.margin2);
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
