@@ -73,6 +73,7 @@ inline constexpr int kMaxSceneEditComponentSizePercent = 500;
 inline constexpr int kSceneEditComponentSizeStepPercent = 10;
 inline constexpr double kSceneWindowBackDistanceM = 100.0;
 inline constexpr bool kDefaultSceneFogEnabled = true;
+inline constexpr bool kDefaultSceneMapDrawDistanceEnabled = true;
 inline constexpr size_t kMaxRecentMaps = 10;
 inline constexpr const char* kOwnTrackLookupAliases[] = {"", "0", "1", "\\", "own", "main"};
 
@@ -360,6 +361,7 @@ struct TableUiCache {
     std::vector<CachedTableRow> adhesion_rows;
     std::vector<CachedTableRow> cab_illuminance_rows;
     std::vector<CachedTableRow> fog_rows;
+    std::vector<CachedTableRow> draw_distance_rows;
     std::vector<CachedTableRow> sound_list_rows;
     std::vector<CachedTableRow> sound_3d_list_rows;
     float structure_file_path_width = 200.0f;
@@ -402,6 +404,8 @@ struct TableUiCache {
     float cab_illuminance_file_path_width = 200.0f;
     float fog_distance_width = 110.0f;
     float fog_file_path_width = 200.0f;
+    float draw_distance_distance_width = 110.0f;
+    float draw_distance_file_path_width = 200.0f;
 };
 
 const std::string& table_cell(const TableRow& row, const std::string& key);
@@ -459,6 +463,7 @@ struct MapModel {
     std::vector<TableRow> adhesions;
     std::vector<TableRow> cab_illuminance;
     std::vector<TableRow> fogs;
+    std::vector<TableRow> draw_distances;
     std::vector<std::string> scene_track_key_warnings;
     double distance_origin = 0.0;
     double height_origin = 0.0;
@@ -575,6 +580,7 @@ using PlanBackgroundMarker = PlanMarker;
 using PlanAdhesionMarker = PlanMarker;
 using PlanCabIlluminanceMarker = PlanMarker;
 using PlanFogMarker = PlanMarker;
+using PlanDrawDistanceMarker = PlanMarker;
 
 struct PlanOtherTrainStopMarker {
     double d = 0.0;
@@ -604,7 +610,8 @@ enum class PlanMarkerKind {
     Background,
     Adhesion,
     CabIlluminance,
-    Fog
+    Fog,
+    DrawDistance
 };
 
 struct PlanMarkerSelection {
@@ -682,6 +689,7 @@ struct PlanData {
     std::vector<PlanAdhesionMarker> adhesion_markers;
     std::vector<PlanCabIlluminanceMarker> cab_illuminance_markers;
     std::vector<PlanFogMarker> fog_markers;
+    std::vector<PlanDrawDistanceMarker> draw_distance_markers;
     std::vector<Section> curve_sections;
     std::vector<Section> transition_sections;
     double origin_angle = 0.0;
@@ -763,6 +771,7 @@ struct WindowVisibilitySettings {
     bool show_adhesions_window = false;
     bool show_cab_illuminance_window = false;
     bool show_fogs_window = false;
+    bool show_draw_distances_window = false;
     bool show_file_structure_window = false;
     bool show_console_window = true;
     bool show_plots_window = true;
@@ -792,6 +801,7 @@ struct WindowVisibilitySettings {
             show_adhesions_window == other.show_adhesions_window &&
             show_cab_illuminance_window == other.show_cab_illuminance_window &&
             show_fogs_window == other.show_fogs_window &&
+            show_draw_distances_window == other.show_draw_distances_window &&
             show_file_structure_window == other.show_file_structure_window &&
             show_console_window == other.show_console_window &&
             show_plots_window == other.show_plots_window &&
@@ -828,6 +838,7 @@ struct View2DSettings {
     bool show_adhesion_markers = kDefaultNonStationAuxInfoVisible;
     bool show_cab_illuminance_markers = kDefaultNonStationAuxInfoVisible;
     bool show_fog_markers = kDefaultNonStationAuxInfoVisible;
+    bool show_draw_distance_markers = kDefaultNonStationAuxInfoVisible;
     bool show_profile_graph = true;
     bool show_radius_graph = true;
     bool show_background_image = true;
@@ -855,6 +866,7 @@ struct View2DSettings {
             show_adhesion_markers == other.show_adhesion_markers &&
             show_cab_illuminance_markers == other.show_cab_illuminance_markers &&
             show_fog_markers == other.show_fog_markers &&
+            show_draw_distance_markers == other.show_draw_distance_markers &&
             show_profile_graph == other.show_profile_graph &&
             show_radius_graph == other.show_radius_graph &&
             show_background_image == other.show_background_image &&
@@ -871,6 +883,7 @@ struct View3DSettings {
     bool show_scene_owntrack_markers = kDefaultNonStationAuxInfoVisible;
     bool show_scene_current_position_on_plan = kDefaultNonStationAuxInfoVisible;
     bool scene_fog_enabled = kDefaultSceneFogEnabled;
+    bool scene_map_draw_distance_enabled = kDefaultSceneMapDrawDistanceEnabled;
     int scene_draw_distance_m = kDefaultSceneDrawDistanceM;
     int scene_edit_component_size_percent = kDefaultSceneEditComponentSizePercent;
 
@@ -878,6 +891,7 @@ struct View3DSettings {
         return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
             show_scene_current_position_on_plan == other.show_scene_current_position_on_plan &&
             scene_fog_enabled == other.scene_fog_enabled &&
+            scene_map_draw_distance_enabled == other.scene_map_draw_distance_enabled &&
             scene_draw_distance_m == other.scene_draw_distance_m &&
             scene_edit_component_size_percent == other.scene_edit_component_size_percent;
     }
@@ -958,6 +972,18 @@ struct MapElementPreviewSnapshot {
     size_t row_index = 0;
 };
 
+struct RepeaterInspectorDraft {
+    bool begin0_conversion_draft = false;
+    std::vector<std::pair<std::string, std::string>> fields;
+};
+
+// Each Properties/Edit window owns one session. The current UI presents one
+// window, but keeping Repeater drafts here avoids a process-global draft cache
+// when independent inspector windows are added later.
+struct MapElementInspectorSessionState {
+    std::map<std::string, RepeaterInspectorDraft> repeater_drafts;
+};
+
 struct MapElementInspectorState {
     bool open = false;
     std::string edit_id;
@@ -978,6 +1004,10 @@ struct MapElementInspectorState {
     int end_line = 0;
     int end_column = 0;
     std::string repeater_boundary_kind;
+    std::string repeater_previous_begin_edit_id;
+    std::string repeater_next_begin_edit_id;
+    size_t repeater_scene_row_index = 0;
+    bool repeater_has_multiple_begins = false;
     bool delete_supported = false;
     bool pending_delete = false;
     bool source_method_put0 = false;
@@ -987,6 +1017,7 @@ struct MapElementInspectorState {
     std::vector<MapElementEditFieldState> fields;
     std::vector<std::string> owned_edit_ids;
     std::vector<std::string> repeater_structure_keys_original;
+    MapElementInspectorSessionState session;
 };
 
 struct MapElementInspectorRequest {
@@ -996,6 +1027,7 @@ struct MapElementInspectorRequest {
     int line = 0;
     int column = 0;
     std::map<std::string, std::string> field_values;
+    std::optional<MapElementInspectorSessionState> inspector_session;
 
     MapElementInspectorRequest() = default;
     MapElementInspectorRequest(std::string requested_edit_id, std::string requested_row_kind)
@@ -1125,6 +1157,9 @@ private:
     bool scene_fog_enabled_ = kDefaultSceneFogEnabled;
     bool pending_scene_fog_enabled_ = kDefaultSceneFogEnabled;
     bool scene_fog_enabled_before_dialog_ = kDefaultSceneFogEnabled;
+    bool scene_map_draw_distance_enabled_ = kDefaultSceneMapDrawDistanceEnabled;
+    bool pending_scene_map_draw_distance_enabled_ = kDefaultSceneMapDrawDistanceEnabled;
+    bool scene_map_draw_distance_enabled_before_dialog_ = kDefaultSceneMapDrawDistanceEnabled;
     ImVec4 theme_color_ = default_theme_color();
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
@@ -1218,6 +1253,7 @@ private:
     bool show_adhesion_markers_ = kDefaultNonStationAuxInfoVisible;
     bool show_cab_illuminance_markers_ = kDefaultNonStationAuxInfoVisible;
     bool show_fog_markers_ = kDefaultNonStationAuxInfoVisible;
+    bool show_draw_distance_markers_ = kDefaultNonStationAuxInfoVisible;
     bool show_scene_owntrack_markers_ = kDefaultNonStationAuxInfoVisible;
     bool show_scene_current_position_on_plan_ = kDefaultNonStationAuxInfoVisible;
     bool show_profile_graph_ = true;
@@ -1278,6 +1314,7 @@ private:
     bool show_adhesions_window_ = false;
     bool show_cab_illuminance_window_ = false;
     bool show_fogs_window_ = false;
+    bool show_draw_distances_window_ = false;
     bool show_file_structure_window_ = false;
     bool show_console_window_ = true;
     bool show_plots_window_ = true;
@@ -1300,6 +1337,7 @@ private:
     bool focus_adhesions_next_ = false;
     bool focus_cab_illuminance_next_ = false;
     bool focus_fogs_next_ = false;
+    bool focus_draw_distances_next_ = false;
     bool focus_file_structure_next_ = false;
     bool focus_model_preview_next_ = false;
     bool focus_scene_preview_next_ = false;
@@ -1351,6 +1389,7 @@ private:
     std::vector<std::optional<PlanAdhesionMarker>> adhesion_marker_cache_;
     std::vector<std::optional<PlanCabIlluminanceMarker>> cab_illuminance_marker_cache_;
     std::vector<std::optional<PlanFogMarker>> fog_marker_cache_;
+    std::vector<std::optional<PlanDrawDistanceMarker>> draw_distance_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
     std::vector<unsigned char> signal_row_visible_;
@@ -1406,6 +1445,8 @@ private:
     int cab_illuminance_list_highlight_row_ = -1;
     int fog_list_scroll_row_ = -1;
     int fog_list_highlight_row_ = -1;
+    int draw_distance_list_scroll_row_ = -1;
+    int draw_distance_list_highlight_row_ = -1;
     int plan_structure_popup_row_ = -1;
     int plan_repeater_popup_row_ = -1;
     int plan_signal_popup_row_ = -1;
@@ -1421,6 +1462,7 @@ private:
     int plan_adhesion_popup_row_ = -1;
     int plan_cab_illuminance_popup_row_ = -1;
     int plan_fog_popup_row_ = -1;
+    int plan_draw_distance_popup_row_ = -1;
     PlanMarkerSelection plan_marker_selection_;
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;
@@ -1528,6 +1570,7 @@ private:
     void revert_inspector_changes();
     void delete_inspector_target();
     void enable_inspector_put0_conversion();
+    bool navigate_repeater_inspector(bool toward_next);
     void sync_scene_structure_edit_from_inspector();
     void apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& update);
     bool update_scene_structure_instance_from_model(const std::string& edit_id);
@@ -1572,6 +1615,7 @@ private:
     void render_adhesions_window();
     void render_cab_illuminance_window();
     void render_fogs_window();
+    void render_draw_distances_window();
     void render_file_structure_window();
     void render_source_file_context_menu(const char* popup_id,
                                          const std::string& file_path);
@@ -1610,6 +1654,7 @@ private:
     void apply_scene_draw_distance_to_canvas(int distance_m);
     void apply_scene_edit_component_size_to_canvas(int size_percent);
     void apply_scene_fog_effect_to_canvas(bool enabled);
+    void apply_scene_map_draw_distance_to_canvas(bool enabled);
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
@@ -1673,6 +1718,8 @@ private:
     void locate_cab_illuminance_row_in_list(size_t row_index);
     void locate_fog_row_on_plan(size_t row_index);
     void locate_fog_row_in_list(size_t row_index);
+    void locate_draw_distance_row_on_plan(size_t row_index);
+    void locate_draw_distance_row_in_list(size_t row_index);
     bool can_locate_scene_preview_row() const;
 
     double current_plan_origin_angle() const;

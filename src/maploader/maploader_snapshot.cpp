@@ -37,7 +37,7 @@ public:
             ctx_.joint_noises.size() + ctx_.repeaters.size() +
             ctx_.irregularities.size() + ctx_.backgrounds.size() +
             ctx_.adhesions.size() + ctx_.cab_illuminance.size() +
-            ctx_.fogs.size() + ctx_.speedlimits.size();
+            ctx_.fogs.size() + ctx_.draw_distances.size() + ctx_.speedlimits.size();
         storage_.string_arena.reserve(std::max<size_t>(256 * 1024, row_count * 32));
         storage_.values.reserve(row_count * 2);
         storage_.string_refs.reserve(row_count);
@@ -543,6 +543,16 @@ private:
             row.metadata = metadata(input.edit_ref, "fog.change");
             storage_.fogs.push_back(row);
         }
+        storage_.draw_distances.reserve(ctx_.draw_distances.size());
+        for (const DrawDistanceChange& input : ctx_.draw_distances) {
+            KvDrawDistanceRow row{};
+            row.distance = input.distance;
+            row.value = input.value;
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "drawDistance.change");
+            storage_.draw_distances.push_back(row);
+        }
         storage_.speed_limits.reserve(ctx_.speedlimits.size());
         for (const SpeedLimitEvent& input : ctx_.speedlimits) {
             KvSpeedLimitRow row{};
@@ -645,6 +655,7 @@ private:
         add_elements("adhesion.change", ctx_.adhesions);
         add_elements("cabIlluminance.change", ctx_.cab_illuminance);
         add_elements("fog.change", ctx_.fogs);
+        add_elements("drawDistance.change", ctx_.draw_distances);
         add_elements("speedlimit", ctx_.speedlimits);
     }
 
@@ -718,6 +729,7 @@ private:
         bind(storage_.adhesions, view.adhesions, view.adhesion_count);
         bind(storage_.cab_illuminance, view.cab_illuminance, view.cab_illuminance_count);
         bind(storage_.fogs, view.fogs, view.fog_count);
+        bind(storage_.draw_distances, view.draw_distances, view.draw_distance_count);
         bind(storage_.speed_limits, view.speed_limits, view.speed_limit_count);
         bind(storage_.statements, view.statements, view.statement_count);
         bind(storage_.elements, view.elements, view.element_count);

@@ -35,6 +35,7 @@
 #include <cstring>
 #include <map>
 #include <filesystem>
+#include <iterator>
 #include <mutex>
 #include <limits>
 #include <optional>
@@ -1332,6 +1333,41 @@ void populate_canvas3d_scene_fog(Canvas3DScene& scene, const MapModel& model) {
     }
 }
 
+void populate_canvas3d_scene_draw_distances(Canvas3DScene& scene, const MapModel& model) {
+    scene.draw_distance_changes.clear();
+    if (model.draw_distances.empty()) return;
+
+    std::vector<const TableRow*> rows;
+    rows.reserve(model.draw_distances.size());
+    for (const TableRow& row : model.draw_distances) {
+        const double distance = table_cell_number(row, "distance");
+        if (std::isfinite(distance)) rows.push_back(&row);
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const TableRow* a, const TableRow* b) {
+        const double a_distance = table_cell_number(*a, "distance");
+        const double b_distance = table_cell_number(*b, "distance");
+        if (a_distance != b_distance) return a_distance < b_distance;
+        return table_cell_number(*a, "order") < table_cell_number(*b, "order");
+    });
+
+    scene.draw_distance_changes.reserve(rows.size());
+    for (const TableRow* row : rows) {
+        Canvas3DSceneDrawDistanceChange change;
+        change.distance = table_cell_number(*row, "distance");
+        const double raw_value = table_cell_number(*row, "value");
+        change.value = !std::isfinite(raw_value) || raw_value < 0.0
+            ? 0.0
+            : std::round(raw_value / static_cast<double>(kSceneDrawDistanceStepM)) *
+                static_cast<double>(kSceneDrawDistanceStepM);
+        if (!scene.draw_distance_changes.empty() &&
+            scene.draw_distance_changes.back().distance == change.distance) {
+            scene.draw_distance_changes.back() = change;
+        } else {
+            scene.draw_distance_changes.push_back(change);
+        }
+    }
+}
+
 struct SceneFogSample {
     bool enabled = false;
     float density = 0.0f;
@@ -2004,6 +2040,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
     }
     populate_canvas3d_scene_route_info(scene, model);
     populate_canvas3d_scene_fog(scene, model);
+    populate_canvas3d_scene_draw_distances(scene, model);
     if (!populate_canvas3d_scene_dynamic_content(scene, model, options.station_index)) {
         result.log_messages.push_back("[warn]canvas3D.cpp: 3D scene preview dynamic content could not be built");
     }
@@ -2522,6 +2559,10 @@ struct Canvas3D::Impl {
 
     void set_scene_fog_enabled(bool enabled) {
         scene_fog_enabled = enabled;
+    }
+
+    void set_scene_map_draw_distance_enabled(bool enabled) {
+        scene_map_draw_distance_enabled = enabled;
     }
 
 #ifndef NDEBUG
@@ -3098,11 +3139,13 @@ struct Canvas3D::Impl {
         if (model_path.empty()) return false;
         double world[16] = {};
         if (!make_repeater_instance_world(*repeater, repeater->begin_distance, world)) return false;
-        if (!scene_model_center_world(model_path, world, target.center)) return false;
         target.object_index = repeater->object_index;
         target.distance = repeater->begin_distance;
         target.model_path = model_path;
         std::copy(world, world + 16, target.world);
+        if (!scene_model_center_world(model_path, world, target.center)) {
+            target.center = {world[12], world[13], world[14]};
+        }
         return true;
     }
 
@@ -5487,7 +5530,8 @@ fail:
         const float aspect = static_cast<float>(width) /
             std::max(1.0f, static_cast<float>(height));
         Mat4 proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect,
-                                                 kSceneNearZ, scene_far_z());
+                                                 kSceneNearZ,
+                                                 scene_far_z(effective_scene_window_forward_m()));
         Mat4 view_proj = multiply(view, proj);
         ImVec2 origin_screen;
         if (!project_scene_point(relative_origin, view_proj, width, height, origin_screen) ||
@@ -5804,8 +5848,24 @@ fail:
         draw_scene_model(it->second, instances, view_proj, fog);
     }
 
-    float scene_far_z() const {
-        double far_z = scene_window_back_m + scene_window_forward_m + scene_chunk_m * 2.0;
+    double effective_scene_window_forward_m() const {
+        if (!scene_map_draw_distance_enabled || scene_data.draw_distance_changes.empty()) {
+            return scene_window_forward_m;
+        }
+        const auto next = std::upper_bound(
+            scene_data.draw_distance_changes.begin(), scene_data.draw_distance_changes.end(),
+            scene_camera_distance,
+            [](double distance, const Canvas3DSceneDrawDistanceChange& change) {
+                return distance < change.distance;
+            });
+        if (next == scene_data.draw_distance_changes.begin()) return scene_window_forward_m;
+        const double map_value = std::prev(next)->value;
+        if (!std::isfinite(map_value) || map_value <= 0.0) return scene_window_forward_m;
+        return std::min(scene_window_forward_m, map_value);
+    }
+
+    float scene_far_z(double window_forward_m) const {
+        double far_z = scene_window_back_m + window_forward_m + scene_chunk_m * 2.0;
         if (!std::isfinite(far_z)) far_z = kSceneBackgroundFarZ;
         return static_cast<float>(std::clamp(far_z, 256.0, static_cast<double>(kSceneBackgroundFarZ)));
     }
@@ -5858,7 +5918,10 @@ fail:
         draw_background_model(background_view_proj, fog_ptr);
         context->ClearDepthStencilView(depth_dsv, D3D11_CLEAR_DEPTH, kSceneDepthClear, 0);
 
-        Mat4 proj = perspective_fov_lh_reverse_z(kSceneCameraFovY, aspect, kSceneNearZ, scene_far_z());
+        const double effective_window_forward_m = effective_scene_window_forward_m();
+        Mat4 proj = perspective_fov_lh_reverse_z(
+            kSceneCameraFovY, aspect, kSceneNearZ,
+            scene_far_z(effective_window_forward_m));
         Mat4 view_proj = multiply(view, proj);
 
         scene_stats_value.drawn_instance_count = 0;
@@ -5866,7 +5929,7 @@ fail:
         scene_stats_value.camera_distance = scene_camera_distance;
 
         double visible_min = scene_camera_distance - scene_window_back_m;
-        double visible_max = scene_camera_distance + scene_window_forward_m;
+        double visible_max = scene_camera_distance + effective_window_forward_m;
         std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
         std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;
         std::vector<SceneInstanceData> track_instance(1);
@@ -6508,6 +6571,7 @@ fail:
     size_t scene_geometry_generation = 0;
     bool scene_active = false;
     bool scene_fog_enabled = true;
+    bool scene_map_draw_distance_enabled = true;
 #ifndef NDEBUG
     size_t debug_scene_fog_draw_part_count = 0;
 #endif
@@ -6652,6 +6716,10 @@ void Canvas3D::set_scene_interaction_mode(Canvas3DSceneInteractionMode mode) {
 
 void Canvas3D::set_scene_fog_enabled(bool enabled) {
     impl_->set_scene_fog_enabled(enabled);
+}
+
+void Canvas3D::set_scene_map_draw_distance_enabled(bool enabled) {
+    impl_->set_scene_map_draw_distance_enabled(enabled);
 }
 
 Canvas3DSceneInteractionMode Canvas3D::scene_interaction_mode() const {

@@ -732,6 +732,16 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
             field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
         });
     }
+    for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {
+        const KvDrawDistanceRow& row = snapshot.draw_distances[i];
+        emit_element(output, full, snapshot, row.metadata,
+                     "drawDistance.change", "drawDistance",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            field(out, "distance", row.distance);
+            field(out, "value", row.value);
+            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+        });
+    }
     for (std::uint64_t i = 0; i < snapshot.speed_limit_count; ++i) {
         const KvSpeedLimitRow& row = snapshot.speed_limits[i];
         emit_element(output, full, snapshot, row.metadata, "speedlimit", "speedlimit",

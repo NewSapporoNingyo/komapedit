@@ -375,6 +375,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
     out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
     out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
+    out << "show_draw_distances_window=" << bool_to_string(settings.window_visibility.show_draw_distances_window) << "\n";
     out << "show_file_structure_window=" << bool_to_string(settings.window_visibility.show_file_structure_window) << "\n";
     out << "show_console_window=" << bool_to_string(settings.window_visibility.show_console_window) << "\n";
     out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
@@ -401,6 +402,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_adhesion_markers=" << bool_to_string(settings.view_2d.show_adhesion_markers) << "\n";
     out << "show_cab_illuminance_markers=" << bool_to_string(settings.view_2d.show_cab_illuminance_markers) << "\n";
     out << "show_fog_markers=" << bool_to_string(settings.view_2d.show_fog_markers) << "\n";
+    out << "show_draw_distance_markers=" << bool_to_string(settings.view_2d.show_draw_distance_markers) << "\n";
     out << "show_profile_graph=" << bool_to_string(settings.view_2d.show_profile_graph) << "\n";
     out << "show_radius_graph=" << bool_to_string(settings.view_2d.show_radius_graph) << "\n";
     out << "show_background_image=" << bool_to_string(settings.view_2d.show_background_image) << "\n";
@@ -410,6 +412,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_scene_owntrack_markers=" << bool_to_string(settings.view_3d.show_scene_owntrack_markers) << "\n";
     out << "show_scene_current_position_on_plan=" << bool_to_string(settings.view_3d.show_scene_current_position_on_plan) << "\n";
     out << "scene_fog_enabled=" << bool_to_string(settings.view_3d.scene_fog_enabled) << "\n";
+    out << "scene_map_draw_distance_enabled=" << bool_to_string(settings.view_3d.scene_map_draw_distance_enabled) << "\n";
     out << "scene_draw_distance_m=" << clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m) << "\n";
     out << "scene_edit_component_size_percent="
         << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
@@ -564,6 +567,9 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_cab_illuminance_window = parse_bool(value, settings.window_visibility.show_cab_illuminance_window);
         } else if (key == "show_fogs_window" || key == "show_fog_window") {
             settings.window_visibility.show_fogs_window = parse_bool(value, settings.window_visibility.show_fogs_window);
+        } else if (key == "show_draw_distances_window") {
+            settings.window_visibility.show_draw_distances_window =
+                parse_bool(value, settings.window_visibility.show_draw_distances_window);
         } else if (key == "show_file_structure_window" || key == "show_file_structure_diagram_window") {
             settings.window_visibility.show_file_structure_window =
                 parse_bool(value, settings.window_visibility.show_file_structure_window);
@@ -635,6 +641,10 @@ UserSettings load_user_settings() {
         } else if (key == "show_fog_markers" || key == "show_fogs" || key == "show_fog_points") {
             view_2d_keys_seen.insert("show_fog_markers");
             settings.view_2d.show_fog_markers = parse_bool(value, settings.view_2d.show_fog_markers);
+        } else if (key == "show_draw_distance_markers") {
+            view_2d_keys_seen.insert("show_draw_distance_markers");
+            settings.view_2d.show_draw_distance_markers =
+                parse_bool(value, settings.view_2d.show_draw_distance_markers);
         } else if (key == "show_profile_graph" || key == "show_gradient_graph") {
             view_2d_keys_seen.insert("show_profile_graph");
             settings.view_2d.show_profile_graph = parse_bool(value, settings.view_2d.show_profile_graph);
@@ -666,6 +676,10 @@ UserSettings load_user_settings() {
             view_3d_keys_seen.insert("scene_fog_enabled");
             settings.view_3d.scene_fog_enabled =
                 parse_bool(value, settings.view_3d.scene_fog_enabled);
+        } else if (key == "scene_map_draw_distance_enabled") {
+            view_3d_keys_seen.insert("scene_map_draw_distance_enabled");
+            settings.view_3d.scene_map_draw_distance_enabled =
+                parse_bool(value, settings.view_3d.scene_map_draw_distance_enabled);
         } else if (key == "scene_draw_distance_m" ||
                    key == "scene_draw_distance" ||
                    key == "scene_window_forward_m" ||
@@ -699,7 +713,9 @@ UserSettings load_user_settings() {
     settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m);
     settings.view_3d.scene_edit_component_size_percent =
         clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent);
-    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 5) {
+    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 5 ||
+        view_2d_keys_seen.count("show_draw_distance_markers") == 0 ||
+        view_3d_keys_seen.count("scene_map_draw_distance_enabled") == 0) {
         save_user_settings(settings);
     }
     return settings;

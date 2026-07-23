@@ -47,6 +47,8 @@ void App::invalidate_table_cache() {
     cab_illuminance_list_highlight_row_ = -1;
     fog_list_scroll_row_ = -1;
     fog_list_highlight_row_ = -1;
+    draw_distance_list_scroll_row_ = -1;
+    draw_distance_list_highlight_row_ = -1;
     plan_structure_popup_row_ = -1;
     plan_repeater_popup_row_ = -1;
     plan_signal_popup_row_ = -1;
@@ -62,6 +64,7 @@ void App::invalidate_table_cache() {
     plan_adhesion_popup_row_ = -1;
     plan_cab_illuminance_popup_row_ = -1;
     plan_fog_popup_row_ = -1;
+    plan_draw_distance_popup_row_ = -1;
     plan_marker_selection_.clear();
 }
 
@@ -127,7 +130,7 @@ void App::locate_repeater_row_in_list(size_t row_index) {
 }
 
 void App::locate_repeater_row_in_scene_preview(size_t row_index) {
-    if (!can_locate_scene_preview_row()) return;
+    if (!scene_preview_started_ || !scene_preview_canvas_ || !scene_preview_canvas_->has_scene()) return;
     if (!scene_preview_canvas_->jump_scene_camera_to_object(Canvas3DSceneObjectKind::Repeater, row_index)) return;
     show_scene_preview_window_ = true;
     focus_scene_preview_next_ = true;
@@ -304,6 +307,19 @@ void App::locate_fog_row_in_list(size_t row_index) {
                                    show_fogs_window_, focus_fogs_next_,
                                    fog_list_scroll_row_, fog_list_highlight_row_);
 }
+
+void App::locate_draw_distance_row_on_plan(size_t row_index) {
+    locate_standard_marker_on_plan(
+        draw_distance_marker_cache_, row_index, show_draw_distance_markers_);
+}
+
+void App::locate_draw_distance_row_in_list(size_t row_index) {
+    locate_standard_marker_in_list(draw_distance_marker_cache_, row_index,
+                                   show_draw_distances_window_, focus_draw_distances_next_,
+                                   draw_distance_list_scroll_row_,
+                                   draw_distance_list_highlight_row_);
+}
+
 bool App::can_locate_scene_preview_row() const {
     if (!scene_preview_started_ || !scene_preview_canvas_ || !scene_preview_canvas_->has_scene()) return false;
     return !scene_preview_canvas_->scene_stats().loading;

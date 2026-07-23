@@ -984,6 +984,15 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.fogs.push_back(std::move(row));
     }
+    model.draw_distances.reserve(static_cast<size_t>(snapshot.draw_distance_count));
+    for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {
+        const KvDrawDistanceRow& input = snapshot.draw_distances[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["value"] = format_double(input.value, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.draw_distances.push_back(std::move(row));
+    }
 
     static const char* station_keys[] = {
         "stationKey", "stationName", "arrivalTime", "depertureTime", "stoppageTime",
@@ -1116,6 +1125,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
     pending_scene_fog_enabled_ = scene_fog_enabled_;
     scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
+    pending_scene_map_draw_distance_enabled_ = scene_map_draw_distance_enabled_;
+    scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
     apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
     history_path_ = default_history_path();
     recent_maps_ = load_history_entries(history_path_);
@@ -1421,7 +1432,9 @@ bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edi
         table_row_count_matches("background.change", current.backgrounds, edit_model.backgrounds, error) &&
         table_row_count_matches("adhesion.change", current.adhesions, edit_model.adhesions, error) &&
         table_row_count_matches("cabIlluminance.change", current.cab_illuminance, edit_model.cab_illuminance, error) &&
-        table_row_count_matches("fog.change", current.fogs, edit_model.fogs, error);
+        table_row_count_matches("fog.change", current.fogs, edit_model.fogs, error) &&
+        table_row_count_matches("drawDistance.change", current.draw_distances,
+                                edit_model.draw_distances, error);
 }
 
 void merge_table_row_edit_metadata(std::vector<TableRow>& current,
@@ -1461,6 +1474,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     merge_table_row_edit_metadata(current.adhesions, edit_model.adhesions);
     merge_table_row_edit_metadata(current.cab_illuminance, edit_model.cab_illuminance);
     merge_table_row_edit_metadata(current.fogs, edit_model.fogs);
+    merge_table_row_edit_metadata(current.draw_distances, edit_model.draw_distances);
 }
 
 void App::apply_edit_metadata_result(LoadResult result) {
@@ -2204,6 +2218,122 @@ void reindex_repeater_structure_key_fields(MapElementInspectorState& inspector) 
     }
 }
 
+MapElementEditFieldState make_repeater_structure_key_field(
+    const MapElementInspectorState& inspector, size_t index, const std::string& value) {
+    MapElementEditFieldState field;
+    field.key = "structureKeys." + std::to_string(index);
+    field.backend_key = field.key;
+    field.target_edit_id = inspector.edit_id;
+    field.expected_source_hash = inspector.expected_source_hash;
+    field.label = "structureKey[" + std::to_string(index + 1) + "]";
+    field.original_value = index < inspector.repeater_structure_keys_original.size()
+        ? inspector.repeater_structure_keys_original[index]
+        : std::string{};
+    field.required = true;
+    set_edit_field_buffer(field, value);
+    return field;
+}
+
+void enable_inspector_zero_method_conversion_draft(MapElementInspectorState& inspector) {
+    const bool supported_row_kind = inspector.row_kind == "structure.put" ||
+        inspector.row_kind == "repeater";
+    if (!inspector.open || !supported_row_kind ||
+        !inspector.source_method_put0 || inspector.put0_conversion_draft) {
+        inspector.put0_prompt_requested = false;
+        return;
+    }
+
+    auto insert_at = std::find_if(inspector.fields.begin(), inspector.fields.end(),
+                                  [](const MapElementEditFieldState& field) {
+                                      return field.key == "tilt";
+                                  });
+    const size_t insertion_index = static_cast<size_t>(
+        std::distance(inspector.fields.begin(), insert_at));
+    std::vector<MapElementEditFieldState> coordinates;
+    coordinates.reserve(6);
+    for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
+        MapElementEditFieldState field;
+        field.key = key;
+        field.backend_key = key;
+        field.target_edit_id = inspector.edit_id;
+        field.expected_source_hash = inspector.expected_source_hash;
+        field.label = key;
+        field.original_value = "0";
+        field.numeric_constraint = structure_edit_numeric_constraint(key);
+        field.required = true;
+        set_edit_field_buffer(field, "0");
+        coordinates.push_back(std::move(field));
+    }
+    inspector.fields.insert(
+        inspector.fields.begin() + static_cast<std::ptrdiff_t>(insertion_index),
+        std::make_move_iterator(coordinates.begin()),
+        std::make_move_iterator(coordinates.end()));
+    inspector.put0_conversion_draft = true;
+    inspector.put0_prompt_requested = false;
+}
+
+void capture_repeater_inspector_draft(MapElementInspectorState& inspector) {
+    if (!inspector.open || inspector.row_kind != "repeater" || inspector.edit_id.empty()) return;
+    RepeaterInspectorDraft draft;
+    draft.begin0_conversion_draft = inspector.put0_conversion_draft;
+    draft.fields.reserve(inspector.fields.size());
+    for (const MapElementEditFieldState& field : inspector.fields) {
+        if (!field.read_only) draft.fields.emplace_back(field.key, edit_field_buffer_text(field));
+    }
+    inspector.session.repeater_drafts[inspector.edit_id] = std::move(draft);
+}
+
+void restore_repeater_inspector_draft(MapElementInspectorState& inspector) {
+    if (!inspector.open || inspector.row_kind != "repeater" || inspector.edit_id.empty()) return;
+    const auto draft_it = inspector.session.repeater_drafts.find(inspector.edit_id);
+    if (draft_it == inspector.session.repeater_drafts.end()) return;
+    const RepeaterInspectorDraft& draft = draft_it->second;
+
+    if (draft.begin0_conversion_draft) {
+        enable_inspector_zero_method_conversion_draft(inspector);
+    }
+
+    std::vector<std::string> structure_keys;
+    for (const auto& entry : draft.fields) {
+        if (entry.first.rfind("structureKeys.", 0) == 0) {
+            structure_keys.push_back(entry.second);
+            continue;
+        }
+        MapElementEditFieldState* field = find_inspector_field(inspector, entry.first);
+        if (field && !field->read_only) set_edit_field_buffer(*field, entry.second);
+    }
+    if (structure_keys.empty()) return;
+
+    size_t insertion_index = inspector.fields.size();
+    for (size_t index = 0; index < inspector.fields.size(); ++index) {
+        if (is_repeater_structure_key_field(inspector.fields[index])) {
+            insertion_index = index;
+            break;
+        }
+        if (inspector.fields[index].key == "endDistance") {
+            insertion_index = index;
+            break;
+        }
+    }
+    inspector.fields.erase(
+        std::remove_if(inspector.fields.begin(), inspector.fields.end(),
+                       [](const MapElementEditFieldState& field) {
+                           return is_repeater_structure_key_field(field);
+                       }),
+        inspector.fields.end());
+    insertion_index = std::min(insertion_index, inspector.fields.size());
+    std::vector<MapElementEditFieldState> restored_fields;
+    restored_fields.reserve(structure_keys.size());
+    for (size_t index = 0; index < structure_keys.size(); ++index) {
+        restored_fields.push_back(
+            make_repeater_structure_key_field(inspector, index, structure_keys[index]));
+    }
+    inspector.fields.insert(
+        inspector.fields.begin() + static_cast<std::ptrdiff_t>(insertion_index),
+        std::make_move_iterator(restored_fields.begin()),
+        std::make_move_iterator(restored_fields.end()));
+}
+
 MapElementInspectorRequest make_inspector_reload_request(const MapElementInspectorState& inspector) {
     MapElementInspectorRequest request;
     request.edit_id = inspector.edit_id;
@@ -2219,6 +2349,7 @@ MapElementInspectorRequest make_inspector_reload_request(const MapElementInspect
         const std::string& backend_key = field.backend_key.empty() ? field.key : field.backend_key;
         request.field_values[backend_key] = trim_gui_ascii_copy(edit_field_buffer_text(field));
     }
+    request.inspector_session = inspector.session;
     return request;
 }
 
@@ -2264,6 +2395,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.edit_id = edit_id;
     next.row_kind = request.row_kind;
     next.title = tr("dialog.element_properties");
+    if (request.inspector_session) next.session = *request.inspector_session;
     next.source_file = source.file_path;
     next.source_file_name = display_name_from_path(next.source_file);
     if (target_info) next.expected_source_hash = target_info->expected_source_hash;
@@ -2395,6 +2527,19 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         next.repeater_boundary_kind =
             linked->boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
             linked->boundary_kind == repeater_linkage::BoundaryKind::NextBegin ? "change" : "open";
+        next.repeater_scene_row_index = linked->display_index - 1;
+        const auto begin_edit_id_at = [&](const std::optional<size_t>& source_index) {
+            if (!source_index || *source_index >= model_.repeaters.size()) return std::string{};
+            return model_.repeaters[*source_index].edit_id;
+        };
+        next.repeater_previous_begin_edit_id =
+            begin_edit_id_at(linked->previous_begin_source_index);
+        if (linked->boundary_kind == repeater_linkage::BoundaryKind::NextBegin) {
+            next.repeater_next_begin_edit_id =
+                begin_edit_id_at(linked->boundary_source_index);
+        }
+        next.repeater_has_multiple_begins = !next.repeater_previous_begin_edit_id.empty() ||
+            !next.repeater_next_begin_edit_id.empty();
 
         add_row_field("distance", "beginDistance", MapElementNumericConstraint::Finite, true);
         add_row_field("repeaterKey", "repeaterKey", MapElementNumericConstraint::None, true);
@@ -2497,6 +2642,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             field.expected_source_hash = inspector_.expected_source_hash;
         }
     }
+    restore_repeater_inspector_draft(inspector_);
     return true;
 }
 
@@ -2504,42 +2650,26 @@ bool App::open_element_inspector(const std::string& edit_id, const std::string& 
     return open_element_inspector(MapElementInspectorRequest{edit_id, row_kind});
 }
 
-void App::enable_inspector_put0_conversion() {
-    const bool supported_row_kind = inspector_.row_kind == "structure.put" ||
-        inspector_.row_kind == "repeater";
-    if (!inspector_.open || !supported_row_kind ||
-        !inspector_.source_method_put0 || inspector_.put0_conversion_draft) {
-        inspector_.put0_prompt_requested = false;
-        return;
-    }
+bool App::navigate_repeater_inspector(bool toward_next) {
+    if (!inspector_.open || inspector_.row_kind != "repeater") return false;
+    const std::string target_edit_id = toward_next
+        ? inspector_.repeater_next_begin_edit_id
+        : inspector_.repeater_previous_begin_edit_id;
+    if (target_edit_id.empty()) return false;
 
-    auto insert_at = std::find_if(inspector_.fields.begin(), inspector_.fields.end(),
-                                  [](const MapElementEditFieldState& field) {
-                                      return field.key == "tilt";
-                                  });
-    const size_t insertion_index = static_cast<size_t>(
-        std::distance(inspector_.fields.begin(), insert_at));
-    std::vector<MapElementEditFieldState> coordinates;
-    coordinates.reserve(6);
-    for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
-        MapElementEditFieldState field;
-        field.key = key;
-        field.backend_key = key;
-        field.target_edit_id = inspector_.edit_id;
-        field.expected_source_hash = inspector_.expected_source_hash;
-        field.label = key;
-        field.original_value = "0";
-        field.numeric_constraint = structure_edit_numeric_constraint(key);
-        field.required = true;
-        set_edit_field_buffer(field, "0");
-        coordinates.push_back(std::move(field));
+    capture_repeater_inspector_draft(inspector_);
+    MapElementInspectorRequest request{target_edit_id, "repeater"};
+    request.inspector_session = inspector_.session;
+    if (!open_element_inspector(request)) return false;
+
+    if (scene_preview_started_ && scene_preview_canvas_ && scene_preview_canvas_->has_scene()) {
+        locate_repeater_row_in_scene_preview(inspector_.repeater_scene_row_index);
     }
-    inspector_.fields.insert(
-        inspector_.fields.begin() + static_cast<std::ptrdiff_t>(insertion_index),
-        std::make_move_iterator(coordinates.begin()),
-        std::make_move_iterator(coordinates.end()));
-    inspector_.put0_conversion_draft = true;
-    inspector_.put0_prompt_requested = false;
+    return true;
+}
+
+void App::enable_inspector_put0_conversion() {
+    enable_inspector_zero_method_conversion_draft(inspector_);
 }
 
 void App::clear_scene_structure_edit_target() {
@@ -2642,6 +2772,8 @@ void App::apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& u
 void App::apply_inspector_changes() {
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
+    const bool repeater_inspector = inspector_.row_kind == "repeater";
+    const std::string repeater_draft_edit_id = inspector_.edit_id;
     if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
         distance_resolution_workflow_.retry_requested) {
         cancel_distance_resolution_workflow();
@@ -2743,6 +2875,9 @@ void App::apply_inspector_changes() {
     }
     if (replacements.empty()) {
         if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+            if (repeater_inspector) {
+                inspector_.session.repeater_drafts.erase(repeater_draft_edit_id);
+            }
             set_program_status("status.edit.no_changes");
         }
         return;
@@ -2770,6 +2905,9 @@ void App::apply_inspector_changes() {
     }
     std::optional<MapElementInspectorRequest> reload_request =
         make_inspector_reload_request(inspector_);
+    if (repeater_inspector && reload_request->inspector_session) {
+        reload_request->inspector_session->repeater_drafts.erase(repeater_draft_edit_id);
+    }
     if (!apply_edit_ledger_to_preview(candidate, std::move(reload_request), false,
                                       inspector_.edit_id)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
@@ -2782,6 +2920,8 @@ void App::apply_inspector_changes() {
 void App::revert_inspector_changes() {
     if (!edit_actions_available()) return;
     if (!inspector_.open || inspector_.edit_id.empty()) return;
+    const bool repeater_inspector = inspector_.row_kind == "repeater";
+    const std::string repeater_draft_edit_id = inspector_.edit_id;
     if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
         distance_resolution_workflow_.retry_requested) {
         cancel_distance_resolution_workflow();
@@ -2795,8 +2935,11 @@ void App::revert_inspector_changes() {
             original_edit_rows_.erase(owned_edit_id);
         }
         inspector_.pending_delete = false;
-        if (inspector_.row_kind == "repeater") {
-            if (open_element_inspector(inspector_.edit_id, inspector_.row_kind)) {
+        if (repeater_inspector) {
+            inspector_.session.repeater_drafts.erase(repeater_draft_edit_id);
+            MapElementInspectorRequest request{inspector_.edit_id, inspector_.row_kind};
+            request.inspector_session = inspector_.session;
+            if (open_element_inspector(request)) {
                 set_program_status("status.edit.reverted");
             }
             clear_scene_structure_edit_target();
@@ -3653,10 +3796,25 @@ void App::render_element_inspector() {
         ImGui::TextWrapped("%s", inspector_.raw_statement.c_str());
     }
     const bool repeater_inspector = inspector_.row_kind == "repeater";
+    bool repeater_navigation_changed = false;
     const auto render_repeater_end_source = [&] {
-        if (inspector_.repeater_boundary_kind == "change") {
+        if (inspector_.repeater_has_multiple_begins) {
             ImGui::TextUnformatted(tr("status.repeater_multiple_begins").c_str());
-        } else if (inspector_.repeater_boundary_kind == "open") {
+            ImGui::BeginDisabled(inspector_.repeater_previous_begin_edit_id.empty());
+            if (ImGui::Button(tr("button.previous").c_str())) {
+                repeater_navigation_changed = navigate_repeater_inspector(false);
+            }
+            ImGui::EndDisabled();
+            if (repeater_navigation_changed) return;
+            ImGui::SameLine();
+            ImGui::BeginDisabled(inspector_.repeater_next_begin_edit_id.empty());
+            if (ImGui::Button(tr("button.next").c_str())) {
+                repeater_navigation_changed = navigate_repeater_inspector(true);
+            }
+            ImGui::EndDisabled();
+            if (repeater_navigation_changed) return;
+        }
+        if (inspector_.repeater_boundary_kind == "open") {
             ImGui::TextUnformatted(tr("status.repeater_no_end").c_str());
         } else if (!inspector_.end_source_file_name.empty()) {
             ImGui::Text("%s %s %d:%d", tr("label.repeater_end_source").c_str(),
@@ -3695,6 +3853,11 @@ void App::render_element_inspector() {
         if (repeater_inspector && field.key == "interval") {
             ImGui::Separator();
             render_repeater_end_source();
+            if (repeater_navigation_changed) {
+                ImGui::EndDisabled();
+                ImGui::End();
+                return;
+            }
         }
     }
     if (repeater_inspector) {
@@ -3745,14 +3908,8 @@ void App::render_element_inspector() {
         ImGui::SetCursorPosX(structure_key_input_x +
                              (structure_key_input_width - add_structure_key_button_width) * 0.5f);
         if (ImGui::Button("+##RepeaterKey", ImVec2(add_structure_key_button_width, 0.0f))) {
-            MapElementEditFieldState field;
-            field.key = "structureKeys." + std::to_string(key_field_indices.size());
-            field.backend_key = field.key;
-            field.target_edit_id = inspector_.edit_id;
-            field.expected_source_hash = inspector_.expected_source_hash;
-            field.label = "structureKey[" + std::to_string(key_field_indices.size() + 1) + "]";
-            field.required = true;
-            inspector_.fields.push_back(std::move(field));
+            inspector_.fields.push_back(make_repeater_structure_key_field(
+                inspector_, key_field_indices.size(), {}));
         }
         if (remove_key_index && *remove_key_index < key_field_indices.size()) {
             inspector_.fields.erase(inspector_.fields.begin() + static_cast<std::ptrdiff_t>(
@@ -4103,6 +4260,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Adhesions", dock_right);
     ImGui::DockBuilderDockWindow("CabIlluminance", dock_right);
     ImGui::DockBuilderDockWindow("Fogs", dock_right);
+    ImGui::DockBuilderDockWindow("DrawDistances", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("FileStructureDiagram", dock_main);
     ImGui::DockBuilderDockWindow("TextPreview", dock_main);
@@ -4140,6 +4298,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
     visibility.show_fogs_window = show_fogs_window_;
+    visibility.show_draw_distances_window = show_draw_distances_window_;
     visibility.show_file_structure_window = show_file_structure_window_;
     visibility.show_console_window = show_console_window_;
     visibility.show_plots_window = show_plots_window_;
@@ -4171,6 +4330,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_adhesions_window_ = visibility.show_adhesions_window;
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
     show_fogs_window_ = visibility.show_fogs_window;
+    show_draw_distances_window_ = visibility.show_draw_distances_window;
     show_file_structure_window_ = visibility.show_file_structure_window;
     show_console_window_ = visibility.show_console_window;
     show_plots_window_ = visibility.show_plots_window;
@@ -4200,6 +4360,7 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_adhesion_markers = show_adhesion_markers_;
     view.show_cab_illuminance_markers = show_cab_illuminance_markers_;
     view.show_fog_markers = show_fog_markers_;
+    view.show_draw_distance_markers = show_draw_distance_markers_;
     view.show_profile_graph = show_profile_graph_;
     view.show_radius_graph = show_radius_graph_;
     view.show_background_image = bg_show_;
@@ -4229,6 +4390,7 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_adhesion_markers_ = settings.show_adhesion_markers;
     show_cab_illuminance_markers_ = settings.show_cab_illuminance_markers;
     show_fog_markers_ = settings.show_fog_markers;
+    show_draw_distance_markers_ = settings.show_draw_distance_markers;
     show_profile_graph_ = settings.show_profile_graph;
     show_radius_graph_ = settings.show_radius_graph;
     bg_show_ = settings.show_background_image;
@@ -4251,6 +4413,7 @@ View3DSettings App::current_view_3d_settings() const {
     view.show_scene_owntrack_markers = show_scene_owntrack_markers_;
     view.show_scene_current_position_on_plan = show_scene_current_position_on_plan_;
     view.scene_fog_enabled = scene_fog_enabled_;
+    view.scene_map_draw_distance_enabled = scene_map_draw_distance_enabled_;
     view.scene_draw_distance_m = scene_draw_distance_m_;
     view.scene_edit_component_size_percent = scene_edit_component_size_percent_;
     return view;
@@ -4260,12 +4423,14 @@ void App::apply_view_3d_settings(const View3DSettings& settings) {
     show_scene_owntrack_markers_ = settings.show_scene_owntrack_markers;
     show_scene_current_position_on_plan_ = settings.show_scene_current_position_on_plan;
     scene_fog_enabled_ = settings.scene_fog_enabled;
+    scene_map_draw_distance_enabled_ = settings.scene_map_draw_distance_enabled;
     scene_draw_distance_m_ = clamp_scene_draw_distance(settings.scene_draw_distance_m);
     scene_edit_component_size_percent_ =
         clamp_scene_edit_component_size_percent(settings.scene_edit_component_size_percent);
     apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
     apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
     apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
+    apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
 }
 
 void App::apply_scene_draw_distance_to_canvas(int distance_m) {
@@ -4284,6 +4449,10 @@ void App::apply_scene_edit_component_size_to_canvas(int size_percent) {
 
 void App::apply_scene_fog_effect_to_canvas(bool enabled) {
     if (scene_preview_canvas_) scene_preview_canvas_->set_scene_fog_enabled(enabled);
+}
+
+void App::apply_scene_map_draw_distance_to_canvas(bool enabled) {
+    if (scene_preview_canvas_) scene_preview_canvas_->set_scene_map_draw_distance_enabled(enabled);
 }
 
 void App::save_runtime_settings_if_changed() {
@@ -4384,6 +4553,8 @@ void App::render_menu() {
             scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
             pending_scene_fog_enabled_ = scene_fog_enabled_;
             scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
+            pending_scene_map_draw_distance_enabled_ = scene_map_draw_distance_enabled_;
+            scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
             popups_.canvas_3d_settings = true;
         }
         ImGui::EndMenu();
@@ -4393,7 +4564,7 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 28> kMapInfoMenuEntries = {{
+        static constexpr std::array<MapInfoMenuEntry, 29> kMapInfoMenuEntries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
@@ -4422,6 +4593,7 @@ void App::render_menu() {
             {"menu.map_info.backgrounds", &App::show_backgrounds_window_},
             {"menu.map_info.cab_illuminance", &App::show_cab_illuminance_window_},
             {"menu.map_info.fogs", &App::show_fogs_window_},
+            {"menu.map_info.draw_distances", &App::show_draw_distances_window_},
         }};
         bool has_category = false;
         for (const MapInfoMenuEntry& entry : kMapInfoMenuEntries) {
@@ -4463,6 +4635,7 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.background_markers").c_str(), nullptr, &show_background_markers_);
         ImGui::MenuItem(tr("chk.cab_illuminance_markers").c_str(), nullptr, &show_cab_illuminance_markers_);
         ImGui::MenuItem(tr("chk.fog_markers").c_str(), nullptr, &show_fog_markers_);
+        ImGui::MenuItem(tr("chk.draw_distance_markers").c_str(), nullptr, &show_draw_distance_markers_);
         ImGui::Separator();
         ImGui::MenuItem(tr("aux.scene_3d").c_str(), nullptr, false, false);
         if (ImGui::MenuItem(tr("chk.scene_owntrack_markers").c_str(), nullptr, &show_scene_owntrack_markers_)) {
@@ -5230,6 +5403,10 @@ void App::render_popups() {
         if (ImGui::Checkbox(tr("label.scene_fog_effect").c_str(), &pending_scene_fog_enabled_)) {
             apply_scene_fog_effect_to_canvas(pending_scene_fog_enabled_);
         }
+        if (ImGui::Checkbox(tr("label.scene_map_draw_distance").c_str(),
+                            &pending_scene_map_draw_distance_enabled_)) {
+            apply_scene_map_draw_distance_to_canvas(pending_scene_map_draw_distance_enabled_);
+        }
         int draw_distance_chunks = clamp_scene_draw_distance(pending_scene_draw_distance_m_) / kSceneDrawDistanceStepM;
         ImGui::SetNextItemWidth(300.0f);
         if (ImGui::SliderInt(tr("label.scene_draw_distance").c_str(),
@@ -5267,9 +5444,12 @@ void App::render_popups() {
             scene_edit_component_size_before_dialog_percent_ = scene_edit_component_size_percent_;
             scene_fog_enabled_ = pending_scene_fog_enabled_;
             scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
+            scene_map_draw_distance_enabled_ = pending_scene_map_draw_distance_enabled_;
+            scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
             apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
             apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
+            apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
             sync_runtime_settings_before_save();
             save_user_settings(settings_);
             ImGui::CloseCurrentPopup();
@@ -5280,9 +5460,12 @@ void App::render_popups() {
             pending_scene_edit_component_size_percent_ =
                 scene_edit_component_size_before_dialog_percent_;
             pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
+            pending_scene_map_draw_distance_enabled_ =
+                scene_map_draw_distance_enabled_before_dialog_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
             apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
             apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
+            apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -5292,9 +5475,12 @@ void App::render_popups() {
         pending_scene_edit_component_size_percent_ =
             scene_edit_component_size_before_dialog_percent_;
         pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
+        pending_scene_map_draw_distance_enabled_ =
+            scene_map_draw_distance_enabled_before_dialog_;
         apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
         apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
         apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
+        apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
     }
 
     if (popups_.range) {
@@ -5924,6 +6110,7 @@ void App::render() {
     render_adhesions_window();
     render_cab_illuminance_window();
     render_fogs_window();
+    render_draw_distances_window();
     process_pending_element_inspector();
     render_element_inspector();
     render_popups();

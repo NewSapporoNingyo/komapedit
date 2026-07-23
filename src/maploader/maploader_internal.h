@@ -533,6 +533,14 @@ struct FogChange {
     EditSourceRef edit_ref;
 };
 
+struct DrawDistanceChange {
+    double distance = 0.0;
+    double value = 0.0;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
+};
+
 struct SpeedLimitEvent {
     double distance = 0.0;
     Value speed;
@@ -627,6 +635,7 @@ struct MapSnapshotStorage {
     std::vector<KvAdhesionRow> adhesions;
     std::vector<KvCabIlluminanceRow> cab_illuminance;
     std::vector<KvFogRow> fogs;
+    std::vector<KvDrawDistanceRow> draw_distances;
     std::vector<KvSpeedLimitRow> speed_limits;
     std::vector<KvStatementRow> statements;
     std::vector<KvElementRow> elements;
@@ -715,6 +724,7 @@ struct MapContext {
     std::vector<AdhesionChange> adhesions;
     std::vector<CabIlluminanceChange> cab_illuminance;
     std::vector<FogChange> fogs;
+    std::vector<DrawDistanceChange> draw_distances;
     std::vector<SpeedLimitEvent> speedlimits;
     Matrix owntrack_buffer;
     Matrix curveradius_buffer;

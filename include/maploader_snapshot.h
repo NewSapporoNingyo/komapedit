@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 2u
-#define KV_MAP_SNAPSHOT_VERSION 2u
+#define KV_MAPLOADER_API_VERSION 3u
+#define KV_MAP_SNAPSHOT_VERSION 3u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
@@ -384,6 +384,15 @@ typedef struct KvFogRow {
     KvRowMetadata metadata;
 } KvFogRow;
 
+typedef struct KvDrawDistanceRow {
+    double distance;
+    double value;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved;
+    KvRowMetadata metadata;
+} KvDrawDistanceRow;
+
 typedef struct KvSpeedLimitRow {
     double distance;
     KvValue speed;
@@ -535,6 +544,8 @@ typedef struct KvMapSnapshot {
     uint64_t cab_illuminance_count;
     const KvFogRow* fogs;
     uint64_t fog_count;
+    const KvDrawDistanceRow* draw_distances;
+    uint64_t draw_distance_count;
     const KvSpeedLimitRow* speed_limits;
     uint64_t speed_limit_count;
 

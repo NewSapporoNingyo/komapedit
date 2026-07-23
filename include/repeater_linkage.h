@@ -44,6 +44,7 @@ struct Event {
 struct Segment {
     size_t begin_source_index = 0;
     size_t display_index = 0; // One-based index in Begin order.
+    std::optional<size_t> previous_begin_source_index;
     std::optional<size_t> boundary_source_index;
     std::optional<size_t> next_begin_display_index;
     double begin_distance = 0.0;
@@ -78,18 +79,21 @@ inline std::vector<Segment> pair_segments(std::vector<Event> events) {
         if (key.empty()) continue;
         if (event.kind == EventKind::Begin) {
             ++display_index;
+            std::optional<size_t> previous_begin_source_index;
             auto open = open_segments.find(key);
             if (open != open_segments.end()) {
                 Segment& previous = result[open->second];
                 previous.boundary_kind = BoundaryKind::NextBegin;
                 previous.boundary_source_index = event.source_index;
                 previous.next_begin_display_index = display_index;
+                previous_begin_source_index = previous.begin_source_index;
                 previous.end_distance = event.distance;
                 open_segments.erase(open);
             }
             Segment segment;
             segment.begin_source_index = event.source_index;
             segment.display_index = display_index;
+            segment.previous_begin_source_index = previous_begin_source_index;
             segment.begin_distance = event.distance;
             result.push_back(std::move(segment));
             open_segments.emplace(key, result.size() - 1);

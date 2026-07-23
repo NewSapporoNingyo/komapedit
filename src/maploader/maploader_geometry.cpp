@@ -947,6 +947,7 @@ void relocate(MapContext& ctx) {
     std::stable_sort(ctx.adhesions.begin(), ctx.adhesions.end(), by_distance);
     std::stable_sort(ctx.cab_illuminance.begin(), ctx.cab_illuminance.end(), by_distance);
     std::stable_sort(ctx.fogs.begin(), ctx.fogs.end(), by_distance);
+    std::stable_sort(ctx.draw_distances.begin(), ctx.draw_distances.end(), by_distance);
     std::stable_sort(ctx.speedlimits.begin(), ctx.speedlimits.end(), by_distance);
     std::stable_sort(ctx.station_puts.begin(), ctx.station_puts.end(), by_distance);
 }

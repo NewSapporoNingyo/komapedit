@@ -493,6 +493,7 @@ private:
         offset_row_edit_refs(child.adhesions, statement_index_base);
         offset_row_edit_refs(child.cab_illuminance, statement_index_base);
         offset_row_edit_refs(child.fogs, statement_index_base);
+        offset_row_edit_refs(child.draw_distances, statement_index_base);
         offset_row_edit_refs(child.speedlimits, statement_index_base);
 
         int order_base = ctx_.parse_order;
@@ -523,6 +524,7 @@ private:
         for (auto& row : child.adhesions) offset_order(row.order);
         for (auto& row : child.cab_illuminance) offset_order(row.order);
         for (auto& row : child.fogs) offset_order(row.order);
+        for (auto& row : child.draw_distances) offset_order(row.order);
         for (auto& row : child.speedlimits) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
@@ -586,6 +588,7 @@ private:
         for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
         for (auto& row : child.cab_illuminance) ctx_.cab_illuminance.push_back(std::move(row));
         for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
+        for (auto& row : child.draw_distances) ctx_.draw_distances.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
     }
 
@@ -911,6 +914,8 @@ private:
             dispatch_cab_illuminance(fn, function.args);
         } else if (first == "fog") {
             dispatch_fog(fn, function.args);
+        } else if (first == "drawdistance") {
+            dispatch_draw_distance(fn, function.args);
         }
     }
 
@@ -1595,6 +1600,18 @@ private:
         row.order = ctx_.next_parse_order();
         attach_active_edit_ref(ctx_, row);
         ctx_.fogs.push_back(std::move(row));
+    }
+
+    void dispatch_draw_distance(const std::string& fn, const std::vector<Value>& a) {
+        if (fn != "change" || a.empty() || a[0].is_null()) return;
+        note_distance_use(ctx_);
+        DrawDistanceChange row;
+        row.distance = ctx_.distance;
+        row.value = as_number(a[0]);
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        attach_active_edit_ref(ctx_, row);
+        ctx_.draw_distances.push_back(std::move(row));
     }
 };
 

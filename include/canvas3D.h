@@ -124,6 +124,11 @@ struct Canvas3DSceneFogKeyframe {
     ImVec4 color = ImVec4(0.875f, 0.875f, 0.875f, 1.0f);
 };
 
+struct Canvas3DSceneDrawDistanceChange {
+    double distance = 0.0;
+    double value = 0.0;
+};
+
 enum class Canvas3DSceneRouteEventKind {
     Value,
     BeginTransition,
@@ -165,6 +170,7 @@ struct Canvas3DScene {
     std::vector<Canvas3DRepeaterSegment> repeaters;
     std::vector<Canvas3DBackgroundChange> backgrounds;
     std::vector<Canvas3DSceneFogKeyframe> fog_keyframes;
+    std::vector<Canvas3DSceneDrawDistanceChange> draw_distance_changes;
     Canvas3DSceneRouteInfo route_info;
     Canvas3DCameraStart camera;
     double min_distance = 0.0;
@@ -344,6 +350,7 @@ public:
     void set_scene_edit_component_scale(float scale);
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
     void set_scene_fog_enabled(bool enabled);
+    void set_scene_map_draw_distance_enabled(bool enabled);
     Canvas3DSceneInteractionMode scene_interaction_mode() const;
     Canvas3DSceneStats scene_stats() const;
     void process_scene_loading();

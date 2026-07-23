@@ -891,6 +891,15 @@ static const TableColumnDef kFogColumns[] = {
 constexpr int kFogDistanceColumn = 1;
 constexpr int kFogFilePathColumn = IM_ARRAYSIZE(kFogColumns) - 1;
 
+static const TableColumnDef kDrawDistanceColumns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"value", "value", 70.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int kDrawDistanceDistanceColumn = 1;
+constexpr int kDrawDistanceFilePathColumn = IM_ARRAYSIZE(kDrawDistanceColumns) - 1;
+
 static const TableColumnDef kStationPositionColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"dist", "dist", 70.0f},
@@ -1693,6 +1702,11 @@ void App::ensure_table_cache() {
                              cache.map_sound_3d_rows,
                              cache.map_sound_3d_distance_width,
                              cache.map_sound_3d_file_path_width);
+    append_change_point_rows(model_.draw_distances, kDrawDistanceColumns,
+                             kDrawDistanceDistanceColumn, kDrawDistanceFilePathColumn,
+                             cache.draw_distance_rows,
+                             cache.draw_distance_distance_width,
+                             cache.draw_distance_file_path_width);
 
     cache.background_distance_width = 0.0f;
     expand_width_for_text(cache.background_distance_width, kBackgroundColumns[kBackgroundDistanceColumn].header);
@@ -3712,5 +3726,43 @@ void App::render_fogs_window() {
         ImGui::EndTable();
     }
     focus_fogs_next_ = false;
+    ImGui::End();
+}
+
+void App::render_draw_distances_window() {
+    if (!show_draw_distances_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_draw_distances_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.draw_distances") + "###DrawDistances";
+    if (!ImGui::Begin(title.c_str(), &show_draw_distances_window_)) {
+        focus_draw_distances_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_draw_distances_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    render_change_point_table(
+        "draw_distances", kDrawDistanceColumns,
+        kDrawDistanceDistanceColumn, kDrawDistanceFilePathColumn,
+        table_cache_.draw_distance_rows,
+        table_cache_.draw_distance_distance_width,
+        table_cache_.draw_distance_file_path_width,
+        tr("column.file_name"),
+        tr("menu.locate_on_plan"),
+        tr("menu.open_in_explorer"),
+        draw_distance_list_scroll_row_,
+        draw_distance_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this](size_t marker_index) {
+            return marker_index < draw_distance_marker_cache_.size() &&
+                draw_distance_marker_cache_[marker_index].has_value();
+        },
+        [this](size_t marker_index) { locate_draw_distance_row_on_plan(marker_index); });
+    focus_draw_distances_next_ = false;
     ImGui::End();
 }

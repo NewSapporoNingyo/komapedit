@@ -303,6 +303,7 @@ void App::rebuild_marker_overlay_cache() {
     adhesion_marker_cache_.clear();
     cab_illuminance_marker_cache_.clear();
     fog_marker_cache_.clear();
+    draw_distance_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
 
     std::map<std::string, TrackSource> track_sources;
@@ -582,6 +583,7 @@ void App::rebuild_marker_overlay_cache() {
     build_standard_markers(model_.adhesions, adhesion_marker_cache_, "");
     build_standard_markers(model_.cab_illuminance, cab_illuminance_marker_cache_, "");
     build_standard_markers(model_.fogs, fog_marker_cache_, "");
+    build_standard_markers(model_.draw_distances, draw_distance_marker_cache_, "value");
     auto build_repeater_segment = [&](TrackSource source, double start, double end,
                                       double lateral, double forward) -> PlanRepeaterSegment {
         PlanRepeaterSegment segment;
@@ -1031,6 +1033,9 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         append_markers(cab_illuminance_marker_cache_, out.cab_illuminance_markers);
     }
     if (show_fog_markers_) append_markers(fog_marker_cache_, out.fog_markers);
+    if (show_draw_distance_markers_) {
+        append_markers(draw_distance_marker_cache_, out.draw_distance_markers);
+    }
     auto append_repeater_marker = [&](const PlanRepeaterMarker& source, size_t row_index) {
         if (source.d < dmin_ || source.d > dmax_) return;
         TrackPoint p;
@@ -1092,6 +1097,7 @@ const PlanData& App::current_plan_data() {
     include_visibility(show_adhesion_markers_, 9);
     include_visibility(show_cab_illuminance_markers_, 10);
     include_visibility(show_fog_markers_, 11);
+    include_visibility(show_draw_distance_markers_, 12);
 
     const bool cache_matches = plan_data_cache_.valid &&
         plan_data_cache_.source_revision == plan_data_source_revision_ &&
@@ -2104,13 +2110,12 @@ static void draw_plan_axle_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float
     draw->AddLine(ImVec2(right.x, right.y - half_height), ImVec2(right.x, right.y + half_height), color, line_weight);
 }
 
-static void draw_plan_flange_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const char* label = "F";
+static void draw_plan_letter_marker(ImDrawList* draw, ImVec2 p, ImU32 color,
+                                    ImU32 outline, const char* label, float scale = 1.0f) {
     ImFont* font = ImGui::GetFont();
     const float font_size = ImGui::GetFontSize() * 0.92f * scale;
     const ImVec2 text_size = font->CalcTextSizeA(font_size, std::numeric_limits<float>::max(), 0.0f, label);
     const ImVec2 text_pos(p.x - text_size.x * 0.5f, p.y - text_size.y * 0.5f);
-    const ImU32 outline = IM_COL32(68, 34, 112, 255);
     const float outline_px = std::max(1.0f, 1.45f * scale);
     const ImVec2 outline_offsets[] = {
         ImVec2(-outline_px, -outline_px), ImVec2(0.0f, -outline_px), ImVec2(outline_px, -outline_px),
@@ -2125,6 +2130,14 @@ static void draw_plan_flange_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 colo
     draw->AddText(font, font_size, ImVec2(text_pos.x - bold_px, text_pos.y), color, label);
     draw->AddText(font, font_size, text_pos, color, label);
     draw->AddText(font, font_size, ImVec2(text_pos.x + bold_px, text_pos.y), color, label);
+}
+
+static void draw_plan_flange_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    draw_plan_letter_marker(draw, p, color, IM_COL32(68, 34, 112, 255), "F", scale);
+}
+
+static void draw_plan_draw_distance_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
+    draw_plan_letter_marker(draw, p, color, IM_COL32(88, 70, 0, 255), "D", scale);
 }
 
 static void draw_plan_joint_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
@@ -2433,6 +2446,8 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.cab_illuminance_markers, hit_transform);
     std::optional<MarkerHit> hovered_fog_hit =
         nearest_marker_hit(data.fog_markers, hit_transform);
+    std::optional<MarkerHit> hovered_draw_distance_hit =
+        nearest_marker_hit(data.draw_distance_markers, hit_transform);
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_structure_row = hovered_structure_hit
         ? std::optional<size_t>(hovered_structure_hit->row_index)
@@ -2482,6 +2497,9 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<size_t> hovered_fog_row = hovered_fog_hit
         ? std::optional<size_t>(hovered_fog_hit->row_index)
         : std::nullopt;
+    std::optional<size_t> hovered_draw_distance_row = hovered_draw_distance_hit
+        ? std::optional<size_t>(hovered_draw_distance_hit->row_index)
+        : std::nullopt;
 
     auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
         return hit && (!other || hit->dist_sq <= other->dist_sq);
@@ -2530,6 +2548,7 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_flange_noise_hit, PlanMarkerKind::FlangeNoise);
         note(hovered_joint_noise_hit, PlanMarkerKind::JointNoise);
         note(hovered_fog_hit, PlanMarkerKind::Fog);
+        note(hovered_draw_distance_hit, PlanMarkerKind::DrawDistance);
         if (best) plan_marker_selection_ = *best;
     };
     ImVec2 touch_tap_pos;
@@ -2544,7 +2563,13 @@ void App::render_plan_canvas(ImVec2 size) {
                                                 &touch_long_press_pos);
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
-        if (hovered_other_train_stop_hit &&
+        if (hovered_draw_distance_hit &&
+            closer_than_all_marker_context_hits(hovered_draw_distance_hit) &&
+            closer_or_equal(hovered_draw_distance_hit, hovered_other_train_stop_hit)) {
+            plan_draw_distance_popup_row_ =
+                static_cast<int>(hovered_draw_distance_hit->row_index);
+            ImGui::OpenPopup("plan_draw_distance_marker_context");
+        } else if (hovered_other_train_stop_hit &&
             closer_than_all_marker_context_hits(hovered_other_train_stop_hit)) {
             plan_other_train_stop_popup_row_ = static_cast<int>(hovered_other_train_stop_hit->row_index);
             ImGui::OpenPopup("plan_other_train_stop_marker_context");
@@ -3075,6 +3100,13 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     }
     debug_plan_stage("fog_markers");
+
+    const ImU32 draw_distance_color = IM_COL32(255, 224, 48, 255);
+    draw_colored_marker_set(data.draw_distance_markers, PlanMarkerKind::DrawDistance,
+                            hovered_draw_distance_row, draw_distance_color,
+                            draw_plan_draw_distance_marker);
+    debug_plan_stage("draw_distance_markers");
+
     if (!repeater_marker_cache_.empty() || !data.repeater_markers.empty()) {
         ImU32 repeater_color = IM_COL32(255, 105, 190, 255);
         draw_repeater_segment_chunks(draw, repeater_marker_cache_, repeater_row_visible_,
@@ -3331,6 +3363,19 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_fog_list").c_str()) && can_locate) {
             locate_fog_row_in_list(static_cast<size_t>(plan_fog_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_draw_distance_marker_context")) {
+        bool can_locate = plan_draw_distance_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_draw_distance_popup_row_) <
+                draw_distance_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_draw_distance_list").c_str()) &&
+            can_locate) {
+            locate_draw_distance_row_in_list(
+                static_cast<size_t>(plan_draw_distance_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();
