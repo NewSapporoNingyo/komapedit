@@ -891,13 +891,16 @@ static const TableColumnDef kFogColumns[] = {
 constexpr int kFogDistanceColumn = 1;
 constexpr int kFogFilePathColumn = IM_ARRAYSIZE(kFogColumns) - 1;
 
-static const TableColumnDef kStationListColumns[] = {
+static const TableColumnDef kStationPositionColumns[] = {
     {"rowNumber", "#", 40.0f},
     {"dist", "dist", 70.0f},
     {"posKey", "key", 80.0f},
     {"door", "door", 55.0f},
     {"margin1", "back", 65.0f},
     {"margin2", "front", 65.0f},
+};
+
+static const TableColumnDef kStationDefinitionColumns[] = {
     {"stationKey", "stKey", 80.0f},
     {"stationName", "name", 120.0f},
     {"arrivalTime", "arr", 70.0f},
@@ -1014,6 +1017,22 @@ void annotate_scene_track_key_warnings(MapModel& model) {
 void copy_table_row_metadata(const TableRow& source, CachedTableRow& dest) {
     dest.edit_id = source.edit_id;
     dest.source = source.source;
+}
+
+template <size_t N>
+void append_station_table_rows(const std::vector<TableRow>& source_rows,
+                               const TableColumnDef (&columns)[N],
+                               std::vector<CachedTableRow>& cached_rows) {
+    cached_rows.reserve(source_rows.size());
+    for (const TableRow& row : source_rows) {
+        CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
+        cached.cells.resize(N);
+        for (size_t i = 0; i < N; ++i) {
+            cached.cells[i] = table_cell(row, columns[i].key);
+        }
+        cached_rows.push_back(std::move(cached));
+    }
 }
 
 template <size_t N>
@@ -1384,16 +1403,10 @@ void App::ensure_table_cache() {
     cache.font_size = font_size;
     cache.cell_padding_x = cell_padding_x;
 
-    cache.station_rows.reserve(model_.station_list_rows.size());
-    for (const auto& row : model_.station_list_rows) {
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(kStationListColumns));
-        for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
-            cached.cells[i] = table_cell(row, kStationListColumns[i].key);
-        }
-        cache.station_rows.push_back(std::move(cached));
-    }
+    append_station_table_rows(model_.station_list_rows, kStationPositionColumns,
+                              cache.station_position_rows);
+    append_station_table_rows(model_.station_definition_rows, kStationDefinitionColumns,
+                              cache.station_definition_rows);
 
     cache.structure_model_rows.reserve(model_.structure_models.size());
     for (size_t row_index = 0; row_index < model_.structure_models.size(); ++row_index) {
@@ -2076,28 +2089,45 @@ void App::render_station_list_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("station_list", IM_ARRAYSIZE(kStationListColumns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
-        for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
-            ImGui::TableSetupColumn(kStationListColumns[i].header, ImGuiTableColumnFlags_WidthFixed, kStationListColumns[i].width);
+    auto render_station_table = [&](const char* table_id,
+                                    const TableColumnDef* columns,
+                                    int column_count,
+                                    const std::vector<CachedTableRow>& rows,
+                                    bool allow_station_put_properties) {
+        const int row_count = static_cast<int>(rows.size());
+        ImVec2 table_size(0.0f, scroll_x_table_height_for_rows(row_count));
+        if (!ImGui::BeginTable(table_id, column_count,
+                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                               ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX,
+                               table_size)) {
+            return;
+        }
+        for (int i = 0; i < column_count; ++i) {
+            ImGui::TableSetupColumn(columns[i].header, ImGuiTableColumnFlags_WidthFixed,
+                                    columns[i].width);
         }
         setup_fixed_table_header();
         ImGui::TableHeadersRow();
         ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(table_cache_.station_rows.size()));
+        clipper.Begin(row_count);
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.station_rows[static_cast<size_t>(row_index)];
+                const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
-                if (row_is_pending_delete(row.edit_id)) {
+                if (allow_station_put_properties && row_is_pending_delete(row.edit_id)) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingDeleteRowColor);
-                } else if (row_has_pending_edit(row.edit_id)) {
+                } else if (allow_station_put_properties && row_has_pending_edit(row.edit_id)) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kPendingEditRowColor);
                 }
                 ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(kStationListColumns); ++i) {
+                for (int i = 0; i < column_count; ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
                     if (value.empty()) continue;
+                    if (!allow_station_put_properties) {
+                        ImGui::TextUnformatted(value.c_str());
+                        continue;
+                    }
                     ImGui::PushID(i);
                     if (render_text_cell_with_context(value, tr("dialog.element_properties"),
                                                       edit_actions_available() && !row.edit_id.empty())) {
@@ -2112,7 +2142,17 @@ void App::render_station_list_window() {
             }
         }
         ImGui::EndTable();
-    }
+    };
+
+    ImGui::TextUnformatted(tr("frame.station_positions").c_str());
+    render_station_table("station_positions", kStationPositionColumns,
+                         IM_ARRAYSIZE(kStationPositionColumns),
+                         table_cache_.station_position_rows, true);
+    ImGui::Separator();
+    ImGui::TextUnformatted(tr("frame.station_definitions").c_str());
+    render_station_table("station_definitions", kStationDefinitionColumns,
+                         IM_ARRAYSIZE(kStationDefinitionColumns),
+                         table_cache_.station_definition_rows, false);
     ImGui::End();
 }
 

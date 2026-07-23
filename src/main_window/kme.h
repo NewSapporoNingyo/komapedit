@@ -338,7 +338,8 @@ struct TableUiCache {
     bool valid = false;
     float font_size = 0.0f;
     float cell_padding_x = 0.0f;
-    std::vector<CachedTableRow> station_rows;
+    std::vector<CachedTableRow> station_position_rows;
+    std::vector<CachedTableRow> station_definition_rows;
     std::vector<CachedTableRow> structure_rows;
     std::vector<CachedTableRow> structure_between_rows;
     std::vector<CachedTableRow> structure_model_rows;
@@ -434,6 +435,7 @@ struct MapModel {
     std::vector<SpeedLimit> speedlimits;
     std::vector<double> controlpoints;
     std::vector<TableRow> station_list_rows;
+    std::vector<TableRow> station_definition_rows;
     std::vector<TableRow> structures;
     std::vector<TableRow> structure_models;
     std::vector<TableRow> other_trains;

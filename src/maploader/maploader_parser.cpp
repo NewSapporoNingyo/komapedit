@@ -500,6 +500,7 @@ private:
             if (order > 0) order += order_base;
         };
         for (auto& row : child.station_puts) offset_order(row.order);
+        for (auto& entry : child.station_list) offset_order(entry.second.order);
         for (auto& row : child.structure_loads) offset_order(row.order);
         for (auto& row : child.structure_puts) offset_order(row.order);
         for (auto& row : child.structure_betweens) offset_order(row.order);
@@ -981,6 +982,7 @@ private:
 
             StationListEntry row;
             for (size_t i = 0; i < row.fields.size() && i < fields.size(); ++i) row.fields[i] = fields[i];
+            row.order = ctx_.next_parse_order();
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StationList.Row",
                                                      line_start, line_end, line, fields);
             std::string key = ascii_lower(row.fields[0]);

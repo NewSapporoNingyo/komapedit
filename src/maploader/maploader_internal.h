@@ -554,6 +554,7 @@ struct StationPut {
 
 struct StationListEntry {
     std::array<std::string, 13> fields{};
+    int order = 0;
     EditSourceRef edit_ref;
 };
 

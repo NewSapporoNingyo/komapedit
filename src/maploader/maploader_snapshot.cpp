@@ -57,6 +57,23 @@ public:
     }
 
 private:
+    using StationListIterator = std::map<std::string, StationListEntry>::const_iterator;
+
+    const std::vector<StationListIterator>& ordered_station_list_entries() {
+        if (station_list_order_initialized_) return ordered_station_list_entries_;
+
+        station_list_order_initialized_ = true;
+        ordered_station_list_entries_.reserve(ctx_.station_list.size());
+        for (auto it = ctx_.station_list.cbegin(); it != ctx_.station_list.cend(); ++it) {
+            ordered_station_list_entries_.push_back(it);
+        }
+        std::stable_sort(ordered_station_list_entries_.begin(), ordered_station_list_entries_.end(),
+                         [](const StationListIterator& left, const StationListIterator& right) {
+                             return left->second.order < right->second.order;
+                         });
+        return ordered_station_list_entries_;
+    }
+
     KvStringRef string_ref(const std::string& text) {
         auto found = strings_.find(text);
         if (found != strings_.end()) return found->second;
@@ -211,8 +228,10 @@ private:
             row.metadata = metadata(input.edit_ref, "station.put");
             storage_.station_puts.push_back(row);
         }
-        storage_.station_list.reserve(ctx_.station_list.size());
-        for (const auto& input : ctx_.station_list) {
+        const auto& station_list_entries = ordered_station_list_entries();
+        storage_.station_list.reserve(station_list_entries.size());
+        for (const StationListIterator& entry : station_list_entries) {
+            const auto& input = *entry;
             KvStationListRow row{};
             row.object_key = string_ref(input.first);
             for (size_t i = 0; i < input.second.fields.size(); ++i) {
@@ -591,9 +610,10 @@ private:
             }
         }
         add_elements("station.put", ctx_.station_puts);
-        size_t station_index = 0;
-        for (const auto& input : ctx_.station_list) {
-            add_element("station.list", station_index++, input.second.edit_ref);
+        const auto& station_list_entries = ordered_station_list_entries();
+        for (size_t station_index = 0; station_index < station_list_entries.size(); ++station_index) {
+            add_element("station.list", station_index,
+                        station_list_entries[station_index]->second.edit_ref);
         }
         add_elements("structure.load", ctx_.structure_loads);
         add_elements("structure.put", ctx_.structure_puts);
@@ -706,6 +726,8 @@ private:
     MapContext& ctx_;
     MapSnapshotStorage& storage_;
     std::unordered_map<std::string, KvStringRef> strings_;
+    std::vector<StationListIterator> ordered_station_list_entries_;
+    bool station_list_order_initialized_ = false;
 };
 
 } // namespace

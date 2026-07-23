@@ -987,7 +987,8 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         "defaultTime", "signalFlag", "alightingTime", "passengers", "arrivalSoundKey",
         "depertureSoundKey", "doorReopen", "stuckInDoor"
     };
-    std::map<std::string, TableRow> station_rows_by_key;
+    model.station_definition_rows.reserve(static_cast<size_t>(snapshot.station_list_count));
+    std::map<std::string, size_t> station_definition_row_indices_by_key;
     for (std::uint64_t i = 0; i < snapshot.station_list_count; ++i) {
         const KvStationListRow& input = snapshot.station_list[i];
         TableRow row;
@@ -997,7 +998,9 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         const std::string object_key = map_snapshot_string(snapshot, input.object_key);
         if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = object_key;
-        station_rows_by_key[ascii_lower(object_key)] = std::move(row);
+        const size_t row_index = model.station_definition_rows.size();
+        model.station_definition_rows.push_back(std::move(row));
+        station_definition_row_indices_by_key[ascii_lower(object_key)] = row_index;
     }
     model.station_list_rows.reserve(static_cast<size_t>(snapshot.station_put_count));
     for (std::uint64_t i = 0; i < snapshot.station_put_count; ++i) {
@@ -1012,9 +1015,10 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         row.cells["margin1"] = map_snapshot_value_text(snapshot, input.margin1);
         row.cells["margin2"] = map_snapshot_value_text(snapshot, input.margin2);
         apply_map_row_metadata(row, snapshot, input.metadata);
-        auto existing = station_rows_by_key.find(ascii_lower(key));
-        if (existing != station_rows_by_key.end()) {
-            for (const auto& cell : existing->second.cells) row.cells[cell.first] = cell.second;
+        auto existing = station_definition_row_indices_by_key.find(ascii_lower(key));
+        if (existing != station_definition_row_indices_by_key.end()) {
+            const TableRow& definition = model.station_definition_rows[existing->second];
+            for (const auto& cell : definition.cells) row.cells[cell.first] = cell.second;
         }
         model.station_list_rows.push_back(std::move(row));
     }
@@ -1391,6 +1395,7 @@ bool table_row_count_matches(const char* label,
 bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edit_model,
                                     std::string& error) {
     return table_row_count_matches("station.put", current.station_list_rows, edit_model.station_list_rows, error) &&
+        table_row_count_matches("station.list", current.station_definition_rows, edit_model.station_definition_rows, error) &&
         table_row_count_matches("structure.put", current.structures, edit_model.structures, error) &&
         table_row_count_matches("structure.between", current.structures_between, edit_model.structures_between, error) &&
         table_row_count_matches("structure.model", current.structure_models, edit_model.structure_models, error) &&
@@ -1429,6 +1434,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     current.edit_statements = std::move(edit_model.edit_statements);
     current.edit_elements = std::move(edit_model.edit_elements);
     merge_table_row_edit_metadata(current.station_list_rows, edit_model.station_list_rows);
+    merge_table_row_edit_metadata(current.station_definition_rows, edit_model.station_definition_rows);
     merge_table_row_edit_metadata(current.structures, edit_model.structures);
     merge_table_row_edit_metadata(current.structures_between, edit_model.structures_between);
     merge_table_row_edit_metadata(current.structure_models, edit_model.structure_models);
