@@ -6228,6 +6228,11 @@ fail:
                     action.edit_id = object.edit_id;
                     action.row_kind = edit_row_kind;
                 }
+                if (ImGui::MenuItem(ui_text.delete_element)) {
+                    action.kind = Canvas3DSceneContextActionKind::DeleteElement;
+                    action.edit_id = object.edit_id;
+                    action.row_kind = edit_row_kind;
+                }
                 ImGui::EndDisabled();
             } else if (object.kind == Canvas3DSceneObjectKind::Repeater) {
                 if (ImGui::MenuItem(ui_text.locate_repeater_list)) {

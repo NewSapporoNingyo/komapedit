@@ -1014,8 +1014,6 @@ struct MapElementInspectorState {
     std::string repeater_next_begin_edit_id;
     size_t repeater_scene_row_index = 0;
     bool repeater_has_multiple_begins = false;
-    bool delete_supported = false;
-    bool pending_delete = false;
     bool source_method_put0 = false;
     bool put0_conversion_draft = false;
     bool put0_prompt_requested = false;
@@ -1038,6 +1036,11 @@ struct MapElementInspectorRequest {
     MapElementInspectorRequest() = default;
     MapElementInspectorRequest(std::string requested_edit_id, std::string requested_row_kind)
         : edit_id(std::move(requested_edit_id)), row_kind(std::move(requested_row_kind)) {}
+};
+
+struct MapElementDeleteRequest {
+    std::string edit_id;
+    std::string row_kind;
 };
 
 struct InspectorTargetMetadata {
@@ -1192,6 +1195,7 @@ private:
     DistanceResolutionWorkflowState distance_resolution_workflow_;
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
+    std::optional<MapElementDeleteRequest> pending_delete_request_;
 
     std::vector<LogLine> logs_;
     std::mutex log_mutex_;
@@ -1362,6 +1366,7 @@ private:
         bool canvas_3d_settings = false;
         bool reload_unsaved_confirm = false;
         bool close_unsaved_confirm = false;
+        bool revert_all_edits_confirm = false;
         bool edit_mode_warning = false;
     };
     enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
@@ -1555,7 +1560,6 @@ private:
     void confirm_distance_resolution_boundary();
     void cancel_distance_resolution_workflow();
     void process_distance_resolution_retry();
-    bool apply_pending_edits_to_preview();
     bool apply_local_preview_change(const MapElementPendingChange& change,
                                     bool refresh_preview = true);
     bool restore_local_preview_change(const std::string& edit_id, const std::string& row_kind,
@@ -1565,6 +1569,9 @@ private:
                                           const std::string& edit_id = {});
     void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
     void process_pending_element_inspector();
+    void request_element_delete(const std::string& edit_id, const std::string& row_kind);
+    void process_pending_element_delete();
+    bool delete_element_target(const MapElementDeleteRequest& request);
     bool open_element_inspector(const MapElementInspectorRequest& request);
     bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);
     bool row_has_pending_edit(const std::string& edit_id) const;
@@ -1575,9 +1582,8 @@ private:
     void request_close_action(PendingCloseAction action);
     bool resolve_pending_close_action(bool save_changes);
     bool discard_pending_edits();
+    bool revert_all_pending_edits();
     void apply_inspector_changes();
-    void revert_inspector_changes();
-    void delete_inspector_target();
     void enable_inspector_put0_conversion();
     bool navigate_repeater_inspector(bool toward_next);
     void sync_scene_structure_edit_from_inspector();

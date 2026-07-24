@@ -227,6 +227,7 @@ struct Canvas3DSceneBuildResult {
 struct Canvas3DSceneUiText {
     const char* switch_signal_aspect = "Switch Signal Aspect";
     const char* element_properties = "Properties/Edit";
+    const char* delete_element = "Delete";
     const char* locate_structure_list = "Locate in Map Structure List";
     const char* locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
     const char* locate_repeater_list = "Locate in Repeater List";
@@ -263,6 +264,7 @@ enum class Canvas3DSceneContextActionKind {
     LocateStructure,
     LocateRepeater,
     EditElement,
+    DeleteElement,
 };
 
 struct Canvas3DSceneContextAction {

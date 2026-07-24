@@ -107,6 +107,7 @@ enum class TextCellContextAction {
     Primary,
     Secondary,
     Tertiary,
+    Quaternary,
 };
 
 TextCellContextAction render_text_cell_with_context_actions(const std::string& display_text,
@@ -115,7 +116,9 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
                                                            const std::string& secondary_label,
                                                            bool secondary_enabled,
                                                            const std::string& tertiary_label = {},
-                                                           bool tertiary_enabled = false) {
+                                                           bool tertiary_enabled = false,
+                                                           const std::string& quaternary_label = {},
+                                                           bool quaternary_enabled = false) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
     ImVec2 item_size(
@@ -133,16 +136,27 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
     TextCellContextAction action = TextCellContextAction::None;
     touch_input::open_popup_on_last_item_long_press("text_cell_context_actions");
     if (ImGui::BeginPopupContextItem("text_cell_context_actions", ImGuiPopupFlags_MouseButtonRight)) {
-        ImGui::BeginDisabled(!primary_enabled);
-        if (ImGui::MenuItem(primary_label.c_str())) action = TextCellContextAction::Primary;
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(!secondary_enabled);
-        if (ImGui::MenuItem(secondary_label.c_str())) action = TextCellContextAction::Secondary;
-        ImGui::EndDisabled();
-        if (!tertiary_label.empty()) {
+        if (!primary_label.empty()) {
+            ImGui::BeginDisabled(!primary_enabled);
+            if (ImGui::MenuItem(primary_label.c_str())) action = TextCellContextAction::Primary;
+            ImGui::EndDisabled();
+        }
+        if (!secondary_label.empty()) {
+            ImGui::BeginDisabled(!secondary_enabled);
+            if (ImGui::MenuItem(secondary_label.c_str())) action = TextCellContextAction::Secondary;
+            ImGui::EndDisabled();
+        }
+        if (!tertiary_label.empty() || !quaternary_label.empty()) {
             ImGui::Separator();
+        }
+        if (!tertiary_label.empty()) {
             ImGui::BeginDisabled(!tertiary_enabled);
             if (ImGui::MenuItem(tertiary_label.c_str())) action = TextCellContextAction::Tertiary;
+            ImGui::EndDisabled();
+        }
+        if (!quaternary_label.empty()) {
+            ImGui::BeginDisabled(!quaternary_enabled);
+            if (ImGui::MenuItem(quaternary_label.c_str())) action = TextCellContextAction::Quaternary;
             ImGui::EndDisabled();
         }
         ImGui::EndPopup();
@@ -2143,9 +2157,16 @@ void App::render_station_list_window() {
                         continue;
                     }
                     ImGui::PushID(i);
-                    if (render_text_cell_with_context(value, tr("dialog.element_properties"),
-                                                      edit_actions_available() && !row.edit_id.empty())) {
+                    const bool edit_enabled = edit_actions_available() && !row.edit_id.empty();
+                    const TextCellContextAction action = render_text_cell_with_context_actions(
+                        value,
+                        tr("dialog.element_properties"), edit_enabled,
+                        {}, false,
+                        tr("button.delete"), edit_enabled);
+                    if (action == TextCellContextAction::Primary) {
                         request_element_inspector(row.edit_id, "station.put");
+                    } else if (action == TextCellContextAction::Tertiary) {
+                        request_element_delete(row.edit_id, "station.put");
                     }
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         request_element_inspector(row.edit_id, "station.put");
@@ -2290,6 +2311,8 @@ void App::render_structure_rows_window(bool put_between) {
                             tr("menu.locate_in_scene_preview"),
                             can_locate_scene,
                             tr("dialog.element_properties"),
+                            edit_actions_available() && !row.edit_id.empty(),
+                            tr("button.delete"),
                             edit_actions_available() && !row.edit_id.empty());
                         if (action == TextCellContextAction::Primary) {
                             locate_structure_row_on_plan(marker_index);
@@ -2297,6 +2320,9 @@ void App::render_structure_rows_window(bool put_between) {
                             locate_structure_row_in_scene_preview(marker_index);
                         } else if (action == TextCellContextAction::Tertiary) {
                             request_element_inspector(row.edit_id, put_between ? "structure.between" : "structure.put");
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(row.edit_id,
+                                                   put_between ? "structure.between" : "structure.put");
                         }
                         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                             request_element_inspector(row.edit_id, put_between ? "structure.between" : "structure.put");
@@ -2437,9 +2463,12 @@ void App::render_structure_models_window() {
                             }
                             ImGui::EndDisabled();
                             ImGui::Separator();
-                        ImGui::BeginDisabled(!edit_actions_available() || row.edit_id.empty());
+                            ImGui::BeginDisabled(!edit_actions_available() || row.edit_id.empty());
                             if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
                                 request_element_inspector(row.edit_id, "structure.model");
+                            }
+                            if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                                request_element_delete(row.edit_id, "structure.model");
                             }
                             ImGui::EndDisabled();
                             ImGui::EndPopup();

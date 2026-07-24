@@ -1696,6 +1696,7 @@ void App::clear_pending_edit_state() {
     text_preview_.placement = TextPreviewPlacementState{};
     inspector_ = MapElementInspectorState{};
     pending_inspector_request_.reset();
+    pending_delete_request_.reset();
 }
 
 bool App::has_pending_edits() const {
@@ -1948,6 +1949,23 @@ void App::process_pending_element_inspector() {
     open_element_inspector(request);
 }
 
+bool row_kind_supports_delete(const std::string& row_kind) {
+    return row_kind == "structure.model" || row_kind == "structure.put" ||
+        row_kind == "structure.between" || row_kind == "station.put";
+}
+
+void App::request_element_delete(const std::string& edit_id, const std::string& row_kind) {
+    if (!edit_actions_available() || edit_id.empty() || !row_kind_supports_delete(row_kind)) return;
+    pending_delete_request_ = MapElementDeleteRequest{edit_id, row_kind};
+}
+
+void App::process_pending_element_delete() {
+    if (!pending_delete_request_) return;
+    MapElementDeleteRequest request = std::move(*pending_delete_request_);
+    pending_delete_request_.reset();
+    delete_element_target(request);
+}
+
 const EditSourceFileInfo* find_model_source_file(const MapModel& model, const std::string& path) {
     for (const EditSourceFileInfo& file : model.edit_files) {
         if (file.file_path == path) return &file;
@@ -1955,11 +1973,13 @@ const EditSourceFileInfo* find_model_source_file(const MapModel& model, const st
     return nullptr;
 }
 
-std::string inspector_expected_source_hash(
+std::string expected_source_hash_for_edit_target(
     const MapModel& model,
     const std::map<std::string, MapElementPendingChange>& pending_changes,
-    const MapElementInspectorState& inspector) {
-    auto pending = pending_changes.find(inspector.edit_id);
+    const std::string& edit_id,
+    const std::string& preferred_hash,
+    const std::string& source_file_path) {
+    auto pending = pending_changes.find(edit_id);
     if (pending != pending_changes.end() && !pending->second.expected_source_hash.empty()) {
         return pending->second.expected_source_hash;
     }
@@ -1967,10 +1987,19 @@ std::string inspector_expected_source_hash(
     // The complete pending ledger is replayed from disk on every Apply. Keep
     // its optimistic-concurrency hash pinned to that disk baseline even while
     // the active maploader handle represents a dirty in-memory working copy.
-    if (!inspector.expected_source_hash.empty()) return inspector.expected_source_hash;
-    const EditSourceFileInfo* source_file = find_model_source_file(model, inspector.source_file);
+    if (!preferred_hash.empty()) return preferred_hash;
+    const EditSourceFileInfo* source_file = find_model_source_file(model, source_file_path);
     if (source_file && !source_file->source_hash.empty()) return source_file->source_hash;
     return {};
+}
+
+std::string inspector_expected_source_hash(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& pending_changes,
+    const MapElementInspectorState& inspector) {
+    return expected_source_hash_for_edit_target(
+        model, pending_changes, inspector.edit_id, inspector.expected_source_hash,
+        inspector.source_file);
 }
 
 const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
@@ -2407,7 +2436,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.raw_statement = target_info && !target_info->raw_statement.empty()
         ? target_info->raw_statement
         : source.raw_text_preview;
-    next.delete_supported = true;
     next.owned_edit_ids.push_back(edit_id);
     if (next.expected_source_hash.empty()) {
         const EditSourceFileInfo* source_file = find_model_source_file(model_, next.source_file);
@@ -2525,7 +2553,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         next.source_method_put0 = ascii_lower(original_method) == "begin0";
         next.put0_conversion_draft = next.source_method_put0 && ascii_lower(method) != "begin0";
         next.put0_prompt_requested = ascii_lower(method) == "begin0";
-        next.delete_supported = false;
         next.repeater_boundary_kind =
             linked->boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
             linked->boundary_kind == repeater_linkage::BoundaryKind::NextBegin ? "change" : "open";
@@ -2614,12 +2641,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         }
     }
 
-    for (const std::string& owned_edit_id : next.owned_edit_ids) {
-        const auto pending = pending_edit_changes_.find(owned_edit_id);
-        if (pending != pending_edit_changes_.end() && pending->second.operation == "delete") {
-            next.pending_delete = true;
-        }
-    }
     for (MapElementEditFieldState& field : next.fields) {
         const std::string& field_edit_id = field.target_edit_id.empty()
             ? edit_id
@@ -2682,7 +2703,7 @@ void App::sync_scene_structure_edit_from_inspector() {
     const bool structure_target = inspector_.row_kind == "structure.put";
     const bool repeater_target = inspector_.row_kind == "repeater";
     if (!scene_preview_started_ || !scene_preview_canvas_ || !inspector_.open ||
-        inspector_.pending_delete || (!structure_target && !repeater_target)) {
+        (!structure_target && !repeater_target)) {
         clear_scene_structure_edit_target();
         return;
     }
@@ -2780,11 +2801,6 @@ void App::apply_inspector_changes() {
         distance_resolution_workflow_.retry_requested) {
         cancel_distance_resolution_workflow();
     }
-    if (inspector_.pending_delete) {
-        apply_pending_edits_to_preview();
-        return;
-    }
-
     std::map<std::string, MapElementPendingChange> replacements;
     auto change_for = [&](const MapElementEditFieldState& field)
         -> MapElementPendingChange& {
@@ -2919,72 +2935,66 @@ void App::apply_inspector_changes() {
     }
 }
 
-void App::revert_inspector_changes() {
-    if (!edit_actions_available()) return;
-    if (!inspector_.open || inspector_.edit_id.empty()) return;
-    const bool repeater_inspector = inspector_.row_kind == "repeater";
-    const std::string repeater_draft_edit_id = inspector_.edit_id;
-    if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
-        distance_resolution_workflow_.retry_requested) {
-        cancel_distance_resolution_workflow();
+std::string delete_expected_source_hash(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& pending_changes,
+    void* handle,
+    const MapElementDeleteRequest& request,
+    std::string* metadata_error) {
+    const auto pending = pending_changes.find(request.edit_id);
+    if (pending != pending_changes.end() &&
+        !pending->second.expected_source_hash.empty()) {
+        return pending->second.expected_source_hash;
     }
-    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-    for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
-        candidate.erase(owned_edit_id);
+
+    const std::optional<InspectorTargetMetadata> metadata =
+        resolve_inspector_target_metadata(handle, request.edit_id, request.row_kind,
+                                          metadata_error);
+    std::string source_file_path = metadata ? metadata->source.file_path : std::string{};
+    const std::vector<TableRow>* rows = inspector_rows_for_kind(model, request.row_kind);
+    if (source_file_path.empty() && rows) {
+        size_t row_index = 0;
+        if (find_row_index_by_edit_id(*rows, request.edit_id, row_index)) {
+            source_file_path = (*rows)[row_index].source.file_path;
+        }
     }
-    if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
-        for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
-            original_edit_rows_.erase(owned_edit_id);
-        }
-        inspector_.pending_delete = false;
-        if (repeater_inspector) {
-            inspector_.session.repeater_drafts.erase(repeater_draft_edit_id);
-            MapElementInspectorRequest request{inspector_.edit_id, inspector_.row_kind};
-            request.inspector_session = inspector_.session;
-            if (open_element_inspector(request)) {
-                set_program_status("status.edit.reverted");
-            }
-            clear_scene_structure_edit_target();
-            return;
-        }
-        for (MapElementEditFieldState& field : inspector_.fields) {
-            set_edit_field_buffer(field, field.original_value);
-        }
-        if (inspector_.source_method_put0) {
-            inspector_.fields.erase(
-                std::remove_if(inspector_.fields.begin(), inspector_.fields.end(),
-                               [](const MapElementEditFieldState& field) {
-                                   return is_structure_coordinate_field(field.key);
-                               }),
-                inspector_.fields.end());
-            inspector_.put0_conversion_draft = false;
-            inspector_.put0_prompt_requested = false;
-        }
-        inspector_.z_rebase_prompt_requested = false;
-        clear_scene_structure_edit_target();
-        set_program_status("status.edit.reverted");
-    }
+    return expected_source_hash_for_edit_target(
+        model, pending_changes, request.edit_id,
+        metadata ? metadata->expected_source_hash : std::string{}, source_file_path);
 }
 
-void App::delete_inspector_target() {
-    if (!edit_actions_available()) return;
-    if (!inspector_.open || inspector_.edit_id.empty() || !inspector_.delete_supported) return;
+bool App::delete_element_target(const MapElementDeleteRequest& request) {
+    if (!edit_actions_available() || request.edit_id.empty() ||
+        !row_kind_supports_delete(request.row_kind)) {
+        return false;
+    }
     if (distance_resolution_workflow_.phase != DistanceResolutionPhase::None ||
         distance_resolution_workflow_.retry_requested) {
         cancel_distance_resolution_workflow();
     }
     MapElementPendingChange change;
-    change.change_id = "delete-" + inspector_.edit_id;
-    change.edit_id = inspector_.edit_id;
-    change.row_kind = inspector_.row_kind;
+    change.change_id = "delete-" + request.edit_id;
+    change.edit_id = request.edit_id;
+    change.row_kind = request.row_kind;
     change.operation = "delete";
-    change.expected_source_hash =
-        inspector_expected_source_hash(model_, pending_edit_changes_, inspector_);
+    std::string metadata_error;
+    change.expected_source_hash = delete_expected_source_hash(
+        model_, pending_edit_changes_, handle_, request, &metadata_error);
+    if (!metadata_error.empty()) {
+        add_log("[warn]gui_kme.cpp: delete target metadata fallback: " + metadata_error);
+    }
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     candidate[change.edit_id] = std::move(change);
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
-        inspector_.pending_delete = true;
+        if (inspector_.open && inspector_.edit_id == request.edit_id) {
+            clear_scene_structure_edit_target();
+            inspector_ = MapElementInspectorState{};
+            pending_inspector_request_.reset();
+        }
+        set_program_status("status.edit.pending_delete");
+        return true;
     }
+    return false;
 }
 
 KvUtf8View edit_utf8_view(const std::string& text) {
@@ -3662,18 +3672,6 @@ void App::process_distance_resolution_retry() {
                                  std::move(workflow.origin_edit_id));
 }
 
-bool App::apply_pending_edits_to_preview() {
-    bool applying_delete = false;
-    for (const auto& kv : pending_edit_changes_) {
-        applying_delete = applying_delete || kv.second.operation == "delete";
-    }
-    std::optional<MapElementInspectorRequest> reload_request;
-    if (inspector_.open && !inspector_.edit_id.empty() && !applying_delete) {
-        reload_request = make_inspector_reload_request(inspector_);
-    }
-    return apply_edit_ledger_to_preview(pending_edit_changes_, std::move(reload_request), applying_delete);
-}
-
 bool App::save_pending_edits(bool refresh_inspector) {
     if (!edit_actions_available()) return false;
     if (!handle_ || !has_pending_edits() || load_state_.running) return false;
@@ -3741,6 +3739,31 @@ bool App::discard_pending_edits() {
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     text_preview_.placement = TextPreviewPlacementState{};
+    return true;
+}
+
+bool App::revert_all_pending_edits() {
+    if (!edit_actions_available() || !has_pending_edits()) return false;
+
+    std::optional<MapElementInspectorRequest> inspector_request;
+    if (inspector_.open && !inspector_.edit_id.empty()) {
+        MapElementInspectorRequest request;
+        request.edit_id = inspector_.edit_id;
+        request.row_kind = inspector_.row_kind;
+        request.source_file = inspector_.source_file;
+        request.line = inspector_.line;
+        request.column = inspector_.column;
+        inspector_request = std::move(request);
+    }
+
+    clear_scene_structure_edit_target();
+    if (!discard_pending_edits()) return false;
+
+    if (inspector_request && !open_element_inspector(*inspector_request)) {
+        inspector_ = MapElementInspectorState{};
+        pending_inspector_request_.reset();
+    }
+    set_program_status("status.edit.reverted");
     return true;
 }
 
@@ -3829,7 +3852,6 @@ void App::render_element_inspector() {
     };
 
     ImGui::Separator();
-    ImGui::BeginDisabled(inspector_.pending_delete);
     for (size_t field_index = 0; field_index < inspector_.fields.size(); ++field_index) {
         MapElementEditFieldState& field = inspector_.fields[field_index];
         if (repeater_inspector && is_repeater_structure_key_field(field)) {
@@ -3856,7 +3878,6 @@ void App::render_element_inspector() {
             ImGui::Separator();
             render_repeater_end_source();
             if (repeater_navigation_changed) {
-                ImGui::EndDisabled();
                 ImGui::End();
                 return;
             }
@@ -3926,15 +3947,7 @@ void App::render_element_inspector() {
             reindex_repeater_structure_key_fields(inspector_);
         }
     }
-    ImGui::EndDisabled();
-
     if (ImGui::Button(tr("button.apply").c_str())) apply_inspector_changes();
-    ImGui::SameLine();
-    if (ImGui::Button(tr("button.revert").c_str())) revert_inspector_changes();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!inspector_.delete_supported);
-    if (ImGui::Button(tr("button.delete").c_str())) delete_inspector_target();
-    ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) {
         cancel_distance_resolution_workflow();
@@ -4793,6 +4806,13 @@ void App::render_toolbar() {
         ImGui::SameLine();
         ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits());
         if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits());
+        if (ImGui::Button(tr("button.revert").c_str())) {
+            popups_.revert_all_edits_confirm = true;
+        }
         ImGui::EndDisabled();
 
         render_section_separator();
@@ -5672,6 +5692,26 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
+    if (popups_.revert_all_edits_confirm) {
+        ImGui::OpenPopup(tr("dialog.revert_all_edits_title").c_str());
+        popups_.revert_all_edits_confirm = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.revert_all_edits_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
+        ImGui::TextUnformatted(tr("dialog.revert_all_edits_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.revert").c_str())) {
+            if (revert_all_pending_edits()) ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     if (popups_.close_unsaved_confirm) {
         ImGui::OpenPopup(tr("dialog.unsaved_changes_title").c_str());
         popups_.close_unsaved_confirm = false;
@@ -5919,6 +5959,7 @@ void App::render_scene_preview_window() {
         Canvas3DSceneUiText scene_ui_text;
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect").c_str();
         scene_ui_text.element_properties = tr("dialog.element_properties").c_str();
+        scene_ui_text.delete_element = tr("button.delete").c_str();
         scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list").c_str();
         scene_ui_text.locate_structure_put_between_list = tr("menu.locate_in_structure_put_between_list").c_str();
         scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list").c_str();
@@ -5945,6 +5986,8 @@ void App::render_scene_preview_window() {
             locate_repeater_row_in_list(scene_action.row_index);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::EditElement) {
             request_element_inspector(scene_action.edit_id, scene_action.row_kind);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::DeleteElement) {
+            request_element_delete(scene_action.edit_id, scene_action.row_kind);
         }
         drain_scene_preview_logs();
     }
@@ -6143,6 +6186,7 @@ void App::render() {
     render_cab_illuminance_window();
     render_fogs_window();
     render_draw_distances_window();
+    process_pending_element_delete();
     process_pending_element_inspector();
     render_element_inspector();
     render_popups();
