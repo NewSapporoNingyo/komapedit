@@ -98,6 +98,8 @@ struct Canvas3DRepeaterSegment {
     std::string edit_id;
     std::string track_key;
     std::vector<std::string> model_paths;
+    size_t chain_begin_index = 0;
+    size_t chain_begin_count = 1;
     double begin_distance = 0.0;
     double end_distance = 0.0;
     bool has_end_or_change_position = false;
@@ -228,6 +230,10 @@ struct Canvas3DSceneUiText {
     const char* switch_signal_aspect = "Switch Signal Aspect";
     const char* element_properties = "Properties/Edit";
     const char* delete_element = "Delete";
+    const char* delete_repeater_all = "Delete All";
+    const char* delete_repeater_change_point = "Delete Change Point";
+    const char* trim_repeater_to_change_point = "Trim to Change Point";
+    const char* start_repeater_from_change_point = "Start from Change Point";
     const char* locate_structure_list = "Locate in Map Structure List";
     const char* locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
     const char* locate_repeater_list = "Locate in Repeater List";
@@ -265,6 +271,10 @@ enum class Canvas3DSceneContextActionKind {
     LocateRepeater,
     EditElement,
     DeleteElement,
+    DeleteRepeaterAll,
+    DeleteRepeaterChangePoint,
+    TrimRepeaterToChangePoint,
+    StartRepeaterFromChangePoint,
 };
 
 struct Canvas3DSceneContextAction {

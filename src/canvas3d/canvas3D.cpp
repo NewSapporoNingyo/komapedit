@@ -1642,10 +1642,10 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         }
         repeater_events.push_back(std::move(event));
     }
-    const std::vector<repeater_linkage::Segment> repeater_segments =
-        repeater_linkage::pair_segments(std::move(repeater_events));
-    scene.repeaters.reserve(repeater_segments.size());
-    for (const repeater_linkage::Segment& linked : repeater_segments) {
+    const repeater_linkage::Linkage linkage =
+        repeater_linkage::pair_linkage(std::move(repeater_events));
+    scene.repeaters.reserve(linkage.segments.size());
+    for (const repeater_linkage::Segment& linked : linkage.segments) {
         if (linked.begin_source_index >= model.repeaters.size()) continue;
         const TableRow& begin = model.repeaters[linked.begin_source_index];
         const double end_distance = linked.boundary_kind == repeater_linkage::BoundaryKind::Open
@@ -1656,6 +1656,8 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         Canvas3DRepeaterSegment segment;
         segment.edit_id = begin.edit_id;
         segment.track_key = table_cell(begin, "trackKey");
+        segment.chain_begin_index = linked.chain_begin_index;
+        segment.chain_begin_count = linked.chain_begin_count;
         segment.begin_distance = linked.begin_distance;
         segment.end_distance = end_distance;
         segment.has_end_or_change_position =
@@ -6248,11 +6250,41 @@ fail:
                     action.row_kind = edit_row_kind;
                 }
                 ImGui::EndDisabled();
+                const Canvas3DRepeaterSegment* repeater = find_repeater_segment(object.source_row);
+                const bool delete_enabled = context_menu_options.element_properties_enabled &&
+                    !object.edit_id.empty() && edit_row_kind && repeater;
+                if (repeater && repeater->chain_begin_count > 1) {
+                    if (ImGui::BeginMenu(ui_text.delete_element, delete_enabled)) {
+                        if (ImGui::MenuItem(ui_text.delete_repeater_all)) {
+                            action.kind = Canvas3DSceneContextActionKind::DeleteRepeaterAll;
+                        } else if (ImGui::MenuItem(ui_text.delete_repeater_change_point)) {
+                            action.kind = Canvas3DSceneContextActionKind::DeleteRepeaterChangePoint;
+                        } else if (repeater->chain_begin_index != 0 &&
+                                   ImGui::MenuItem(ui_text.trim_repeater_to_change_point)) {
+                            action.kind = Canvas3DSceneContextActionKind::TrimRepeaterToChangePoint;
+                        } else if (repeater->chain_begin_index != 0 &&
+                                   ImGui::MenuItem(ui_text.start_repeater_from_change_point)) {
+                            action.kind = Canvas3DSceneContextActionKind::StartRepeaterFromChangePoint;
+                        }
+                        if (action.kind != Canvas3DSceneContextActionKind::None) {
+                            action.edit_id = object.edit_id;
+                            action.row_kind = edit_row_kind;
+                        }
+                        ImGui::EndMenu();
+                    }
+                } else {
+                    ImGui::BeginDisabled(!delete_enabled);
+                    if (ImGui::MenuItem(ui_text.delete_element)) {
+                        action.kind = Canvas3DSceneContextActionKind::DeleteRepeaterAll;
+                        action.edit_id = object.edit_id;
+                        action.row_kind = edit_row_kind;
+                    }
+                    ImGui::EndDisabled();
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem(ui_text.jump_to_repeater_start_position)) {
                     jump_scene_camera_to_object(Canvas3DSceneObjectKind::Repeater, object.source_row);
                 }
-                const Canvas3DRepeaterSegment* repeater = find_repeater_segment(object.source_row);
                 ImGui::BeginDisabled(!repeater || !repeater->has_end_or_change_position);
                 if (ImGui::MenuItem(ui_text.jump_to_repeater_end_or_change_position)) {
                     jump_scene_camera_to_repeater_end_or_change(object.source_row);

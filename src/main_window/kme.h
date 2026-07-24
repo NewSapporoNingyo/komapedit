@@ -331,6 +331,8 @@ struct CachedTableRow {
     EditSourceInfo source;
     std::string open_path;
     std::string tooltip_text;
+    size_t repeater_chain_begin_index = 0;
+    size_t repeater_chain_begin_count = 1;
     bool invalid_track_key = false;
 };
 
@@ -1038,9 +1040,17 @@ struct MapElementInspectorRequest {
         : edit_id(std::move(requested_edit_id)), row_kind(std::move(requested_row_kind)) {}
 };
 
+enum class RepeaterDeleteMode {
+    EntireChain,
+    ChangePoint,
+    TrimToChangePoint,
+    StartFromChangePoint,
+};
+
 struct MapElementDeleteRequest {
     std::string edit_id;
     std::string row_kind;
+    RepeaterDeleteMode repeater_mode = RepeaterDeleteMode::EntireChain;
 };
 
 struct InspectorTargetMetadata {
@@ -1569,7 +1579,8 @@ private:
                                           const std::string& edit_id = {});
     void request_element_inspector(const std::string& edit_id, const std::string& row_kind);
     void process_pending_element_inspector();
-    void request_element_delete(const std::string& edit_id, const std::string& row_kind);
+    void request_element_delete(const std::string& edit_id, const std::string& row_kind,
+                                RepeaterDeleteMode repeater_mode = RepeaterDeleteMode::EntireChain);
     void process_pending_element_delete();
     bool delete_element_target(const MapElementDeleteRequest& request);
     bool open_element_inspector(const MapElementInspectorRequest& request);

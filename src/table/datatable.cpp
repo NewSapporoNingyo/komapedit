@@ -76,14 +76,16 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
     }
 }
 
-bool render_text_cell_with_context(const std::string& display_text, const std::string& menu_label, bool menu_enabled) {
+bool begin_text_cell_context_popup(const std::string& display_text, const char* item_id,
+                                   const char* popup_id, bool* item_hovered = nullptr) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
     ImVec2 item_size(
         std::max(1.0f, ImGui::GetContentRegionAvail().x),
         std::max(ImGui::GetTextLineHeight(), text_size.y));
-    ImGui::InvisibleButton("text_cell_context_item", item_size);
-    if (ImGui::IsItemHovered()) {
+    ImGui::InvisibleButton(item_id, item_size);
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) {
         ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y),
                                                   ImGui::GetColorU32(ImGuiCol_HeaderHovered));
     }
@@ -91,9 +93,14 @@ bool render_text_cell_with_context(const std::string& display_text, const std::s
         ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), display_text.c_str());
     }
 
+    if (item_hovered) *item_hovered = hovered;
+    touch_input::open_popup_on_last_item_long_press(popup_id);
+    return ImGui::BeginPopupContextItem(popup_id, ImGuiPopupFlags_MouseButtonRight);
+}
+
+bool render_text_cell_with_context(const std::string& display_text, const std::string& menu_label, bool menu_enabled) {
     bool selected = false;
-    touch_input::open_popup_on_last_item_long_press("text_cell_context");
-    if (ImGui::BeginPopupContextItem("text_cell_context", ImGuiPopupFlags_MouseButtonRight)) {
+    if (begin_text_cell_context_popup(display_text, "text_cell_context_item", "text_cell_context")) {
         ImGui::BeginDisabled(!menu_enabled);
         selected = ImGui::MenuItem(menu_label.c_str());
         ImGui::EndDisabled();
@@ -119,23 +126,9 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
                                                            bool tertiary_enabled = false,
                                                            const std::string& quaternary_label = {},
                                                            bool quaternary_enabled = false) {
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImVec2 text_size = ImGui::CalcTextSize(display_text.c_str());
-    ImVec2 item_size(
-        std::max(1.0f, ImGui::GetContentRegionAvail().x),
-        std::max(ImGui::GetTextLineHeight(), text_size.y));
-    ImGui::InvisibleButton("text_cell_context_actions_item", item_size);
-    if (ImGui::IsItemHovered()) {
-        ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y),
-                                                  ImGui::GetColorU32(ImGuiCol_HeaderHovered));
-    }
-    if (!display_text.empty()) {
-        ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), display_text.c_str());
-    }
-
     TextCellContextAction action = TextCellContextAction::None;
-    touch_input::open_popup_on_last_item_long_press("text_cell_context_actions");
-    if (ImGui::BeginPopupContextItem("text_cell_context_actions", ImGuiPopupFlags_MouseButtonRight)) {
+    if (begin_text_cell_context_popup(display_text, "text_cell_context_actions_item",
+                                      "text_cell_context_actions")) {
         if (!primary_label.empty()) {
             ImGui::BeginDisabled(!primary_enabled);
             if (ImGui::MenuItem(primary_label.c_str())) action = TextCellContextAction::Primary;
@@ -161,6 +154,72 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
         }
         ImGui::EndPopup();
     }
+    return action;
+}
+
+struct RepeaterTextCellContextAction {
+    TextCellContextAction navigation = TextCellContextAction::None;
+    RepeaterDeleteMode delete_mode = RepeaterDeleteMode::EntireChain;
+    bool delete_requested = false;
+    bool hovered = false;
+};
+
+RepeaterTextCellContextAction render_repeater_text_cell_with_context_actions(
+    const std::string& display_text,
+    const std::string& locate_on_plan_label, bool locate_on_plan_enabled,
+    const std::string& locate_in_scene_label, bool locate_in_scene_enabled,
+    const std::string& properties_label, const std::string& delete_label,
+    const std::string& delete_all_label, const std::string& delete_change_point_label,
+    const std::string& trim_to_change_point_label,
+    const std::string& start_from_change_point_label,
+    bool edit_enabled, size_t chain_begin_index, size_t chain_begin_count) {
+    RepeaterTextCellContextAction action;
+    if (!begin_text_cell_context_popup(display_text, "repeater_text_cell_context_item",
+                                       "repeater_text_cell_context", &action.hovered)) {
+        return action;
+    }
+    ImGui::BeginDisabled(!locate_on_plan_enabled);
+    if (ImGui::MenuItem(locate_on_plan_label.c_str())) {
+        action.navigation = TextCellContextAction::Primary;
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!locate_in_scene_enabled);
+    if (ImGui::MenuItem(locate_in_scene_label.c_str())) {
+        action.navigation = TextCellContextAction::Secondary;
+    }
+    ImGui::EndDisabled();
+    ImGui::Separator();
+    ImGui::BeginDisabled(!edit_enabled);
+    if (ImGui::MenuItem(properties_label.c_str())) {
+        action.navigation = TextCellContextAction::Tertiary;
+    }
+    ImGui::EndDisabled();
+    if (chain_begin_count <= 1) {
+        ImGui::BeginDisabled(!edit_enabled);
+        if (ImGui::MenuItem(delete_label.c_str())) action.delete_requested = true;
+        ImGui::EndDisabled();
+    } else if (ImGui::BeginMenu(delete_label.c_str(), edit_enabled)) {
+        if (ImGui::MenuItem(delete_all_label.c_str())) {
+            action.delete_requested = true;
+            action.delete_mode = RepeaterDeleteMode::EntireChain;
+        }
+        if (ImGui::MenuItem(delete_change_point_label.c_str())) {
+            action.delete_requested = true;
+            action.delete_mode = RepeaterDeleteMode::ChangePoint;
+        }
+        if (chain_begin_index != 0) {
+            if (ImGui::MenuItem(trim_to_change_point_label.c_str())) {
+                action.delete_requested = true;
+                action.delete_mode = RepeaterDeleteMode::TrimToChangePoint;
+            }
+            if (ImGui::MenuItem(start_from_change_point_label.c_str())) {
+                action.delete_requested = true;
+                action.delete_mode = RepeaterDeleteMode::StartFromChangePoint;
+            }
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::EndPopup();
     return action;
 }
 
@@ -1373,16 +1432,17 @@ std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
         events.push_back(std::move(event));
     }
     std::vector<TableRow> merged_rows;
-    const std::vector<repeater_linkage::Segment> segments =
-        repeater_linkage::pair_segments(std::move(events));
-    merged_rows.reserve(segments.size());
-    for (const repeater_linkage::Segment& segment : segments) {
+    const repeater_linkage::Linkage linkage = repeater_linkage::pair_linkage(std::move(events));
+    merged_rows.reserve(linkage.segments.size());
+    for (const repeater_linkage::Segment& segment : linkage.segments) {
         if (segment.begin_source_index >= data.size()) continue;
         const TableRow& begin = data[segment.begin_source_index];
         TableRow row = begin;
         const std::string& begin_distance = table_cell(begin, "distance");
         const std::string& begin_file_path = table_cell(begin, "filePath");
         row.cells["rowNumber"] = std::to_string(segment.display_index);
+        row.cells["_repeaterChainBeginIndex"] = std::to_string(segment.chain_begin_index);
+        row.cells["_repeaterChainBeginCount"] = std::to_string(segment.chain_begin_count);
         row.cells["_openFilePath"] = begin_file_path;
         row.cells["_repeaterBoundaryKind"] =
             segment.boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
@@ -1585,6 +1645,10 @@ void App::ensure_table_cache() {
         copy_table_row_metadata(row, cached);
         cached.cells.resize(IM_ARRAYSIZE(k_repeater_columns));
         cached.invalid_track_key = is_invalid_track_key_row(row);
+        cached.repeater_chain_begin_index = static_cast<size_t>(std::max(
+            0.0, table_cell_number(row, "_repeaterChainBeginIndex")));
+        cached.repeater_chain_begin_count = std::max<size_t>(1, static_cast<size_t>(std::max(
+            0.0, table_cell_number(row, "_repeaterChainBeginCount"))));
         cached.open_path = table_cell(row, "_openFilePath");
         cached.tooltip_text = table_cell(row, "_filePathTooltip");
         if (cached.tooltip_text.empty()) cached.tooltip_text = cached.open_path;
@@ -2802,22 +2866,33 @@ void App::render_repeaters_window() {
                         bool can_locate = marker_index < repeater_marker_cache_.size() &&
                             repeater_marker_cache_[marker_index].begin_marker.has_value();
                         const bool can_locate_scene = can_locate_scene_preview;
-                        TextCellContextAction action = render_text_cell_with_context_actions(
+                        RepeaterTextCellContextAction action =
+                            render_repeater_text_cell_with_context_actions(
                             value,
                             tr("menu.locate_on_plan"),
                             can_locate,
                             tr("menu.locate_in_scene_preview"),
                             can_locate_scene,
                             tr("dialog.element_properties"),
-                            edit_actions_available() && !row.edit_id.empty());
-                        if (action == TextCellContextAction::Primary) {
+                            tr("button.delete"),
+                            tr("menu.repeater_delete_all"),
+                            tr("menu.repeater_delete_change_point"),
+                            tr("menu.repeater_trim_to_change_point"),
+                            tr("menu.repeater_start_from_change_point"),
+                            edit_actions_available() && !row.edit_id.empty(),
+                            row.repeater_chain_begin_index,
+                            row.repeater_chain_begin_count);
+                        if (action.navigation == TextCellContextAction::Primary) {
                             locate_repeater_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
+                        } else if (action.navigation == TextCellContextAction::Secondary) {
                             locate_repeater_row_in_scene_preview(marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
+                        } else if (action.navigation == TextCellContextAction::Tertiary) {
                             request_element_inspector(row.edit_id, "repeater");
                         }
-                        if (ImGui::IsItemHovered() &&
+                        if (action.delete_requested) {
+                            request_element_delete(row.edit_id, "repeater", action.delete_mode);
+                        }
+                        if (action.hovered &&
                             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                             request_element_inspector(row.edit_id, "repeater");
                         }

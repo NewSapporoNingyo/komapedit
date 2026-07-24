@@ -6,6 +6,7 @@
 
 #include "maploader.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -77,6 +78,12 @@ struct TempFixture {
             << "SpeedLimit.Begin(80);\n"
             << "125;\n"
             << "Structure['pole'].Put('1',9,2,3,0,0,0,0,25);\n"
+            << "150;\n"
+            << "Repeater['rail'].Begin0('1',1,25,5,'rail-a');\n"
+            << "175;\n"
+            << "Repeater['rail'].Begin0('1',1,25,5,'rail-b');\n"
+            << "190;\n"
+            << "Repeater['rail'].End();\n"
             << "200;\n"
             << "Track['1'].Position(4.0,0);\n"
             << "SpeedLimit.End();\n";
@@ -354,6 +361,35 @@ struct UpdateBatch {
     }
 };
 
+struct RepeaterTrimBatch {
+    std::string change_update_id = "typed-contract-repeater-trim";
+    std::string change_delete_id = "typed-contract-repeater-delete-end";
+    std::string update_edit_id;
+    std::string delete_edit_id;
+    std::string source_hash;
+    std::string field_name = "method";
+    std::string field_value = "End";
+    KvEditField field{};
+    std::array<KvEditChange, 2> changes{};
+    KvEditBatch batch{};
+
+    RepeaterTrimBatch(std::string update_id, std::string delete_id, std::string hash)
+        : update_edit_id(std::move(update_id)), delete_edit_id(std::move(delete_id)),
+          source_hash(std::move(hash)) {
+        field = KvEditField{utf8_view(field_name), utf8_view(field_value)};
+        changes[0].change_id = utf8_view(change_update_id);
+        changes[0].edit_id = utf8_view(update_edit_id);
+        changes[0].operation = KV_EDIT_UPDATE;
+        changes[0].fields = KvSpan{0, 1};
+        changes[0].expected_source_hash = utf8_view(source_hash);
+        changes[1].change_id = utf8_view(change_delete_id);
+        changes[1].edit_id = utf8_view(delete_edit_id);
+        changes[1].operation = KV_EDIT_DELETE;
+        changes[1].expected_source_hash = utf8_view(source_hash);
+        batch = KvEditBatch{changes.data(), changes.size(), &field, 1};
+    }
+};
+
 void validate_report(const KvEditReportSnapshot& report) {
     check(report.version == KV_EDIT_REPORT_SNAPSHOT_VERSION, "report version");
     check(report.structure_size == sizeof(KvEditReportSnapshot), "report structure size");
@@ -397,6 +433,18 @@ const KvStructurePutRow* find_structure(const KvMapSnapshot& snapshot,
     return nullptr;
 }
 
+const KvRepeaterRow* find_repeater(const KvMapSnapshot& snapshot,
+                                   std::string_view edit_id) {
+    for (std::uint64_t i = 0; i < snapshot.repeater_count; ++i) {
+        const KvRepeaterRow& row = snapshot.repeaters[i];
+        if (arena_view(snapshot.string_data, snapshot.string_size,
+                       row.metadata.edit_id) == edit_id) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
 int edit_contract() {
     TempFixture fixture;
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
@@ -418,6 +466,12 @@ int edit_contract() {
     const KvSourceFileRow& source = baseline.source_files[row.metadata.source_file_index];
     const std::string source_hash = map_string(baseline, source.source_hash);
     const std::string source_path = map_string(baseline, source.file_path);
+    check(baseline.repeater_count == 3, "Repeater trim fixture rows present");
+    if (baseline.repeater_count != 3) return failures;
+    const std::string trim_edit_id =
+        map_string(baseline, baseline.repeaters[1].metadata.edit_id);
+    const std::string trim_end_edit_id =
+        map_string(baseline, baseline.repeaters[2].metadata.edit_id);
 
     KvEditTargetSnapshot target{};
     check(kv_get_edit_target_typed(handle.value, utf8_view(edit_id),
@@ -443,6 +497,40 @@ int edit_contract() {
     check(!kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)),
           "out-of-bounds field span rejected");
     update.change.fields = KvSpan{0, 1};
+
+    RepeaterTrimBatch trim(trim_edit_id, trim_end_edit_id, source_hash);
+    check(kv_edit_dry_run_typed(handle.value, &trim.batch,
+                                &report, sizeof(report)) != 0,
+          "Repeater trim dry-run call");
+    validate_report(report);
+    check(report.ok && report.update_count == 1 && report.delete_count == 1 &&
+              report.blocking_error_count == 0,
+          "Repeater trim dry-run report");
+    KvEditReportSnapshot trim_applied_report{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &trim.batch,
+                                        &trim_applied_report,
+                                        sizeof(trim_applied_report)) != 0,
+          "Repeater trim apply-to-memory call");
+    validate_report(trim_applied_report);
+    KvMapSnapshot trim_applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &trim_applied, sizeof(trim_applied)) != 0,
+          "Repeater trim applied snapshot");
+    const KvRepeaterRow* trimmed = find_repeater(trim_applied, trim_edit_id);
+    check(trim_applied.repeater_count == 2 && trimmed &&
+              map_string(trim_applied, trimmed->method) == "End" &&
+              find_repeater(trim_applied, trim_end_edit_id) == nullptr,
+          "Repeater trim converted Begin0 and removed original End");
+    check(kv_edit_reset_memory(handle.value) != 0, "Repeater trim reset call");
+    KvMapSnapshot trim_reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &trim_reset, sizeof(trim_reset)) != 0,
+          "Repeater trim reset snapshot");
+    const KvRepeaterRow* reset_trimmed = find_repeater(trim_reset, trim_edit_id);
+    check(trim_reset.repeater_count == 3 && reset_trimmed &&
+              map_string(trim_reset, reset_trimmed->method) == "Begin0" &&
+              find_repeater(trim_reset, trim_end_edit_id) != nullptr,
+          "Repeater trim reset restored source rows");
 
     check(kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) != 0,
           "dry-run call");

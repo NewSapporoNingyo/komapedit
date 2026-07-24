@@ -1951,12 +1951,57 @@ void App::process_pending_element_inspector() {
 
 bool row_kind_supports_delete(const std::string& row_kind) {
     return row_kind == "structure.model" || row_kind == "structure.put" ||
-        row_kind == "structure.between" || row_kind == "station.put";
+        row_kind == "structure.between" || row_kind == "station.put" ||
+        row_kind == "repeater";
 }
 
-void App::request_element_delete(const std::string& edit_id, const std::string& row_kind) {
+struct RepeaterDeleteChain {
+    std::vector<size_t> begin_source_indices;
+    std::optional<size_t> end_source_index;
+    size_t selected_begin_index = 0;
+};
+
+std::optional<RepeaterDeleteChain> repeater_delete_chain_for_edit_id(
+    const std::vector<TableRow>& rows, const std::string& edit_id) {
+    std::vector<repeater_linkage::Event> events;
+    events.reserve(rows.size());
+    for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+        const TableRow& row = rows[row_index];
+        repeater_linkage::Event event;
+        event.source_index = row_index;
+        event.distance = table_cell_number(row, "distance");
+        event.order = table_cell_number(row, "order");
+        event.key = table_cell(row, "repeaterKey");
+        const std::string& method = table_cell(row, "method");
+        if (method == "Begin" || method == "Begin0") {
+            event.kind = repeater_linkage::EventKind::Begin;
+        } else if (method == "End") {
+            event.kind = repeater_linkage::EventKind::End;
+        }
+        events.push_back(std::move(event));
+    }
+
+    const repeater_linkage::Linkage linkage = repeater_linkage::pair_linkage(std::move(events));
+    for (const repeater_linkage::Segment& segment : linkage.segments) {
+        if (segment.begin_source_index >= rows.size() ||
+            rows[segment.begin_source_index].edit_id != edit_id ||
+            segment.chain_index >= linkage.chains.size()) {
+            continue;
+        }
+        const repeater_linkage::Chain& chain = linkage.chains[segment.chain_index];
+        RepeaterDeleteChain result;
+        result.begin_source_indices = chain.begin_source_indices;
+        result.end_source_index = chain.end_source_index;
+        result.selected_begin_index = segment.chain_begin_index;
+        return result;
+    }
+    return std::nullopt;
+}
+
+void App::request_element_delete(const std::string& edit_id, const std::string& row_kind,
+                                 RepeaterDeleteMode repeater_mode) {
     if (!edit_actions_available() || edit_id.empty() || !row_kind_supports_delete(row_kind)) return;
-    pending_delete_request_ = MapElementDeleteRequest{edit_id, row_kind};
+    pending_delete_request_ = MapElementDeleteRequest{edit_id, row_kind, repeater_mode};
 }
 
 void App::process_pending_element_delete() {
@@ -2972,21 +3017,119 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         distance_resolution_workflow_.retry_requested) {
         cancel_distance_resolution_workflow();
     }
-    MapElementPendingChange change;
-    change.change_id = "delete-" + request.edit_id;
-    change.edit_id = request.edit_id;
-    change.row_kind = request.row_kind;
-    change.operation = "delete";
-    std::string metadata_error;
-    change.expected_source_hash = delete_expected_source_hash(
-        model_, pending_edit_changes_, handle_, request, &metadata_error);
-    if (!metadata_error.empty()) {
-        add_log("[warn]gui_kme.cpp: delete target metadata fallback: " + metadata_error);
-    }
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-    candidate[change.edit_id] = std::move(change);
+    std::set<std::string> repeater_chain_edit_ids;
+    auto make_delete_change = [&](const std::string& edit_id, const std::string& row_kind) {
+        MapElementDeleteRequest target_request = request;
+        target_request.edit_id = edit_id;
+        target_request.row_kind = row_kind;
+        MapElementPendingChange change;
+        change.change_id = "delete-" + edit_id;
+        change.edit_id = edit_id;
+        change.row_kind = row_kind;
+        change.operation = "delete";
+        std::string metadata_error;
+        change.expected_source_hash = delete_expected_source_hash(
+            model_, pending_edit_changes_, handle_, target_request, &metadata_error);
+        if (!metadata_error.empty()) {
+            add_log("[warn]gui_kme.cpp: delete target metadata fallback: " + metadata_error);
+        }
+        return change;
+    };
+
+    if (request.row_kind == "repeater") {
+        const std::optional<RepeaterDeleteChain> chain =
+            repeater_delete_chain_for_edit_id(model_.repeaters, request.edit_id);
+        if (!chain || chain->begin_source_indices.empty() ||
+            chain->selected_begin_index >= chain->begin_source_indices.size()) {
+            add_log("[warn]gui_kme.cpp: Repeater delete target is not a linked Begin statement: " +
+                    request.edit_id);
+            return false;
+        }
+        if (chain->begin_source_indices.size() == 1 &&
+            request.repeater_mode != RepeaterDeleteMode::EntireChain) {
+            add_log("[warn]gui_kme.cpp: Repeater change-point delete requires multiple Begins");
+            return false;
+        }
+        if (chain->selected_begin_index == 0 &&
+            (request.repeater_mode == RepeaterDeleteMode::TrimToChangePoint ||
+             request.repeater_mode == RepeaterDeleteMode::StartFromChangePoint)) {
+            add_log("[warn]gui_kme.cpp: Repeater delete mode is unavailable for the first Begin");
+            return false;
+        }
+
+        std::vector<std::string> begin_edit_ids;
+        begin_edit_ids.reserve(chain->begin_source_indices.size());
+        for (size_t source_index : chain->begin_source_indices) {
+            if (source_index >= model_.repeaters.size() ||
+                model_.repeaters[source_index].edit_id.empty()) {
+                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable Begin metadata");
+                return false;
+            }
+            const std::string& edit_id = model_.repeaters[source_index].edit_id;
+            begin_edit_ids.push_back(edit_id);
+            repeater_chain_edit_ids.insert(edit_id);
+        }
+        std::optional<std::string> end_edit_id;
+        if (chain->end_source_index) {
+            if (*chain->end_source_index >= model_.repeaters.size() ||
+                model_.repeaters[*chain->end_source_index].edit_id.empty()) {
+                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable End metadata");
+                return false;
+            }
+            end_edit_id = model_.repeaters[*chain->end_source_index].edit_id;
+            repeater_chain_edit_ids.insert(*end_edit_id);
+        }
+
+        const auto add_delete = [&](const std::string& edit_id) {
+            candidate[edit_id] = make_delete_change(edit_id, "repeater");
+        };
+        const size_t selected = chain->selected_begin_index;
+        switch (request.repeater_mode) {
+            case RepeaterDeleteMode::EntireChain:
+                for (const std::string& edit_id : begin_edit_ids) add_delete(edit_id);
+                if (end_edit_id) add_delete(*end_edit_id);
+                break;
+            case RepeaterDeleteMode::ChangePoint:
+                add_delete(begin_edit_ids[selected]);
+                break;
+            case RepeaterDeleteMode::TrimToChangePoint: {
+                MapElementDeleteRequest target_request = request;
+                target_request.edit_id = begin_edit_ids[selected];
+                target_request.row_kind = "repeater";
+                MapElementPendingChange change;
+                change.change_id = "repeater-trim-" + target_request.edit_id;
+                change.edit_id = target_request.edit_id;
+                change.row_kind = "repeater";
+                change.operation = "update";
+                change.field_changes.emplace("method", "End");
+                std::string metadata_error;
+                change.expected_source_hash = delete_expected_source_hash(
+                    model_, pending_edit_changes_, handle_, target_request, &metadata_error);
+                if (!metadata_error.empty()) {
+                    add_log("[warn]gui_kme.cpp: Repeater trim metadata fallback: " + metadata_error);
+                }
+                candidate[change.edit_id] = std::move(change);
+                for (size_t index = selected + 1; index < begin_edit_ids.size(); ++index) {
+                    add_delete(begin_edit_ids[index]);
+                }
+                if (end_edit_id) add_delete(*end_edit_id);
+                break;
+            }
+            case RepeaterDeleteMode::StartFromChangePoint:
+                for (size_t index = 0; index < selected; ++index) add_delete(begin_edit_ids[index]);
+                break;
+        }
+    } else {
+        MapElementPendingChange change = make_delete_change(request.edit_id, request.row_kind);
+        candidate[change.edit_id] = std::move(change);
+    }
+
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
-        if (inspector_.open && inspector_.edit_id == request.edit_id) {
+        const bool close_repeater_inspector = inspector_.open && inspector_.row_kind == "repeater" &&
+            repeater_chain_edit_ids.find(inspector_.edit_id) != repeater_chain_edit_ids.end();
+        if (close_repeater_inspector ||
+            (inspector_.open && inspector_.edit_id == request.edit_id)) {
             clear_scene_structure_edit_target();
             inspector_ = MapElementInspectorState{};
             pending_inspector_request_.reset();
@@ -5960,6 +6103,13 @@ void App::render_scene_preview_window() {
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect").c_str();
         scene_ui_text.element_properties = tr("dialog.element_properties").c_str();
         scene_ui_text.delete_element = tr("button.delete").c_str();
+        scene_ui_text.delete_repeater_all = tr("menu.repeater_delete_all").c_str();
+        scene_ui_text.delete_repeater_change_point =
+            tr("menu.repeater_delete_change_point").c_str();
+        scene_ui_text.trim_repeater_to_change_point =
+            tr("menu.repeater_trim_to_change_point").c_str();
+        scene_ui_text.start_repeater_from_change_point =
+            tr("menu.repeater_start_from_change_point").c_str();
         scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list").c_str();
         scene_ui_text.locate_structure_put_between_list = tr("menu.locate_in_structure_put_between_list").c_str();
         scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list").c_str();
@@ -5988,6 +6138,18 @@ void App::render_scene_preview_window() {
             request_element_inspector(scene_action.edit_id, scene_action.row_kind);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::DeleteElement) {
             request_element_delete(scene_action.edit_id, scene_action.row_kind);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::DeleteRepeaterAll) {
+            request_element_delete(scene_action.edit_id, scene_action.row_kind,
+                                   RepeaterDeleteMode::EntireChain);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::DeleteRepeaterChangePoint) {
+            request_element_delete(scene_action.edit_id, scene_action.row_kind,
+                                   RepeaterDeleteMode::ChangePoint);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::TrimRepeaterToChangePoint) {
+            request_element_delete(scene_action.edit_id, scene_action.row_kind,
+                                   RepeaterDeleteMode::TrimToChangePoint);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::StartRepeaterFromChangePoint) {
+            request_element_delete(scene_action.edit_id, scene_action.row_kind,
+                                   RepeaterDeleteMode::StartFromChangePoint);
         }
         drain_scene_preview_logs();
     }

@@ -751,6 +751,15 @@ std::string build_repeater_statement(const MapEditChange& change,
     if (has_field_change(change, "method")) {
         const std::string requested_method = ascii_lower(
             trim_field_copy(field_text_or(change, "method", row.method)));
+        if (requested_method == "end") {
+            for (const auto& field : change.field_changes) {
+                if (field.first != "method") {
+                    throw std::runtime_error(
+                        "Repeater Begin to End conversion only supports the method field");
+                }
+            }
+            return "Repeater[" + key + "].End();";
+        }
         if (!source_begin0 || requested_method != "begin") {
             throw std::runtime_error("unsupported Repeater method conversion");
         }
@@ -2935,11 +2944,6 @@ MapEditReport build_edit_report(MapContext& ctx,
             }
             edit.operation = operation;
             if (operation == "delete") {
-                if (target.row_kind == "repeater") {
-                    report.blocking_errors.push_back(
-                        "delete is not supported for Repeater statements: " + change.edit_id);
-                    continue;
-                }
                 if (target.elements_for_statement != 1) {
                     report.blocking_errors.push_back("delete is blocked because the source statement maps to multiple elements: " + change.edit_id);
                     continue;

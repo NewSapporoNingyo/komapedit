@@ -323,6 +323,30 @@ void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
                     const KvRepeaterRow& row,
                     const MapEditChange* change = nullptr) {
     if (change) validate_repeater_edit_fields(*change);
+    const std::string source_method = ascii_lower(text(snapshot, row.method));
+    const std::string effective_method = ascii_lower(
+        changed_string(snapshot, change, "method", row.method));
+    if ((source_method == "begin" || source_method == "begin0") &&
+        effective_method == "end") {
+        for (const auto& field_change : change->field_changes) {
+            if (field_change.first != "method") {
+                throw std::runtime_error(
+                    "Repeater Begin to End conversion only supports the method field");
+            }
+        }
+        field(out, "distance", row.distance);
+        field(out, "method", std::string_view{"End"});
+        field(out, snapshot, "repeaterKey", row.repeater_key);
+        out.label("trackKey");
+        out.value(Value::str(""));
+        for (const char* field_name : {"x", "y", "z", "rx", "ry", "rz", "tilt", "span", "interval"}) {
+            field(out, field_name, 0.0);
+        }
+        out.label("structureKeys");
+        out.signed_integer(0);
+        field(out, "filePath", text(snapshot, row.file_path));
+        return;
+    }
     const RepeaterStructureKeyEdit structure_keys = change
         ? parse_repeater_structure_key_edit(*change)
         : RepeaterStructureKeyEdit{};
