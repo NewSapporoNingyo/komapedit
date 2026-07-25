@@ -79,7 +79,9 @@ constexpr double k_scene_route_display_zero_epsilon = 0.0000005;
 constexpr size_t k_scene_model_max_workers = 8;
 constexpr double k_default_scene_fog_density = 0.001;
 constexpr double k_default_scene_fog_color = 0.875;
+constexpr float k_scene_marker_board_width = 1.0f;
 constexpr float k_scene_marker_board_alpha = 0.70f;
+constexpr float k_scene_marker_lateral_gap = 0.10f;
 constexpr float k_scene_marker_face_offset = 0.003f;
 constexpr float k_scene_marker_icon_half_extent = 0.18f;
 constexpr float k_scene_marker_label_height = 0.18f;
@@ -5888,6 +5890,32 @@ fail:
             return false;
         }
 
+        // Use the complete semantic marker set so visibility-only updates keep
+        // their dynamic-index-buffer fast path and do not move nearby signs.
+        std::vector<float> marker_lateral_offsets(
+            scene_data.markers.size(), 0.0f);
+        for (size_t group_begin = 0;
+             group_begin < scene_data.markers.size();) {
+            size_t group_end = group_begin + 1;
+            const double group_distance =
+                scene_data.markers[group_begin].track_point.distance;
+            while (group_end < scene_data.markers.size() &&
+                   scene_data.markers[group_end].track_point.distance ==
+                       group_distance) {
+                ++group_end;
+            }
+            const size_t group_size = group_end - group_begin;
+            const float step =
+                k_scene_marker_board_width + k_scene_marker_lateral_gap;
+            const float first_offset =
+                -0.5f * static_cast<float>(group_size - 1) * step;
+            for (size_t i = 0; i < group_size; ++i) {
+                marker_lateral_offsets[group_begin + i] =
+                    first_offset + static_cast<float>(i) * step;
+            }
+            group_begin = group_end;
+        }
+
         std::vector<std::vector<size_t>> marker_indices(scene_chunks.size());
         const double first_distance = scene_chunks.front().d_min;
         for (size_t marker_index = 0;
@@ -5919,11 +5947,14 @@ fail:
                 const Canvas3DSceneMarker& marker =
                     scene_data.markers[marker_index];
                 const Canvas3DTrackPoint& point = marker.track_point;
-                const DVec3 center{point.x, point.y, point.z};
                 DVec3 right;
                 DVec3 up;
                 DVec3 forward;
                 scene_marker_frame(point, right, up, forward);
+                const DVec3 center =
+                    DVec3{point.x, point.y, point.z} +
+                    right * static_cast<double>(
+                        marker_lateral_offsets[marker_index]);
 
                 const std::uint32_t marker_first =
                     static_cast<std::uint32_t>(indices.size());
@@ -5935,7 +5966,8 @@ fail:
                 append_scene_marker_quad(
                     vertices, indices, gpu_chunk.origin, center,
                     right, up, forward,
-                    -0.50f, 1.0f, 0.50f, 0.0f,
+                    k_scene_marker_board_width * -0.5f, 1.0f,
+                    k_scene_marker_board_width * 0.5f, 0.0f,
                     face_sign, board_color_u32);
                 append_scene_marker_icon(
                     vertices, indices, gpu_chunk.origin, center,
