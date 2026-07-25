@@ -5441,7 +5441,7 @@ fail:
         ImU32 color,
         bool textured) {
         DVec3 position = center +
-            right * static_cast<double>(local_x * face_sign) +
+            right * static_cast<double>(local_x) +
             up * static_cast<double>(local_y) +
             forward * static_cast<double>(k_scene_marker_face_offset * face_sign);
         const unsigned int index = static_cast<unsigned int>(vertices.size());
@@ -5490,7 +5490,7 @@ fail:
         const unsigned int d = append_scene_marker_vertex(
             vertices, origin, center, right, up, forward,
             x0, y1, face_sign, uv0.x, uv1.y, color, textured);
-        indices.insert(indices.end(), {a, b, c, a, c, d});
+        indices.insert(indices.end(), {a, c, b, a, d, c});
     }
 
     static void append_scene_marker_triangle(
@@ -5513,7 +5513,7 @@ fail:
         const float signed_area =
             (p1.x - p0.x) * (p2.y - p0.y) -
             (p1.y - p0.y) * (p2.x - p0.x);
-        if (signed_area > 0.0f) std::swap(p1, p2);
+        if (signed_area < 0.0f) std::swap(p1, p2);
         const unsigned int a = append_scene_marker_vertex(
             vertices, origin, center, right, up, forward,
             p0.x, p0.y, face_sign, 0.0f, 0.0f, color, false);
@@ -5965,8 +5965,7 @@ fail:
                              ImVec2(0.0f, k_scene_marker_outline_width)}) {
                         DVec3 shifted_center =
                             center +
-                            right * static_cast<double>(
-                                offset.x * face_sign) +
+                            right * static_cast<double>(offset.x) +
                             up * static_cast<double>(offset.y);
                         append_scene_marker_text(
                             vertices, indices, gpu_chunk.origin,
