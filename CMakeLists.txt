@@ -227,6 +227,7 @@ add_executable(komapedit
     src/main_window/text_preview.cpp
     src/main_window/debug_headless.cpp
     src/main_window/touch_input.cpp
+    src/main_window/map_marker_visuals.cpp
     src/canvas2d/canvas2D.cpp
     src/canvas2d/profile_plots.cpp
     src/canvas3d/canvas3D.cpp

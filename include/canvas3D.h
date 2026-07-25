@@ -7,6 +7,7 @@
 #pragma once
 
 #include "imgui.h"
+#include "map_marker_visuals.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -156,6 +157,33 @@ struct Canvas3DSceneRouteInfo {
     std::vector<Canvas3DSceneRouteStation> stations;
 };
 
+struct Canvas3DSceneMarker {
+    MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
+    Canvas3DTrackPoint track_point;
+    std::string label;
+};
+
+struct Canvas3DSceneMarkerVisibility {
+    std::uint64_t marker_mask = 0;
+    std::uint64_t label_mask = 0;
+
+    bool operator==(const Canvas3DSceneMarkerVisibility& other) const {
+        return marker_mask == other.marker_mask && label_mask == other.label_mask;
+    }
+
+    bool operator!=(const Canvas3DSceneMarkerVisibility& other) const {
+        return !(*this == other);
+    }
+
+    bool marker_visible(MapMarkerVisualKind kind) const {
+        return (marker_mask & map_marker_visual_bit(kind)) != 0;
+    }
+
+    bool label_visible(MapMarkerVisualKind kind) const {
+        return (label_mask & map_marker_visual_bit(kind)) != 0;
+    }
+};
+
 struct Canvas3DCameraStart {
     double distance = 0.0;
     double x = 0.0;
@@ -174,6 +202,7 @@ struct Canvas3DScene {
     std::vector<Canvas3DSceneFogKeyframe> fog_keyframes;
     std::vector<Canvas3DSceneDrawDistanceChange> draw_distance_changes;
     Canvas3DSceneRouteInfo route_info;
+    std::vector<Canvas3DSceneMarker> markers;
     Canvas3DCameraStart camera;
     double min_distance = 0.0;
     double max_distance = 0.0;
@@ -357,7 +386,9 @@ public:
     bool has_scene() const;
     bool reload_scene_models(std::string& error);
     bool set_scene_track_visibility(const std::vector<Canvas3DTrackVisibility>& visibility, std::string& error);
-    void refresh_scene_route_stations(const MapModel& model);
+    bool set_scene_marker_visibility(const Canvas3DSceneMarkerVisibility& visibility,
+                                     std::string& error);
+    bool refresh_scene_route_stations(const MapModel& model, std::string& error);
     void set_scene_window(double back_m, double forward_m);
     void set_scene_edit_component_scale(float scale);
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);

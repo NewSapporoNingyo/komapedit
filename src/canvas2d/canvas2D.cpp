@@ -11,6 +11,7 @@
 
 #include "kme.h"
 #include "canvas3D.h"
+#include "map_marker_visuals.h"
 #include "touch_input.h"
 #include "repeater_linkage.h"
 
@@ -1991,234 +1992,16 @@ static void draw_plan_signal_marker(ImDrawList* draw, ImVec2 p, ImU32 color, flo
                   color, line_weight);
 }
 
-static void draw_plan_beacon_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float half_top = 4.5f * scale;
-    const float half_bottom = 7.0f * scale;
-    const float half_height = 5.5f * scale;
-    const float line_weight = 1.8f * scale;
-    const ImU32 shadow = IM_COL32(8, 42, 30, 230);
-    ImVec2 pts[4] = {
-        ImVec2(p.x - half_top, p.y - half_height),
-        ImVec2(p.x + half_top, p.y - half_height),
-        ImVec2(p.x + half_bottom, p.y + half_height),
-        ImVec2(p.x - half_bottom, p.y + half_height),
-    };
-    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), shadow, ImDrawFlags_Closed, line_weight + 1.8f * scale);
-    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), color, ImDrawFlags_Closed, line_weight);
-}
-
 static void draw_plan_pretrain_marker(ImDrawList* draw, ImVec2 p, const std::string& label, float scale = 1.0f) {
     const float half = 7.0f * scale;
-    const ImU32 white = IM_COL32(255, 255, 255, 255);
+    const ImU32 white = map_marker_theme_color_u32(MapMarkerVisualKind::PreTrain);
     const ImU32 shadow = IM_COL32(0, 0, 0, 220);
-    ImVec2 min(p.x - half, p.y - half);
-    ImVec2 max(p.x + half, p.y + half);
-    draw->AddRect(min, max, shadow, 0.0f, 0, 3.8f * scale);
-    draw->AddRect(min, max, white, 0.0f, 0, 1.8f * scale);
-    ImVec2 text_size = ImGui::CalcTextSize("P");
-    ImVec2 text_pos(p.x - text_size.x * 0.5f, p.y - text_size.y * 0.5f);
-    draw->AddText(ImVec2(text_pos.x + 1.0f, text_pos.y + 1.0f), shadow, "P");
-    draw->AddText(text_pos, white, "P");
+    draw_map_marker_icon(draw, MapMarkerVisualKind::PreTrain, p, half);
     if (!label.empty()) {
-        ImVec2 label_pos(max.x + 5.0f * scale, p.y - ImGui::GetTextLineHeight() * 0.5f);
+        ImVec2 label_pos(p.x + half + 5.0f * scale,
+                         p.y - ImGui::GetTextLineHeight() * 0.5f);
         draw->AddText(ImVec2(label_pos.x + 1.0f, label_pos.y + 1.0f), shadow, label.c_str());
         draw->AddText(label_pos, white, label.c_str());
-    }
-}
-
-static void draw_plan_wave_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float half_width = 7.0f * scale;
-    const float amplitude = 3.0f * scale;
-    ImVec2 pts[9];
-    for (int i = 0; i < IM_ARRAYSIZE(pts); ++i) {
-        float t = static_cast<float>(i) / static_cast<float>(IM_ARRAYSIZE(pts) - 1);
-        float x = p.x - half_width + half_width * 2.0f * t;
-        float y = p.y + std::sin(t * 3.14159265358979323846f * 4.0f) * amplitude;
-        pts[i] = ImVec2(x, y);
-    }
-    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), IM_COL32(72, 48, 112, 255), ImDrawFlags_None, 3.0f * scale);
-    draw->AddPolyline(pts, IM_ARRAYSIZE(pts), color, ImDrawFlags_None, 1.6f * scale);
-}
-
-static void draw_plan_speaker_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float body_w = 4.4f * scale;
-    const float body_h = 6.2f * scale;
-    const float cone_w = 5.0f * scale;
-    const float cone_left_h = 4.0f * scale;
-    const float cone_right_h = 9.2f * scale;
-    const float line_weight = 1.8f * scale;
-    const ImU32 outline = IM_COL32(58, 32, 92, 255);
-    ImVec2 body_min(p.x - 8.0f * scale, p.y - body_h * 0.5f);
-    ImVec2 body_max(body_min.x + body_w, p.y + body_h * 0.5f);
-    ImVec2 cone[4] = {
-        ImVec2(body_max.x, p.y - cone_left_h * 0.5f),
-        ImVec2(body_max.x + cone_w, p.y - cone_right_h * 0.5f),
-        ImVec2(body_max.x + cone_w, p.y + cone_right_h * 0.5f),
-        ImVec2(body_max.x, p.y + cone_left_h * 0.5f),
-    };
-    draw->AddRectFilled(body_min, body_max, color, 1.0f * scale);
-    draw->AddRect(body_min, body_max, outline, 1.0f * scale, 0, 1.0f * scale);
-    draw->AddConvexPolyFilled(cone, IM_ARRAYSIZE(cone), color);
-    draw->AddPolyline(cone, IM_ARRAYSIZE(cone), outline, ImDrawFlags_Closed, 1.0f * scale);
-    for (int i = 0; i < 2; ++i) {
-        float r = (5.4f + static_cast<float>(i) * 3.2f) * scale;
-        draw->PathArcTo(ImVec2(p.x - 1.0f * scale, p.y), r, -0.72f, 0.72f, 12);
-        draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
-        draw->PathArcTo(ImVec2(p.x - 1.0f * scale, p.y), r, -0.72f, 0.72f, 12);
-        draw->PathStroke(color, ImDrawFlags_None, line_weight);
-    }
-}
-
-static void draw_plan_broadcast_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const ImU32 outline = IM_COL32(58, 32, 92, 255);
-    const float stem = 7.4f * scale;
-    const float line_weight = 1.8f * scale;
-    ImVec2 base(p.x, p.y + 4.8f * scale);
-    ImVec2 top(p.x, p.y + 4.8f * scale - stem);
-    draw->AddCircleFilled(base, 2.8f * scale, color, 16);
-    draw->AddCircle(base, 2.8f * scale, outline, 16, 1.0f * scale);
-    draw->AddLine(base, top, outline, line_weight + 1.6f * scale);
-    draw->AddLine(base, top, color, line_weight);
-    draw->AddCircleFilled(top, 2.0f * scale, color, 16);
-    draw->AddCircle(top, 2.0f * scale, outline, 16, 1.0f * scale);
-    for (int i = 0; i < 2; ++i) {
-        float r = (5.6f + static_cast<float>(i) * 3.8f) * scale;
-        draw->PathArcTo(top, r, -0.72f, 0.72f, 14);
-        draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
-        draw->PathArcTo(top, r, -0.72f, 0.72f, 14);
-        draw->PathStroke(color, ImDrawFlags_None, line_weight);
-        draw->PathArcTo(top, r, 2.42f, 3.86f, 14);
-        draw->PathStroke(outline, ImDrawFlags_None, line_weight + 1.4f * scale);
-        draw->PathArcTo(top, r, 2.42f, 3.86f, 14);
-        draw->PathStroke(color, ImDrawFlags_None, line_weight);
-    }
-}
-
-static void draw_plan_axle_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float half_width = 7.2f * scale;
-    const float half_height = 4.4f * scale;
-    const float outline_weight = 3.6f * scale;
-    const float line_weight = 2.0f * scale;
-    const ImU32 outline = IM_COL32(18, 52, 78, 255);
-    ImVec2 left(p.x - half_width, p.y);
-    ImVec2 right(p.x + half_width, p.y);
-    draw->AddLine(left, right, outline, outline_weight);
-    draw->AddLine(ImVec2(left.x, left.y - half_height), ImVec2(left.x, left.y + half_height), outline, outline_weight);
-    draw->AddLine(ImVec2(right.x, right.y - half_height), ImVec2(right.x, right.y + half_height), outline, outline_weight);
-    draw->AddLine(left, right, color, line_weight);
-    draw->AddLine(ImVec2(left.x, left.y - half_height), ImVec2(left.x, left.y + half_height), color, line_weight);
-    draw->AddLine(ImVec2(right.x, right.y - half_height), ImVec2(right.x, right.y + half_height), color, line_weight);
-}
-
-static void draw_plan_letter_marker(ImDrawList* draw, ImVec2 p, ImU32 color,
-                                    ImU32 outline, const char* label, float scale = 1.0f) {
-    ImFont* font = ImGui::GetFont();
-    const float font_size = ImGui::GetFontSize() * 0.92f * scale;
-    const ImVec2 text_size = font->CalcTextSizeA(font_size, std::numeric_limits<float>::max(), 0.0f, label);
-    const ImVec2 text_pos(p.x - text_size.x * 0.5f, p.y - text_size.y * 0.5f);
-    const float outline_px = std::max(1.0f, 1.45f * scale);
-    const ImVec2 outline_offsets[] = {
-        ImVec2(-outline_px, -outline_px), ImVec2(0.0f, -outline_px), ImVec2(outline_px, -outline_px),
-        ImVec2(-outline_px, 0.0f),                                      ImVec2(outline_px, 0.0f),
-        ImVec2(-outline_px, outline_px),  ImVec2(0.0f, outline_px),  ImVec2(outline_px, outline_px),
-    };
-    for (const ImVec2& offset : outline_offsets) {
-        draw->AddText(font, font_size, ImVec2(text_pos.x + offset.x, text_pos.y + offset.y), outline, label);
-    }
-
-    const float bold_px = std::max(0.45f, 0.75f * scale);
-    draw->AddText(font, font_size, ImVec2(text_pos.x - bold_px, text_pos.y), color, label);
-    draw->AddText(font, font_size, text_pos, color, label);
-    draw->AddText(font, font_size, ImVec2(text_pos.x + bold_px, text_pos.y), color, label);
-}
-
-static void draw_plan_flange_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    draw_plan_letter_marker(draw, p, color, IM_COL32(68, 34, 112, 255), "F", scale);
-}
-
-static void draw_plan_draw_distance_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    draw_plan_letter_marker(draw, p, color, IM_COL32(88, 70, 0, 255), "D", scale);
-}
-
-static void draw_plan_joint_noise_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float left = 6.0f * scale;
-    const float right = 6.5f * scale;
-    const float up = 6.5f * scale;
-    const float down = 5.0f * scale;
-    const float outline_weight = 4.0f * scale;
-    const float line_weight = 2.1f * scale;
-    const ImU32 outline = IM_COL32(18, 54, 72, 255);
-    ImVec2 vertex(p.x - left, p.y + down);
-    ImVec2 upper(p.x + right, p.y - up);
-    ImVec2 lower(p.x + right, p.y + down);
-    draw->AddLine(upper, vertex, outline, outline_weight);
-    draw->AddLine(vertex, lower, outline, outline_weight);
-    draw->AddLine(upper, vertex, color, line_weight);
-    draw->AddLine(vertex, lower, color, line_weight);
-}
-
-static void draw_plan_square_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float r = 5.0f * scale;
-    ImVec2 min(p.x - r, p.y - r);
-    ImVec2 max(p.x + r, p.y + r);
-    draw->AddRectFilled(min, max, color, 0.0f);
-    draw->AddRect(min, max, IM_COL32(82, 68, 0, 255), 0.0f, 0, 1.0f * scale);
-}
-
-static void draw_plan_adhesion_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float circle_r = 3.2f * scale;
-    const float arc_r = 7.2f * scale;
-    const float start_angle = -2.45f;
-    const float end_angle = 0.82f;
-    draw->AddCircleFilled(p, circle_r, color, 16);
-    draw->AddCircle(p, circle_r, IM_COL32(62, 28, 96, 255), 16, 1.0f * scale);
-    draw->PathArcTo(p, arc_r, start_angle, end_angle, 18);
-    draw->PathStroke(color, ImDrawFlags_None, 1.8f * scale);
-
-    ImVec2 tip(p.x + std::cos(end_angle) * arc_r, p.y + std::sin(end_angle) * arc_r);
-    ImVec2 tangent(-std::sin(end_angle), std::cos(end_angle));
-    ImVec2 normal(-tangent.y, tangent.x);
-    const float head_len = 4.0f * scale;
-    const float head_half = 2.5f * scale;
-    ImVec2 pts[3] = {
-        tip,
-        ImVec2(tip.x - tangent.x * head_len + normal.x * head_half,
-               tip.y - tangent.y * head_len + normal.y * head_half),
-        ImVec2(tip.x - tangent.x * head_len - normal.x * head_half,
-               tip.y - tangent.y * head_len - normal.y * head_half),
-    };
-    draw->AddConvexPolyFilled(pts, IM_ARRAYSIZE(pts), color);
-}
-
-static void draw_plan_sun_marker(ImDrawList* draw, ImVec2 p, ImU32 color, float scale = 1.0f) {
-    const float inner = 3.4f * scale;
-    const float ray_inner = 5.3f * scale;
-    const float ray_outer = 8.0f * scale;
-    const ImU32 outline = IM_COL32(96, 68, 0, 255);
-    for (int i = 0; i < 8; ++i) {
-        float angle = static_cast<float>(i) * 3.14159265358979323846f / 4.0f;
-        ImVec2 a(p.x + std::cos(angle) * ray_inner, p.y + std::sin(angle) * ray_inner);
-        ImVec2 b(p.x + std::cos(angle) * ray_outer, p.y + std::sin(angle) * ray_outer);
-        draw->AddLine(a, b, outline, 2.8f * scale);
-        draw->AddLine(a, b, color, 1.6f * scale);
-    }
-    draw->AddCircleFilled(p, inner, color, 16);
-    draw->AddCircle(p, inner, outline, 16, 1.0f * scale);
-}
-
-static void draw_plan_fog_marker(ImDrawList* draw, ImVec2 p, float scale = 1.0f) {
-    const float half_width = 5.5f * scale;
-    const float gap = 3.2f * scale;
-    const float shadow_weight = 3.0f * scale;
-    const float line_weight = 1.5f * scale;
-    const ImU32 shadow = IM_COL32(0, 0, 0, 190);
-    const ImU32 white = IM_COL32(255, 255, 255, 255);
-    for (int i = -1; i <= 1; ++i) {
-        float y = p.y + static_cast<float>(i) * gap;
-        ImVec2 a(p.x - half_width, y);
-        ImVec2 b(p.x + half_width, y);
-        draw->AddLine(a, b, shadow, shadow_weight);
-        draw->AddLine(a, b, white, line_weight);
     }
 }
 
@@ -2943,9 +2726,14 @@ void App::render_plan_canvas(ImVec2 size) {
         const float station_label_offset = std::max(8.0f, station_marker_radius + 4.0f);
         for (const auto& st : data.stations) {
             ImVec2 p = transform.plan_to_screen(st.x, st.y);
-            draw->AddCircleFilled(p, station_marker_radius, IM_COL32(255, 255, 255, 255));
+            draw_map_marker_icon(
+                draw, MapMarkerVisualKind::Station, p,
+                station_marker_radius / 0.46f);
             if (!overview_marker_lod && show_station_names_) {
-                draw->AddText(ImVec2(p.x + station_label_offset, p.y - 16), IM_COL32(255, 255, 255, 255), st.station.name.c_str());
+                draw->AddText(
+                    ImVec2(p.x + station_label_offset, p.y - 16),
+                    map_marker_theme_color_u32(MapMarkerVisualKind::Station),
+                    st.station.name.c_str());
             }
             if (!overview_marker_lod && show_station_mileage_) {
                 draw->AddText(ImVec2(p.x + station_label_offset, p.y + 4), IM_COL32(255, 216, 77, 255), (format_double(st.station.mileage, 0) + "m").c_str());
@@ -2961,12 +2749,16 @@ void App::render_plan_canvas(ImVec2 size) {
             ImVec2 q = transform.plan_to_screen(wx, wy);
             ImVec2 d(q.x - p.x, q.y - p.y);
             float len = std::max(1.0f, std::sqrt(d.x * d.x + d.y * d.y));
-            d.x = d.x / len * (8.0f * marker_size_scale);
-            d.y = d.y / len * (8.0f * marker_size_scale);
-            draw->AddLine(ImVec2(p.x - d.x, p.y - d.y), ImVec2(p.x + d.x, p.y + d.y), IM_COL32(136, 204, 255, 255), std::max(1.0f, marker_size_scale));
+            const float rotation = std::atan2(d.y / len, d.x / len);
+            draw_map_marker_icon(
+                draw, MapMarkerVisualKind::SpeedLimit, p,
+                8.0f * marker_size_scale / 0.88f, rotation);
             if (!overview_marker_lod) {
                 std::string label = sp.has_speed ? format_double(sp.speed, 0) : "x";
-                draw->AddText(ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15), IM_COL32(136, 204, 255, 255), label.c_str());
+                draw->AddText(
+                    ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15),
+                    map_marker_theme_color_u32(MapMarkerVisualKind::SpeedLimit),
+                    label.c_str());
             }
         }
     }
@@ -2996,7 +2788,9 @@ void App::render_plan_canvas(ImVec2 size) {
     auto draw_colored_marker_set = [&](const std::vector<PlanMarker>& markers,
                                        PlanMarkerKind kind,
                                        const std::optional<size_t>& hovered_row,
-                                       ImU32 color, auto draw_icon) {
+                                       MapMarkerVisualKind visual_kind,
+                                       float icon_half_extent) {
+        const ImU32 color = map_marker_theme_color_u32(visual_kind);
         for (const PlanMarker& marker : markers) {
             const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(point, origin, avail)) continue;
@@ -3006,15 +2800,16 @@ void App::render_plan_canvas(ImVec2 size) {
                 dx * dx + dy * dy <= marker_hover_radius_sq;
             const bool marker_active = marker_emphasized(kind, marker.row_index, marker_hovered);
             draw_selected_marker_ring(point, kind, marker.row_index, color);
-            draw_icon(draw, point, color,
-                      marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            draw_map_marker_icon(
+                draw, visual_kind, point,
+                icon_half_extent * marker_size_scale *
+                    (marker_active ? 1.28f : 1.0f));
             if (marker_active) draw_plan_small_text(draw, point, color, marker.label);
         }
     };
 
-    const ImU32 beacon_color = IM_COL32(148, 242, 178, 255);
     draw_colored_marker_set(data.beacon_markers, PlanMarkerKind::Beacon,
-                            hovered_beacon_row, beacon_color, draw_plan_beacon_marker);
+                            hovered_beacon_row, MapMarkerVisualKind::Beacon, 7.0f);
     debug_plan_stage("beacon_markers");
 
     if (!data.pretrain_markers.empty()) {
@@ -3028,7 +2823,8 @@ void App::render_plan_canvas(ImVec2 size) {
                 dx * dx + dy * dy <= marker_hover_radius_sq;
             const bool marker_active = marker_emphasized(
                 PlanMarkerKind::PreTrain, marker.row_index, marker_hovered);
-            const ImU32 color = IM_COL32(255, 255, 255, 255);
+            const ImU32 color =
+                map_marker_theme_color_u32(MapMarkerVisualKind::PreTrain);
             draw_selected_marker_ring(point, PlanMarkerKind::PreTrain, marker.row_index, color);
             draw_plan_pretrain_marker(
                 draw, point, marker.label, marker_size_scale * (marker_active ? 1.22f : 1.0f));
@@ -3036,50 +2832,49 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("pretrain_markers");
 
-    const ImU32 irregularity_color = IM_COL32(204, 170, 255, 255);
     draw_colored_marker_set(data.irregularity_markers, PlanMarkerKind::Irregularity,
-                            hovered_irregularity_row, irregularity_color, draw_plan_wave_marker);
+                            hovered_irregularity_row,
+                            MapMarkerVisualKind::Irregularity, 7.0f);
     debug_plan_stage("irregularity_markers");
 
-    const ImU32 map_sound_color = IM_COL32(222, 190, 255, 255);
     draw_colored_marker_set(data.map_sound_markers, PlanMarkerKind::MapSound,
-                            hovered_map_sound_row, map_sound_color, draw_plan_speaker_marker);
+                            hovered_map_sound_row,
+                            MapMarkerVisualKind::MapSound, 8.0f);
     debug_plan_stage("map_sound_markers");
 
     draw_colored_marker_set(data.map_sound_3d_markers, PlanMarkerKind::MapSound3D,
-                            hovered_map_sound_3d_row, map_sound_color, draw_plan_broadcast_marker);
+                            hovered_map_sound_3d_row,
+                            MapMarkerVisualKind::MapSound3D, 8.0f);
     debug_plan_stage("map_sound_3d_markers");
 
-    const ImU32 rolling_noise_color = IM_COL32(126, 214, 255, 255);
     draw_colored_marker_set(data.rolling_noise_markers, PlanMarkerKind::RollingNoise,
-                            hovered_rolling_noise_row, rolling_noise_color, draw_plan_axle_marker);
+                            hovered_rolling_noise_row,
+                            MapMarkerVisualKind::RollingNoise, 7.2f);
     debug_plan_stage("rolling_noise_markers");
 
-    const ImU32 flange_noise_color = IM_COL32(214, 176, 255, 255);
     draw_colored_marker_set(data.flange_noise_markers, PlanMarkerKind::FlangeNoise,
-                            hovered_flange_noise_row, flange_noise_color,
-                            draw_plan_flange_noise_marker);
+                            hovered_flange_noise_row,
+                            MapMarkerVisualKind::FlangeNoise, 7.0f);
     debug_plan_stage("flange_noise_markers");
 
-    const ImU32 joint_noise_color = IM_COL32(158, 224, 255, 255);
     draw_colored_marker_set(data.joint_noise_markers, PlanMarkerKind::JointNoise,
-                            hovered_joint_noise_row, joint_noise_color,
-                            draw_plan_joint_noise_marker);
+                            hovered_joint_noise_row,
+                            MapMarkerVisualKind::JointNoise, 7.0f);
     debug_plan_stage("joint_noise_markers");
 
-    const ImU32 background_color = IM_COL32(255, 230, 72, 255);
     draw_colored_marker_set(data.background_markers, PlanMarkerKind::Background,
-                            hovered_background_row, background_color, draw_plan_square_marker);
+                            hovered_background_row,
+                            MapMarkerVisualKind::Background, 6.0f);
     debug_plan_stage("background_change_markers");
 
-    const ImU32 adhesion_color = IM_COL32(178, 102, 255, 255);
     draw_colored_marker_set(data.adhesion_markers, PlanMarkerKind::Adhesion,
-                            hovered_adhesion_row, adhesion_color, draw_plan_adhesion_marker);
+                            hovered_adhesion_row,
+                            MapMarkerVisualKind::Adhesion, 7.2f);
     debug_plan_stage("adhesion_markers");
 
-    const ImU32 cab_color = IM_COL32(255, 226, 64, 255);
     draw_colored_marker_set(data.cab_illuminance_markers, PlanMarkerKind::CabIlluminance,
-                            hovered_cab_illuminance_row, cab_color, draw_plan_sun_marker);
+                            hovered_cab_illuminance_row,
+                            MapMarkerVisualKind::CabIlluminance, 8.0f);
     debug_plan_stage("cab_illuminance_markers");
 
     if (!data.fog_markers.empty()) {
@@ -3092,19 +2887,21 @@ void App::render_plan_canvas(ImVec2 size) {
                 dx * dx + dy * dy <= marker_hover_radius_sq;
             const bool marker_active = marker_emphasized(
                 PlanMarkerKind::Fog, marker.row_index, marker_hovered);
-            const ImU32 color = IM_COL32(255, 255, 255, 255);
+            const ImU32 color =
+                map_marker_theme_color_u32(MapMarkerVisualKind::Fog);
             draw_selected_marker_ring(point, PlanMarkerKind::Fog, marker.row_index, color);
-            draw_plan_fog_marker(draw, point,
-                                 marker_size_scale * (marker_active ? 1.28f : 1.0f));
+            draw_map_marker_icon(
+                draw, MapMarkerVisualKind::Fog, point,
+                7.0f * marker_size_scale *
+                    (marker_active ? 1.28f : 1.0f));
             if (marker_active) draw_plan_small_text(draw, point, color, marker.label);
         }
     }
     debug_plan_stage("fog_markers");
 
-    const ImU32 draw_distance_color = IM_COL32(255, 224, 48, 255);
     draw_colored_marker_set(data.draw_distance_markers, PlanMarkerKind::DrawDistance,
-                            hovered_draw_distance_row, draw_distance_color,
-                            draw_plan_draw_distance_marker);
+                            hovered_draw_distance_row,
+                            MapMarkerVisualKind::DrawDistance, 7.0f);
     debug_plan_stage("draw_distance_markers");
 
     if (!repeater_marker_cache_.empty() || !data.repeater_markers.empty()) {

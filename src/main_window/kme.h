@@ -439,6 +439,7 @@ struct MapModel {
     Matrix own;
     Matrix curve;
     std::vector<OtherTrack> other_tracks;
+    std::vector<Station> station_positions;
     std::vector<Station> stations;
     std::map<std::string, std::string> station_names;
     std::vector<TrackEvent> own_events;
@@ -1663,6 +1664,7 @@ private:
     void finish_pending_scene_preview_load_timing();
     void reload_scene_preview_models();
     void sync_scene_preview_track_visibility();
+    void sync_scene_preview_marker_visibility();
     void perform_reload_current_map_and_model_preview();
     void perform_reload_current_map_geometry();
     bool confirm_reload_if_unsaved(PendingReloadAction action);

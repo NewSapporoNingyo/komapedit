@@ -32,6 +32,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <filesystem>
@@ -78,6 +79,13 @@ constexpr double k_scene_route_display_zero_epsilon = 0.0000005;
 constexpr size_t k_scene_model_max_workers = 8;
 constexpr double k_default_scene_fog_density = 0.001;
 constexpr double k_default_scene_fog_color = 0.875;
+constexpr float k_scene_marker_board_alpha = 0.70f;
+constexpr float k_scene_marker_face_offset = 0.003f;
+constexpr float k_scene_marker_icon_half_extent = 0.18f;
+constexpr float k_scene_marker_label_height = 0.18f;
+constexpr float k_scene_marker_label_center_y = 0.22f;
+constexpr float k_scene_marker_label_max_width = 0.88f;
+constexpr float k_scene_marker_outline_width = 0.012f;
 
 enum class SceneOverlayCorner {
     TopLeft,
@@ -446,6 +454,39 @@ struct GpuVertex {
     float nz;
     float u;
     float v;
+};
+
+struct SceneMarkerVertex {
+    float px = 0.0f;
+    float py = 0.0f;
+    float pz = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    std::uint32_t color = 0xffffffffu;
+    float use_texture = 0.0f;
+};
+
+struct SceneMarkerConstants {
+    Mat4 view_proj;
+    float chunk_offset[4] = {};
+};
+
+struct SceneMarkerIndexRange {
+    MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+    bool label = false;
+};
+
+struct SceneMarkerChunkGpu {
+    ID3D11Buffer* vertex_buffer = nullptr;
+    ID3D11Buffer* index_buffer = nullptr;
+    std::vector<unsigned int> source_indices;
+    std::vector<SceneMarkerIndexRange> ranges;
+    DVec3 origin;
+    double d_min = 0.0;
+    double d_max = 0.0;
+    UINT visible_index_count = 0;
 };
 
 struct SceneViewConstants {
@@ -1283,6 +1324,149 @@ void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& mo
     scene.route_info = std::move(route_info);
 }
 
+void format_scene_route_number(char* output, size_t output_size, double value);
+
+double canvas3d_scene_route_value_at(
+    const std::vector<Canvas3DSceneRouteValueEvent>& events,
+    double distance) {
+    const auto next = std::upper_bound(
+        events.begin(), events.end(), distance,
+        [](double value, const Canvas3DSceneRouteValueEvent& event) {
+            return value < event.distance;
+        });
+    return next == events.begin() ? 0.0 : (next - 1)->value;
+}
+
+std::string canvas3d_scene_curve_marker_label(
+    const Canvas3DSceneRouteInfo& route_info,
+    const TrackEvent& event) {
+    char radius_text[64] = {};
+    char cant_text[64] = {};
+    format_scene_route_number(radius_text, sizeof(radius_text), std::abs(event.number));
+    const double cant =
+        canvas3d_scene_route_value_at(route_info.cant_events, event.distance);
+    format_scene_route_number(cant_text, sizeof(cant_text), cant);
+    char label[192] = {};
+    std::snprintf(label, sizeof(label), "R %s m  %s %s",
+                  radius_text, cant_text, event.number < 0.0 ? u8"←" : u8"→");
+    return label;
+}
+
+std::string canvas3d_scene_gradient_marker_label(double gradient) {
+    char gradient_text[64] = {};
+    format_scene_route_number(gradient_text, sizeof(gradient_text), std::abs(gradient));
+    char label[128] = {};
+    std::snprintf(label, sizeof(label), "%s %s‰",
+                  gradient > 0.0 ? u8"↗" : u8"↘", gradient_text);
+    return label;
+}
+
+void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model) {
+    scene.markers.clear();
+    const Canvas3DTrackPath* own_track = scene_own_track_path(scene);
+    if (!own_track || own_track->points.empty()) return;
+
+    const size_t estimated_count =
+        model.station_positions.size() + model.own_events.size() +
+        model.speedlimits.size() + model.beacons.size() + model.pretrains.size() +
+        model.irregularities.size() + model.map_sounds.size() +
+        model.map_sound_3d.size() + model.rolling_noises.size() +
+        model.flange_noises.size() + model.joint_noises.size() +
+        model.backgrounds.size() + model.adhesions.size() +
+        model.cab_illuminance.size() + model.fogs.size() +
+        model.draw_distances.size();
+    scene.markers.reserve(estimated_count);
+
+    auto append_marker = [&](MapMarkerVisualKind kind,
+                             double distance,
+                             std::string label = {}) {
+        if (!std::isfinite(distance)) return;
+        std::optional<Canvas3DTrackPoint> point =
+            scene_sample_track_path_points(*own_track, distance);
+        if (!point) return;
+        Canvas3DSceneMarker marker;
+        marker.kind = kind;
+        marker.track_point = *point;
+        marker.label = std::move(label);
+        scene.markers.push_back(std::move(marker));
+    };
+
+    for (const Station& station : model.station_positions) {
+        append_marker(MapMarkerVisualKind::Station, station.distance,
+                      station.name.empty() ? station.key : station.name);
+    }
+
+    for (const TrackEvent& event : model.own_events) {
+        if (event.key == "radius") {
+            if (event.flag == "bt") {
+                append_marker(MapMarkerVisualKind::CurveTransitionStart, event.distance);
+            } else if (event.flag.empty() && event.value_number &&
+                       std::isfinite(event.number)) {
+                if (std::abs(event.number) <= k_scene_route_display_zero_epsilon) {
+                    append_marker(MapMarkerVisualKind::CurveEnd, event.distance);
+                } else {
+                    append_marker(MapMarkerVisualKind::CurveCircularStart,
+                                  event.distance,
+                                  canvas3d_scene_curve_marker_label(scene.route_info, event));
+                }
+            }
+        } else if (event.key == "gradient") {
+            if (event.flag == "bt") {
+                append_marker(MapMarkerVisualKind::GradientTransitionStart, event.distance);
+            } else if (event.flag.empty() && event.value_number &&
+                       std::isfinite(event.number)) {
+                if (std::abs(event.number) <= k_scene_route_display_zero_epsilon) {
+                    append_marker(MapMarkerVisualKind::GradientEnd, event.distance);
+                } else {
+                    append_marker(MapMarkerVisualKind::GradientStart,
+                                  event.distance,
+                                  canvas3d_scene_gradient_marker_label(event.number));
+                }
+            }
+        }
+    }
+
+    for (const SpeedLimit& speed : model.speedlimits) {
+        char value[64] = {};
+        std::string label;
+        if (speed.has_speed && std::isfinite(speed.speed)) {
+            format_scene_route_number(value, sizeof(value), speed.speed);
+            label = value;
+        }
+        append_marker(MapMarkerVisualKind::SpeedLimit, speed.distance, std::move(label));
+    }
+
+    auto append_table_markers = [&](const std::vector<TableRow>& rows,
+                                    MapMarkerVisualKind kind,
+                                    const char* label_key = nullptr) {
+        for (const TableRow& row : rows) {
+            std::string label;
+            if (label_key) label = table_cell(row, label_key);
+            append_marker(kind, table_cell_number(row, "distance"), std::move(label));
+        }
+    };
+
+    append_table_markers(model.beacons, MapMarkerVisualKind::Beacon, "type");
+    append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain, "passTime");
+    append_table_markers(model.irregularities, MapMarkerVisualKind::Irregularity);
+    append_table_markers(model.map_sounds, MapMarkerVisualKind::MapSound, "soundKey");
+    append_table_markers(model.map_sound_3d, MapMarkerVisualKind::MapSound3D, "soundKey");
+    append_table_markers(model.rolling_noises, MapMarkerVisualKind::RollingNoise);
+    append_table_markers(model.flange_noises, MapMarkerVisualKind::FlangeNoise);
+    append_table_markers(model.joint_noises, MapMarkerVisualKind::JointNoise);
+    append_table_markers(model.backgrounds, MapMarkerVisualKind::Background, "structureKey");
+    append_table_markers(model.adhesions, MapMarkerVisualKind::Adhesion);
+    append_table_markers(model.cab_illuminance, MapMarkerVisualKind::CabIlluminance);
+    append_table_markers(model.fogs, MapMarkerVisualKind::Fog);
+    append_table_markers(model.draw_distances, MapMarkerVisualKind::DrawDistance, "value");
+
+    std::stable_sort(scene.markers.begin(), scene.markers.end(),
+                     [](const Canvas3DSceneMarker& a,
+                        const Canvas3DSceneMarker& b) {
+                         return a.track_point.distance < b.track_point.distance;
+                     });
+}
+
 double resolve_canvas3d_scene_fog_component(const TableRow& row,
                                             const char* key,
                                             double previous_value) {
@@ -1776,6 +1960,53 @@ float4 ps_fog_main(VSOutput input) : SV_TARGET
 }
 )";
 
+const char* k_scene_marker_shader_source = R"(
+cbuffer SceneMarkerConstants : register(b0)
+{
+    row_major float4x4 viewProj;
+    float4 chunkOffset;
+};
+
+Texture2D fontTexture : register(t0);
+SamplerState fontSampler : register(s0);
+
+struct VSInput
+{
+    float3 position : POSITION;
+    float2 texcoord : TEXCOORD0;
+    float4 color : COLOR0;
+    float useTexture : TEXCOORD1;
+};
+
+struct VSOutput
+{
+    float4 position : SV_POSITION;
+    float2 texcoord : TEXCOORD0;
+    float4 color : COLOR0;
+    float useTexture : TEXCOORD1;
+};
+
+VSOutput vs_main(VSInput input)
+{
+    VSOutput output;
+    float3 worldPosition = input.position + chunkOffset.xyz;
+    output.position = mul(float4(worldPosition, 1.0), viewProj);
+    output.texcoord = input.texcoord;
+    output.color = input.color;
+    output.useTexture = input.useTexture;
+    return output;
+}
+
+float4 ps_main(VSOutput input) : SV_TARGET
+{
+    float alpha = input.color.a;
+    if (input.useTexture > 0.5)
+        alpha *= fontTexture.Sample(fontSampler, input.texcoord).a;
+    clip(alpha - 0.01);
+    return float4(input.color.rgb, alpha);
+}
+)";
+
 const char* k_scene_pick_shader_source = R"(
 cbuffer ScenePickConstants : register(b1)
 {
@@ -2041,6 +2272,7 @@ Canvas3DSceneBuildResult build_canvas3d_scene_preview(const Canvas3DSceneBuildOp
         }
     }
     populate_canvas3d_scene_route_info(scene, model);
+    populate_canvas3d_scene_markers(scene, model);
     populate_canvas3d_scene_fog(scene, model);
     populate_canvas3d_scene_draw_distances(scene, model);
     if (!populate_canvas3d_scene_dynamic_content(scene, model, options.station_index)) {
@@ -2080,6 +2312,10 @@ struct Canvas3D::Impl {
         release_com(scene_pixel_shader);
         release_com(scene_fog_pixel_shader);
         release_com(scene_constant_buffer);
+        release_com(scene_marker_input_layout);
+        release_com(scene_marker_vertex_shader);
+        release_com(scene_marker_pixel_shader);
+        release_com(scene_marker_constant_buffer);
         release_com(scene_depth_state);
         release_com(scene_depth_read_state);
         release_com(blend_state);
@@ -2251,6 +2487,7 @@ struct Canvas3D::Impl {
         stop_scene_loader();
         if (preserve_loaded_models) {
             release_scene_track_chunks();
+            release_scene_marker_chunks();
             scene_chunks.clear();
             clear_pending_scene_model_uploads();
             scene_last_error.clear();
@@ -2293,6 +2530,10 @@ struct Canvas3D::Impl {
         const auto track_gpu_setup_started_at = std::chrono::steady_clock::now();
         build_scene_chunks();
         if (!build_scene_track_chunks(error)) {
+            clear_scene();
+            return false;
+        }
+        if (!build_scene_marker_chunks(error)) {
             clear_scene();
             return false;
         }
@@ -2462,8 +2703,18 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    void refresh_scene_route_stations(const MapModel& model) {
-        if (scene_active) populate_canvas3d_scene_route_stations(scene_data.route_info, model);
+    bool refresh_scene_route_stations(const MapModel& model, std::string& error) {
+        error.clear();
+        if (!scene_active) return true;
+        populate_canvas3d_scene_route_stations(scene_data.route_info, model);
+        populate_canvas3d_scene_markers(scene_data, model);
+        release_scene_marker_chunks();
+        if (!build_scene_marker_chunks(error)) {
+            if (!error.empty()) scene_last_error = error;
+            release_scene_marker_chunks();
+            return false;
+        }
+        return true;
     }
 
     void clear_scene() {
@@ -3480,6 +3731,25 @@ fail:
         scene_track_chunks.clear();
     }
 
+    static void release_marker_chunk(SceneMarkerChunkGpu& chunk) {
+        release_com(chunk.vertex_buffer);
+        release_com(chunk.index_buffer);
+        chunk.source_indices.clear();
+        chunk.ranges.clear();
+        chunk.visible_index_count = 0;
+    }
+
+    void release_scene_marker_chunks() {
+        for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) release_marker_chunk(chunk);
+        scene_marker_chunks.clear();
+        scene_marker_font = nullptr;
+        scene_marker_font_size = 0.0f;
+        scene_marker_font_texture_id = ImTextureID_Invalid;
+        scene_marker_font_texture_unique_id = -1;
+        scene_marker_font_texture_width = 0;
+        scene_marker_font_texture_height = 0;
+    }
+
     void notify_scene_loading_progress() {
         if (!wake_callback) return;
         bool expected = false;
@@ -3508,6 +3778,7 @@ fail:
         scene_models.clear();
         release_scene_texture_cache();
         release_scene_track_chunks();
+        release_scene_marker_chunks();
         scene_chunks.clear();
         scene_structure_locations.clear();
         scene_repeater_locations.clear();
@@ -4019,14 +4290,18 @@ fail:
             track_rasterizer_state && sampler_state && blend_state &&
             scene_outline_vertex_shader && scene_outline_pixel_shader &&
             scene_outline_constant_buffer && scene_outline_sampler_state &&
-            scene_pick_pixel_shader && scene_pick_constant_buffer) return true;
+            scene_pick_pixel_shader && scene_pick_constant_buffer &&
+            scene_marker_vertex_shader && scene_marker_pixel_shader &&
+            scene_marker_input_layout && scene_marker_constant_buffer) return true;
 
         if (!ensure_pipeline(error)) return false;
         if (!ensure_scene_depth_states(error)) return false;
         if (scene_vertex_shader && scene_pixel_shader && scene_fog_pixel_shader &&
             scene_input_layout && scene_constant_buffer &&
             track_rasterizer_state && sampler_state && blend_state) {
-            return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error);
+            return ensure_scene_outline_pipeline(error) &&
+                ensure_scene_pick_pipeline(error) &&
+                ensure_scene_marker_pipeline(error);
         }
 
         release_com(scene_input_layout);
@@ -4132,7 +4407,105 @@ fail:
             release_com(scene_fog_pixel_shader);
             return false;
         }
-        return ensure_scene_outline_pipeline(error) && ensure_scene_pick_pipeline(error);
+        return ensure_scene_outline_pipeline(error) &&
+            ensure_scene_pick_pipeline(error) &&
+            ensure_scene_marker_pipeline(error);
+    }
+
+    bool ensure_scene_marker_pipeline(std::string& error) {
+        if (scene_marker_vertex_shader && scene_marker_pixel_shader &&
+            scene_marker_input_layout && scene_marker_constant_buffer) {
+            return true;
+        }
+        release_com(scene_marker_input_layout);
+        release_com(scene_marker_vertex_shader);
+        release_com(scene_marker_pixel_shader);
+        release_com(scene_marker_constant_buffer);
+
+        ID3DBlob* vs_blob = nullptr;
+        ID3DBlob* ps_blob = nullptr;
+        ID3DBlob* errors = nullptr;
+        HRESULT hr = D3DCompile(
+            k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
+            nullptr, nullptr, nullptr, "vs_main", "vs_4_0",
+            D3DCOMPILE_ENABLE_STRICTNESS, 0, &vs_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors
+                ? static_cast<const char*>(errors->GetBufferPointer())
+                : hresult_text("D3DCompile(scene marker vertex shader)", hr);
+            release_com(errors);
+            return false;
+        }
+        release_com(errors);
+
+        hr = D3DCompile(
+            k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
+            nullptr, nullptr, nullptr, "ps_main", "ps_4_0",
+            D3DCOMPILE_ENABLE_STRICTNESS, 0, &ps_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors
+                ? static_cast<const char*>(errors->GetBufferPointer())
+                : hresult_text("D3DCompile(scene marker pixel shader)", hr);
+            release_com(errors);
+            release_com(vs_blob);
+            return false;
+        }
+        release_com(errors);
+
+        hr = device->CreateVertexShader(vs_blob->GetBufferPointer(),
+                                        vs_blob->GetBufferSize(), nullptr,
+                                        &scene_marker_vertex_shader);
+        if (SUCCEEDED(hr)) {
+            hr = device->CreatePixelShader(ps_blob->GetBufferPointer(),
+                                           ps_blob->GetBufferSize(), nullptr,
+                                           &scene_marker_pixel_shader);
+        }
+        if (FAILED(hr)) {
+            error = hresult_text("CreateShader(scene marker)", hr);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            release_com(scene_marker_vertex_shader);
+            release_com(scene_marker_pixel_shader);
+            return false;
+        }
+
+        D3D11_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+             D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12,
+             D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 20,
+             D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 1, DXGI_FORMAT_R32_FLOAT, 0, 24,
+             D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+        hr = device->CreateInputLayout(
+            layout, IM_ARRAYSIZE(layout),
+            vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(),
+            &scene_marker_input_layout);
+        release_com(vs_blob);
+        release_com(ps_blob);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateInputLayout(scene marker)", hr);
+            release_com(scene_marker_vertex_shader);
+            release_com(scene_marker_pixel_shader);
+            return false;
+        }
+
+        D3D11_BUFFER_DESC cb_desc = {};
+        cb_desc.ByteWidth = sizeof(SceneMarkerConstants);
+        cb_desc.Usage = D3D11_USAGE_DEFAULT;
+        cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        hr = device->CreateBuffer(&cb_desc, nullptr,
+                                  &scene_marker_constant_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene marker constants)", hr);
+            release_com(scene_marker_input_layout);
+            release_com(scene_marker_vertex_shader);
+            release_com(scene_marker_pixel_shader);
+            return false;
+        }
+        return true;
     }
 
     bool ensure_scene_depth_states(std::string& error) {
@@ -4613,6 +4986,96 @@ fail:
         ++scene_stats_value.drawn_track_chunk_count;
     }
 
+    void draw_scene_marker_chunk(const SceneMarkerChunkGpu& chunk,
+                                 DVec3 render_origin,
+                                 const Mat4& view_proj) {
+        if (!chunk.vertex_buffer || !chunk.index_buffer ||
+            chunk.visible_index_count == 0 ||
+            scene_marker_font_texture_id == ImTextureID_Invalid) {
+            return;
+        }
+
+        SceneMarkerConstants constants = {};
+        constants.view_proj = view_proj;
+        constants.chunk_offset[0] =
+            static_cast<float>(chunk.origin.x - render_origin.x);
+        constants.chunk_offset[1] =
+            static_cast<float>(chunk.origin.y - render_origin.y);
+        constants.chunk_offset[2] =
+            static_cast<float>(chunk.origin.z - render_origin.z);
+        context->UpdateSubresource(
+            scene_marker_constant_buffer, 0, nullptr, &constants, 0, 0);
+
+        UINT stride = sizeof(SceneMarkerVertex);
+        UINT offset = 0;
+        ID3D11Buffer* vertex_buffer = chunk.vertex_buffer;
+        context->IASetInputLayout(scene_marker_input_layout);
+        context->IASetVertexBuffers(
+            0, 1, &vertex_buffer, &stride, &offset);
+        context->IASetIndexBuffer(
+            chunk.index_buffer, DXGI_FORMAT_R32_UINT, 0);
+        context->IASetPrimitiveTopology(
+            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context->VSSetShader(scene_marker_vertex_shader, nullptr, 0);
+        context->VSSetConstantBuffers(
+            0, 1, &scene_marker_constant_buffer);
+        context->PSSetShader(scene_marker_pixel_shader, nullptr, 0);
+        context->PSSetSamplers(0, 1, &sampler_state);
+        ID3D11ShaderResourceView* font_srv =
+            reinterpret_cast<ID3D11ShaderResourceView*>(
+                static_cast<std::uintptr_t>(
+                    scene_marker_font_texture_id));
+        context->PSSetShaderResources(0, 1, &font_srv);
+        context->RSSetState(rasterizer_state);
+        context->OMSetDepthStencilState(scene_depth_read_state, 0);
+        const float blend_factor[4] = {
+            0.0f, 0.0f, 0.0f, 0.0f};
+        context->OMSetBlendState(
+            blend_state, blend_factor, 0xffffffff);
+        context->DrawIndexed(chunk.visible_index_count, 0, 0);
+    }
+
+    bool scene_marker_font_cache_current() const {
+        ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+        if (!atlas || !atlas->TexData) return false;
+        return scene_marker_font == ImGui::GetFont() &&
+            scene_marker_font_size == ImGui::GetFontSize() &&
+            scene_marker_font_texture_id == atlas->TexRef.GetTexID() &&
+            scene_marker_font_texture_unique_id ==
+                atlas->TexData->UniqueID &&
+            scene_marker_font_texture_width == atlas->TexData->Width &&
+            scene_marker_font_texture_height == atlas->TexData->Height;
+    }
+
+    void draw_visible_scene_markers(double visible_min,
+                                    double visible_max,
+                                    DVec3 render_origin,
+                                    const Mat4& view_proj) {
+        if (scene_marker_chunks.empty()) return;
+        size_t camera_chunk = 0;
+        while (camera_chunk + 1 < scene_marker_chunks.size() &&
+               scene_marker_chunks[camera_chunk].d_max <
+                   scene_camera_distance) {
+            ++camera_chunk;
+        }
+
+        for (size_t i = scene_marker_chunks.size();
+             i-- > camera_chunk;) {
+            const SceneMarkerChunkGpu& chunk = scene_marker_chunks[i];
+            if (chunk.d_max < visible_min || chunk.d_min > visible_max) {
+                continue;
+            }
+            draw_scene_marker_chunk(chunk, render_origin, view_proj);
+        }
+        for (size_t i = 0; i < camera_chunk; ++i) {
+            const SceneMarkerChunkGpu& chunk = scene_marker_chunks[i];
+            if (chunk.d_max < visible_min || chunk.d_min > visible_max) {
+                continue;
+            }
+            draw_scene_marker_chunk(chunk, render_origin, view_proj);
+        }
+    }
+
     bool scene_object_index_valid(int object_index) const {
         return object_index >= 0 && static_cast<size_t>(object_index) < scene_data.objects.size();
     }
@@ -4959,6 +5422,641 @@ fail:
             }
 
             if (!upload_track_chunk(gpu_chunk, vertices, indices, error)) return false;
+        }
+        return true;
+    }
+
+    static unsigned int append_scene_marker_vertex(
+        std::vector<SceneMarkerVertex>& vertices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        float local_x,
+        float local_y,
+        float face_sign,
+        float u,
+        float v,
+        ImU32 color,
+        bool textured) {
+        DVec3 position = center +
+            right * static_cast<double>(local_x * face_sign) +
+            up * static_cast<double>(local_y) +
+            forward * static_cast<double>(k_scene_marker_face_offset * face_sign);
+        const unsigned int index = static_cast<unsigned int>(vertices.size());
+        vertices.push_back({
+            static_cast<float>(position.x - origin.x),
+            static_cast<float>(position.y - origin.y),
+            static_cast<float>(position.z - origin.z),
+            u,
+            v,
+            static_cast<std::uint32_t>(color),
+            textured ? 1.0f : 0.0f
+        });
+        return index;
+    }
+
+    static void append_scene_marker_quad(
+        std::vector<SceneMarkerVertex>& vertices,
+        std::vector<unsigned int>& indices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        float x0,
+        float y0,
+        float x1,
+        float y1,
+        float face_sign,
+        ImU32 color,
+        bool textured = false,
+        ImVec2 uv0 = ImVec2(0.0f, 0.0f),
+        ImVec2 uv1 = ImVec2(0.0f, 0.0f)) {
+        if (vertices.size() >
+            static_cast<size_t>(std::numeric_limits<unsigned int>::max() - 4)) {
+            return;
+        }
+        const unsigned int a = append_scene_marker_vertex(
+            vertices, origin, center, right, up, forward,
+            x0, y0, face_sign, uv0.x, uv0.y, color, textured);
+        const unsigned int b = append_scene_marker_vertex(
+            vertices, origin, center, right, up, forward,
+            x1, y0, face_sign, uv1.x, uv0.y, color, textured);
+        const unsigned int c = append_scene_marker_vertex(
+            vertices, origin, center, right, up, forward,
+            x1, y1, face_sign, uv1.x, uv1.y, color, textured);
+        const unsigned int d = append_scene_marker_vertex(
+            vertices, origin, center, right, up, forward,
+            x0, y1, face_sign, uv0.x, uv1.y, color, textured);
+        indices.insert(indices.end(), {a, b, c, a, c, d});
+    }
+
+    static void append_scene_marker_triangle(
+        std::vector<SceneMarkerVertex>& vertices,
+        std::vector<unsigned int>& indices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        ImVec2 p0,
+        ImVec2 p1,
+        ImVec2 p2,
+        float face_sign,
+        ImU32 color) {
+        if (vertices.size() >
+            static_cast<size_t>(std::numeric_limits<unsigned int>::max() - 3)) {
+            return;
+        }
+        const float signed_area =
+            (p1.x - p0.x) * (p2.y - p0.y) -
+            (p1.y - p0.y) * (p2.x - p0.x);
+        if (signed_area > 0.0f) std::swap(p1, p2);
+        const unsigned int a = append_scene_marker_vertex(
+            vertices, origin, center, right, up, forward,
+            p0.x, p0.y, face_sign, 0.0f, 0.0f, color, false);
+        const unsigned int b = append_scene_marker_vertex(
+            vertices, origin, center, right, up, forward,
+            p1.x, p1.y, face_sign, 0.0f, 0.0f, color, false);
+        const unsigned int c = append_scene_marker_vertex(
+            vertices, origin, center, right, up, forward,
+            p2.x, p2.y, face_sign, 0.0f, 0.0f, color, false);
+        indices.insert(indices.end(), {a, b, c});
+    }
+
+    static ImVec2 scene_marker_icon_point(ImVec2 point) {
+        return ImVec2(
+            point.x * k_scene_marker_icon_half_extent,
+            0.72f - point.y * k_scene_marker_icon_half_extent);
+    }
+
+    static void append_scene_marker_line(
+        std::vector<SceneMarkerVertex>& vertices,
+        std::vector<unsigned int>& indices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        ImVec2 a,
+        ImVec2 b,
+        float thickness,
+        float face_sign,
+        ImU32 color) {
+        const float dx = b.x - a.x;
+        const float dy = b.y - a.y;
+        const float length = std::sqrt(dx * dx + dy * dy);
+        if (length <= 1e-6f) return;
+        const float half = thickness * 0.5f;
+        const ImVec2 side(-dy / length * half, dx / length * half);
+        append_scene_marker_triangle(
+            vertices, indices, origin, center, right, up, forward,
+            ImVec2(a.x - side.x, a.y - side.y),
+            ImVec2(a.x + side.x, a.y + side.y),
+            ImVec2(b.x + side.x, b.y + side.y),
+            face_sign, color);
+        append_scene_marker_triangle(
+            vertices, indices, origin, center, right, up, forward,
+            ImVec2(a.x - side.x, a.y - side.y),
+            ImVec2(b.x + side.x, b.y + side.y),
+            ImVec2(b.x - side.x, b.y - side.y),
+            face_sign, color);
+    }
+
+    static void append_scene_marker_glyph(
+        std::vector<SceneMarkerVertex>& vertices,
+        std::vector<unsigned int>& indices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        ImFontBaked& baked,
+        ImWchar codepoint,
+        float cursor_x,
+        float top_y,
+        float scale,
+        float face_sign,
+        ImU32 color) {
+        const ImFontGlyph* glyph = baked.FindGlyph(codepoint);
+        if (!glyph || !glyph->Visible) return;
+        append_scene_marker_quad(
+            vertices, indices, origin, center, right, up, forward,
+            cursor_x + glyph->X0 * scale,
+            top_y - glyph->Y0 * scale,
+            cursor_x + glyph->X1 * scale,
+            top_y - glyph->Y1 * scale,
+            face_sign, color, true,
+            ImVec2(glyph->U0, glyph->V0),
+            ImVec2(glyph->U1, glyph->V1));
+    }
+
+    static unsigned int decode_scene_marker_utf8(const char*& cursor,
+                                                  const char* end) {
+        if (cursor >= end) return 0;
+        const unsigned char c0 = static_cast<unsigned char>(*cursor++);
+        if (c0 < 0x80) return c0;
+        int continuation_count = 0;
+        unsigned int codepoint = 0;
+        if ((c0 & 0xe0u) == 0xc0u) {
+            continuation_count = 1;
+            codepoint = c0 & 0x1fu;
+        } else if ((c0 & 0xf0u) == 0xe0u) {
+            continuation_count = 2;
+            codepoint = c0 & 0x0fu;
+        } else if ((c0 & 0xf8u) == 0xf0u) {
+            continuation_count = 3;
+            codepoint = c0 & 0x07u;
+        } else {
+            return 0xfffdu;
+        }
+        for (int i = 0; i < continuation_count; ++i) {
+            if (cursor >= end) return 0xfffdu;
+            const unsigned char continuation =
+                static_cast<unsigned char>(*cursor);
+            if ((continuation & 0xc0u) != 0x80u) return 0xfffdu;
+            ++cursor;
+            codepoint = (codepoint << 6) | (continuation & 0x3fu);
+        }
+        return codepoint <= IM_UNICODE_CODEPOINT_MAX ? codepoint : 0xfffdu;
+    }
+
+    static void append_scene_marker_text(
+        std::vector<SceneMarkerVertex>& vertices,
+        std::vector<unsigned int>& indices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        ImFont& font,
+        ImFontBaked& baked,
+        float font_size,
+        const std::string& text,
+        float face_sign,
+        ImU32 color) {
+        if (text.empty() || font_size <= 0.0f || baked.Size <= 0.0f) return;
+        const ImVec2 measured = font.CalcTextSizeA(
+            font_size, std::numeric_limits<float>::max(), 0.0f,
+            text.c_str(), text.c_str() + text.size());
+        float scale = k_scene_marker_label_height / baked.Size;
+        if (measured.x > 0.0f) {
+            scale = std::min(
+                scale, k_scene_marker_label_max_width / measured.x);
+        }
+        const float top_y =
+            k_scene_marker_label_center_y + measured.y * scale * 0.5f;
+        float cursor_x = measured.x * scale * -0.5f;
+        const char* cursor = text.c_str();
+        const char* end = cursor + text.size();
+        while (cursor < end) {
+            const unsigned int codepoint = decode_scene_marker_utf8(cursor, end);
+            const ImFontGlyph* glyph = baked.FindGlyph(
+                static_cast<ImWchar>(codepoint));
+            if (!glyph) continue;
+            const float advance = glyph->AdvanceX * scale;
+            if (glyph->Visible) {
+                append_scene_marker_glyph(
+                    vertices, indices, origin, center, right, up, forward,
+                    baked, static_cast<ImWchar>(codepoint),
+                    cursor_x, top_y, scale, face_sign, color);
+            }
+            cursor_x += advance;
+        }
+    }
+
+    static void append_scene_marker_icon_glyph(
+        std::vector<SceneMarkerVertex>& vertices,
+        std::vector<unsigned int>& indices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        ImFontBaked& baked,
+        char glyph,
+        float face_sign,
+        ImU32 color,
+        float offset_x,
+        float offset_y) {
+        const ImFontGlyph* font_glyph =
+            baked.FindGlyph(static_cast<ImWchar>(glyph));
+        if (!font_glyph || baked.Size <= 0.0f) return;
+        constexpr float glyph_height = 0.28f;
+        const float scale = glyph_height / baked.Size;
+        const float cursor_x =
+            -font_glyph->AdvanceX * scale * 0.5f + offset_x;
+        const float top_y = 0.72f + glyph_height * 0.5f + offset_y;
+        append_scene_marker_glyph(
+            vertices, indices, origin, center, right, up, forward,
+            baked, static_cast<ImWchar>(glyph),
+            cursor_x, top_y, scale, face_sign, color);
+    }
+
+    static void append_scene_marker_icon(
+        std::vector<SceneMarkerVertex>& vertices,
+        std::vector<unsigned int>& indices,
+        DVec3 origin,
+        DVec3 center,
+        DVec3 right,
+        DVec3 up,
+        DVec3 forward,
+        ImFontBaked& baked,
+        MapMarkerVisualKind kind,
+        float face_sign) {
+        const MapMarkerIconRecipe recipe = map_marker_icon_recipe(kind);
+        for (size_t primitive_index = 0;
+             primitive_index < recipe.primitive_count;
+             ++primitive_index) {
+            const MapMarkerIconPrimitive& primitive =
+                recipe.primitives[primitive_index];
+            const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+                map_marker_role_color(kind, primitive.color));
+            switch (primitive.kind) {
+                case MapMarkerPrimitiveKind::Polyline: {
+                    if (primitive.point_count < 2) break;
+                    const float thickness =
+                        primitive.thickness * k_scene_marker_icon_half_extent;
+                    const size_t segment_count = primitive.closed
+                        ? primitive.point_count
+                        : primitive.point_count - 1;
+                    for (size_t segment = 0; segment < segment_count; ++segment) {
+                        const size_t next =
+                            (segment + 1) % primitive.point_count;
+                        append_scene_marker_line(
+                            vertices, indices, origin, center, right, up, forward,
+                            scene_marker_icon_point(primitive.points[segment]),
+                            scene_marker_icon_point(primitive.points[next]),
+                            thickness, face_sign, color);
+                    }
+                    break;
+                }
+                case MapMarkerPrimitiveKind::FilledPolygon: {
+                    if (primitive.point_count < 3) break;
+                    const ImVec2 first =
+                        scene_marker_icon_point(primitive.points[0]);
+                    for (size_t point = 2;
+                         point < primitive.point_count;
+                         ++point) {
+                        append_scene_marker_triangle(
+                            vertices, indices, origin, center, right, up, forward,
+                            first,
+                            scene_marker_icon_point(primitive.points[point - 1]),
+                            scene_marker_icon_point(primitive.points[point]),
+                            face_sign, color);
+                    }
+                    break;
+                }
+                case MapMarkerPrimitiveKind::Circle:
+                case MapMarkerPrimitiveKind::FilledCircle: {
+                    constexpr int segments = 20;
+                    const ImVec2 circle_center =
+                        scene_marker_icon_point(primitive.points[0]);
+                    const float radius =
+                        primitive.radius * k_scene_marker_icon_half_extent;
+                    if (primitive.kind == MapMarkerPrimitiveKind::FilledCircle) {
+                        for (int segment = 0; segment < segments; ++segment) {
+                            const float a0 =
+                                static_cast<float>(segment) * 6.28318530718f /
+                                static_cast<float>(segments);
+                            const float a1 =
+                                static_cast<float>(segment + 1) * 6.28318530718f /
+                                static_cast<float>(segments);
+                            append_scene_marker_triangle(
+                                vertices, indices, origin, center, right, up, forward,
+                                circle_center,
+                                ImVec2(circle_center.x + std::cos(a0) * radius,
+                                       circle_center.y + std::sin(a0) * radius),
+                                ImVec2(circle_center.x + std::cos(a1) * radius,
+                                       circle_center.y + std::sin(a1) * radius),
+                                face_sign, color);
+                        }
+                    } else {
+                        const float thickness =
+                            primitive.thickness *
+                            k_scene_marker_icon_half_extent;
+                        for (int segment = 0; segment < segments; ++segment) {
+                            const float a0 =
+                                static_cast<float>(segment) * 6.28318530718f /
+                                static_cast<float>(segments);
+                            const float a1 =
+                                static_cast<float>(segment + 1) * 6.28318530718f /
+                                static_cast<float>(segments);
+                            append_scene_marker_line(
+                                vertices, indices, origin, center, right, up, forward,
+                                ImVec2(circle_center.x + std::cos(a0) * radius,
+                                       circle_center.y + std::sin(a0) * radius),
+                                ImVec2(circle_center.x + std::cos(a1) * radius,
+                                       circle_center.y + std::sin(a1) * radius),
+                                thickness, face_sign, color);
+                        }
+                    }
+                    break;
+                }
+                case MapMarkerPrimitiveKind::Glyph: {
+                    const bool outline =
+                        primitive.color == MapMarkerColorRole::Outline ||
+                        primitive.color == MapMarkerColorRole::Shadow ||
+                        primitive.color == MapMarkerColorRole::Black;
+                    if (outline) {
+                        for (const ImVec2 offset : {
+                                 ImVec2(-k_scene_marker_outline_width, 0.0f),
+                                 ImVec2(k_scene_marker_outline_width, 0.0f),
+                                 ImVec2(0.0f, -k_scene_marker_outline_width),
+                                 ImVec2(0.0f, k_scene_marker_outline_width)}) {
+                            append_scene_marker_icon_glyph(
+                                vertices, indices, origin, center, right, up, forward,
+                                baked, primitive.glyph, face_sign, color,
+                                offset.x, offset.y);
+                        }
+                    } else {
+                        append_scene_marker_icon_glyph(
+                            vertices, indices, origin, center, right, up, forward,
+                            baked, primitive.glyph, face_sign, color, 0.0f, 0.0f);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    static void scene_marker_frame(const Canvas3DTrackPoint& point,
+                                   DVec3& right,
+                                   DVec3& up,
+                                   DVec3& forward) {
+        const double gradient =
+            std::isfinite(point.gradient) ? point.gradient / 1000.0 : 0.0;
+        forward = normalize(DVec3{
+            std::sin(point.theta), gradient, -std::cos(point.theta)});
+        right = normalize(cross(forward, DVec3{0.0, 1.0, 0.0}));
+        up = normalize(cross(right, forward));
+        apply_track_cant(right, up, forward, point.cant_angle);
+    }
+
+    bool rebuild_scene_marker_visible_indices(std::string& error) {
+        error.clear();
+        for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) {
+            chunk.visible_index_count = 0;
+            if (!chunk.index_buffer || chunk.source_indices.empty()) continue;
+
+            D3D11_MAPPED_SUBRESOURCE mapped = {};
+            const HRESULT hr = context->Map(
+                chunk.index_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+            if (FAILED(hr)) {
+                error = hresult_text("Map(scene marker index)", hr);
+                return false;
+            }
+            unsigned int* destination =
+                static_cast<unsigned int*>(mapped.pData);
+            for (const SceneMarkerIndexRange& range : chunk.ranges) {
+                const bool visible = range.label
+                    ? scene_marker_visibility.label_visible(range.kind)
+                    : scene_marker_visibility.marker_visible(range.kind);
+                if (!visible || range.count == 0) continue;
+                const size_t end =
+                    static_cast<size_t>(range.first) + range.count;
+                if (end > chunk.source_indices.size()) continue;
+                std::copy_n(
+                    chunk.source_indices.data() + range.first,
+                    range.count,
+                    destination + chunk.visible_index_count);
+                chunk.visible_index_count += range.count;
+            }
+            context->Unmap(chunk.index_buffer, 0);
+        }
+        return true;
+    }
+
+    bool build_scene_marker_chunks(std::string& error) {
+        error.clear();
+        release_scene_marker_chunks();
+        scene_marker_chunks.resize(scene_chunks.size());
+        if (scene_chunks.empty() || scene_data.markers.empty()) return true;
+
+        ImFont* font = ImGui::GetFont();
+        const float font_size = ImGui::GetFontSize();
+        ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+        if (!font || !atlas || font_size <= 0.0f) {
+            error = "ImGui font atlas is not available for 3D scene markers";
+            return false;
+        }
+        ImFontBaked* baked = font->GetFontBaked(font_size);
+        if (!baked) {
+            error = "ImGui font glyphs are not available for 3D scene markers";
+            return false;
+        }
+
+        std::vector<std::vector<size_t>> marker_indices(scene_chunks.size());
+        const double first_distance = scene_chunks.front().d_min;
+        for (size_t marker_index = 0;
+             marker_index < scene_data.markers.size();
+             ++marker_index) {
+            const double distance =
+                scene_data.markers[marker_index].track_point.distance;
+            int chunk_index = static_cast<int>(
+                std::floor((distance - first_distance) / scene_chunk_m));
+            chunk_index = std::clamp(
+                chunk_index, 0, static_cast<int>(scene_chunks.size()) - 1);
+            marker_indices[static_cast<size_t>(chunk_index)].push_back(
+                marker_index);
+        }
+
+        for (size_t chunk_index = 0;
+             chunk_index < scene_chunks.size();
+             ++chunk_index) {
+            const SceneChunk& scene_chunk = scene_chunks[chunk_index];
+            SceneMarkerChunkGpu& gpu_chunk =
+                scene_marker_chunks[chunk_index];
+            gpu_chunk.origin = scene_chunk.origin;
+            gpu_chunk.d_min = scene_chunk.d_min;
+            gpu_chunk.d_max = scene_chunk.d_max;
+            std::vector<SceneMarkerVertex> vertices;
+            std::vector<unsigned int>& indices = gpu_chunk.source_indices;
+
+            for (const size_t marker_index : marker_indices[chunk_index]) {
+                const Canvas3DSceneMarker& marker =
+                    scene_data.markers[marker_index];
+                const Canvas3DTrackPoint& point = marker.track_point;
+                const DVec3 center{point.x, point.y, point.z};
+                DVec3 right;
+                DVec3 up;
+                DVec3 forward;
+                scene_marker_frame(point, right, up, forward);
+
+                const std::uint32_t marker_first =
+                    static_cast<std::uint32_t>(indices.size());
+                ImVec4 board_color = map_marker_theme_color(marker.kind);
+                board_color.w = k_scene_marker_board_alpha;
+                const ImU32 board_color_u32 =
+                    ImGui::ColorConvertFloat4ToU32(board_color);
+                constexpr float face_sign = -1.0f;
+                append_scene_marker_quad(
+                    vertices, indices, gpu_chunk.origin, center,
+                    right, up, forward,
+                    -0.50f, 1.0f, 0.50f, 0.0f,
+                    face_sign, board_color_u32);
+                append_scene_marker_icon(
+                    vertices, indices, gpu_chunk.origin, center,
+                    right, up, forward, *baked, marker.kind, face_sign);
+                gpu_chunk.ranges.push_back({
+                    marker.kind,
+                    marker_first,
+                    static_cast<std::uint32_t>(
+                        indices.size() - marker_first),
+                    false
+                });
+
+                if (!marker.label.empty()) {
+                    const std::uint32_t label_first =
+                        static_cast<std::uint32_t>(indices.size());
+                    const ImU32 outline_color =
+                        ImGui::ColorConvertFloat4ToU32(
+                            map_marker_role_color(
+                                marker.kind, MapMarkerColorRole::Shadow));
+                    const ImU32 text_color =
+                        ImGui::ColorConvertFloat4ToU32(
+                            map_marker_theme_color(marker.kind));
+                    for (const ImVec2 offset : {
+                             ImVec2(-k_scene_marker_outline_width, 0.0f),
+                             ImVec2(k_scene_marker_outline_width, 0.0f),
+                             ImVec2(0.0f, -k_scene_marker_outline_width),
+                             ImVec2(0.0f, k_scene_marker_outline_width)}) {
+                        DVec3 shifted_center =
+                            center +
+                            right * static_cast<double>(
+                                offset.x * face_sign) +
+                            up * static_cast<double>(offset.y);
+                        append_scene_marker_text(
+                            vertices, indices, gpu_chunk.origin,
+                            shifted_center, right, up, forward,
+                            *font, *baked, font_size, marker.label,
+                            face_sign, outline_color);
+                    }
+                    append_scene_marker_text(
+                        vertices, indices, gpu_chunk.origin, center,
+                        right, up, forward, *font, *baked, font_size,
+                        marker.label, face_sign, text_color);
+                    gpu_chunk.ranges.push_back({
+                        marker.kind,
+                        label_first,
+                        static_cast<std::uint32_t>(
+                            indices.size() - label_first),
+                        true
+                    });
+                }
+            }
+
+            if (vertices.empty() || indices.empty()) continue;
+            if (vertices.size() >
+                    static_cast<size_t>(
+                        std::numeric_limits<UINT>::max() /
+                        sizeof(SceneMarkerVertex)) ||
+                indices.size() >
+                    static_cast<size_t>(
+                        std::numeric_limits<UINT>::max() /
+                        sizeof(unsigned int))) {
+                error = "scene marker chunk is too large for a Direct3D 11 buffer";
+                release_scene_marker_chunks();
+                return false;
+            }
+
+            D3D11_BUFFER_DESC vb_desc = {};
+            vb_desc.ByteWidth = static_cast<UINT>(
+                vertices.size() * sizeof(SceneMarkerVertex));
+            vb_desc.Usage = D3D11_USAGE_DEFAULT;
+            vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            D3D11_SUBRESOURCE_DATA vb_data = {};
+            vb_data.pSysMem = vertices.data();
+            HRESULT hr = device->CreateBuffer(
+                &vb_desc, &vb_data, &gpu_chunk.vertex_buffer);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateBuffer(scene marker vertex)", hr);
+                release_scene_marker_chunks();
+                return false;
+            }
+
+            D3D11_BUFFER_DESC ib_desc = {};
+            ib_desc.ByteWidth = static_cast<UINT>(
+                indices.size() * sizeof(unsigned int));
+            ib_desc.Usage = D3D11_USAGE_DYNAMIC;
+            ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+            ib_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            hr = device->CreateBuffer(
+                &ib_desc, nullptr, &gpu_chunk.index_buffer);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateBuffer(scene marker index)", hr);
+                release_scene_marker_chunks();
+                return false;
+            }
+        }
+
+        scene_marker_font = font;
+        scene_marker_font_size = font_size;
+        scene_marker_font_texture_id = atlas->TexRef.GetTexID();
+        if (atlas->TexData) {
+            scene_marker_font_texture_unique_id = atlas->TexData->UniqueID;
+            scene_marker_font_texture_width = atlas->TexData->Width;
+            scene_marker_font_texture_height = atlas->TexData->Height;
+        }
+        if (!rebuild_scene_marker_visible_indices(error)) {
+            release_scene_marker_chunks();
+            return false;
+        }
+        return true;
+    }
+
+    bool set_scene_marker_visibility(
+        const Canvas3DSceneMarkerVisibility& visibility,
+        std::string& error) {
+        error.clear();
+        if (scene_marker_visibility == visibility) return true;
+        scene_marker_visibility = visibility;
+        if (!scene_active || scene_marker_chunks.empty()) return true;
+        if (!rebuild_scene_marker_visible_indices(error)) {
+            if (!error.empty()) scene_last_error = error;
+            return false;
         }
         return true;
     }
@@ -5890,6 +6988,11 @@ fail:
             return;
         }
         upload_pending_scene_models();
+        if (!scene_data.markers.empty() &&
+            !scene_marker_font_cache_current() &&
+            !build_scene_marker_chunks(error)) {
+            if (scene_last_error != error) scene_last_error = error;
+        }
 
 #ifndef NDEBUG
         debug_scene_fog_draw_part_count = 0;
@@ -6018,6 +7121,8 @@ fail:
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj,
                                    track_instance, error, fog_ptr);
         }
+        draw_visible_scene_markers(
+            visible_min, visible_max, render_origin, view_proj);
         draw_scene_highlight_batch(scene_focus_highlight_batch, view_proj, width, height);
         draw_scene_highlight_batch(scene_hover_highlight_batch, view_proj, width, height);
 
@@ -6574,6 +7679,10 @@ fail:
     ID3D11PixelShader* scene_fog_pixel_shader = nullptr;
     ID3D11InputLayout* scene_input_layout = nullptr;
     ID3D11Buffer* scene_constant_buffer = nullptr;
+    ID3D11VertexShader* scene_marker_vertex_shader = nullptr;
+    ID3D11PixelShader* scene_marker_pixel_shader = nullptr;
+    ID3D11InputLayout* scene_marker_input_layout = nullptr;
+    ID3D11Buffer* scene_marker_constant_buffer = nullptr;
     ID3D11VertexShader* scene_outline_vertex_shader = nullptr;
     ID3D11PixelShader* scene_outline_pixel_shader = nullptr;
     ID3D11Buffer* scene_outline_constant_buffer = nullptr;
@@ -6623,6 +7732,17 @@ fail:
     SceneStructureEditState scene_structure_edit;
     float scene_edit_component_scale = 1.0f;
     std::vector<SceneTrackChunkGpu> scene_track_chunks;
+    // Static marker vertices/UVs are keyed by scene_data.markers, the 100 m
+    // scene chunk layout, and the active ImGui font/atlas identity below.
+    // Visibility is view-only state and rewrites only each chunk's dynamic IB.
+    std::vector<SceneMarkerChunkGpu> scene_marker_chunks;
+    Canvas3DSceneMarkerVisibility scene_marker_visibility;
+    ImFont* scene_marker_font = nullptr;
+    float scene_marker_font_size = 0.0f;
+    ImTextureID scene_marker_font_texture_id = ImTextureID_Invalid;
+    int scene_marker_font_texture_unique_id = -1;
+    int scene_marker_font_texture_width = 0;
+    int scene_marker_font_texture_height = 0;
     std::map<std::string, SceneModelGpu> scene_models;
     std::unordered_map<std::string, SceneTextureCacheEntry> scene_texture_cache;
     size_t scene_model_worker_limit = 0;
@@ -6725,8 +7845,16 @@ bool Canvas3D::refresh_scene_dynamic_content(const MapModel& model, int station_
     return impl_->refresh_scene_dynamic_content(model, station_index, error);
 }
 
-void Canvas3D::refresh_scene_route_stations(const MapModel& model) {
-    impl_->refresh_scene_route_stations(model);
+bool Canvas3D::set_scene_marker_visibility(
+    const Canvas3DSceneMarkerVisibility& visibility,
+    std::string& error) {
+    return impl_->set_scene_marker_visibility(visibility, error);
+}
+
+bool Canvas3D::refresh_scene_route_stations(
+    const MapModel& model,
+    std::string& error) {
+    return impl_->refresh_scene_route_stations(model, error);
 }
 
 void Canvas3D::clear_scene() {

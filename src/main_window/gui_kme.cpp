@@ -711,6 +711,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
     }
     std::set<std::string> seen_stations;
     size_t own_index = 0;
+    model.station_positions.reserve(static_cast<size_t>(snapshot.station_position_count));
     model.stations.reserve(static_cast<size_t>(snapshot.station_position_count));
     for (std::uint64_t i = 0; i < snapshot.station_position_count; ++i) {
         const KvStationPositionRow& input = snapshot.station_positions[i];
@@ -729,6 +730,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
             station.y = model.own.at(own_index, 2);
             station.z = model.own.at(own_index, 3);
         }
+        model.station_positions.push_back(station);
         if (seen_stations.insert(station.key).second) model.stations.push_back(std::move(station));
     }
 
@@ -1890,7 +1892,15 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     if (row_kind == "station.put") {
         normalize_station_preview_rows(model_);
         if (scene_preview_started_ && scene_preview_canvas_) {
-            scene_preview_canvas_->refresh_scene_route_stations(model_);
+            std::string error;
+            if (!scene_preview_canvas_->refresh_scene_route_stations(
+                    model_, error)) {
+                add_log("[warn]gui_kme.cpp: 3D scene station marker refresh failed, scheduling full rebuild: " +
+                        (error.empty() ? std::string("unknown error") : error));
+                scene_preview_dirty_ = true;
+                scene_preview_preserve_models_on_rebuild_ = true;
+                scene_preview_preserve_camera_on_rebuild_ = true;
+            }
         }
     }
     invalidate_table_cache();
@@ -2149,6 +2159,7 @@ void normalize_station_preview_rows(MapModel& model) {
             model.station_names.try_emplace(station.key, station.name);
         }
     }
+    model.station_positions.clear();
     model.stations.clear();
     std::set<std::string> seen;
     size_t own_row = 0;
@@ -2159,8 +2170,7 @@ void normalize_station_preview_rows(MapModel& model) {
         row.cells["dist"] = format_double(distance - model.distance_origin, 0);
 
         std::string key = table_cell(row, "posKey");
-        if (key.empty() || !seen.insert(key).second) continue;
-
+        if (key.empty()) continue;
         Station station;
         station.key = key;
         auto station_name = model.station_names.find(key);
@@ -2176,7 +2186,8 @@ void normalize_station_preview_rows(MapModel& model) {
             station.y = model.own.at(own_row, 2);
             station.z = model.own.at(own_row, 3);
         }
-        model.stations.push_back(std::move(station));
+        model.station_positions.push_back(station);
+        if (seen.insert(key).second) model.stations.push_back(std::move(station));
     }
 }
 
@@ -4782,6 +4793,8 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.station_mileage").c_str(), nullptr, &show_station_mileage_);
         ImGui::Separator();
         ImGui::MenuItem(tr("aux.track_geometry").c_str(), nullptr, false, false);
+        ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
+        ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.curve_val").c_str(), nullptr, &show_curve_values_);
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
         ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
@@ -5977,6 +5990,7 @@ double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_cam
         set_program_status("status.scene_preview_failed");
         return scene_build_seconds;
     }
+    sync_scene_preview_marker_visibility();
     Canvas3DSceneStats stats = scene_preview_canvas_->scene_stats();
     std::ostringstream stage_timing;
     stage_timing << std::fixed << std::setprecision(3)
@@ -6037,6 +6051,65 @@ void App::sync_scene_preview_track_visibility() {
     std::string error;
     if (!scene_preview_canvas_->set_scene_track_visibility(visibility, error)) {
         add_log("[error]gui_kme.cpp: 3D scene preview track visibility failed: " + error);
+    }
+}
+
+void App::sync_scene_preview_marker_visibility() {
+    if (!scene_preview_canvas_ || !scene_preview_started_) return;
+
+    Canvas3DSceneMarkerVisibility visibility;
+    auto set_marker = [&](MapMarkerVisualKind kind, bool visible) {
+        if (visible) visibility.marker_mask |= map_marker_visual_bit(kind);
+    };
+    auto set_label = [&](MapMarkerVisualKind kind, bool visible) {
+        if (visible) visibility.label_mask |= map_marker_visual_bit(kind);
+    };
+    auto set_marker_and_label = [&](MapMarkerVisualKind kind, bool visible) {
+        set_marker(kind, visible);
+        set_label(kind, visible);
+    };
+
+    set_marker(MapMarkerVisualKind::Station, show_stations_);
+    set_label(MapMarkerVisualKind::Station,
+              show_stations_ && show_station_names_);
+
+    for (MapMarkerVisualKind kind : {
+             MapMarkerVisualKind::CurveTransitionStart,
+             MapMarkerVisualKind::CurveCircularStart,
+             MapMarkerVisualKind::CurveEnd}) {
+        set_marker(kind, show_curve_values_);
+    }
+    set_label(MapMarkerVisualKind::CurveCircularStart, show_curve_values_);
+
+    for (MapMarkerVisualKind kind : {
+             MapMarkerVisualKind::GradientTransitionStart,
+             MapMarkerVisualKind::GradientStart,
+             MapMarkerVisualKind::GradientEnd}) {
+        set_marker(kind, show_gradient_pos_);
+    }
+    set_label(MapMarkerVisualKind::GradientStart,
+              show_gradient_pos_ && show_gradient_values_);
+
+    set_marker_and_label(MapMarkerVisualKind::SpeedLimit, show_speedlimits_);
+    set_marker_and_label(MapMarkerVisualKind::Beacon, show_beacon_markers_);
+    set_marker_and_label(MapMarkerVisualKind::PreTrain, show_pretrain_markers_);
+    set_marker_and_label(MapMarkerVisualKind::Irregularity, show_irregularity_markers_);
+    set_marker_and_label(MapMarkerVisualKind::MapSound, show_map_sound_markers_);
+    set_marker_and_label(MapMarkerVisualKind::MapSound3D, show_map_sound_3d_markers_);
+    set_marker_and_label(MapMarkerVisualKind::RollingNoise, show_rolling_noise_markers_);
+    set_marker_and_label(MapMarkerVisualKind::FlangeNoise, show_flange_noise_markers_);
+    set_marker_and_label(MapMarkerVisualKind::JointNoise, show_joint_noise_markers_);
+    set_marker_and_label(MapMarkerVisualKind::Background, show_background_markers_);
+    set_marker_and_label(MapMarkerVisualKind::Adhesion, show_adhesion_markers_);
+    set_marker_and_label(MapMarkerVisualKind::CabIlluminance, show_cab_illuminance_markers_);
+    set_marker_and_label(MapMarkerVisualKind::Fog, show_fog_markers_);
+    set_marker_and_label(MapMarkerVisualKind::DrawDistance, show_draw_distance_markers_);
+
+    std::string error;
+    if (!scene_preview_canvas_->set_scene_marker_visibility(
+            visibility, error)) {
+        add_log("[error]gui_kme.cpp: 3D scene marker visibility failed: " +
+                (error.empty() ? std::string("unknown error") : error));
     }
 }
 
@@ -6124,6 +6197,7 @@ void App::render_scene_preview_window() {
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();
         sync_scene_structure_edit_from_inspector();
+        sync_scene_preview_marker_visibility();
         Canvas3DSceneFrameResult scene_result =
             scene_preview_canvas_->render_scene_preview(avail, scene_ui_text, context_menu_options);
         if (scene_result.structure_drag) {
