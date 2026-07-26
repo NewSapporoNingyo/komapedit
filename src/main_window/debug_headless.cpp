@@ -39,6 +39,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <set>
 #include <string>
@@ -629,6 +630,30 @@ void print_headless_buffer_summary(std::ostream& out, const char* label, const H
         << (summary.finite ? "" : ":nonfinite");
 }
 
+std::mutex g_headless_map_log_mutex;
+std::vector<std::string>* g_headless_map_logs = nullptr;
+
+void headless_map_log_callback(const char* message) {
+    if (!message) return;
+    std::lock_guard<std::mutex> lock(g_headless_map_log_mutex);
+    if (g_headless_map_logs) g_headless_map_logs->emplace_back(message);
+}
+
+class ScopedHeadlessMapLogCapture {
+public:
+    explicit ScopedHeadlessMapLogCapture(std::vector<std::string>& logs) {
+        std::lock_guard<std::mutex> lock(g_headless_map_log_mutex);
+        g_headless_map_logs = &logs;
+        kv_set_log_callback(headless_map_log_callback);
+    }
+
+    ~ScopedHeadlessMapLogCapture() {
+        kv_set_log_callback(nullptr);
+        std::lock_guard<std::mutex> lock(g_headless_map_log_mutex);
+        g_headless_map_logs = nullptr;
+    }
+};
+
 int run_headless_load_map(const HeadlessLoadOptions& options) {
     std::ofstream output_file;
     std::ostream* out = &std::cout;
@@ -647,16 +672,33 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
          << " unit_distance=" << format_double(options.unit_distance, 3)
          << " load_profile=" << options.load_profile << "\n";
 
+    std::vector<std::string> captured_logs;
+    ScopedHeadlessMapLogCapture log_capture(captured_logs);
+    auto flush_logs = [&]() {
+        std::vector<std::string> logs;
+        {
+            std::lock_guard<std::mutex> lock(g_headless_map_log_mutex);
+            logs.swap(captured_logs);
+        }
+        for (const std::string& line : logs) *out << line << "\n";
+        out->flush();
+    };
+
     for (int run = 1; run <= options.repeat; ++run) {
         auto started_at = std::chrono::steady_clock::now();
         const bool edit_profile = options.load_profile == "edit";
         unsigned load_flags = edit_profile ? KV_LOAD_EDIT_METADATA : KV_LOAD_PREVIEW;
         void* handle = kv_load_map_ex(options.path.c_str(), options.unit_distance, load_flags);
         auto loaded_at = std::chrono::steady_clock::now();
+        flush_logs();
         if (!handle) {
             const char* err = kv_get_last_error();
-            std::cerr << "headless run " << run << " failed: "
-                      << (err ? err : "maploader failed") << "\n";
+            const std::string failure =
+                "headless run " + std::to_string(run) + " failed: " +
+                (err ? err : "maploader failed");
+            *out << failure << "\n";
+            out->flush();
+            std::cerr << failure << "\n";
             return 2;
         }
 
@@ -664,8 +706,12 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
         if (!kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION,
                                  &snapshot, sizeof(snapshot))) {
             const char* err = kv_get_last_error();
-            std::cerr << "headless run " << run << " snapshot failed: "
-                      << (err ? err : "typed snapshot unavailable") << "\n";
+            const std::string failure =
+                "headless run " + std::to_string(run) + " snapshot failed: " +
+                (err ? err : "typed snapshot unavailable");
+            *out << failure << "\n";
+            out->flush();
+            std::cerr << failure << "\n";
             kv_free(handle);
             return 2;
         }
@@ -4761,6 +4807,10 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         for (int i = 0; i < 5; ++i) render_frame();
+        for (const std::string& message :
+             app.scene_preview_canvas_->drain_scene_load_messages()) {
+            *out << message << "\n";
+        }
         Canvas3DSceneStats warmed_stats = app.scene_preview_canvas_->scene_stats();
         const double scene_build_ms = scene_build_seconds * 1000.0;
         const double preview_load_ms = std::chrono::duration<double, std::milli>(

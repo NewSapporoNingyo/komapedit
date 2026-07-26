@@ -13,7 +13,7 @@
 namespace kme::maploader::detail {
 
 using kme::maploader::log_info;
-using kme::maploader::log_load_failure;
+using kme::maploader::log_warn;
 using kme::maploader::path_to_utf8;
 
 std::string resolve_loaded_asset_path(const std::filesystem::path& root,
@@ -35,6 +35,7 @@ struct MapFunction {
     std::string label;
     std::vector<Value> args;
     std::string raw_arguments;
+    size_t explicit_argument_count = 0;
 };
 
 struct ParsedMapElement {
@@ -61,12 +62,25 @@ public:
         while (true) {
             skip();
             if (eof()) break;
-            parse_statement();
+            current_statement_start_ = pos_;
+            try {
+                parse_statement();
+            } catch (const FatalParseError&) {
+                throw;
+            } catch (const std::exception& e) {
+                add_warning(current_statement_start_, "Syntax", e.what());
+                synchronize_statement();
+            }
         }
         flush_pending_includes();
     }
 
 private:
+    class FatalParseError final : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
     struct IncludeResult {
         MapContext context;
         std::string error;
@@ -86,6 +100,8 @@ private:
     std::string src_;
     std::filesystem::path file_path_;
     size_t pos_ = 0;
+    size_t current_statement_start_ = 0;
+    std::vector<size_t> diagnostic_line_starts_ = build_line_starts(src_);
     std::vector<PendingInclude> pending_includes_;
     std::unordered_map<std::string, size_t> include_call_occurrences_;
 
@@ -130,6 +146,57 @@ private:
             std::ostringstream out;
             out << "Expected '" << ch << "' at byte " << pos_;
             throw std::runtime_error(out.str());
+        }
+    }
+
+    std::pair<int, int> diagnostic_line_column(size_t position) const {
+        const auto it = std::upper_bound(diagnostic_line_starts_.begin(),
+                                         diagnostic_line_starts_.end(), position);
+        const size_t line_index =
+            it == diagnostic_line_starts_.begin()
+                ? 0
+                : static_cast<size_t>(std::distance(diagnostic_line_starts_.begin(), it) - 1);
+        const size_t line_start = diagnostic_line_starts_[line_index];
+        return {loaded_.body_start_line + static_cast<int>(line_index),
+                utf8_column_count(src_, line_start, position) + 1};
+    }
+
+    MapDiagnostic diagnostic_source(size_t position, const std::string& statement_kind,
+                                    const std::string& message = {}) const {
+        const auto location = diagnostic_line_column(std::min(position, src_.size()));
+        MapDiagnostic diagnostic;
+        diagnostic.file_path = loaded_.normalized_path;
+        diagnostic.line = location.first;
+        diagnostic.column = location.second;
+        diagnostic.statement_kind = statement_kind;
+        diagnostic.message = message;
+        return diagnostic;
+    }
+
+    void add_warning(size_t position, const std::string& statement_kind,
+                     const std::string& message) {
+        ctx_.diagnostics.push_back(diagnostic_source(position, statement_kind, message));
+    }
+
+    bool finish_statement(size_t statement_start, const std::string& statement_kind) {
+        skip();
+        if (peek() == ';') {
+            ++pos_;
+            return true;
+        }
+        add_warning(statement_start, statement_kind, "Missing statement terminator ';'.");
+        return false;
+    }
+
+    void synchronize_statement() {
+        bool in_string = false;
+        while (!eof()) {
+            const char ch = src_[pos_++];
+            if (ch == '\'') {
+                in_string = !in_string;
+            } else if (!in_string && ch == ';') {
+                break;
+            }
         }
     }
 
@@ -224,7 +291,7 @@ private:
             size_t args_start = pos_;
             Value value = parse_expression();
             size_t args_end = pos_;
-            expect(';');
+            finish_statement(statement_start, "Variable.Assign");
             if (ctx_.parse_options.collect_edit_metadata) {
                 add_parsed_statement(ctx_, "Variable.Assign",
                                      make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
@@ -251,7 +318,7 @@ private:
                 size_t args_start = pos_;
                 Value path = parse_expression();
                 size_t args_end = pos_;
-                expect(';');
+                finish_statement(statement_start, "Include");
                 if (ctx_.parse_options.collect_edit_metadata) {
                     add_parsed_statement(ctx_, "Include",
                                          make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
@@ -265,11 +332,13 @@ private:
             if (current_starts_map_element()) {
                 flush_pending_includes();
                 ParsedMapElement element = parse_map_element();
-                expect(';');
+                const std::string statement_kind =
+                    map_statement_kind(element.objects, element.function);
+                finish_statement(statement_start, statement_kind);
                 size_t statement_index = k_no_source_ref;
                 if (ctx_.parse_options.collect_edit_metadata) {
                     statement_index = add_parsed_statement(
-                        ctx_, map_statement_kind(element.objects, element.function),
+                        ctx_, statement_kind,
                         make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
                         src_.substr(statement_start, pos_ - statement_start),
                         element.function.raw_arguments,
@@ -287,7 +356,7 @@ private:
         size_t args_start = pos_;
         Value distance = parse_expression();
         size_t args_end = pos_;
-        expect(';');
+        finish_statement(statement_start, "Distance.Set");
         std::string raw_distance = trim_field_copy(src_.substr(args_start, args_end - args_start));
         double distance_value = as_number(distance);
         if (ctx_.parse_options.collect_edit_metadata) {
@@ -590,11 +659,21 @@ private:
         for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
         for (auto& row : child.draw_distances) ctx_.draw_distances.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
+        for (auto& diagnostic : child.diagnostics) {
+            ctx_.diagnostics.push_back(std::move(diagnostic));
+        }
+        for (auto& reference : child.deferred_key_references) {
+            ctx_.deferred_key_references.push_back(std::move(reference));
+        }
+        for (auto& event : child.transition_events) {
+            ctx_.transition_events.push_back(std::move(event));
+        }
     }
 
     void flush_pending_includes() {
         if (pending_includes_.empty()) return;
 
+        std::string first_error;
         for (auto& pending : pending_includes_) {
             IncludeResult result;
             try {
@@ -607,7 +686,10 @@ private:
                     make_child_seed(pending.path, pending.include_path,
                                     pending.include_invocation_key), pending.path);
                 if (!result.error.empty()) {
-                    log_load_failure(result.error);
+                    for (auto& diagnostic : result.context.diagnostics) {
+                        ctx_.diagnostics.push_back(std::move(diagnostic));
+                    }
+                    if (first_error.empty()) first_error = result.error;
                     continue;
                 }
             } else if (include_result_is_stale(pending, result.context)) {
@@ -615,13 +697,19 @@ private:
                     make_child_seed(pending.path, pending.include_path,
                                     pending.include_invocation_key), pending.path);
                 if (!result.error.empty()) {
-                    log_load_failure(result.error);
+                    for (auto& diagnostic : result.context.diagnostics) {
+                        ctx_.diagnostics.push_back(std::move(diagnostic));
+                    }
+                    if (first_error.empty()) first_error = result.error;
                     continue;
                 }
             }
             merge_include_context(result.context);
         }
         pending_includes_.clear();
+        if (!first_error.empty()) {
+            throw FatalParseError("Include load failed: " + first_error);
+        }
     }
 
     std::string map_statement_kind(const std::vector<MapObject>& objects,
@@ -672,6 +760,11 @@ private:
         expect('(');
         size_t args_start = pos_;
         parse_map_args(function.args);
+        function.explicit_argument_count =
+            function.args.size() == 1 && function.args.front().is_null() &&
+                    trim_field_copy(src_.substr(args_start, pos_ - args_start - 1)).empty()
+                ? 0
+                : function.args.size();
         size_t args_end = pos_ > args_start ? pos_ - 1 : args_start;
         function.raw_arguments = src_.substr(args_start, args_end - args_start);
         return function;
@@ -851,11 +944,352 @@ private:
         throw std::runtime_error("Unknown function: " + label);
     }
 
+    enum class RuleArgumentKind {
+        Any,
+        Number,
+        Text,
+    };
+
+    enum class RuleKeyUse {
+        Any,
+        Required,
+        Forbidden,
+    };
+
+    struct MethodRule {
+        std::vector<size_t> allowed_counts;
+        size_t minimum_count = 0;
+        size_t maximum_count = 0;
+        std::vector<RuleArgumentKind> argument_kinds;
+        RuleArgumentKind tail_kind = RuleArgumentKind::Any;
+        RuleKeyUse key_use = RuleKeyUse::Any;
+
+        MethodRule(std::vector<size_t> counts = {}, size_t minimum = 0,
+                   size_t maximum = 0,
+                   std::vector<RuleArgumentKind> kinds = {},
+                   RuleArgumentKind tail = RuleArgumentKind::Any,
+                   RuleKeyUse key = RuleKeyUse::Any)
+            : allowed_counts(std::move(counts)),
+              minimum_count(minimum),
+              maximum_count(maximum),
+              argument_kinds(std::move(kinds)),
+              tail_kind(tail),
+              key_use(key) {}
+    };
+
+    static const std::unordered_map<std::string, MethodRule>& method_rules() {
+        using A = RuleArgumentKind;
+        using K = RuleKeyUse;
+        static const std::unordered_map<std::string, MethodRule> rules = {
+            {"curve.gauge", {{1}, 0, 0, {A::Number}}},
+            {"curve.setgauge", {{1}, 0, 0, {A::Number}}},
+            {"curve.setcenter", {{1}, 0, 0, {A::Number}}},
+            {"curve.setfunction", {{1}, 0, 0, {A::Number}}},
+            {"curve.begintransition", {{0}}},
+            {"curve.begin", {{1, 2}, 0, 0, {A::Number, A::Number}}},
+            {"curve.begincircular", {{2}, 0, 0, {A::Number, A::Number}}},
+            {"curve.change", {{1, 2}, 0, 0, {A::Number, A::Number}}},
+            {"curve.end", {{0}}},
+            {"curve.interpolate", {{0, 1, 2}, 0, 0, {A::Number, A::Number}}},
+            {"gradient.begintransition", {{0}}},
+            {"gradient.begin", {{1}, 0, 0, {A::Number}}},
+            {"gradient.beginconst", {{1}, 0, 0, {A::Number}}},
+            {"gradient.end", {{0}}},
+            {"gradient.interpolate", {{0, 1}, 0, 0, {A::Number}}},
+            {"legacy.turn", {{1}, 0, 0, {A::Number}}},
+            {"legacy.curve", {{1, 2}, 0, 0, {A::Number, A::Number}}},
+            {"legacy.pitch", {{1}, 0, 0, {A::Number}}},
+            {"station.load", {{1}, 0, 0, {A::Text}, A::Any, K::Forbidden}},
+            {"station.put", {{1, 2, 3, 4}, 0, 0,
+                             {A::Any, A::Number, A::Number, A::Number}}},
+            {"track.position", {{3, 4, 5}, 0, 0,
+                                {A::Any, A::Number, A::Number, A::Number, A::Number},
+                                A::Any, K::Required}},
+            {"track.gauge", {{2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"track.cant", {{2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"track.x.interpolate", {{1, 2, 3}, 0, 0,
+                                     {A::Any, A::Number, A::Number}, A::Any, K::Required}},
+            {"track.y.interpolate", {{1, 2, 3}, 0, 0,
+                                     {A::Any, A::Number, A::Number}, A::Any, K::Required}},
+            {"track.cant.setgauge", {{2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"track.cant.setcenter", {{2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"track.cant.setfunction", {{2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"track.cant.begintransition", {{1}, 0, 0, {}, A::Any, K::Required}},
+            {"track.cant.begin", {{2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"track.cant.end", {{1}, 0, 0, {}, A::Any, K::Required}},
+            {"track.cant.interpolate", {{1, 2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"track.cant.cant", {{1, 2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
+            {"speedlimit.begin", {{1}, 0, 0, {A::Number}}},
+            {"speedlimit.end", {{0}}},
+            {"section.begin", {{}, 1, std::numeric_limits<size_t>::max(), {},
+                               A::Number}},
+            {"section.beginnew", {{}, 1, std::numeric_limits<size_t>::max(), {},
+                                  A::Number}},
+            {"section.setspeedlimit", {{}, 1, std::numeric_limits<size_t>::max(), {},
+                                       A::Number}},
+            {"signal.load", {{1}, 0, 0, {A::Text}, A::Any, K::Forbidden}},
+            {"signal.speedlimit", {{}, 1, std::numeric_limits<size_t>::max(), {},
+                                   A::Number, K::Forbidden}},
+            {"signal.put", {{4, 11}, 0, 0,
+                            {A::Any, A::Number, A::Any, A::Number, A::Number,
+                             A::Number, A::Number, A::Number, A::Number, A::Number,
+                             A::Number},
+                            A::Any, K::Required}},
+            {"structure.load", {{1}, 0, 0, {A::Text}, A::Any, K::Forbidden}},
+            {"structure.put", {{10}, 0, 0,
+                               {A::Any, A::Any, A::Number, A::Number, A::Number,
+                                A::Number, A::Number, A::Number, A::Number, A::Number}}},
+            {"structure.put0", {{4}, 0, 0,
+                                {A::Any, A::Any, A::Number, A::Number}}},
+            {"structure.putbetween", {{3, 4}, 0, 0,
+                                      {A::Any, A::Any, A::Any, A::Number}}},
+            {"beacon.put", {{3}, 0, 0, {A::Number, A::Number, A::Number}}},
+            {"pretrain.pass", {{1}}},
+            {"sound.load", {{1}, 0, 0, {A::Text}, A::Any, K::Forbidden}},
+            {"sound.play", {{1}, 0, 0, {}, A::Any, K::Required}},
+            {"sound3d.load", {{1}, 0, 0, {A::Text}, A::Any, K::Forbidden}},
+            {"sound3d.put", {{3}, 0, 0, {A::Any, A::Number, A::Number},
+                             A::Any, K::Required}},
+            {"train.add", {{4}, 0, 0,
+                           {A::Any, A::Text, A::Any, A::Number}}},
+            {"train.load", {{4}, 0, 0,
+                            {A::Any, A::Text, A::Any, A::Number},
+                            A::Any, K::Required}},
+            {"train.enable", {{2}, 0, 0, {}, A::Any, K::Required}},
+            {"train.stop", {{5}, 0, 0,
+                            {A::Any, A::Number, A::Number, A::Number, A::Number},
+                            A::Any, K::Required}},
+            {"rollingnoise.change", {{1}, 0, 0, {A::Number}}},
+            {"flangenoise.change", {{1}, 0, 0, {A::Number}}},
+            {"jointnoise.play", {{1}, 0, 0, {A::Number}}},
+            {"repeater.begin", {{}, 12, std::numeric_limits<size_t>::max(),
+                                {A::Any, A::Any, A::Number, A::Number, A::Number,
+                                 A::Number, A::Number, A::Number, A::Number, A::Number,
+                                 A::Number},
+                                A::Any, K::Required}},
+            {"repeater.begin0", {{}, 6, std::numeric_limits<size_t>::max(),
+                                 {A::Any, A::Any, A::Number, A::Number, A::Number},
+                                 A::Any, K::Required}},
+            {"repeater.end", {{1}, 0, 0, {}, A::Any, K::Required}},
+            {"irregularity.change", {{6}, 0, 0,
+                                     {A::Number, A::Number, A::Number, A::Number,
+                                      A::Number, A::Number}}},
+            {"background.change", {{1}}},
+            {"adhesion.change", {{1, 3}, 0, 0,
+                                 {A::Number, A::Number, A::Number}}},
+            {"cabilluminance.interpolate", {{0, 1}, 0, 0, {A::Number}}},
+            {"cabilluminance.set", {{1}, 0, 0, {A::Number}}},
+            {"fog.interpolate", {{0, 1, 4}, 0, 0,
+                                 {A::Number, A::Number, A::Number, A::Number}}},
+            {"fog.set", {{4}, 0, 0,
+                         {A::Number, A::Number, A::Number, A::Number}}},
+            {"drawdistance.change", {{1}, 0, 0, {A::Number}}},
+            {"light.ambient", {{3}, 0, 0, {A::Number, A::Number, A::Number}}},
+            {"light.diffuse", {{3}, 0, 0, {A::Number, A::Number, A::Number}}},
+            {"light.direction", {{2}, 0, 0, {A::Number, A::Number}}},
+        };
+        return rules;
+    }
+
+    static std::string object_path(const std::vector<std::string>& labels) {
+        std::string path;
+        for (const std::string& label : labels) {
+            if (!path.empty()) path += ".";
+            path += label;
+        }
+        return path;
+    }
+
+    bool validate_statement(const std::vector<MapObject>& objects,
+                            const MapFunction& function,
+                            const std::vector<std::string>& labels,
+                            std::string& rule_key) {
+        const std::string path = object_path(labels);
+        const std::string method = ascii_lower(function.label);
+        rule_key = path + "." + method;
+        const auto& rules = method_rules();
+        const auto rule_it = rules.find(rule_key);
+        if (rule_it == rules.end()) {
+            bool known_path = false;
+            const std::string prefix = path + ".";
+            for (const auto& candidate : rules) {
+                if (candidate.first.rfind(prefix, 0) == 0) {
+                    known_path = true;
+                    break;
+                }
+            }
+            if (known_path) {
+                add_warning(current_statement_start_, rule_key,
+                            "Unknown submethod '" + function.label + "' for '" + path + "'.");
+            } else {
+                add_warning(current_statement_start_, rule_key,
+                            "Unknown element name '" + path + "'.");
+            }
+            return false;
+        }
+
+        const MethodRule& rule = rule_it->second;
+        const bool has_key = !objects.empty() && objects.front().has_key;
+        if (rule.key_use == RuleKeyUse::Required && !has_key) {
+            add_warning(current_statement_start_, rule_key,
+                        "An element key is required.");
+            return false;
+        }
+        if (rule.key_use == RuleKeyUse::Forbidden && has_key) {
+            add_warning(current_statement_start_, rule_key,
+                        "An element key is not allowed.");
+            return false;
+        }
+
+        const size_t key_argument_count = has_key ? 1 : 0;
+        const size_t count = function.explicit_argument_count + key_argument_count;
+        auto argument_at = [&](size_t argument_index) -> const Value& {
+            return has_key && argument_index == 0
+                       ? objects.front().key
+                       : function.args[argument_index - key_argument_count];
+        };
+        bool count_is_valid = rule.allowed_counts.empty()
+                                  ? count >= rule.minimum_count && count <= rule.maximum_count
+                                  : std::find(rule.allowed_counts.begin(), rule.allowed_counts.end(),
+                                              count) != rule.allowed_counts.end();
+        if (!count_is_valid) {
+            std::ostringstream expected;
+            if (!rule.allowed_counts.empty()) {
+                for (size_t i = 0; i < rule.allowed_counts.size(); ++i) {
+                    if (i != 0) expected << (i + 1 == rule.allowed_counts.size() ? " or " : ", ");
+                    expected << rule.allowed_counts[i];
+                }
+            } else {
+                expected << "at least " << rule.minimum_count;
+            }
+            add_warning(current_statement_start_, rule_key,
+                        "Parameter count error: expected " + expected.str() +
+                            ", got " + std::to_string(count) + ".");
+            return false;
+        }
+
+        for (size_t i = 0; i < count; ++i) {
+            const Value& argument = argument_at(i);
+            if (argument.is_null()) continue;
+            const RuleArgumentKind kind =
+                i < rule.argument_kinds.size() ? rule.argument_kinds[i] : rule.tail_kind;
+            const bool valid =
+                kind == RuleArgumentKind::Any ||
+                (kind == RuleArgumentKind::Number && argument.is_number()) ||
+                (kind == RuleArgumentKind::Text && argument.is_string());
+            if (!valid) {
+                add_warning(
+                    current_statement_start_, rule_key,
+                    "Parameter content error: argument " + std::to_string(i + 1) +
+                        (kind == RuleArgumentKind::Number ? " must be numeric." :
+                                                           " must be a quoted file path."));
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void add_deferred_key(DeferredKeyKind kind, const Value& value,
+                          const std::string& statement_kind) {
+        const std::string display_key = trim_field_copy(key_text(value));
+        const std::string key = ascii_lower(display_key);
+        if (key.empty()) return;
+        DeferredKeyReference reference;
+        reference.kind = kind;
+        reference.key = key;
+        reference.display_key = display_key;
+        reference.source =
+            diagnostic_source(current_statement_start_, statement_kind);
+        ctx_.deferred_key_references.push_back(std::move(reference));
+    }
+
+    void add_loaded_deferred_key(DeferredKeyKind kind, const std::string& key_text_value,
+                                 const LoadedText& loaded, int line,
+                                 const std::string& statement_kind) {
+        const std::string display_key = trim_field_copy(key_text_value);
+        const std::string key = ascii_lower(display_key);
+        if (key.empty()) return;
+        DeferredKeyReference reference;
+        reference.kind = kind;
+        reference.key = key;
+        reference.display_key = display_key;
+        reference.source.file_path = loaded.normalized_path;
+        reference.source.line = line;
+        reference.source.column = 1;
+        reference.source.statement_kind = statement_kind;
+        ctx_.deferred_key_references.push_back(std::move(reference));
+    }
+
+    void record_deferred_semantics(const std::vector<MapObject>& objects,
+                                   const MapFunction& function,
+                                   const std::string& kind) {
+        const bool has_key = !objects.empty() && objects.front().has_key;
+        const size_t key_argument_count = has_key ? 1 : 0;
+        const size_t argument_count =
+            function.explicit_argument_count + key_argument_count;
+        auto argument_at = [&](size_t argument_index) -> const Value& {
+            return has_key && argument_index == 0
+                       ? objects.front().key
+                       : function.args[argument_index - key_argument_count];
+        };
+
+        auto add_transition = [&](TransitionEventKind event_kind) {
+            TransitionEvent event;
+            event.kind = event_kind;
+            event.argument_count = static_cast<int>(function.explicit_argument_count);
+            event.source = diagnostic_source(current_statement_start_, kind);
+            ctx_.transition_events.push_back(std::move(event));
+        };
+        if (kind == "curve.begintransition") add_transition(TransitionEventKind::CurveBeginTransition);
+        else if (kind == "curve.begin") add_transition(TransitionEventKind::CurveBegin);
+        else if (kind == "curve.begincircular") add_transition(TransitionEventKind::CurveBeginCircular);
+        else if (kind == "curve.end") add_transition(TransitionEventKind::CurveEnd);
+        else if (kind == "gradient.begintransition") add_transition(TransitionEventKind::GradientBeginTransition);
+        else if (kind == "gradient.begin" || kind == "gradient.beginconst") {
+            add_transition(TransitionEventKind::GradientBegin);
+        } else if (kind == "gradient.end") {
+            add_transition(TransitionEventKind::GradientEnd);
+        }
+
+        if ((kind == "structure.put" || kind == "structure.put0" ||
+             kind == "structure.putbetween" || kind == "background.change") &&
+            argument_count != 0) {
+            add_deferred_key(DeferredKeyKind::Structure, argument_at(0), kind);
+        } else if (kind == "repeater.begin" && argument_count > 11) {
+            for (size_t i = 11; i < argument_count; ++i) {
+                add_deferred_key(DeferredKeyKind::Structure, argument_at(i), kind);
+            }
+        } else if (kind == "repeater.begin0" && argument_count > 5) {
+            for (size_t i = 5; i < argument_count; ++i) {
+                add_deferred_key(DeferredKeyKind::Structure, argument_at(i), kind);
+            }
+        } else if (kind == "station.put" && argument_count != 0) {
+            add_deferred_key(DeferredKeyKind::Station, argument_at(0), kind);
+        } else if (kind == "signal.put" && argument_count != 0) {
+            add_deferred_key(DeferredKeyKind::SignalAspect, argument_at(0), kind);
+        } else if (kind == "sound.play" && argument_count != 0) {
+            add_deferred_key(DeferredKeyKind::Sound, argument_at(0), kind);
+        } else if (kind == "sound3d.put" && argument_count != 0) {
+            add_deferred_key(DeferredKeyKind::Sound3D, argument_at(0), kind);
+        } else if ((kind == "train.enable" || kind == "train.stop") &&
+                   argument_count != 0) {
+            add_deferred_key(DeferredKeyKind::Train, argument_at(0), kind);
+        }
+    }
+
     void dispatch(const std::vector<MapObject>& objects, const MapFunction& function) {
-        std::string first = ascii_lower(objects.front().label);
         std::vector<std::string> labels;
         labels.reserve(objects.size());
         for (const auto& object : objects) labels.push_back(ascii_lower(object.label));
+        std::string statement_kind;
+        if (!validate_statement(objects, function, labels, statement_kind)) return;
+        const std::string& first = labels.front();
+        if (first == "curve" || first == "gradient" || first == "structure" ||
+            first == "background" || first == "repeater" || first == "station" ||
+            first == "signal" || first == "sound" || first == "sound3d" ||
+            first == "train") {
+            record_deferred_semantics(objects, function, statement_kind);
+        }
         std::string fn = ascii_lower(function.label);
 
         if (first == "curve") {
@@ -955,6 +1389,23 @@ private:
         }
     }
 
+    template <typename ParseCallback>
+    void load_resource_list(const std::string& path_text,
+                            const std::string& header,
+                            double minimum_version,
+                            const std::string& statement_kind,
+                            ParseCallback&& parse_callback) {
+        if (path_text.empty()) return;
+        try {
+            const std::filesystem::path path = join_path(ctx_.rootpath, path_text);
+            LoadedText loaded = load_header_text(ctx_, path, header, minimum_version);
+            parse_callback(loaded);
+        } catch (const std::exception& e) {
+            add_warning(current_statement_start_, statement_kind,
+                        "Resource list load failed: " + std::string(e.what()));
+        }
+    }
+
     void dispatch_station(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "put" && !a.empty()) {
             note_distance_use(ctx_);
@@ -971,9 +1422,9 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.station_puts.push_back(std::move(row));
         } else if (fn == "load" && !a.empty()) {
-            std::filesystem::path path = join_path(ctx_.rootpath, as_text(a.at(0)));
-            LoadedText loaded = load_header_text(ctx_, path, "BveTs Station List ", 0.04);
-            parse_station_list(loaded);
+            load_resource_list(as_text(a.at(0)), "BveTs Station List ", 0.04,
+                               "station.load",
+                               [&](const LoadedText& loaded) { parse_station_list(loaded); });
         }
     }
 
@@ -981,7 +1432,7 @@ private:
         register_source_file(ctx_, loaded);
         std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
-                                              size_t line_end, int) {
+                                              size_t line_end, int line_number) {
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
             if (fields.empty() || fields[0].empty()) return;
 
@@ -992,6 +1443,10 @@ private:
                                                      line_start, line_end, line, fields);
             std::string key = ascii_lower(row.fields[0]);
             ctx_.station_key[key] = row.fields[1];
+            add_loaded_deferred_key(DeferredKeyKind::Sound, row.fields[9], loaded,
+                                    line_number, "StationList.Row");
+            add_loaded_deferred_key(DeferredKeyKind::Sound, row.fields[10], loaded,
+                                    line_number, "StationList.Row");
             ctx_.station_list[key] = std::move(row);
         });
     }
@@ -1023,7 +1478,7 @@ private:
         std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         SignalAspect* current_aspect = nullptr;
         for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
-                                              size_t line_end, int) {
+                                              size_t line_end, int line_number) {
             std::string trimmed = trim_field_copy(line);
             if (trimmed.empty() || trimmed[0] == '#') return;
 
@@ -1046,6 +1501,8 @@ private:
             }
             for (size_t i = 1; i < fields.size(); ++i) {
                 current_aspect->structure_keys.push_back(fields[i]);
+                add_loaded_deferred_key(DeferredKeyKind::Structure, fields[i], loaded,
+                                        line_number, "SignalList.Row");
             }
         });
     }
@@ -1090,7 +1547,7 @@ private:
         std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         std::string section;
         for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
-                                              size_t line_end, int) {
+                                              size_t line_end, int line_number) {
             std::string trimmed = trim_field_copy(strip_ini_comment_copy(line));
             if (trimmed.empty()) return;
             if (trimmed.front() == '[' && trimmed.back() == ']' && trimmed.size() >= 2) {
@@ -1110,8 +1567,12 @@ private:
                                                           line_start, line_end, line, fields);
             if (section == "structure") {
                 ctx_.other_train_structure_keys.push_back({value, path_key, ref});
+                add_loaded_deferred_key(DeferredKeyKind::Structure, value, loaded,
+                                        line_number, "OtherTrainFile.Row");
             } else if (section == "sound3d") {
                 ctx_.other_train_sound_3d_keys.push_back({value, path_key, ref});
+                add_loaded_deferred_key(DeferredKeyKind::Sound3D, value, loaded,
+                                        line_number, "OtherTrainFile.Row");
             }
         });
     }
@@ -1221,14 +1682,9 @@ private:
     void dispatch_signal(const std::string& fn, const std::vector<Value>& a, bool has_signal_key) {
         if (fn == "load" && !has_signal_key && !a.empty()) {
             std::string list_path_text = as_text(a.at(0));
-            if (list_path_text.empty()) return;
-            try {
-                std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
-                LoadedText loaded = load_header_text(ctx_, path, "BveTs Signal Aspects List ", 2.0);
-                parse_signal_aspect_list(loaded);
-            } catch (const std::exception& e) {
-                log_load_failure(e.what());
-            }
+            load_resource_list(list_path_text, "BveTs Signal Aspects List ", 2.0,
+                               "signal.load",
+                               [&](const LoadedText& loaded) { parse_signal_aspect_list(loaded); });
         } else if (fn == "speedlimit" && !has_signal_key) {
             note_distance_use(ctx_);
             SectionSpeedLimit row;
@@ -1300,15 +1756,9 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.structure_loads.push_back(row);
             std::string list_path_text = as_text(row.load_file_path);
-            if (!list_path_text.empty()) {
-                try {
-                    std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
-                    LoadedText loaded = load_header_text(ctx_, path, "BveTs Structure List ", 1.0);
-                    parse_structure_list(loaded);
-                } catch (const std::exception& e) {
-                    log_load_failure(e.what());
-                }
-            }
+            load_resource_list(list_path_text, "BveTs Structure List ", 1.0,
+                               "structure.load",
+                               [&](const LoadedText& loaded) { parse_structure_list(loaded); });
         } else if (fn == "put" && a.size() >= 10) {
             note_distance_use(ctx_);
             StructurePut row;
@@ -1355,14 +1805,10 @@ private:
                         bool is_3d, bool has_key, const Value& sound_key) {
         if (fn == "load" && !has_key && !a.empty()) {
             std::string list_path_text = as_text(a.at(0));
-            if (list_path_text.empty()) return;
-            try {
-                std::filesystem::path path = join_path(ctx_.rootpath, list_path_text);
-                LoadedText loaded = load_header_text(ctx_, path, "BveTs Sound List ", 2.0);
-                parse_sound_list(loaded, is_3d);
-            } catch (const std::exception& e) {
-                log_load_failure(e.what());
-            }
+            load_resource_list(
+                list_path_text, "BveTs Sound List ", 2.0,
+                is_3d ? "sound3d.load" : "sound.load",
+                [&](const LoadedText& loaded) { parse_sound_list(loaded, is_3d); });
         } else if (!is_3d && fn == "play" && has_key) {
             note_distance_use(ctx_);
             MapSoundPlay row;
@@ -1414,7 +1860,8 @@ private:
             try {
                 parse_other_train_file(path);
             } catch (const std::exception& e) {
-                log_load_failure(e.what());
+                add_warning(current_statement_start_, "train.load",
+                            "Resource list load failed: " + std::string(e.what()));
             }
         }
 
@@ -1615,6 +2062,131 @@ private:
     }
 };
 
+namespace {
+
+std::string deferred_key_kind_name(DeferredKeyKind kind) {
+    switch (kind) {
+    case DeferredKeyKind::Structure: return "StructureKey";
+    case DeferredKeyKind::Sound: return "SoundKey";
+    case DeferredKeyKind::Sound3D: return "Sound3DKey";
+    case DeferredKeyKind::Station: return "StationKey";
+    case DeferredKeyKind::SignalAspect: return "SignalAspectKey";
+    case DeferredKeyKind::Train: return "TrainKey";
+    }
+    return "Key";
+}
+
+std::string format_diagnostic(const MapDiagnostic& diagnostic) {
+    std::ostringstream out;
+    out << diagnostic.file_path << ":" << diagnostic.line << ":" << diagnostic.column;
+    if (!diagnostic.statement_kind.empty()) {
+        out << " [" << diagnostic.statement_kind << "]";
+    }
+    out << " " << diagnostic.message;
+    return out.str();
+}
+
+void append_transition_diagnostics(MapContext& ctx) {
+    bool curve_transition_pending = false;
+    bool gradient_transition_pending = false;
+    for (const TransitionEvent& event : ctx.transition_events) {
+        auto warn = [&](const char* method) {
+            MapDiagnostic diagnostic = event.source;
+            diagnostic.message =
+                std::string("'BeginTransition' is required before '") + method + "'.";
+            ctx.diagnostics.push_back(std::move(diagnostic));
+        };
+        switch (event.kind) {
+        case TransitionEventKind::CurveBeginTransition:
+            curve_transition_pending = true;
+            break;
+        case TransitionEventKind::CurveBegin:
+            if (event.argument_count == 2) {
+                if (!curve_transition_pending) warn("Begin");
+                curve_transition_pending = false;
+            }
+            break;
+        case TransitionEventKind::CurveBeginCircular:
+            if (!curve_transition_pending) warn("Begin");
+            curve_transition_pending = false;
+            break;
+        case TransitionEventKind::CurveEnd:
+            if (!curve_transition_pending) warn("End");
+            curve_transition_pending = false;
+            break;
+        case TransitionEventKind::GradientBeginTransition:
+            gradient_transition_pending = true;
+            break;
+        case TransitionEventKind::GradientBegin:
+            if (!gradient_transition_pending) warn("Begin");
+            gradient_transition_pending = false;
+            break;
+        case TransitionEventKind::GradientEnd:
+            if (!gradient_transition_pending) warn("End");
+            gradient_transition_pending = false;
+            break;
+        }
+    }
+}
+
+void append_deferred_key_diagnostics(MapContext& ctx) {
+    std::array<std::unordered_set<std::string>, 6> definitions;
+    const auto index = [](DeferredKeyKind kind) {
+        return static_cast<size_t>(kind);
+    };
+    for (const StructureModel& row : ctx.structure_models) {
+        definitions[index(DeferredKeyKind::Structure)].insert(
+            ascii_lower(trim_field_copy(row.structure_key)));
+    }
+    for (const SoundListEntry& row : ctx.sound_list) {
+        definitions[index(row.is_3d ? DeferredKeyKind::Sound3D : DeferredKeyKind::Sound)]
+            .insert(ascii_lower(trim_field_copy(row.sound_key)));
+    }
+    for (const auto& row : ctx.station_list) {
+        definitions[index(DeferredKeyKind::Station)].insert(
+            ascii_lower(trim_field_copy(row.first)));
+    }
+    for (const SignalAspect& row : ctx.signal_aspects) {
+        definitions[index(DeferredKeyKind::SignalAspect)].insert(
+            ascii_lower(trim_field_copy(row.signal_aspect_key)));
+    }
+    for (const OtherTrainDefinition& row : ctx.other_trains) {
+        definitions[index(DeferredKeyKind::Train)].insert(
+            ascii_lower(trim_field_copy(key_text(row.train_key))));
+    }
+
+    for (const DeferredKeyReference& reference : ctx.deferred_key_references) {
+        const auto& keys = definitions[index(reference.kind)];
+        if (keys.find(reference.key) != keys.end()) continue;
+        MapDiagnostic diagnostic = reference.source;
+        diagnostic.message = "Unknown " + deferred_key_kind_name(reference.kind) +
+                             " '" + reference.display_key + "'.";
+        ctx.diagnostics.push_back(std::move(diagnostic));
+    }
+}
+
+void emit_diagnostics(MapContext& ctx) {
+    auto source_order = [&](const MapDiagnostic& diagnostic) {
+        const auto it =
+            ctx.source_file_indices.find(normalized_source_key(diagnostic.file_path));
+        return it == ctx.source_file_indices.end() ? k_no_source_ref : it->second;
+    };
+    std::stable_sort(
+        ctx.diagnostics.begin(), ctx.diagnostics.end(),
+        [&](const MapDiagnostic& left, const MapDiagnostic& right) {
+            const size_t left_source = source_order(left);
+            const size_t right_source = source_order(right);
+            if (left_source != right_source) return left_source < right_source;
+            if (left.line != right.line) return left.line < right.line;
+            return left.column < right.column;
+        });
+    for (const MapDiagnostic& diagnostic : ctx.diagnostics) {
+        log_warn(format_diagnostic(diagnostic));
+    }
+}
+
+} // namespace
+
 
 std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
                                               double unit_distance,
@@ -1637,11 +2209,17 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     ctx->file_structure.push_back({k_no_source_ref, {}, ctx->entry_file_path});
 
     log_info("parsing syntax tree");
-    {
+    try {
         ScopedTimer timer(&ctx->timing.parse_seconds);
         Parser parser(*ctx, std::move(loaded));
         parser.parse();
+    } catch (...) {
+        emit_diagnostics(*ctx);
+        throw;
     }
+    append_transition_diagnostics(*ctx);
+    append_deferred_key_diagnostics(*ctx);
+    emit_diagnostics(*ctx);
 
     log_info("sorting parsed IR");
     {

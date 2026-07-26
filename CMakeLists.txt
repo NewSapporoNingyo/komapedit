@@ -121,6 +121,10 @@ if(BUILD_TESTING)
     add_test(NAME typed_edit_contract
         COMMAND $<TARGET_FILE:typed_snapshot_tests> edit
     )
+    add_test(NAME maploader_diagnostics_contract
+        COMMAND $<TARGET_FILE:typed_snapshot_tests> diagnostics
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
 endif()
 
 find_package(assimp CONFIG REQUIRED)

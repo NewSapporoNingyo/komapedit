@@ -25,22 +25,26 @@
 #endif
 
 namespace kme::maploader {
-namespace {
+
+FileOpenFailureKind classify_file_open_failure(const std::filesystem::path& path) {
+    std::error_code error;
+    const bool exists = std::filesystem::exists(path, error);
+    if (error) return FileOpenFailureKind::StatusUnknown;
+    return exists ? FileOpenFailureKind::ExistsButCannotOpen : FileOpenFailureKind::Missing;
+}
 
 std::string file_open_failure_message(const std::filesystem::path& path) {
     const std::string path_text = path_to_utf8(path);
-    std::error_code error;
-    const bool exists = std::filesystem::exists(path, error);
-    if (!error && !exists) {
+    switch (classify_file_open_failure(path)) {
+    case FileOpenFailureKind::Missing:
         return "File not found at specified path: " + path_text;
-    }
-    if (!error) {
+    case FileOpenFailureKind::ExistsButCannotOpen:
         return "File open error; file exists but cannot be opened: " + path_text;
+    case FileOpenFailureKind::StatusUnknown:
+        return "File open error; file status could not be determined: " + path_text;
     }
-    return "File open error; file status could not be determined: " + path_text;
+    return "File open error: " + path_text;
 }
-
-} // namespace
 
 std::string path_to_utf8(const std::filesystem::path& path) {
 #if defined(__cpp_char8_t)

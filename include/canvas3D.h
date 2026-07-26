@@ -415,6 +415,7 @@ public:
 
     bool load_model(const std::string& path, std::string& error);
     bool reload_model(std::string& error);
+    std::vector<std::string> drain_model_load_warnings();
     void clear_model();
     bool has_model() const;
     const std::string& model_path() const;

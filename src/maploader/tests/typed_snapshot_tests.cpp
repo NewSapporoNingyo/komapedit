@@ -14,12 +14,22 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
 int failures = 0;
+std::mutex diagnostic_log_mutex;
+std::vector<std::string> diagnostic_logs;
+
+void diagnostic_log_callback(const char* message) {
+    if (!message) return;
+    std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+    diagnostic_logs.emplace_back(message);
+}
 
 void check(bool condition, const char* message) {
     if (condition) return;
@@ -627,16 +637,112 @@ int edit_contract() {
     return failures;
 }
 
+bool diagnostics_contain(std::string_view needle) {
+    std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+    for (const std::string& line : diagnostic_logs) {
+        if (line.find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+void clear_diagnostics() {
+    std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
+    diagnostic_logs.clear();
+}
+
+int diagnostics_contract(const std::filesystem::path& fixture_root) {
+    kv_set_log_callback(diagnostic_log_callback);
+    auto fixture_path = [&](const char* name) {
+        return (fixture_root / name).u8string();
+    };
+
+    clear_diagnostics();
+    MapHandle nonfatal(kv_load_map_ex(fixture_path("map_errors.txt").c_str(), 25.0,
+                                      KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(nonfatal.value != nullptr, "nonfatal diagnostics map returns a handle");
+    check(diagnostics_contain("[WARN]"), "nonfatal diagnostics use warning severity");
+    check(diagnostics_contain("Parameter count error"), "parameter count warning");
+    check(diagnostics_contain("Parameter content error"), "parameter content warning");
+    check(diagnostics_contain("Unknown submethod"), "unknown submethod warning");
+    check(diagnostics_contain("Unknown element name"), "unknown element warning");
+    check(diagnostics_contain("Unknown StructureKey"), "unknown structure key warning");
+    check(diagnostics_contain("Unknown SoundKey"), "unknown sound key warning");
+    check(diagnostics_contain("Unknown Sound3DKey"), "unknown sound3d key warning");
+    check(diagnostics_contain("Unknown StationKey"), "unknown station key warning");
+    check(diagnostics_contain("Unknown SignalAspectKey"), "unknown signal aspect key warning");
+    check(diagnostics_contain("Unknown TrainKey"), "unknown train key warning");
+    check(diagnostics_contain("Undefined variable"), "undefined variable warning");
+    check(diagnostics_contain("Missing statement terminator ';'"), "missing semicolon warning");
+    check(diagnostics_contain("Resource list load failed: File not found"),
+          "missing resource list warning");
+    check(diagnostics_contain("file exists but cannot be opened"),
+          "existing but unopenable resource list warning");
+    check(diagnostics_contain("Invalid file header"),
+          "invalid resource list header warning");
+    check(diagnostics_contain("'BeginTransition' is required before 'Begin'."),
+          "BeginTransition Begin warning");
+    check(diagnostics_contain("'BeginTransition' is required before 'End'."),
+          "BeginTransition End warning");
+    if (nonfatal.value) {
+        KvMapSnapshot snapshot{};
+        check(kv_get_map_snapshot(nonfatal.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &snapshot, sizeof(snapshot)) != 0,
+              "nonfatal diagnostics snapshot");
+        check(snapshot.speed_limit_count == 1,
+              "valid statement after syntax errors reaches IR");
+    }
+
+    clear_diagnostics();
+    MapHandle clean(kv_load_map_ex(
+        fixture_path("map_errors_no_false_positive.txt").c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(clean.value != nullptr, "diagnostics false-positive fixture loads");
+    check(!diagnostics_contain("'BeginTransition' is required"),
+          "one-argument Curve.Begin does not require BeginTransition");
+    check(!diagnostics_contain("Unknown RepeaterKey"),
+          "Repeater.End permits an undefined RepeaterKey");
+    check(!diagnostics_contain("Parameter count error"),
+          "legal Repeater variable arguments have no count warning");
+
+    struct FatalCase {
+        const char* file;
+        const char* error_text;
+    };
+    const std::array<FatalCase, 3> fatal_cases{{
+        {"map_error_invalid_header.txt", "Invalid file header"},
+        {"map_error_missing_include.txt", "Include load failed"},
+        {"map_error_invalid_include.txt", "Include load failed"},
+    }};
+    for (const FatalCase& fatal : fatal_cases) {
+        clear_diagnostics();
+        MapHandle handle(kv_load_map_ex(fixture_path(fatal.file).c_str(), 25.0,
+                                        KV_LOAD_PREVIEW));
+        check(handle.value == nullptr, "fatal diagnostics fixture returns null");
+        const char* error = kv_get_last_error();
+        check(error && std::string_view(error).find(fatal.error_text) != std::string_view::npos,
+              "fatal diagnostics last error");
+        check(diagnostics_contain("[ERROR]"), "fatal diagnostics use error severity");
+    }
+
+    kv_set_log_callback(nullptr);
+    std::cout << "maploader diagnostics contract "
+              << (failures ? "FAIL" : "PASS") << '\n';
+    return failures;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::cerr << "usage: typed_snapshot_tests <snapshot|edit>\n";
+    if (argc < 2) {
+        std::cerr << "usage: typed_snapshot_tests <snapshot|edit|diagnostics> [fixture-root]\n";
         return 2;
     }
     const std::string mode = argv[1];
     if (mode == "snapshot") return snapshot_contract() == 0 ? 0 : 1;
     if (mode == "edit") return edit_contract() == 0 ? 0 : 1;
+    if (mode == "diagnostics" && argc == 3) {
+        return diagnostics_contract(std::filesystem::path(argv[2])) == 0 ? 0 : 1;
+    }
     std::cerr << "unknown mode: " << mode << '\n';
     return 2;
 }

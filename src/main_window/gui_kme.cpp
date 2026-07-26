@@ -6422,6 +6422,9 @@ void App::preview_structure_model(const std::string& path) {
         add_log("[ERROR]model preview: " + error);
         return;
     }
+    for (std::string& warning : model_preview_canvas_->drain_model_load_warnings()) {
+        add_log(std::move(warning));
+    }
     add_log("[INFO]model preview: " + path);
 }
 
@@ -6432,6 +6435,9 @@ void App::reload_model_preview() {
     if (!model_preview_canvas_->reload_model(error)) {
         add_log("[ERROR]model preview reload: " + error);
         return;
+    }
+    for (std::string& warning : model_preview_canvas_->drain_model_load_warnings()) {
+        add_log(std::move(warning));
     }
     add_log("[INFO]model preview reloaded: " + path);
 }

@@ -16,6 +16,7 @@
 #include "maploader.h"
 #include "model_loader.h"
 #include "runtime_paths.h"
+#include "text_decoder.h"
 #include "touch_input.h"
 
 #include "imgui.h"
@@ -45,6 +46,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -596,6 +598,8 @@ struct GpuMaterial {
 struct SceneTextureCacheEntry {
     ID3D11ShaderResourceView* texture = nullptr;
     bool has_alpha = false;
+    bool failed = false;
+    std::string error;
 };
 
 struct CpuMaterial {
@@ -2541,12 +2545,19 @@ struct Canvas3D::Impl {
     }
 
     bool load_model(const std::string& path, std::string& error) {
+        model_load_warnings.clear();
         MlMeshData data = {};
         if (!loader.load(path, data, error)) return false;
 
         bool ok = upload_model(data, path, error);
         loader.free_model(data);
         return ok;
+    }
+
+    std::vector<std::string> drain_model_load_warnings() {
+        std::vector<std::string> warnings;
+        warnings.swap(model_load_warnings);
+        return warnings;
     }
 
     bool reload_model(std::string& error) {
@@ -2638,12 +2649,16 @@ struct Canvas3D::Impl {
                 materials[i].diffuse[3] = normalize_material_alpha(src->diffuse[3]);
                 if (src->texture_path && *src->texture_path) {
                     bool texture_has_alpha = false;
-                    if (!load_texture(src->texture_path, &materials[i].texture, error, &texture_has_alpha)) {
-                        release_resources();
-                        return false;
+                    std::string texture_error;
+                    if (!load_texture(src->texture_path, &materials[i].texture,
+                                      texture_error, &texture_has_alpha)) {
+                        model_load_warnings.push_back(
+                            "[WARN]canvas3D.cpp: model preview texture warning: " +
+                            texture_error);
+                    } else {
+                        materials[i].has_texture = true;
+                        materials[i].texture_has_alpha = texture_has_alpha;
                     }
-                    materials[i].has_texture = true;
-                    materials[i].texture_has_alpha = texture_has_alpha;
                 }
             }
         }
@@ -3842,12 +3857,22 @@ struct Canvas3D::Impl {
         hr = factory->CreateDecoderFromFilename(utf8_to_wide_local(path).c_str(), nullptr, GENERIC_READ,
                                                 WICDecodeMetadataCacheOnLoad, &decoder);
         if (FAILED(hr)) {
-            error = "failed to open texture: " + path;
+            const auto failure =
+                kme::maploader::classify_file_open_failure(
+                    kme::maploader::path_from_utf8(path));
+            if (failure == kme::maploader::FileOpenFailureKind::Missing) {
+                error = "Texture file not found at specified path: " + path;
+            } else if (failure ==
+                       kme::maploader::FileOpenFailureKind::ExistsButCannotOpen) {
+                error = "Texture file exists but cannot be opened or decoded: " + path;
+            } else {
+                error = "Texture file status could not be determined: " + path;
+            }
             goto fail;
         }
         hr = decoder->GetFrame(0, &frame);
         if (FAILED(hr)) {
-            error = "failed to decode texture frame: " + path;
+            error = "Texture file exists but cannot be opened or decoded: " + path;
             goto fail;
         }
         hr = factory->CreateFormatConverter(&converter);
@@ -3858,7 +3883,7 @@ struct Canvas3D::Impl {
         hr = converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone,
                                    nullptr, 0.0, WICBitmapPaletteTypeCustom);
         if (FAILED(hr)) {
-            error = "failed to convert texture to RGBA: " + path;
+            error = "Texture file exists but cannot be opened or decoded: " + path;
             goto fail;
         }
         converter->GetSize(&width, &height);
@@ -3932,17 +3957,29 @@ fail:
 
         const std::string key = normalized_texture_cache_key(path);
         auto cached = scene_texture_cache.find(key);
-        if (cached != scene_texture_cache.end() && cached->second.texture) {
-            cached->second.texture->AddRef();
-            *out_srv = cached->second.texture;
-            if (out_has_alpha) *out_has_alpha = cached->second.has_alpha;
+        if (cached != scene_texture_cache.end()) {
             ++scene_stats_value.texture_cache_hit_count;
-            return true;
+            if (cached->second.failed) {
+                error = cached->second.error;
+                return false;
+            }
+            if (cached->second.texture) {
+                cached->second.texture->AddRef();
+                *out_srv = cached->second.texture;
+                if (out_has_alpha) *out_has_alpha = cached->second.has_alpha;
+                return true;
+            }
         }
 
         ++scene_stats_value.texture_cache_miss_count;
         bool has_alpha = false;
-        if (!load_texture(path, out_srv, error, &has_alpha)) return false;
+        if (!load_texture(path, out_srv, error, &has_alpha)) {
+            SceneTextureCacheEntry entry;
+            entry.failed = true;
+            entry.error = error;
+            scene_texture_cache.emplace(key, std::move(entry));
+            return false;
+        }
 
         SceneTextureCacheEntry entry;
         entry.texture = *out_srv;
@@ -3956,6 +3993,7 @@ fail:
     void release_scene_texture_cache() {
         for (auto& entry : scene_texture_cache) release_com(entry.second.texture);
         scene_texture_cache.clear();
+        scene_texture_warning_keys.clear();
     }
 
     void release_scene_model(SceneModelGpu& model) {
@@ -4386,8 +4424,15 @@ fail:
                                            texture_error, &texture_has_alpha)) {
                         model.materials[i].has_texture = true;
                         model.materials[i].texture_has_alpha = texture_has_alpha;
-                    } else if (scene_last_error.empty()) {
-                        scene_last_error = texture_error;
+                    } else {
+                        if (scene_last_error.empty()) scene_last_error = texture_error;
+                        const std::string texture_key =
+                            normalized_texture_cache_key(src->texture_path);
+                        if (scene_texture_warning_keys.insert(texture_key).second) {
+                            push_scene_load_log(
+                                "[WARN]canvas3D.cpp: scene texture warning: " +
+                                texture_error);
+                        }
                     }
                 }
             }
@@ -8571,6 +8616,7 @@ fail:
     bool rotating = false;
     ImVec2 last_mouse = ImVec2(0.0f, 0.0f);
     std::string model_path_value;
+    std::vector<std::string> model_load_warnings;
     ImVec4 background_color_value = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
     std::string last_error;
     Canvas3DScene scene_data;
@@ -8602,6 +8648,7 @@ fail:
     int scene_marker_font_texture_height = 0;
     std::map<std::string, SceneModelGpu> scene_models;
     std::unordered_map<std::string, SceneTextureCacheEntry> scene_texture_cache;
+    std::unordered_set<std::string> scene_texture_warning_keys;
     size_t scene_model_worker_limit = 0;
     bool scene_texture_cache_enabled = true;
     std::mutex scene_upload_mutex;
@@ -8672,6 +8719,10 @@ bool Canvas3D::load_model(const std::string& path, std::string& error) {
 
 bool Canvas3D::reload_model(std::string& error) {
     return impl_->reload_model(error);
+}
+
+std::vector<std::string> Canvas3D::drain_model_load_warnings() {
+    return impl_->drain_model_load_warnings();
 }
 
 void Canvas3D::clear_model() {

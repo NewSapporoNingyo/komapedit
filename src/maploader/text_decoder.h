@@ -11,8 +11,16 @@
 
 namespace kme::maploader {
 
+enum class FileOpenFailureKind {
+    Missing,
+    ExistsButCannotOpen,
+    StatusUnknown,
+};
+
 std::string path_to_utf8(const std::filesystem::path& path);
 std::filesystem::path path_from_utf8(const std::string& utf8);
+FileOpenFailureKind classify_file_open_failure(const std::filesystem::path& path);
+std::string file_open_failure_message(const std::filesystem::path& path);
 std::string read_binary_file(const std::filesystem::path& path);
 std::string decode_codepage(const std::string& bytes, unsigned int codepage, bool strict);
 std::string decode_utf16(const std::string& bytes, bool little_endian);

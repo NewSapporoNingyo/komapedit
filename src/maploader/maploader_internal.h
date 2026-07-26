@@ -262,6 +262,51 @@ struct EditSourceRef {
     }
 };
 
+enum class MapDiagnosticKind {
+    Warning,
+};
+
+struct MapDiagnostic {
+    MapDiagnosticKind kind = MapDiagnosticKind::Warning;
+    std::string file_path;
+    int line = 1;
+    int column = 1;
+    std::string statement_kind;
+    std::string message;
+};
+
+enum class DeferredKeyKind {
+    Structure,
+    Sound,
+    Sound3D,
+    Station,
+    SignalAspect,
+    Train,
+};
+
+struct DeferredKeyReference {
+    DeferredKeyKind kind = DeferredKeyKind::Structure;
+    std::string key;
+    std::string display_key;
+    MapDiagnostic source;
+};
+
+enum class TransitionEventKind {
+    CurveBeginTransition,
+    CurveBegin,
+    CurveBeginCircular,
+    CurveEnd,
+    GradientBeginTransition,
+    GradientBegin,
+    GradientEnd,
+};
+
+struct TransitionEvent {
+    TransitionEventKind kind = TransitionEventKind::CurveBeginTransition;
+    int argument_count = 0;
+    MapDiagnostic source;
+};
+
 struct OwnTrackEvent {
     double distance = 0.0;
     std::string key;
@@ -765,6 +810,9 @@ struct MapContext {
     std::unordered_map<std::string, std::string> disk_source_hashes_for_stable_ids;
     mutable std::unordered_map<std::string, std::string> element_edit_id_cache;
     std::vector<ParsedStatement> parsed_statements;
+    std::vector<MapDiagnostic> diagnostics;
+    std::vector<DeferredKeyReference> deferred_key_references;
+    std::vector<TransitionEvent> transition_events;
     size_t active_statement_index = k_no_source_ref;
     int active_statement_next_element_index = 0;
     std::string edit_validation_fingerprint;

@@ -162,8 +162,13 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
                                    bool collect_source_metadata) {
     size_t line_end = text.find('\n');
     std::string header = line_end == std::string::npos ? text : text.substr(0, line_end);
-    if (ascii_lower(header).find(ascii_lower(head_str)) == std::string::npos) {
-        throw std::runtime_error(path_to_utf8(path) + " is not " + head_str);
+    if (!header.empty() && header.back() == '\r') header.pop_back();
+    const std::string lower_header = ascii_lower(header);
+    const std::string lower_prefix = ascii_lower(head_str);
+    if (lower_header.rfind(lower_prefix, 0) != 0) {
+        throw std::runtime_error(
+            "Invalid file header: " + path_to_utf8(path) +
+            "; expected a header beginning with '" + head_str + "'.");
     }
     if (parse_first_version(header) < min_version) {
         throw std::runtime_error(path_to_utf8(path) + " is under Ver." + canonical_number(min_version));
