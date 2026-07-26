@@ -130,10 +130,12 @@ MapMarkerIconRecipe curve_transition_recipe() {
 
 MapMarkerIconRecipe curve_circular_recipe() {
     MapMarkerIconRecipe recipe;
-    append_sampled_arc(recipe, MapMarkerColorRole::Shadow, ImVec2(-0.2f, 0.75f),
-                       1.3f, -1.45f, -0.15f, 0.28f, 14);
-    append_sampled_arc(recipe, MapMarkerColorRole::White, ImVec2(-0.2f, 0.75f),
-                       1.3f, -1.45f, -0.15f, 0.13f, 14);
+    // Keep the lower tangent vertical while the upper end bends to the right.
+    const ImVec2 arc_center(0.72f, 0.75f);
+    append_sampled_arc(recipe, MapMarkerColorRole::Shadow, arc_center,
+                       1.3f, -k_pi + 0.15f, -k_pi + 1.45f, 0.28f, 14);
+    append_sampled_arc(recipe, MapMarkerColorRole::White, arc_center,
+                       1.3f, -k_pi + 0.15f, -k_pi + 1.45f, 0.13f, 14);
     return recipe;
 }
 
