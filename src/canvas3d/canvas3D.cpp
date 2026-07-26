@@ -89,6 +89,8 @@ constexpr float k_scene_marker_label_height = 0.18f;
 constexpr float k_scene_marker_label_center_y = 0.22f;
 constexpr float k_scene_marker_label_max_width = 0.88f;
 constexpr float k_scene_marker_outline_width = 0.012f;
+constexpr float k_scene_marker_irregularity_content_offset = 0.16f;
+constexpr int k_scene_marker_circle_segments = 48;
 
 enum class SceneOverlayCorner {
     TopLeft,
@@ -1418,7 +1420,8 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     for (const Station& station : model.station_positions) {
         append_marker(MapMarkerVisualKind::Station, station.distance,
-                      station.name.empty() ? station.key : station.name);
+                      station.name.empty() ? station.key : station.name,
+                      MapMarkerIconVariant::StationRailDiagram);
     }
 
     for (const TrackEvent& event : model.own_events) {
@@ -1469,10 +1472,13 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     auto append_table_markers = [&](const std::vector<TableRow>& rows,
                                     MapMarkerVisualKind kind,
-                                    const auto& label_for_row) {
+                                    const auto& label_for_row,
+                                    MapMarkerIconVariant icon_variant =
+                                        MapMarkerIconVariant::Default) {
         for (const TableRow& row : rows) {
             std::string label = label_for_row(row);
-            append_marker(kind, table_cell_number(row, "distance"), std::move(label));
+            append_marker(kind, table_cell_number(row, "distance"),
+                          std::move(label), icon_variant);
         }
     };
 
@@ -1490,7 +1496,13 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                          });
     append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain,
                          field_label("passTime"));
-    append_table_markers(model.irregularities, MapMarkerVisualKind::Irregularity, no_label);
+    append_table_markers(model.irregularities, MapMarkerVisualKind::Irregularity,
+                         [](const TableRow& row) {
+                             return canvas3d_scene_table_marker_label(
+                                 row, {"x", "y", "r"}, "\n") + "\n" +
+                                 canvas3d_scene_table_marker_label(
+                                     row, {"lx", "ly", "lr"});
+                         });
     append_table_markers(model.map_sounds, MapMarkerVisualKind::MapSound,
                          field_label("soundKey"));
     append_table_markers(model.map_sound_3d, MapMarkerVisualKind::MapSound3D,
@@ -1502,7 +1514,12 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                          field_label("index"));
     append_table_markers(model.backgrounds, MapMarkerVisualKind::Background,
                          field_label("structureKey"));
-    append_table_markers(model.adhesions, MapMarkerVisualKind::Adhesion, no_label);
+    append_table_markers(model.adhesions, MapMarkerVisualKind::Adhesion,
+                         [](const TableRow& row) {
+                             return canvas3d_scene_table_marker_label(
+                                 row, {"a", "b", "c"});
+                         },
+                         MapMarkerIconVariant::AdhesionOutlined);
     append_table_markers(model.cab_illuminance, MapMarkerVisualKind::CabIlluminance,
                          field_label("value"));
     append_table_markers(model.fogs, MapMarkerVisualKind::Fog,
@@ -5840,19 +5857,20 @@ fail:
                 }
                 case MapMarkerPrimitiveKind::Circle:
                 case MapMarkerPrimitiveKind::FilledCircle: {
-                    constexpr int segments = 20;
                     const ImVec2 circle_center =
                         scene_marker_icon_point(primitive.points[0]);
                     const float radius =
                         primitive.radius * k_scene_marker_icon_half_extent;
                     if (primitive.kind == MapMarkerPrimitiveKind::FilledCircle) {
-                        for (int segment = 0; segment < segments; ++segment) {
+                        for (int segment = 0;
+                             segment < k_scene_marker_circle_segments;
+                             ++segment) {
                             const float a0 =
                                 static_cast<float>(segment) * 6.28318530718f /
-                                static_cast<float>(segments);
+                                static_cast<float>(k_scene_marker_circle_segments);
                             const float a1 =
                                 static_cast<float>(segment + 1) * 6.28318530718f /
-                                static_cast<float>(segments);
+                                static_cast<float>(k_scene_marker_circle_segments);
                             append_scene_marker_triangle(
                                 vertices, indices, origin, center, right, up, forward,
                                 circle_center,
@@ -5866,20 +5884,36 @@ fail:
                         const float thickness =
                             primitive.thickness *
                             k_scene_marker_icon_half_extent;
-                        for (int segment = 0; segment < segments; ++segment) {
+                        const float outer_radius = radius + thickness * 0.5f;
+                        const float inner_radius = std::max(
+                            0.0f, radius - thickness * 0.5f);
+                        for (int segment = 0;
+                             segment < k_scene_marker_circle_segments;
+                             ++segment) {
                             const float a0 =
                                 static_cast<float>(segment) * 6.28318530718f /
-                                static_cast<float>(segments);
+                                static_cast<float>(k_scene_marker_circle_segments);
                             const float a1 =
                                 static_cast<float>(segment + 1) * 6.28318530718f /
-                                static_cast<float>(segments);
-                            append_scene_marker_line(
+                                static_cast<float>(k_scene_marker_circle_segments);
+                            const ImVec2 outer0(
+                                circle_center.x + std::cos(a0) * outer_radius,
+                                circle_center.y + std::sin(a0) * outer_radius);
+                            const ImVec2 outer1(
+                                circle_center.x + std::cos(a1) * outer_radius,
+                                circle_center.y + std::sin(a1) * outer_radius);
+                            const ImVec2 inner0(
+                                circle_center.x + std::cos(a0) * inner_radius,
+                                circle_center.y + std::sin(a0) * inner_radius);
+                            const ImVec2 inner1(
+                                circle_center.x + std::cos(a1) * inner_radius,
+                                circle_center.y + std::sin(a1) * inner_radius);
+                            append_scene_marker_triangle(
                                 vertices, indices, origin, center, right, up, forward,
-                                ImVec2(circle_center.x + std::cos(a0) * radius,
-                                       circle_center.y + std::sin(a0) * radius),
-                                ImVec2(circle_center.x + std::cos(a1) * radius,
-                                       circle_center.y + std::sin(a1) * radius),
-                                thickness, face_sign, color);
+                                outer0, inner0, inner1, face_sign, color);
+                            append_scene_marker_triangle(
+                                vertices, indices, origin, center, right, up, forward,
+                                outer0, inner1, outer1, face_sign, color);
                         }
                     }
                     break;
@@ -6042,6 +6076,12 @@ fail:
                     DVec3{point.x, point.y, point.z} +
                     right * static_cast<double>(
                         marker_lateral_offsets[marker_index]);
+                const float content_vertical_offset =
+                    marker.kind == MapMarkerVisualKind::Irregularity
+                    ? k_scene_marker_irregularity_content_offset
+                    : 0.0f;
+                const DVec3 content_center =
+                    center + up * static_cast<double>(content_vertical_offset);
 
                 const std::uint32_t marker_first =
                     static_cast<std::uint32_t>(indices.size());
@@ -6057,7 +6097,7 @@ fail:
                     k_scene_marker_board_width * 0.5f, 0.0f,
                     face_sign, board_color_u32);
                 append_scene_marker_icon(
-                    vertices, indices, gpu_chunk.origin, center,
+                    vertices, indices, gpu_chunk.origin, content_center,
                     right, up, forward, *baked, marker.kind,
                     marker.icon_variant, face_sign);
                 const bool label_in_icon =
@@ -6069,7 +6109,7 @@ fail:
                             map_marker_role_color(
                                 marker.kind, MapMarkerColorRole::Black));
                     append_scene_marker_text(
-                        vertices, indices, gpu_chunk.origin, center,
+                        vertices, indices, gpu_chunk.origin, content_center,
                         right, up, forward, *font, *baked, font_size,
                         marker.label, face_sign, text_color,
                         0.22f, 0.72f, 0.25f);
@@ -6098,7 +6138,7 @@ fail:
                              ImVec2(0.0f, -k_scene_marker_outline_width),
                              ImVec2(0.0f, k_scene_marker_outline_width)}) {
                         DVec3 shifted_center =
-                            center +
+                            content_center +
                             right * static_cast<double>(offset.x) +
                             up * static_cast<double>(offset.y);
                         append_scene_marker_text(
@@ -6111,7 +6151,7 @@ fail:
                             k_scene_marker_label_max_width);
                     }
                     append_scene_marker_text(
-                        vertices, indices, gpu_chunk.origin, center,
+                        vertices, indices, gpu_chunk.origin, content_center,
                         right, up, forward, *font, *baked, font_size,
                         marker.label, face_sign, text_color,
                         k_scene_marker_label_height,

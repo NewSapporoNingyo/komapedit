@@ -63,7 +63,9 @@ enum class MapMarkerColorRole : std::uint8_t {
 enum class MapMarkerIconVariant : std::uint8_t {
     Default,
     SpeedLimitBegin,
-    SpeedLimitEnd
+    SpeedLimitEnd,
+    StationRailDiagram,
+    AdhesionOutlined
 };
 
 struct MapMarkerIconPrimitive {

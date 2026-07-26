@@ -106,8 +106,12 @@ void append_sampled_arc(MapMarkerIconRecipe& recipe,
     }
 }
 
-MapMarkerIconRecipe station_recipe() {
+MapMarkerIconRecipe station_recipe(bool rail_diagram) {
     MapMarkerIconRecipe recipe;
+    if (rail_diagram) {
+        append_polyline(recipe, MapMarkerColorRole::Outline,
+                        {ImVec2(-1.55f, 0.0f), ImVec2(1.55f, 0.0f)}, 0.20f);
+    }
     append_circle(recipe, MapMarkerColorRole::Outline, ImVec2(0.0f, 0.0f), 0.58f, 0.24f, false);
     append_circle(recipe, MapMarkerColorRole::White, ImVec2(0.0f, 0.0f), 0.46f, 0.0f, true);
     return recipe;
@@ -333,8 +337,18 @@ MapMarkerIconRecipe background_recipe() {
     return recipe;
 }
 
-MapMarkerIconRecipe adhesion_recipe() {
+MapMarkerIconRecipe adhesion_recipe(bool outlined) {
     MapMarkerIconRecipe recipe;
+    if (outlined) {
+        append_circle(recipe, MapMarkerColorRole::Black,
+                      ImVec2(-0.16f, 0.12f), 0.36f, 0.0f, true);
+        append_sampled_arc(recipe, MapMarkerColorRole::Black,
+                           ImVec2(-0.16f, 0.12f),
+                           0.72f, -2.45f, 0.82f, 0.30f, 16);
+        append_polygon(recipe, MapMarkerColorRole::Black,
+                       {ImVec2(0.29f, 0.70f), ImVec2(0.79f, 0.52f),
+                        ImVec2(0.50f, 0.13f)});
+    }
     append_circle(recipe, MapMarkerColorRole::Theme, ImVec2(-0.16f, 0.12f), 0.28f, 0.0f, true);
     append_sampled_arc(recipe, MapMarkerColorRole::Theme, ImVec2(-0.16f, 0.12f),
                        0.72f, -2.45f, 0.82f, 0.16f, 16);
@@ -451,7 +465,8 @@ MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind,
                                            MapMarkerIconVariant variant) {
     switch (kind) {
         case MapMarkerVisualKind::Station:
-            return station_recipe();
+            return station_recipe(
+                variant == MapMarkerIconVariant::StationRailDiagram);
         case MapMarkerVisualKind::CurveTransitionStart:
             return curve_transition_recipe();
         case MapMarkerVisualKind::CurveCircularStart:
@@ -497,7 +512,8 @@ MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind,
         case MapMarkerVisualKind::Background:
             return background_recipe();
         case MapMarkerVisualKind::Adhesion:
-            return adhesion_recipe();
+            return adhesion_recipe(
+                variant == MapMarkerIconVariant::AdhesionOutlined);
         case MapMarkerVisualKind::CabIlluminance:
             return sun_recipe();
         case MapMarkerVisualKind::Fog:
