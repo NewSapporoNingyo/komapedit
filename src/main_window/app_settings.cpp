@@ -135,6 +135,25 @@ int clamp_scene_edit_component_size_percent(double value) {
                       k_max_scene_edit_component_size_percent);
 }
 
+int clamp_scene_instance_warning_threshold(double value, int fallback) {
+    if (!std::isfinite(value)) value = fallback;
+    const int rounded = static_cast<int>(
+        std::round(value / k_scene_instance_warning_threshold_step)) *
+        k_scene_instance_warning_threshold_step;
+    return std::clamp(rounded,
+                      k_min_scene_instance_warning_threshold,
+                      k_max_scene_instance_warning_threshold);
+}
+
+void normalize_scene_instance_warning_thresholds(int& warning_threshold,
+                                                 int& critical_warning_threshold) {
+    warning_threshold = clamp_scene_instance_warning_threshold(
+        warning_threshold, k_default_scene_instance_warning_threshold);
+    critical_warning_threshold = clamp_scene_instance_warning_threshold(
+        critical_warning_threshold, k_default_scene_instance_critical_warning_threshold);
+    critical_warning_threshold = std::max(critical_warning_threshold, warning_threshold);
+}
+
 ImVec4 default_theme_color() {
     return ImVec4(0.26f, 0.59f, 0.98f, 1.0f);
 }
@@ -418,6 +437,16 @@ bool save_user_settings(const UserSettings& settings) {
         << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
         << "\n";
     out << "scene_camera_speed_percent=" << settings.view_3d.scene_camera_speed_percent << "\n";
+    int scene_instance_warning_threshold = settings.view_3d.scene_instance_warning_threshold;
+    int scene_instance_critical_warning_threshold =
+        settings.view_3d.scene_instance_critical_warning_threshold;
+    normalize_scene_instance_warning_thresholds(
+        scene_instance_warning_threshold, scene_instance_critical_warning_threshold);
+    out << "scene_performance_warning_enabled="
+        << bool_to_string(settings.view_3d.scene_performance_warning_enabled) << "\n";
+    out << "scene_instance_warning_threshold=" << scene_instance_warning_threshold << "\n";
+    out << "scene_instance_critical_warning_threshold="
+        << scene_instance_critical_warning_threshold << "\n";
     return true;
 }
 
@@ -712,6 +741,30 @@ UserSettings load_user_settings() {
             } catch (...) {
                 settings.view_3d.scene_camera_speed_percent = k_default_scene_camera_speed_percent;
             }
+        } else if (key == "scene_performance_warning_enabled") {
+            view_3d_keys_seen.insert("scene_performance_warning_enabled");
+            settings.view_3d.scene_performance_warning_enabled =
+                parse_bool(value, settings.view_3d.scene_performance_warning_enabled);
+        } else if (key == "scene_instance_warning_threshold") {
+            view_3d_keys_seen.insert("scene_instance_warning_threshold");
+            try {
+                settings.view_3d.scene_instance_warning_threshold =
+                    clamp_scene_instance_warning_threshold(
+                        std::stod(value), k_default_scene_instance_warning_threshold);
+            } catch (...) {
+                settings.view_3d.scene_instance_warning_threshold =
+                    k_default_scene_instance_warning_threshold;
+            }
+        } else if (key == "scene_instance_critical_warning_threshold") {
+            view_3d_keys_seen.insert("scene_instance_critical_warning_threshold");
+            try {
+                settings.view_3d.scene_instance_critical_warning_threshold =
+                    clamp_scene_instance_warning_threshold(
+                        std::stod(value), k_default_scene_instance_critical_warning_threshold);
+            } catch (...) {
+                settings.view_3d.scene_instance_critical_warning_threshold =
+                    k_default_scene_instance_critical_warning_threshold;
+            }
         }
     }
     settings.font_size = clamp_font_size(settings.font_size);
@@ -727,9 +780,15 @@ UserSettings load_user_settings() {
     settings.view_3d.scene_camera_speed_percent =
         std::clamp(settings.view_3d.scene_camera_speed_percent,
                    k_min_scene_camera_speed_percent, k_max_scene_camera_speed_percent);
+    normalize_scene_instance_warning_thresholds(
+        settings.view_3d.scene_instance_warning_threshold,
+        settings.view_3d.scene_instance_critical_warning_threshold);
     if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 6 ||
         view_2d_keys_seen.count("show_draw_distance_markers") == 0 ||
-        view_3d_keys_seen.count("scene_map_draw_distance_enabled") == 0) {
+        view_3d_keys_seen.count("scene_map_draw_distance_enabled") == 0 ||
+        view_3d_keys_seen.count("scene_performance_warning_enabled") == 0 ||
+        view_3d_keys_seen.count("scene_instance_warning_threshold") == 0 ||
+        view_3d_keys_seen.count("scene_instance_critical_warning_threshold") == 0) {
         save_user_settings(settings);
     }
     return settings;

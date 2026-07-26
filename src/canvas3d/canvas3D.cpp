@@ -111,6 +111,11 @@ enum class SceneOverlayCorner {
     BottomRight,
 };
 
+struct SceneOverlayLabelLayout {
+    ImVec2 pos{};
+    float pad = 0.0f;
+};
+
 template <typename T>
 void release_com(T*& p) {
     if (p) {
@@ -3028,6 +3033,15 @@ struct Canvas3D::Impl {
 
     void set_scene_camera_speed_percent(int percent) {
         scene_camera_speed_percent = std::clamp(percent, 50, 400);
+    }
+
+    void set_scene_performance_warning(bool enabled,
+                                       size_t warning_threshold,
+                                       size_t critical_warning_threshold) {
+        scene_performance_warning_enabled = enabled;
+        scene_instance_warning_threshold = warning_threshold;
+        scene_instance_critical_warning_threshold =
+            std::max(warning_threshold, critical_warning_threshold);
     }
 
 #ifndef NDEBUG
@@ -7883,11 +7897,9 @@ fail:
         scene_fps_last_frame_valid = true;
     }
 
-    void draw_scene_overlay_label(ImDrawList* draw, ImVec2 origin, ImVec2 size,
-                                  const char* text, SceneOverlayCorner corner) const {
-        if (!draw || !text || size.x <= 0.0f || size.y <= 0.0f) return;
+    SceneOverlayLabelLayout scene_overlay_label_layout(
+        ImVec2 origin, ImVec2 size, ImVec2 text_size, SceneOverlayCorner corner) const {
         const float pad = std::max(4.0f, ImGui::GetStyle().FramePadding.x);
-        const ImVec2 text_size = ImGui::CalcTextSize(text);
         ImVec2 pos(origin.x + pad * 2.0f, origin.y + pad * 2.0f);
         if (corner == SceneOverlayCorner::TopRight) {
             pos.x = origin.x + size.x - text_size.x - pad * 2.0f;
@@ -7897,10 +7909,27 @@ fail:
         }
         pos.x = std::max(origin.x + pad, pos.x);
         pos.y = std::max(origin.y + pad, pos.y);
-        draw->AddRectFilled(ImVec2(pos.x - pad, pos.y - pad * 0.5f),
-                            ImVec2(pos.x + text_size.x + pad, pos.y + text_size.y + pad * 0.5f),
+        return SceneOverlayLabelLayout{pos, pad};
+    }
+
+    void draw_scene_overlay_label_background(ImDrawList* draw,
+                                             const SceneOverlayLabelLayout& layout,
+                                             ImVec2 text_size) const {
+        if (!draw) return;
+        draw->AddRectFilled(ImVec2(layout.pos.x - layout.pad, layout.pos.y - layout.pad * 0.5f),
+                            ImVec2(layout.pos.x + text_size.x + layout.pad,
+                                   layout.pos.y + text_size.y + layout.pad * 0.5f),
                             IM_COL32(0, 0, 0, 140), 3.0f);
-        draw->AddText(pos, IM_COL32(255, 255, 255, 230), text);
+    }
+
+    void draw_scene_overlay_label(ImDrawList* draw, ImVec2 origin, ImVec2 size,
+                                  const char* text, SceneOverlayCorner corner) const {
+        if (!draw || !text || size.x <= 0.0f || size.y <= 0.0f) return;
+        const ImVec2 text_size = ImGui::CalcTextSize(text);
+        const SceneOverlayLabelLayout layout =
+            scene_overlay_label_layout(origin, size, text_size, corner);
+        draw_scene_overlay_label_background(draw, layout, text_size);
+        draw->AddText(layout.pos, IM_COL32(255, 255, 255, 230), text);
     }
 
     void draw_scene_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size) const {
@@ -7998,17 +8027,45 @@ fail:
         draw_scene_overlay_label(draw, origin, size, buffer, SceneOverlayCorner::TopRight);
     }
 
+    ImU32 scene_instance_metric_color(size_t instance_count) const {
+        if (!scene_performance_warning_enabled) return IM_COL32(255, 255, 255, 230);
+        if (instance_count > scene_instance_critical_warning_threshold) {
+            return IM_COL32(255, 96, 96, 230);
+        }
+        if (instance_count > scene_instance_warning_threshold) {
+            return IM_COL32(255, 220, 0, 230);
+        }
+        return IM_COL32(255, 255, 255, 230);
+    }
+
     void draw_scene_metrics_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
                                     const Canvas3DSceneStats& stats) const {
         if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active) return;
-        char buffer[128] = {};
-        std::snprintf(buffer, sizeof(buffer), "chunks=%zu  instances=%zu  models=%zu/%zu  %.1f fps",
-                      stats.chunk_count,
-                      stats.drawn_instance_count,
+        char prefix[64] = {};
+        char instance[64] = {};
+        char suffix[96] = {};
+        std::snprintf(prefix, sizeof(prefix), "chunks=%zu  ", stats.chunk_count);
+        std::snprintf(instance, sizeof(instance), "instances=%zu", stats.drawn_instance_count);
+        std::snprintf(suffix, sizeof(suffix), "  models=%zu/%zu  %.1f fps",
                       stats.model_ready_count,
                       stats.model_path_count,
                       static_cast<double>(scene_fps_value));
-        draw_scene_overlay_label(draw, origin, size, buffer, SceneOverlayCorner::BottomRight);
+        const ImVec2 prefix_size = ImGui::CalcTextSize(prefix);
+        const ImVec2 instance_size = ImGui::CalcTextSize(instance);
+        const ImVec2 suffix_size = ImGui::CalcTextSize(suffix);
+        const ImVec2 text_size(
+            prefix_size.x + instance_size.x + suffix_size.x,
+            std::max(prefix_size.y, std::max(instance_size.y, suffix_size.y)));
+        const SceneOverlayLabelLayout layout = scene_overlay_label_layout(
+            origin, size, text_size, SceneOverlayCorner::BottomRight);
+        draw_scene_overlay_label_background(draw, layout, text_size);
+        const ImU32 normal_color = IM_COL32(255, 255, 255, 230);
+        draw->AddText(layout.pos, normal_color, prefix);
+        ImVec2 instance_pos(layout.pos.x + prefix_size.x, layout.pos.y);
+        draw->AddText(instance_pos,
+                      scene_instance_metric_color(stats.drawn_instance_count), instance);
+        ImVec2 suffix_pos(instance_pos.x + instance_size.x, layout.pos.y);
+        draw->AddText(suffix_pos, normal_color, suffix);
     }
 
     void draw_scene_loading_overlay(ImDrawList* draw, ImVec2 origin, ImVec2 size,
@@ -8591,6 +8648,9 @@ fail:
     float scene_slow_speed_mps = 8.0f;
     float scene_fast_multiplier = 10.0f;
     int scene_camera_speed_percent = 100;
+    bool scene_performance_warning_enabled = true;
+    size_t scene_instance_warning_threshold = 3000;
+    size_t scene_instance_critical_warning_threshold = 5000;
     std::string scene_last_error;
     Canvas3DSceneStats scene_stats_value;
     std::chrono::steady_clock::time_point scene_fps_last_frame_at{};
@@ -8698,6 +8758,13 @@ void Canvas3D::set_scene_map_draw_distance_enabled(bool enabled) {
 
 void Canvas3D::set_scene_camera_speed_percent(int percent) {
     impl_->set_scene_camera_speed_percent(percent);
+}
+
+void Canvas3D::set_scene_performance_warning(bool enabled,
+                                             size_t warning_threshold,
+                                             size_t critical_warning_threshold) {
+    impl_->set_scene_performance_warning(
+        enabled, warning_threshold, critical_warning_threshold);
 }
 
 Canvas3DSceneInteractionMode Canvas3D::scene_interaction_mode() const {

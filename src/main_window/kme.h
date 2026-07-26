@@ -76,6 +76,12 @@ inline constexpr int k_default_scene_camera_speed_percent = 100;
 inline constexpr int k_min_scene_camera_speed_percent = 50;
 inline constexpr int k_max_scene_camera_speed_percent = 400;
 inline constexpr int k_scene_camera_speed_step_percent = 10;
+inline constexpr bool k_default_scene_performance_warning_enabled = true;
+inline constexpr int k_default_scene_instance_warning_threshold = 3000;
+inline constexpr int k_default_scene_instance_critical_warning_threshold = 5000;
+inline constexpr int k_min_scene_instance_warning_threshold = 1000;
+inline constexpr int k_max_scene_instance_warning_threshold = 8000;
+inline constexpr int k_scene_instance_warning_threshold_step = 200;
 inline constexpr double k_scene_window_back_distance_m = 100.0;
 inline constexpr bool k_default_scene_fog_enabled = true;
 inline constexpr bool k_default_scene_map_draw_distance_enabled = true;
@@ -120,6 +126,9 @@ float clamp_canvas_line_width(float value, float fallback);
 CanvasLineWidthSettings clamp_canvas_line_widths(CanvasLineWidthSettings value);
 int clamp_scene_draw_distance(double value);
 int clamp_scene_edit_component_size_percent(double value);
+int clamp_scene_instance_warning_threshold(double value, int fallback);
+void normalize_scene_instance_warning_thresholds(int& warning_threshold,
+                                                 int& critical_warning_threshold);
 ImVec4 default_theme_color();
 ImVec4 clamp_theme_color(ImVec4 color);
 std::string theme_color_to_string(const ImVec4& color);
@@ -895,6 +904,10 @@ struct View3DSettings {
     int scene_draw_distance_m = k_default_scene_draw_distance_m;
     int scene_edit_component_size_percent = k_default_scene_edit_component_size_percent;
     int scene_camera_speed_percent = k_default_scene_camera_speed_percent;
+    bool scene_performance_warning_enabled = k_default_scene_performance_warning_enabled;
+    int scene_instance_warning_threshold = k_default_scene_instance_warning_threshold;
+    int scene_instance_critical_warning_threshold =
+        k_default_scene_instance_critical_warning_threshold;
 
     bool operator==(const View3DSettings& other) const {
         return show_scene_owntrack_markers == other.show_scene_owntrack_markers &&
@@ -903,7 +916,11 @@ struct View3DSettings {
             scene_map_draw_distance_enabled == other.scene_map_draw_distance_enabled &&
             scene_draw_distance_m == other.scene_draw_distance_m &&
             scene_edit_component_size_percent == other.scene_edit_component_size_percent &&
-            scene_camera_speed_percent == other.scene_camera_speed_percent;
+            scene_camera_speed_percent == other.scene_camera_speed_percent &&
+            scene_performance_warning_enabled == other.scene_performance_warning_enabled &&
+            scene_instance_warning_threshold == other.scene_instance_warning_threshold &&
+            scene_instance_critical_warning_threshold ==
+                other.scene_instance_critical_warning_threshold;
     }
 
     bool operator!=(const View3DSettings& other) const {
@@ -1184,6 +1201,20 @@ private:
     int scene_camera_speed_percent_ = k_default_scene_camera_speed_percent;
     int pending_scene_camera_speed_percent_ = k_default_scene_camera_speed_percent;
     int scene_camera_speed_percent_before_dialog_ = k_default_scene_camera_speed_percent;
+    bool scene_performance_warning_enabled_ = k_default_scene_performance_warning_enabled;
+    bool pending_scene_performance_warning_enabled_ = k_default_scene_performance_warning_enabled;
+    bool scene_performance_warning_enabled_before_dialog_ =
+        k_default_scene_performance_warning_enabled;
+    int scene_instance_warning_threshold_ = k_default_scene_instance_warning_threshold;
+    int pending_scene_instance_warning_threshold_ = k_default_scene_instance_warning_threshold;
+    int scene_instance_warning_threshold_before_dialog_ =
+        k_default_scene_instance_warning_threshold;
+    int scene_instance_critical_warning_threshold_ =
+        k_default_scene_instance_critical_warning_threshold;
+    int pending_scene_instance_critical_warning_threshold_ =
+        k_default_scene_instance_critical_warning_threshold;
+    int scene_instance_critical_warning_threshold_before_dialog_ =
+        k_default_scene_instance_critical_warning_threshold;
     ImVec4 theme_color_ = default_theme_color();
     ImVec4 pending_theme_color_ = default_theme_color();
     ImVec4 theme_color_before_dialog_ = default_theme_color();
@@ -1685,6 +1716,9 @@ private:
     void apply_scene_fog_effect_to_canvas(bool enabled);
     void apply_scene_map_draw_distance_to_canvas(bool enabled);
     void apply_scene_camera_speed_to_canvas(int percent);
+    void apply_scene_performance_warning_to_canvas(bool enabled,
+                                                   int warning_threshold,
+                                                   int critical_warning_threshold);
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
