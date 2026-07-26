@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct ID3D11Device;
@@ -162,6 +163,18 @@ struct Canvas3DSceneMarker {
     MapMarkerIconVariant icon_variant = MapMarkerIconVariant::Default;
     Canvas3DTrackPoint track_point;
     std::string label;
+    std::string row_kind;
+    std::optional<size_t> row_index;
+    std::string edit_id;
+};
+
+// String views remain valid until the scene or its marker data is refreshed.
+struct Canvas3DSceneMarkerTarget {
+    MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
+    size_t marker_index = 0;
+    std::string_view row_kind;
+    std::optional<size_t> row_index;
+    std::string_view edit_id;
 };
 
 struct Canvas3DSceneMarkerVisibility {
@@ -353,6 +366,7 @@ struct Canvas3DStructureDragUpdate {
 struct Canvas3DSceneFrameResult {
     Canvas3DSceneContextAction context_action;
     std::optional<Canvas3DStructureDragUpdate> structure_drag;
+    std::optional<Canvas3DSceneMarkerTarget> hovered_marker;
 };
 
 using Canvas3DWakeCallback = void (*)();

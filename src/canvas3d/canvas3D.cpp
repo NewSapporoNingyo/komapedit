@@ -171,6 +171,21 @@ ImVec4 scene_highlight_color_for_kind(Canvas3DSceneObjectKind kind) {
     }
 }
 
+ImVec4 scene_marker_highlight_color() {
+    return ImVec4(65.0f / 255.0f, 126.0f / 255.0f, 245.0f / 255.0f, 0.92f);
+}
+
+enum class ScenePickTargetKind {
+    None,
+    Object,
+    Marker,
+};
+
+struct ScenePickTarget {
+    ScenePickTargetKind kind = ScenePickTargetKind::None;
+    size_t index = 0;
+};
+
 bool scene_pick_id_for_object(int object_index, unsigned int& id) {
     if (object_index < 0 || object_index >= 0x00ffffff) return false;
     id = static_cast<unsigned int>(object_index) + 1u;
@@ -186,13 +201,22 @@ std::array<float, 4> scene_pick_color_for_id(unsigned int id) {
     }};
 }
 
-int scene_object_index_from_pick_rgba(const unsigned char* rgba) {
-    if (!rgba) return -1;
-    const unsigned int id = static_cast<unsigned int>(rgba[0]) |
+unsigned int scene_pick_id_from_rgba(const unsigned char* rgba) {
+    if (!rgba) return 0;
+    return static_cast<unsigned int>(rgba[0]) |
         (static_cast<unsigned int>(rgba[1]) << 8) |
         (static_cast<unsigned int>(rgba[2]) << 16);
-    if (id == 0) return -1;
-    return static_cast<int>(id - 1u);
+}
+
+ScenePickTarget scene_pick_target_from_id(unsigned int id,
+                                          size_t object_count,
+                                          size_t marker_count) {
+    if (id == 0) return {};
+    const size_t index = static_cast<size_t>(id - 1u);
+    if (index < object_count) return {ScenePickTargetKind::Object, index};
+    const size_t marker_index = index - object_count;
+    if (marker_index < marker_count) return {ScenePickTargetKind::Marker, marker_index};
+    return {};
 }
 
 bool texture_pixels_have_alpha(const std::vector<unsigned char>& pixels) {
@@ -469,6 +493,7 @@ struct SceneMarkerVertex {
     float v = 0.0f;
     std::uint32_t color = 0xffffffffu;
     float use_texture = 0.0f;
+    std::uint32_t marker_index = 0;
 };
 
 struct SceneMarkerConstants {
@@ -476,22 +501,41 @@ struct SceneMarkerConstants {
     float chunk_offset[4] = {};
 };
 
+struct SceneMarkerPickConstants {
+    std::uint32_t marker_pick_id_base = 0;
+    std::uint32_t padding[3] = {};
+};
+
 struct SceneMarkerIndexRange {
     MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
+    size_t marker_index = 0;
     std::uint32_t first = 0;
     std::uint32_t count = 0;
+    std::uint32_t visible_first = 0;
+    bool visible = false;
     bool label = false;
+    DVec3 center;
+    DVec3 right;
+    DVec3 up;
+};
+
+struct SceneMarkerGpuLocation {
+    size_t chunk_index = 0;
+    size_t range_index = 0;
+    bool valid = false;
 };
 
 struct SceneMarkerChunkGpu {
     ID3D11Buffer* vertex_buffer = nullptr;
     ID3D11Buffer* index_buffer = nullptr;
+    ID3D11Buffer* pick_index_buffer = nullptr;
     std::vector<unsigned int> source_indices;
     std::vector<SceneMarkerIndexRange> ranges;
     DVec3 origin;
     double d_min = 0.0;
     double d_max = 0.0;
     UINT visible_index_count = 0;
+    UINT visible_pick_index_count = 0;
 };
 
 struct SceneViewConstants {
@@ -1405,7 +1449,10 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                              double distance,
                              std::string label = {},
                              MapMarkerIconVariant icon_variant =
-                                 MapMarkerIconVariant::Default) {
+                                 MapMarkerIconVariant::Default,
+                             std::string row_kind = {},
+                             std::optional<size_t> row_index = std::nullopt,
+                             std::string edit_id = {}) {
         if (!std::isfinite(distance)) return;
         std::optional<Canvas3DTrackPoint> point =
             scene_sample_track_path_points(*own_track, distance);
@@ -1415,6 +1462,9 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         marker.icon_variant = icon_variant;
         marker.track_point = *point;
         marker.label = std::move(label);
+        marker.row_kind = std::move(row_kind);
+        marker.row_index = row_index;
+        marker.edit_id = std::move(edit_id);
         scene.markers.push_back(std::move(marker));
     };
 
@@ -1472,13 +1522,16 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     auto append_table_markers = [&](const std::vector<TableRow>& rows,
                                     MapMarkerVisualKind kind,
+                                    const char* row_kind,
                                     const auto& label_for_row,
                                     MapMarkerIconVariant icon_variant =
                                         MapMarkerIconVariant::Default) {
-        for (const TableRow& row : rows) {
+        for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+            const TableRow& row = rows[row_index];
             std::string label = label_for_row(row);
             append_marker(kind, table_cell_number(row, "distance"),
-                          std::move(label), icon_variant);
+                          std::move(label), icon_variant, row_kind,
+                          row_index, row.edit_id);
         }
     };
 
@@ -1489,14 +1542,15 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         };
     };
 
-    append_table_markers(model.beacons, MapMarkerVisualKind::Beacon,
+    append_table_markers(model.beacons, MapMarkerVisualKind::Beacon, "beacon.put",
                          [](const TableRow& row) {
                              return canvas3d_scene_table_marker_label(
                                  row, {"type", "section", "sendData"});
                          });
-    append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain,
+    append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain, "preTrain.pass",
                          field_label("passTime"));
     append_table_markers(model.irregularities, MapMarkerVisualKind::Irregularity,
+                         "irregularity.change",
                          [](const TableRow& row) {
                              return canvas3d_scene_table_marker_label(
                                  row, {"x", "y", "r"}, "\n") + "\n" +
@@ -1504,25 +1558,33 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                                      row, {"lx", "ly", "lr"});
                          });
     append_table_markers(model.map_sounds, MapMarkerVisualKind::MapSound,
+                         "mapSound.play",
                          field_label("soundKey"));
     append_table_markers(model.map_sound_3d, MapMarkerVisualKind::MapSound3D,
+                         "mapSound3D.put",
                          field_label("soundKey"));
     append_table_markers(model.rolling_noises, MapMarkerVisualKind::RollingNoise,
+                         "rollingNoise.change",
                          field_label("index"));
-    append_table_markers(model.flange_noises, MapMarkerVisualKind::FlangeNoise, no_label);
+    append_table_markers(model.flange_noises, MapMarkerVisualKind::FlangeNoise,
+                         "flangeNoise.change", no_label);
     append_table_markers(model.joint_noises, MapMarkerVisualKind::JointNoise,
+                         "jointNoise.play",
                          field_label("index"));
     append_table_markers(model.backgrounds, MapMarkerVisualKind::Background,
+                         "background.change",
                          field_label("structureKey"));
     append_table_markers(model.adhesions, MapMarkerVisualKind::Adhesion,
+                         "adhesion.change",
                          [](const TableRow& row) {
                              return canvas3d_scene_table_marker_label(
                                  row, {"a", "b", "c"});
                          },
                          MapMarkerIconVariant::AdhesionOutlined);
     append_table_markers(model.cab_illuminance, MapMarkerVisualKind::CabIlluminance,
+                         "cabIlluminance.change",
                          field_label("value"));
-    append_table_markers(model.fogs, MapMarkerVisualKind::Fog,
+    append_table_markers(model.fogs, MapMarkerVisualKind::Fog, "fog.change",
                          [](const TableRow& row) {
                              std::string label = canvas3d_scene_table_marker_label(
                                  row, {"density"}, " ", "-");
@@ -1532,6 +1594,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                              return label;
                          });
     append_table_markers(model.draw_distances, MapMarkerVisualKind::DrawDistance,
+                         "drawDistance.change",
                          field_label("value"));
 
     std::stable_sort(scene.markers.begin(), scene.markers.end(),
@@ -2041,6 +2104,12 @@ cbuffer SceneMarkerConstants : register(b0)
     float4 chunkOffset;
 };
 
+cbuffer SceneMarkerPickConstants : register(b1)
+{
+    uint markerPickIdBase;
+    float3 markerPickPadding;
+};
+
 Texture2D fontTexture : register(t0);
 SamplerState fontSampler : register(s0);
 
@@ -2050,6 +2119,7 @@ struct VSInput
     float2 texcoord : TEXCOORD0;
     float4 color : COLOR0;
     float useTexture : TEXCOORD1;
+    uint markerIndex : TEXCOORD2;
 };
 
 struct VSOutput
@@ -2058,6 +2128,7 @@ struct VSOutput
     float2 texcoord : TEXCOORD0;
     float4 color : COLOR0;
     float useTexture : TEXCOORD1;
+    nointerpolation uint markerIndex : TEXCOORD2;
 };
 
 VSOutput vs_main(VSInput input)
@@ -2068,16 +2139,40 @@ VSOutput vs_main(VSInput input)
     output.texcoord = input.texcoord;
     output.color = input.color;
     output.useTexture = input.useTexture;
+    output.markerIndex = input.markerIndex;
     return output;
 }
 
-float4 ps_main(VSOutput input) : SV_TARGET
+float marker_alpha(VSOutput input)
 {
     float alpha = input.color.a;
     if (input.useTexture > 0.5)
         alpha *= fontTexture.Sample(fontSampler, input.texcoord).a;
     clip(alpha - 0.01);
+    return alpha;
+}
+
+float4 ps_main(VSOutput input) : SV_TARGET
+{
+    float alpha = marker_alpha(input);
     return float4(input.color.rgb, alpha);
+}
+
+float4 ps_pick_main(VSOutput input) : SV_TARGET
+{
+    marker_alpha(input);
+    uint id = markerPickIdBase + input.markerIndex;
+    return float4(
+        float(id & 0xffu) / 255.0,
+        float((id >> 8) & 0xffu) / 255.0,
+        float((id >> 16) & 0xffu) / 255.0,
+        1.0);
+}
+
+float4 ps_mask_main(VSOutput input) : SV_TARGET
+{
+    marker_alpha(input);
+    return float4(1.0, 1.0, 1.0, 1.0);
 }
 )";
 
@@ -2389,7 +2484,10 @@ struct Canvas3D::Impl {
         release_com(scene_marker_input_layout);
         release_com(scene_marker_vertex_shader);
         release_com(scene_marker_pixel_shader);
+        release_com(scene_marker_pick_pixel_shader);
+        release_com(scene_marker_mask_pixel_shader);
         release_com(scene_marker_constant_buffer);
+        release_com(scene_marker_pick_constant_buffer);
         release_com(scene_depth_state);
         release_com(scene_depth_read_state);
         release_com(blend_state);
@@ -2730,6 +2828,7 @@ struct Canvas3D::Impl {
 
         clear_scene_focus_highlight();
         scene_hovered_object_index = -1;
+        scene_hovered_marker_index = -1;
         scene_context_object_index = -1;
         scene_hover_highlight_batch.clear();
 
@@ -2801,6 +2900,7 @@ struct Canvas3D::Impl {
         scene_repeater_locations.clear();
         scene_rotating = false;
         scene_hovered_object_index = -1;
+        scene_hovered_marker_index = -1;
         scene_context_object_index = -1;
         scene_hover_highlight_batch.clear();
         clear_scene_focus_highlight();
@@ -2880,6 +2980,7 @@ struct Canvas3D::Impl {
         scene_interaction_mode = mode;
         scene_rotating = false;
         scene_hovered_object_index = -1;
+        scene_hovered_marker_index = -1;
         scene_context_object_index = -1;
         scene_hover_highlight_batch.clear();
     }
@@ -3808,14 +3909,17 @@ fail:
     static void release_marker_chunk(SceneMarkerChunkGpu& chunk) {
         release_com(chunk.vertex_buffer);
         release_com(chunk.index_buffer);
+        release_com(chunk.pick_index_buffer);
         chunk.source_indices.clear();
         chunk.ranges.clear();
         chunk.visible_index_count = 0;
+        chunk.visible_pick_index_count = 0;
     }
 
     void release_scene_marker_chunks() {
         for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) release_marker_chunk(chunk);
         scene_marker_chunks.clear();
+        scene_marker_locations.clear();
         scene_marker_font = nullptr;
         scene_marker_font_size = 0.0f;
         scene_marker_font_texture_id = ImTextureID_Invalid;
@@ -4366,7 +4470,9 @@ fail:
             scene_outline_constant_buffer && scene_outline_sampler_state &&
             scene_pick_pixel_shader && scene_pick_constant_buffer &&
             scene_marker_vertex_shader && scene_marker_pixel_shader &&
-            scene_marker_input_layout && scene_marker_constant_buffer) return true;
+            scene_marker_pick_pixel_shader && scene_marker_mask_pixel_shader &&
+            scene_marker_input_layout && scene_marker_constant_buffer &&
+            scene_marker_pick_constant_buffer) return true;
 
         if (!ensure_pipeline(error)) return false;
         if (!ensure_scene_depth_states(error)) return false;
@@ -4488,16 +4594,23 @@ fail:
 
     bool ensure_scene_marker_pipeline(std::string& error) {
         if (scene_marker_vertex_shader && scene_marker_pixel_shader &&
-            scene_marker_input_layout && scene_marker_constant_buffer) {
+            scene_marker_pick_pixel_shader && scene_marker_mask_pixel_shader &&
+            scene_marker_input_layout && scene_marker_constant_buffer &&
+            scene_marker_pick_constant_buffer) {
             return true;
         }
         release_com(scene_marker_input_layout);
         release_com(scene_marker_vertex_shader);
         release_com(scene_marker_pixel_shader);
+        release_com(scene_marker_pick_pixel_shader);
+        release_com(scene_marker_mask_pixel_shader);
         release_com(scene_marker_constant_buffer);
+        release_com(scene_marker_pick_constant_buffer);
 
         ID3DBlob* vs_blob = nullptr;
         ID3DBlob* ps_blob = nullptr;
+        ID3DBlob* pick_ps_blob = nullptr;
+        ID3DBlob* mask_ps_blob = nullptr;
         ID3DBlob* errors = nullptr;
         HRESULT hr = D3DCompile(
             k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
@@ -4526,6 +4639,37 @@ fail:
         }
         release_com(errors);
 
+        hr = D3DCompile(
+            k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
+            nullptr, nullptr, nullptr, "ps_pick_main", "ps_4_0",
+            D3DCOMPILE_ENABLE_STRICTNESS, 0, &pick_ps_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors
+                ? static_cast<const char*>(errors->GetBufferPointer())
+                : hresult_text("D3DCompile(scene marker pick shader)", hr);
+            release_com(errors);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            return false;
+        }
+        release_com(errors);
+
+        hr = D3DCompile(
+            k_scene_marker_shader_source, std::strlen(k_scene_marker_shader_source),
+            nullptr, nullptr, nullptr, "ps_mask_main", "ps_4_0",
+            D3DCOMPILE_ENABLE_STRICTNESS, 0, &mask_ps_blob, &errors);
+        if (FAILED(hr)) {
+            error = errors
+                ? static_cast<const char*>(errors->GetBufferPointer())
+                : hresult_text("D3DCompile(scene marker mask shader)", hr);
+            release_com(errors);
+            release_com(vs_blob);
+            release_com(ps_blob);
+            release_com(pick_ps_blob);
+            return false;
+        }
+        release_com(errors);
+
         hr = device->CreateVertexShader(vs_blob->GetBufferPointer(),
                                         vs_blob->GetBufferSize(), nullptr,
                                         &scene_marker_vertex_shader);
@@ -4534,12 +4678,26 @@ fail:
                                            ps_blob->GetBufferSize(), nullptr,
                                            &scene_marker_pixel_shader);
         }
+        if (SUCCEEDED(hr)) {
+            hr = device->CreatePixelShader(pick_ps_blob->GetBufferPointer(),
+                                           pick_ps_blob->GetBufferSize(), nullptr,
+                                           &scene_marker_pick_pixel_shader);
+        }
+        if (SUCCEEDED(hr)) {
+            hr = device->CreatePixelShader(mask_ps_blob->GetBufferPointer(),
+                                           mask_ps_blob->GetBufferSize(), nullptr,
+                                           &scene_marker_mask_pixel_shader);
+        }
         if (FAILED(hr)) {
             error = hresult_text("CreateShader(scene marker)", hr);
             release_com(vs_blob);
             release_com(ps_blob);
+            release_com(pick_ps_blob);
+            release_com(mask_ps_blob);
             release_com(scene_marker_vertex_shader);
             release_com(scene_marker_pixel_shader);
+            release_com(scene_marker_pick_pixel_shader);
+            release_com(scene_marker_mask_pixel_shader);
             return false;
         }
 
@@ -4552,6 +4710,8 @@ fail:
              D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 1, DXGI_FORMAT_R32_FLOAT, 0, 24,
              D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 2, DXGI_FORMAT_R32_UINT, 0, 28,
+             D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
         hr = device->CreateInputLayout(
             layout, IM_ARRAYSIZE(layout),
@@ -4559,10 +4719,14 @@ fail:
             &scene_marker_input_layout);
         release_com(vs_blob);
         release_com(ps_blob);
+        release_com(pick_ps_blob);
+        release_com(mask_ps_blob);
         if (FAILED(hr)) {
             error = hresult_text("CreateInputLayout(scene marker)", hr);
             release_com(scene_marker_vertex_shader);
             release_com(scene_marker_pixel_shader);
+            release_com(scene_marker_pick_pixel_shader);
+            release_com(scene_marker_mask_pixel_shader);
             return false;
         }
 
@@ -4577,6 +4741,21 @@ fail:
             release_com(scene_marker_input_layout);
             release_com(scene_marker_vertex_shader);
             release_com(scene_marker_pixel_shader);
+            release_com(scene_marker_pick_pixel_shader);
+            release_com(scene_marker_mask_pixel_shader);
+            return false;
+        }
+        cb_desc.ByteWidth = sizeof(SceneMarkerPickConstants);
+        hr = device->CreateBuffer(&cb_desc, nullptr,
+                                  &scene_marker_pick_constant_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene marker pick constants)", hr);
+            release_com(scene_marker_constant_buffer);
+            release_com(scene_marker_input_layout);
+            release_com(scene_marker_vertex_shader);
+            release_com(scene_marker_pixel_shader);
+            release_com(scene_marker_pick_pixel_shader);
+            release_com(scene_marker_mask_pixel_shader);
             return false;
         }
         return true;
@@ -4813,18 +4992,18 @@ fail:
         return true;
     }
 
-    int pick_scene_object_at_mouse(const std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
-                                   const std::map<int, std::vector<SceneVisibleInstanceRef>>& object_refs,
-                                   const Mat4& view_proj,
-                                   int width,
-                                   int height,
-                                   ImVec2 mouse_local,
-                                   std::string& error) {
+    bool begin_scene_pick_at_mouse(
+        const std::map<std::string, std::vector<SceneInstanceData>>& visible_instances,
+        const std::map<int, std::vector<SceneVisibleInstanceRef>>& object_refs,
+        const Mat4& view_proj,
+        int width,
+        int height,
+        ImVec2 mouse_local,
+        std::string& error) {
         const int pixel_x = static_cast<int>(std::floor(mouse_local.x));
         const int pixel_y = static_cast<int>(std::floor(mouse_local.y));
-        if (pixel_x < 0 || pixel_y < 0 || pixel_x >= width || pixel_y >= height) return -1;
-        if (object_refs.empty()) return -1;
-        if (!ensure_scene_pick_target(width, height, error)) return -1;
+        if (pixel_x < 0 || pixel_y < 0 || pixel_x >= width || pixel_y >= height) return false;
+        if (!ensure_scene_pick_target(width, height, error)) return false;
 
         using PickBatchKey = std::pair<int, std::string>;
         std::map<PickBatchKey, std::vector<SceneInstanceData>> pick_batches;
@@ -4840,8 +5019,6 @@ fail:
                 pick_batches[PickBatchKey{object_index, *ref.model_path}].push_back(visible_it->second[ref.instance_index]);
             }
         }
-        if (pick_batches.empty()) return -1;
-
         const float clear_id[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         context->ClearRenderTargetView(scene_pick_rtv, clear_id);
         ID3D11RenderTargetView* pick_target = scene_pick_rtv;
@@ -4864,6 +5041,17 @@ fail:
             }
         }
 
+        return true;
+    }
+
+    ScenePickTarget finish_scene_pick_at_mouse(int width,
+                                                int height,
+                                                ImVec2 mouse_local,
+                                                std::string& error) {
+        const int pixel_x = static_cast<int>(std::floor(mouse_local.x));
+        const int pixel_y = static_cast<int>(std::floor(mouse_local.y));
+        if (pixel_x < 0 || pixel_y < 0 || pixel_x >= width || pixel_y >= height) return {};
+
         ID3D11RenderTargetView* null_rtv = nullptr;
         context->OMSetRenderTargets(1, &null_rtv, nullptr);
 
@@ -4880,14 +5068,15 @@ fail:
         HRESULT hr = context->Map(scene_pick_readback_texture, 0, D3D11_MAP_READ, 0, &mapped);
         if (FAILED(hr)) {
             error = hresult_text("Map(scene pick readback)", hr);
-            return -1;
+            return {};
         }
         unsigned char rgba[4] = {};
         if (mapped.pData) std::memcpy(rgba, mapped.pData, sizeof(rgba));
         context->Unmap(scene_pick_readback_texture, 0);
 
-        const int object_index = scene_object_index_from_pick_rgba(rgba);
-        return scene_object_index_valid(object_index) ? object_index : -1;
+        return scene_pick_target_from_id(
+            scene_pick_id_from_rgba(rgba), scene_data.objects.size(),
+            scene_data.markers.size());
     }
 
     void composite_scene_highlight_outline(int width, int height,
@@ -5060,13 +5249,13 @@ fail:
         ++scene_stats_value.drawn_track_chunk_count;
     }
 
-    void draw_scene_marker_chunk(const SceneMarkerChunkGpu& chunk,
+    bool bind_scene_marker_chunk(const SceneMarkerChunkGpu& chunk,
+                                 ID3D11Buffer* index_buffer,
                                  DVec3 render_origin,
                                  const Mat4& view_proj) {
-        if (!chunk.vertex_buffer || !chunk.index_buffer ||
-            chunk.visible_index_count == 0 ||
+        if (!chunk.vertex_buffer || !index_buffer ||
             scene_marker_font_texture_id == ImTextureID_Invalid) {
-            return;
+            return false;
         }
 
         SceneMarkerConstants constants = {};
@@ -5087,13 +5276,12 @@ fail:
         context->IASetVertexBuffers(
             0, 1, &vertex_buffer, &stride, &offset);
         context->IASetIndexBuffer(
-            chunk.index_buffer, DXGI_FORMAT_R32_UINT, 0);
+            index_buffer, DXGI_FORMAT_R32_UINT, 0);
         context->IASetPrimitiveTopology(
             D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context->VSSetShader(scene_marker_vertex_shader, nullptr, 0);
         context->VSSetConstantBuffers(
             0, 1, &scene_marker_constant_buffer);
-        context->PSSetShader(scene_marker_pixel_shader, nullptr, 0);
         context->PSSetSamplers(0, 1, &sampler_state);
         ID3D11ShaderResourceView* font_srv =
             reinterpret_cast<ID3D11ShaderResourceView*>(
@@ -5101,12 +5289,61 @@ fail:
                     scene_marker_font_texture_id));
         context->PSSetShaderResources(0, 1, &font_srv);
         context->RSSetState(rasterizer_state);
+        return true;
+    }
+
+    void draw_scene_marker_chunk(const SceneMarkerChunkGpu& chunk,
+                                 DVec3 render_origin,
+                                 const Mat4& view_proj) {
+        if (chunk.visible_index_count == 0 ||
+            !bind_scene_marker_chunk(
+                chunk, chunk.index_buffer, render_origin, view_proj)) {
+            return;
+        }
+
+        context->PSSetShader(scene_marker_pixel_shader, nullptr, 0);
         context->OMSetDepthStencilState(scene_depth_read_state, 0);
         const float blend_factor[4] = {
             0.0f, 0.0f, 0.0f, 0.0f};
         context->OMSetBlendState(
             blend_state, blend_factor, 0xffffffff);
         context->DrawIndexed(chunk.visible_index_count, 0, 0);
+    }
+
+    bool scene_marker_pick_ids_valid() const {
+        constexpr size_t max_pick_id = 0x00ffffffu;
+        return scene_data.objects.size() <= max_pick_id &&
+            scene_data.markers.size() <= max_pick_id - scene_data.objects.size();
+    }
+
+    bool draw_scene_marker_pick_chunk(const SceneMarkerChunkGpu& chunk,
+                                      DVec3 render_origin,
+                                      const Mat4& view_proj) {
+        if (chunk.visible_pick_index_count == 0 ||
+            !scene_marker_pick_ids_valid() ||
+            !scene_marker_pick_pixel_shader ||
+            !scene_marker_pick_constant_buffer ||
+            !bind_scene_marker_chunk(
+                chunk, chunk.pick_index_buffer, render_origin, view_proj)) {
+            return false;
+        }
+
+        SceneMarkerPickConstants constants = {};
+        constants.marker_pick_id_base = static_cast<std::uint32_t>(
+            scene_data.objects.size() + 1u);
+        context->UpdateSubresource(
+            scene_marker_pick_constant_buffer, 0, nullptr, &constants, 0, 0);
+        context->PSSetShader(scene_marker_pick_pixel_shader, nullptr, 0);
+        context->PSSetConstantBuffers(
+            1, 1, &scene_marker_pick_constant_buffer);
+        context->OMSetDepthStencilState(scene_depth_read_state, 0);
+        const float blend_factor[4] = {
+            0.0f, 0.0f, 0.0f, 0.0f};
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
+        context->DrawIndexed(chunk.visible_pick_index_count, 0, 0);
+        ID3D11Buffer* null_buffer = nullptr;
+        context->PSSetConstantBuffers(1, 1, &null_buffer);
+        return true;
     }
 
     bool scene_marker_font_cache_current() const {
@@ -5150,6 +5387,45 @@ fail:
         }
     }
 
+    bool draw_visible_scene_marker_picks(double visible_min,
+                                         double visible_max,
+                                         DVec3 render_origin,
+                                         const Mat4& view_proj) {
+        if (scene_marker_chunks.empty() || !scene_marker_pick_ids_valid()) return false;
+        bool drew = false;
+        size_t camera_chunk = 0;
+        while (camera_chunk + 1 < scene_marker_chunks.size() &&
+               scene_marker_chunks[camera_chunk].d_max <
+                   scene_camera_distance) {
+            ++camera_chunk;
+        }
+
+        const auto draw_chunk = [&](const SceneMarkerChunkGpu& chunk) {
+            if (chunk.d_max < visible_min || chunk.d_min > visible_max) return;
+            drew = draw_scene_marker_pick_chunk(
+                chunk, render_origin, view_proj) || drew;
+        };
+        for (size_t i = scene_marker_chunks.size(); i-- > camera_chunk;) {
+            draw_chunk(scene_marker_chunks[i]);
+        }
+        for (size_t i = 0; i < camera_chunk; ++i) {
+            draw_chunk(scene_marker_chunks[i]);
+        }
+        return drew;
+    }
+
+    bool has_visible_scene_marker_picks(double visible_min,
+                                        double visible_max) const {
+        if (!scene_marker_pick_ids_valid()) return false;
+        for (const SceneMarkerChunkGpu& chunk : scene_marker_chunks) {
+            if (chunk.d_max < visible_min || chunk.d_min > visible_max) {
+                continue;
+            }
+            if (chunk.visible_pick_index_count > 0) return true;
+        }
+        return false;
+    }
+
     bool scene_object_index_valid(int object_index) const {
         return object_index >= 0 && static_cast<size_t>(object_index) < scene_data.objects.size();
     }
@@ -5173,6 +5449,78 @@ fail:
         screen.x = (ndc_x * 0.5f + 0.5f) * static_cast<float>(width);
         screen.y = (-ndc_y * 0.5f + 0.5f) * static_cast<float>(height);
         return true;
+    }
+
+    void draw_scene_marker_highlight(size_t marker_index,
+                                     DVec3 render_origin,
+                                     const Mat4& view_proj,
+                                     int width,
+                                     int height) {
+        if (marker_index >= scene_marker_locations.size() || !render_rtv) return;
+        const SceneMarkerGpuLocation& location =
+            scene_marker_locations[marker_index];
+        if (!location.valid || location.chunk_index >= scene_marker_chunks.size()) return;
+        const SceneMarkerChunkGpu& chunk =
+            scene_marker_chunks[location.chunk_index];
+        if (location.range_index >= chunk.ranges.size()) return;
+        const SceneMarkerIndexRange& range = chunk.ranges[location.range_index];
+        if (range.label || !range.visible || range.count == 0) return;
+
+        std::string error;
+        if (!ensure_scene_highlight_mask_target(width, height, error)) {
+            if (!error.empty()) scene_last_error = error;
+            return;
+        }
+
+        const float clear_mask[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context->ClearRenderTargetView(scene_highlight_mask_rtv, clear_mask);
+        ID3D11RenderTargetView* mask_target = scene_highlight_mask_rtv;
+        context->OMSetRenderTargets(1, &mask_target, nullptr);
+        if (!scene_marker_mask_pixel_shader ||
+            !bind_scene_marker_chunk(
+                chunk, chunk.index_buffer, render_origin, view_proj)) {
+            return;
+        }
+        context->PSSetShader(scene_marker_mask_pixel_shader, nullptr, 0);
+        context->OMSetDepthStencilState(nullptr, 0);
+        const float blend_factor[4] = {
+            0.0f, 0.0f, 0.0f, 0.0f};
+        context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
+        context->DrawIndexed(range.count, range.visible_first, 0);
+
+        ImVec2 screen_min(
+            static_cast<float>(width), static_cast<float>(height));
+        ImVec2 screen_max(0.0f, 0.0f);
+        bool projected = false;
+        for (float x : {-0.5f, 0.5f}) {
+            for (float y : {0.0f, 1.0f}) {
+                const DVec3 world_point =
+                    range.center +
+                    range.right * static_cast<double>(
+                        x * k_scene_marker_board_width) +
+                    range.up * static_cast<double>(y);
+                ImVec2 screen;
+                if (!project_scene_point(
+                        world_point - render_origin, view_proj,
+                        width, height, screen)) {
+                    continue;
+                }
+                projected = true;
+                screen_min.x = std::min(screen_min.x, screen.x);
+                screen_min.y = std::min(screen_min.y, screen.y);
+                screen_max.x = std::max(screen_max.x, screen.x);
+                screen_max.y = std::max(screen_max.y, screen.y);
+            }
+        }
+        if (!projected) return;
+        const float outline_padding = k_scene_highlight_outline_width_px + 2.0f;
+        screen_min.x -= outline_padding;
+        screen_min.y -= outline_padding;
+        screen_max.x += outline_padding;
+        screen_max.y += outline_padding;
+        composite_scene_highlight_outline(
+            width, height, screen_min, screen_max,
+            scene_marker_highlight_color());
     }
 
     bool compute_scene_instance_screen_bounds(const double world[16],
@@ -5962,32 +6310,60 @@ fail:
         error.clear();
         for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) {
             chunk.visible_index_count = 0;
-            if (!chunk.index_buffer || chunk.source_indices.empty()) continue;
+            chunk.visible_pick_index_count = 0;
+            if (!chunk.index_buffer || !chunk.pick_index_buffer ||
+                chunk.source_indices.empty()) continue;
 
-            D3D11_MAPPED_SUBRESOURCE mapped = {};
-            const HRESULT hr = context->Map(
-                chunk.index_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+            D3D11_MAPPED_SUBRESOURCE display_mapped = {};
+            HRESULT hr = context->Map(
+                chunk.index_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
+                &display_mapped);
             if (FAILED(hr)) {
                 error = hresult_text("Map(scene marker index)", hr);
                 return false;
             }
-            unsigned int* destination =
-                static_cast<unsigned int*>(mapped.pData);
-            for (const SceneMarkerIndexRange& range : chunk.ranges) {
+            D3D11_MAPPED_SUBRESOURCE pick_mapped = {};
+            hr = context->Map(
+                chunk.pick_index_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
+                &pick_mapped);
+            if (FAILED(hr)) {
+                context->Unmap(chunk.index_buffer, 0);
+                error = hresult_text("Map(scene marker pick index)", hr);
+                return false;
+            }
+            unsigned int* display_destination =
+                static_cast<unsigned int*>(display_mapped.pData);
+            unsigned int* pick_destination =
+                static_cast<unsigned int*>(pick_mapped.pData);
+            for (SceneMarkerIndexRange& range : chunk.ranges) {
                 const bool visible = range.label
                     ? scene_marker_visibility.label_visible(range.kind)
                     : scene_marker_visibility.marker_visible(range.kind);
-                if (!visible || range.count == 0) continue;
+                range.visible = visible && range.count > 0;
+                range.visible_first = 0;
+                if (!range.visible) continue;
                 const size_t end =
                     static_cast<size_t>(range.first) + range.count;
-                if (end > chunk.source_indices.size()) continue;
+                if (end > chunk.source_indices.size()) {
+                    range.visible = false;
+                    continue;
+                }
                 std::copy_n(
                     chunk.source_indices.data() + range.first,
                     range.count,
-                    destination + chunk.visible_index_count);
+                    display_destination + chunk.visible_index_count);
+                range.visible_first = chunk.visible_index_count;
                 chunk.visible_index_count += range.count;
+                if (!range.label) {
+                    std::copy_n(
+                        chunk.source_indices.data() + range.first,
+                        range.count,
+                        pick_destination + chunk.visible_pick_index_count);
+                    chunk.visible_pick_index_count += range.count;
+                }
             }
             context->Unmap(chunk.index_buffer, 0);
+            context->Unmap(chunk.pick_index_buffer, 0);
         }
         return true;
     }
@@ -5997,6 +6373,7 @@ fail:
         release_scene_marker_chunks();
         scene_marker_chunks.resize(scene_chunks.size());
         if (scene_chunks.empty() || scene_data.markers.empty()) return true;
+        scene_marker_locations.resize(scene_data.markers.size());
 
         ImFont* font = ImGui::GetFont();
         const float font_size = ImGui::GetFontSize();
@@ -6083,6 +6460,7 @@ fail:
                 const DVec3 content_center =
                     center + up * static_cast<double>(content_vertical_offset);
 
+                const size_t marker_vertex_first = vertices.size();
                 const std::uint32_t marker_first =
                     static_cast<std::uint32_t>(indices.size());
                 ImVec4 board_color = map_marker_theme_color(marker.kind);
@@ -6116,11 +6494,19 @@ fail:
                 }
                 gpu_chunk.ranges.push_back({
                     marker.kind,
+                    marker_index,
                     marker_first,
                     static_cast<std::uint32_t>(
                         indices.size() - marker_first),
-                    false
+                    0,
+                    false,
+                    false,
+                    center,
+                    right,
+                    up
                 });
+                scene_marker_locations[marker_index] = {
+                    chunk_index, gpu_chunk.ranges.size() - 1, true};
 
                 if (!label_in_icon && !marker.label.empty()) {
                     const std::uint32_t label_first =
@@ -6159,11 +6545,30 @@ fail:
                         k_scene_marker_label_max_width);
                     gpu_chunk.ranges.push_back({
                         marker.kind,
+                        marker_index,
                         label_first,
                         static_cast<std::uint32_t>(
                             indices.size() - label_first),
-                        true
+                        0,
+                        false,
+                        true,
+                        content_center,
+                        right,
+                        up
                     });
+                }
+
+                if (marker_index >
+                    static_cast<size_t>(std::numeric_limits<std::uint32_t>::max())) {
+                    error = "too many scene markers for a Direct3D 11 vertex attribute";
+                    release_scene_marker_chunks();
+                    return false;
+                }
+                const std::uint32_t marker_index_u32 =
+                    static_cast<std::uint32_t>(marker_index);
+                for (size_t vertex_index = marker_vertex_first;
+                     vertex_index < vertices.size(); ++vertex_index) {
+                    vertices[vertex_index].marker_index = marker_index_u32;
                 }
             }
 
@@ -6206,6 +6611,13 @@ fail:
                 &ib_desc, nullptr, &gpu_chunk.index_buffer);
             if (FAILED(hr)) {
                 error = hresult_text("CreateBuffer(scene marker index)", hr);
+                release_scene_marker_chunks();
+                return false;
+            }
+            hr = device->CreateBuffer(
+                &ib_desc, nullptr, &gpu_chunk.pick_index_buffer);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateBuffer(scene marker pick index)", hr);
                 release_scene_marker_chunks();
                 return false;
             }
@@ -7157,6 +7569,7 @@ fail:
     void render_scene_preview_target(int width, int height, ImVec2 mouse_local, bool pick_enabled) {
         std::string error;
         scene_hovered_object_index = -1;
+        scene_hovered_marker_index = -1;
         scene_hover_highlight_batch.clear();
         if (!ensure_render_target(width, height, error)) {
             if (scene_last_error != error) scene_last_error = error;
@@ -7257,51 +7670,87 @@ fail:
                 scene_stats_value.drawn_instance_count += kv.second.size();
             }
         }
-        const int picked_object_index = can_pick
-            ? pick_scene_object_at_mouse(visible_instances, visible_object_instances, view_proj,
-                                         width, height, mouse_local, error)
-            : -1;
+        const bool marker_pick_possible =
+            can_pick && has_visible_scene_marker_picks(
+                visible_min, visible_max);
+        const bool scene_pick_active =
+            can_pick && (!visible_object_instances.empty() || marker_pick_possible) &&
+            begin_scene_pick_at_mouse(
+                visible_instances, visible_object_instances, view_proj,
+                width, height, mouse_local, error);
         if (!error.empty() && scene_last_error != error) scene_last_error = error;
         ID3D11RenderTargetView* scene_target = render_rtv;
         context->OMSetRenderTargets(1, &scene_target, depth_dsv);
         context->RSSetViewports(1, &viewport);
         context->OMSetDepthStencilState(scene_depth_state, 0);
         context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
-        if (picked_object_index >= 0) {
+        for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
+            if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
+            draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj,
+                                   track_instance, error, fog_ptr);
+        }
+        ScenePickTarget picked_target;
+        if (scene_pick_active) {
+            ID3D11RenderTargetView* pick_target = scene_pick_rtv;
+            context->OMSetRenderTargets(1, &pick_target, depth_dsv);
+            context->RSSetViewports(1, &viewport);
+            draw_visible_scene_marker_picks(
+                visible_min, visible_max, render_origin, view_proj);
+            picked_target = finish_scene_pick_at_mouse(
+                width, height, mouse_local, error);
+            if (!error.empty() && scene_last_error != error) {
+                scene_last_error = error;
+            }
+            context->OMSetRenderTargets(1, &scene_target, depth_dsv);
+            context->RSSetViewports(1, &viewport);
+            context->OMSetDepthStencilState(scene_depth_state, 0);
+            context->OMSetBlendState(nullptr, blend_factor, 0xffffffff);
+        }
+        draw_visible_scene_markers(
+            visible_min, visible_max, render_origin, view_proj);
+        if (picked_target.kind == ScenePickTargetKind::Object &&
+            picked_target.index < scene_data.objects.size()) {
+            const int picked_object_index =
+                static_cast<int>(picked_target.index);
             scene_hovered_object_index = picked_object_index;
             scene_hover_highlight_batch.object_index = picked_object_index;
-            scene_hover_highlight_batch.screen_min = ImVec2(static_cast<float>(width), static_cast<float>(height));
+            scene_hover_highlight_batch.screen_min = ImVec2(
+                static_cast<float>(width), static_cast<float>(height));
             scene_hover_highlight_batch.screen_max = ImVec2(0.0f, 0.0f);
             auto refs_it = visible_object_instances.find(picked_object_index);
             if (refs_it != visible_object_instances.end()) {
                 for (const SceneVisibleInstanceRef& ref : refs_it->second) {
                     if (!ref.model_path) continue;
                     auto visible_it = visible_instances.find(*ref.model_path);
-                    if (visible_it == visible_instances.end() || ref.instance_index >= visible_it->second.size()) continue;
-                    scene_hover_highlight_batch.instances.push_back(SceneHighlightInstance{
-                        *ref.model_path,
-                        visible_it->second[ref.instance_index],
-                        ref.screen_min,
-                        ref.screen_max
-                    });
-                    include_scene_screen_bounds(scene_hover_highlight_batch.screen_min,
-                                                scene_hover_highlight_batch.screen_max,
-                                                ref);
+                    if (visible_it == visible_instances.end() ||
+                        ref.instance_index >= visible_it->second.size()) {
+                        continue;
+                    }
+                    scene_hover_highlight_batch.instances.push_back(
+                        SceneHighlightInstance{
+                            *ref.model_path,
+                            visible_it->second[ref.instance_index],
+                            ref.screen_min,
+                            ref.screen_max
+                        });
+                    include_scene_screen_bounds(
+                        scene_hover_highlight_batch.screen_min,
+                        scene_hover_highlight_batch.screen_max, ref);
                 }
             }
-        }
-        if (picked_object_index >= 0 &&
-            picked_object_index == scene_focus_highlight_object_index) {
-            clear_scene_focus_highlight();
+            if (picked_object_index == scene_focus_highlight_object_index) {
+                clear_scene_focus_highlight();
+            }
+        } else if (picked_target.kind == ScenePickTargetKind::Marker &&
+                   picked_target.index < scene_data.markers.size()) {
+            scene_hovered_marker_index = static_cast<int>(picked_target.index);
         }
         update_scene_focus_highlight_batch(render_origin, view_proj, width, height);
-        for (size_t i = 0; i < scene_chunks.size() && i < scene_track_chunks.size(); ++i) {
-            if (!scene_chunk_visible(scene_chunks[i], visible_min, visible_max)) continue;
-            draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj,
-                                   track_instance, error, fog_ptr);
+        if (scene_hovered_marker_index >= 0) {
+            draw_scene_marker_highlight(
+                static_cast<size_t>(scene_hovered_marker_index), render_origin,
+                view_proj, width, height);
         }
-        draw_visible_scene_markers(
-            visible_min, visible_max, render_origin, view_proj);
         draw_scene_highlight_batch(scene_focus_highlight_batch, view_proj, width, height);
         draw_scene_highlight_batch(scene_hover_highlight_batch, view_proj, width, height);
 
@@ -7660,9 +8109,24 @@ fail:
         }
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
+        if (select_mode && scene_hovered_marker_index >= 0 &&
+            static_cast<size_t>(scene_hovered_marker_index) <
+                scene_data.markers.size()) {
+            const Canvas3DSceneMarker& marker = scene_data.markers[
+                static_cast<size_t>(scene_hovered_marker_index)];
+            result.hovered_marker = Canvas3DSceneMarkerTarget{
+                marker.kind,
+                static_cast<size_t>(scene_hovered_marker_index),
+                marker.row_kind,
+                marker.row_index,
+                marker.edit_id
+            };
+        }
         if (!stats.loading && scene_structure_gizmo_consumes_left_input()) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-        } else if (!stats.loading && select_mode && hovered && scene_hovered_object_index >= 0) {
+        } else if (!stats.loading && select_mode && hovered &&
+                   (scene_hovered_object_index >= 0 ||
+                    scene_hovered_marker_index >= 0)) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         }
         ImVec2 long_press_pos;
@@ -7860,8 +8324,11 @@ fail:
     ID3D11Buffer* scene_constant_buffer = nullptr;
     ID3D11VertexShader* scene_marker_vertex_shader = nullptr;
     ID3D11PixelShader* scene_marker_pixel_shader = nullptr;
+    ID3D11PixelShader* scene_marker_pick_pixel_shader = nullptr;
+    ID3D11PixelShader* scene_marker_mask_pixel_shader = nullptr;
     ID3D11InputLayout* scene_marker_input_layout = nullptr;
     ID3D11Buffer* scene_marker_constant_buffer = nullptr;
+    ID3D11Buffer* scene_marker_pick_constant_buffer = nullptr;
     ID3D11VertexShader* scene_outline_vertex_shader = nullptr;
     ID3D11PixelShader* scene_outline_pixel_shader = nullptr;
     ID3D11Buffer* scene_outline_constant_buffer = nullptr;
@@ -7913,8 +8380,9 @@ fail:
     std::vector<SceneTrackChunkGpu> scene_track_chunks;
     // Static marker vertices/UVs are keyed by scene_data.markers, the 100 m
     // scene chunk layout, and the active ImGui font/atlas identity below.
-    // Visibility is view-only state and rewrites only each chunk's dynamic IB.
+    // Visibility is view-only state and rewrites only each chunk's dynamic IBs.
     std::vector<SceneMarkerChunkGpu> scene_marker_chunks;
+    std::vector<SceneMarkerGpuLocation> scene_marker_locations;
     Canvas3DSceneMarkerVisibility scene_marker_visibility;
     ImFont* scene_marker_font = nullptr;
     float scene_marker_font_size = 0.0f;
@@ -7949,6 +8417,7 @@ fail:
     ImVec2 scene_last_mouse = ImVec2(0.0f, 0.0f);
     Canvas3DSceneInteractionMode scene_interaction_mode = Canvas3DSceneInteractionMode::Move;
     int scene_hovered_object_index = -1;
+    int scene_hovered_marker_index = -1;
     int scene_context_object_index = -1;
     SceneHighlightBatch scene_hover_highlight_batch;
     SceneHighlightBatch scene_focus_highlight_batch;
