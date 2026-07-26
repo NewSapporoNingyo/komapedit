@@ -2653,8 +2653,8 @@ struct Canvas3D::Impl {
                     if (!load_texture(src->texture_path, &materials[i].texture,
                                       texture_error, &texture_has_alpha)) {
                         model_load_warnings.push_back(
-                            "[WARN]canvas3D.cpp: model preview texture warning: " +
-                            texture_error);
+                            "[WARN]canvas3D.cpp: model preview texture warning: model=" +
+                            path + "; " + texture_error);
                     } else {
                         materials[i].has_texture = true;
                         materials[i].texture_has_alpha = texture_has_alpha;
@@ -4430,8 +4430,8 @@ fail:
                             normalized_texture_cache_key(src->texture_path);
                         if (scene_texture_warning_keys.insert(texture_key).second) {
                             push_scene_load_log(
-                                "[WARN]canvas3D.cpp: scene texture warning: " +
-                                texture_error);
+                                "[WARN]canvas3D.cpp: scene texture warning: model=" +
+                                cpu.path + "; " + texture_error);
                         }
                     }
                 }
