@@ -35,6 +35,7 @@
 struct ID3D11Device;
 struct ID3D11ShaderResourceView;
 class Canvas3D;
+enum class Canvas3DSceneMarkerListKind : std::uint8_t;
 struct Canvas3DStructureDragUpdate;
 struct Canvas3DStructureEditTarget;
 struct KvEditReportSnapshot;
@@ -1716,6 +1717,7 @@ private:
     void locate_repeater_row_in_scene_preview(size_t row_index);
     void locate_signal_row_on_plan(size_t row_index);
     void locate_signal_row_in_list(size_t row_index);
+    void locate_signal_row_in_scene_preview(size_t row_index);
     void locate_standard_marker_on_plan(
         const std::vector<std::optional<PlanMarker>>& cache,
         size_t row_index, bool& markers_visible);
@@ -1749,6 +1751,10 @@ private:
     void locate_fog_row_in_list(size_t row_index);
     void locate_draw_distance_row_on_plan(size_t row_index);
     void locate_draw_distance_row_in_list(size_t row_index);
+    void locate_scene_marker_row_in_list(Canvas3DSceneMarkerListKind list_kind,
+                                         size_t row_index);
+    void locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind list_kind,
+                                                   size_t row_index);
     bool can_locate_scene_preview_row() const;
 
     double current_plan_origin_angle() const;

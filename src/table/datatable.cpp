@@ -157,6 +157,16 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
     return action;
 }
 
+TextCellContextAction render_marker_text_cell_with_context(
+    const std::string& display_text,
+    const std::string& locate_on_plan_label, bool locate_on_plan_enabled,
+    const std::string& locate_in_scene_label, bool locate_in_scene_enabled) {
+    return render_text_cell_with_context_actions(
+        display_text,
+        locate_on_plan_label, locate_on_plan_enabled,
+        locate_in_scene_label, locate_in_scene_enabled);
+}
+
 struct RepeaterTextCellContextAction {
     TextCellContextAction navigation = TextCellContextAction::None;
     RepeaterDeleteMode delete_mode = RepeaterDeleteMode::EntireChain;
@@ -1247,7 +1257,7 @@ void render_event_table(const char* table_id,
     ImGui::EndTable();
 }
 
-template <size_t N, typename CanLocateFn, typename LocateFn>
+template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn>
 void render_change_point_table(const char* table_id,
                                const TableColumnDef (&columns)[N],
                                int distance_column,
@@ -1256,13 +1266,16 @@ void render_change_point_table(const char* table_id,
                                float distance_width,
                                float file_path_width,
                                const std::string& file_name_header,
-                               const std::string& locate_menu_label,
+                               const std::string& locate_on_plan_label,
+                               const std::string& locate_in_scene_label,
                                const std::string& open_menu_label,
                                int& scroll_row,
                                int& highlight_row,
                                ImU32 highlight_color,
                                CanLocateFn can_locate,
-                               LocateFn locate_row_on_plan) {
+                               LocateFn locate_row_on_plan,
+                               bool can_locate_scene,
+                               LocateSceneFn locate_row_in_scene) {
     render_event_table(
         table_id, columns, distance_column, file_path_column, rows,
         distance_width, file_path_width, file_name_header, open_menu_label,
@@ -1270,14 +1283,19 @@ void render_change_point_table(const char* table_id,
         [&](int row_index, int column, const std::string& value) {
             if (column != distance_column) return false;
             const size_t marker_index = static_cast<size_t>(row_index);
-            if (render_text_cell_with_context(
-                    value, locate_menu_label, can_locate(marker_index))) {
+            const TextCellContextAction action = render_marker_text_cell_with_context(
+                value,
+                locate_on_plan_label, can_locate(marker_index),
+                locate_in_scene_label, can_locate_scene);
+            if (action == TextCellContextAction::Primary) {
                 locate_row_on_plan(marker_index);
+            } else if (action == TextCellContextAction::Secondary) {
+                locate_row_in_scene(marker_index);
             }
             return true;
         });
 }
-template <size_t N, typename CanLocateFn, typename LocateFn, typename FindFn>
+template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn, typename FindFn>
 void render_map_sound_event_table(const char* table_id,
                                   const TableColumnDef (&columns)[N],
                                   int distance_column,
@@ -1287,7 +1305,8 @@ void render_map_sound_event_table(const char* table_id,
                                   float distance_width,
                                   float file_path_width,
                                   const std::string& file_name_header,
-                                  const std::string& locate_menu_label,
+                                  const std::string& locate_on_plan_label,
+                                  const std::string& locate_in_scene_label,
                                   const std::string& find_menu_label,
                                   const std::string& open_menu_label,
                                   int& scroll_row,
@@ -1295,6 +1314,8 @@ void render_map_sound_event_table(const char* table_id,
                                   ImU32 highlight_color,
                                   CanLocateFn can_locate,
                                   LocateFn locate_row_on_plan,
+                                  bool can_locate_scene,
+                                  LocateSceneFn locate_row_in_scene,
                                   FindFn find_sound_file) {
     render_event_table(
         table_id, columns, distance_column, file_path_column, rows,
@@ -1304,10 +1325,16 @@ void render_map_sound_event_table(const char* table_id,
             if (column == distance_column) {
                 const size_t marker_index = static_cast<size_t>(row_index);
                 ImGui::PushID(column);
-                const bool should_locate = render_text_cell_with_context(
-                    value, locate_menu_label, can_locate(marker_index));
+                const TextCellContextAction action = render_marker_text_cell_with_context(
+                    value,
+                    locate_on_plan_label, can_locate(marker_index),
+                    locate_in_scene_label, can_locate_scene);
                 ImGui::PopID();
-                if (should_locate) locate_row_on_plan(marker_index);
+                if (action == TextCellContextAction::Primary) {
+                    locate_row_on_plan(marker_index);
+                } else if (action == TextCellContextAction::Secondary) {
+                    locate_row_in_scene(marker_index);
+                }
                 return true;
             }
             if (column == sound_key_column) {
@@ -3074,6 +3101,7 @@ void App::render_signals_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.signal_rows[static_cast<size_t>(row_index)];
@@ -3100,8 +3128,14 @@ void App::render_signals_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < signal_marker_cache_.size() &&
                             signal_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
                             locate_signal_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_signal_row_in_scene_preview(marker_index);
                         }
                         continue;
                     }
@@ -3172,6 +3206,7 @@ void App::render_beacons_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.beacon_rows[static_cast<size_t>(row_index)];
@@ -3191,8 +3226,15 @@ void App::render_beacons_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < beacon_marker_cache_.size() &&
                             beacon_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
                             locate_beacon_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::Beacon, marker_index);
                         }
                         continue;
                     }
@@ -3256,6 +3298,7 @@ void App::render_irregularities_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.irregularity_rows[static_cast<size_t>(row_index)];
@@ -3275,8 +3318,15 @@ void App::render_irregularities_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < irregularity_marker_cache_.size() &&
                             irregularity_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
                             locate_irregularity_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::Irregularity, marker_index);
                         }
                         continue;
                     }
@@ -3322,6 +3372,7 @@ void App::render_rolling_noises_window() {
         table_cache_.rolling_noise_file_path_width,
         tr("column.file_name"),
         tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"),
         tr("menu.open_in_explorer"),
         rolling_noise_list_scroll_row_,
         rolling_noise_list_highlight_row_,
@@ -3330,7 +3381,12 @@ void App::render_rolling_noises_window() {
             return marker_index < rolling_noise_marker_cache_.size() &&
                 rolling_noise_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_rolling_noise_row_on_plan(marker_index); });
+        [this](size_t marker_index) { locate_rolling_noise_row_on_plan(marker_index); },
+        can_locate_scene_preview_row(),
+        [this](size_t marker_index) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::RollingNoise, marker_index);
+        });
     focus_rolling_noises_next_ = false;
     ImGui::End();
 }
@@ -3360,6 +3416,7 @@ void App::render_map_sounds_window() {
         table_cache_.map_sound_file_path_width,
         tr("column.file_name"),
         tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"),
         tr("menu.find_in_sound_files"),
         tr("menu.open_in_explorer"),
         map_sound_list_scroll_row_,
@@ -3370,6 +3427,11 @@ void App::render_map_sounds_window() {
                 map_sound_marker_cache_[marker_index].has_value();
         },
         [this](size_t marker_index) { locate_map_sound_row_on_plan(marker_index); },
+        can_locate_scene_preview_row(),
+        [this](size_t marker_index) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::MapSound, marker_index);
+        },
         [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, false); });
     focus_map_sounds_next_ = false;
     ImGui::End();
@@ -3400,6 +3462,7 @@ void App::render_map_sound_3d_window() {
         table_cache_.map_sound_3d_file_path_width,
         tr("column.file_name"),
         tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"),
         tr("menu.find_in_sound_3d_files"),
         tr("menu.open_in_explorer"),
         map_sound_3d_list_scroll_row_,
@@ -3410,6 +3473,11 @@ void App::render_map_sound_3d_window() {
                 map_sound_3d_marker_cache_[marker_index].has_value();
         },
         [this](size_t marker_index) { locate_map_sound_3d_row_on_plan(marker_index); },
+        can_locate_scene_preview_row(),
+        [this](size_t marker_index) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::MapSound3D, marker_index);
+        },
         [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, true); });
     focus_map_sound_3d_next_ = false;
     ImGui::End();
@@ -3440,6 +3508,7 @@ void App::render_flange_noises_window() {
         table_cache_.flange_noise_file_path_width,
         tr("column.file_name"),
         tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"),
         tr("menu.open_in_explorer"),
         flange_noise_list_scroll_row_,
         flange_noise_list_highlight_row_,
@@ -3448,7 +3517,12 @@ void App::render_flange_noises_window() {
             return marker_index < flange_noise_marker_cache_.size() &&
                 flange_noise_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_flange_noise_row_on_plan(marker_index); });
+        [this](size_t marker_index) { locate_flange_noise_row_on_plan(marker_index); },
+        can_locate_scene_preview_row(),
+        [this](size_t marker_index) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::FlangeNoise, marker_index);
+        });
     focus_flange_noises_next_ = false;
     ImGui::End();
 }
@@ -3478,6 +3552,7 @@ void App::render_joint_noises_window() {
         table_cache_.joint_noise_file_path_width,
         tr("column.file_name"),
         tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"),
         tr("menu.open_in_explorer"),
         joint_noise_list_scroll_row_,
         joint_noise_list_highlight_row_,
@@ -3486,7 +3561,12 @@ void App::render_joint_noises_window() {
             return marker_index < joint_noise_marker_cache_.size() &&
                 joint_noise_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_joint_noise_row_on_plan(marker_index); });
+        [this](size_t marker_index) { locate_joint_noise_row_on_plan(marker_index); },
+        can_locate_scene_preview_row(),
+        [this](size_t marker_index) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::JointNoise, marker_index);
+        });
     focus_joint_noises_next_ = false;
     ImGui::End();
 }
@@ -3534,6 +3614,7 @@ void App::render_backgrounds_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.background_rows[static_cast<size_t>(row_index)];
@@ -3553,8 +3634,15 @@ void App::render_backgrounds_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < background_marker_cache_.size() &&
                             background_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
                             locate_background_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::Background, marker_index);
                         }
                         continue;
                     }
@@ -3624,6 +3712,7 @@ void App::render_adhesions_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.adhesion_rows[static_cast<size_t>(row_index)];
@@ -3643,8 +3732,15 @@ void App::render_adhesions_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < adhesion_marker_cache_.size() &&
                             adhesion_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
                             locate_adhesion_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::Adhesion, marker_index);
                         }
                         continue;
                     }
@@ -3708,6 +3804,7 @@ void App::render_cab_illuminance_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.cab_illuminance_rows[static_cast<size_t>(row_index)];
@@ -3727,8 +3824,15 @@ void App::render_cab_illuminance_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < cab_illuminance_marker_cache_.size() &&
                             cab_illuminance_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
                             locate_cab_illuminance_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::CabIlluminance, marker_index);
                         }
                         continue;
                     }
@@ -3792,6 +3896,7 @@ void App::render_fogs_window() {
             clipper.IncludeItemByIndex(scroll_target_row);
         }
         const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
         while (clipper.Step()) {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.fog_rows[static_cast<size_t>(row_index)];
@@ -3811,8 +3916,15 @@ void App::render_fogs_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < fog_marker_cache_.size() &&
                             fog_marker_cache_[marker_index].has_value();
-                        if (render_text_cell_with_context(value, tr("menu.locate_on_plan"), can_locate)) {
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
                             locate_fog_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::Fog, marker_index);
                         }
                         continue;
                     }
@@ -3858,6 +3970,7 @@ void App::render_draw_distances_window() {
         table_cache_.draw_distance_file_path_width,
         tr("column.file_name"),
         tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"),
         tr("menu.open_in_explorer"),
         draw_distance_list_scroll_row_,
         draw_distance_list_highlight_row_,
@@ -3866,7 +3979,12 @@ void App::render_draw_distances_window() {
             return marker_index < draw_distance_marker_cache_.size() &&
                 draw_distance_marker_cache_[marker_index].has_value();
         },
-        [this](size_t marker_index) { locate_draw_distance_row_on_plan(marker_index); });
+        [this](size_t marker_index) { locate_draw_distance_row_on_plan(marker_index); },
+        can_locate_scene_preview_row(),
+        [this](size_t marker_index) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::DrawDistance, marker_index);
+        });
     focus_draw_distances_next_ = false;
     ImGui::End();
 }

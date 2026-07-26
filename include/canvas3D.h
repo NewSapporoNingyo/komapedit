@@ -9,6 +9,7 @@
 #include "imgui.h"
 #include "map_marker_visuals.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -52,6 +53,26 @@ enum class Canvas3DSceneObjectKind {
     Structure,
     Repeater,
     Signal,
+};
+
+// GUI-only navigation identity for scene markers that have a matching table.
+// This is deliberately separate from MapMarkerVisualKind: several visible
+// marker kinds have no table and must not expose list navigation.
+enum class Canvas3DSceneMarkerListKind : std::uint8_t {
+    None,
+    Beacon,
+    Irregularity,
+    MapSound,
+    MapSound3D,
+    RollingNoise,
+    FlangeNoise,
+    JointNoise,
+    Background,
+    Adhesion,
+    CabIlluminance,
+    Fog,
+    DrawDistance,
+    Count,
 };
 
 struct Canvas3DSceneModelOption {
@@ -160,6 +181,7 @@ struct Canvas3DSceneRouteInfo {
 
 struct Canvas3DSceneMarker {
     MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
+    Canvas3DSceneMarkerListKind list_kind = Canvas3DSceneMarkerListKind::None;
     MapMarkerIconVariant icon_variant = MapMarkerIconVariant::Default;
     Canvas3DTrackPoint track_point;
     std::string label;
@@ -171,6 +193,7 @@ struct Canvas3DSceneMarker {
 // String views remain valid until the scene or its marker data is refreshed.
 struct Canvas3DSceneMarkerTarget {
     MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
+    Canvas3DSceneMarkerListKind list_kind = Canvas3DSceneMarkerListKind::None;
     size_t marker_index = 0;
     std::string_view row_kind;
     std::optional<size_t> row_index;
@@ -280,6 +303,9 @@ struct Canvas3DSceneUiText {
     const char* locate_structure_list = "Locate in Map Structure List";
     const char* locate_structure_put_between_list = "Locate in Map Structure List (PutBetween)";
     const char* locate_repeater_list = "Locate in Repeater List";
+    const char* locate_signal_list = "Locate in Map Signal List";
+    std::array<const char*, static_cast<size_t>(Canvas3DSceneMarkerListKind::Count)>
+        locate_marker_list_labels{};
     const char* jump_to_repeater_start_position = "Jump to Start Position";
     const char* jump_to_repeater_end_or_change_position = "Jump to End/Change Position";
     const char* loading = "Loading...";
@@ -312,6 +338,8 @@ enum class Canvas3DSceneContextActionKind {
     None,
     LocateStructure,
     LocateRepeater,
+    LocateSignal,
+    LocateMarkerList,
     EditElement,
     DeleteElement,
     DeleteRepeaterAll,
@@ -322,6 +350,7 @@ enum class Canvas3DSceneContextActionKind {
 
 struct Canvas3DSceneContextAction {
     Canvas3DSceneContextActionKind kind = Canvas3DSceneContextActionKind::None;
+    Canvas3DSceneMarkerListKind marker_list_kind = Canvas3DSceneMarkerListKind::None;
     size_t row_index = 0;
     std::string edit_id;
     std::string row_kind;
@@ -424,6 +453,7 @@ public:
     Canvas3DSceneCameraPose scene_camera_pose() const;
     bool jump_scene_camera_to_distance(double distance);
     bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row);
+    bool jump_scene_camera_to_marker(Canvas3DSceneMarkerListKind list_kind, size_t row_index);
     bool set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
                                          bool show_gizmo);
     bool update_scene_structure_instance(const Canvas3DStructureEditTarget& target);

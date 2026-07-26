@@ -91,6 +91,19 @@ constexpr float k_scene_marker_label_max_width = 0.88f;
 constexpr float k_scene_marker_outline_width = 0.012f;
 constexpr float k_scene_marker_irregularity_content_offset = 0.16f;
 constexpr int k_scene_marker_circle_segments = 48;
+constexpr size_t k_scene_marker_target_missing = std::numeric_limits<size_t>::max();
+constexpr size_t k_scene_marker_list_kind_count =
+    static_cast<size_t>(Canvas3DSceneMarkerListKind::Count);
+
+bool scene_marker_list_kind_is_navigable(Canvas3DSceneMarkerListKind kind) {
+    const size_t slot = static_cast<size_t>(kind);
+    return slot > static_cast<size_t>(Canvas3DSceneMarkerListKind::None) &&
+        slot < k_scene_marker_list_kind_count;
+}
+
+size_t scene_marker_list_kind_slot(Canvas3DSceneMarkerListKind kind) {
+    return static_cast<size_t>(kind);
+}
 
 enum class SceneOverlayCorner {
     TopLeft,
@@ -1450,6 +1463,8 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                              std::string label = {},
                              MapMarkerIconVariant icon_variant =
                                  MapMarkerIconVariant::Default,
+                             Canvas3DSceneMarkerListKind list_kind =
+                                 Canvas3DSceneMarkerListKind::None,
                              std::string row_kind = {},
                              std::optional<size_t> row_index = std::nullopt,
                              std::string edit_id = {}) {
@@ -1459,6 +1474,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         if (!point) return;
         Canvas3DSceneMarker marker;
         marker.kind = kind;
+        marker.list_kind = list_kind;
         marker.icon_variant = icon_variant;
         marker.track_point = *point;
         marker.label = std::move(label);
@@ -1522,6 +1538,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     auto append_table_markers = [&](const std::vector<TableRow>& rows,
                                     MapMarkerVisualKind kind,
+                                    Canvas3DSceneMarkerListKind list_kind,
                                     const char* row_kind,
                                     const auto& label_for_row,
                                     MapMarkerIconVariant icon_variant =
@@ -1530,7 +1547,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
             const TableRow& row = rows[row_index];
             std::string label = label_for_row(row);
             append_marker(kind, table_cell_number(row, "distance"),
-                          std::move(label), icon_variant, row_kind,
+                          std::move(label), icon_variant, list_kind, row_kind,
                           row_index, row.edit_id);
         }
     };
@@ -1542,14 +1559,17 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         };
     };
 
-    append_table_markers(model.beacons, MapMarkerVisualKind::Beacon, "beacon.put",
+    append_table_markers(model.beacons, MapMarkerVisualKind::Beacon,
+                         Canvas3DSceneMarkerListKind::Beacon, "beacon.put",
                          [](const TableRow& row) {
                              return canvas3d_scene_table_marker_label(
                                  row, {"type", "section", "sendData"});
                          });
-    append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain, "preTrain.pass",
+    append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain,
+                         Canvas3DSceneMarkerListKind::None, "preTrain.pass",
                          field_label("passTime"));
     append_table_markers(model.irregularities, MapMarkerVisualKind::Irregularity,
+                         Canvas3DSceneMarkerListKind::Irregularity,
                          "irregularity.change",
                          [](const TableRow& row) {
                              return canvas3d_scene_table_marker_label(
@@ -1558,23 +1578,30 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                                      row, {"lx", "ly", "lr"});
                          });
     append_table_markers(model.map_sounds, MapMarkerVisualKind::MapSound,
+                         Canvas3DSceneMarkerListKind::MapSound,
                          "mapSound.play",
                          field_label("soundKey"));
     append_table_markers(model.map_sound_3d, MapMarkerVisualKind::MapSound3D,
+                         Canvas3DSceneMarkerListKind::MapSound3D,
                          "mapSound3D.put",
                          field_label("soundKey"));
     append_table_markers(model.rolling_noises, MapMarkerVisualKind::RollingNoise,
+                         Canvas3DSceneMarkerListKind::RollingNoise,
                          "rollingNoise.change",
                          field_label("index"));
     append_table_markers(model.flange_noises, MapMarkerVisualKind::FlangeNoise,
+                         Canvas3DSceneMarkerListKind::FlangeNoise,
                          "flangeNoise.change", no_label);
     append_table_markers(model.joint_noises, MapMarkerVisualKind::JointNoise,
+                         Canvas3DSceneMarkerListKind::JointNoise,
                          "jointNoise.play",
                          field_label("index"));
     append_table_markers(model.backgrounds, MapMarkerVisualKind::Background,
+                         Canvas3DSceneMarkerListKind::Background,
                          "background.change",
                          field_label("structureKey"));
     append_table_markers(model.adhesions, MapMarkerVisualKind::Adhesion,
+                         Canvas3DSceneMarkerListKind::Adhesion,
                          "adhesion.change",
                          [](const TableRow& row) {
                              return canvas3d_scene_table_marker_label(
@@ -1582,9 +1609,11 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                          },
                          MapMarkerIconVariant::AdhesionOutlined);
     append_table_markers(model.cab_illuminance, MapMarkerVisualKind::CabIlluminance,
+                         Canvas3DSceneMarkerListKind::CabIlluminance,
                          "cabIlluminance.change",
                          field_label("value"));
-    append_table_markers(model.fogs, MapMarkerVisualKind::Fog, "fog.change",
+    append_table_markers(model.fogs, MapMarkerVisualKind::Fog,
+                         Canvas3DSceneMarkerListKind::Fog, "fog.change",
                          [](const TableRow& row) {
                              std::string label = canvas3d_scene_table_marker_label(
                                  row, {"density"}, " ", "-");
@@ -1594,6 +1623,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                              return label;
                          });
     append_table_markers(model.draw_distances, MapMarkerVisualKind::DrawDistance,
+                         Canvas3DSceneMarkerListKind::DrawDistance,
                          "drawDistance.change",
                          field_label("value"));
 
@@ -2830,6 +2860,7 @@ struct Canvas3D::Impl {
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
         scene_context_object_index = -1;
+        scene_context_marker_index = -1;
         scene_hover_highlight_batch.clear();
 
         std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
@@ -2902,6 +2933,7 @@ struct Canvas3D::Impl {
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
         scene_context_object_index = -1;
+        scene_context_marker_index = -1;
         scene_hover_highlight_batch.clear();
         clear_scene_focus_highlight();
         scene_stats_value = {};
@@ -2982,6 +3014,7 @@ struct Canvas3D::Impl {
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
         scene_context_object_index = -1;
+        scene_context_marker_index = -1;
         scene_hover_highlight_batch.clear();
     }
 
@@ -3620,6 +3653,7 @@ struct Canvas3D::Impl {
 
     void clear_scene_focus_highlight() {
         scene_focus_highlight_object_index = -1;
+        scene_focus_highlight_marker_index = -1;
         scene_focus_highlight_model_path.clear();
         scene_focus_highlight_until = {};
         scene_focus_highlight_batch.clear();
@@ -3628,6 +3662,7 @@ struct Canvas3D::Impl {
     void start_scene_focus_highlight(int object_index, const std::string& model_path, const double world[16]) {
         scene_focus_highlight_batch.clear();
         scene_focus_highlight_object_index = object_index;
+        scene_focus_highlight_marker_index = -1;
         scene_focus_highlight_model_path = model_path;
         std::copy(world, world + 16, scene_focus_highlight_world);
         scene_focus_highlight_until =
@@ -3637,10 +3672,21 @@ struct Canvas3D::Impl {
     }
 
     bool scene_focus_highlight_active_now() {
-        if (scene_focus_highlight_object_index < 0 || scene_focus_highlight_model_path.empty()) return false;
+        if (scene_focus_highlight_object_index < 0 && scene_focus_highlight_marker_index < 0) return false;
         if (std::chrono::steady_clock::now() < scene_focus_highlight_until) return true;
         clear_scene_focus_highlight();
         return false;
+    }
+
+    void start_scene_marker_focus_highlight(size_t marker_index) {
+        scene_focus_highlight_batch.clear();
+        scene_focus_highlight_object_index = -1;
+        scene_focus_highlight_marker_index = static_cast<int>(marker_index);
+        scene_focus_highlight_model_path.clear();
+        scene_focus_highlight_until =
+            std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(k_scene_focus_highlight_seconds));
     }
 
     bool update_scene_focus_highlight_batch(DVec3 render_origin,
@@ -3715,6 +3761,30 @@ struct Canvas3D::Impl {
         }
 
         start_scene_focus_highlight(target.object_index, target.model_path, target.world);
+        return true;
+    }
+
+    bool jump_scene_camera_to_marker(Canvas3DSceneMarkerListKind list_kind,
+                                     size_t row_index) {
+        if (!scene_active || !scene_marker_list_kind_is_navigable(list_kind)) return false;
+        const size_t list_slot = scene_marker_list_kind_slot(list_kind);
+        if (list_slot >= scene_marker_target_indices.size()) return false;
+        const std::vector<size_t>& target_indices = scene_marker_target_indices[list_slot];
+        if (row_index >= target_indices.size()) return false;
+        const size_t marker_index = target_indices[row_index];
+        if (marker_index == k_scene_marker_target_missing ||
+            marker_index >= scene_data.markers.size()) {
+            return false;
+        }
+        const Canvas3DSceneMarker& marker = scene_data.markers[marker_index];
+        if (marker.list_kind != list_kind || !marker.row_index ||
+            *marker.row_index != row_index ||
+            !set_scene_camera_for_target(
+                marker.track_point.distance,
+                DVec3{marker.track_point.x, marker.track_point.y, marker.track_point.z})) {
+            return false;
+        }
+        start_scene_marker_focus_highlight(marker_index);
         return true;
     }
 
@@ -3920,6 +3990,9 @@ fail:
         for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) release_marker_chunk(chunk);
         scene_marker_chunks.clear();
         scene_marker_locations.clear();
+        for (std::vector<size_t>& target_indices : scene_marker_target_indices) {
+            target_indices.clear();
+        }
         scene_marker_font = nullptr;
         scene_marker_font_size = 0.0f;
         scene_marker_font_texture_id = ImTextureID_Invalid;
@@ -6372,6 +6445,20 @@ fail:
         error.clear();
         release_scene_marker_chunks();
         scene_marker_chunks.resize(scene_chunks.size());
+        for (size_t marker_index = 0;
+             marker_index < scene_data.markers.size();
+             ++marker_index) {
+            const Canvas3DSceneMarker& marker = scene_data.markers[marker_index];
+            if (!scene_marker_list_kind_is_navigable(marker.list_kind) || !marker.row_index) {
+                continue;
+            }
+            std::vector<size_t>& target_indices =
+                scene_marker_target_indices[scene_marker_list_kind_slot(marker.list_kind)];
+            if (*marker.row_index >= target_indices.size()) {
+                target_indices.resize(*marker.row_index + 1, k_scene_marker_target_missing);
+            }
+            target_indices[*marker.row_index] = marker_index;
+        }
         if (scene_chunks.empty() || scene_data.markers.empty()) return true;
         scene_marker_locations.resize(scene_data.markers.size());
 
@@ -7745,8 +7832,16 @@ fail:
                    picked_target.index < scene_data.markers.size()) {
             scene_hovered_marker_index = static_cast<int>(picked_target.index);
         }
+        const bool focus_highlight_active = scene_focus_highlight_active_now();
+        if (focus_highlight_active && scene_focus_highlight_marker_index >= 0 &&
+            static_cast<size_t>(scene_focus_highlight_marker_index) < scene_data.markers.size()) {
+            draw_scene_marker_highlight(
+                static_cast<size_t>(scene_focus_highlight_marker_index), render_origin,
+                view_proj, width, height);
+        }
         update_scene_focus_highlight_batch(render_origin, view_proj, width, height);
-        if (scene_hovered_marker_index >= 0) {
+        if (scene_hovered_marker_index >= 0 &&
+            scene_hovered_marker_index != scene_focus_highlight_marker_index) {
             draw_scene_marker_highlight(
                 static_cast<size_t>(scene_hovered_marker_index), render_origin,
                 view_proj, width, height);
@@ -8023,19 +8118,53 @@ fail:
                     jump_scene_camera_to_repeater_end_or_change(object.source_row);
                 }
                 ImGui::EndDisabled();
-            } else if (object.kind == Canvas3DSceneObjectKind::Signal &&
-                       ImGui::BeginMenu(ui_text.switch_signal_aspect, !object.model_options.empty())) {
-                for (size_t i = 0; i < object.model_options.size(); ++i) {
-                    const Canvas3DSceneModelOption& option = object.model_options[i];
-                    std::string label = std::to_string(option.structure_key_index) + " - " + option.structure_key;
-                    const bool selected = i == object.selected_model_option;
-                    ImGui::BeginDisabled(option.model_path.empty());
-                    if (ImGui::MenuItem(label.c_str(), nullptr, selected)) {
-                        set_scene_object_model_option(scene_context_object_index, i);
-                    }
-                    ImGui::EndDisabled();
+            } else if (object.kind == Canvas3DSceneObjectKind::Signal) {
+                if (ImGui::MenuItem(ui_text.locate_signal_list)) {
+                    action.kind = Canvas3DSceneContextActionKind::LocateSignal;
+                    action.row_index = object.source_row;
                 }
-                ImGui::EndMenu();
+                if (ImGui::BeginMenu(ui_text.switch_signal_aspect, !object.model_options.empty())) {
+                    for (size_t i = 0; i < object.model_options.size(); ++i) {
+                        const Canvas3DSceneModelOption& option = object.model_options[i];
+                        std::string label = std::to_string(option.structure_key_index) + " - " + option.structure_key;
+                        const bool selected = i == object.selected_model_option;
+                        ImGui::BeginDisabled(option.model_path.empty());
+                        if (ImGui::MenuItem(label.c_str(), nullptr, selected)) {
+                            set_scene_object_model_option(scene_context_object_index, i);
+                        }
+                        ImGui::EndDisabled();
+                    }
+                    ImGui::EndMenu();
+                }
+            }
+        }
+
+        ImGui::EndPopup();
+        return action;
+    }
+
+    static bool scene_marker_has_list_target(const Canvas3DSceneMarker& marker) {
+        return scene_marker_list_kind_is_navigable(marker.list_kind) &&
+            marker.row_index.has_value();
+    }
+
+    Canvas3DSceneContextAction render_scene_marker_context_popup(
+        const Canvas3DSceneUiText& ui_text) {
+        Canvas3DSceneContextAction action;
+        if (!ImGui::BeginPopup("ScenePreviewMarkerContext")) return action;
+
+        if (scene_context_marker_index >= 0 &&
+            static_cast<size_t>(scene_context_marker_index) < scene_data.markers.size()) {
+            const Canvas3DSceneMarker& marker =
+                scene_data.markers[static_cast<size_t>(scene_context_marker_index)];
+            const char* locate_label = scene_marker_has_list_target(marker)
+                ? ui_text.locate_marker_list_labels[
+                    scene_marker_list_kind_slot(marker.list_kind)]
+                : nullptr;
+            if (locate_label && ImGui::MenuItem(locate_label)) {
+                action.kind = Canvas3DSceneContextActionKind::LocateMarkerList;
+                action.marker_list_kind = marker.list_kind;
+                action.row_index = *marker.row_index;
             }
         }
 
@@ -8057,7 +8186,9 @@ fail:
         ImGui::InvisibleButton("ScenePreview3DCanvas", avail,
                                ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         bool hovered = ImGui::IsItemHovered();
-        const bool context_popup_open = ImGui::IsPopupOpen("ScenePreviewObjectContext");
+        const bool context_popup_open =
+            ImGui::IsPopupOpen("ScenePreviewObjectContext") ||
+            ImGui::IsPopupOpen("ScenePreviewMarkerContext");
         const bool loading_before_render = scene_stats().loading;
         ImGuiIO& io = ImGui::GetIO();
         ImVec2 pointer_pos = io.MousePos;
@@ -8116,12 +8247,18 @@ fail:
                 static_cast<size_t>(scene_hovered_marker_index)];
             result.hovered_marker = Canvas3DSceneMarkerTarget{
                 marker.kind,
+                marker.list_kind,
                 static_cast<size_t>(scene_hovered_marker_index),
                 marker.row_kind,
                 marker.row_index,
                 marker.edit_id
             };
         }
+        const bool marker_context_available =
+            scene_hovered_marker_index >= 0 &&
+            static_cast<size_t>(scene_hovered_marker_index) < scene_data.markers.size() &&
+            scene_marker_has_list_target(
+                scene_data.markers[static_cast<size_t>(scene_hovered_marker_index)]);
         if (!stats.loading && scene_structure_gizmo_consumes_left_input()) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         } else if (!stats.loading && select_mode && hovered &&
@@ -8131,14 +8268,24 @@ fail:
         }
         ImVec2 long_press_pos;
         const bool touch_context =
-            select_mode && !stats.loading && scene_hovered_object_index >= 0 &&
+            select_mode && !stats.loading &&
+            (scene_hovered_object_index >= 0 || marker_context_available) &&
             touch_input::consume_long_press_in_rect(origin, end, &long_press_pos);
-        if (!stats.loading && select_mode && scene_hovered_object_index >= 0 &&
+        if (!stats.loading && select_mode &&
+            (scene_hovered_object_index >= 0 || marker_context_available) &&
             ((hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) || touch_context)) {
-            scene_context_object_index = scene_hovered_object_index;
-            ImGui::OpenPopup("ScenePreviewObjectContext");
+            if (scene_hovered_object_index >= 0) {
+                scene_context_object_index = scene_hovered_object_index;
+                ImGui::OpenPopup("ScenePreviewObjectContext");
+            } else {
+                scene_context_marker_index = scene_hovered_marker_index;
+                ImGui::OpenPopup("ScenePreviewMarkerContext");
+            }
         }
         result.context_action = render_scene_context_popup(ui_text, context_menu_options);
+        if (result.context_action.kind == Canvas3DSceneContextActionKind::None) {
+            result.context_action = render_scene_marker_context_popup(ui_text);
+        }
         return result;
     }
 
@@ -8383,6 +8530,7 @@ fail:
     // Visibility is view-only state and rewrites only each chunk's dynamic IBs.
     std::vector<SceneMarkerChunkGpu> scene_marker_chunks;
     std::vector<SceneMarkerGpuLocation> scene_marker_locations;
+    std::array<std::vector<size_t>, k_scene_marker_list_kind_count> scene_marker_target_indices;
     Canvas3DSceneMarkerVisibility scene_marker_visibility;
     ImFont* scene_marker_font = nullptr;
     float scene_marker_font_size = 0.0f;
@@ -8419,9 +8567,11 @@ fail:
     int scene_hovered_object_index = -1;
     int scene_hovered_marker_index = -1;
     int scene_context_object_index = -1;
+    int scene_context_marker_index = -1;
     SceneHighlightBatch scene_hover_highlight_batch;
     SceneHighlightBatch scene_focus_highlight_batch;
     int scene_focus_highlight_object_index = -1;
+    int scene_focus_highlight_marker_index = -1;
     std::string scene_focus_highlight_model_path;
     double scene_focus_highlight_world[16] = {
         1.0, 0.0, 0.0, 0.0,
@@ -8588,6 +8738,11 @@ bool Canvas3D::jump_scene_camera_to_distance(double distance) {
 
 bool Canvas3D::jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row) {
     return impl_->jump_scene_camera_to_object(kind, source_row);
+}
+
+bool Canvas3D::jump_scene_camera_to_marker(Canvas3DSceneMarkerListKind list_kind,
+                                            size_t row_index) {
+    return impl_->jump_scene_camera_to_marker(list_kind, row_index);
 }
 
 bool Canvas3D::set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,

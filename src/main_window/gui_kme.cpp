@@ -6195,6 +6195,35 @@ void App::render_scene_preview_window() {
         scene_ui_text.locate_structure_list = tr("menu.locate_in_structure_list").c_str();
         scene_ui_text.locate_structure_put_between_list = tr("menu.locate_in_structure_put_between_list").c_str();
         scene_ui_text.locate_repeater_list = tr("menu.locate_in_repeater_list").c_str();
+        scene_ui_text.locate_signal_list = tr("menu.locate_in_signal_list").c_str();
+        auto set_marker_list_label = [&scene_ui_text](Canvas3DSceneMarkerListKind kind,
+                                                       const std::string& label) {
+            scene_ui_text.locate_marker_list_labels[static_cast<size_t>(kind)] = label.c_str();
+        };
+        set_marker_list_label(Canvas3DSceneMarkerListKind::Beacon,
+                              tr("menu.locate_in_beacon_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::Irregularity,
+                              tr("menu.locate_in_irregularity_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::MapSound,
+                              tr("menu.locate_in_map_sound_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::MapSound3D,
+                              tr("menu.locate_in_map_sound_3d_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::RollingNoise,
+                              tr("menu.locate_in_rolling_noise_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::FlangeNoise,
+                              tr("menu.locate_in_flange_noise_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::JointNoise,
+                              tr("menu.locate_in_joint_noise_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::Background,
+                              tr("menu.locate_in_background_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::Adhesion,
+                              tr("menu.locate_in_adhesion_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::CabIlluminance,
+                              tr("menu.locate_in_cab_illuminance_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::Fog,
+                              tr("menu.locate_in_fog_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::DrawDistance,
+                              tr("menu.locate_in_draw_distance_list"));
         scene_ui_text.jump_to_repeater_start_position = tr("menu.jump_to_repeater_start_position").c_str();
         scene_ui_text.jump_to_repeater_end_or_change_position =
             tr("menu.jump_to_repeater_end_or_change_position").c_str();
@@ -6217,6 +6246,10 @@ void App::render_scene_preview_window() {
             locate_structure_row_in_list(scene_action.row_index);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::LocateRepeater) {
             locate_repeater_row_in_list(scene_action.row_index);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::LocateSignal) {
+            locate_signal_row_in_list(scene_action.row_index);
+        } else if (scene_action.kind == Canvas3DSceneContextActionKind::LocateMarkerList) {
+            locate_scene_marker_row_in_list(scene_action.marker_list_kind, scene_action.row_index);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::EditElement) {
             request_element_inspector(scene_action.edit_id, scene_action.row_kind);
         } else if (scene_action.kind == Canvas3DSceneContextActionKind::DeleteElement) {

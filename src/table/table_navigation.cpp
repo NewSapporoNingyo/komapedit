@@ -153,6 +153,16 @@ void App::locate_signal_row_in_list(size_t row_index) {
     signal_list_highlight_row_ = static_cast<int>(row_index);
 }
 
+void App::locate_signal_row_in_scene_preview(size_t row_index) {
+    if (!can_locate_scene_preview_row()) return;
+    if (!scene_preview_canvas_->jump_scene_camera_to_object(
+            Canvas3DSceneObjectKind::Signal, row_index)) {
+        return;
+    }
+    show_scene_preview_window_ = true;
+    focus_scene_preview_next_ = true;
+}
+
 void App::locate_standard_marker_on_plan(
     const std::vector<std::optional<PlanMarker>>& cache,
     size_t row_index, bool& markers_visible) {
@@ -318,6 +328,103 @@ void App::locate_draw_distance_row_in_list(size_t row_index) {
                                    show_draw_distances_window_, focus_draw_distances_next_,
                                    draw_distance_list_scroll_row_,
                                    draw_distance_list_highlight_row_);
+}
+
+void App::locate_scene_marker_row_in_list(
+    Canvas3DSceneMarkerListKind list_kind, size_t row_index) {
+    switch (list_kind) {
+    case Canvas3DSceneMarkerListKind::Beacon:
+        locate_beacon_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::Irregularity:
+        locate_irregularity_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::MapSound:
+        locate_map_sound_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::MapSound3D:
+        locate_map_sound_3d_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::RollingNoise:
+        locate_rolling_noise_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::FlangeNoise:
+        locate_flange_noise_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::JointNoise:
+        locate_joint_noise_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::Background:
+        locate_background_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::Adhesion:
+        locate_adhesion_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::CabIlluminance:
+        locate_cab_illuminance_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::Fog:
+        locate_fog_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::DrawDistance:
+        locate_draw_distance_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::None:
+    case Canvas3DSceneMarkerListKind::Count:
+        return;
+    }
+}
+
+void App::locate_scene_marker_row_in_scene_preview(
+    Canvas3DSceneMarkerListKind list_kind, size_t row_index) {
+    if (!can_locate_scene_preview_row()) return;
+
+    switch (list_kind) {
+    case Canvas3DSceneMarkerListKind::Beacon:
+        show_beacon_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::Irregularity:
+        show_irregularity_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::MapSound:
+        show_map_sound_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::MapSound3D:
+        show_map_sound_3d_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::RollingNoise:
+        show_rolling_noise_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::FlangeNoise:
+        show_flange_noise_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::JointNoise:
+        show_joint_noise_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::Background:
+        show_background_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::Adhesion:
+        show_adhesion_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::CabIlluminance:
+        show_cab_illuminance_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::Fog:
+        show_fog_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::DrawDistance:
+        show_draw_distance_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::None:
+    case Canvas3DSceneMarkerListKind::Count:
+        return;
+    }
+
+    sync_scene_preview_marker_visibility();
+    if (!scene_preview_canvas_->jump_scene_camera_to_marker(list_kind, row_index)) return;
+    show_scene_preview_window_ = true;
+    focus_scene_preview_next_ = true;
 }
 
 bool App::can_locate_scene_preview_row() const {
