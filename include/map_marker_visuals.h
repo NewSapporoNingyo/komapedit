@@ -60,6 +60,12 @@ enum class MapMarkerColorRole : std::uint8_t {
     Black
 };
 
+enum class MapMarkerIconVariant : std::uint8_t {
+    Default,
+    SpeedLimitBegin,
+    SpeedLimitEnd
+};
+
 struct MapMarkerIconPrimitive {
     MapMarkerPrimitiveKind kind = MapMarkerPrimitiveKind::Polyline;
     MapMarkerColorRole color = MapMarkerColorRole::Theme;
@@ -79,7 +85,9 @@ struct MapMarkerIconRecipe {
 ImVec4 map_marker_theme_color(MapMarkerVisualKind kind);
 ImU32 map_marker_theme_color_u32(MapMarkerVisualKind kind, float alpha = 1.0f);
 ImVec4 map_marker_role_color(MapMarkerVisualKind kind, MapMarkerColorRole role);
-MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind);
+MapMarkerIconRecipe map_marker_icon_recipe(
+    MapMarkerVisualKind kind,
+    MapMarkerIconVariant variant = MapMarkerIconVariant::Default);
 
 void draw_map_marker_icon(ImDrawList* draw,
                           MapMarkerVisualKind kind,

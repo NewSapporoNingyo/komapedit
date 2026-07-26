@@ -6079,7 +6079,12 @@ void App::sync_scene_preview_marker_visibility() {
              MapMarkerVisualKind::CurveEnd}) {
         set_marker(kind, show_curve_values_);
     }
-    set_label(MapMarkerVisualKind::CurveCircularStart, show_curve_values_);
+    for (MapMarkerVisualKind kind : {
+             MapMarkerVisualKind::CurveTransitionStart,
+             MapMarkerVisualKind::CurveCircularStart,
+             MapMarkerVisualKind::CurveEnd}) {
+        set_label(kind, show_curve_values_);
+    }
 
     for (MapMarkerVisualKind kind : {
              MapMarkerVisualKind::GradientTransitionStart,
@@ -6087,8 +6092,12 @@ void App::sync_scene_preview_marker_visibility() {
              MapMarkerVisualKind::GradientEnd}) {
         set_marker(kind, show_gradient_pos_);
     }
-    set_label(MapMarkerVisualKind::GradientStart,
-              show_gradient_pos_ && show_gradient_values_);
+    for (MapMarkerVisualKind kind : {
+             MapMarkerVisualKind::GradientTransitionStart,
+             MapMarkerVisualKind::GradientStart,
+             MapMarkerVisualKind::GradientEnd}) {
+        set_label(kind, show_gradient_pos_ && show_gradient_values_);
+    }
 
     set_marker_and_label(MapMarkerVisualKind::SpeedLimit, show_speedlimits_);
     set_marker_and_label(MapMarkerVisualKind::Beacon, show_beacon_markers_);

@@ -189,6 +189,32 @@ MapMarkerIconRecipe gradient_end_recipe() {
     return recipe;
 }
 
+MapMarkerIconRecipe speed_limit_begin_recipe() {
+    MapMarkerIconRecipe recipe;
+    const std::initializer_list<ImVec2> points = {
+        ImVec2(-0.78f, -0.78f), ImVec2(0.78f, -0.78f),
+        ImVec2(0.78f, 0.78f), ImVec2(-0.78f, 0.78f)};
+    append_polygon(recipe, MapMarkerColorRole::White, points);
+    append_polyline(recipe, MapMarkerColorRole::Black, points, 0.12f, true);
+    return recipe;
+}
+
+MapMarkerIconRecipe speed_limit_end_recipe() {
+    MapMarkerIconRecipe recipe;
+    const std::initializer_list<ImVec2> outline = {
+        ImVec2(-0.92f, -0.72f), ImVec2(0.92f, -0.72f),
+        ImVec2(0.92f, 0.72f), ImVec2(-0.92f, 0.72f)};
+    append_polygon(recipe, MapMarkerColorRole::Black, outline);
+    append_polygon(recipe, MapMarkerColorRole::White,
+                   {ImVec2(-0.84f, -0.64f), ImVec2(0.0f, 0.0f),
+                    ImVec2(-0.84f, 0.64f)});
+    append_polygon(recipe, MapMarkerColorRole::White,
+                   {ImVec2(0.84f, -0.64f), ImVec2(0.84f, 0.64f),
+                    ImVec2(0.0f, 0.0f)});
+    append_polyline(recipe, MapMarkerColorRole::Black, outline, 0.10f, true);
+    return recipe;
+}
+
 MapMarkerIconRecipe beacon_recipe() {
     MapMarkerIconRecipe recipe;
     const std::initializer_list<ImVec2> points = {
@@ -420,7 +446,8 @@ ImVec4 map_marker_role_color(MapMarkerVisualKind kind, MapMarkerColorRole role) 
     return map_marker_theme_color(kind);
 }
 
-MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind) {
+MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind,
+                                           MapMarkerIconVariant variant) {
     switch (kind) {
         case MapMarkerVisualKind::Station:
             return station_recipe();
@@ -437,6 +464,12 @@ MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind) {
         case MapMarkerVisualKind::GradientEnd:
             return gradient_end_recipe();
         case MapMarkerVisualKind::SpeedLimit: {
+            if (variant == MapMarkerIconVariant::SpeedLimitBegin) {
+                return speed_limit_begin_recipe();
+            }
+            if (variant == MapMarkerIconVariant::SpeedLimitEnd) {
+                return speed_limit_end_recipe();
+            }
             MapMarkerIconRecipe recipe;
             append_polyline(recipe, MapMarkerColorRole::Shadow,
                             {ImVec2(-0.88f, 0.0f), ImVec2(0.88f, 0.0f)}, 0.28f);

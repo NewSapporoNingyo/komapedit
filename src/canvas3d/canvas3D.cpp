@@ -36,6 +36,7 @@
 #include <cstring>
 #include <map>
 #include <filesystem>
+#include <initializer_list>
 #include <iterator>
 #include <mutex>
 #include <limits>
@@ -1363,6 +1364,25 @@ std::string canvas3d_scene_gradient_marker_label(double gradient) {
     return label;
 }
 
+std::string canvas3d_scene_table_marker_label(
+    const TableRow& row,
+    std::initializer_list<const char*> keys,
+    const char* separator = " ",
+    const char* empty_value = nullptr) {
+    std::string label;
+    size_t key_index = 0;
+    for (const char* key : keys) {
+        if (key_index++ != 0) label += separator;
+        const std::string& value = table_cell(row, key);
+        if (value.empty() && empty_value) {
+            label += empty_value;
+        } else {
+            label += value;
+        }
+    }
+    return label;
+}
+
 void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model) {
     scene.markers.clear();
     const Canvas3DTrackPath* own_track = scene_own_track_path(scene);
@@ -1381,13 +1401,16 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     auto append_marker = [&](MapMarkerVisualKind kind,
                              double distance,
-                             std::string label = {}) {
+                             std::string label = {},
+                             MapMarkerIconVariant icon_variant =
+                                 MapMarkerIconVariant::Default) {
         if (!std::isfinite(distance)) return;
         std::optional<Canvas3DTrackPoint> point =
             scene_sample_track_path_points(*own_track, distance);
         if (!point) return;
         Canvas3DSceneMarker marker;
         marker.kind = kind;
+        marker.icon_variant = icon_variant;
         marker.track_point = *point;
         marker.label = std::move(label);
         scene.markers.push_back(std::move(marker));
@@ -1401,11 +1424,12 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     for (const TrackEvent& event : model.own_events) {
         if (event.key == "radius") {
             if (event.flag == "bt") {
-                append_marker(MapMarkerVisualKind::CurveTransitionStart, event.distance);
+                append_marker(MapMarkerVisualKind::CurveTransitionStart, event.distance,
+                              "Curve\nTr.");
             } else if (event.flag.empty() && event.value_number &&
                        std::isfinite(event.number)) {
                 if (std::abs(event.number) <= k_scene_route_display_zero_epsilon) {
-                    append_marker(MapMarkerVisualKind::CurveEnd, event.distance);
+                    append_marker(MapMarkerVisualKind::CurveEnd, event.distance, "End");
                 } else {
                     append_marker(MapMarkerVisualKind::CurveCircularStart,
                                   event.distance,
@@ -1414,11 +1438,12 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
             }
         } else if (event.key == "gradient") {
             if (event.flag == "bt") {
-                append_marker(MapMarkerVisualKind::GradientTransitionStart, event.distance);
+                append_marker(MapMarkerVisualKind::GradientTransitionStart, event.distance,
+                              "Gradient\nTr.");
             } else if (event.flag.empty() && event.value_number &&
                        std::isfinite(event.number)) {
                 if (std::abs(event.number) <= k_scene_route_display_zero_epsilon) {
-                    append_marker(MapMarkerVisualKind::GradientEnd, event.distance);
+                    append_marker(MapMarkerVisualKind::GradientEnd, event.distance, "End");
                 } else {
                     append_marker(MapMarkerVisualKind::GradientStart,
                                   event.distance,
@@ -1430,37 +1455,67 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     for (const SpeedLimit& speed : model.speedlimits) {
         char value[64] = {};
-        std::string label;
         if (speed.has_speed && std::isfinite(speed.speed)) {
             format_scene_route_number(value, sizeof(value), speed.speed);
-            label = value;
+            append_marker(
+                MapMarkerVisualKind::SpeedLimit, speed.distance, value,
+                MapMarkerIconVariant::SpeedLimitBegin);
+        } else {
+            append_marker(
+                MapMarkerVisualKind::SpeedLimit, speed.distance, {},
+                MapMarkerIconVariant::SpeedLimitEnd);
         }
-        append_marker(MapMarkerVisualKind::SpeedLimit, speed.distance, std::move(label));
     }
 
     auto append_table_markers = [&](const std::vector<TableRow>& rows,
                                     MapMarkerVisualKind kind,
-                                    const char* label_key = nullptr) {
+                                    const auto& label_for_row) {
         for (const TableRow& row : rows) {
-            std::string label;
-            if (label_key) label = table_cell(row, label_key);
+            std::string label = label_for_row(row);
             append_marker(kind, table_cell_number(row, "distance"), std::move(label));
         }
     };
 
-    append_table_markers(model.beacons, MapMarkerVisualKind::Beacon, "type");
-    append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain, "passTime");
-    append_table_markers(model.irregularities, MapMarkerVisualKind::Irregularity);
-    append_table_markers(model.map_sounds, MapMarkerVisualKind::MapSound, "soundKey");
-    append_table_markers(model.map_sound_3d, MapMarkerVisualKind::MapSound3D, "soundKey");
-    append_table_markers(model.rolling_noises, MapMarkerVisualKind::RollingNoise);
-    append_table_markers(model.flange_noises, MapMarkerVisualKind::FlangeNoise);
-    append_table_markers(model.joint_noises, MapMarkerVisualKind::JointNoise);
-    append_table_markers(model.backgrounds, MapMarkerVisualKind::Background, "structureKey");
-    append_table_markers(model.adhesions, MapMarkerVisualKind::Adhesion);
-    append_table_markers(model.cab_illuminance, MapMarkerVisualKind::CabIlluminance);
-    append_table_markers(model.fogs, MapMarkerVisualKind::Fog);
-    append_table_markers(model.draw_distances, MapMarkerVisualKind::DrawDistance, "value");
+    const auto no_label = [](const TableRow&) { return std::string{}; };
+    const auto field_label = [](const char* key) {
+        return [key](const TableRow& row) {
+            return canvas3d_scene_table_marker_label(row, {key});
+        };
+    };
+
+    append_table_markers(model.beacons, MapMarkerVisualKind::Beacon,
+                         [](const TableRow& row) {
+                             return canvas3d_scene_table_marker_label(
+                                 row, {"type", "section", "sendData"});
+                         });
+    append_table_markers(model.pretrains, MapMarkerVisualKind::PreTrain,
+                         field_label("passTime"));
+    append_table_markers(model.irregularities, MapMarkerVisualKind::Irregularity, no_label);
+    append_table_markers(model.map_sounds, MapMarkerVisualKind::MapSound,
+                         field_label("soundKey"));
+    append_table_markers(model.map_sound_3d, MapMarkerVisualKind::MapSound3D,
+                         field_label("soundKey"));
+    append_table_markers(model.rolling_noises, MapMarkerVisualKind::RollingNoise,
+                         field_label("index"));
+    append_table_markers(model.flange_noises, MapMarkerVisualKind::FlangeNoise, no_label);
+    append_table_markers(model.joint_noises, MapMarkerVisualKind::JointNoise,
+                         field_label("index"));
+    append_table_markers(model.backgrounds, MapMarkerVisualKind::Background,
+                         field_label("structureKey"));
+    append_table_markers(model.adhesions, MapMarkerVisualKind::Adhesion, no_label);
+    append_table_markers(model.cab_illuminance, MapMarkerVisualKind::CabIlluminance,
+                         field_label("value"));
+    append_table_markers(model.fogs, MapMarkerVisualKind::Fog,
+                         [](const TableRow& row) {
+                             std::string label = canvas3d_scene_table_marker_label(
+                                 row, {"density"}, " ", "-");
+                             label += '\n';
+                             label += canvas3d_scene_table_marker_label(
+                                 row, {"red", "green", "blue"}, " ", "-");
+                             return label;
+                         });
+    append_table_markers(model.draw_distances, MapMarkerVisualKind::DrawDistance,
+                         field_label("value"));
 
     std::stable_sort(scene.markers.begin(), scene.markers.end(),
                      [](const Canvas3DSceneMarker& a,
@@ -5638,34 +5693,64 @@ fail:
         float font_size,
         const std::string& text,
         float face_sign,
-        ImU32 color) {
+        ImU32 color,
+        float text_height,
+        float center_y,
+        float max_width) {
         if (text.empty() || font_size <= 0.0f || baked.Size <= 0.0f) return;
-        const ImVec2 measured = font.CalcTextSizeA(
-            font_size, std::numeric_limits<float>::max(), 0.0f,
-            text.c_str(), text.c_str() + text.size());
-        float scale = k_scene_marker_label_height / baked.Size;
-        if (measured.x > 0.0f) {
-            scale = std::min(
-                scale, k_scene_marker_label_max_width / measured.x);
-        }
-        const float top_y =
-            k_scene_marker_label_center_y + measured.y * scale * 0.5f;
-        float cursor_x = measured.x * scale * -0.5f;
-        const char* cursor = text.c_str();
-        const char* end = cursor + text.size();
-        while (cursor < end) {
-            const unsigned int codepoint = decode_scene_marker_utf8(cursor, end);
-            const ImFontGlyph* glyph = baked.FindGlyph(
-                static_cast<ImWchar>(codepoint));
-            if (!glyph) continue;
-            const float advance = glyph->AdvanceX * scale;
-            if (glyph->Visible) {
-                append_scene_marker_glyph(
-                    vertices, indices, origin, center, right, up, forward,
-                    baked, static_cast<ImWchar>(codepoint),
-                    cursor_x, top_y, scale, face_sign, color);
+        const char* text_begin = text.c_str();
+        const char* text_end = text_begin + text.size();
+        float max_line_width = 0.0f;
+        size_t line_count = 0;
+        for (const char* line_begin = text_begin;;) {
+            const char* line_end = std::find(line_begin, text_end, '\n');
+            const char* display_end = line_end;
+            if (display_end > line_begin && *(display_end - 1) == '\r') {
+                --display_end;
             }
-            cursor_x += advance;
+            const ImVec2 measured = font.CalcTextSizeA(
+                font_size, std::numeric_limits<float>::max(), 0.0f,
+                line_begin, display_end);
+            max_line_width = std::max(max_line_width, measured.x);
+            ++line_count;
+            if (line_end == text_end) break;
+            line_begin = line_end + 1;
+        }
+        float scale = text_height / baked.Size;
+        if (max_line_width > 0.0f) {
+            scale = std::min(scale, max_width / max_line_width);
+        }
+        const float line_height = font_size * scale;
+        float top_y = center_y +
+            line_height * static_cast<float>(line_count) * 0.5f;
+        for (const char* line_begin = text_begin;;) {
+            const char* line_end = std::find(line_begin, text_end, '\n');
+            const char* display_end = line_end;
+            if (display_end > line_begin && *(display_end - 1) == '\r') {
+                --display_end;
+            }
+            const ImVec2 measured = font.CalcTextSizeA(
+                font_size, std::numeric_limits<float>::max(), 0.0f,
+                line_begin, display_end);
+            float cursor_x = measured.x * scale * -0.5f;
+            const char* cursor = line_begin;
+            while (cursor < display_end) {
+                const unsigned int codepoint = decode_scene_marker_utf8(cursor, display_end);
+                const ImFontGlyph* glyph = baked.FindGlyph(
+                    static_cast<ImWchar>(codepoint));
+                if (!glyph) continue;
+                const float advance = glyph->AdvanceX * scale;
+                if (glyph->Visible) {
+                    append_scene_marker_glyph(
+                        vertices, indices, origin, center, right, up, forward,
+                        baked, static_cast<ImWchar>(codepoint),
+                        cursor_x, top_y, scale, face_sign, color);
+                }
+                cursor_x += advance;
+            }
+            if (line_end == text_end) break;
+            top_y -= line_height;
+            line_begin = line_end + 1;
         }
     }
 
@@ -5707,8 +5792,10 @@ fail:
         DVec3 forward,
         ImFontBaked& baked,
         MapMarkerVisualKind kind,
+        MapMarkerIconVariant variant,
         float face_sign) {
-        const MapMarkerIconRecipe recipe = map_marker_icon_recipe(kind);
+        const MapMarkerIconRecipe recipe =
+            map_marker_icon_recipe(kind, variant);
         for (size_t primitive_index = 0;
              primitive_index < recipe.primitive_count;
              ++primitive_index) {
@@ -5971,7 +6058,22 @@ fail:
                     face_sign, board_color_u32);
                 append_scene_marker_icon(
                     vertices, indices, gpu_chunk.origin, center,
-                    right, up, forward, *baked, marker.kind, face_sign);
+                    right, up, forward, *baked, marker.kind,
+                    marker.icon_variant, face_sign);
+                const bool label_in_icon =
+                    marker.icon_variant ==
+                    MapMarkerIconVariant::SpeedLimitBegin;
+                if (label_in_icon && !marker.label.empty()) {
+                    const ImU32 text_color =
+                        ImGui::ColorConvertFloat4ToU32(
+                            map_marker_role_color(
+                                marker.kind, MapMarkerColorRole::Black));
+                    append_scene_marker_text(
+                        vertices, indices, gpu_chunk.origin, center,
+                        right, up, forward, *font, *baked, font_size,
+                        marker.label, face_sign, text_color,
+                        0.22f, 0.72f, 0.25f);
+                }
                 gpu_chunk.ranges.push_back({
                     marker.kind,
                     marker_first,
@@ -5980,7 +6082,7 @@ fail:
                     false
                 });
 
-                if (!marker.label.empty()) {
+                if (!label_in_icon && !marker.label.empty()) {
                     const std::uint32_t label_first =
                         static_cast<std::uint32_t>(indices.size());
                     const ImU32 outline_color =
@@ -6003,12 +6105,18 @@ fail:
                             vertices, indices, gpu_chunk.origin,
                             shifted_center, right, up, forward,
                             *font, *baked, font_size, marker.label,
-                            face_sign, outline_color);
+                            face_sign, outline_color,
+                            k_scene_marker_label_height,
+                            k_scene_marker_label_center_y,
+                            k_scene_marker_label_max_width);
                     }
                     append_scene_marker_text(
                         vertices, indices, gpu_chunk.origin, center,
                         right, up, forward, *font, *baked, font_size,
-                        marker.label, face_sign, text_color);
+                        marker.label, face_sign, text_color,
+                        k_scene_marker_label_height,
+                        k_scene_marker_label_center_y,
+                        k_scene_marker_label_max_width);
                     gpu_chunk.ranges.push_back({
                         marker.kind,
                         label_first,

@@ -159,6 +159,7 @@ struct Canvas3DSceneRouteInfo {
 
 struct Canvas3DSceneMarker {
     MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
+    MapMarkerIconVariant icon_variant = MapMarkerIconVariant::Default;
     Canvas3DTrackPoint track_point;
     std::string label;
 };
