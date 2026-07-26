@@ -3569,12 +3569,14 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    bool find_structure_jump_target(size_t source_row, SceneObjectJumpTarget& target) const {
+    bool find_placed_object_jump_target(Canvas3DSceneObjectKind kind,
+                                        size_t source_row,
+                                        SceneObjectJumpTarget& target) const {
         for (const SceneChunk& chunk : scene_chunks) {
             for (const SceneInstance& instance : chunk.instances) {
                 if (!scene_object_index_valid(instance.object_index)) continue;
                 const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(instance.object_index)];
-                if (object.kind != Canvas3DSceneObjectKind::Structure || object.source_row != source_row) continue;
+                if (object.kind != kind || object.source_row != source_row) continue;
                 if (!scene_model_center_world(instance.model_path, instance.world, target.center)) return false;
                 target.object_index = instance.object_index;
                 target.distance = instance.distance;
@@ -3646,7 +3648,10 @@ struct Canvas3D::Impl {
     bool find_scene_object_jump_target(Canvas3DSceneObjectKind kind,
                                        size_t source_row,
                                        SceneObjectJumpTarget& target) const {
-        if (kind == Canvas3DSceneObjectKind::Structure) return find_structure_jump_target(source_row, target);
+        if (kind == Canvas3DSceneObjectKind::Structure ||
+            kind == Canvas3DSceneObjectKind::Signal) {
+            return find_placed_object_jump_target(kind, source_row, target);
+        }
         if (kind == Canvas3DSceneObjectKind::Repeater) return find_repeater_jump_target(source_row, target);
         return false;
     }
