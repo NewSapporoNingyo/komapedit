@@ -311,14 +311,13 @@ MapMarkerIconRecipe glyph_recipe(char glyph, MapMarkerColorRole outline) {
 
 MapMarkerIconRecipe joint_recipe() {
     MapMarkerIconRecipe recipe;
+    const std::initializer_list<ImVec2> points = {
+        ImVec2(0.72f, -0.68f), ImVec2(-0.72f, 0.60f),
+        ImVec2(0.82f, 0.60f)};
     append_polyline(recipe, MapMarkerColorRole::Outline,
-                    {ImVec2(-0.78f, 0.68f), ImVec2(-0.28f, 0.10f), ImVec2(0.80f, -0.68f)}, 0.34f);
-    append_polyline(recipe, MapMarkerColorRole::Outline,
-                    {ImVec2(-0.28f, 0.10f), ImVec2(0.80f, 0.68f)}, 0.34f);
+                    points, 0.34f);
     append_polyline(recipe, MapMarkerColorRole::Theme,
-                    {ImVec2(-0.78f, 0.68f), ImVec2(-0.28f, 0.10f), ImVec2(0.80f, -0.68f)}, 0.17f);
-    append_polyline(recipe, MapMarkerColorRole::Theme,
-                    {ImVec2(-0.28f, 0.10f), ImVec2(0.80f, 0.68f)}, 0.17f);
+                    points, 0.17f);
     return recipe;
 }
 
