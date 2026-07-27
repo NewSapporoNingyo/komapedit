@@ -1533,6 +1533,12 @@ void App::apply_edit_metadata_result(LoadResult result) {
             scene_preview_dirty_ = true;
             scene_preview_preserve_models_on_rebuild_ = true;
             scene_preview_preserve_camera_on_rebuild_ = true;
+        } else if (!scene_preview_canvas_->refresh_scene_route_stations(model_, scene_error)) {
+            add_log("[warn]gui_kme.cpp: 3D scene marker metadata refresh failed, scheduling full rebuild: " +
+                    (scene_error.empty() ? std::string("unknown error") : scene_error));
+            scene_preview_dirty_ = true;
+            scene_preview_preserve_models_on_rebuild_ = true;
+            scene_preview_preserve_camera_on_rebuild_ = true;
         }
     }
     add_log("[info]gui_kme.cpp: edit metadata loaded");
