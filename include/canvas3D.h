@@ -358,10 +358,11 @@ struct Canvas3DSceneContextAction {
 
 enum class Canvas3DSceneEditKind {
     Structure,
+    Signal,
     Repeater,
 };
 
-struct Canvas3DStructureEditTarget {
+struct Canvas3DPlacementEditTarget {
     Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure;
     std::string edit_id;
     std::string track_key;
@@ -383,7 +384,7 @@ enum class Canvas3DSceneDragAxis {
     Z,
 };
 
-struct Canvas3DStructureDragUpdate {
+struct Canvas3DPlacementDragUpdate {
     Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure;
     std::string edit_id;
     Canvas3DSceneDragAxis axis = Canvas3DSceneDragAxis::None;
@@ -394,7 +395,7 @@ struct Canvas3DStructureDragUpdate {
 
 struct Canvas3DSceneFrameResult {
     Canvas3DSceneContextAction context_action;
-    std::optional<Canvas3DStructureDragUpdate> structure_drag;
+    std::optional<Canvas3DPlacementDragUpdate> placement_drag;
     std::optional<Canvas3DSceneMarkerTarget> hovered_marker;
 };
 
@@ -458,13 +459,13 @@ public:
     bool jump_scene_camera_to_distance(double distance);
     bool jump_scene_camera_to_object(Canvas3DSceneObjectKind kind, size_t source_row);
     bool jump_scene_camera_to_marker(Canvas3DSceneMarkerListKind list_kind, size_t row_index);
-    bool set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
+    bool set_scene_placement_edit_target(const Canvas3DPlacementEditTarget& target,
                                          bool show_gizmo);
-    bool update_scene_structure_instance(const Canvas3DStructureEditTarget& target);
-    bool set_scene_repeater_edit_target(const Canvas3DStructureEditTarget& target,
+    bool update_scene_placement_instance(const Canvas3DPlacementEditTarget& target);
+    bool set_scene_repeater_edit_target(const Canvas3DPlacementEditTarget& target,
                                         bool show_gizmo);
-    bool update_scene_repeater_segment(const Canvas3DStructureEditTarget& target);
-    void clear_scene_structure_edit_target();
+    bool update_scene_repeater_segment(const Canvas3DPlacementEditTarget& target);
+    void clear_scene_placement_edit_target();
     Canvas3DSceneFrameResult render_scene_preview(
         ImVec2 size,
         const Canvas3DSceneUiText& ui_text = Canvas3DSceneUiText{},

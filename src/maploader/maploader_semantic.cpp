@@ -271,6 +271,20 @@ void changed_track_key(SemanticWriter& out, const KvMapSnapshot& snapshot,
     }
 }
 
+void changed_required_number_value(SemanticWriter& out,
+                                   const KvMapSnapshot& snapshot,
+                                   const MapEditChange* change,
+                                   const char* key,
+                                   const KvValue& fallback) {
+    out.label(key);
+    const std::string* input = changed_field(change, key);
+    if (input) {
+        out.value(Value::num(parse_changed_number(*input, key)));
+    } else {
+        out.value(snapshot, fallback);
+    }
+}
+
 void write_structure_model(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const KvStructureModelRow& row,
                            const MapEditChange* change = nullptr) {
@@ -316,6 +330,24 @@ void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     changed_optional_number(out, snapshot, change, "door", row.door);
     changed_optional_number(out, snapshot, change, "margin1", row.margin1);
     changed_optional_number(out, snapshot, change, "margin2", row.margin2);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_signal_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                      const KvSignalPutRow& row,
+                      const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_value(out, snapshot, change, "signalAspectKey", row.signal_aspect_key);
+    changed_required_number_value(out, snapshot, change, "section", row.section);
+    changed_track_key(out, snapshot, change, "trackKey", row.track_key);
+    field(out, "x", changed_number(change, "x", row.x));
+    field(out, "y", changed_number(change, "y", row.y));
+    field(out, "z", changed_number(change, "z", row.z));
+    field(out, "rx", changed_number(change, "rx", row.rx));
+    field(out, "ry", changed_number(change, "ry", row.ry));
+    field(out, "rz", changed_number(change, "rz", row.rz));
+    field(out, "tilt", changed_number(change, "tilt", row.tilt));
+    field(out, "span", changed_number(change, "span", row.span));
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
@@ -385,6 +417,9 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "method", "structureKey", "trackKey1", "trackKey2", "flag"};
     } else if (target.row_kind == "station.put") {
         allowed = {"distance", "stationKey", "door", "margin1", "margin2"};
+    } else if (target.row_kind == "signal.put") {
+        allowed = {"distance", "form", "signalAspectKey", "section", "trackKey",
+                   "x", "y", "z", "rx", "ry", "rz", "tilt", "span"};
     }
     if (target.row_kind == "repeater") {
         validate_repeater_edit_fields(change);
@@ -614,14 +649,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvSignalPutRow& row = snapshot.signal_puts[i];
         emit_element(output, full, snapshot, row.metadata, "signal.put", "signal.data",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "signalAspectKey", row.signal_aspect_key);
-            field(out, snapshot, "section", row.section);
-            field(out, snapshot, "trackKey", row.track_key);
-            field(out, "x", row.x); field(out, "y", row.y); field(out, "z", row.z);
-            field(out, "rx", row.rx); field(out, "ry", row.ry); field(out, "rz", row.rz);
-            field(out, "tilt", row.tilt); field(out, "span", row.span);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_signal_put(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.beacon_count; ++i) {
@@ -819,6 +847,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("station.put target row is out of bounds");
         }
         write_station_put(out, snapshot, snapshot.station_puts[target.row_index], &change);
+    } else if (target.row_kind == "signal.put") {
+        if (target.row_index >= snapshot.signal_put_count || !snapshot.signal_puts) {
+            throw std::runtime_error("signal.put target row is out of bounds");
+        }
+        write_signal_put(out, snapshot, snapshot.signal_puts[target.row_index], &change);
     } else if (target.row_kind == "repeater") {
         if (target.row_index >= snapshot.repeater_count || !snapshot.repeaters) {
             throw std::runtime_error("repeater target row is out of bounds");

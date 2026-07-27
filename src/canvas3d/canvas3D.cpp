@@ -698,7 +698,7 @@ struct SceneChunk {
     std::vector<size_t> repeater_indices;
 };
 
-struct SceneStructureInstanceLocation {
+struct ScenePlacementInstanceLocation {
     size_t source_index = 0;
     size_t chunk_index = 0;
     size_t chunk_instance_index = 0;
@@ -722,7 +722,7 @@ struct SceneStructureEditState {
     std::string edit_id;
     Canvas3DModelInstance baseline_instance;
     Canvas3DRepeaterSegment baseline_repeater;
-    Canvas3DStructureEditTarget current;
+    Canvas3DPlacementEditTarget current;
     DVec3 origin;
     std::array<DVec3, 3> axes{};
     std::array<SceneGizmoAxisProjection, 3> projection{};
@@ -2720,7 +2720,7 @@ struct Canvas3D::Impl {
             release_scene_resources();
         }
         scene_structure_edit = SceneStructureEditState{};
-        scene_structure_locations.clear();
+        scene_placement_locations.clear();
         scene_repeater_locations.clear();
         scene_data = std::move(scene);
         if (++scene_geometry_generation == 0) ++scene_geometry_generation;
@@ -2814,7 +2814,7 @@ struct Canvas3D::Impl {
             return false;
         }
 
-        clear_scene_structure_edit_target();
+        clear_scene_placement_edit_target();
 
         std::vector<Canvas3DSceneObject> old_objects = std::move(scene_data.objects);
         std::vector<Canvas3DModelInstance> old_instances = std::move(scene_data.instances);
@@ -2824,7 +2824,7 @@ struct Canvas3D::Impl {
         const double old_min_distance = scene_data.min_distance;
         const double old_max_distance = scene_data.max_distance;
         std::vector<SceneChunk> old_chunks = std::move(scene_chunks);
-        auto old_structure_locations = scene_structure_locations;
+        auto old_structure_locations = scene_placement_locations;
         auto old_repeater_locations = scene_repeater_locations;
 
         auto restore_dynamic_content = [&]() {
@@ -2836,7 +2836,7 @@ struct Canvas3D::Impl {
             scene_data.min_distance = old_min_distance;
             scene_data.max_distance = old_max_distance;
             scene_chunks = std::move(old_chunks);
-            scene_structure_locations = std::move(old_structure_locations);
+            scene_placement_locations = std::move(old_structure_locations);
             scene_repeater_locations = std::move(old_repeater_locations);
         };
 
@@ -2947,7 +2947,7 @@ struct Canvas3D::Impl {
         scene_data = {};
         scene_active = false;
         scene_structure_edit = SceneStructureEditState{};
-        scene_structure_locations.clear();
+        scene_placement_locations.clear();
         scene_repeater_locations.clear();
         scene_rotating = false;
         scene_hovered_object_index = -1;
@@ -3256,19 +3256,22 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    static bool same_structure_edit_target(const Canvas3DStructureEditTarget& a,
-                                           const Canvas3DStructureEditTarget& b) {
+    static bool same_placement_edit_target(const Canvas3DPlacementEditTarget& a,
+                                           const Canvas3DPlacementEditTarget& b) {
         return a.edit_id == b.edit_id && a.track_key == b.track_key &&
             a.distance == b.distance && a.x == b.x && a.y == b.y && a.z == b.z &&
             a.rx == b.rx && a.ry == b.ry && a.rz == b.rz &&
             a.tilt == b.tilt && a.span == b.span;
     }
 
-    const std::string* structure_edit_id_for_object(int object_index) const {
+    const std::string* placement_edit_id_for_object(int object_index) const {
         if (!scene_object_index_valid(object_index)) return nullptr;
         const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(object_index)];
-        if (object.kind != Canvas3DSceneObjectKind::Structure ||
-            object.structure_put_between || object.edit_id.empty()) {
+        const bool editable_placement =
+            (object.kind == Canvas3DSceneObjectKind::Structure &&
+             !object.structure_put_between) ||
+            object.kind == Canvas3DSceneObjectKind::Signal;
+        if (!editable_placement || object.edit_id.empty()) {
             return nullptr;
         }
         return &object.edit_id;
@@ -3282,8 +3285,8 @@ struct Canvas3D::Impl {
         return static_cast<size_t>(index);
     }
 
-    Canvas3DModelInstance structure_instance_from_target(
-        const Canvas3DStructureEditTarget& target,
+    Canvas3DModelInstance placement_instance_from_target(
+        const Canvas3DPlacementEditTarget& target,
         const Canvas3DModelInstance& base) const {
         Canvas3DModelInstance desired = base;
         desired.track_key = target.track_key;
@@ -3302,7 +3305,7 @@ struct Canvas3D::Impl {
     }
 
     Canvas3DRepeaterSegment repeater_segment_from_target(
-        const Canvas3DStructureEditTarget& target,
+        const Canvas3DPlacementEditTarget& target,
         const Canvas3DRepeaterSegment& base) const {
         Canvas3DRepeaterSegment desired = base;
         desired.track_key = target.track_key;
@@ -3318,11 +3321,11 @@ struct Canvas3D::Impl {
         return desired;
     }
 
-    bool write_scene_structure_instance(const std::string& edit_id,
+    bool write_scene_placement_instance(const std::string& edit_id,
                                         Canvas3DModelInstance desired) {
-        auto location_it = scene_structure_locations.find(edit_id);
-        if (location_it == scene_structure_locations.end() || scene_chunks.empty()) return false;
-        SceneStructureInstanceLocation location = location_it->second;
+        auto location_it = scene_placement_locations.find(edit_id);
+        if (location_it == scene_placement_locations.end() || scene_chunks.empty()) return false;
+        ScenePlacementInstanceLocation location = location_it->second;
         if (location.source_index >= scene_data.instances.size() ||
             location.chunk_index >= scene_chunks.size() ||
             location.chunk_instance_index >= scene_chunks[location.chunk_index].instances.size()) {
@@ -3357,9 +3360,9 @@ struct Canvas3D::Impl {
                 old_chunk.instances[location.chunk_instance_index] =
                     std::move(old_chunk.instances[last_index]);
                 const SceneInstance& moved = old_chunk.instances[location.chunk_instance_index];
-                if (const std::string* moved_edit_id = structure_edit_id_for_object(moved.object_index)) {
-                    auto moved_location = scene_structure_locations.find(*moved_edit_id);
-                    if (moved_location != scene_structure_locations.end()) {
+                if (const std::string* moved_edit_id = placement_edit_id_for_object(moved.object_index)) {
+                    auto moved_location = scene_placement_locations.find(*moved_edit_id);
+                    if (moved_location != scene_placement_locations.end()) {
                         moved_location->second.chunk_index = location.chunk_index;
                         moved_location->second.chunk_instance_index = location.chunk_instance_index;
                     }
@@ -3371,7 +3374,7 @@ struct Canvas3D::Impl {
             location.chunk_index = destination_chunk_index;
             location.chunk_instance_index = destination.instances.size();
             destination.instances.push_back(std::move(replacement));
-            scene_structure_locations[edit_id] = location;
+            scene_placement_locations[edit_id] = location;
         }
 
         scene_data.instances[location.source_index] = desired;
@@ -3412,7 +3415,7 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    void clear_scene_structure_edit_target() {
+    void clear_scene_placement_edit_target() {
         if (!scene_structure_edit.active) return;
         const std::string edit_id = scene_structure_edit.edit_id;
         Canvas3DModelInstance baseline = scene_structure_edit.baseline_instance;
@@ -3422,39 +3425,43 @@ struct Canvas3D::Impl {
         if (kind == Canvas3DSceneEditKind::Repeater) {
             write_scene_repeater_segment(edit_id, std::move(repeater_baseline));
         } else {
-            write_scene_structure_instance(edit_id, std::move(baseline));
+            write_scene_placement_instance(edit_id, std::move(baseline));
         }
     }
 
-    bool set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
+    bool set_scene_placement_edit_target(const Canvas3DPlacementEditTarget& target,
                                          bool show_gizmo) {
         if (!scene_active || target.edit_id.empty()) return false;
+        if (target.kind != Canvas3DSceneEditKind::Structure &&
+            target.kind != Canvas3DSceneEditKind::Signal) {
+            return false;
+        }
         if (scene_structure_edit.active &&
-            (scene_structure_edit.kind != Canvas3DSceneEditKind::Structure ||
+            (scene_structure_edit.kind != target.kind ||
              scene_structure_edit.edit_id != target.edit_id)) {
-            clear_scene_structure_edit_target();
+            clear_scene_placement_edit_target();
         }
 
-        auto location_it = scene_structure_locations.find(target.edit_id);
-        if (location_it == scene_structure_locations.end() ||
+        auto location_it = scene_placement_locations.find(target.edit_id);
+        if (location_it == scene_placement_locations.end() ||
             location_it->second.source_index >= scene_data.instances.size()) {
             return false;
         }
 
         if (!scene_structure_edit.active) {
             scene_structure_edit.active = true;
-            scene_structure_edit.kind = Canvas3DSceneEditKind::Structure;
+            scene_structure_edit.kind = target.kind;
             scene_structure_edit.edit_id = target.edit_id;
             scene_structure_edit.baseline_instance =
                 scene_data.instances[location_it->second.source_index];
-        } else if (same_structure_edit_target(scene_structure_edit.current, target) &&
+        } else if (same_placement_edit_target(scene_structure_edit.current, target) &&
                    scene_structure_edit.show_gizmo == show_gizmo) {
             return true;
         }
 
-        Canvas3DModelInstance desired = structure_instance_from_target(
+        Canvas3DModelInstance desired = placement_instance_from_target(
             target, scene_structure_edit.baseline_instance);
-        if (!write_scene_structure_instance(target.edit_id, std::move(desired))) {
+        if (!write_scene_placement_instance(target.edit_id, std::move(desired))) {
             if (scene_structure_edit.current.edit_id.empty()) {
                 scene_structure_edit = SceneStructureEditState{};
             }
@@ -3469,15 +3476,15 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    bool set_scene_repeater_edit_target(const Canvas3DStructureEditTarget& input,
+    bool set_scene_repeater_edit_target(const Canvas3DPlacementEditTarget& input,
                                         bool show_gizmo) {
         if (!scene_active || input.edit_id.empty()) return false;
-        Canvas3DStructureEditTarget target = input;
+        Canvas3DPlacementEditTarget target = input;
         target.kind = Canvas3DSceneEditKind::Repeater;
         if (scene_structure_edit.active &&
             (scene_structure_edit.kind != Canvas3DSceneEditKind::Repeater ||
              scene_structure_edit.edit_id != target.edit_id)) {
-            clear_scene_structure_edit_target();
+            clear_scene_placement_edit_target();
         }
 
         const auto location_it = scene_repeater_locations.find(target.edit_id);
@@ -3493,7 +3500,7 @@ struct Canvas3D::Impl {
             scene_structure_edit.kind = Canvas3DSceneEditKind::Repeater;
             scene_structure_edit.edit_id = target.edit_id;
             scene_structure_edit.baseline_repeater = current;
-        } else if (same_structure_edit_target(scene_structure_edit.current, target) &&
+        } else if (same_placement_edit_target(scene_structure_edit.current, target) &&
                    scene_structure_edit.show_gizmo == show_gizmo) {
             return true;
         }
@@ -3502,7 +3509,7 @@ struct Canvas3D::Impl {
             target, scene_structure_edit.baseline_repeater);
         if (desired.track_key != scene_structure_edit.baseline_repeater.track_key ||
             desired.begin_distance != scene_structure_edit.baseline_repeater.begin_distance) {
-            clear_scene_structure_edit_target();
+            clear_scene_placement_edit_target();
             return false;
         }
         if (!write_scene_repeater_segment(target.edit_id, desired)) {
@@ -3520,10 +3527,14 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    bool update_scene_structure_instance(const Canvas3DStructureEditTarget& target) {
+    bool update_scene_placement_instance(const Canvas3DPlacementEditTarget& target) {
         if (!scene_active) return true;
-        auto location_it = scene_structure_locations.find(target.edit_id);
-        if (location_it == scene_structure_locations.end() ||
+        if (target.kind != Canvas3DSceneEditKind::Structure &&
+            target.kind != Canvas3DSceneEditKind::Signal) {
+            return false;
+        }
+        auto location_it = scene_placement_locations.find(target.edit_id);
+        if (location_it == scene_placement_locations.end() ||
             location_it->second.source_index >= scene_data.instances.size()) {
             return false;
         }
@@ -3531,12 +3542,12 @@ struct Canvas3D::Impl {
             scene_structure_edit.edit_id == target.edit_id
             ? scene_structure_edit.baseline_instance
             : scene_data.instances[location_it->second.source_index];
-        Canvas3DModelInstance desired = structure_instance_from_target(target, base);
-        if (!write_scene_structure_instance(target.edit_id, std::move(desired))) return false;
+        Canvas3DModelInstance desired = placement_instance_from_target(target, base);
+        if (!write_scene_placement_instance(target.edit_id, std::move(desired))) return false;
 
         if (scene_structure_edit.active && scene_structure_edit.edit_id == target.edit_id) {
-            auto updated_location = scene_structure_locations.find(target.edit_id);
-            if (updated_location != scene_structure_locations.end() &&
+            auto updated_location = scene_placement_locations.find(target.edit_id);
+            if (updated_location != scene_placement_locations.end() &&
                 updated_location->second.source_index < scene_data.instances.size()) {
                 scene_structure_edit.baseline_instance =
                     scene_data.instances[updated_location->second.source_index];
@@ -3546,9 +3557,9 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    bool update_scene_repeater_segment(const Canvas3DStructureEditTarget& input) {
+    bool update_scene_repeater_segment(const Canvas3DPlacementEditTarget& input) {
         if (!scene_active) return true;
-        Canvas3DStructureEditTarget target = input;
+        Canvas3DPlacementEditTarget target = input;
         target.kind = Canvas3DSceneEditKind::Repeater;
         const auto location_it = scene_repeater_locations.find(target.edit_id);
         if (location_it == scene_repeater_locations.end() ||
@@ -4088,7 +4099,7 @@ fail:
         release_scene_track_chunks();
         release_scene_marker_chunks();
         scene_chunks.clear();
-        scene_structure_locations.clear();
+        scene_placement_locations.clear();
         scene_repeater_locations.clear();
         scene_structure_edit = SceneStructureEditState{};
         clear_pending_scene_model_uploads();
@@ -5776,7 +5787,7 @@ fail:
 
     void build_scene_chunks() {
         scene_chunks.clear();
-        scene_structure_locations.clear();
+        scene_placement_locations.clear();
         scene_repeater_locations.clear();
         double min_d = scene_data.min_distance;
         double max_d = scene_data.max_distance;
@@ -5822,9 +5833,12 @@ fail:
             if (scene_object_index_valid(source.object_index)) {
                 const Canvas3DSceneObject& object =
                     scene_data.objects[static_cast<size_t>(source.object_index)];
-                if (object.kind == Canvas3DSceneObjectKind::Structure &&
-                    !object.structure_put_between && !object.edit_id.empty()) {
-                    scene_structure_locations[object.edit_id] = SceneStructureInstanceLocation{
+                const bool editable_placement =
+                    (object.kind == Canvas3DSceneObjectKind::Structure &&
+                     !object.structure_put_between) ||
+                    object.kind == Canvas3DSceneObjectKind::Signal;
+                if (editable_placement && !object.edit_id.empty()) {
+                    scene_placement_locations[object.edit_id] = ScenePlacementInstanceLocation{
                         source_index,
                         static_cast<size_t>(index),
                         chunk_instance_index
@@ -7433,7 +7447,7 @@ fail:
         return any;
     }
 
-    std::optional<Canvas3DStructureDragUpdate> handle_scene_structure_gizmo_input(
+    std::optional<Canvas3DPlacementDragUpdate> handle_scene_structure_gizmo_input(
         bool canvas_hovered, int width, int height, ImVec2 mouse_local) {
         if (!update_scene_structure_gizmo_projection(width, height)) {
             scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
@@ -7536,16 +7550,16 @@ fail:
                 scene_structure_edit.current, scene_structure_edit.baseline_repeater);
             wrote = write_scene_repeater_segment(scene_structure_edit.edit_id, std::move(desired));
         } else {
-            Canvas3DModelInstance desired = structure_instance_from_target(
+            Canvas3DModelInstance desired = placement_instance_from_target(
                 scene_structure_edit.current, scene_structure_edit.baseline_instance);
-            wrote = write_scene_structure_instance(scene_structure_edit.edit_id, std::move(desired));
+            wrote = write_scene_placement_instance(scene_structure_edit.edit_id, std::move(desired));
         }
         if (!wrote) {
             *current_value = previous_value;
             return std::nullopt;
         }
 
-        Canvas3DStructureDragUpdate result;
+        Canvas3DPlacementDragUpdate result;
         result.kind = scene_structure_edit.kind;
         result.edit_id = scene_structure_edit.edit_id;
         result.axis = changed_axis;
@@ -8138,6 +8152,7 @@ fail:
         if (object.kind == Canvas3DSceneObjectKind::Structure) {
             return object.structure_put_between ? "structure.between" : "structure.put";
         }
+        if (object.kind == Canvas3DSceneObjectKind::Signal) return "signal.put";
         return object.kind == Canvas3DSceneObjectKind::Repeater ? "repeater" : nullptr;
     }
 
@@ -8230,6 +8245,15 @@ fail:
                     action.kind = Canvas3DSceneContextActionKind::LocateSignal;
                     action.row_index = object.source_row;
                 }
+                const char* edit_row_kind = scene_object_edit_row_kind(object);
+                ImGui::BeginDisabled(!context_menu_options.element_properties_enabled ||
+                                     object.edit_id.empty() || !edit_row_kind);
+                if (ImGui::MenuItem(ui_text.element_properties)) {
+                    action.kind = Canvas3DSceneContextActionKind::EditElement;
+                    action.edit_id = object.edit_id;
+                    action.row_kind = edit_row_kind;
+                }
+                ImGui::EndDisabled();
                 if (ImGui::BeginMenu(ui_text.switch_signal_aspect, !object.model_options.empty())) {
                     for (size_t i = 0; i < object.model_options.size(); ++i) {
                         const Canvas3DSceneModelOption& option = object.model_options[i];
@@ -8307,7 +8331,7 @@ fail:
         int width = std::max(1, static_cast<int>(std::round(avail.x)));
         int height = std::max(1, static_cast<int>(std::round(avail.y)));
         if (scene_active && !loading_before_render) {
-            result.structure_drag = handle_scene_structure_gizmo_input(
+            result.placement_drag = handle_scene_structure_gizmo_input(
                 hovered, width, height, mouse_local);
             handle_scene_input(hovered, scene_structure_gizmo_consumes_left_input());
         }
@@ -8628,7 +8652,7 @@ fail:
     size_t debug_scene_fog_draw_part_count = 0;
 #endif
     std::vector<SceneChunk> scene_chunks;
-    std::unordered_map<std::string, SceneStructureInstanceLocation> scene_structure_locations;
+    std::unordered_map<std::string, ScenePlacementInstanceLocation> scene_placement_locations;
     std::unordered_map<std::string, size_t> scene_repeater_locations;
     SceneStructureEditState scene_structure_edit;
     float scene_edit_component_scale = 1.0f;
@@ -8868,26 +8892,26 @@ bool Canvas3D::jump_scene_camera_to_marker(Canvas3DSceneMarkerListKind list_kind
     return impl_->jump_scene_camera_to_marker(list_kind, row_index);
 }
 
-bool Canvas3D::set_scene_structure_edit_target(const Canvas3DStructureEditTarget& target,
+bool Canvas3D::set_scene_placement_edit_target(const Canvas3DPlacementEditTarget& target,
                                                bool show_gizmo) {
-    return impl_->set_scene_structure_edit_target(target, show_gizmo);
+    return impl_->set_scene_placement_edit_target(target, show_gizmo);
 }
 
-bool Canvas3D::update_scene_structure_instance(const Canvas3DStructureEditTarget& target) {
-    return impl_->update_scene_structure_instance(target);
+bool Canvas3D::update_scene_placement_instance(const Canvas3DPlacementEditTarget& target) {
+    return impl_->update_scene_placement_instance(target);
 }
 
-bool Canvas3D::set_scene_repeater_edit_target(const Canvas3DStructureEditTarget& target,
+bool Canvas3D::set_scene_repeater_edit_target(const Canvas3DPlacementEditTarget& target,
                                                bool show_gizmo) {
     return impl_->set_scene_repeater_edit_target(target, show_gizmo);
 }
 
-bool Canvas3D::update_scene_repeater_segment(const Canvas3DStructureEditTarget& target) {
+bool Canvas3D::update_scene_repeater_segment(const Canvas3DPlacementEditTarget& target) {
     return impl_->update_scene_repeater_segment(target);
 }
 
-void Canvas3D::clear_scene_structure_edit_target() {
-    impl_->clear_scene_structure_edit_target();
+void Canvas3D::clear_scene_placement_edit_target() {
+    impl_->clear_scene_placement_edit_target();
 }
 
 Canvas3DSceneFrameResult Canvas3D::render_scene_preview(

@@ -451,6 +451,7 @@ std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
         info.source.raw_text_preview = typed_snapshot_string(target, target.raw_text_preview);
         info.raw_statement = typed_snapshot_string(target, target.raw_text);
         info.raw_arguments = typed_snapshot_string(target, target.raw_arguments);
+        info.flags = target.flags;
         if (row_kind_has_source_distance_string(info.row_kind)) {
             info.source_distance_string = typed_snapshot_string(target, target.distance_expression);
         }
@@ -1697,7 +1698,7 @@ void set_inspector_row_field_value(TableRow& row,
 void normalize_station_preview_rows(MapModel& model);
 
 void App::clear_pending_edit_state() {
-    clear_scene_structure_edit_target();
+    clear_scene_placement_edit_target();
     pending_edit_changes_.clear();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
@@ -1748,7 +1749,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
     save_user_settings(settings_);
 
     if (!edit_mode_enabled_) {
-        clear_scene_structure_edit_target();
+        clear_scene_placement_edit_target();
         inspector_.open = false;
         pending_inspector_request_.reset();
         distance_resolution_choices_.clear();
@@ -1817,8 +1818,12 @@ bool App::restore_local_preview_change(const std::string& edit_id, const std::st
     auto pending = pending_edit_changes_.find(edit_id);
     if (pending != pending_edit_changes_.end()) {
         requires_full_scene_refresh =
-            pending->second.field_changes.find("structureKey") !=
-            pending->second.field_changes.end();
+            (effective_row_kind == "structure.put" &&
+             pending->second.field_changes.find("structureKey") !=
+                 pending->second.field_changes.end()) ||
+            (effective_row_kind == "signal.put" &&
+             pending->second.field_changes.find("signalAspectKey") !=
+                 pending->second.field_changes.end());
     }
     original_edit_rows_.erase(snapshot);
     if (refresh_preview) {
@@ -1851,8 +1856,10 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change,
         set_inspector_row_field_value(row, change.row_kind, field.first, field.second, model_.distance_origin);
     }
     const bool requires_full_scene_refresh =
-        change.row_kind == "structure.put" &&
-        change.field_changes.find("structureKey") != change.field_changes.end();
+        (change.row_kind == "structure.put" &&
+         change.field_changes.find("structureKey") != change.field_changes.end()) ||
+        (change.row_kind == "signal.put" &&
+         change.field_changes.find("signalAspectKey") != change.field_changes.end());
     if (refresh_preview) {
         refresh_local_preview_after_edit(
             change.row_kind, requires_full_scene_refresh ? std::string{} : change.edit_id);
@@ -1860,9 +1867,9 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change,
     return true;
 }
 
-Canvas3DStructureEditTarget scene_edit_target_from_row(
+Canvas3DPlacementEditTarget scene_edit_target_from_row(
     const TableRow& row, Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure) {
-    Canvas3DStructureEditTarget target;
+    Canvas3DPlacementEditTarget target;
     target.kind = kind;
     target.edit_id = row.edit_id;
     target.track_key = table_cell(row, "trackKey");
@@ -1878,12 +1885,17 @@ Canvas3DStructureEditTarget scene_edit_target_from_row(
     return target;
 }
 
-bool App::update_scene_structure_instance_from_model(const std::string& edit_id) {
+bool App::update_scene_placement_instance_from_model(const std::string& edit_id,
+                                                     const std::string& row_kind) {
     if (!scene_preview_started_ || !scene_preview_canvas_) return true;
+    const bool signal = row_kind == "signal.put";
+    const std::vector<TableRow>& rows = signal ? model_.signals : model_.structures;
     size_t row_index = 0;
-    if (!find_row_index_by_edit_id(model_.structures, edit_id, row_index)) return false;
-    return scene_preview_canvas_->update_scene_structure_instance(
-        scene_edit_target_from_row(model_.structures[row_index]));
+    if (!find_row_index_by_edit_id(rows, edit_id, row_index)) return false;
+    return scene_preview_canvas_->update_scene_placement_instance(
+        scene_edit_target_from_row(rows[row_index], signal
+            ? Canvas3DSceneEditKind::Signal
+            : Canvas3DSceneEditKind::Structure));
 }
 
 bool App::update_scene_repeater_segment_from_model(const std::string& edit_id) {
@@ -1915,9 +1927,10 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     rebuild_marker_overlay_cache();
     sync_marker_visibility_sizes();
 
-    bool structure_instance_synced = false;
-    if (row_kind == "structure.put" && !edit_id.empty()) {
-        structure_instance_synced = update_scene_structure_instance_from_model(edit_id);
+    bool placement_instance_synced = false;
+    if ((row_kind == "structure.put" || row_kind == "signal.put") && !edit_id.empty()) {
+        placement_instance_synced =
+            update_scene_placement_instance_from_model(edit_id, row_kind);
     }
     bool repeater_segment_synced = false;
     if (row_kind == "repeater" && !edit_id.empty()) {
@@ -1934,7 +1947,8 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
         }
     }
     const bool affects_scene_dynamic =
-        (row_kind == "structure.put" && !structure_instance_synced) ||
+        ((row_kind == "structure.put" || row_kind == "signal.put") &&
+         !placement_instance_synced) ||
         row_kind == "structure.between" || row_kind == "structure.model" ||
         (row_kind == "repeater" && !repeater_segment_synced);
     if (affects_scene_dynamic && scene_preview_started_ && scene_preview_canvas_) {
@@ -2072,6 +2086,7 @@ const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
     if (row_kind == "repeater") return &model.repeaters;
+    if (row_kind == "signal.put") return &model.signals;
     return nullptr;
 }
 
@@ -2082,6 +2097,7 @@ std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
     if (row_kind == "repeater") return &model.repeaters;
+    if (row_kind == "signal.put") return &model.signals;
     return nullptr;
 }
 
@@ -2113,6 +2129,7 @@ void set_inspector_row_field_value(TableRow& row,
                                    const std::string& field_key,
                                    const std::string& value,
                                    double distance_origin) {
+    if (row_kind == "signal.put" && field_key == "form") return;
     if (row_kind == "station.put") {
         if (field_key == "distance") {
             row.cells["_distance"] = value;
@@ -2274,11 +2291,12 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 4> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 5> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
         "repeater",
+        "signal.put",
     };
     return std::any_of(k_distance_row_kinds.begin(), k_distance_row_kinds.end(),
                        [&](const char* value) { return row_kind == value; });
@@ -2458,7 +2476,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_log("[warn]gui_kme.cpp: edit target row not found: " + request.edit_id);
         return false;
     }
-    clear_scene_structure_edit_target();
+    clear_scene_placement_edit_target();
 
     if (!request.edit_id.empty() && request.edit_id != edit_id) {
         auto pending = pending_edit_changes_.extract(request.edit_id);
@@ -2500,6 +2518,8 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.raw_statement = target_info && !target_info->raw_statement.empty()
         ? target_info->raw_statement
         : source.raw_text_preview;
+    next.source_signal_short_form = target_info &&
+        (target_info->flags & KV_EDIT_TARGET_FLAG_SIGNAL_SHORT_FORM) != 0;
     next.owned_edit_ids.push_back(edit_id);
     if (next.expected_source_hash.empty()) {
         const EditSourceFileInfo* source_file = find_model_source_file(model_, next.source_file);
@@ -2581,6 +2601,20 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("door", "door", MapElementNumericConstraint::Finite, false);
         add_row_field("margin1", "back", MapElementNumericConstraint::Finite, false);
         add_row_field("margin2", "front", MapElementNumericConstraint::Finite, false);
+    } else if (request.row_kind == "signal.put") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("signalAspectKey", "signalAspectKey",
+                      MapElementNumericConstraint::None, true);
+        add_row_field("section", "section", MapElementNumericConstraint::Finite, true);
+        add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, false);
+        for (const char* key : {"x", "y", "z", "rx", "ry", "rz", "tilt", "span"}) {
+            add_row_field(key, key, structure_edit_numeric_constraint(key), true);
+            if (std::strcmp(key, "z") == 0 || std::strcmp(key, "rx") == 0 ||
+                std::strcmp(key, "ry") == 0 || std::strcmp(key, "rz") == 0 ||
+                std::strcmp(key, "tilt") == 0 || std::strcmp(key, "span") == 0) {
+                next.fields.back().requires_signal_full_form = true;
+            }
+        }
     } else if (request.row_kind == "repeater") {
         std::vector<repeater_linkage::Event> events;
         events.reserve(model_.repeaters.size());
@@ -2759,29 +2793,32 @@ void App::enable_inspector_put0_conversion() {
     enable_inspector_zero_method_conversion_draft(inspector_);
 }
 
-void App::clear_scene_structure_edit_target() {
-    if (scene_preview_canvas_) scene_preview_canvas_->clear_scene_structure_edit_target();
+void App::clear_scene_placement_edit_target() {
+    if (scene_preview_canvas_) scene_preview_canvas_->clear_scene_placement_edit_target();
 }
 
-void App::sync_scene_structure_edit_from_inspector() {
+void App::sync_scene_placement_edit_from_inspector() {
     const bool structure_target = inspector_.row_kind == "structure.put";
+    const bool signal_target = inspector_.row_kind == "signal.put";
     const bool repeater_target = inspector_.row_kind == "repeater";
     if (!scene_preview_started_ || !scene_preview_canvas_ || !inspector_.open ||
-        (!structure_target && !repeater_target)) {
-        clear_scene_structure_edit_target();
+        (!structure_target && !signal_target && !repeater_target)) {
+        clear_scene_placement_edit_target();
         return;
     }
 
     size_t row_index = 0;
-    const std::vector<TableRow>& rows = structure_target ? model_.structures : model_.repeaters;
+    const std::vector<TableRow>& rows = structure_target ? model_.structures :
+        signal_target ? model_.signals : model_.repeaters;
     if (!find_row_index_by_edit_id(rows, inspector_.edit_id, row_index)) {
-        clear_scene_structure_edit_target();
+        clear_scene_placement_edit_target();
         return;
     }
-    Canvas3DStructureEditTarget target =
+    Canvas3DPlacementEditTarget target =
         scene_edit_target_from_row(rows[row_index], repeater_target
             ? Canvas3DSceneEditKind::Repeater
-            : Canvas3DSceneEditKind::Structure);
+            : signal_target ? Canvas3DSceneEditKind::Signal
+                            : Canvas3DSceneEditKind::Structure);
     const double model_distance = target.distance;
     const std::string model_track_key = target.track_key;
     if (const MapElementEditFieldState* distance_field =
@@ -2817,7 +2854,7 @@ void App::sync_scene_structure_edit_from_inspector() {
     if (repeater_target &&
         (std::fabs(target.distance - model_distance) > 1e-9 ||
          target.track_key != model_track_key)) {
-        clear_scene_structure_edit_target();
+        clear_scene_placement_edit_target();
         return;
     }
     const bool show_gizmo = !inspector_.source_method_put0 ||
@@ -2825,13 +2862,14 @@ void App::sync_scene_structure_edit_from_inspector() {
     if (repeater_target) {
         scene_preview_canvas_->set_scene_repeater_edit_target(target, show_gizmo);
     } else {
-        scene_preview_canvas_->set_scene_structure_edit_target(target, show_gizmo);
+        scene_preview_canvas_->set_scene_placement_edit_target(target, show_gizmo);
     }
 }
 
-void App::apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& update) {
+void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& update) {
     const bool matching_kind =
         (update.kind == Canvas3DSceneEditKind::Structure && inspector_.row_kind == "structure.put") ||
+        (update.kind == Canvas3DSceneEditKind::Signal && inspector_.row_kind == "signal.put") ||
         (update.kind == Canvas3DSceneEditKind::Repeater && inspector_.row_kind == "repeater");
     if (!inspector_.open || !matching_kind ||
         inspector_.edit_id != update.edit_id) {
@@ -2851,6 +2889,15 @@ void App::apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& u
     }
     if (field_key) {
         if (MapElementEditFieldState* field = find_inspector_field(inspector_, field_key)) {
+            if (field->requires_signal_full_form &&
+                inspector_.source_signal_short_form &&
+                !inspector_.signal_full_form_conversion_draft) {
+                inspector_.pending_signal_full_form_field = field_key;
+                inspector_.pending_signal_full_form_value =
+                    format_gui_transform_number(value);
+                inspector_.signal_full_form_prompt_requested = true;
+                return;
+            }
             set_edit_field_buffer(*field, format_gui_transform_number(value));
         }
     }
@@ -2939,6 +2986,15 @@ void App::apply_inspector_changes() {
         primary_field.expected_source_hash = inspector_.expected_source_hash;
         MapElementPendingChange& change = change_for(primary_field);
         change.field_changes["method"] = inspector_.row_kind == "repeater" ? "Begin" : "Put";
+    }
+    if (inspector_.row_kind == "signal.put" &&
+        inspector_.source_signal_short_form &&
+        inspector_.signal_full_form_conversion_draft) {
+        MapElementEditFieldState primary_field;
+        primary_field.target_edit_id = inspector_.edit_id;
+        primary_field.expected_source_hash = inspector_.expected_source_hash;
+        MapElementPendingChange& change = change_for(primary_field);
+        change.field_changes["form"] = "full";
     }
 
     if (inspector_.row_kind == "structure.put") {
@@ -3149,7 +3205,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
             repeater_chain_edit_ids.find(inspector_.edit_id) != repeater_chain_edit_ids.end();
         if (close_repeater_inspector ||
             (inspector_.open && inspector_.edit_id == request.edit_id)) {
-            clear_scene_structure_edit_target();
+            clear_scene_placement_edit_target();
             inspector_ = MapElementInspectorState{};
             pending_inspector_request_.reset();
         }
@@ -3309,8 +3365,9 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 5> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 6> k_committed_row_kinds = {
         "structure.model", "structure.put", "structure.between", "station.put", "repeater",
+        "signal.put",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -3577,7 +3634,10 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
         const bool force_full_refresh = kv.second.operation == "delete" ||
             (kv.second.row_kind == "structure.put" &&
-             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end());
+             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end()) ||
+            (kv.second.row_kind == "signal.put" &&
+             kv.second.field_changes.find("signalAspectKey") !=
+                 kv.second.field_changes.end());
         note_refresh_target(kv.second.row_kind, kv.first, force_full_refresh);
     }
 
@@ -3588,7 +3648,10 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
         const bool force_full_refresh = kv.second.operation == "delete" ||
             (kv.second.row_kind == "structure.put" &&
-             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end());
+             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end()) ||
+            (kv.second.row_kind == "signal.put" &&
+             kv.second.field_changes.find("signalAspectKey") !=
+                 kv.second.field_changes.end());
         note_refresh_target(kv.second.row_kind, kv.first, force_full_refresh);
     }
     pending_edit_changes_ = changes;
@@ -3918,7 +3981,7 @@ bool App::revert_all_pending_edits() {
         inspector_request = std::move(request);
     }
 
-    clear_scene_structure_edit_target();
+    clear_scene_placement_edit_target();
     if (!discard_pending_edits()) return false;
 
     if (inspector_request && !open_element_inspector(*inspector_request)) {
@@ -3950,7 +4013,7 @@ bool App::resolve_pending_close_action(bool save_changes) {
 
 void App::render_element_inspector() {
     if (!edit_mode_enabled_) {
-        clear_scene_structure_edit_target();
+        clear_scene_placement_edit_target();
         inspector_.open = false;
         return;
     }
@@ -3961,7 +4024,7 @@ void App::render_element_inspector() {
         ImGui::End();
         if (closed) {
             cancel_distance_resolution_workflow();
-            clear_scene_structure_edit_target();
+            clear_scene_placement_edit_target();
         }
         return;
     }
@@ -4025,8 +4088,18 @@ void App::render_element_inspector() {
         if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
         ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
         ImGui::BeginDisabled(field.read_only);
-        ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
+        const std::string previous_value = edit_field_buffer_text(field);
+        const bool input_changed =
+            ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
         ImGui::EndDisabled();
+        if (input_changed && field.requires_signal_full_form &&
+            inspector_.source_signal_short_form &&
+            !inspector_.signal_full_form_conversion_draft) {
+            inspector_.pending_signal_full_form_field = field.key;
+            inspector_.pending_signal_full_form_value = edit_field_buffer_text(field);
+            set_edit_field_buffer(field, previous_value);
+            inspector_.signal_full_form_prompt_requested = true;
+        }
         if (ImGui::IsItemDeactivatedAfterEdit() &&
             !validate_and_canonicalize_edit_field(field, true)) {
             set_program_status("status.edit.invalid_number");
@@ -4113,7 +4186,7 @@ void App::render_element_inspector() {
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) {
         cancel_distance_resolution_workflow();
-        clear_scene_structure_edit_target();
+        clear_scene_placement_edit_target();
         inspector_.open = false;
     }
 
@@ -4123,7 +4196,7 @@ void App::render_element_inspector() {
          distance_resolution_workflow_.retry_requested)) {
         cancel_distance_resolution_workflow();
     }
-    if (!inspector_.open) clear_scene_structure_edit_target();
+    if (!inspector_.open) clear_scene_placement_edit_target();
 }
 
 std::string App::open_map_dialog() {
@@ -5311,6 +5384,35 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
+    if (inspector_.open && inspector_.signal_full_form_prompt_requested) {
+        ImGui::OpenPopup(tr("dialog.signal_full_form_convert_title").c_str());
+        inspector_.signal_full_form_prompt_requested = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.signal_full_form_convert_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 480.0f);
+        ImGui::TextUnformatted(tr("dialog.signal_full_form_convert_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            inspector_.signal_full_form_conversion_draft = true;
+            if (MapElementEditFieldState* field = find_inspector_field(
+                    inspector_, inspector_.pending_signal_full_form_field)) {
+                set_edit_field_buffer(*field, inspector_.pending_signal_full_form_value);
+            }
+            inspector_.pending_signal_full_form_field.clear();
+            inspector_.pending_signal_full_form_value.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            inspector_.pending_signal_full_form_field.clear();
+            inspector_.pending_signal_full_form_value.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     if (inspector_.open && inspector_.z_rebase_prompt_requested) {
         ImGui::OpenPopup(tr("dialog.structure_z_rebase_title").c_str());
         inspector_.z_rebase_prompt_requested = false;
@@ -6370,12 +6472,12 @@ void App::render_scene_preview_window() {
         scene_ui_text.no_station_ahead = tr("scene.route_info.no_station_ahead").c_str();
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();
-        sync_scene_structure_edit_from_inspector();
+        sync_scene_placement_edit_from_inspector();
         sync_scene_preview_marker_visibility();
         Canvas3DSceneFrameResult scene_result =
             scene_preview_canvas_->render_scene_preview(avail, scene_ui_text, context_menu_options);
-        if (scene_result.structure_drag) {
-            apply_scene_structure_drag_update(*scene_result.structure_drag);
+        if (scene_result.placement_drag) {
+            apply_scene_placement_drag_update(*scene_result.placement_drag);
         }
         const Canvas3DSceneContextAction& scene_action = scene_result.context_action;
         if (scene_action.kind == Canvas3DSceneContextActionKind::LocateStructure) {

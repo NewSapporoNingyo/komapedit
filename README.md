@@ -18,7 +18,7 @@ The application has three main runtime components:
 
 The bundled executable and `maploader.dll` use maploader API v2. `KvMapSnapshot` v2 carries all map, regular-geometry, source, and edit metadata; the independently invalidated `KvSceneGeometrySnapshot` v1 carries dense 3D own/other-track geometry. Typed edit batches and handle-owned typed reports cover dry-run, in-memory Apply, direct Apply, Save/commit, and target lookup. These views are process-memory only: Open and Reload always read the current route sources, and no route snapshot or geometry cache is written to disk.
 
-At this stage, komapedit provides source-backed editing for Structure model-list entries, `Structure.Put`/`Put0`/`PutBetween`, `Station.Put`, and linked `Repeater.Begin`/`Begin0`/`End` segments. It supports live X/Y/Z Structure and Repeater-Begin placement edits in the 3D scene. It is not yet a full map editor: curve/gradient, sound, environmental-effect, and new-element editing are still planned.
+At this stage, komapedit provides source-backed editing for Structure model-list entries, `Structure.Put`/`Put0`/`PutBetween`, `Signal.Put`, `Station.Put`, and linked `Repeater.Begin`/`Begin0`/`End` segments. It supports live X/Y/Z Structure, Signal, and Repeater-Begin placement edits in the 3D scene. It is not yet a full map editor: curve/gradient, sound, environmental-effect, and new-element editing are still planned.
 
 ## Development Status (TODO List)
 
@@ -89,8 +89,8 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`.
-- [ ] Edit signal and beacon lists.
-- [x] Provide a source-backed `Properties/Edit` inspector for supported Structure, `Station.Put`, and linked Repeater rows, including live 3D X/Y/Z gizmos for editable Structure and Repeater Begin placements.
+- [ ] Edit `Signal.Load` aspect definitions and beacon lists.
+- [x] Provide a source-backed `Properties/Edit` inspector for supported Structure, `Signal.Put`, `Station.Put`, and linked Repeater rows, including live 3D X/Y/Z gizmos for editable Structure, Signal, and Repeater Begin placements.
 - [ ] Extend the property inspector to 2D markers and remaining Map Info rows.
 
 ### 3D Canvas
@@ -143,7 +143,7 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 | Variables and argument variables              |    √    |       ✕       |         -         | Can participate in expression evaluation                                                                                |
 | Arithmetic, comparison, and logical operators |    △    |       ✕       |         -         | Most expressions can be evaluated, but edge cases such as mixed strings and numbers are incomplete                      |
 | Mathematical functions                        |    √    |       ✕       |         -         | Used to evaluate map expressions                                                                                        |
-| Distance declarations and expressions         |    √    |       △       |         ✕         | Distance can be changed only for edit targets such as `Structure.Put/Put0/PutBetween`, `Station.Put`, and linked Repeater Begin/End |
+| Distance declarations and expressions         |    √    |       △       |         ✕         | Distance can be changed only for edit targets such as `Structure.Put/Put0/PutBetween`, `Signal.Put`, `Station.Put`, and linked Repeater Begin/End |
 | `include` and distance-offset `include`        |    √    |       △       |         ✕         | Include files can be loaded and supported elements in them can be written back, but Include paths are not editable       |
 | `Curve.*`                                     |    √    |       ✕       |         ✕         | Participates in track-geometry generation                                                                               |
 | `Gradient.*`                                  |    √    |       ✕       |         ✕         | Participates in track elevation and gradient generation                                                                 |
@@ -160,7 +160,7 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 | `Section.Begin` / `Section.BeginNew`          |    ✕    |       ✕       |         ✕         | Parsed into the typed map snapshot, but the current GUI does not display it                                               |
 | `Section.SetSpeedLimit` / `Signal.SpeedLimit` |    ✕    |       ✕       |         ✕         | Parsed into the typed map snapshot, but the current GUI does not display it                                               |
 | `Signal.Load`                                 |    √    |       ✕       |         -         | Signal aspects and model data can be loaded and displayed                                                               |
-| `Signal.Put`                                  |    √    |       ✕       |         ✕         | Feeds the signal list, markers, and scene                                                                                |
+| `Signal.Put`                                  |    √    |       √       |         △         | All placement fields are editable; 3D supports X/Y/Z translation. Editing extended fields on the short form requires confirmation before conversion to the full form |
 | `Beacon.Put`                                  |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
 | `SpeedLimit.Begin` / `SpeedLimit.End`         |    √    |       ✕       |         ✕         | Feeds the speed-limit model, list, and markers                                                                           |
 | `PreTrain.Pass`                               |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
@@ -224,11 +224,11 @@ of overwriting either file.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map, and locate rendered objects in the 3D scene preview when it is loaded.
    - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. Right-click a structure key and choose `Preview Model` to open the 3D model preview.
     - `Repeater List`: inspect linked `Repeater.Begin`/`Begin0`/`End` segments, edit them through `Properties/Edit`, and locate generated repeaters in the 3D scene preview when it is loaded.
-    - Turn on `Enable Edit` to use `Properties/Edit` on supported `Station.Put`, Structure model-list/placement, and linked Repeater rows. `Apply` updates the in-memory preview; the toolbar `Save` writes pending changes to source files, `Revert` discards all pending in-memory changes, and `Reload` reads the map from disk again.
+    - Turn on `Enable Edit` to use `Properties/Edit` on supported `Station.Put`, `Signal.Put`, Structure model-list/placement, and linked Repeater rows. `Apply` updates the in-memory preview; the toolbar `Save` writes pending changes to source files, `Revert` discards all pending in-memory changes, and `Reload` reads the map from disk again.
      The first enablement asks for confirmation because editing is an unstable, experimental feature that may make destructive changes. Back up map files or manage them with version control such as Git; selecting `Don't show again` and confirming suppresses later warnings.
 9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
-11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, and next-station information. `Options -> 3D Canvas Settings -> Fog effect` immediately toggles route fog in the scene preview and is enabled by default; the same settings also control map-driven draw distance, camera speed, and instance-performance warnings. In select mode, scene objects and supported map-element markers can be located back in their matching tables. With edit mode enabled, right-click a Structure or Repeater and choose `Properties/Edit`; supported `Structure.Put` and `Repeater.Begin` coordinates can be dragged with the X/Y/Z gizmo.
+11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, and next-station information. `Options -> 3D Canvas Settings -> Fog effect` immediately toggles route fog in the scene preview and is enabled by default; the same settings also control map-driven draw distance, camera speed, and instance-performance warnings. In select mode, scene objects and supported map-element markers can be located back in their matching tables. With edit mode enabled, right-click a Structure, Signal, or Repeater and choose `Properties/Edit`; supported `Structure.Put`, `Signal.Put`, and `Repeater.Begin` coordinates can be dragged with the X/Y/Z gizmo.
 12. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
 13. Press `F5` or use `File -> Reload` to reload the current map.
 

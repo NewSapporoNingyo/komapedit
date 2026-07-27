@@ -3106,7 +3106,9 @@ void App::render_signals_window() {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.signal_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
-                if (row_index == signal_list_highlight_row_) {
+                if (row_has_pending_edit(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
+                } else if (row_index == signal_list_highlight_row_) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
                 }
                 if (row_index == scroll_target_row) {
@@ -3128,14 +3130,19 @@ void App::render_signals_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < signal_marker_cache_.size() &&
                             signal_marker_cache_[marker_index].has_value();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                        const TextCellContextAction action = render_text_cell_with_context_actions(
                             value,
                             tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                            tr("dialog.element_properties"),
+                            edit_actions_available() && !row.edit_id.empty(),
+                            {}, false);
                         if (action == TextCellContextAction::Primary) {
                             locate_signal_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_signal_row_in_scene_preview(marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(row.edit_id, "signal.put");
                         }
                         continue;
                     }

@@ -32,6 +32,7 @@ struct EditableTarget {
     int element_index = 0;
     const StructurePut* structure_put = nullptr;
     const StationPut* station_put = nullptr;
+    const SignalPut* signal_put = nullptr;
     const RepeaterEvent* repeater = nullptr;
     int elements_for_statement = 0;
 };
@@ -578,6 +579,15 @@ std::string optional_numeric_value_field(const MapEditChange& change, const std:
     return value_to_bve_arg(fallback);
 }
 
+std::string required_numeric_value_field(const MapEditChange& change, const std::string& key,
+                                         const Value& fallback,
+                                         const std::string* raw_fallback = nullptr) {
+    const std::string value =
+        optional_numeric_value_field(change, key, fallback, raw_fallback);
+    if (value.empty()) throw std::runtime_error("required edit field is empty: " + key);
+    return value;
+}
+
 std::string track_key_field_as_bve_arg(const MapEditChange& change, const std::string& key,
                                        const Value& fallback,
                                        const std::string* raw_fallback = nullptr) {
@@ -684,6 +694,54 @@ std::string build_structure_put_statement(const MapEditChange& change,
             << numeric_field(change, "rz", row.rz, raw_arg_at(raw_args, 6)) << ","
             << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 7)) << ","
             << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 8));
+    }
+    out << ");";
+    return out.str();
+}
+
+std::string build_signal_put_statement(const MapEditChange& change,
+                                       const ParsedStatement& statement,
+                                       const SignalPut& row) {
+    std::vector<std::string> raw_args =
+        parse_bve_argument_fields(statement.raw_arguments);
+    const bool source_short_form = raw_args.size() == 4;
+    const std::string requested_form =
+        trim_field_copy(field_text_or(change, "form", source_short_form ? "short" : "full"));
+    const bool convert_to_full = source_short_form && ascii_lower(requested_form) == "full";
+    if ((!source_short_form && has_field_change(change, "form")) ||
+        (source_short_form && has_field_change(change, "form") && !convert_to_full)) {
+        throw std::runtime_error("unsupported Signal.Put form conversion");
+    }
+    for (const char* field : {"z", "rx", "ry", "rz", "tilt", "span"}) {
+        if (source_short_form && !convert_to_full && has_field_change(change, field)) {
+            throw std::runtime_error(
+                "short Signal.Put requires confirmation before editing full-form fields");
+        }
+    }
+
+    const auto aspect_key_change = change.field_changes.find("signalAspectKey");
+    const std::string aspect_key_arg = aspect_key_change == change.field_changes.end()
+        ? value_to_bve_arg(row.signal_aspect_key)
+        : quoted_bve_string(required_string_field(
+            change, "signalAspectKey", value_to_edit_text(row.signal_aspect_key)));
+    if (aspect_key_arg.empty()) {
+        throw std::runtime_error("required edit field is empty: signalAspectKey");
+    }
+    std::ostringstream out;
+    out << "Signal[" << aspect_key_arg << "].Put("
+        << required_numeric_value_field(change, "section", row.section,
+                                        raw_arg_at(raw_args, 0)) << ","
+        << track_key_field_as_bve_arg(change, "trackKey", row.track_key,
+                                      raw_arg_at(raw_args, 1)) << ","
+        << numeric_field(change, "x", row.x, raw_arg_at(raw_args, 2)) << ","
+        << numeric_field(change, "y", row.y, raw_arg_at(raw_args, 3));
+    if (!source_short_form || convert_to_full) {
+        out << "," << numeric_field(change, "z", row.z, raw_arg_at(raw_args, 4))
+            << "," << numeric_field(change, "rx", row.rx, raw_arg_at(raw_args, 5))
+            << "," << numeric_field(change, "ry", row.ry, raw_arg_at(raw_args, 6))
+            << "," << numeric_field(change, "rz", row.rz, raw_arg_at(raw_args, 7))
+            << "," << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 8))
+            << "," << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 9));
     }
     out << ");";
     return out.str();
@@ -815,6 +873,7 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     for (const auto& row : ctx.structure_models) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_betweens) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.signal_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.repeaters) count_statement_ref(row.edit_ref, statement_index, count);
     return count;
 }
@@ -887,6 +946,13 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
             return target;
         }
     }
+    for (size_t i = 0; i < ctx.signal_puts.size(); ++i) {
+        const SignalPut& row = ctx.signal_puts[i];
+        if (match_edit_ref(ctx, row, "signal.put", i, edit_id, target)) {
+            target.signal_put = &row;
+            return target;
+        }
+    }
     for (size_t i = 0; i < ctx.repeaters.size(); ++i) {
         const RepeaterEvent& row = ctx.repeaters[i];
         if (match_edit_ref(ctx, row, "repeater", i, edit_id, target)) {
@@ -929,6 +995,10 @@ const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
     };
     KvEditTargetSnapshot& view = storage->view;
     view.version = KV_EDIT_TARGET_SNAPSHOT_VERSION;
+    if (target.row_kind == "signal.put" &&
+        parse_bve_argument_fields(statement.raw_arguments).size() == 4) {
+        view.flags |= KV_EDIT_TARGET_FLAG_SIGNAL_SHORT_FORM;
+    }
     view.structure_size = sizeof(KvEditTargetSnapshot);
     view.edit_id = string_ref(edit_id);
     view.row_kind = string_ref(target.row_kind);
@@ -980,6 +1050,9 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "station.put" && target.station_put) {
         return build_station_put_statement(change, statement, *target.station_put);
+    }
+    if (target.row_kind == "signal.put" && target.signal_put) {
+        return build_signal_put_statement(change, statement, *target.signal_put);
     }
     if (target.row_kind == "repeater" && target.repeater) {
         return build_repeater_statement(change, statement, *target.repeater);
@@ -2241,6 +2314,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->structure_puts, "structure.put");
         collect_candidate_rows(candidate->structure_betweens, "structure.between");
         collect_candidate_rows(candidate->station_puts, "station.put");
+        collect_candidate_rows(candidate->signal_puts, "signal.put");
         collect_candidate_rows(candidate->repeaters, "repeater");
     } catch (const std::exception& e) {
         report.blocking_errors.push_back(
@@ -3642,6 +3716,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "structure.model", ctx.structure_models);
     append_committed_rows(ctx, report, "structure.put", ctx.structure_puts);
     append_committed_rows(ctx, report, "structure.between", ctx.structure_betweens);
+    append_committed_rows(ctx, report, "signal.put", ctx.signal_puts);
     append_committed_rows(ctx, report, "repeater", ctx.repeaters);
 
     std::vector<size_t> station_order;

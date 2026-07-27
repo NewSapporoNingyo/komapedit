@@ -19,6 +19,7 @@ extern "C" {
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
 
 #define KV_INDEX_NONE UINT64_MAX
+#define KV_EDIT_TARGET_FLAG_SIGNAL_SHORT_FORM (1u << 0)
 
 typedef struct KvUtf8View {
     const char* data;
@@ -611,7 +612,7 @@ typedef struct KvEditBatch {
 
 typedef struct KvEditTargetSnapshot {
     uint32_t version;
-    uint32_t reserved;
+    uint32_t flags;
     uint64_t structure_size;
     const char* string_data;
     uint64_t string_size;

@@ -1030,7 +1030,7 @@ private:
             {"signal.load", {{1}, 0, 0, {A::Text}, A::Any, K::Forbidden}},
             {"signal.speedlimit", {{}, 1, std::numeric_limits<size_t>::max(), {},
                                    A::Number, K::Forbidden}},
-            {"signal.put", {{4, 11}, 0, 0,
+            {"signal.put", {{5, 11}, 0, 0,
                             {A::Any, A::Number, A::Any, A::Number, A::Number,
                              A::Number, A::Number, A::Number, A::Number, A::Number,
                              A::Number},

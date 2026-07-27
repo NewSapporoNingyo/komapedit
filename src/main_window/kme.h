@@ -36,8 +36,8 @@ struct ID3D11Device;
 struct ID3D11ShaderResourceView;
 class Canvas3D;
 enum class Canvas3DSceneMarkerListKind : std::uint8_t;
-struct Canvas3DStructureDragUpdate;
-struct Canvas3DStructureEditTarget;
+struct Canvas3DPlacementDragUpdate;
+struct Canvas3DPlacementEditTarget;
 struct KvEditReportSnapshot;
 
 #ifndef NDEBUG
@@ -978,6 +978,7 @@ struct MapElementEditFieldState {
     MapElementNumericConstraint numeric_constraint = MapElementNumericConstraint::None;
     bool required = true;
     bool read_only = false;
+    bool requires_signal_full_form = false;
 };
 
 struct MapElementPendingChange {
@@ -1039,6 +1040,11 @@ struct MapElementInspectorState {
     bool put0_conversion_draft = false;
     bool put0_prompt_requested = false;
     bool z_rebase_prompt_requested = false;
+    bool source_signal_short_form = false;
+    bool signal_full_form_conversion_draft = false;
+    bool signal_full_form_prompt_requested = false;
+    std::string pending_signal_full_form_field;
+    std::string pending_signal_full_form_value;
     std::vector<MapElementEditFieldState> fields;
     std::vector<std::string> owned_edit_ids;
     std::vector<std::string> repeater_structure_keys_original;
@@ -1084,6 +1090,7 @@ struct InspectorTargetMetadata {
     std::string raw_arguments;
     std::string source_distance_string;
     double distance_value = 0.0;
+    uint32_t flags = 0;
 };
 
 std::optional<InspectorTargetMetadata> resolve_inspector_target_metadata(
@@ -1630,11 +1637,12 @@ private:
     void apply_inspector_changes();
     void enable_inspector_put0_conversion();
     bool navigate_repeater_inspector(bool toward_next);
-    void sync_scene_structure_edit_from_inspector();
-    void apply_scene_structure_drag_update(const Canvas3DStructureDragUpdate& update);
-    bool update_scene_structure_instance_from_model(const std::string& edit_id);
+    void sync_scene_placement_edit_from_inspector();
+    void apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& update);
+    bool update_scene_placement_instance_from_model(const std::string& edit_id,
+                                                    const std::string& row_kind);
     bool update_scene_repeater_segment_from_model(const std::string& edit_id);
-    void clear_scene_structure_edit_target();
+    void clear_scene_placement_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
     void render_element_inspector();
 
