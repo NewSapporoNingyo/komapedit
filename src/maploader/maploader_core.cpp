@@ -24,12 +24,24 @@ using kme::maploader::path_to_utf8;
 using kme::maploader::read_binary_file;
 using kme::maploader::log_warn;
 
+namespace {
+
+thread_local LoadTiming* g_active_timing = nullptr;
+
+} // namespace
+
 double elapsed_seconds_since(SteadyClock::time_point started_at) {
     return std::chrono::duration<double>(SteadyClock::now() - started_at).count();
 }
 
-thread_local LoadTiming* g_active_timing = nullptr;
+ActiveTimingScope::ActiveTimingScope(LoadTiming& timing)
+    : previous_(g_active_timing) {
+    g_active_timing = &timing;
+}
 
+ActiveTimingScope::~ActiveTimingScope() {
+    g_active_timing = previous_;
+}
 
 std::string ascii_lower(std::string s) {
     for (char& ch : s) {

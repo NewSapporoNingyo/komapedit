@@ -73,8 +73,6 @@ struct LoadTiming {
     std::vector<std::pair<std::string, double>> othertrack_seconds;
 };
 
-extern thread_local LoadTiming* g_active_timing;
-
 double elapsed_seconds_since(SteadyClock::time_point started_at);
 class ScopedTimer {
 public:
@@ -92,14 +90,8 @@ private:
 
 class ActiveTimingScope {
 public:
-    explicit ActiveTimingScope(LoadTiming& timing)
-        : previous_(g_active_timing) {
-        g_active_timing = &timing;
-    }
-
-    ~ActiveTimingScope() {
-        g_active_timing = previous_;
-    }
+    explicit ActiveTimingScope(LoadTiming& timing);
+    ~ActiveTimingScope();
 
 private:
     LoadTiming* previous_ = nullptr;
