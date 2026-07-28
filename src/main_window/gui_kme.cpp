@@ -1714,10 +1714,15 @@ void App::clear_pending_edit_state() {
     inspector_ = MapElementInspectorState{};
     pending_inspector_request_.reset();
     pending_delete_request_.reset();
+    discard_station_definition_drafts();
 }
 
 bool App::has_pending_edits() const {
     return !pending_edit_changes_.empty();
+}
+
+bool App::has_unsaved_edit_state() const {
+    return has_pending_edits() || has_station_definition_drafts();
 }
 
 bool App::row_has_pending_edit(const std::string& edit_id) const {
@@ -1741,7 +1746,7 @@ void App::set_edit_mode_enabled(bool enabled) {
         wake_main_window();
         return;
     }
-    if (!enabled && has_pending_edits()) {
+    if (!enabled && has_unsaved_edit_state()) {
         request_close_action(PendingCloseAction::DisableEditMode);
         return;
     }
@@ -1761,6 +1766,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
         distance_resolution_choices_.clear();
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
         text_preview_.placement = TextPreviewPlacementState{};
+        discard_station_definition_drafts();
         edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
         set_program_status("status.edit.mode_disabled");
         add_log("[info]gui_kme.cpp: edit mode disabled");
@@ -1776,7 +1782,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
 
 void App::request_close_action(PendingCloseAction action) {
     if (action == PendingCloseAction::None) return;
-    if (has_pending_edits()) {
+    if (has_unsaved_edit_state()) {
         pending_close_action_ = action;
         popups_.close_unsaved_confirm = true;
         wake_main_window();
@@ -1915,7 +1921,7 @@ bool App::update_scene_repeater_segment_from_model(const std::string& edit_id) {
 
 void App::refresh_local_preview_after_edit(const std::string& row_kind,
                                            const std::string& edit_id) {
-    if (row_kind == "station.put") {
+    if (row_kind == "station.put" || row_kind == "station.list") {
         normalize_station_preview_rows(model_);
         if (scene_preview_started_ && scene_preview_canvas_) {
             std::string error;
@@ -2091,6 +2097,7 @@ const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
     if (row_kind == "structure.put") return &model.structures;
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
+    if (row_kind == "station.list") return &model.station_definition_rows;
     if (row_kind == "repeater") return &model.repeaters;
     if (row_kind == "signal.put") return &model.signals;
     return nullptr;
@@ -2102,6 +2109,7 @@ std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
     if (row_kind == "structure.put") return &model.structures;
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
+    if (row_kind == "station.list") return &model.station_definition_rows;
     if (row_kind == "repeater") return &model.repeaters;
     if (row_kind == "signal.put") return &model.signals;
     return nullptr;
@@ -2185,9 +2193,11 @@ void normalize_station_preview_rows(MapModel& model) {
                          return table_cell_number(a, "_order") < table_cell_number(b, "_order");
                      });
 
-    for (const Station& station : model.stations) {
-        if (!station.key.empty() && !station.name.empty()) {
-            model.station_names.try_emplace(station.key, station.name);
+    model.station_names.clear();
+    for (const TableRow& definition : model.station_definition_rows) {
+        const std::string key = ascii_lower(table_cell(definition, "stationKey"));
+        if (!key.empty()) {
+            model.station_names[key] = table_cell(definition, "stationName");
         }
     }
     model.station_positions.clear();
@@ -2204,7 +2214,7 @@ void normalize_station_preview_rows(MapModel& model) {
         if (key.empty()) continue;
         Station station;
         station.key = key;
-        auto station_name = model.station_names.find(key);
+        auto station_name = model.station_names.find(ascii_lower(key));
         station.name = station_name == model.station_names.end() ? key : station_name->second;
         if (station.name.empty()) station.name = key;
         row.cells["stationName"] = station.name;
@@ -3061,6 +3071,103 @@ void App::apply_inspector_changes() {
     }
 }
 
+bool App::has_station_definition_drafts() const {
+    const StationDefinitionEditState& edit = station_definition_edit_;
+    return !edit.drafts.empty() ||
+        (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
+         edit.edit_buffer != edit.editing_baseline);
+}
+
+void App::commit_station_definition_active_edit() {
+    StationDefinitionEditState& edit = station_definition_edit_;
+    if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
+        static_cast<size_t>(edit.editing_column) < k_station_list_field_names.size()) {
+        const auto key = std::make_pair(edit.editing_edit_id, edit.editing_column);
+        if (edit.edit_buffer == edit.editing_baseline) {
+            edit.drafts.erase(key);
+        } else {
+            edit.drafts[key] = edit.edit_buffer;
+        }
+    }
+    edit.editing_row = -1;
+    edit.editing_column = -1;
+    edit.editing_edit_id.clear();
+    edit.editing_baseline.clear();
+    edit.edit_buffer.clear();
+    edit.edit_buffer_fresh = false;
+}
+
+void App::discard_station_definition_drafts() {
+    station_definition_edit_ = StationDefinitionEditState{};
+}
+
+void App::apply_station_definition_drafts() {
+    if (!edit_actions_available()) return;
+    commit_station_definition_active_edit();
+    if (station_definition_edit_.drafts.empty()) return;
+
+    // Fold drafts into the shared pending-edit ledger. The drafts are keyed by
+    // (editId, columnIndex); group them by editId so each station.list row
+    // becomes one MapElementPendingChange with the same field names the
+    // maploader expects (k_station_list_field_names).
+    std::map<std::string, std::map<std::string, std::string>> grouped;
+    for (const auto& draft : station_definition_edit_.drafts) {
+        const std::string& edit_id = draft.first.first;
+        const int column_index = draft.first.second;
+        if (column_index < 0 ||
+            static_cast<size_t>(column_index) >= k_station_list_field_names.size()) {
+            continue;
+        }
+        grouped[edit_id][k_station_list_field_names[column_index]] = draft.second;
+    }
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    for (const auto& entry : grouped) {
+        const std::string& edit_id = entry.first;
+        if (edit_id.empty()) continue;
+        auto existing = candidate.find(edit_id);
+        if (existing != candidate.end()) {
+            if (existing->second.row_kind != "station.list" ||
+                existing->second.operation != "update") {
+                add_log("[error]gui_kme.cpp: station.list apply blocked by an incompatible "
+                        "pending edit: " + edit_id);
+                set_program_status("status.edit.pending");
+                return;
+            }
+        } else {
+            MapElementPendingChange change;
+            change.change_id = "station-list-" + edit_id;
+            change.edit_id = edit_id;
+            change.row_kind = "station.list";
+            change.operation = "update";
+            std::string metadata_error;
+            const std::optional<InspectorTargetMetadata> metadata =
+                resolve_inspector_target_metadata(handle_, edit_id, "station.list",
+                                                  &metadata_error);
+            if (!metadata) {
+                add_log("[error]gui_kme.cpp: station.list apply blocked: " +
+                        (metadata_error.empty() ? std::string("metadata unavailable")
+                                                : metadata_error));
+                set_program_status("status.edit.pending");
+                return;
+            }
+            change.expected_source_hash = metadata->expected_source_hash;
+            existing = candidate.emplace(edit_id, std::move(change)).first;
+        }
+        for (const auto& field : entry.second) {
+            existing->second.field_changes[field.first] = field.second;
+        }
+    }
+
+    if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+        discard_station_definition_drafts();
+        invalidate_table_cache();
+        set_program_status("status.edit.pending");
+    } else {
+        set_program_status("status.edit.pending");
+    }
+}
+
 std::string delete_expected_source_hash(
     const MapModel& model,
     const std::map<std::string, MapElementPendingChange>& pending_changes,
@@ -3371,9 +3478,9 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 6> k_committed_row_kinds = {
-        "structure.model", "structure.put", "structure.between", "station.put", "repeater",
-        "signal.put",
+    static constexpr std::array<const char*, 7> k_committed_row_kinds = {
+        "structure.model", "structure.put", "structure.between", "station.put",
+        "station.list", "repeater", "signal.put",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -3905,7 +4012,16 @@ void App::process_distance_resolution_retry() {
 
 bool App::save_pending_edits(bool refresh_inspector) {
     if (!edit_actions_available()) return false;
-    if (!handle_ || !has_pending_edits() || load_state_.running) return false;
+    if (load_state_.running) return false;
+    // Fold any unapplied Station Definitions drafts into the ledger first so
+    // the toolbar Save button is a one-step "write to disk" action even when
+    // the user skipped the table's Apply button.
+    commit_station_definition_active_edit();
+    if (has_station_definition_drafts()) {
+        apply_station_definition_drafts();
+        if (has_station_definition_drafts()) return false;
+    }
+    if (!handle_ || !has_pending_edits()) return false;
 
     if (!edit_memory_matches_pending_ledger_) {
         std::vector<DistanceResolutionRequest> replay_requests;
@@ -3964,17 +4080,19 @@ bool App::discard_pending_edits() {
         distance_resolution_choices_.clear();
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
         text_preview_.placement = TextPreviewPlacementState{};
+        discard_station_definition_drafts();
         return true;
     }
     if (!apply_edit_ledger_to_preview({}, std::nullopt, false)) return false;
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     text_preview_.placement = TextPreviewPlacementState{};
+    discard_station_definition_drafts();
     return true;
 }
 
 bool App::revert_all_pending_edits() {
-    if (!edit_actions_available() || !has_pending_edits()) return false;
+    if (!edit_actions_available() || !has_unsaved_edit_state()) return false;
 
     std::optional<MapElementInspectorRequest> inspector_request;
     if (inspector_.open && !inspector_.edit_id.empty()) {
@@ -5081,12 +5199,12 @@ void App::render_toolbar() {
         }
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits());
+        ImGui::BeginDisabled(!edit_actions_available() || !has_unsaved_edit_state());
         if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits());
+        ImGui::BeginDisabled(!edit_actions_available() || !has_unsaved_edit_state());
         if (ImGui::Button(tr("button.revert").c_str())) {
             popups_.revert_all_edits_confirm = true;
         }
@@ -6563,7 +6681,7 @@ void App::perform_reload_current_map_geometry() {
 }
 
 bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
-    if (!has_pending_edits() || !has_model_ || file_path_.empty()) return false;
+    if (!has_unsaved_edit_state() || !has_model_ || file_path_.empty()) return false;
     pending_reload_action_ = action;
     popups_.reload_unsaved_confirm = true;
     return true;

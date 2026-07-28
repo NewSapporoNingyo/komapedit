@@ -14,6 +14,7 @@
 
 #include "canvas3D.h"
 #include "imgui.h"
+#include "misc/cpp/imgui_stdlib.h"
 #include "repeater_linkage.h"
 
 #include <windows.h>
@@ -2276,9 +2277,121 @@ void App::render_station_list_window() {
                          table_cache_.station_position_rows, true);
     ImGui::Separator();
     ImGui::TextUnformatted(tr("frame.station_definitions").c_str());
-    render_station_table("station_definitions", k_station_definition_columns,
-                         IM_ARRAYSIZE(k_station_definition_columns),
-                         table_cache_.station_definition_rows, false);
+    if (edit_actions_available()) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!has_station_definition_drafts());
+        if (ImGui::Button(tr("button.apply").c_str())) apply_station_definition_drafts();
+        ImGui::EndDisabled();
+    }
+    {
+        const TableColumnDef* columns = k_station_definition_columns;
+        const int column_count = IM_ARRAYSIZE(k_station_definition_columns);
+        const std::vector<CachedTableRow>& rows = table_cache_.station_definition_rows;
+        const int row_count = static_cast<int>(rows.size());
+        const bool can_edit = edit_actions_available();
+        ImVec2 table_size(0.0f, scroll_x_table_height_for_rows(row_count));
+        if (ImGui::BeginTable("station_definitions", column_count,
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX,
+                              table_size)) {
+            for (int i = 0; i < column_count; ++i) {
+                ImGui::TableSetupColumn(columns[i].header, ImGuiTableColumnFlags_WidthFixed,
+                                        columns[i].width);
+            }
+            setup_fixed_table_header();
+            ImGui::TableHeadersRow();
+            const ImGuiStyle& style = ImGui::GetStyle();
+            StationDefinitionEditState& edit = station_definition_edit_;
+            const auto row_has_definition_draft = [&](const std::string& edit_id) {
+                if (edit_id.empty()) return false;
+                for (const auto& draft : edit.drafts) {
+                    if (draft.first.first == edit_id) return true;
+                }
+                return false;
+            };
+            ImGuiListClipper clipper;
+            clipper.Begin(row_count);
+            while (clipper.Step()) {
+                for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                    const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
+                    ImGui::TableNextRow();
+                    if (row_has_pending_edit(row.edit_id) || row_has_definition_draft(row.edit_id)) {
+                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
+                    }
+                    ImGui::PushID(row_index);
+                    for (int col = 0; col < column_count; ++col) {
+                        ImGui::TableSetColumnIndex(col);
+                        ImGui::PushID(col);
+                        const std::string& cached = row.cells[static_cast<size_t>(col)];
+                        const auto draft_it = edit.drafts.find({row.edit_id, col});
+                        const std::string& display = (draft_it != edit.drafts.end())
+                            ? draft_it->second : cached;
+                        const bool is_editing = (edit.editing_row == row_index && edit.editing_column == col);
+                        const bool is_selected = (edit.selected_row == row_index && edit.selected_column == col);
+
+                        if (can_edit && is_editing) {
+                            if (edit.edit_buffer_fresh) {
+                                ImGui::SetKeyboardFocusHere(0);
+                                edit.edit_buffer_fresh = false;
+                            }
+                            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+                            const bool returned = ImGui::InputText(
+                                "##cell_edit", &edit.edit_buffer,
+                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                            ImGui::PopItemWidth();
+                            if (returned || ImGui::IsItemDeactivated()) {
+                                commit_station_definition_active_edit();
+                            }
+                            ImGui::PopID();
+                            continue;
+                        }
+
+                        ImVec2 pos = ImGui::GetCursorScreenPos();
+                        float cell_w = ImGui::GetContentRegionAvail().x;
+                        float cell_h = ImGui::GetFrameHeight();
+                        ImGui::InvisibleButton("cell", ImVec2(cell_w, cell_h));
+                        const bool hovered = ImGui::IsItemHovered();
+                        if (is_selected) {
+                            ImGui::GetWindowDrawList()->AddRect(
+                                pos, ImVec2(pos.x + cell_w, pos.y + cell_h),
+                                ImGui::GetColorU32(ImGuiCol_HeaderActive), 0.0f, 0, 1.5f);
+                        } else if (hovered) {
+                            ImGui::GetWindowDrawList()->AddRect(
+                                pos, ImVec2(pos.x + cell_w, pos.y + cell_h),
+                                ImGui::GetColorU32(ImGuiCol_HeaderHovered), 0.0f, 0, 1.0f);
+                        }
+                        if (!display.empty()) {
+                            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                            draw_list->PushClipRect(
+                                pos, ImVec2(pos.x + cell_w, pos.y + cell_h), true);
+                            draw_list->AddText(
+                                ImVec2(pos.x + style.CellPadding.x, pos.y + style.CellPadding.y),
+                                ImGui::GetColorU32(ImGuiCol_Text), display.c_str());
+                            draw_list->PopClipRect();
+                        }
+                        if (can_edit && !row.edit_id.empty()) {
+                            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                                edit.selected_row = row_index;
+                                edit.selected_column = col;
+                            }
+                            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                                commit_station_definition_active_edit();
+                                edit.editing_row = row_index;
+                                edit.editing_column = col;
+                                edit.editing_edit_id = row.edit_id;
+                                edit.editing_baseline = cached;
+                                edit.edit_buffer = display;
+                                edit.edit_buffer_fresh = true;
+                            }
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
     ImGui::End();
 }
 

@@ -1127,6 +1127,29 @@ struct DistanceResolutionWorkflowState {
     std::array<char, 1024> expression_buffer{};
 };
 
+// Excel-style inline editing state for the Station Definitions table. Drafts
+// hold the cell values the user has confirmed in the table but not yet pushed
+// into the shared pending-edit ledger. Apply folds drafts into the ledger and
+// the existing working-copy flow; Save/Revert/Reload discard them alongside
+// the ledger so the table never desyncs from the in-memory map state.
+inline constexpr std::array<const char*, 13> k_station_list_field_names = {
+    "stationKey", "stationName", "arrivalTime", "depertureTime", "stoppageTime",
+    "defaultTime", "signalFlag", "alightingTime", "passengers", "arrivalSoundKey",
+    "depertureSoundKey", "doorReopen", "stuckInDoor"
+};
+
+struct StationDefinitionEditState {
+    int selected_row = -1;
+    int selected_column = -1;
+    int editing_row = -1;
+    int editing_column = -1;
+    std::string editing_edit_id;
+    std::string editing_baseline;
+    std::string edit_buffer;
+    bool edit_buffer_fresh = false;
+    std::map<std::pair<std::string, int>, std::string> drafts;
+};
+
 struct BackgroundHistory {
     bool has_image = false;
     std::string image_path;
@@ -1246,6 +1269,7 @@ private:
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
+    StationDefinitionEditState station_definition_edit_;
 
     std::vector<LogLine> logs_;
     std::mutex log_mutex_;
@@ -1635,6 +1659,11 @@ private:
     bool discard_pending_edits();
     bool revert_all_pending_edits();
     void apply_inspector_changes();
+    bool has_unsaved_edit_state() const;
+    bool has_station_definition_drafts() const;
+    void commit_station_definition_active_edit();
+    void discard_station_definition_drafts();
+    void apply_station_definition_drafts();
     void enable_inspector_put0_conversion();
     bool navigate_repeater_inspector(bool toward_next);
     void sync_scene_placement_edit_from_inspector();

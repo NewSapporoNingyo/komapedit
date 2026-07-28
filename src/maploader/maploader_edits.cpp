@@ -34,6 +34,7 @@ struct EditableTarget {
     const StationPut* station_put = nullptr;
     const SignalPut* signal_put = nullptr;
     const RepeaterEvent* repeater = nullptr;
+    const StationListEntry* station_list = nullptr;
     int elements_for_statement = 0;
 };
 
@@ -610,6 +611,47 @@ std::string csv_field(const std::string& text) {
     return out;
 }
 
+struct CsvSourceLine {
+    std::vector<std::string_view> fields;
+    std::string_view comment_suffix;
+};
+
+CsvSourceLine split_csv_source_line(std::string_view line) {
+    CsvSourceLine result;
+    size_t field_start = 0;
+    bool quoted = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char ch = line[i];
+        if (ch == '"') {
+            if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
+                ++i;
+            } else {
+                quoted = !quoted;
+            }
+            continue;
+        }
+        if (quoted) continue;
+        if (ch == ',') {
+            result.fields.push_back(line.substr(field_start, i - field_start));
+            field_start = i + 1;
+            continue;
+        }
+        if (ch == '#') {
+            size_t comment_start = i;
+            while (comment_start > field_start &&
+                   (line[comment_start - 1] == ' ' || line[comment_start - 1] == '\t')) {
+                --comment_start;
+            }
+            result.fields.push_back(
+                line.substr(field_start, comment_start - field_start));
+            result.comment_suffix = line.substr(comment_start);
+            return result;
+        }
+    }
+    result.fields.push_back(line.substr(field_start));
+    return result;
+}
+
 std::string build_structure_model_statement(const MapEditChange& change,
                                             const ParsedStatement& statement) {
     std::vector<std::string> fields = parse_comma_separated_fields(statement.raw_arguments, false);
@@ -617,6 +659,38 @@ std::string build_structure_model_statement(const MapEditChange& change,
     std::string structure_key = required_string_field(change, "structureKey", fields[0]);
     std::string file_path = required_string_field(change, "filePath", fields.size() > 1 ? fields[1] : "");
     return csv_field(structure_key) + "," + csv_field(file_path);
+}
+
+std::string build_station_list_statement(const MapEditChange& change,
+                                         const ParsedStatement& statement,
+                                         const StationListEntry& row) {
+    const CsvSourceLine source = split_csv_source_line(statement.raw_arguments);
+    size_t output_count = source.fields.size();
+    for (size_t i = 0; i < k_station_list_field_names.size(); ++i) {
+        if (change.field_changes.find(k_station_list_field_names[i]) !=
+            change.field_changes.end()) {
+            output_count = std::max(output_count, i + 1);
+        }
+    }
+
+    std::ostringstream out;
+    for (size_t i = 0; i < output_count; ++i) {
+        if (i) out << ",";
+        if (i < k_station_list_field_names.size()) {
+            const auto edited = change.field_changes.find(k_station_list_field_names[i]);
+            if (edited != change.field_changes.end()) {
+                out << csv_field(normalized_station_list_edit_value(edited->second, i));
+                continue;
+            }
+        }
+        if (i < source.fields.size()) {
+            out << source.fields[i];
+        } else if (i < row.fields.size()) {
+            out << csv_field(row.fields[i]);
+        }
+    }
+    out << source.comment_suffix;
+    return out.str();
 }
 
 std::string build_station_put_statement(const MapEditChange& change,
@@ -870,6 +944,9 @@ void count_statement_ref(const EditSourceRef& ref, size_t statement_index, int& 
 int count_elements_for_statement(const MapContext& ctx, size_t statement_index) {
     int count = 0;
     for (const auto& row : ctx.station_puts) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.station_list) {
+        count_statement_ref(row.second.edit_ref, statement_index, count);
+    }
     for (const auto& row : ctx.structure_models) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_betweens) count_statement_ref(row.edit_ref, statement_index, count);
@@ -944,6 +1021,16 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
         if (match_edit_ref(ctx, row, "station.put", i, edit_id, target)) {
             target.station_put = &row;
             return target;
+        }
+    }
+    {
+        const auto entries = ordered_station_list_entries(ctx);
+        for (size_t i = 0; i < entries.size(); ++i) {
+            const StationListEntry& row = entries[i]->second;
+            if (match_edit_ref(ctx, row, "station.list", i, edit_id, target)) {
+                target.station_list = &row;
+                return target;
+            }
         }
     }
     for (size_t i = 0; i < ctx.signal_puts.size(); ++i) {
@@ -1050,6 +1137,9 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "station.put" && target.station_put) {
         return build_station_put_statement(change, statement, *target.station_put);
+    }
+    if (target.row_kind == "station.list" && target.station_list) {
+        return build_station_list_statement(change, statement, *target.station_list);
     }
     if (target.row_kind == "signal.put" && target.signal_put) {
         return build_signal_put_statement(change, statement, *target.signal_put);
@@ -2290,23 +2380,26 @@ void validate_edit_report(MapContext& baseline,
         patched_text_by_source_key[file.source_key] = &file.text;
     }
     std::map<IdentityLocation, std::vector<CandidateIdentityElement>> candidates_by_location;
+    auto collect_candidate_row = [&](const auto& row, const std::string& row_kind) {
+        const EditSourceRef& ref = row.edit_ref;
+        if (!ref.valid() || ref.statement_index >= candidate->parsed_statements.size()) return;
+        const ParsedStatement& statement = candidate->parsed_statements[ref.statement_index];
+        const std::string& source_key = source_file_key(*candidate, statement.source);
+        auto patched_text = patched_text_by_source_key.find(source_key);
+        if (patched_text == patched_text_by_source_key.end()) return;
+        SourcePatch source;
+        source.text = *patched_text->second;
+        const auto range = source_range_in_text(source, statement.source);
+        candidates_by_location[IdentityLocation{
+            source_key, range.first, range.second, row_kind, ref.element_index,
+        }].push_back({
+            native_element_edit_id(*candidate, ref, row_kind),
+            statement.global_order,
+        });
+    };
     auto collect_candidate_rows = [&](const auto& rows, const std::string& row_kind) {
         for (const auto& row : rows) {
-            const EditSourceRef& ref = row.edit_ref;
-            if (!ref.valid() || ref.statement_index >= candidate->parsed_statements.size()) continue;
-            const ParsedStatement& statement = candidate->parsed_statements[ref.statement_index];
-            const std::string& source_key = source_file_key(*candidate, statement.source);
-            auto patched_text = patched_text_by_source_key.find(source_key);
-            if (patched_text == patched_text_by_source_key.end()) continue;
-            SourcePatch source;
-            source.text = *patched_text->second;
-            const auto range = source_range_in_text(source, statement.source);
-            candidates_by_location[IdentityLocation{
-                source_key, range.first, range.second, row_kind, ref.element_index,
-            }].push_back({
-                native_element_edit_id(*candidate, ref, row_kind),
-                statement.global_order,
-            });
+            collect_candidate_row(row, row_kind);
         }
     };
     try {
@@ -2314,6 +2407,9 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->structure_puts, "structure.put");
         collect_candidate_rows(candidate->structure_betweens, "structure.between");
         collect_candidate_rows(candidate->station_puts, "station.put");
+        for (const auto& entry : ordered_station_list_entries(*candidate)) {
+            collect_candidate_row(entry->second, "station.list");
+        }
         collect_candidate_rows(candidate->signal_puts, "signal.put");
         collect_candidate_rows(candidate->repeaters, "repeater");
     } catch (const std::exception& e) {
@@ -3731,6 +3827,15 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     for (size_t row_index = 0; row_index < station_order.size(); ++row_index) {
         append_committed_row(ctx, report, "station.put", row_index,
                              ctx.station_puts[station_order[row_index]].edit_ref);
+    }
+
+    // station.list rows live in a std::map keyed by lowercased station key but
+    // the snapshot exposes them in parse order. Reuse the same helper so that
+    // committed row indices line up with the snapshot and the GUI table cache.
+    const auto station_list_entries = ordered_station_list_entries(ctx);
+    for (size_t row_index = 0; row_index < station_list_entries.size(); ++row_index) {
+        append_committed_row(ctx, report, "station.list", row_index,
+                             station_list_entries[row_index]->second.edit_ref);
     }
 }
 

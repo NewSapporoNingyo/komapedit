@@ -333,6 +333,19 @@ void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                        const KvStationListRow& row,
+                        const MapEditChange* change = nullptr) {
+    for (size_t i = 0; i < k_station_list_field_names.size(); ++i) {
+        const std::string* edited = changed_field(change, k_station_list_field_names[i]);
+        const std::string value = edited
+            ? normalized_station_list_edit_value(*edited, i)
+            : text(snapshot, row.fields[i]);
+        out.label("field");
+        out.string(value);
+    }
+}
+
 void write_signal_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
                       const KvSignalPutRow& row,
                       const MapEditChange* change = nullptr) {
@@ -417,6 +430,11 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "method", "structureKey", "trackKey1", "trackKey2", "flag"};
     } else if (target.row_kind == "station.put") {
         allowed = {"distance", "stationKey", "door", "margin1", "margin2"};
+    } else if (target.row_kind == "station.list") {
+        allowed = {"stationKey", "stationName", "arrivalTime", "depertureTime",
+                   "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
+                   "passengers", "arrivalSoundKey", "depertureSoundKey",
+                   "doorReopen", "stuckInDoor"};
     } else if (target.row_kind == "signal.put") {
         allowed = {"distance", "form", "signalAspectKey", "section", "trackKey",
                    "x", "y", "z", "rx", "ry", "rz", "tilt", "span"};
@@ -526,10 +544,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         emit_element(output, full, snapshot, row.metadata, "station.list",
                      "station.list." + object_key, static_cast<size_t>(i),
                      [&](SemanticWriter& out) {
-            for (size_t field_index = 0; field_index < 13; ++field_index) {
-                out.label("field");
-                out.string(SemanticWriter::snapshot_text(snapshot, row.fields[field_index]));
-            }
+            write_station_list(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.structure_load_count; ++i) {
@@ -826,7 +841,15 @@ std::string expected_target_semantic(MapContext& ctx,
     reject_unknown_target_fields(target, change);
     const KvMapSnapshot& snapshot = build_map_snapshot(ctx);
     SemanticWriter out;
-    begin_element(out, target.source_file, target.container_path);
+    std::string expected_container = target.container_path;
+    if (target.row_kind == "station.list") {
+        const auto station_key = change.field_changes.find("stationKey");
+        if (station_key != change.field_changes.end()) {
+            expected_container = "station.list." +
+                ascii_lower(normalized_station_list_edit_value(station_key->second, 0));
+        }
+    }
+    begin_element(out, target.source_file, expected_container);
     if (target.row_kind == "structure.model") {
         if (target.row_index >= snapshot.structure_model_count || !snapshot.structure_models) {
             throw std::runtime_error("structure.model target row is out of bounds");
@@ -847,6 +870,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("station.put target row is out of bounds");
         }
         write_station_put(out, snapshot, snapshot.station_puts[target.row_index], &change);
+    } else if (target.row_kind == "station.list") {
+        if (target.row_index >= snapshot.station_list_count || !snapshot.station_list) {
+            throw std::runtime_error("station.list target row is out of bounds");
+        }
+        write_station_list(out, snapshot, snapshot.station_list[target.row_index], &change);
     } else if (target.row_kind == "signal.put") {
         if (target.row_index >= snapshot.signal_put_count || !snapshot.signal_puts) {
             throw std::runtime_error("signal.put target row is out of bounds");

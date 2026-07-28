@@ -81,6 +81,7 @@ struct TempFixture {
         map << "BveTs Map 2.02:utf-8\n"
             << "0;\n"
             << "Structure.Load('structures.csv');\n"
+            << "Station.Load('stations.csv');\n"
             << "Track['1'].Position(3.8,0);\n"
             << "100;\n"
             << "Station['STA'].Put();\n"
@@ -102,6 +103,12 @@ struct TempFixture {
                                  std::ios::binary | std::ios::trunc);
         structures << "BveTs Structure List 1.00:utf-8\n"
                    << "pole,pole.csv\n";
+        structures.close();
+        std::ofstream stations(directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 1.00:utf-8\n"
+                 << "STA,Original,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0,"
+                    "legacy-a,legacy-b # keep station comment\n";
     }
 
     ~TempFixture() {
@@ -358,9 +365,10 @@ struct UpdateBatch {
     KvEditChange change{};
     KvEditBatch batch{};
 
-    UpdateBatch(std::string id, std::string hash, std::string value)
+    UpdateBatch(std::string id, std::string hash, std::string value,
+                std::string name = "x")
         : edit_id(std::move(id)), source_hash(std::move(hash)),
-          field_value(std::move(value)) {
+          field_name(std::move(name)), field_value(std::move(value)) {
         field = KvEditField{utf8_view(field_name), utf8_view(field_value)};
         change.change_id = utf8_view(change_id);
         change.edit_id = utf8_view(edit_id);
@@ -455,6 +463,18 @@ const KvRepeaterRow* find_repeater(const KvMapSnapshot& snapshot,
     return nullptr;
 }
 
+const KvStationListRow* find_station_list_row(const KvMapSnapshot& snapshot,
+                                              std::string_view edit_id) {
+    for (std::uint64_t i = 0; i < snapshot.station_list_count; ++i) {
+        const KvStationListRow& row = snapshot.station_list[i];
+        if (arena_view(snapshot.string_data, snapshot.string_size,
+                       row.metadata.edit_id) == edit_id) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
 int edit_contract() {
     TempFixture fixture;
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
@@ -507,6 +527,108 @@ int edit_contract() {
     check(!kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)),
           "out-of-bounds field span rejected");
     update.change.fields = KvSpan{0, 1};
+
+    check(baseline.station_list_count == 1, "Station.List fixture row present");
+    if (baseline.station_list_count == 1) {
+        const KvStationListRow& station_row = baseline.station_list[0];
+        const std::string station_edit_id =
+            map_string(baseline, station_row.metadata.edit_id);
+        check(station_row.metadata.source_file_index < baseline.source_file_count,
+              "Station.List source index");
+        if (station_row.metadata.source_file_index < baseline.source_file_count) {
+            const KvSourceFileRow& station_source =
+                baseline.source_files[station_row.metadata.source_file_index];
+            const std::string station_source_hash =
+                map_string(baseline, station_source.source_hash);
+            const std::string station_source_path =
+                map_string(baseline, station_source.file_path);
+            KvEditTargetSnapshot station_target{};
+            check(kv_get_edit_target_typed(handle.value, utf8_view(station_edit_id),
+                                           &station_target, sizeof(station_target)) != 0 &&
+                      station_target.elements_for_statement == 1,
+                  "Station.List target maps to one editable element");
+
+            UpdateBatch station_name_update(
+                station_edit_id, station_source_hash, "Edited", "stationName");
+            KvEditReportSnapshot station_name_report{};
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &station_name_update.batch,
+                      &station_name_report, sizeof(station_name_report)) != 0 &&
+                      station_name_report.ok,
+                  "Station.List name apply-to-memory");
+            KvMapSnapshot station_name_snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &station_name_snapshot,
+                                      sizeof(station_name_snapshot)) != 0,
+                  "Station.List name snapshot");
+            const KvStationListRow* edited_station =
+                find_station_list_row(station_name_snapshot, station_edit_id);
+            check(edited_station &&
+                      map_string(station_name_snapshot, edited_station->fields[1]) == "Edited",
+                  "Station.List name value");
+            const char* station_source_text =
+                kv_get_source_text(handle.value, station_source_path.c_str());
+            check(station_source_text &&
+                      std::string_view(station_source_text).find(
+                          "STA,Edited,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0,"
+                          "legacy-a,legacy-b # keep station comment") !=
+                          std::string_view::npos,
+                  "Station.List preserves trailing fields and inline comment");
+            kv_free_string(station_source_text);
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "Station.List name reset");
+
+            UpdateBatch station_key_update(
+                station_edit_id, station_source_hash, "STB", "stationKey");
+            KvEditReportSnapshot station_key_report{};
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &station_key_update.batch,
+                      &station_key_report, sizeof(station_key_report)) != 0 &&
+                      station_key_report.ok,
+                  "Station.List key apply-to-memory");
+            KvMapSnapshot station_key_snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &station_key_snapshot,
+                                      sizeof(station_key_snapshot)) != 0,
+                  "Station.List key snapshot");
+            const KvStationListRow* renamed_station =
+                find_station_list_row(station_key_snapshot, station_edit_id);
+            check(renamed_station &&
+                      map_string(station_key_snapshot, renamed_station->fields[0]) == "STB",
+                  "Station.List key value and stable identity");
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "Station.List key reset");
+
+            KvEditReportSnapshot station_save_apply_report{};
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &station_name_update.batch,
+                      &station_save_apply_report, sizeof(station_save_apply_report)) != 0 &&
+                      station_save_apply_report.ok,
+                  "Station.List apply before save");
+            KvEditReportSnapshot station_save_report{};
+            check(kv_edit_commit_typed(handle.value, &station_save_report,
+                                       sizeof(station_save_report)) != 0 &&
+                      station_save_report.ok,
+                  "Station.List save");
+            MapHandle station_reload(kv_load_map_ex(
+                fixture.path_utf8().c_str(), 25.0,
+                KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+            check(station_reload.value != nullptr, "Station.List reload after save");
+            if (station_reload.value) {
+                KvMapSnapshot station_reload_snapshot{};
+                check(kv_get_map_snapshot(station_reload.value, KV_MAP_SNAPSHOT_VERSION,
+                                          &station_reload_snapshot,
+                                          sizeof(station_reload_snapshot)) != 0,
+                      "Station.List reload snapshot");
+                const KvStationListRow* reloaded_station =
+                    find_station_list_row(station_reload_snapshot, station_edit_id);
+                check(reloaded_station &&
+                          map_string(station_reload_snapshot,
+                                     reloaded_station->fields[1]) == "Edited",
+                      "Station.List saved value and stable identity");
+            }
+        }
+    }
 
     RepeaterTrimBatch trim(trim_edit_id, trim_end_edit_id, source_hash);
     check(kv_edit_dry_run_typed(handle.value, &trim.batch,

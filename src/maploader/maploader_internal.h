@@ -603,6 +603,26 @@ struct StationListEntry {
     EditSourceRef edit_ref;
 };
 
+inline constexpr std::array<const char*, 13> k_station_list_field_names = {
+    "stationKey", "stationName", "arrivalTime", "depertureTime", "stoppageTime",
+    "defaultTime", "signalFlag", "alightingTime", "passengers", "arrivalSoundKey",
+    "depertureSoundKey", "doorReopen", "stuckInDoor"
+};
+
+inline std::string normalized_station_list_edit_value(const std::string& input,
+                                                      size_t field_index) {
+    std::string value = trim_field_copy(input);
+    if (field_index == 0 && value.empty()) {
+        throw std::runtime_error("required edit field is empty: stationKey");
+    }
+    if (value.find_first_of("\r\n") != std::string::npos) {
+        throw std::runtime_error(
+            std::string("Station.List field cannot contain a line break: ") +
+            k_station_list_field_names[field_index]);
+    }
+    return value;
+}
+
 struct Matrix {
     std::vector<double> data;
     size_t rows = 0;
@@ -966,6 +986,13 @@ std::string native_element_edit_id(const MapContext& ctx, const EditSourceRef& r
                                    const std::string& row_kind);
 std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
                             const std::string& row_kind);
+
+// Returns station-list entries in the canonical parse-order used by the
+// snapshot builder. The same ordering must be used by edit-target lookup and
+// committed-row population so that station.list row indices stay stable
+// across map snapshots, edit reports, and the GUI table cache.
+std::vector<std::map<std::string, StationListEntry>::const_iterator>
+ordered_station_list_entries(const MapContext& ctx);
 struct MapEditChange {
     std::string change_id;
     std::string edit_id;
