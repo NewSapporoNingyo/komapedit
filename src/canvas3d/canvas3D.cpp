@@ -808,11 +808,6 @@ std::string normalize_scene_track_key(std::string key) {
     return key;
 }
 
-bool is_scene_own_track_alias(const std::string& normalized_key) {
-    return normalized_key.empty() || normalized_key == "0" || normalized_key == "1" ||
-        normalized_key == "\\" || normalized_key == "own" || normalized_key == "main";
-}
-
 int scene_tilt_flags(double tilt) {
     if (!std::isfinite(tilt)) return 0;
     return static_cast<int>(tilt);
@@ -7037,64 +7032,20 @@ fail:
     }
 
     const Canvas3DTrackPath* own_track_path() const {
-        for (const Canvas3DTrackPath& path : scene_data.tracks) {
-            if (path.key == "own" || path.key.empty() || path.key == "0") return &path;
-        }
-        return scene_data.tracks.empty() ? nullptr : &scene_data.tracks.front();
+        return scene_own_track_path(scene_data);
     }
 
     bool sample_track_path(const Canvas3DTrackPath& path, double distance, Canvas3DTrackPoint& out) const {
-        if (path.points.empty()) return false;
-        if (distance <= path.points.front().distance) {
-            out = path.points.front();
-            return true;
-        }
-        if (distance >= path.points.back().distance) {
-            out = path.points.back();
-            return true;
-        }
-        size_t lo = 0;
-        size_t hi = path.points.size();
-        while (lo < hi) {
-            size_t mid = (lo + hi) / 2;
-            if (path.points[mid].distance < distance) lo = mid + 1;
-            else hi = mid;
-        }
-        size_t a_index = lo == 0 ? 0 : lo - 1;
-        size_t b_index = std::min(lo, path.points.size() - 1);
-        const Canvas3DTrackPoint& a = path.points[a_index];
-        const Canvas3DTrackPoint& b = path.points[b_index];
-        double span = b.distance - a.distance;
-        double t = std::abs(span) < 1e-9 ? 0.0 : std::clamp((distance - a.distance) / span, 0.0, 1.0);
-        out.distance = distance;
-        out.x = a.x + (b.x - a.x) * t;
-        out.y = a.y + (b.y - a.y) * t;
-        out.z = a.z + (b.z - a.z) * t;
-        out.theta = angle_lerp(a.theta, b.theta, t);
-        out.gradient = a.gradient + (b.gradient - a.gradient) * t;
-        out.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
+        std::optional<Canvas3DTrackPoint> sample =
+            scene_sample_track_path_points(path, distance);
+        if (!sample) return false;
+        out = *sample;
         return true;
     }
 
     bool sample_own_track(double distance, Canvas3DTrackPoint& out) const {
         const Canvas3DTrackPath* path = own_track_path();
         return path && sample_track_path(*path, distance, out);
-    }
-
-    const Canvas3DTrackPath* other_track_path_for_normalized_key(const std::string& normalized) const {
-        const Canvas3DTrackPath* own = own_track_path();
-        for (const Canvas3DTrackPath& path : scene_data.tracks) {
-            if (&path == own) continue;
-            if (normalize_scene_track_key(path.key) == normalized) return &path;
-        }
-        return nullptr;
-    }
-
-    const Canvas3DTrackPath* track_path_for_key(const std::string& key) const {
-        std::string normalized = normalize_scene_track_key(key);
-        if (const Canvas3DTrackPath* other = other_track_path_for_normalized_key(normalized)) return other;
-        if (is_scene_own_track_alias(normalized)) return own_track_path();
-        return nullptr;
     }
 
     const Canvas3DTrackPath* placement_track_path_for_key(const std::string& key) const {

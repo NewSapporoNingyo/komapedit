@@ -41,7 +41,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -64,6 +66,40 @@ using SteadyClock = std::chrono::steady_clock;
 
 constexpr double k_inf = std::numeric_limits<double>::infinity();
 constexpr double k_pi = 3.141592653589793238462643383279502884;
+inline constexpr size_t k_max_parallel_maploader_tasks = 32;
+
+bool try_acquire_maploader_task_slot() noexcept;
+void release_maploader_task_slot() noexcept;
+
+template <typename Function>
+auto launch_bounded_maploader_task(Function&& function)
+    -> std::future<std::invoke_result_t<std::decay_t<Function>&>> {
+    using Task = std::decay_t<Function>;
+    using Result = std::invoke_result_t<Task&>;
+    auto task = std::make_shared<Task>(std::forward<Function>(function));
+    auto deferred = [task]() mutable -> Result {
+        return (*task)();
+    };
+    if (!try_acquire_maploader_task_slot()) {
+        return std::async(std::launch::deferred, std::move(deferred));
+    }
+
+    try {
+        return std::async(std::launch::async, [task]() mutable -> Result {
+            struct SlotRelease {
+                ~SlotRelease() { release_maploader_task_slot(); }
+            } slot_release;
+            return (*task)();
+        });
+    } catch (const std::system_error&) {
+        release_maploader_task_slot();
+        return std::async(std::launch::deferred, std::move(deferred));
+    } catch (...) {
+        release_maploader_task_slot();
+        throw;
+    }
+}
+
 struct LoadTiming {
     double read_decode_seconds = 0.0;
     double parse_seconds = 0.0;

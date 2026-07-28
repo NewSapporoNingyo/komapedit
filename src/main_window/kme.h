@@ -429,16 +429,6 @@ double table_cell_number(const TableRow& row, const std::string& key);
 struct MapModel;
 void annotate_scene_track_key_warnings(MapModel& model);
 
-inline bool repeater_event_distance_order_less(const TableRow& a, const TableRow& b) {
-    double ad = table_cell_number(a, "distance");
-    double bd = table_cell_number(b, "distance");
-    if (ad < bd) return true;
-    if (ad > bd) return false;
-    double ao = table_cell_number(a, "order");
-    double bo = table_cell_number(b, "order");
-    return ao < bo;
-}
-
 struct MapModel {
     std::string path;
     std::vector<FileStructureNode> file_structure;
@@ -1590,6 +1580,7 @@ private:
     static void log_callback(const char* message);
 
     void stop_loader();
+    void handle_loader_start_failure(const std::string& error);
     void poll_loader();
     void set_program_status(const char* key, std::string_view elapsed_seconds = {});
     void finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at);
@@ -1756,6 +1747,8 @@ private:
     void apply_scene_performance_warning_to_canvas(bool enabled,
                                                    int warning_threshold,
                                                    int critical_warning_threshold);
+    bool scene_settings_preview_differs_from_dialog_baseline() const;
+    void restore_scene_settings_preview();
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();

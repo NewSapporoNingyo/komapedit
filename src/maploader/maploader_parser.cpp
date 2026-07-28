@@ -431,6 +431,13 @@ private:
 
     void queue_include(const std::string& path_text, size_t body_start, size_t body_end) {
         std::filesystem::path child = join_path(ctx_.rootpath, path_text);
+        const std::string child_path = normalized_source_path(child);
+        const std::string child_key = normalized_source_key(child_path);
+        for (const std::string& ancestor : ctx_.include_stack) {
+            if (normalized_source_key(ancestor) == child_key) {
+                throw FatalParseError("Include cycle detected: " + child_path);
+            }
+        }
         log_info("including " + path_to_utf8(child));
         const size_t byte_start = loaded_.body_offset + body_start;
         const size_t byte_end = loaded_.body_offset + body_end;
@@ -448,10 +455,10 @@ private:
         pending.include_invocation_key = std::move(include_invocation_key);
         pending.seed_distance = seed.distance;
         pending.seed_variables = seed.variables;
-        pending.future = std::async(std::launch::async,
-                                    [seed = std::move(seed), child]() mutable {
-                                        return parse_include_context(std::move(seed), child);
-                                    });
+        pending.future = launch_bounded_maploader_task(
+            [seed = std::move(seed), child]() mutable {
+                return parse_include_context(std::move(seed), child);
+            });
         pending_includes_.push_back(std::move(pending));
     }
 

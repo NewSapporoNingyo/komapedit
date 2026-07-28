@@ -1101,22 +1101,30 @@ void generate_geometry(MapContext& ctx, double unitdist,
     }
     if (generate_auxiliary_buffers) generate_curveradius(ctx);
     std::vector<std::future<OtherTrackBuildResult>> futures;
-    futures.reserve(ctx.othertrack_order.size());
-    for (const auto& key : ctx.othertrack_order) {
-        futures.push_back(std::async(std::launch::async, [&ctx, key]() {
-            auto started_at = SteadyClock::now();
-            OtherTrackBuildResult out;
-            out.key = key;
-            out.buffer = build_othertrack_buffer(ctx, key, out.has_buffer);
-            out.seconds = elapsed_seconds_since(started_at);
-            return out;
-        }));
-    }
-    for (auto& future : futures) {
-        OtherTrackBuildResult result = future.get();
-        ctx.timing.othertrack_seconds.push_back({result.key, result.seconds});
-        if (result.has_buffer) {
-            ctx.othertrack_buffers[result.key] = std::move(result.buffer);
+    futures.reserve(std::min(ctx.othertrack_order.size(),
+                             k_max_parallel_maploader_tasks));
+    for (size_t first = 0; first < ctx.othertrack_order.size();
+         first += k_max_parallel_maploader_tasks) {
+        const size_t last = std::min(
+            first + k_max_parallel_maploader_tasks, ctx.othertrack_order.size());
+        futures.clear();
+        for (size_t index = first; index < last; ++index) {
+            const std::string& key = ctx.othertrack_order[index];
+            futures.push_back(launch_bounded_maploader_task([&ctx, key]() {
+                auto started_at = SteadyClock::now();
+                OtherTrackBuildResult out;
+                out.key = key;
+                out.buffer = build_othertrack_buffer(ctx, key, out.has_buffer);
+                out.seconds = elapsed_seconds_since(started_at);
+                return out;
+            }));
+        }
+        for (auto& future : futures) {
+            OtherTrackBuildResult result = future.get();
+            ctx.timing.othertrack_seconds.push_back({result.key, result.seconds});
+            if (result.has_buffer) {
+                ctx.othertrack_buffers[result.key] = std::move(result.buffer);
+            }
         }
     }
     if (generate_auxiliary_buffers) build_structure_put_buffer(ctx);

@@ -4753,6 +4753,10 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         app.dmax_ = app.model_.default_max;
         app.plot_min_ = app.dmin_;
         app.plot_max_ = app.dmax_;
+        app.cp_start_ = app.model_.cp_arb[0];
+        app.cp_end_ = app.model_.cp_arb[1];
+        app.cp_interval_ = app.model_.cp_arb[2];
+        app.unit_distance_ = unit_distance;
         app.rebuild_marker_overlay_cache();
         app.reset_marker_visibility();
         app.scene_preview_started_ = true;
@@ -4761,7 +4765,9 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
             static_cast<size_t>(std::max(scene_model_workers, 0)),
             !disable_scene_texture_cache);
         const auto preview_load_started_at = std::chrono::steady_clock::now();
+        ImGui::NewFrame();
         const double scene_build_seconds = app.rebuild_scene_preview();
+        ImGui::EndFrame();
         Canvas3DSceneStats initial_stats = app.scene_preview_canvas_->scene_stats();
         *out << "stage=scene-ready"
              << " chunks=" << initial_stats.chunk_count
@@ -5016,6 +5022,15 @@ int App::run_debug_headless_scene_camera_transfer(const std::string& path, doubl
     }
     *out << "stage=load-complete\n";
 
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+
     int exit_code = 0;
     try {
         Canvas3DSceneBuildOptions options;
@@ -5087,6 +5102,8 @@ int App::run_debug_headless_scene_camera_transfer(const std::string& path, doubl
     }
 
     if (load_result.handle) kv_free(load_result.handle);
+    ImGui::EndFrame();
+    ImGui::DestroyContext();
     context->ClearState();
     context->Flush();
     release_com(context);

@@ -10,6 +10,8 @@
 
 #include "maploader_internal.h"
 
+#include <atomic>
+
 namespace kme::maploader::detail {
 
 using kme::maploader::decode_codepage;
@@ -27,8 +29,25 @@ using kme::maploader::log_warn;
 namespace {
 
 thread_local LoadTiming* g_active_timing = nullptr;
+std::atomic<size_t> g_active_maploader_tasks{0};
 
 } // namespace
+
+bool try_acquire_maploader_task_slot() noexcept {
+    size_t active = g_active_maploader_tasks.load(std::memory_order_relaxed);
+    while (active < k_max_parallel_maploader_tasks) {
+        if (g_active_maploader_tasks.compare_exchange_weak(
+                active, active + 1, std::memory_order_acq_rel,
+                std::memory_order_relaxed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void release_maploader_task_slot() noexcept {
+    g_active_maploader_tasks.fetch_sub(1, std::memory_order_acq_rel);
+}
 
 double elapsed_seconds_since(SteadyClock::time_point started_at) {
     return std::chrono::duration<double>(SteadyClock::now() - started_at).count();

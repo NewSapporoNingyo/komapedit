@@ -309,14 +309,6 @@ MapElementNumericConstraint structure_edit_numeric_constraint(const std::string&
     return MapElementNumericConstraint::Finite;
 }
 
-bool is_structure_coordinate_field(const std::string& key) {
-    static constexpr std::array<const char*, 6> k_coordinate_fields = {
-        "x", "y", "z", "rx", "ry", "rz"
-    };
-    return std::any_of(k_coordinate_fields.begin(), k_coordinate_fields.end(),
-                       [&](const char* field) { return key == field; });
-}
-
 float distance_jump_input_width() {
     const ImGuiStyle& style = ImGui::GetStyle();
     return ImGui::CalcTextSize("0000000000").x + style.FramePadding.x * 2.0f;
@@ -527,19 +519,6 @@ std::string map_snapshot_value_span_text(const KvMapSnapshot& snapshot, KvSpan s
     for (std::uint64_t i = 0; i < span.count; ++i) {
         if (i) output += ", ";
         output += map_snapshot_value_text(snapshot, snapshot.values[span.offset + i]);
-    }
-    return output;
-}
-
-std::string map_snapshot_string_span_text(const KvMapSnapshot& snapshot, KvSpan span) {
-    if (!map_snapshot_span_valid(span, snapshot.string_ref_count) ||
-        (span.count != 0 && !snapshot.string_refs)) {
-        return {};
-    }
-    std::string output;
-    for (std::uint64_t i = 0; i < span.count; ++i) {
-        if (i) output += ", ";
-        output += map_snapshot_string(snapshot, snapshot.string_refs[span.offset + i]);
     }
     return output;
 }
@@ -1184,6 +1163,14 @@ void App::stop_loader() {
     if (load_state_.worker.joinable()) load_state_.worker.join();
 }
 
+void App::handle_loader_start_failure(const std::string& error) {
+    load_state_.running = false;
+    load_state_.pending_started_at.reset();
+    set_program_status("status.map_load_failed");
+    add_log(LogSeverity::Error,
+            "[ERROR]gui_kme.cpp: failed to start map loader: " + error);
+}
+
 void App::poll_loader() {
     std::optional<LoadResult> result;
     {
@@ -1238,35 +1225,39 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     load_options.full_edit_registry = false;
     load_options.load_profile = "preview";
 
-    load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
-                           record_history, background_to_restore, load_started_at,
-                           preserve_scene_preview_models,
-                           preserve_scene_preview_camera, load_options]() mutable {
-        LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
-        result.started_at = load_started_at;
-        result.preserve_settings = preserve_settings;
-        result.record_history = record_history;
-        result.preserve_scene_preview_models = preserve_scene_preview_models;
-        result.preserve_scene_preview_camera = preserve_scene_preview_camera;
-        result.background_to_restore = background_to_restore;
-        if (result.ok && preserve_settings) {
-            for (auto& t : result.model.other_tracks) {
-                auto it = old_other.find(t.key);
-                if (it != old_other.end()) {
-                    t.visible = it->second.visible;
-                    t.color = it->second.color;
-                    t.range_min = it->second.range_min;
-                    t.range_max = it->second.range_max;
+    try {
+        load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
+                               record_history, background_to_restore, load_started_at,
+                               preserve_scene_preview_models,
+                               preserve_scene_preview_camera, load_options]() mutable {
+            LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
+            result.started_at = load_started_at;
+            result.preserve_settings = preserve_settings;
+            result.record_history = record_history;
+            result.preserve_scene_preview_models = preserve_scene_preview_models;
+            result.preserve_scene_preview_camera = preserve_scene_preview_camera;
+            result.background_to_restore = background_to_restore;
+            if (result.ok && preserve_settings) {
+                for (auto& t : result.model.other_tracks) {
+                    auto it = old_other.find(t.key);
+                    if (it != old_other.end()) {
+                        t.visible = it->second.visible;
+                        t.color = it->second.color;
+                        t.range_min = it->second.range_min;
+                        t.range_max = it->second.range_max;
+                    }
                 }
             }
-        }
-        {
-            std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-            load_state_.pending_result = std::move(result);
-        }
-        load_state_.running = false;
-        wake_main_window();
-    });
+            {
+                std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+                load_state_.pending_result = std::move(result);
+            }
+            load_state_.running = false;
+            wake_main_window();
+        });
+    } catch (const std::exception& e) {
+        handle_loader_start_failure(e.what());
+    }
 }
 
 void App::begin_edit_metadata_load() {
@@ -1288,17 +1279,21 @@ void App::begin_edit_metadata_load() {
     load_options.load_profile = "edit";
     std::string path = file_path_;
 
-    load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, load_started_at, load_options]() mutable {
-        LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
-        result.started_at = load_started_at;
-        result.edit_metadata_only = true;
-        {
-            std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-            load_state_.pending_result = std::move(result);
-        }
-        load_state_.running = false;
-        wake_main_window();
-    });
+    try {
+        load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, load_started_at, load_options]() mutable {
+            LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
+            result.started_at = load_started_at;
+            result.edit_metadata_only = true;
+            {
+                std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+                load_state_.pending_result = std::move(result);
+            }
+            load_state_.running = false;
+            wake_main_window();
+        });
+    } catch (const std::exception& e) {
+        handle_loader_start_failure(e.what());
+    }
 }
 
 void App::apply_load_result(LoadResult result) {
@@ -1691,8 +1686,19 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
 
 }
 
-std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
-                                                       const std::string& row_kind);
+template <typename Model>
+auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
+    -> decltype(&model.structure_models) {
+    if (row_kind == "structure.model") return &model.structure_models;
+    if (row_kind == "structure.put") return &model.structures;
+    if (row_kind == "structure.between") return &model.structures_between;
+    if (row_kind == "station.put") return &model.station_list_rows;
+    if (row_kind == "station.list") return &model.station_definition_rows;
+    if (row_kind == "repeater") return &model.repeaters;
+    if (row_kind == "signal.put") return &model.signals;
+    return nullptr;
+}
+
 bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
                                const std::string& edit_id,
                                size_t& row_index);
@@ -1803,7 +1809,7 @@ void App::request_exit() {
 bool App::snapshot_local_preview_row(const std::string& edit_id, const std::string& row_kind) {
     if (edit_id.empty() || row_kind.empty()) return false;
     if (original_edit_rows_.find(edit_id) != original_edit_rows_.end()) return true;
-    std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, row_kind);
+    std::vector<TableRow>* rows = inspector_rows_for_kind(model_, row_kind);
     if (!rows) return false;
     size_t row_index = 0;
     if (!find_row_index_by_edit_id(*rows, edit_id, row_index)) return false;
@@ -1816,7 +1822,7 @@ bool App::restore_local_preview_change(const std::string& edit_id, const std::st
     auto snapshot = original_edit_rows_.find(edit_id);
     if (snapshot == original_edit_rows_.end()) return true;
     const std::string effective_row_kind = row_kind.empty() ? snapshot->second.row_kind : row_kind;
-    std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, effective_row_kind);
+    std::vector<TableRow>* rows = inspector_rows_for_kind(model_, effective_row_kind);
     if (!rows) return false;
 
     size_t row_index = 0;
@@ -1848,7 +1854,7 @@ bool App::restore_local_preview_change(const std::string& edit_id, const std::st
 bool App::apply_local_preview_change(const MapElementPendingChange& change,
                                      bool refresh_preview) {
     if (change.edit_id.empty() || change.row_kind.empty()) return false;
-    std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, change.row_kind);
+    std::vector<TableRow>* rows = inspector_rows_for_kind(model_, change.row_kind);
     if (!rows) return false;
 
     size_t row_index = 0;
@@ -2089,30 +2095,6 @@ std::string inspector_expected_source_hash(
     return expected_source_hash_for_edit_target(
         model, pending_changes, inspector.edit_id, inspector.expected_source_hash,
         inspector.source_file);
-}
-
-const std::vector<TableRow>* inspector_rows_for_kind(const MapModel& model,
-                                                     const std::string& row_kind) {
-    if (row_kind == "structure.model") return &model.structure_models;
-    if (row_kind == "structure.put") return &model.structures;
-    if (row_kind == "structure.between") return &model.structures_between;
-    if (row_kind == "station.put") return &model.station_list_rows;
-    if (row_kind == "station.list") return &model.station_definition_rows;
-    if (row_kind == "repeater") return &model.repeaters;
-    if (row_kind == "signal.put") return &model.signals;
-    return nullptr;
-}
-
-std::vector<TableRow>* mutable_inspector_rows_for_kind(MapModel& model,
-                                                       const std::string& row_kind) {
-    if (row_kind == "structure.model") return &model.structure_models;
-    if (row_kind == "structure.put") return &model.structures;
-    if (row_kind == "structure.between") return &model.structures_between;
-    if (row_kind == "station.put") return &model.station_list_rows;
-    if (row_kind == "station.list") return &model.station_definition_rows;
-    if (row_kind == "repeater") return &model.repeaters;
-    if (row_kind == "signal.put") return &model.signals;
-    return nullptr;
 }
 
 bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
@@ -3473,7 +3455,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         state.source.line = item.line;
         state.source.column = item.column;
         state.source.raw_text_preview = edit_report_string(report, item.raw_text_preview);
-        if (mutable_inspector_rows_for_kind(model, state.row_kind)) {
+        if (inspector_rows_for_kind(model, state.row_kind)) {
             rows_by_kind[state.row_kind].push_back(std::move(state));
         }
     }
@@ -3485,7 +3467,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
     for (const char* row_kind : k_committed_row_kinds) {
-        std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
+        std::vector<TableRow>* target_rows = inspector_rows_for_kind(model, row_kind);
         const std::vector<CommittedEditRowState>& states = rows_by_kind[row_kind];
         if (!target_rows || states.size() != target_rows->size()) {
             error = std::string("edit commit row count mismatch for ") + row_kind;
@@ -3528,7 +3510,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         file->byte_length = state.byte_length;
     }
     for (const char* row_kind : k_committed_row_kinds) {
-        std::vector<TableRow>* target_rows = mutable_inspector_rows_for_kind(model, row_kind);
+        std::vector<TableRow>* target_rows = inspector_rows_for_kind(model, row_kind);
         for (size_t row_index = 0; row_index < target_rows->size(); ++row_index) {
             TableRow& row = (*target_rows)[row_index];
             const CommittedEditRowState* state = nullptr;
@@ -3687,7 +3669,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
     std::map<std::string, std::vector<TableRow>> row_backups;
     for (const std::string& row_kind : affected_row_kinds) {
-        if (std::vector<TableRow>* rows = mutable_inspector_rows_for_kind(model_, row_kind)) {
+        if (std::vector<TableRow>* rows = inspector_rows_for_kind(model_, row_kind)) {
             row_backups.emplace(row_kind, *rows);
         }
     }
@@ -3709,7 +3691,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     auto rollback_local_preview = [&]() {
         for (auto& backup : row_backups) {
             if (std::vector<TableRow>* rows =
-                    mutable_inspector_rows_for_kind(model_, backup.first)) {
+                    inspector_rows_for_kind(model_, backup.first)) {
                 *rows = std::move(backup.second);
             }
         }
@@ -4864,6 +4846,47 @@ void App::apply_scene_performance_warning_to_canvas(bool enabled,
     }
 }
 
+bool App::scene_settings_preview_differs_from_dialog_baseline() const {
+    return pending_scene_draw_distance_m_ != scene_draw_distance_before_dialog_m_ ||
+        pending_scene_edit_component_size_percent_ !=
+            scene_edit_component_size_before_dialog_percent_ ||
+        pending_scene_camera_speed_percent_ != scene_camera_speed_percent_before_dialog_ ||
+        pending_scene_fog_enabled_ != scene_fog_enabled_before_dialog_ ||
+        pending_scene_map_draw_distance_enabled_ !=
+            scene_map_draw_distance_enabled_before_dialog_ ||
+        pending_scene_performance_warning_enabled_ !=
+            scene_performance_warning_enabled_before_dialog_ ||
+        pending_scene_instance_warning_threshold_ !=
+            scene_instance_warning_threshold_before_dialog_ ||
+        pending_scene_instance_critical_warning_threshold_ !=
+            scene_instance_critical_warning_threshold_before_dialog_;
+}
+
+void App::restore_scene_settings_preview() {
+    pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
+    pending_scene_edit_component_size_percent_ =
+        scene_edit_component_size_before_dialog_percent_;
+    pending_scene_camera_speed_percent_ = scene_camera_speed_percent_before_dialog_;
+    pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
+    pending_scene_map_draw_distance_enabled_ =
+        scene_map_draw_distance_enabled_before_dialog_;
+    pending_scene_performance_warning_enabled_ =
+        scene_performance_warning_enabled_before_dialog_;
+    pending_scene_instance_warning_threshold_ =
+        scene_instance_warning_threshold_before_dialog_;
+    pending_scene_instance_critical_warning_threshold_ =
+        scene_instance_critical_warning_threshold_before_dialog_;
+    apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
+    apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
+    apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);
+    apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
+    apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
+    apply_scene_performance_warning_to_canvas(
+        scene_performance_warning_enabled_,
+        scene_instance_warning_threshold_,
+        scene_instance_critical_warning_threshold_);
+}
+
 void App::save_runtime_settings_if_changed() {
     bool changed = false;
     WindowVisibilitySettings visibility = current_window_visibility();
@@ -6002,55 +6025,14 @@ void App::render_popups() {
         }
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
-            pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
-            pending_scene_edit_component_size_percent_ =
-                scene_edit_component_size_before_dialog_percent_;
-            pending_scene_camera_speed_percent_ = scene_camera_speed_percent_before_dialog_;
-            pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
-            pending_scene_map_draw_distance_enabled_ =
-                scene_map_draw_distance_enabled_before_dialog_;
-            pending_scene_performance_warning_enabled_ =
-                scene_performance_warning_enabled_before_dialog_;
-            pending_scene_instance_warning_threshold_ =
-                scene_instance_warning_threshold_before_dialog_;
-            pending_scene_instance_critical_warning_threshold_ =
-                scene_instance_critical_warning_threshold_before_dialog_;
-            apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
-            apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
-            apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);
-            apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
-            apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
-            apply_scene_performance_warning_to_canvas(
-                scene_performance_warning_enabled_,
-                scene_instance_warning_threshold_,
-                scene_instance_critical_warning_threshold_);
+            restore_scene_settings_preview();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
-    if (!canvas_3d_settings_popup_open) {
-        pending_scene_draw_distance_m_ = scene_draw_distance_before_dialog_m_;
-        pending_scene_edit_component_size_percent_ =
-            scene_edit_component_size_before_dialog_percent_;
-        pending_scene_camera_speed_percent_ = scene_camera_speed_percent_before_dialog_;
-        pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
-        pending_scene_map_draw_distance_enabled_ =
-            scene_map_draw_distance_enabled_before_dialog_;
-        pending_scene_performance_warning_enabled_ =
-            scene_performance_warning_enabled_before_dialog_;
-        pending_scene_instance_warning_threshold_ =
-            scene_instance_warning_threshold_before_dialog_;
-        pending_scene_instance_critical_warning_threshold_ =
-            scene_instance_critical_warning_threshold_before_dialog_;
-        apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
-        apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
-        apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);
-        apply_scene_fog_effect_to_canvas(scene_fog_enabled_);
-        apply_scene_map_draw_distance_to_canvas(scene_map_draw_distance_enabled_);
-        apply_scene_performance_warning_to_canvas(
-            scene_performance_warning_enabled_,
-            scene_instance_warning_threshold_,
-            scene_instance_critical_warning_threshold_);
+    if (!canvas_3d_settings_popup_open &&
+        scene_settings_preview_differs_from_dialog_baseline()) {
+        restore_scene_settings_preview();
     }
 
     if (popups_.range) {

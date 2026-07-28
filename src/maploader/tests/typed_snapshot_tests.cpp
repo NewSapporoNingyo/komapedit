@@ -791,7 +791,6 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
     check(diagnostics_contain("Unknown SoundKey"), "unknown sound key warning");
     check(diagnostics_contain("Unknown Sound3DKey"), "unknown sound3d key warning");
     check(diagnostics_contain("Unknown StationKey"), "unknown station key warning");
-    check(diagnostics_contain("Unknown SignalAspectKey"), "unknown signal aspect key warning");
     check(diagnostics_contain("Unknown TrainKey"), "unknown train key warning");
     check(diagnostics_contain("Undefined variable"), "undefined variable warning");
     check(diagnostics_contain("Missing statement terminator ';'"), "missing semicolon warning");
@@ -826,6 +825,21 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
     check(!diagnostics_contain("Parameter count error"),
           "legal Repeater variable arguments have no count warning");
 
+    TempFixture unknown_signal_aspect;
+    {
+        std::ofstream map(unknown_signal_aspect.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Signal['missing'].Put(0,'0',0,0);\n";
+    }
+    clear_diagnostics();
+    MapHandle unknown_signal_handle(kv_load_map_ex(
+        unknown_signal_aspect.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(unknown_signal_handle.value != nullptr, "unknown signal aspect map loads");
+    check(diagnostics_contain("Unknown SignalAspectKey"),
+          "unknown signal aspect key warning");
+
     struct FatalCase {
         const char* file;
         const char* error_text;
@@ -845,6 +859,23 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
               "fatal diagnostics last error");
         check(diagnostics_contain("[ERROR]"), "fatal diagnostics use error severity");
     }
+
+    TempFixture include_cycle;
+    {
+        std::ofstream map(include_cycle.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "Include 'map.txt';\n";
+    }
+    clear_diagnostics();
+    MapHandle cycle_handle(kv_load_map_ex(
+        include_cycle.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(cycle_handle.value == nullptr, "cyclic Include returns null");
+    const char* cycle_error = kv_get_last_error();
+    check(cycle_error &&
+              std::string_view(cycle_error).find("Include cycle detected") !=
+                  std::string_view::npos,
+          "cyclic Include reports its cause");
+    check(diagnostics_contain("[ERROR]"), "cyclic Include uses error severity");
 
     kv_set_log_callback(nullptr);
     std::cout << "maploader diagnostics contract "

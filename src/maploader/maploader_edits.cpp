@@ -3008,6 +3008,20 @@ bool physical_include_instances_are_compatible(
     return true;
 }
 
+void replace_context_and_advance_revisions(MapContext& current, MapContext&& replacement) {
+    const std::uint64_t next_content_revision = current.content_revision + 1;
+    const std::uint64_t next_geometry_revision = current.geometry_revision + 1;
+    const std::uint64_t next_scene_revision = current.scene_revision + 1;
+    current = std::move(replacement);
+    current.content_revision = next_content_revision;
+    current.geometry_revision = next_geometry_revision;
+    current.scene_revision = next_scene_revision;
+    current.map_snapshot.reset();
+    current.scene_snapshot.reset();
+    current.edit_target_snapshot.reset();
+    current.edit_report_snapshot.reset();
+}
+
 MapEditReport build_edit_report(MapContext& ctx,
                                 const std::vector<MapEditChange>& changes,
                                 bool write_files) {
@@ -3651,17 +3665,8 @@ MapEditReport build_edit_report(MapContext& ctx,
             return report;
         }
 
-        const std::uint64_t next_content_revision = ctx.content_revision + 1;
-        const std::uint64_t next_geometry_revision = ctx.geometry_revision + 1;
-        const std::uint64_t next_scene_revision = ctx.scene_revision + 1;
-        ctx = std::move(*report.validated_context);
-        ctx.content_revision = next_content_revision;
-        ctx.geometry_revision = next_geometry_revision;
-        ctx.scene_revision = next_scene_revision;
-        ctx.map_snapshot.reset();
-        ctx.scene_snapshot.reset();
-        ctx.edit_target_snapshot.reset();
-        ctx.edit_report_snapshot.reset();
+        replace_context_and_advance_revisions(
+            ctx, std::move(*report.validated_context));
         ctx.disk_native_element_edit_id_to_stable =
             ctx.native_element_edit_id_to_stable;
         ctx.disk_source_hashes_for_stable_ids.clear();
@@ -3700,9 +3705,6 @@ void reparse_context_with_overrides(MapContext& ctx,
                                     SourceTextOverrides overrides,
                                     bool has_arbitrary_distribution,
                                     const std::array<double, 3>& arbitrary_distribution) {
-    const std::uint64_t next_content_revision = ctx.content_revision + 1;
-    const std::uint64_t next_geometry_revision = ctx.geometry_revision + 1;
-    const std::uint64_t next_scene_revision = ctx.scene_revision + 1;
     const auto disk_identities = ctx.disk_native_element_edit_id_to_stable;
     const auto disk_source_hashes = ctx.disk_source_hashes_for_stable_ids;
     std::string entry_file_path = ctx.entry_file_path;
@@ -3735,31 +3737,15 @@ void reparse_context_with_overrides(MapContext& ctx,
     next->disk_native_element_edit_id_to_stable = disk_identities;
     next->disk_source_hashes_for_stable_ids = disk_source_hashes;
     next->element_edit_id_cache.clear();
-    ctx = std::move(*next);
-    ctx.content_revision = next_content_revision;
-    ctx.geometry_revision = next_geometry_revision;
-    ctx.scene_revision = next_scene_revision;
-    ctx.map_snapshot.reset();
-    ctx.scene_snapshot.reset();
-    ctx.edit_target_snapshot.reset();
-    ctx.edit_report_snapshot.reset();
+    replace_context_and_advance_revisions(ctx, std::move(*next));
 }
 
 void apply_edit_report_to_memory(MapContext& ctx, const MapEditReport& report) {
     if (!report.ok() || !report.full_reparse_ok || !report.validated_context) {
         throw std::runtime_error("edit report has no validated full-reparse result");
     }
-    const std::uint64_t next_content_revision = ctx.content_revision + 1;
-    const std::uint64_t next_geometry_revision = ctx.geometry_revision + 1;
-    const std::uint64_t next_scene_revision = ctx.scene_revision + 1;
-    ctx = std::move(*report.validated_context);
-    ctx.content_revision = next_content_revision;
-    ctx.geometry_revision = next_geometry_revision;
-    ctx.scene_revision = next_scene_revision;
-    ctx.map_snapshot.reset();
-    ctx.scene_snapshot.reset();
-    ctx.edit_target_snapshot.reset();
-    ctx.edit_report_snapshot.reset();
+    replace_context_and_advance_revisions(
+        ctx, std::move(*report.validated_context));
     ctx.edit_validation_fingerprint = report.validation_fingerprint;
     ctx.edit_validation_current = true;
 }
