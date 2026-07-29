@@ -10,6 +10,7 @@
 #endif
 
 #include "kme.h"
+#include "app_settings.h"
 #include "canvas3D.h"
 #include "debug_headless.h"
 #include "maploader.h"
@@ -47,14 +48,6 @@
 #include <utility>
 #include <vector>
 #ifndef NDEBUG
-template <typename T>
-void release_com(T*& p) {
-    if (p) {
-        p->Release();
-        p = nullptr;
-    }
-}
-
 class ScopedComApartment {
 public:
     ScopedComApartment() : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {
@@ -1921,21 +1914,6 @@ std::string edit_number(double value) {
     return text == "-0" ? "0" : text;
 }
 
-std::string ascii_lower_copy(std::string text) {
-    for (char& ch : text) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return text;
-}
-
-std::string trim_copy(const std::string& text) {
-    size_t begin = 0;
-    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
-    size_t end = text.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
-    return text.substr(begin, end - begin);
-}
-
 std::string hash_text(const std::string& text) {
     std::uint64_t hash = 1469598103934665603ull;
     for (unsigned char ch : text) {
@@ -2305,7 +2283,7 @@ bool preview_has_local_wrapper(const EditReport& report,
         size_t start = 0;
         while (start <= after.size()) {
             size_t end = after.find('\n', start);
-            std::string line = trim_copy(after.substr(
+            std::string line = trim_ascii(after.substr(
                 start, end == std::string::npos ? std::string::npos : end - start));
             if (!line.empty()) lines.push_back(std::move(line));
             if (end == std::string::npos) break;
@@ -2319,7 +2297,7 @@ bool preview_has_local_wrapper(const EditReport& report,
         if (!has_structure) continue;
         for (const StructureEdit& edit : edits) {
             if (!edit.original_distance_expression.empty() &&
-                lines.back() == trim_copy(edit.original_distance_expression) + ";") {
+                lines.back() == trim_ascii(edit.original_distance_expression) + ";") {
                 return true;
             }
         }
@@ -2360,7 +2338,7 @@ std::vector<StructureEdit> select_real_map_edits(
     auto try_row = [&](const StructureEdit& source, bool require_sig,
                        double minimum_spacing) {
         if (selected.size() >= 5 || !attempted_ids.insert(source.edit_id).second) return false;
-        const std::string file_key = ascii_lower_copy(source.source_file);
+        const std::string file_key = ascii_lower(source.source_file);
         if (selected_files.find(file_key) != selected_files.end()) return false;
         if (!distances_are_separated(selected, source.old_distance, minimum_spacing)) return false;
         StructureEdit candidate = source;
@@ -2375,9 +2353,9 @@ std::vector<StructureEdit> select_real_map_edits(
 
     for (const char* file_tail : {"beacons_common1.txt", "beacons_common2.txt"}) {
         int attempts_for_file = 0;
-        const std::string wanted = ascii_lower_copy(file_tail);
+        const std::string wanted = ascii_lower(file_tail);
         for (const StructureEdit& row : rows) {
-            if (ascii_lower_copy(row.source_file).find(wanted) == std::string::npos) continue;
+            if (ascii_lower(row.source_file).find(wanted) == std::string::npos) continue;
             if (++attempts_for_file > 16) break;
             if (try_row(row, true, 100.0)) break;
         }

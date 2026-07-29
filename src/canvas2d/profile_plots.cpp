@@ -22,9 +22,6 @@
 
 namespace {
 
-void set_crosshair_cursor() {
-    ::SetCursor(::LoadCursor(nullptr, IDC_CROSS));
-}
 static void plot_line_vec(const char* label, const std::vector<double>& x, const std::vector<double>& y, ImVec4 color, float weight = 1.5f) {
     if (x.size() < 2 || y.size() < 2) return;
     ImPlotSpec spec;

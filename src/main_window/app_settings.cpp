@@ -158,19 +158,6 @@ ImVec4 default_theme_color() {
     return ImVec4(0.26f, 0.59f, 0.98f, 1.0f);
 }
 
-float clamp_color_component(float value) {
-    if (!std::isfinite(value)) return 0.0f;
-    return std::clamp(value, 0.0f, 1.0f);
-}
-
-ImVec4 clamp_theme_color(ImVec4 color) {
-    color.x = clamp_color_component(color.x);
-    color.y = clamp_color_component(color.y);
-    color.z = clamp_color_component(color.z);
-    color.w = 1.0f;
-    return color;
-}
-
 int color_component_to_byte(float value) {
     return std::clamp(static_cast<int>(std::round(clamp_color_component(value) * 255.0f)), 0, 255);
 }

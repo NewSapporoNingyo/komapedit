@@ -1029,7 +1029,12 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
         }
 
         desired_step = std::clamp(desired_step, min_step, max_step);
-        const int divisions = std::max(1, static_cast<int>(std::ceil(span / desired_step)));
+        const double requested_divisions = std::ceil(span / desired_step);
+        if (!std::isfinite(requested_divisions) ||
+            requested_divisions > static_cast<double>(std::numeric_limits<int>::max())) {
+            throw std::runtime_error("adaptive scene subdivision count exceeds supported range");
+        }
+        const int divisions = std::max(1, static_cast<int>(requested_divisions));
         for (int i = 1; i < divisions; ++i) {
             values.push_back(a_distance + span * (static_cast<double>(i) / static_cast<double>(divisions)));
         }

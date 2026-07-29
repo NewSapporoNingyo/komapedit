@@ -37,20 +37,6 @@
 
 namespace {
 
-void set_crosshair_cursor() {
-    ::SetCursor(::LoadCursor(nullptr, IDC_CROSS));
-}
-
-void set_move_cursor() {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-    ::SetCursor(::LoadCursor(nullptr, IDC_SIZEALL));
-}
-
-double angle_lerp(double a, double b, double t) {
-    double delta = std::atan2(std::sin(b - a), std::cos(b - a));
-    return a + delta * t;
-}
-
 TrackPoint matrix_row_track_point(const Matrix& points, size_t row, bool has_theta_column) {
     TrackPoint p;
     p.d = points.at(row, 0);

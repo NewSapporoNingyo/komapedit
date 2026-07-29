@@ -8,12 +8,13 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <string>
 
 namespace kme::maploader {
 char* copy_c_string(const std::string& s) {
     char* p = static_cast<char*>(std::malloc(s.size() + 1));
-    if (!p) return nullptr;
+    if (!p) throw std::bad_alloc();
     std::memcpy(p, s.c_str(), s.size() + 1);
     return p;
 }

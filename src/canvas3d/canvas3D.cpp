@@ -118,35 +118,9 @@ struct SceneOverlayLabelLayout {
     float pad = 0.0f;
 };
 
-template <typename T>
-void release_com(T*& p) {
-    if (p) {
-        p->Release();
-        p = nullptr;
-    }
-}
-
-std::wstring utf8_to_wide_local(const std::string& text) {
-    if (text.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (n <= 0) return {};
-    std::wstring out(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), n);
-    return out;
-}
-
-std::string wide_to_utf8_local(const std::wstring& text) {
-    if (text.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return {};
-    std::string out(n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), n, nullptr, nullptr);
-    return out;
-}
-
 std::string path_filename_utf8(const std::string& path) {
     try {
-        std::filesystem::path p = utf8_to_wide_local(path);
+        std::filesystem::path p = utf8_to_wide(path);
 #if defined(__cpp_char8_t)
         auto s = p.filename().u8string();
         std::string name(reinterpret_cast<const char*>(s.data()), s.size());
@@ -159,23 +133,10 @@ std::string path_filename_utf8(const std::string& path) {
     }
 }
 
-float clamp_color_component(float value) {
-    if (!std::isfinite(value)) return 0.0f;
-    return std::clamp(value, 0.0f, 1.0f);
-}
-
 float normalize_material_alpha(float value) {
     float alpha = clamp_color_component(value);
     // BVE .x models commonly use 0.99/0.999999 for opaque alpha-tested textures.
     return alpha >= k_material_opaque_alpha_threshold ? 1.0f : alpha;
-}
-
-ImVec4 clamp_background_color(ImVec4 color) {
-    color.x = clamp_color_component(color.x);
-    color.y = clamp_color_component(color.y);
-    color.z = clamp_color_component(color.z);
-    color.w = 1.0f;
-    return color;
 }
 
 ImVec4 scene_highlight_color_for_kind(Canvas3DSceneObjectKind kind) {
@@ -255,7 +216,7 @@ std::string win32_error_text(DWORD code) {
     std::wstring text(buffer, n);
     LocalFree(buffer);
     while (!text.empty() && (text.back() == L'\n' || text.back() == L'\r' || text.back() == L' ')) text.pop_back();
-    return wide_to_utf8_local(text);
+    return wide_to_utf8(text);
 }
 
 std::string hresult_text(const char* action, HRESULT hr) {
@@ -794,20 +755,6 @@ using MlLoadModelFn = int (*)(const char*, MlMeshData*);
 using MlFreeModelFn = void (*)(MlMeshData*);
 using MlGetLastErrorFn = const char* (*)();
 
-double angle_lerp(double a, double b, double t) {
-    double delta = std::atan2(std::sin(static_cast<double>(b) - static_cast<double>(a)),
-                              std::cos(static_cast<double>(b) - static_cast<double>(a)));
-    return a + delta * t;
-}
-
-std::string normalize_scene_track_key(std::string key) {
-    key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char ch) {
-        return std::isspace(ch) != 0;
-    }), key.end());
-    for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return key;
-}
-
 int scene_tilt_flags(double tilt) {
     if (!std::isfinite(tilt)) return 0;
     return static_cast<int>(tilt);
@@ -1084,13 +1031,13 @@ std::optional<Canvas3DTrackPoint> scene_sample_track_path_points(const Canvas3DT
 
 std::string normalized_texture_cache_key(const std::string& path) {
     try {
-        std::filesystem::path normalized = utf8_to_wide_local(path);
+        std::filesystem::path normalized = utf8_to_wide(path);
         std::error_code ec;
         if (normalized.is_relative()) {
             std::filesystem::path absolute = std::filesystem::absolute(normalized, ec);
             if (!ec) normalized = std::move(absolute);
         }
-        std::string key = wide_to_utf8_local(normalized.lexically_normal().wstring());
+        std::string key = wide_to_utf8(normalized.lexically_normal().wstring());
         return key.empty() ? path : key;
     } catch (...) {
         return path;
@@ -1117,14 +1064,14 @@ const Canvas3DTrackPath* scene_other_track_path_for_key(const Canvas3DScene& sce
     const Canvas3DTrackPath* own = scene_own_track_path(scene);
     for (const Canvas3DTrackPath& path : scene.tracks) {
         if (&path == own) continue;
-        if (normalize_scene_track_key(path.key) == normalized_key) return &path;
+        if (normalize_track_lookup_key(path.key) == normalized_key) return &path;
     }
     return nullptr;
 }
 
 const Canvas3DTrackPath* scene_placement_track_path_for_key(const Canvas3DScene& scene,
                                                             const std::string& key) {
-    const std::string normalized_key = normalize_scene_track_key(key);
+    const std::string normalized_key = normalize_track_lookup_key(key);
     if (is_own_track_placement_key(normalized_key)) return scene_own_track_path(scene);
     if (const Canvas3DTrackPath* other =
             scene_other_track_path_for_key(scene, normalized_key)) {
@@ -1146,8 +1093,8 @@ std::string scene_model_key_for_instance(const Canvas3DModelInstance& instance,
     std::string key(1, '\x1f');
     key.append("putbetween");
     append_scene_model_key_field(key, instance.model_path);
-    append_scene_model_key_field(key, normalize_scene_track_key(instance.put_between_track_key1));
-    append_scene_model_key_field(key, normalize_scene_track_key(instance.put_between_track_key2));
+    append_scene_model_key_field(key, normalize_track_lookup_key(instance.put_between_track_key1));
+    append_scene_model_key_field(key, normalize_track_lookup_key(instance.put_between_track_key2));
     key.append(reinterpret_cast<const char*>(&instance.distance), sizeof(instance.distance));
     const int flag = instance.put_between_flag & 1;
     key.append(reinterpret_cast<const char*>(&flag), sizeof(flag));
@@ -3044,12 +2991,12 @@ struct Canvas3D::Impl {
 
         std::map<std::string, bool> visible_by_key;
         for (const Canvas3DTrackVisibility& item : visibility) {
-            visible_by_key[normalize_scene_track_key(item.key)] = item.visible;
+            visible_by_key[normalize_track_lookup_key(item.key)] = item.visible;
         }
 
         bool changed = false;
         for (Canvas3DTrackPath& path : scene_data.tracks) {
-            auto it = visible_by_key.find(normalize_scene_track_key(path.key));
+            auto it = visible_by_key.find(normalize_track_lookup_key(path.key));
             if (it == visible_by_key.end() || path.visible == it->second) continue;
             path.visible = it->second;
             changed = true;
@@ -3915,7 +3862,7 @@ struct Canvas3D::Impl {
             error = hresult_text("CoCreateInstance(WIC)", hr);
             goto fail;
         }
-        hr = factory->CreateDecoderFromFilename(utf8_to_wide_local(path).c_str(), nullptr, GENERIC_READ,
+        hr = factory->CreateDecoderFromFilename(utf8_to_wide(path).c_str(), nullptr, GENERIC_READ,
                                                 WICDecodeMetadataCacheOnLoad, &decoder);
         if (FAILED(hr)) {
             const auto failure =
@@ -7765,7 +7712,7 @@ fail:
             scene_data.fog_keyframes, scene_camera_distance, scene_fog_enabled);
         const SceneFogSample* fog_ptr = fog.enabled ? &fog : nullptr;
 
-        const ImVec4 bg = clamp_background_color(background_color_value);
+        const ImVec4 bg = clamp_theme_color(background_color_value);
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
@@ -8137,7 +8084,7 @@ fail:
                                     const char* text) const {
         if (!draw || size.x <= 0.0f || size.y <= 0.0f) return;
         ImVec2 end(origin.x + size.x, origin.y + size.y);
-        ImVec4 bg = clamp_background_color(background_color_value);
+        ImVec4 bg = clamp_theme_color(background_color_value);
         bg.w = 1.0f;
         draw->AddRectFilled(origin, end, ImGui::ColorConvertFloat4ToU32(bg));
 
@@ -8367,7 +8314,7 @@ fail:
             std::string error;
             ensure_render_target(width, height, error);
             if (render_rtv && context) {
-                const ImVec4 bg = clamp_background_color(background_color_value);
+                const ImVec4 bg = clamp_theme_color(background_color_value);
                 const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
                 context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
                 context->ClearRenderTargetView(render_rtv, clear_color);
@@ -8457,7 +8404,7 @@ fail:
             if (last_error != error) last_error = error;
         }
 
-        const ImVec4 bg = clamp_background_color(background_color_value);
+        const ImVec4 bg = clamp_theme_color(background_color_value);
         const float clear_color[4] = {bg.x, bg.y, bg.z, 1.0f};
         context->OMSetRenderTargets(1, &render_rtv, depth_dsv);
         context->ClearRenderTargetView(render_rtv, clear_color);
@@ -8789,7 +8736,7 @@ const std::string& Canvas3D::model_path() const {
 }
 
 void Canvas3D::set_background_color(ImVec4 color) {
-    impl_->background_color_value = clamp_background_color(color);
+    impl_->background_color_value = clamp_theme_color(color);
 }
 
 ImVec4 Canvas3D::background_color() const {

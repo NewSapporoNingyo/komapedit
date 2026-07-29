@@ -347,6 +347,31 @@ int snapshot_contract() {
     check(!kv_get_scene_geometry_snapshot(handle.value, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
                                            &rebuilt_scene, sizeof(rebuilt_scene)),
           "regular geometry invalidates scene");
+
+    {
+        TempFixture huge_distance_fixture;
+        std::ofstream huge_map(huge_distance_fixture.map_path,
+                               std::ios::binary | std::ios::trunc);
+        huge_map << "BveTs Map 2.02:utf-8\n"
+                 << "0;\n"
+                 << "1000000000000;\n";
+        huge_map.close();
+
+        MapHandle huge_distance_handle(kv_load_map_ex(
+            huge_distance_fixture.path_utf8().c_str(), 1.0e12, KV_LOAD_PREVIEW));
+        check(huge_distance_handle.value != nullptr, "huge-distance preview load");
+        if (huge_distance_handle.value) {
+            check(kv_generate_scene_geometry(huge_distance_handle.value, 1.0e12,
+                                             0.25, 25.0, 1.0, 0.01) == 0,
+                  "huge adaptive subdivision rejected");
+            const char* error = kv_get_last_error();
+            check(error && std::string_view(error).find(
+                               "adaptive scene subdivision count exceeds supported range") !=
+                               std::string_view::npos,
+                  "huge adaptive subdivision error");
+        }
+    }
+
     std::cout << "typed snapshot contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures;
 }

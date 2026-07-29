@@ -21,6 +21,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "misc/cpp/imgui_stdlib.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
 #include "implot.h"
@@ -66,14 +67,6 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #ifndef NDEBUG
 std::ostream* g_debug_plan_benchmark_log = nullptr;
 #endif
-
-template <typename T>
-void release_com(T*& p) {
-    if (p) {
-        p->Release();
-        p = nullptr;
-    }
-}
 
 namespace {
 
@@ -160,18 +153,11 @@ void set_move_cursor() {
 }
 
 std::string edit_field_buffer_text(const MapElementEditFieldState& field) {
-    return std::string(field.value);
-}
-
-std::string trim_gui_ascii_copy(const std::string& text) {
-    size_t first = text.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) return {};
-    size_t last = text.find_last_not_of(" \t\r\n");
-    return text.substr(first, last - first + 1);
+    return field.value;
 }
 
 void set_edit_field_buffer(MapElementEditFieldState& field, const std::string& value) {
-    std::snprintf(field.value, sizeof(field.value), "%s", value.c_str());
+    field.value = value;
 }
 
 bool parse_gui_edit_number(const std::string& text, double* parsed_value = nullptr) {
@@ -1151,10 +1137,13 @@ void App::add_log(std::string text) {
 void App::add_log(LogSeverity severity, std::string text) {
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
-        last_log_ = text;
         logs_.push_back({std::move(text), severity});
-        if (severity == LogSeverity::Error) ++error_count_;
-        if (severity == LogSeverity::Warning) ++warn_count_;
+        if (severity == LogSeverity::Error) {
+            error_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (severity == LogSeverity::Warning) {
+            warn_count_.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     wake_main_window();
 }
@@ -1209,8 +1198,8 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();
-        last_log_.clear();
-        error_count_ = warn_count_ = 0;
+        error_count_.store(0, std::memory_order_relaxed);
+        warn_count_.store(0, std::memory_order_relaxed);
     }
     load_state_.running = true;
     load_state_.pending_started_at.reset();
@@ -4195,8 +4184,7 @@ void App::render_element_inspector() {
         ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
         ImGui::BeginDisabled(field.read_only);
         const std::string previous_value = edit_field_buffer_text(field);
-        const bool input_changed =
-            ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
+        const bool input_changed = ImGui::InputText(field.label.c_str(), &field.value);
         ImGui::EndDisabled();
         if (input_changed && field.requires_signal_full_form &&
             inspector_.source_signal_short_form &&
@@ -4246,7 +4234,7 @@ void App::render_element_inspector() {
             const bool changed = edit_field_buffer_text(field) != field.original_value;
             if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
             ImGui::SetNextItemWidth(structure_key_input_width);
-            ImGui::InputText(field.label.c_str(), field.value, sizeof(field.value));
+            ImGui::InputText(field.label.c_str(), &field.value);
             if (changed) ImGui::PopStyleColor();
             ImGui::SameLine();
             ImGui::BeginDisabled(list_index == 0);
@@ -5260,13 +5248,8 @@ void App::render_status_bar() {
     if (visible) {
         ImGui::SetWindowFontScale(k_font_scale);
 
-        int error_count = 0;
-        int warning_count = 0;
-        {
-            std::lock_guard<std::mutex> lock(log_mutex_);
-            error_count = error_count_;
-            warning_count = warn_count_;
-        }
+        const int error_count = error_count_.load(std::memory_order_relaxed);
+        const int warning_count = warn_count_.load(std::memory_order_relaxed);
 
         std::array<char, 32> error_text{};
         std::array<char, 32> warning_text{};
@@ -5422,8 +5405,8 @@ void App::render_console() {
     if (ImGui::Button(tr("button.clear").c_str())) {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();
-        last_log_.clear();
-        error_count_ = warn_count_ = 0;
+        error_count_.store(0, std::memory_order_relaxed);
+        warn_count_.store(0, std::memory_order_relaxed);
     }
     ImGui::SameLine();
     if (ImGui::Button(tr("button.copy").c_str())) {
@@ -5441,9 +5424,11 @@ void App::render_console() {
         ImGui::SetClipboardText(console_text.c_str());
     }
     ImGui::SameLine();
-    ImGui::TextColored(log_severity_color(LogSeverity::Error), "E %d", error_count_);
+    ImGui::TextColored(log_severity_color(LogSeverity::Error), "E %d",
+                       error_count_.load(std::memory_order_relaxed));
     ImGui::SameLine();
-    ImGui::TextColored(log_severity_color(LogSeverity::Warning), "W %d", warn_count_);
+    ImGui::TextColored(log_severity_color(LogSeverity::Warning), "W %d",
+                       warn_count_.load(std::memory_order_relaxed));
     ImGui::Separator();
     ImGui::BeginChild("console_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
     const bool was_at_bottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;

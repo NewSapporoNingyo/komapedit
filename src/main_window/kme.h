@@ -40,6 +40,14 @@ struct Canvas3DPlacementDragUpdate;
 struct Canvas3DPlacementEditTarget;
 struct KvEditReportSnapshot;
 
+template <typename T>
+inline void release_com(T*& pointer) {
+    if (pointer) {
+        pointer->Release();
+        pointer = nullptr;
+    }
+}
+
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
@@ -96,6 +104,18 @@ inline std::string normalize_track_lookup_key(std::string key) {
     return key;
 }
 
+inline double angle_lerp(double a, double b, double t) {
+    const double delta = std::atan2(std::sin(b - a), std::cos(b - a));
+    return a + delta * t;
+}
+
+inline std::string trim_gui_ascii_copy(const std::string& text) {
+    const size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const size_t last = text.find_last_not_of(" \t\r\n");
+    return text.substr(first, last - first + 1);
+}
+
 inline bool is_own_track_lookup_alias(const std::string& normalized_key) {
     for (const char* alias : k_own_track_lookup_aliases) {
         if (normalized_key == alias) return true;
@@ -117,6 +137,8 @@ struct CanvasLineWidthSettings {
 
 std::wstring utf8_to_wide(const std::string& text);
 std::string wide_to_utf8(const std::wstring& text);
+void set_crosshair_cursor();
+void set_move_cursor();
 std::string format_double(double value, int precision = 6);
 float clamp_font_size(float value);
 float clamp_ui_component_size(float value);
@@ -130,7 +152,17 @@ int clamp_scene_instance_warning_threshold(double value, int fallback);
 void normalize_scene_instance_warning_thresholds(int& warning_threshold,
                                                  int& critical_warning_threshold);
 ImVec4 default_theme_color();
-ImVec4 clamp_theme_color(ImVec4 color);
+inline float clamp_color_component(float value) {
+    if (!std::isfinite(value)) return 0.0f;
+    return std::clamp(value, 0.0f, 1.0f);
+}
+inline ImVec4 clamp_theme_color(ImVec4 color) {
+    color.x = clamp_color_component(color.x);
+    color.y = clamp_color_component(color.y);
+    color.z = clamp_color_component(color.z);
+    color.w = 1.0f;
+    return color;
+}
 std::string theme_color_to_string(const ImVec4& color);
 std::string display_name_from_path(const std::string& path);
 void open_parent_directory_in_explorer(const std::string& file_path);
@@ -964,7 +996,7 @@ struct MapElementEditFieldState {
     std::string label;
     std::string original_value;
     std::string source_distance_string;
-    char value[256] = {};
+    std::string value;
     MapElementNumericConstraint numeric_constraint = MapElementNumericConstraint::None;
     bool required = true;
     bool read_only = false;
@@ -1263,9 +1295,8 @@ private:
 
     std::vector<LogLine> logs_;
     std::mutex log_mutex_;
-    std::string last_log_;
-    int error_count_ = 0;
-    int warn_count_ = 0;
+    std::atomic<int> error_count_{0};
+    std::atomic<int> warn_count_{0};
     const char* program_status_key_ = "status.ready";
     std::string program_status_elapsed_suffix_;
 

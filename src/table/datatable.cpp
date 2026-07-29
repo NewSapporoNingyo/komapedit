@@ -234,20 +234,13 @@ RepeaterTextCellContextAction render_repeater_text_cell_with_context_actions(
     return action;
 }
 
-std::string trim_ascii_copy(const std::string& text) {
-    size_t first = text.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) return {};
-    size_t last = text.find_last_not_of(" \t\r\n");
-    return text.substr(first, last - first + 1);
-}
-
 std::vector<std::string> split_structure_key_list(const std::string& text) {
     std::vector<std::string> keys;
     size_t start = 0;
     while (start <= text.size()) {
         size_t comma = text.find(',', start);
         size_t end = comma == std::string::npos ? text.size() : comma;
-        std::string key = trim_ascii_copy(text.substr(start, end - start));
+        std::string key = trim_gui_ascii_copy(text.substr(start, end - start));
         if (!key.empty()) keys.push_back(std::move(key));
         if (comma == std::string::npos) break;
         start = comma + 1;
@@ -463,7 +456,7 @@ void run_unused_key_search(TableFindState& state,
     std::vector<unsigned char> used_rows(definition_rows.size(), 0);
     std::unordered_set<std::string> warned_undefined_keys;
     auto note_key = [&](const std::string& raw_key) {
-        std::string key = trim_ascii_copy(raw_key);
+        std::string key = trim_gui_ascii_copy(raw_key);
         if (key.empty()) return;
         std::string folded_key = ascii_case_key(key);
         auto match = rows_by_key.find(folded_key);
