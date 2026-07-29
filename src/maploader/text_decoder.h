@@ -19,6 +19,8 @@ enum class FileOpenFailureKind {
 
 std::string path_to_utf8(const std::filesystem::path& path);
 std::filesystem::path path_from_utf8(const std::string& utf8);
+std::filesystem::path join_utf8_path(const std::filesystem::path& root,
+                                     const std::string& path_text);
 FileOpenFailureKind classify_file_open_failure(const std::filesystem::path& path);
 std::string file_open_failure_message(const std::filesystem::path& path);
 std::string read_binary_file(const std::filesystem::path& path);

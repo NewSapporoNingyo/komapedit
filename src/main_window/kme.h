@@ -486,6 +486,7 @@ struct MapModel {
     std::vector<TableRow> other_train_structure_keys;
     std::vector<TableRow> other_train_sound_3d_keys;
     std::vector<TableRow> sound_list;
+    std::vector<TableRow> sound_3d_list;
     std::vector<TableRow> structures_between;
     std::vector<TableRow> repeaters;
     std::vector<TableRow> signal_aspects;
@@ -1009,6 +1010,7 @@ struct MapElementPendingChange {
     std::string row_kind;
     std::string operation = "update";
     std::map<std::string, std::string> field_changes;
+    std::string replacement_statement;
     std::string expected_source_hash;
     std::string distance_resolution_key;
     std::string distance_boundary_token;
@@ -1149,28 +1151,126 @@ struct DistanceResolutionWorkflowState {
     std::array<char, 1024> expression_buffer{};
 };
 
-// Excel-style inline editing state for the Station Definitions table. Drafts
-// hold the cell values the user has confirmed in the table but not yet pushed
-// into the shared pending-edit ledger. Apply folds drafts into the ledger and
-// the existing working-copy flow; Save/Revert/Reload discard them alongside
-// the ledger so the table never desyncs from the in-memory map state.
+// A target slot is one physical source line. Its payload can come from another
+// slot after a row move; this lets the typed-edit layer replace the target with
+// the source row's full raw template while retaining stable target edit IDs.
 inline constexpr std::array<const char*, 13> k_station_list_field_names = {
     "stationKey", "stationName", "arrivalTime", "depertureTime", "stoppageTime",
     "defaultTime", "signalFlag", "alightingTime", "passengers", "arrivalSoundKey",
     "depertureSoundKey", "doorReopen", "stuckInDoor"
 };
 
-struct StationDefinitionEditState {
+inline constexpr std::array<const char*, 2> k_structure_model_field_names = {
+    "structureKey", "filePath"
+};
+
+inline constexpr std::array<const char*, 3> k_sound_file_field_names = {
+    "soundKey", "filePath", "bufferCount"
+};
+
+struct EditableListSpec {
+    const char* row_kind = "";
+    const char* change_prefix = "";
+    const char* const* field_names = nullptr;
+    size_t field_count = 0;
+    size_t cache_column_offset = 0;
+    int path_field = -1;
+};
+
+inline constexpr EditableListSpec k_station_definition_edit_spec = {
+    "station.list", "station-list-", k_station_list_field_names.data(),
+    k_station_list_field_names.size(), 0, -1
+};
+inline constexpr EditableListSpec k_structure_model_edit_spec = {
+    "structure.model", "structure-model-", k_structure_model_field_names.data(),
+    k_structure_model_field_names.size(), 1, 1
+};
+inline constexpr EditableListSpec k_sound_list_edit_spec = {
+    "sound.list", "sound-list-", k_sound_file_field_names.data(),
+    k_sound_file_field_names.size(), 1, 1
+};
+inline constexpr EditableListSpec k_sound_3d_list_edit_spec = {
+    "sound3D.list", "sound3d-list-", k_sound_file_field_names.data(),
+    k_sound_file_field_names.size(), 1, 1
+};
+
+struct EditableListDraftRow {
+    std::string target_edit_id;
+    std::string target_source_file;
+    std::string target_expected_source_hash;
+    int target_line = 0;
+    int target_column = 0;
+    std::array<std::string, 13> original_values{};
+    std::string payload_edit_id;
+    std::string payload_source_file;
+    int payload_line = 0;
+    int payload_column = 0;
+    std::string payload_raw_statement;
+    std::array<std::string, 13> values{};
+    std::string resolved_path;
+    bool deleted = false;
+};
+
+struct EditableListEditState {
     int selected_row = -1;
     int selected_column = -1;
-    int editing_row = -1;
     int editing_column = -1;
     std::string editing_edit_id;
     std::string editing_baseline;
     std::string edit_buffer;
     bool edit_buffer_fresh = false;
-    std::map<std::pair<std::string, int>, std::string> drafts;
+    bool rows_initialized = false;
+    std::vector<EditableListDraftRow> rows;
+    std::vector<size_t> visible_rows;
+    bool visible_rows_dirty = false;
 };
+
+using StationDefinitionDraftRow = EditableListDraftRow;
+using StationDefinitionEditState = EditableListEditState;
+
+bool editable_list_row_has_draft(const EditableListDraftRow& row,
+                                 size_t field_count);
+std::vector<size_t> editable_list_visible_row_indices(
+    const std::vector<EditableListDraftRow>& rows);
+bool move_editable_list_draft_row(
+    std::vector<EditableListDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int direction);
+bool clear_editable_list_draft_cell(
+    std::vector<EditableListDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int column, size_t field_count);
+bool delete_editable_list_draft_row(
+    std::vector<EditableListDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row);
+bool build_editable_list_pending_changes(
+    const EditableListSpec& spec,
+    const std::vector<EditableListDraftRow>& rows,
+    const std::map<std::string, MapElementPendingChange>& existing_changes,
+    std::map<std::string, MapElementPendingChange>& candidate_changes,
+    std::string& error_message);
+
+bool station_definition_row_has_draft(const StationDefinitionDraftRow& row);
+std::vector<size_t> station_definition_visible_row_indices(
+    const std::vector<StationDefinitionDraftRow>& rows);
+bool move_station_definition_draft_row(
+    std::vector<StationDefinitionDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int direction);
+bool clear_station_definition_draft_cell(
+    std::vector<StationDefinitionDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int column);
+bool delete_station_definition_draft_row(
+    std::vector<StationDefinitionDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row);
+bool build_station_definition_pending_changes(
+    const std::vector<StationDefinitionDraftRow>& rows,
+    const std::map<std::string, MapElementPendingChange>& existing_changes,
+    std::map<std::string, MapElementPendingChange>& candidate_changes,
+    std::string& error_message);
 
 struct BackgroundHistory {
     bool has_image = false;
@@ -1292,6 +1392,9 @@ private:
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
     StationDefinitionEditState station_definition_edit_;
+    EditableListEditState structure_model_edit_;
+    EditableListEditState sound_list_edit_;
+    EditableListEditState sound_3d_list_edit_;
 
     std::vector<LogLine> logs_;
     std::mutex log_mutex_;
@@ -1683,8 +1786,33 @@ private:
     void apply_inspector_changes();
     bool has_unsaved_edit_state() const;
     bool has_station_definition_drafts() const;
+    bool has_unapplied_editable_list_drafts() const;
+    bool has_editable_list_drafts(const EditableListEditState& edit,
+                                  const EditableListSpec& spec) const;
+    bool initialize_editable_list_draft_rows(EditableListEditState& edit,
+                                             const EditableListSpec& spec);
+    void commit_editable_list_active_edit(EditableListEditState& edit,
+                                          const EditableListSpec& spec);
+    void discard_all_editable_list_drafts();
+    bool move_editable_list_row(EditableListEditState& edit,
+                                const EditableListSpec& spec,
+                                int visible_row, int direction);
+    bool clear_editable_list_cell(EditableListEditState& edit,
+                                  const EditableListSpec& spec,
+                                  int visible_row, int column);
+    bool delete_editable_list_row(EditableListEditState& edit,
+                                  const EditableListSpec& spec,
+                                  int visible_row);
+    void apply_editable_list_drafts(EditableListEditState& edit,
+                                    const EditableListSpec& spec);
+    void rebind_other_editable_list_drafts(const EditableListEditState* applied);
+    void reset_editable_list_find_results(const EditableListSpec& spec);
+    bool initialize_station_definition_draft_rows();
     void commit_station_definition_active_edit();
     void discard_station_definition_drafts();
+    bool move_station_definition_row(int visible_row, int direction);
+    bool clear_station_definition_cell(int visible_row, int column);
+    bool delete_station_definition_row(int visible_row);
     void apply_station_definition_drafts();
     void enable_inspector_put0_conversion();
     bool navigate_repeater_inspector(bool toward_next);
@@ -1711,6 +1839,15 @@ private:
     void render_radius_plot(const ProfileData& data, ImVec2 size);
     void render_othertracks_window();
     void render_station_list_window();
+    void render_editable_list_table(const char* table_id,
+                                    const TableColumnDef* columns,
+                                    int column_count,
+                                    const std::vector<CachedTableRow>& cached_rows,
+                                    EditableListEditState& edit,
+                                    const EditableListSpec& spec,
+                                    float path_column_width = 0.0f,
+                                    float last_column_width = 0.0f,
+                                    TableFindState* find_state = nullptr);
     void render_structure_rows_window(bool put_between);
     void render_structures_window();
     void render_structures_between_window();

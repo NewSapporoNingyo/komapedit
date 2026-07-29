@@ -20,8 +20,6 @@ const T* data_or_null(const std::vector<T>& values) {
     return values.empty() ? nullptr : values.data();
 }
 
-using StationListIterator = std::map<std::string, StationListEntry>::const_iterator;
-
 class MapSnapshotBuilder {
 public:
     MapSnapshotBuilder(MapContext& context, MapSnapshotStorage& storage)
@@ -108,9 +106,12 @@ private:
         return span;
     }
 
-    KvRowMetadata metadata(const EditSourceRef& ref, const std::string& row_kind) {
+    KvRowMetadata metadata(const EditSourceRef& ref, const std::string& row_kind,
+                           size_t source_file_index = k_no_source_ref) {
         KvRowMetadata out{};
-        out.source_file_index = KV_INDEX_NONE;
+        out.source_file_index = source_file_index == k_no_source_ref
+            ? KV_INDEX_NONE
+            : static_cast<std::uint64_t>(source_file_index);
         if (!ref.valid() || ref.statement_index >= ctx_.parsed_statements.size()) return out;
         const ParsedStatement& statement = ctx_.parsed_statements[ref.statement_index];
         out.edit_id = string_ref(element_edit_id(ctx_, ref, row_kind));
@@ -215,14 +216,13 @@ private:
         }
         const auto& station_list_entries = ordered_station_list_entries(ctx_);
         storage_.station_list.reserve(station_list_entries.size());
-        for (const StationListIterator& entry : station_list_entries) {
-            const auto& input = *entry;
+        for (const StationListEntry* input : station_list_entries) {
             KvStationListRow row{};
-            row.object_key = string_ref(input.first);
-            for (size_t i = 0; i < input.second.fields.size(); ++i) {
-                row.fields[i] = string_ref(input.second.fields[i]);
+            row.object_key = string_ref(input->fields[0]);
+            for (size_t i = 0; i < input->fields.size(); ++i) {
+                row.fields[i] = string_ref(input->fields[i]);
             }
-            row.metadata = metadata(input.second.edit_ref, "station.list");
+            row.metadata = metadata(input->edit_ref, "station.list");
             storage_.station_list.push_back(row);
         }
     }
@@ -273,7 +273,8 @@ private:
             KvStructureModelRow row{};
             row.structure_key = string_ref(input.structure_key);
             row.file_path = string_ref(input.file_path);
-            row.metadata = metadata(input.edit_ref, "structure.model");
+            row.metadata = metadata(input.edit_ref, "structure.model",
+                                    input.source_file_index);
             storage_.structure_models.push_back(row);
         }
     }
@@ -414,7 +415,8 @@ private:
             row.buffer_count = input.buffer_count;
             row.is_3d = input.is_3d ? 1u : 0u;
             row.metadata = metadata(input.edit_ref,
-                input.is_3d ? "sound3D.list" : "sound.list");
+                input.is_3d ? "sound3D.list" : "sound.list",
+                input.source_file_index);
             storage_.sound_list.push_back(row);
         }
         storage_.map_sounds.reserve(ctx_.map_sounds.size());
@@ -608,7 +610,7 @@ private:
         const auto& station_list_entries = ordered_station_list_entries(ctx_);
         for (size_t station_index = 0; station_index < station_list_entries.size(); ++station_index) {
             add_element("station.list", station_index,
-                        station_list_entries[station_index]->second.edit_ref);
+                        station_list_entries[station_index]->edit_ref);
         }
         add_elements("structure.load", ctx_.structure_loads);
         add_elements("structure.put", ctx_.structure_puts);
@@ -625,9 +627,12 @@ private:
         add_elements("signal.put", ctx_.signal_puts);
         add_elements("beacon.put", ctx_.beacons);
         add_elements("preTrain.pass", ctx_.pretrains);
-        for (size_t i = 0; i < ctx_.sound_list.size(); ++i) {
-            add_element(ctx_.sound_list[i].is_3d ? "sound3D.list" : "sound.list",
-                        i, ctx_.sound_list[i].edit_ref);
+        size_t sound_index = 0;
+        size_t sound_3d_index = 0;
+        for (const SoundListEntry& row : ctx_.sound_list) {
+            const bool is_3d = row.is_3d;
+            add_element(is_3d ? "sound3D.list" : "sound.list",
+                        is_3d ? sound_3d_index++ : sound_index++, row.edit_ref);
         }
         add_elements("mapSound.play", ctx_.map_sounds);
         add_elements("mapSound3D.put", ctx_.map_sound_3d);
@@ -796,17 +801,22 @@ const KvSceneGeometrySnapshot& build_scene_geometry_snapshot(MapContext& ctx) {
     return ctx.scene_snapshot->view;
 }
 
-std::vector<std::map<std::string, StationListEntry>::const_iterator>
-ordered_station_list_entries(const MapContext& ctx) {
-    std::vector<std::map<std::string, StationListEntry>::const_iterator> entries;
+void append_station_list_entry(MapContext& ctx, StationListEntry row) {
+    const std::string key = ascii_lower(trim_field_copy(row.fields[0]));
+    const size_t index = ctx.station_list.size();
+    ctx.station_list.push_back(std::move(row));
+    if (!key.empty()) ctx.station_list_indices[key] = index;
+}
+
+std::vector<const StationListEntry*> ordered_station_list_entries(const MapContext& ctx) {
+    std::vector<const StationListEntry*> entries;
     entries.reserve(ctx.station_list.size());
-    for (auto it = ctx.station_list.begin(); it != ctx.station_list.end(); ++it) {
-        entries.push_back(it);
+    for (const StationListEntry& row : ctx.station_list) {
+        entries.push_back(&row);
     }
     std::stable_sort(entries.begin(), entries.end(),
-                     [](const std::map<std::string, StationListEntry>::const_iterator& left,
-                        const std::map<std::string, StationListEntry>::const_iterator& right) {
-                         return left->second.order < right->second.order;
+                     [](const StationListEntry* left, const StationListEntry* right) {
+                         return left->order < right->order;
                      });
     return entries;
 }

@@ -16,15 +16,6 @@ using kme::maploader::log_info;
 using kme::maploader::log_warn;
 using kme::maploader::path_to_utf8;
 
-std::string resolve_loaded_asset_path(const std::filesystem::path& root,
-                                      const std::string& path_text) {
-    std::filesystem::path path = join_path(root, path_text);
-    std::error_code error;
-    const std::filesystem::path absolute = std::filesystem::absolute(path, error);
-    if (!error) path = absolute;
-    return path_to_utf8(path.lexically_normal());
-}
-
 struct MapObject {
     std::string label;
     Value key;
@@ -539,7 +530,7 @@ private:
         }
         ctx_.edit_order += child.edit_order;
         offset_row_edit_refs(child.own_track, statement_index_base);
-        for (auto& kv : child.station_list) offset_edit_ref(kv.second.edit_ref, statement_index_base);
+        for (auto& row : child.station_list) offset_edit_ref(row.edit_ref, statement_index_base);
         for (auto& row : child.station_puts) offset_row_edit_ref(row, statement_index_base);
         for (auto& kv : child.othertrack) offset_row_edit_refs(kv.second, statement_index_base);
         offset_row_edit_refs(child.structure_loads, statement_index_base);
@@ -571,13 +562,24 @@ private:
         offset_row_edit_refs(child.fogs, statement_index_base);
         offset_row_edit_refs(child.draw_distances, statement_index_base);
         offset_row_edit_refs(child.speedlimits, statement_index_base);
+        auto remap_source_file_index = [&](size_t& index) {
+            if (index < source_file_index_map.size()) {
+                index = source_file_index_map[index];
+            }
+        };
+        for (auto& row : child.structure_models) {
+            remap_source_file_index(row.source_file_index);
+        }
+        for (auto& row : child.sound_list) {
+            remap_source_file_index(row.source_file_index);
+        }
 
         int order_base = ctx_.parse_order;
         auto offset_order = [order_base](int& order) {
             if (order > 0) order += order_base;
         };
         for (auto& row : child.station_puts) offset_order(row.order);
-        for (auto& entry : child.station_list) offset_order(entry.second.order);
+        for (auto& row : child.station_list) offset_order(row.order);
         for (auto& row : child.structure_loads) offset_order(row.order);
         for (auto& row : child.structure_puts) offset_order(row.order);
         for (auto& row : child.structure_betweens) offset_order(row.order);
@@ -628,7 +630,7 @@ private:
         for (auto& row : child.own_track) ctx_.own_track.push_back(std::move(row));
         for (auto& kv : child.station_position) ctx_.station_position[kv.first] = std::move(kv.second);
         for (auto& kv : child.station_key) ctx_.station_key[kv.first] = std::move(kv.second);
-        for (auto& kv : child.station_list) ctx_.station_list[kv.first] = std::move(kv.second);
+        for (auto& row : child.station_list) append_station_list_entry(ctx_, std::move(row));
         for (auto& row : child.station_puts) ctx_.station_puts.push_back(std::move(row));
         for (const std::string& key : child.othertrack_order) {
             ensure_othertrack(ctx_, key);
@@ -1441,7 +1443,7 @@ private:
         for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
                                               size_t line_end, int line_number) {
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
-            if (fields.empty() || fields[0].empty()) return;
+            if (fields.size() < 2) return;
 
             StationListEntry row;
             for (size_t i = 0; i < row.fields.size() && i < fields.size(); ++i) row.fields[i] = fields[i];
@@ -1449,17 +1451,17 @@ private:
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StationList.Row",
                                                      line_start, line_end, line, fields);
             std::string key = ascii_lower(row.fields[0]);
-            ctx_.station_key[key] = row.fields[1];
+            if (!key.empty()) ctx_.station_key[key] = row.fields[1];
             add_loaded_deferred_key(DeferredKeyKind::Sound, row.fields[9], loaded,
                                     line_number, "StationList.Row");
             add_loaded_deferred_key(DeferredKeyKind::Sound, row.fields[10], loaded,
                                     line_number, "StationList.Row");
-            ctx_.station_list[key] = std::move(row);
+            append_station_list_entry(ctx_, std::move(row));
         });
     }
 
     void parse_structure_list(const LoadedText& loaded) {
-        register_source_file(ctx_, loaded);
+        const size_t source_file_index = register_source_file_index(ctx_, loaded);
         std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
                                               size_t line_end, int) {
@@ -1467,13 +1469,12 @@ private:
             if (trimmed.empty() || trimmed[0] == '#') return;
 
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
-            if (fields.empty() || fields[0].empty()) return;
+            if (fields.empty()) return;
 
             StructureModel row;
             row.structure_key = fields[0];
-            if (fields.size() > 1 && !fields[1].empty()) {
-                row.file_path = resolve_loaded_asset_path(loaded.root, fields[1]);
-            }
+            if (fields.size() > 1) row.file_path = fields[1];
+            row.source_file_index = source_file_index;
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StructureList.Row",
                                                      line_start, line_end, line, fields);
             ctx_.structure_models.push_back(std::move(row));
@@ -1515,7 +1516,7 @@ private:
     }
 
     void parse_sound_list(const LoadedText& loaded, bool is_3d) {
-        register_source_file(ctx_, loaded);
+        const size_t source_file_index = register_source_file_index(ctx_, loaded);
         std::vector<std::string> stack = include_stack_for_file(ctx_, loaded.path);
         for_each_loaded_body_line(loaded, [&](const std::string& line, size_t line_start,
                                               size_t line_end, int) {
@@ -1523,17 +1524,16 @@ private:
             if (trimmed.empty() || trimmed[0] == '#') return;
 
             std::vector<std::string> fields = parse_comma_separated_fields(line, true);
-            if (fields.empty() || fields[0].empty()) return;
+            if (fields.empty()) return;
 
             SoundListEntry row;
             row.sound_key = fields[0];
             row.is_3d = is_3d;
-            if (fields.size() > 1 && !fields[1].empty()) {
-                row.file_path = resolve_loaded_asset_path(loaded.root, fields[1]);
-            }
+            if (fields.size() > 1) row.file_path = fields[1];
             if (fields.size() > 2) {
                 row.buffer_count = parse_sound_buffer_count(fields[2]);
             }
+            row.source_file_index = source_file_index;
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack,
                                                      is_3d ? "Sound3DList.Row" : "SoundList.Row",
                                                      line_start, line_end, line, fields);
@@ -2150,8 +2150,8 @@ void append_deferred_key_diagnostics(MapContext& ctx) {
             .insert(ascii_lower(trim_field_copy(row.sound_key)));
     }
     for (const auto& row : ctx.station_list) {
-        definitions[index(DeferredKeyKind::Station)].insert(
-            ascii_lower(trim_field_copy(row.first)));
+        const std::string key = ascii_lower(trim_field_copy(row.fields[0]));
+        if (!key.empty()) definitions[index(DeferredKeyKind::Station)].insert(key);
     }
     for (const SignalAspect& row : ctx.signal_aspects) {
         definitions[index(DeferredKeyKind::SignalAspect)].insert(

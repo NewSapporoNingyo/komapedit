@@ -1843,7 +1843,7 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
     std::map<std::string, std::string> model_paths;
     for (const TableRow& row : model.structure_models) {
         std::string key = scene_model_key(table_cell(row, "structureKey"));
-        std::string path = table_cell(row, "filePath");
+        std::string path = table_cell(row, "resolvedFilePath");
         if (!key.empty() && !path.empty()) model_paths[key] = path;
     }
     auto model_path_for_key = [&](const std::string& key) -> std::string {

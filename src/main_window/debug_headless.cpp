@@ -516,6 +516,41 @@ HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     return options;
 }
 
+HeadlessStationListEditOptions parse_headless_station_list_edit_options(
+    const std::vector<std::string>& args) {
+    HeadlessStationListEditOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-station-list-edit") {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-station-list-edit requires a map path";
+    }
+    return options;
+}
+
 HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
     const std::vector<std::string>& args) {
     static constexpr const char* k_default_map_path =
@@ -1010,6 +1045,7 @@ int App::run_debug_headless_source_anchors(const std::string& path, double unit_
     count_missing_rows(model.other_train_structure_keys);
     count_missing_rows(model.other_train_sound_3d_keys);
     count_missing_rows(model.sound_list);
+    count_missing_rows(model.sound_3d_list);
     count_missing_rows(model.structures_between);
     count_missing_rows(model.repeaters);
     count_missing_rows(model.signal_aspects);
@@ -3247,6 +3283,821 @@ int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOption
     write_batch_result(*out, facts);
     out->flush();
     return facts.passed() ? 0 : 20;
+}
+
+namespace station_list_edit_headless {
+
+using EditChange = typed_edit_headless::Change;
+using EditField = typed_edit_headless::Field;
+using EditReport = typed_edit_headless::Report;
+using MapHandle = distance_batch_headless::MapHandle;
+
+struct StationRow {
+    std::string edit_id;
+    std::string source_file;
+    int source_line = 0;
+    std::array<std::string, 13> values{};
+    std::string raw_statement;
+    std::string expected_source_hash;
+};
+
+struct SourceFacts {
+    std::string path;
+    std::string encoding;
+    std::string newline;
+    std::string source_hash;
+    std::uint64_t byte_length = 0;
+};
+
+struct Facts {
+    std::string map_path;
+    std::string target_file;
+    std::string original_source_hash;
+    std::string committed_source_hash;
+    std::string original_snapshot_fingerprint;
+    std::string reset_snapshot_fingerprint;
+    std::string encoding;
+    std::string newline;
+    size_t baseline_station_count = 0;
+    size_t baseline_target_row_count = 0;
+    size_t baseline_physical_line_count = 0;
+    size_t committed_physical_line_count = 0;
+    int selected_first_line = 0;
+    int selected_last_line = 0;
+    std::array<std::string, 6> selected_edit_ids{};
+    bool commit_requested = false;
+    bool first_move_up_disabled = false;
+    bool last_move_down_disabled = false;
+    bool opposite_moves_equivalent = false;
+    bool full_row_templates_swapped = false;
+    bool clear_normal_cell_draft_ok = false;
+    bool clear_key_draft_ok = false;
+    bool delete_row_draft_ok = false;
+    bool dry_run_ok = false;
+    bool dry_run_disk_unchanged = false;
+    bool apply_memory_ok = false;
+    bool apply_memory_snapshot_ok = false;
+    bool apply_memory_disk_unchanged = false;
+    bool empty_key_row_persisted = false;
+    bool empty_key_not_registered = false;
+    bool reset_ok = false;
+    bool reset_snapshot_restored = false;
+    bool reset_disk_unchanged = false;
+    bool commit_attempted = false;
+    bool commit_ok = false;
+    bool committed_snapshot_ok = false;
+    bool committed_stable_edit_ids = false;
+    bool committed_disk_changed = false;
+    bool committed_header_encoding_newline_preserved = false;
+    bool committed_full_rows_swapped = false;
+    bool committed_clear_cells_persisted = false;
+    bool committed_delete_removed_physical_line = false;
+    bool committed_sentinel_and_suffix_preserved = false;
+    bool committed_non_target_semantics_ok = false;
+    std::string error;
+
+    bool passed() const {
+        const bool memory = first_move_up_disabled && last_move_down_disabled &&
+            opposite_moves_equivalent && full_row_templates_swapped &&
+            clear_normal_cell_draft_ok && clear_key_draft_ok &&
+            delete_row_draft_ok && dry_run_ok && dry_run_disk_unchanged &&
+            apply_memory_ok && apply_memory_snapshot_ok &&
+            apply_memory_disk_unchanged && empty_key_row_persisted &&
+            empty_key_not_registered && reset_ok && reset_snapshot_restored &&
+            reset_disk_unchanged;
+        const bool committed = !commit_requested ||
+            (commit_attempted && commit_ok && committed_snapshot_ok &&
+             committed_stable_edit_ids && committed_disk_changed &&
+             committed_header_encoding_newline_preserved &&
+             committed_full_rows_swapped && committed_clear_cells_persisted &&
+             committed_delete_removed_physical_line &&
+             committed_sentinel_and_suffix_preserved &&
+             committed_non_target_semantics_ok);
+        return error.empty() && memory && committed;
+    }
+};
+
+std::string lower_ascii_copy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool same_path(const std::string& left, const std::string& right) {
+    const std::filesystem::path a(utf8_to_wide(left));
+    const std::filesystem::path b(utf8_to_wide(right));
+    return lower_ascii_copy(wide_to_utf8(a.lexically_normal().wstring())) ==
+        lower_ascii_copy(wide_to_utf8(b.lexically_normal().wstring()));
+}
+
+std::vector<StationRow> collect_station_rows(void* handle) {
+    const KvMapSnapshot snapshot =
+        distance_batch_headless::current_map_snapshot(handle);
+    if (snapshot.station_list_count != 0 && !snapshot.station_list) {
+        throw std::runtime_error("typed map snapshot has null Station.List array");
+    }
+    std::vector<StationRow> rows;
+    rows.reserve(static_cast<size_t>(snapshot.station_list_count));
+    for (std::uint64_t index = 0; index < snapshot.station_list_count; ++index) {
+        const KvStationListRow& source = snapshot.station_list[index];
+        StationRow row;
+        row.edit_id =
+            distance_batch_headless::snapshot_text(snapshot, source.metadata.edit_id);
+        row.source_file =
+            distance_batch_headless::metadata_source_file(snapshot, source.metadata);
+        row.source_line = source.metadata.line;
+        for (size_t field = 0; field < row.values.size(); ++field) {
+            row.values[field] =
+                distance_batch_headless::snapshot_text(snapshot, source.fields[field]);
+        }
+        rows.push_back(std::move(row));
+    }
+    for (StationRow& row : rows) {
+        std::string metadata_error;
+        const std::optional<InspectorTargetMetadata> metadata =
+            resolve_inspector_target_metadata(
+                handle, row.edit_id, "station.list", &metadata_error);
+        if (!metadata || metadata->elements_for_statement != 1) {
+            throw std::runtime_error(metadata_error.empty()
+                ? "Station.List row does not have unique editable metadata"
+                : metadata_error);
+        }
+        row.raw_statement = metadata->raw_statement;
+        row.expected_source_hash = metadata->expected_source_hash;
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const StationRow& left,
+                                                  const StationRow& right) {
+        if (left.source_file != right.source_file) {
+            return left.source_file < right.source_file;
+        }
+        return left.source_line < right.source_line;
+    });
+    return rows;
+}
+
+SourceFacts source_facts(void* handle, const std::string& path) {
+    const KvMapSnapshot snapshot =
+        distance_batch_headless::current_map_snapshot(handle);
+    for (std::uint64_t index = 0; index < snapshot.source_file_count; ++index) {
+        const KvSourceFileRow& source = snapshot.source_files[index];
+        const std::string candidate =
+            distance_batch_headless::snapshot_text(snapshot, source.file_path);
+        if (!same_path(candidate, path)) continue;
+        return {
+            candidate,
+            distance_batch_headless::snapshot_text(snapshot, source.encoding),
+            distance_batch_headless::snapshot_text(snapshot, source.newline),
+            distance_batch_headless::snapshot_text(snapshot, source.source_hash),
+            source.byte_length,
+        };
+    }
+    throw std::runtime_error("Station.List source file is absent from the snapshot");
+}
+
+std::vector<std::string> physical_lines(const std::string& bytes) {
+    std::vector<std::string> lines;
+    size_t begin = 0;
+    for (size_t index = 0; index < bytes.size(); ++index) {
+        if (bytes[index] != '\n' && bytes[index] != '\r') continue;
+        lines.push_back(bytes.substr(begin, index - begin));
+        if (bytes[index] == '\r' && index + 1 < bytes.size() &&
+            bytes[index + 1] == '\n') {
+            ++index;
+        }
+        begin = index + 1;
+    }
+    if (begin < bytes.size()) lines.push_back(bytes.substr(begin));
+    return lines;
+}
+
+std::pair<size_t, size_t> newline_counts(const std::string& bytes) {
+    size_t crlf = 0;
+    size_t other = 0;
+    for (size_t index = 0; index < bytes.size(); ++index) {
+        if (bytes[index] == '\r' && index + 1 < bytes.size() &&
+            bytes[index + 1] == '\n') {
+            ++crlf;
+            ++index;
+        } else if (bytes[index] == '\r' || bytes[index] == '\n') {
+            ++other;
+        }
+    }
+    return {crlf, other};
+}
+
+std::vector<std::string> csv_values(const std::string& line) {
+    std::vector<std::string> result;
+    std::string field;
+    bool quoted = false;
+    for (size_t index = 0; index < line.size(); ++index) {
+        const char ch = line[index];
+        if (ch == '"') {
+            if (quoted && index + 1 < line.size() && line[index + 1] == '"') {
+                field.push_back('"');
+                ++index;
+            } else {
+                quoted = !quoted;
+            }
+        } else if (ch == ',' && !quoted) {
+            result.push_back(field);
+            field.clear();
+        } else if (ch == '#' && !quoted) {
+            break;
+        } else {
+            field.push_back(ch);
+        }
+    }
+    result.push_back(field);
+    for (std::string& value : result) {
+        const size_t begin = value.find_first_not_of(" \t");
+        const size_t end = value.find_last_not_of(" \t");
+        value = begin == std::string::npos
+            ? std::string{}
+            : value.substr(begin, end - begin + 1);
+    }
+    return result;
+}
+
+std::vector<StationDefinitionDraftRow> make_drafts(
+    const std::vector<StationRow>& rows) {
+    std::vector<StationDefinitionDraftRow> drafts;
+    drafts.reserve(rows.size());
+    for (const StationRow& source : rows) {
+        StationDefinitionDraftRow row;
+        row.target_edit_id = source.edit_id;
+        row.target_source_file = source.source_file;
+        row.target_expected_source_hash = source.expected_source_hash;
+        row.original_values = source.values;
+        row.payload_edit_id = source.edit_id;
+        row.payload_source_file = source.source_file;
+        row.payload_raw_statement = source.raw_statement;
+        row.values = source.values;
+        drafts.push_back(std::move(row));
+    }
+    return drafts;
+}
+
+std::vector<EditChange> typed_changes(
+    const std::map<std::string, MapElementPendingChange>& pending) {
+    std::vector<EditChange> result;
+    result.reserve(pending.size());
+    for (const auto& entry : pending) {
+        const MapElementPendingChange& source = entry.second;
+        EditChange change;
+        change.change_id = source.change_id;
+        change.edit_id = source.edit_id;
+        if (source.operation == "update") change.operation = KV_EDIT_UPDATE;
+        else if (source.operation == "delete") change.operation = KV_EDIT_DELETE;
+        else throw std::runtime_error("unexpected Station.List pending operation");
+        change.replacement_statement = source.replacement_statement;
+        change.expected_source_hash = source.expected_source_hash;
+        for (const auto& field : source.field_changes) {
+            change.fields.push_back({field.first, field.second});
+        }
+        result.push_back(std::move(change));
+    }
+    return result;
+}
+
+std::string pending_signature(
+    const std::map<std::string, MapElementPendingChange>& changes) {
+    std::ostringstream out;
+    for (const auto& entry : changes) {
+        const MapElementPendingChange& change = entry.second;
+        out << entry.first << "|" << change.operation << "|"
+            << change.replacement_statement << "\n";
+        for (const auto& field : change.field_changes) {
+            out << field.first << "=" << field.second << "\n";
+        }
+    }
+    return out.str();
+}
+
+std::map<std::string, MapElementPendingChange> build_pending(
+    const std::vector<StationDefinitionDraftRow>& drafts) {
+    std::map<std::string, MapElementPendingChange> result;
+    std::string error;
+    if (!build_station_definition_pending_changes(drafts, {}, result, error)) {
+        throw std::runtime_error(error.empty()
+            ? "shared Station.List draft builder failed" : error);
+    }
+    return result;
+}
+
+size_t select_consecutive_run(const std::vector<StationRow>& rows) {
+    std::map<std::string, int> key_counts;
+    for (const StationRow& row : rows) {
+        const std::string key = lower_ascii_copy(row.values[0]);
+        if (!key.empty()) ++key_counts[key];
+    }
+    for (size_t begin = 0; begin + 6 <= rows.size(); ++begin) {
+        bool valid = !rows[begin + 2].values[1].empty();
+        std::set<std::string> keys;
+        for (size_t offset = 0; valid && offset < 6; ++offset) {
+            const StationRow& row = rows[begin + offset];
+            const std::string key = lower_ascii_copy(row.values[0]);
+            valid = !key.empty() && key_counts[key] == 1 && keys.insert(key).second;
+            if (offset != 0) {
+                valid = valid &&
+                    row.source_line == rows[begin + offset - 1].source_line + 1;
+            }
+        }
+        if (valid) return begin;
+    }
+    throw std::runtime_error(
+        "no six consecutive unique Station.List definitions were found");
+}
+
+const StationRow* find_edit_id(const std::vector<StationRow>& rows,
+                               const std::string& edit_id) {
+    const auto found = std::find_if(rows.begin(), rows.end(),
+                                    [&](const StationRow& row) {
+                                        return row.edit_id == edit_id;
+                                    });
+    return found == rows.end() ? nullptr : &*found;
+}
+
+bool station_name_key_absent(void* handle, const std::string& key) {
+    const KvMapSnapshot snapshot =
+        distance_batch_headless::current_map_snapshot(handle);
+    for (std::uint64_t index = 0; index < snapshot.station_name_count; ++index) {
+        const std::string candidate = distance_batch_headless::snapshot_text(
+            snapshot, snapshot.station_names[index].key);
+        if (lower_ascii_copy(candidate) == lower_ascii_copy(key)) return false;
+    }
+    return true;
+}
+
+bool snapshot_matches_edits(
+    void* handle, const std::string& target_file,
+    const std::vector<StationRow>& baseline, size_t run,
+    size_t baseline_global_count, bool& empty_row_persisted,
+    bool& empty_key_not_registered, bool& stable_ids) {
+    const KvMapSnapshot snapshot =
+        distance_batch_headless::current_map_snapshot(handle);
+    std::vector<StationRow> all = collect_station_rows(handle);
+    std::vector<StationRow> target;
+    for (StationRow& row : all) {
+        if (same_path(row.source_file, target_file)) target.push_back(std::move(row));
+    }
+    const StationRow* first = find_edit_id(target, baseline[run].edit_id);
+    const StationRow* second = find_edit_id(target, baseline[run + 1].edit_id);
+    const StationRow* cleared_normal = find_edit_id(target, baseline[run + 2].edit_id);
+    const StationRow* cleared_key = find_edit_id(target, baseline[run + 3].edit_id);
+    const StationRow* deleted = find_edit_id(target, baseline[run + 4].edit_id);
+    const StationRow* sentinel = find_edit_id(target, baseline[run + 5].edit_id);
+    stable_ids = first && second && cleared_normal && cleared_key && !deleted && sentinel;
+    if (!stable_ids || snapshot.station_list_count + 1 != baseline_global_count ||
+        target.size() + 1 != baseline.size()) {
+        return false;
+    }
+    const bool first_swapped = first->values == baseline[run + 1].values;
+    const bool second_swapped = second->values == baseline[run].values;
+    bool normal_only = cleared_normal->values[1].empty();
+    for (size_t field = 0; field < cleared_normal->values.size(); ++field) {
+        if (field != 1 && cleared_normal->values[field] != baseline[run + 2].values[field]) {
+            normal_only = false;
+        }
+    }
+    bool key_only = cleared_key->values[0].empty();
+    for (size_t field = 1; field < cleared_key->values.size(); ++field) {
+        if (cleared_key->values[field] != baseline[run + 3].values[field]) {
+            key_only = false;
+        }
+    }
+    empty_row_persisted = key_only;
+    empty_key_not_registered =
+        station_name_key_absent(handle, "") &&
+        station_name_key_absent(handle, baseline[run + 3].values[0]) &&
+        station_name_key_absent(handle, baseline[run + 4].values[0]);
+    return first_swapped && second_swapped && normal_only && key_only &&
+        sentinel->values == baseline[run + 5].values;
+}
+
+bool persisted_snapshot_matches(
+    void* handle, const std::string& target_file,
+    const std::vector<StationRow>& baseline, size_t run,
+    size_t baseline_global_count, bool& empty_row_persisted,
+    bool& empty_key_not_registered) {
+    const KvMapSnapshot snapshot =
+        distance_batch_headless::current_map_snapshot(handle);
+    std::vector<StationRow> all = collect_station_rows(handle);
+    std::vector<StationRow> target;
+    for (StationRow& row : all) {
+        if (same_path(row.source_file, target_file)) target.push_back(std::move(row));
+    }
+    if (snapshot.station_list_count + 1 != baseline_global_count ||
+        target.size() + 1 != baseline.size() || run + 4 >= target.size()) {
+        return false;
+    }
+    bool normal_only = target[run + 2].values[1].empty();
+    for (size_t field = 0; field < target[run + 2].values.size(); ++field) {
+        if (field != 1 &&
+            target[run + 2].values[field] != baseline[run + 2].values[field]) {
+            normal_only = false;
+        }
+    }
+    bool key_only = target[run + 3].values[0].empty();
+    for (size_t field = 1; field < target[run + 3].values.size(); ++field) {
+        if (target[run + 3].values[field] != baseline[run + 3].values[field]) {
+            key_only = false;
+        }
+    }
+    empty_row_persisted = key_only;
+    empty_key_not_registered =
+        station_name_key_absent(handle, "") &&
+        station_name_key_absent(handle, baseline[run + 3].values[0]) &&
+        station_name_key_absent(handle, baseline[run + 4].values[0]);
+    return target[run].values == baseline[run + 1].values &&
+        target[run + 1].values == baseline[run].values &&
+        normal_only && key_only &&
+        target[run + 4].values == baseline[run + 5].values;
+}
+
+bool apply_report_ok(const EditReport& report) {
+    return report.ok && report.full_reparse_ok &&
+        report.update_count == 4 && report.delete_count == 1 &&
+        report.non_target_changed_count == 0 &&
+        report.blocking_errors.empty();
+}
+
+bool commit_report_ok(const EditReport& report) {
+    return report.ok && report.full_reparse_ok &&
+        report.non_target_changed_count == 0 &&
+        !report.committed_files.empty() && report.blocking_errors.empty();
+}
+
+void write_facts(std::ostream& out, const Facts& facts) {
+    auto flag = [&](const char* name, bool value) {
+        out << name << "=" << (value ? 1 : 0) << "\n";
+    };
+    out << "command=debug-headless-station-list-edit\n";
+    out << "map_path=" << facts.map_path << "\n";
+    out << "target_file=" << facts.target_file << "\n";
+    out << "commit_requested=" << (facts.commit_requested ? 1 : 0) << "\n";
+    out << "original_source_hash=" << facts.original_source_hash << "\n";
+    out << "committed_source_hash=" << facts.committed_source_hash << "\n";
+    out << "original_snapshot_fingerprint=" << facts.original_snapshot_fingerprint << "\n";
+    out << "reset_snapshot_fingerprint=" << facts.reset_snapshot_fingerprint << "\n";
+    out << "encoding=" << facts.encoding << "\n";
+    out << "newline=" << facts.newline << "\n";
+    out << "baseline_station_count=" << facts.baseline_station_count << "\n";
+    out << "baseline_target_row_count=" << facts.baseline_target_row_count << "\n";
+    out << "baseline_physical_line_count=" << facts.baseline_physical_line_count << "\n";
+    out << "committed_physical_line_count=" << facts.committed_physical_line_count << "\n";
+    out << "selected_first_line=" << facts.selected_first_line << "\n";
+    out << "selected_last_line=" << facts.selected_last_line << "\n";
+    for (size_t index = 0; index < facts.selected_edit_ids.size(); ++index) {
+        out << "selected_edit_id_" << index << "=" << facts.selected_edit_ids[index] << "\n";
+    }
+    flag("first_move_up_disabled", facts.first_move_up_disabled);
+    flag("last_move_down_disabled", facts.last_move_down_disabled);
+    flag("opposite_moves_equivalent", facts.opposite_moves_equivalent);
+    flag("full_row_templates_swapped", facts.full_row_templates_swapped);
+    flag("clear_normal_cell_draft_ok", facts.clear_normal_cell_draft_ok);
+    flag("clear_key_draft_ok", facts.clear_key_draft_ok);
+    flag("delete_row_draft_ok", facts.delete_row_draft_ok);
+    flag("dry_run_ok", facts.dry_run_ok);
+    flag("dry_run_disk_unchanged", facts.dry_run_disk_unchanged);
+    flag("apply_memory_ok", facts.apply_memory_ok);
+    flag("apply_memory_snapshot_ok", facts.apply_memory_snapshot_ok);
+    flag("apply_memory_disk_unchanged", facts.apply_memory_disk_unchanged);
+    flag("empty_key_row_persisted", facts.empty_key_row_persisted);
+    flag("empty_key_not_registered", facts.empty_key_not_registered);
+    flag("reset_ok", facts.reset_ok);
+    flag("reset_snapshot_restored", facts.reset_snapshot_restored);
+    flag("reset_disk_unchanged", facts.reset_disk_unchanged);
+    flag("commit_attempted", facts.commit_attempted);
+    flag("commit_ok", facts.commit_ok);
+    flag("committed_snapshot_ok", facts.committed_snapshot_ok);
+    flag("committed_stable_edit_ids", facts.committed_stable_edit_ids);
+    flag("committed_disk_changed", facts.committed_disk_changed);
+    flag("committed_header_encoding_newline_preserved",
+         facts.committed_header_encoding_newline_preserved);
+    flag("committed_full_rows_swapped", facts.committed_full_rows_swapped);
+    flag("committed_clear_cells_persisted", facts.committed_clear_cells_persisted);
+    flag("committed_delete_removed_physical_line",
+         facts.committed_delete_removed_physical_line);
+    flag("committed_sentinel_and_suffix_preserved",
+         facts.committed_sentinel_and_suffix_preserved);
+    flag("committed_non_target_semantics_ok",
+         facts.committed_non_target_semantics_ok);
+    if (!facts.error.empty()) out << "error=" << facts.error << "\n";
+    out << "result=" << (facts.passed() ? "PASS" : "FAIL") << "\n";
+}
+
+} // namespace station_list_edit_headless
+
+int run_debug_headless_station_list_edit(
+    const HeadlessStationListEditOptions& options) {
+    using namespace station_list_edit_headless;
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: "
+                      << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    Facts facts;
+    facts.map_path = options.path;
+    facts.commit_requested = options.commit;
+    try {
+        MapHandle handle;
+        handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "real map load failed");
+        }
+        const KvMapSnapshot baseline_snapshot =
+            distance_batch_headless::current_map_snapshot(handle.value);
+        facts.baseline_station_count =
+            static_cast<size_t>(baseline_snapshot.station_list_count);
+        facts.original_snapshot_fingerprint =
+            distance_batch_headless::source_snapshot_fingerprint(handle.value);
+
+        const std::vector<StationRow> all_rows = collect_station_rows(handle.value);
+        std::map<std::string, std::vector<StationRow>> rows_by_file;
+        for (const StationRow& row : all_rows) rows_by_file[row.source_file].push_back(row);
+        const auto preferred = std::find_if(
+            rows_by_file.begin(), rows_by_file.end(), [](const auto& entry) {
+                return lower_ascii_copy(wide_to_utf8(
+                    std::filesystem::path(utf8_to_wide(entry.first)).filename().wstring())) ==
+                    "stations121m.txt";
+            });
+        const auto selected_file = preferred != rows_by_file.end()
+            ? preferred
+            : std::max_element(
+                  rows_by_file.begin(), rows_by_file.end(),
+                  [](const auto& left, const auto& right) {
+                      return left.second.size() < right.second.size();
+                  });
+        if (selected_file == rows_by_file.end() || selected_file->second.size() < 6) {
+            throw std::runtime_error(
+                "no Station.List source file contains at least six definitions");
+        }
+        const std::vector<StationRow>& baseline = selected_file->second;
+        facts.target_file = selected_file->first;
+        facts.baseline_target_row_count = baseline.size();
+        const size_t run = select_consecutive_run(baseline);
+        facts.selected_first_line = baseline[run].source_line;
+        facts.selected_last_line = baseline[run + 5].source_line;
+        for (size_t index = 0; index < 6; ++index) {
+            facts.selected_edit_ids[index] = baseline[run + index].edit_id;
+        }
+
+        const SourceFacts original_source = source_facts(handle.value, facts.target_file);
+        facts.original_source_hash = original_source.source_hash;
+        facts.encoding = original_source.encoding;
+        facts.newline = original_source.newline;
+        const std::filesystem::path target_path(utf8_to_wide(facts.target_file));
+        const std::filesystem::path entry_path(utf8_to_wide(options.path));
+        const std::string baseline_bytes =
+            distance_batch_headless::read_fixture_file(target_path);
+        const std::string baseline_entry_bytes =
+            distance_batch_headless::read_fixture_file(entry_path);
+        const std::vector<std::string> baseline_lines = physical_lines(baseline_bytes);
+        facts.baseline_physical_line_count = baseline_lines.size();
+
+        std::vector<StationDefinitionDraftRow> boundary_drafts =
+            make_drafts(baseline);
+        const std::vector<size_t> boundary_visible =
+            station_definition_visible_row_indices(boundary_drafts);
+        facts.first_move_up_disabled = !move_station_definition_draft_row(
+            boundary_drafts, boundary_visible, 0, -1);
+        facts.last_move_down_disabled = !move_station_definition_draft_row(
+            boundary_drafts, boundary_visible,
+            static_cast<int>(boundary_visible.size()) - 1, 1);
+
+        std::vector<StationDefinitionDraftRow> down_drafts = make_drafts(baseline);
+        const std::vector<size_t> down_visible =
+            station_definition_visible_row_indices(down_drafts);
+        if (!move_station_definition_draft_row(
+                down_drafts, down_visible, static_cast<int>(run), 1)) {
+            throw std::runtime_error("shared first-row move-down operation failed");
+        }
+        const auto down_pending = build_pending(down_drafts);
+
+        std::vector<StationDefinitionDraftRow> up_drafts = make_drafts(baseline);
+        const std::vector<size_t> up_visible =
+            station_definition_visible_row_indices(up_drafts);
+        if (!move_station_definition_draft_row(
+                up_drafts, up_visible, static_cast<int>(run + 1), -1)) {
+            throw std::runtime_error("shared second-row move-up operation failed");
+        }
+        const auto up_pending = build_pending(up_drafts);
+        facts.opposite_moves_equivalent =
+            pending_signature(down_pending) == pending_signature(up_pending);
+        const auto first_change = down_pending.find(baseline[run].edit_id);
+        const auto second_change = down_pending.find(baseline[run + 1].edit_id);
+        facts.full_row_templates_swapped =
+            first_change != down_pending.end() &&
+            second_change != down_pending.end() &&
+            first_change->second.field_changes.size() == 13 &&
+            second_change->second.field_changes.size() == 13 &&
+            first_change->second.replacement_statement ==
+                baseline[run + 1].raw_statement &&
+            second_change->second.replacement_statement ==
+                baseline[run].raw_statement;
+
+        std::vector<StationDefinitionDraftRow> drafts = make_drafts(baseline);
+        const std::vector<size_t> visible =
+            station_definition_visible_row_indices(drafts);
+        if (!move_station_definition_draft_row(
+                drafts, visible, static_cast<int>(run), 1) ||
+            !clear_station_definition_draft_cell(
+                drafts, visible, static_cast<int>(run + 2), 1) ||
+            !clear_station_definition_draft_cell(
+                drafts, visible, static_cast<int>(run + 3), 0) ||
+            !delete_station_definition_draft_row(
+                drafts, visible, static_cast<int>(run + 4))) {
+            throw std::runtime_error("shared composite Station.List draft operation failed");
+        }
+        facts.clear_normal_cell_draft_ok =
+            drafts[run + 2].values[1].empty();
+        facts.clear_key_draft_ok = drafts[run + 3].values[0].empty();
+        facts.delete_row_draft_ok = drafts[run + 4].deleted;
+
+        const auto pending = build_pending(drafts);
+        const std::vector<EditChange> changes = typed_changes(pending);
+        const EditReport dry = typed_edit_headless::dry_run(handle.value, changes);
+        facts.dry_run_ok = apply_report_ok(dry);
+        facts.dry_run_disk_unchanged =
+            distance_batch_headless::read_fixture_file(target_path) == baseline_bytes &&
+            distance_batch_headless::read_fixture_file(entry_path) == baseline_entry_bytes;
+        if (!facts.dry_run_ok) {
+            throw std::runtime_error(dry.blocking_errors.empty()
+                ? "Station.List dry-run assertions failed"
+                : dry.blocking_errors.front());
+        }
+
+        const EditReport applied =
+            typed_edit_headless::apply_to_memory(handle.value, changes);
+        facts.apply_memory_ok = apply_report_ok(applied);
+        bool applied_stable_ids = false;
+        facts.apply_memory_snapshot_ok = snapshot_matches_edits(
+            handle.value, facts.target_file, baseline, run,
+            facts.baseline_station_count, facts.empty_key_row_persisted,
+            facts.empty_key_not_registered, applied_stable_ids);
+        facts.apply_memory_disk_unchanged =
+            distance_batch_headless::read_fixture_file(target_path) == baseline_bytes &&
+            distance_batch_headless::read_fixture_file(entry_path) == baseline_entry_bytes;
+        if (!facts.apply_memory_ok || !facts.apply_memory_snapshot_ok ||
+            !applied_stable_ids) {
+            throw std::runtime_error("Station.List Apply-to-memory assertions failed");
+        }
+
+        facts.reset_ok = kv_edit_reset_memory(handle.value) != 0;
+        facts.reset_snapshot_fingerprint =
+            distance_batch_headless::source_snapshot_fingerprint(handle.value);
+        const std::vector<StationRow> reset_all = collect_station_rows(handle.value);
+        bool reset_rows_match = true;
+        for (size_t index = 0; index < 6; ++index) {
+            const StationRow* row =
+                find_edit_id(reset_all, baseline[run + index].edit_id);
+            reset_rows_match = reset_rows_match && row &&
+                row->values == baseline[run + index].values;
+        }
+        facts.reset_snapshot_restored =
+            facts.reset_ok && reset_rows_match &&
+            facts.reset_snapshot_fingerprint == facts.original_snapshot_fingerprint;
+        facts.reset_disk_unchanged =
+            distance_batch_headless::read_fixture_file(target_path) == baseline_bytes &&
+            distance_batch_headless::read_fixture_file(entry_path) == baseline_entry_bytes;
+        if (!facts.reset_snapshot_restored || !facts.reset_disk_unchanged) {
+            throw std::runtime_error("Station.List Reset did not restore the baseline");
+        }
+
+        if (options.commit) {
+            facts.commit_attempted = true;
+            const EditReport reapplied =
+                typed_edit_headless::apply_to_memory(handle.value, changes);
+            if (!apply_report_ok(reapplied)) {
+                throw std::runtime_error("pre-commit Station.List Apply failed");
+            }
+            const EditReport committed = typed_edit_headless::commit(handle.value);
+            facts.commit_ok = commit_report_ok(committed);
+            facts.committed_non_target_semantics_ok =
+                committed.non_target_changed_count == 0;
+            std::set<std::string> committed_station_ids;
+            for (const typed_edit_headless::CommittedRow& row :
+                 committed.committed_rows) {
+                if (row.row_kind == "station.list") {
+                    committed_station_ids.insert(row.edit_id);
+                }
+            }
+            facts.committed_stable_edit_ids =
+                committed_station_ids.count(baseline[run].edit_id) != 0 &&
+                committed_station_ids.count(baseline[run + 1].edit_id) != 0 &&
+                committed_station_ids.count(baseline[run + 2].edit_id) != 0 &&
+                committed_station_ids.count(baseline[run + 3].edit_id) != 0 &&
+                committed_station_ids.count(baseline[run + 4].edit_id) == 0 &&
+                committed_station_ids.count(baseline[run + 5].edit_id) != 0;
+            if (!facts.commit_ok) {
+                throw std::runtime_error(committed.blocking_errors.empty()
+                    ? "Station.List commit assertions failed"
+                    : committed.blocking_errors.front());
+            }
+
+            const std::string committed_bytes =
+                distance_batch_headless::read_fixture_file(target_path);
+            const std::string committed_entry_bytes =
+                distance_batch_headless::read_fixture_file(entry_path);
+            facts.committed_disk_changed =
+                committed_bytes != baseline_bytes &&
+                committed_entry_bytes == baseline_entry_bytes;
+            const std::vector<std::string> committed_lines =
+                physical_lines(committed_bytes);
+            facts.committed_physical_line_count = committed_lines.size();
+
+            MapHandle reopened;
+            reopened.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                            KV_LOAD_EDIT_METADATA);
+            if (!reopened.value) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(error
+                    ? error : "committed entry map reopen failed");
+            }
+            const SourceFacts committed_source =
+                source_facts(reopened.value, facts.target_file);
+            facts.committed_source_hash = committed_source.source_hash;
+            bool reopened_empty_row = false;
+            bool reopened_empty_lookup = false;
+            facts.committed_snapshot_ok = persisted_snapshot_matches(
+                reopened.value, facts.target_file, baseline, run,
+                facts.baseline_station_count, reopened_empty_row,
+                reopened_empty_lookup);
+            facts.committed_snapshot_ok = facts.committed_snapshot_ok &&
+                reopened_empty_row && reopened_empty_lookup;
+
+            const size_t first_line_index =
+                static_cast<size_t>(baseline[run].source_line - 1);
+            const size_t delete_line_index =
+                static_cast<size_t>(baseline[run + 4].source_line - 1);
+            const bool physical_range_ok =
+                first_line_index + 5 < baseline_lines.size() &&
+                delete_line_index < committed_lines.size();
+            if (physical_range_ok) {
+                facts.committed_full_rows_swapped =
+                    committed_lines[first_line_index] ==
+                        baseline[run + 1].raw_statement &&
+                    committed_lines[first_line_index + 1] ==
+                        baseline[run].raw_statement;
+                const std::vector<std::string> normal_values =
+                    csv_values(committed_lines[first_line_index + 2]);
+                const std::vector<std::string> key_values =
+                    csv_values(committed_lines[first_line_index + 3]);
+                facts.committed_clear_cells_persisted =
+                    normal_values.size() >= 13 && normal_values[1].empty() &&
+                    key_values.size() >= 13 && key_values[0].empty() &&
+                    !committed_lines[first_line_index + 3].empty() &&
+                    committed_lines[first_line_index + 3].front() == ',';
+                facts.committed_delete_removed_physical_line =
+                    committed_lines.size() + 1 == baseline_lines.size();
+                bool prefix_ok = true;
+                for (size_t index = 0; index < first_line_index; ++index) {
+                    prefix_ok = prefix_ok &&
+                        committed_lines[index] == baseline_lines[index];
+                }
+                bool suffix_ok = true;
+                for (size_t index = delete_line_index;
+                     index < committed_lines.size(); ++index) {
+                    suffix_ok = suffix_ok && index + 1 < baseline_lines.size() &&
+                        committed_lines[index] == baseline_lines[index + 1];
+                }
+                facts.committed_sentinel_and_suffix_preserved =
+                    prefix_ok && suffix_ok &&
+                    committed_lines[delete_line_index] ==
+                        baseline[run + 5].raw_statement;
+            }
+            const auto baseline_newlines = newline_counts(baseline_bytes);
+            const auto committed_newlines = newline_counts(committed_bytes);
+            const bool newline_preserved =
+                (baseline_newlines.second == 0 &&
+                 committed_newlines.second == 0 &&
+                 committed_newlines.first + 1 == baseline_newlines.first) ||
+                (baseline_newlines.first == 0 &&
+                 committed_newlines.first == 0 &&
+                 committed_newlines.second + 1 == baseline_newlines.second);
+            facts.committed_header_encoding_newline_preserved =
+                committed_source.encoding == original_source.encoding &&
+                committed_source.newline == original_source.newline &&
+                newline_preserved;
+        }
+    } catch (const std::exception& e) {
+        facts.error = e.what();
+    }
+
+    write_facts(*out, facts);
+    out->flush();
+    return facts.passed() ? 0 : 22;
 }
 
 namespace repeater_batch_headless {

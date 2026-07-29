@@ -1342,74 +1342,6 @@ void render_map_sound_event_table(const char* table_id,
             return false;
         });
 }
-static void render_sound_list_table(const char* table_id,
-                                    const std::vector<CachedTableRow>& rows,
-                                    float file_path_width,
-                                    float buffer_count_width,
-                                    TableFindState& find_state,
-                                    const std::string& file_name_header,
-                                    const std::string& open_menu_label) {
-    if (ImGui::BeginTable(table_id, IM_ARRAYSIZE(k_sound_list_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        for (int i = 0; i < IM_ARRAYSIZE(k_sound_list_columns); ++i) {
-            float width = k_sound_list_columns[i].width;
-            if (i == k_sound_list_file_path_column) width = file_path_width;
-            if (i == k_sound_list_buffer_count_column) width = buffer_count_width;
-            const char* header = i == k_sound_list_file_path_column
-                ? file_name_header.c_str()
-                : k_sound_list_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(rows.size());
-        if (find_state.scroll_row >= row_count) find_state.scroll_row = -1;
-        const int scroll_target_row = find_state.scroll_row;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
-                const bool is_find_match =
-                    static_cast<size_t>(row_index) < find_state.row_matches.size() &&
-                    find_state.row_matches[static_cast<size_t>(row_index)] != 0;
-                const bool is_unused =
-                    static_cast<size_t>(row_index) < find_state.unused_row_matches.size() &&
-                    find_state.unused_row_matches[static_cast<size_t>(row_index)] != 0;
-                ImGui::TableNextRow();
-                if (is_unused) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
-                } else if (is_find_match) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.0f);
-                    find_state.scroll_row = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_sound_list_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (value.empty()) continue;
-                    if (i == k_sound_list_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           open_menu_label, row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
-    }
-}
-
 std::string format_distance_range(const std::string& start, const std::string& end) {
     return start + "~" + end;
 }
@@ -1520,8 +1452,9 @@ void App::ensure_table_cache() {
         cached.cells.resize(IM_ARRAYSIZE(k_structure_model_columns));
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[1] = table_cell(row, "structureKey");
-        cached.open_path = table_cell(row, "filePath");
-        cached.cells[2] = display_name_from_path(cached.open_path);
+        cached.cells[2] = table_cell(row, "filePath");
+        cached.open_path = table_cell(row, "resolvedFilePath");
+        cached.tooltip_text = cached.open_path;
         expand_width_for_text(cache.structure_model_file_path_width, cached.cells[2]);
         cache.structure_model_rows.push_back(std::move(cached));
     }
@@ -1616,7 +1549,7 @@ void App::ensure_table_cache() {
     expand_width_for_text(cache.sound_list_buffer_count_width, k_sound_list_columns[k_sound_list_buffer_count_column].header);
     expand_width_for_text(cache.sound_3d_list_buffer_count_width, k_sound_list_columns[k_sound_list_buffer_count_column].header);
     cache.sound_list_rows.reserve(model_.sound_list.size());
-    cache.sound_3d_list_rows.reserve(model_.sound_list.size());
+    cache.sound_3d_list_rows.reserve(model_.sound_3d_list.size());
     auto append_sound_list_row = [&](const TableRow& row,
                                      std::vector<CachedTableRow>& rows,
                                      float& file_path_width,
@@ -1626,24 +1559,23 @@ void App::ensure_table_cache() {
         cached.cells.resize(IM_ARRAYSIZE(k_sound_list_columns));
         cached.cells[0] = std::to_string(rows.size() + 1);
         cached.cells[1] = table_cell(row, "soundKey");
-        cached.open_path = table_cell(row, "filePath");
-        cached.cells[2] = display_name_from_path(cached.open_path);
+        cached.cells[2] = table_cell(row, "filePath");
+        cached.open_path = table_cell(row, "resolvedFilePath");
+        cached.tooltip_text = cached.open_path;
         cached.cells[3] = table_cell(row, "bufferCount");
         expand_width_for_text(file_path_width, cached.cells[2]);
         expand_width_for_text(buffer_count_width, cached.cells[3]);
         rows.push_back(std::move(cached));
     };
     for (const TableRow& row : model_.sound_list) {
-        const bool is_3d = table_cell(row, "is3D") == "true";
-        if (is_3d) {
-            append_sound_list_row(row, cache.sound_3d_list_rows,
-                                  cache.sound_3d_list_file_path_width,
-                                  cache.sound_3d_list_buffer_count_width);
-        } else {
-            append_sound_list_row(row, cache.sound_list_rows,
-                                  cache.sound_list_file_path_width,
-                                  cache.sound_list_buffer_count_width);
-        }
+        append_sound_list_row(row, cache.sound_list_rows,
+                              cache.sound_list_file_path_width,
+                              cache.sound_list_buffer_count_width);
+    }
+    for (const TableRow& row : model_.sound_3d_list) {
+        append_sound_list_row(row, cache.sound_3d_list_rows,
+                              cache.sound_3d_list_file_path_width,
+                              cache.sound_3d_list_buffer_count_width);
     }
 
     append_structure_table_rows(model_.structures,
@@ -2188,6 +2120,299 @@ void App::render_othertracks_window() {
     ImGui::End();
 }
 
+void App::render_editable_list_table(
+    const char* table_id,
+    const TableColumnDef* columns,
+    int column_count,
+    const std::vector<CachedTableRow>& cached_rows,
+    EditableListEditState& edit,
+    const EditableListSpec& spec,
+    float path_column_width,
+    float last_column_width,
+    TableFindState* find_state) {
+    if (edit.rows_initialized && edit.visible_rows_dirty) {
+        edit.visible_rows = editable_list_visible_row_indices(edit.rows);
+        edit.visible_rows_dirty = false;
+    }
+    const int row_count = edit.rows_initialized
+        ? static_cast<int>(edit.visible_rows.size())
+        : static_cast<int>(cached_rows.size());
+    if (find_state && find_state->scroll_row >= row_count) {
+        find_state->scroll_row = -1;
+    }
+    const int scroll_target_row = find_state ? find_state->scroll_row : -1;
+    const bool is_station = std::string_view(spec.row_kind) == "station.list";
+    const bool is_structure = std::string_view(spec.row_kind) == "structure.model";
+    const int path_column = spec.path_field < 0
+        ? -1
+        : static_cast<int>(spec.cache_column_offset) + spec.path_field;
+    const ImVec2 table_size = is_station
+        ? ImVec2(0.0f, scroll_x_table_height_for_rows(row_count))
+        : ImVec2(0.0f, 0.0f);
+    if (!ImGui::BeginTable(
+            table_id, column_count,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                (is_station ? ImGuiTableFlags_None : ImGuiTableFlags_ScrollY),
+            table_size)) {
+        return;
+    }
+
+    const std::string file_name_header = tr("column.file_name");
+    for (int column = 0; column < column_count; ++column) {
+        float width = columns[column].width;
+        if (column == path_column && path_column_width > 0.0f) {
+            width = path_column_width;
+        } else if (column == column_count - 1 && last_column_width > 0.0f) {
+            width = last_column_width;
+        }
+        const char* header = column == path_column
+            ? file_name_header.c_str()
+            : columns[column].header;
+        ImGui::TableSetupColumn(
+            header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+    }
+    setup_fixed_table_header();
+    ImGui::TableHeadersRow();
+
+    const bool can_edit = edit_actions_available();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImVec4 preview_text_color(1.0f, 1.0f, 0.0f, 1.0f);
+    const auto draft_at = [&](int visible_row) -> EditableListDraftRow* {
+        return edit.rows_initialized
+            ? &edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]
+            : nullptr;
+    };
+    const auto cached_at = [&](int visible_row) -> const CachedTableRow* {
+        return edit.rows_initialized
+            ? nullptr
+            : &cached_rows[static_cast<size_t>(visible_row)];
+    };
+    const auto source_file_at = [&](int visible_row) -> const std::string& {
+        EditableListDraftRow* draft = draft_at(visible_row);
+        return draft ? draft->target_source_file : cached_at(visible_row)->source.file_path;
+    };
+    const auto edit_id_at = [&](int visible_row) -> const std::string& {
+        EditableListDraftRow* draft = draft_at(visible_row);
+        return draft ? draft->target_edit_id : cached_at(visible_row)->edit_id;
+    };
+
+    ImGuiListClipper clipper;
+    clipper.Begin(row_count);
+    if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+        clipper.IncludeItemByIndex(scroll_target_row);
+    }
+    while (clipper.Step()) {
+        for (int row_index = clipper.DisplayStart;
+             row_index < clipper.DisplayEnd; ++row_index) {
+            EditableListDraftRow* draft = draft_at(row_index);
+            const CachedTableRow* cached = cached_at(row_index);
+            const std::string& target_edit_id =
+                draft ? draft->target_edit_id : cached->edit_id;
+            const std::string& resolved_path =
+                draft ? draft->resolved_path : cached->open_path;
+            const bool row_editable = can_edit && !target_edit_id.empty();
+            const bool is_preview_model =
+                is_structure && model_preview_canvas_ &&
+                model_preview_canvas_->has_model() &&
+                resolved_path == model_preview_canvas_->model_path();
+            const ImU32 text_color = ImGui::GetColorU32(
+                is_preview_model ? preview_text_color : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+            const bool is_find_match =
+                !draft && find_state &&
+                static_cast<size_t>(row_index) < find_state->row_matches.size() &&
+                find_state->row_matches[static_cast<size_t>(row_index)] != 0;
+            const bool is_unused =
+                !draft && find_state &&
+                static_cast<size_t>(row_index) < find_state->unused_row_matches.size() &&
+                find_state->unused_row_matches[static_cast<size_t>(row_index)] != 0;
+
+            ImGui::TableNextRow();
+            if (row_is_pending_delete(target_edit_id)) {
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
+            } else if (row_has_pending_edit(target_edit_id) ||
+                       (draft && editable_list_row_has_draft(
+                           *draft, spec.field_count))) {
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
+            } else if (is_unused) {
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
+            } else if (is_find_match) {
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
+            }
+            if (row_index == scroll_target_row && find_state) {
+                ImGui::SetScrollHereY(0.0f);
+                find_state->scroll_row = -1;
+            }
+
+            ImGui::PushID(row_index);
+            for (int column = 0; column < column_count; ++column) {
+                ImGui::TableSetColumnIndex(column);
+                ImGui::PushID(column);
+                const int field_index =
+                    column - static_cast<int>(spec.cache_column_offset);
+                const bool editable_cell =
+                    field_index >= 0 &&
+                    static_cast<size_t>(field_index) < spec.field_count;
+                const std::string sequence =
+                    std::to_string(static_cast<size_t>(row_index) + 1);
+                const std::string& display = draft
+                    ? (editable_cell
+                        ? draft->values[static_cast<size_t>(field_index)]
+                        : sequence)
+                    : cached->cells[static_cast<size_t>(column)];
+                const bool is_editing =
+                    editable_cell && edit.editing_edit_id == target_edit_id &&
+                    edit.editing_column == field_index;
+                const bool is_selected =
+                    edit.selected_row == row_index &&
+                    edit.selected_column == column;
+
+                const auto render_context_menu = [&]() {
+                    if (column == path_column && ImGui::IsItemHovered() &&
+                        !resolved_path.empty()) {
+                        ImGui::SetTooltip("%s", resolved_path.c_str());
+                    }
+                    touch_input::open_popup_on_last_item_long_press(
+                        "##editable_list_context");
+                    if (!ImGui::BeginPopupContextItem(
+                            "##editable_list_context",
+                            ImGuiPopupFlags_MouseButtonRight)) {
+                        return;
+                    }
+                    bool has_read_only_action = false;
+                    if (is_structure) {
+                        ImGui::BeginDisabled(blank_ascii(resolved_path));
+                        if (ImGui::MenuItem(tr("menu.preview_model").c_str())) {
+                            preview_structure_model(resolved_path);
+                        }
+                        ImGui::EndDisabled();
+                        has_read_only_action = true;
+                    }
+                    if (column == path_column) {
+                        ImGui::BeginDisabled(blank_ascii(resolved_path));
+                        if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
+                            open_parent_directory_in_explorer(resolved_path);
+                        }
+                        ImGui::EndDisabled();
+                        has_read_only_action = true;
+                    }
+                    if (has_read_only_action) ImGui::Separator();
+
+                    const bool move_up_available =
+                        row_editable && row_index > 0 &&
+                        !edit_id_at(row_index - 1).empty() &&
+                        source_file_at(row_index - 1) == source_file_at(row_index);
+                    const bool move_down_available =
+                        row_editable && row_index + 1 < row_count &&
+                        !edit_id_at(row_index + 1).empty() &&
+                        source_file_at(row_index + 1) == source_file_at(row_index);
+                    ImGui::BeginDisabled(!move_up_available);
+                    if (ImGui::MenuItem(
+                            tr("context.editable_list.move_up").c_str())) {
+                        move_editable_list_row(edit, spec, row_index, -1);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!move_down_available);
+                    if (ImGui::MenuItem(
+                            tr("context.editable_list.move_down").c_str())) {
+                        move_editable_list_row(edit, spec, row_index, 1);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!row_editable || !editable_cell);
+                    if (ImGui::MenuItem(
+                            tr("context.editable_list.clear_cell").c_str())) {
+                        clear_editable_list_cell(
+                            edit, spec, row_index, field_index);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!row_editable);
+                    if (ImGui::MenuItem(
+                            tr("context.editable_list.delete_row").c_str())) {
+                        delete_editable_list_row(edit, spec, row_index);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                };
+
+                if (row_editable && is_editing) {
+                    if (edit.edit_buffer_fresh) {
+                        ImGui::SetKeyboardFocusHere(0);
+                        edit.edit_buffer_fresh = false;
+                    }
+                    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+                    const bool returned = ImGui::InputText(
+                        "##cell_edit", &edit.edit_buffer,
+                        ImGuiInputTextFlags_EnterReturnsTrue |
+                            ImGuiInputTextFlags_AutoSelectAll);
+                    ImGui::PopItemWidth();
+                    render_context_menu();
+                    if (returned || ImGui::IsItemDeactivated()) {
+                        commit_editable_list_active_edit(edit, spec);
+                    }
+                    ImGui::PopID();
+                    continue;
+                }
+
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                const float cell_width =
+                    std::max(1.0f, ImGui::GetContentRegionAvail().x);
+                const float cell_height = ImGui::GetFrameHeight();
+                ImGui::InvisibleButton(
+                    "cell", ImVec2(cell_width, cell_height));
+                const bool hovered = ImGui::IsItemHovered();
+                if (is_selected) {
+                    ImGui::GetWindowDrawList()->AddRect(
+                        pos, ImVec2(pos.x + cell_width, pos.y + cell_height),
+                        ImGui::GetColorU32(ImGuiCol_HeaderActive),
+                        0.0f, 0, 1.5f);
+                } else if (hovered) {
+                    ImGui::GetWindowDrawList()->AddRect(
+                        pos, ImVec2(pos.x + cell_width, pos.y + cell_height),
+                        ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+                }
+                if (!display.empty()) {
+                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                    draw_list->PushClipRect(
+                        pos, ImVec2(pos.x + cell_width, pos.y + cell_height), true);
+                    draw_list->AddText(
+                        ImVec2(pos.x + style.CellPadding.x,
+                               pos.y + style.CellPadding.y),
+                        text_color, display.c_str());
+                    draw_list->PopClipRect();
+                }
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Left) ||
+                    ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                    edit.selected_row = row_index;
+                    edit.selected_column = column;
+                }
+                render_context_menu();
+                if (row_editable && editable_cell && hovered &&
+                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    commit_editable_list_active_edit(edit, spec);
+                    if (initialize_editable_list_draft_rows(edit, spec)) {
+                        EditableListDraftRow& active =
+                            edit.rows[edit.visible_rows[
+                                static_cast<size_t>(row_index)]];
+                        edit.editing_column = field_index;
+                        edit.editing_edit_id = active.target_edit_id;
+                        edit.editing_baseline =
+                            active.values[static_cast<size_t>(field_index)];
+                        edit.edit_buffer = edit.editing_baseline;
+                        edit.edit_buffer_fresh = true;
+                    }
+                }
+                ImGui::PopID();
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndTable();
+}
+
 void App::render_station_list_window() {
     if (!show_station_list_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
@@ -2270,17 +2495,22 @@ void App::render_station_list_window() {
                          table_cache_.station_position_rows, true);
     ImGui::Separator();
     ImGui::TextUnformatted(tr("frame.station_definitions").c_str());
-    if (edit_actions_available()) {
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!has_station_definition_drafts());
-        if (ImGui::Button(tr("button.apply").c_str())) apply_station_definition_drafts();
-        ImGui::EndDisabled();
-    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!edit_actions_available() || !has_station_definition_drafts());
+    if (ImGui::Button(tr("button.apply").c_str())) apply_station_definition_drafts();
+    ImGui::EndDisabled();
     {
         const TableColumnDef* columns = k_station_definition_columns;
         const int column_count = IM_ARRAYSIZE(k_station_definition_columns);
         const std::vector<CachedTableRow>& rows = table_cache_.station_definition_rows;
-        const int row_count = static_cast<int>(rows.size());
+        StationDefinitionEditState& edit = station_definition_edit_;
+        if (edit.rows_initialized && edit.visible_rows_dirty) {
+            edit.visible_rows = station_definition_visible_row_indices(edit.rows);
+            edit.visible_rows_dirty = false;
+        }
+        const int row_count = edit.rows_initialized
+            ? static_cast<int>(edit.visible_rows.size())
+            : static_cast<int>(rows.size());
         const bool can_edit = edit_actions_available();
         ImVec2 table_size(0.0f, scroll_x_table_height_for_rows(row_count));
         if (ImGui::BeginTable("station_definitions", column_count,
@@ -2294,35 +2524,80 @@ void App::render_station_list_window() {
             setup_fixed_table_header();
             ImGui::TableHeadersRow();
             const ImGuiStyle& style = ImGui::GetStyle();
-            StationDefinitionEditState& edit = station_definition_edit_;
-            const auto row_has_definition_draft = [&](const std::string& edit_id) {
-                if (edit_id.empty()) return false;
-                for (const auto& draft : edit.drafts) {
-                    if (draft.first.first == edit_id) return true;
+            const auto source_file_at = [&](int visible_row) -> const std::string& {
+                if (edit.rows_initialized) {
+                    return edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]
+                        .target_source_file;
                 }
-                return false;
+                return rows[static_cast<size_t>(visible_row)].source.file_path;
+            };
+            const auto edit_id_at = [&](int visible_row) -> const std::string& {
+                if (edit.rows_initialized) {
+                    return edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]
+                        .target_edit_id;
+                }
+                return rows[static_cast<size_t>(visible_row)].edit_id;
+            };
+            const auto render_context_menu = [&](int visible_row, int column,
+                                                 bool actions_available) {
+                const bool move_up_available = actions_available && visible_row > 0 &&
+                    !edit_id_at(visible_row - 1).empty() &&
+                    source_file_at(visible_row - 1) == source_file_at(visible_row);
+                const bool move_down_available = actions_available &&
+                    visible_row + 1 < row_count &&
+                    !edit_id_at(visible_row + 1).empty() &&
+                    source_file_at(visible_row + 1) == source_file_at(visible_row);
+                if (!ImGui::BeginPopupContextItem("##station_definition_context")) return;
+                ImGui::BeginDisabled(!move_up_available);
+                if (ImGui::MenuItem(tr("context.station_list.move_up").c_str())) {
+                    move_station_definition_row(visible_row, -1);
+                }
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!move_down_available);
+                if (ImGui::MenuItem(tr("context.station_list.move_down").c_str())) {
+                    move_station_definition_row(visible_row, 1);
+                }
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!actions_available);
+                if (ImGui::MenuItem(tr("context.station_list.clear_cell").c_str())) {
+                    clear_station_definition_cell(visible_row, column);
+                }
+                if (ImGui::MenuItem(tr("context.station_list.delete_row").c_str())) {
+                    delete_station_definition_row(visible_row);
+                }
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
             };
             ImGuiListClipper clipper;
             clipper.Begin(row_count);
             while (clipper.Step()) {
                 for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                    const CachedTableRow& row = rows[static_cast<size_t>(row_index)];
+                    const CachedTableRow* cached_row = edit.rows_initialized ? nullptr :
+                        &rows[static_cast<size_t>(row_index)];
+                    StationDefinitionDraftRow* draft_row = edit.rows_initialized
+                        ? &edit.rows[edit.visible_rows[static_cast<size_t>(row_index)]]
+                        : nullptr;
+                    const std::string& target_edit_id = draft_row
+                        ? draft_row->target_edit_id : cached_row->edit_id;
+                    const bool row_editable = can_edit && !target_edit_id.empty();
                     ImGui::TableNextRow();
-                    if (row_has_pending_edit(row.edit_id) || row_has_definition_draft(row.edit_id)) {
+                    if (row_has_pending_edit(target_edit_id) ||
+                        (draft_row && station_definition_row_has_draft(*draft_row))) {
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
                     }
                     ImGui::PushID(row_index);
                     for (int col = 0; col < column_count; ++col) {
                         ImGui::TableSetColumnIndex(col);
                         ImGui::PushID(col);
-                        const std::string& cached = row.cells[static_cast<size_t>(col)];
-                        const auto draft_it = edit.drafts.find({row.edit_id, col});
-                        const std::string& display = (draft_it != edit.drafts.end())
-                            ? draft_it->second : cached;
-                        const bool is_editing = (edit.editing_row == row_index && edit.editing_column == col);
+                        const std::string& display = draft_row
+                            ? draft_row->values[static_cast<size_t>(col)]
+                            : cached_row->cells[static_cast<size_t>(col)];
+                        const bool is_editing =
+                            edit.editing_edit_id == target_edit_id &&
+                            edit.editing_column == col;
                         const bool is_selected = (edit.selected_row == row_index && edit.selected_column == col);
 
-                        if (can_edit && is_editing) {
+                        if (row_editable && is_editing) {
                             if (edit.edit_buffer_fresh) {
                                 ImGui::SetKeyboardFocusHere(0);
                                 edit.edit_buffer_fresh = false;
@@ -2332,6 +2607,7 @@ void App::render_station_list_window() {
                                 "##cell_edit", &edit.edit_buffer,
                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
                             ImGui::PopItemWidth();
+                            render_context_menu(row_index, col, row_editable);
                             if (returned || ImGui::IsItemDeactivated()) {
                                 commit_station_definition_active_edit();
                             }
@@ -2362,18 +2638,29 @@ void App::render_station_list_window() {
                                 ImGui::GetColorU32(ImGuiCol_Text), display.c_str());
                             draw_list->PopClipRect();
                         }
-                        if (can_edit && !row.edit_id.empty()) {
+                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                            edit.selected_row = row_index;
+                            edit.selected_column = col;
+                        }
+                        render_context_menu(row_index, col, row_editable);
+                        if (row_editable) {
                             if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                                 edit.selected_row = row_index;
                                 edit.selected_column = col;
                             }
                             if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                                 commit_station_definition_active_edit();
-                                edit.editing_row = row_index;
+                                if (!initialize_station_definition_draft_rows()) {
+                                    ImGui::PopID();
+                                    continue;
+                                }
+                                StationDefinitionDraftRow& active_row =
+                                    edit.rows[edit.visible_rows[static_cast<size_t>(row_index)]];
                                 edit.editing_column = col;
-                                edit.editing_edit_id = row.edit_id;
-                                edit.editing_baseline = cached;
-                                edit.edit_buffer = display;
+                                edit.editing_edit_id = active_row.target_edit_id;
+                                edit.editing_baseline =
+                                    active_row.values[static_cast<size_t>(col)];
+                                edit.edit_buffer = edit.editing_baseline;
                                 edit.edit_buffer_fresh = true;
                             }
                         }
@@ -2583,108 +2870,22 @@ void App::render_structure_models_window() {
         [this](int delta) { step_structure_model_find(delta); },
         [this]() { return structure_model_find_status_text(); });
 
-    if (ImGui::BeginTable("structure_models", IM_ARRAYSIZE(k_structure_model_columns), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_structure_model_columns); ++i) {
-            float width = k_structure_model_columns[i].width;
-            if (i == k_structure_model_file_path_column) width = table_cache_.structure_model_file_path_width;
-            const char* header = i == k_structure_model_file_path_column ? file_name_header.c_str() : k_structure_model_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.structure_model_rows.size());
-        const int scroll_target_row = structure_model_find_.scroll_row;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImVec4 preview_text_color = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.structure_model_rows[static_cast<size_t>(row_index)];
-                const bool is_find_match =
-                    static_cast<size_t>(row_index) < structure_model_find_.row_matches.size() &&
-                    structure_model_find_.row_matches[static_cast<size_t>(row_index)] != 0;
-                const bool is_unused_model =
-                    static_cast<size_t>(row_index) < structure_model_find_.unused_row_matches.size() &&
-                    structure_model_find_.unused_row_matches[static_cast<size_t>(row_index)] != 0;
-                const bool is_preview_model = model_preview_canvas_ && model_preview_canvas_->has_model() &&
-                    row.open_path == model_preview_canvas_->model_path();
-                const ImU32 row_text_color = is_preview_model
-                    ? ImGui::GetColorU32(preview_text_color)
-                    : ImGui::GetColorU32(ImGuiCol_Text);
-                ImGui::TableNextRow();
-                if (row_is_pending_delete(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
-                } else if (row_has_pending_edit(row.edit_id)) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
-                } else if (is_unused_model) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
-                } else if (is_find_match) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.0f);
-                    structure_model_find_.scroll_row = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_structure_model_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_structure_model_key_column) {
-                        ImVec2 pos = ImGui::GetCursorScreenPos();
-                        ImVec2 text_size = ImGui::CalcTextSize(value.c_str());
-                        ImVec2 item_size(
-                            std::max(1.0f, ImGui::GetContentRegionAvail().x),
-                            std::max(ImGui::GetTextLineHeight(), text_size.y));
-                        ImGui::InvisibleButton("structure_key_cell", item_size);
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::GetWindowDrawList()->AddRectFilled(
-                                pos, ImVec2(pos.x + item_size.x, pos.y + item_size.y),
-                                ImGui::GetColorU32(ImGuiCol_HeaderHovered));
-                        }
-                        if (!value.empty()) {
-                            ImGui::GetWindowDrawList()->AddText(pos, row_text_color, value.c_str());
-                        }
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                            request_element_inspector(row.edit_id, "structure.model");
-                        }
-                        touch_input::open_popup_on_last_item_long_press("structure_key_context");
-                        if (ImGui::BeginPopupContextItem("structure_key_context", ImGuiPopupFlags_MouseButtonRight)) {
-                            bool can_preview = !blank_ascii(row.open_path);
-                            ImGui::BeginDisabled(!can_preview);
-                            if (ImGui::MenuItem(tr("menu.preview_model").c_str())) {
-                                preview_structure_model(row.open_path);
-                            }
-                            ImGui::EndDisabled();
-                            ImGui::Separator();
-                            ImGui::BeginDisabled(!edit_actions_available() || row.edit_id.empty());
-                            if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
-                                request_element_inspector(row.edit_id, "structure.model");
-                            }
-                            if (ImGui::MenuItem(tr("button.delete").c_str())) {
-                                request_element_delete(row.edit_id, "structure.model");
-                            }
-                            ImGui::EndDisabled();
-                            ImGui::EndPopup();
-                        }
-                    } else if (value.empty()) {
-                        continue;
-                    } else if (i == k_structure_model_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path, tr("menu.open_in_explorer"), row.open_path, row_text_color);
-                    } else {
-                        if (is_preview_model) ImGui::PushStyleColor(ImGuiCol_Text, preview_text_color);
-                        ImGui::TextUnformatted(value.c_str());
-                        if (is_preview_model) ImGui::PopStyleColor();
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
+    ImGui::BeginDisabled(
+        !edit_actions_available() ||
+        !has_editable_list_drafts(
+            structure_model_edit_, k_structure_model_edit_spec));
+    if (ImGui::Button(tr("button.apply").c_str())) {
+        apply_editable_list_drafts(
+            structure_model_edit_, k_structure_model_edit_spec);
     }
+    ImGui::EndDisabled();
+    render_editable_list_table(
+        "structure_models", k_structure_model_columns,
+        IM_ARRAYSIZE(k_structure_model_columns),
+        table_cache_.structure_model_rows, structure_model_edit_,
+        k_structure_model_edit_spec,
+        table_cache_.structure_model_file_path_width, 0.0f,
+        &structure_model_find_);
     ImGui::End();
 }
 
@@ -2895,13 +3096,18 @@ void App::render_sound_list_window() {
     }
     ensure_table_cache();
     render_sound_file_find_panel(false);
-    render_sound_list_table("sound_list",
-                            table_cache_.sound_list_rows,
-                            table_cache_.sound_list_file_path_width,
-                            table_cache_.sound_list_buffer_count_width,
-                            sound_file_find_,
-                            tr("column.file_name"),
-                            tr("menu.open_in_explorer"));
+    ImGui::BeginDisabled(
+        !edit_actions_available() ||
+        !has_editable_list_drafts(sound_list_edit_, k_sound_list_edit_spec));
+    if (ImGui::Button(tr("button.apply").c_str())) {
+        apply_editable_list_drafts(sound_list_edit_, k_sound_list_edit_spec);
+    }
+    ImGui::EndDisabled();
+    render_editable_list_table(
+        "sound_list", k_sound_list_columns, IM_ARRAYSIZE(k_sound_list_columns),
+        table_cache_.sound_list_rows, sound_list_edit_, k_sound_list_edit_spec,
+        table_cache_.sound_list_file_path_width,
+        table_cache_.sound_list_buffer_count_width, &sound_file_find_);
     ImGui::End();
 }
 
@@ -2920,13 +3126,22 @@ void App::render_sound_3d_list_window() {
     }
     ensure_table_cache();
     render_sound_file_find_panel(true);
-    render_sound_list_table("sound_3d_list",
-                            table_cache_.sound_3d_list_rows,
-                            table_cache_.sound_3d_list_file_path_width,
-                            table_cache_.sound_3d_list_buffer_count_width,
-                            sound_3d_file_find_,
-                            tr("column.file_name"),
-                            tr("menu.open_in_explorer"));
+    ImGui::BeginDisabled(
+        !edit_actions_available() ||
+        !has_editable_list_drafts(
+            sound_3d_list_edit_, k_sound_3d_list_edit_spec));
+    if (ImGui::Button(tr("button.apply").c_str())) {
+        apply_editable_list_drafts(
+            sound_3d_list_edit_, k_sound_3d_list_edit_spec);
+    }
+    ImGui::EndDisabled();
+    render_editable_list_table(
+        "sound_3d_list", k_sound_list_columns,
+        IM_ARRAYSIZE(k_sound_list_columns),
+        table_cache_.sound_3d_list_rows, sound_3d_list_edit_,
+        k_sound_3d_list_edit_spec,
+        table_cache_.sound_3d_list_file_path_width,
+        table_cache_.sound_3d_list_buffer_count_width, &sound_3d_file_find_);
     ImGui::End();
 }
 

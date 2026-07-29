@@ -17,6 +17,7 @@
 #include "canvas3D.h"
 #include "maploader.h"
 #include "repeater_linkage.h"
+#include "text_decoder.h"
 #include "resource.h"
 
 #include "imgui.h"
@@ -521,6 +522,30 @@ void apply_map_row_metadata(TableRow& output, const KvMapSnapshot& snapshot,
     output.source.raw_text_preview = map_snapshot_string(snapshot, metadata.raw_text_preview);
 }
 
+std::string resolve_list_asset_path(const std::string& list_file,
+                                    const std::string& source_path) {
+    if (list_file.empty() || source_path.empty()) return {};
+    std::filesystem::path resolved = kme::maploader::join_utf8_path(
+        kme::maploader::path_from_utf8(list_file).parent_path(), source_path);
+    std::error_code ec;
+    const std::filesystem::path absolute = std::filesystem::absolute(resolved, ec);
+    if (!ec) resolved = absolute;
+    return kme::maploader::path_to_utf8(resolved.lexically_normal());
+}
+
+std::string resolve_list_asset_path(const KvMapSnapshot& snapshot,
+                                    const KvRowMetadata& metadata,
+                                    const std::string& source_path) {
+    if (metadata.source_file_index >= snapshot.source_file_count ||
+        !snapshot.source_files) {
+        return {};
+    }
+    return resolve_list_asset_path(
+        map_snapshot_string(
+            snapshot, snapshot.source_files[metadata.source_file_index].file_path),
+        source_path);
+}
+
 template <typename Row>
 void put_map_common_event_cells(TableRow& output, const KvMapSnapshot& snapshot,
                                 const Row& input) {
@@ -737,6 +762,8 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         TableRow row;
         row.cells["structureKey"] = map_snapshot_string(snapshot, input.structure_key);
         row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        row.cells["resolvedFilePath"] = resolve_list_asset_path(
+            snapshot, input.metadata, row.cells["filePath"]);
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.structure_models.push_back(std::move(row));
     }
@@ -787,15 +814,19 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                         snapshot.other_train_sound_3d_key_count,
                         model.other_train_sound_3d_keys);
     model.sound_list.reserve(static_cast<size_t>(snapshot.sound_list_count));
+    model.sound_3d_list.reserve(static_cast<size_t>(snapshot.sound_list_count));
     for (std::uint64_t i = 0; i < snapshot.sound_list_count; ++i) {
         const KvSoundListRow& input = snapshot.sound_list[i];
         TableRow row;
         row.cells["soundKey"] = map_snapshot_string(snapshot, input.sound_key);
         row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        row.cells["resolvedFilePath"] = resolve_list_asset_path(
+            snapshot, input.metadata, row.cells["filePath"]);
         row.cells["bufferCount"] = std::to_string(input.buffer_count);
         row.cells["is3D"] = input.is_3d ? "true" : "false";
         apply_map_row_metadata(row, snapshot, input.metadata);
-        model.sound_list.push_back(std::move(row));
+        (input.is_3d ? model.sound_3d_list : model.sound_list).push_back(
+            std::move(row));
     }
     model.repeaters.reserve(static_cast<size_t>(snapshot.repeater_count));
     for (std::uint64_t i = 0; i < snapshot.repeater_count; ++i) {
@@ -980,7 +1011,10 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         if (table_cell(row, "stationKey").empty()) row.cells["stationKey"] = object_key;
         const size_t row_index = model.station_definition_rows.size();
         model.station_definition_rows.push_back(std::move(row));
-        station_definition_row_indices_by_key[ascii_lower(object_key)] = row_index;
+        const std::string normalized_key = ascii_lower(object_key);
+        if (!normalized_key.empty()) {
+            station_definition_row_indices_by_key[normalized_key] = row_index;
+        }
     }
     model.station_list_rows.reserve(static_cast<size_t>(snapshot.station_put_count));
     for (std::uint64_t i = 0; i < snapshot.station_put_count; ++i) {
@@ -1419,6 +1453,8 @@ bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edi
         table_row_count_matches("beacon.put", current.beacons, edit_model.beacons, error) &&
         table_row_count_matches("preTrain.pass", current.pretrains, edit_model.pretrains, error) &&
         table_row_count_matches("sound.list", current.sound_list, edit_model.sound_list, error) &&
+        table_row_count_matches("sound3D.list", current.sound_3d_list,
+                                edit_model.sound_3d_list, error) &&
         table_row_count_matches("repeater", current.repeaters, edit_model.repeaters, error) &&
         table_row_count_matches("irregularity.change", current.irregularities, edit_model.irregularities, error) &&
         table_row_count_matches("mapSound.play", current.map_sounds, edit_model.map_sounds, error) &&
@@ -1460,6 +1496,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     merge_table_row_edit_metadata(current.beacons, edit_model.beacons);
     merge_table_row_edit_metadata(current.pretrains, edit_model.pretrains);
     merge_table_row_edit_metadata(current.sound_list, edit_model.sound_list);
+    merge_table_row_edit_metadata(current.sound_3d_list, edit_model.sound_3d_list);
     merge_table_row_edit_metadata(current.repeaters, edit_model.repeaters);
     merge_table_row_edit_metadata(current.irregularities, edit_model.irregularities);
     merge_table_row_edit_metadata(current.map_sounds, edit_model.map_sounds);
@@ -1683,6 +1720,8 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "structure.between") return &model.structures_between;
     if (row_kind == "station.put") return &model.station_list_rows;
     if (row_kind == "station.list") return &model.station_definition_rows;
+    if (row_kind == "sound.list") return &model.sound_list;
+    if (row_kind == "sound3D.list") return &model.sound_3d_list;
     if (row_kind == "repeater") return &model.repeaters;
     if (row_kind == "signal.put") return &model.signals;
     return nullptr;
@@ -1709,7 +1748,7 @@ void App::clear_pending_edit_state() {
     inspector_ = MapElementInspectorState{};
     pending_inspector_request_.reset();
     pending_delete_request_.reset();
-    discard_station_definition_drafts();
+    discard_all_editable_list_drafts();
 }
 
 bool App::has_pending_edits() const {
@@ -1717,7 +1756,7 @@ bool App::has_pending_edits() const {
 }
 
 bool App::has_unsaved_edit_state() const {
-    return has_pending_edits() || has_station_definition_drafts();
+    return has_pending_edits() || has_unapplied_editable_list_drafts();
 }
 
 bool App::row_has_pending_edit(const std::string& edit_id) const {
@@ -1761,7 +1800,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
         distance_resolution_choices_.clear();
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
         text_preview_.placement = TextPreviewPlacementState{};
-        discard_station_definition_drafts();
+        discard_all_editable_list_drafts();
         edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
         set_program_status("status.edit.mode_disabled");
         add_log("[info]gui_kme.cpp: edit mode disabled");
@@ -1861,6 +1900,13 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change,
     TableRow& row = (*rows)[row_index];
     for (const auto& field : change.field_changes) {
         set_inspector_row_field_value(row, change.row_kind, field.first, field.second, model_.distance_origin);
+    }
+    if ((change.row_kind == "structure.model" ||
+         change.row_kind == "sound.list" ||
+         change.row_kind == "sound3D.list") &&
+        change.field_changes.find("filePath") != change.field_changes.end()) {
+        row.cells["resolvedFilePath"] = resolve_list_asset_path(
+            row.source.file_path, table_cell(row, "filePath"));
     }
     const bool requires_full_scene_refresh =
         (change.row_kind == "structure.put" &&
@@ -3042,25 +3088,321 @@ void App::apply_inspector_changes() {
     }
 }
 
-bool App::has_station_definition_drafts() const {
-    const StationDefinitionEditState& edit = station_definition_edit_;
-    return !edit.drafts.empty() ||
-        (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
-         edit.edit_buffer != edit.editing_baseline);
-}
-
-void App::commit_station_definition_active_edit() {
-    StationDefinitionEditState& edit = station_definition_edit_;
-    if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
-        static_cast<size_t>(edit.editing_column) < k_station_list_field_names.size()) {
-        const auto key = std::make_pair(edit.editing_edit_id, edit.editing_column);
-        if (edit.edit_buffer == edit.editing_baseline) {
-            edit.drafts.erase(key);
-        } else {
-            edit.drafts[key] = edit.edit_buffer;
+bool editable_list_row_has_draft(const EditableListDraftRow& row,
+                                 size_t field_count) {
+    bool values_changed = false;
+    for (size_t field = 0; field < field_count; ++field) {
+        if (row.values[field] != row.original_values[field]) {
+            values_changed = true;
+            break;
         }
     }
-    edit.editing_row = -1;
+    return row.deleted || row.payload_edit_id != row.target_edit_id ||
+        values_changed;
+}
+
+std::vector<size_t> editable_list_visible_row_indices(
+    const std::vector<EditableListDraftRow>& rows) {
+    std::vector<size_t> result;
+    result.reserve(rows.size());
+    for (size_t index = 0; index < rows.size(); ++index) {
+        if (!rows[index].deleted) result.push_back(index);
+    }
+    return result;
+}
+
+bool move_editable_list_draft_row(
+    std::vector<EditableListDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int direction) {
+    if (direction != -1 && direction != 1) return false;
+    const int neighbor = visible_row + direction;
+    if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size()) ||
+        neighbor < 0 || neighbor >= static_cast<int>(visible_rows.size())) {
+        return false;
+    }
+    EditableListDraftRow& left =
+        rows[visible_rows[static_cast<size_t>(visible_row)]];
+    EditableListDraftRow& right =
+        rows[visible_rows[static_cast<size_t>(neighbor)]];
+    if (left.target_source_file != right.target_source_file) return false;
+    std::swap(left.payload_edit_id, right.payload_edit_id);
+    std::swap(left.payload_source_file, right.payload_source_file);
+    std::swap(left.payload_line, right.payload_line);
+    std::swap(left.payload_column, right.payload_column);
+    std::swap(left.payload_raw_statement, right.payload_raw_statement);
+    std::swap(left.values, right.values);
+    std::swap(left.resolved_path, right.resolved_path);
+    return true;
+}
+
+bool clear_editable_list_draft_cell(
+    std::vector<EditableListDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int column, size_t field_count) {
+    if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size()) ||
+        column < 0 || static_cast<size_t>(column) >= field_count) {
+        return false;
+    }
+    rows[visible_rows[static_cast<size_t>(visible_row)]]
+        .values[static_cast<size_t>(column)].clear();
+    return true;
+}
+
+bool delete_editable_list_draft_row(
+    std::vector<EditableListDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row) {
+    if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size())) return false;
+    rows[visible_rows[static_cast<size_t>(visible_row)]].deleted = true;
+    return true;
+}
+
+bool build_editable_list_pending_changes(
+    const EditableListSpec& spec,
+    const std::vector<EditableListDraftRow>& rows,
+    const std::map<std::string, MapElementPendingChange>& existing_changes,
+    std::map<std::string, MapElementPendingChange>& candidate_changes,
+    std::string& error_message) {
+    candidate_changes = existing_changes;
+    for (const EditableListDraftRow& row : rows) {
+        if (!editable_list_row_has_draft(row, spec.field_count)) continue;
+        if (row.target_edit_id.empty()) {
+            error_message = std::string(spec.row_kind) +
+                " draft has no target edit ID";
+            return false;
+        }
+
+        auto existing = candidate_changes.find(row.target_edit_id);
+        if (existing != candidate_changes.end() &&
+            existing->second.row_kind != spec.row_kind) {
+            error_message = std::string(spec.row_kind) +
+                " draft conflicts with another pending row kind: " + row.target_edit_id;
+            return false;
+        }
+
+        MapElementPendingChange change;
+        if (existing != candidate_changes.end()) change = existing->second;
+        change.change_id = std::string(spec.change_prefix) + row.target_edit_id;
+        change.edit_id = row.target_edit_id;
+        change.row_kind = spec.row_kind;
+        if (change.expected_source_hash.empty()) {
+            change.expected_source_hash = row.target_expected_source_hash;
+        }
+
+        if (row.deleted) {
+            change.operation = "delete";
+            change.field_changes.clear();
+            change.replacement_statement.clear();
+        } else {
+            if (existing != candidate_changes.end() &&
+                existing->second.operation != "update") {
+                error_message = std::string(spec.row_kind) +
+                    " draft conflicts with a pending " +
+                    existing->second.operation + ": " + row.target_edit_id;
+                return false;
+            }
+            change.operation = "update";
+            const bool moved = row.payload_edit_id != row.target_edit_id;
+            if (moved) {
+                if (row.payload_source_file != row.target_source_file ||
+                    row.payload_raw_statement.empty()) {
+                    error_message = std::string(spec.row_kind) +
+                        " row move lost its same-file source template: " +
+                        row.target_edit_id;
+                    return false;
+                }
+                change.field_changes.clear();
+                for (size_t field = 0; field < spec.field_count; ++field) {
+                    change.field_changes[spec.field_names[field]] = row.values[field];
+                }
+                change.replacement_statement = row.payload_raw_statement;
+            } else {
+                for (size_t field = 0; field < spec.field_count; ++field) {
+                    if (row.values[field] != row.original_values[field]) {
+                        change.field_changes[spec.field_names[field]] =
+                            row.values[field];
+                    }
+                }
+            }
+        }
+        candidate_changes[row.target_edit_id] = std::move(change);
+    }
+    error_message.clear();
+    return true;
+}
+
+bool station_definition_row_has_draft(const StationDefinitionDraftRow& row) {
+    return editable_list_row_has_draft(
+        row, k_station_definition_edit_spec.field_count);
+}
+
+std::vector<size_t> station_definition_visible_row_indices(
+    const std::vector<StationDefinitionDraftRow>& rows) {
+    return editable_list_visible_row_indices(rows);
+}
+
+bool move_station_definition_draft_row(
+    std::vector<StationDefinitionDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int direction) {
+    return move_editable_list_draft_row(
+        rows, visible_rows, visible_row, direction);
+}
+
+bool clear_station_definition_draft_cell(
+    std::vector<StationDefinitionDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row, int column) {
+    return clear_editable_list_draft_cell(
+        rows, visible_rows, visible_row, column,
+        k_station_definition_edit_spec.field_count);
+}
+
+bool delete_station_definition_draft_row(
+    std::vector<StationDefinitionDraftRow>& rows,
+    const std::vector<size_t>& visible_rows,
+    int visible_row) {
+    return delete_editable_list_draft_row(rows, visible_rows, visible_row);
+}
+
+bool build_station_definition_pending_changes(
+    const std::vector<StationDefinitionDraftRow>& rows,
+    const std::map<std::string, MapElementPendingChange>& existing_changes,
+    std::map<std::string, MapElementPendingChange>& candidate_changes,
+    std::string& error_message) {
+    return build_editable_list_pending_changes(
+        k_station_definition_edit_spec, rows, existing_changes,
+        candidate_changes, error_message);
+}
+
+bool App::has_station_definition_drafts() const {
+    return has_editable_list_drafts(
+        station_definition_edit_, k_station_definition_edit_spec);
+}
+
+bool App::has_unapplied_editable_list_drafts() const {
+    return has_editable_list_drafts(
+               station_definition_edit_, k_station_definition_edit_spec) ||
+        has_editable_list_drafts(
+               structure_model_edit_, k_structure_model_edit_spec) ||
+        has_editable_list_drafts(
+               sound_list_edit_, k_sound_list_edit_spec) ||
+        has_editable_list_drafts(
+               sound_3d_list_edit_, k_sound_3d_list_edit_spec);
+}
+
+bool App::has_editable_list_drafts(const EditableListEditState& edit,
+                                   const EditableListSpec& spec) const {
+    if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
+        edit.edit_buffer != edit.editing_baseline) {
+        return true;
+    }
+    return edit.rows_initialized &&
+        std::any_of(edit.rows.begin(), edit.rows.end(),
+                    [&](const EditableListDraftRow& row) {
+                        return editable_list_row_has_draft(row, spec.field_count);
+                    });
+}
+
+bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
+                                              const EditableListSpec& spec) {
+    if (edit.rows_initialized) return true;
+    ensure_table_cache();
+    const std::vector<CachedTableRow>* cached_rows = nullptr;
+    if (std::string_view(spec.row_kind) == "station.list") {
+        cached_rows = &table_cache_.station_definition_rows;
+    } else if (std::string_view(spec.row_kind) == "structure.model") {
+        cached_rows = &table_cache_.structure_model_rows;
+    } else if (std::string_view(spec.row_kind) == "sound.list") {
+        cached_rows = &table_cache_.sound_list_rows;
+    } else if (std::string_view(spec.row_kind) == "sound3D.list") {
+        cached_rows = &table_cache_.sound_3d_list_rows;
+    }
+    if (!cached_rows) return false;
+
+    std::vector<EditableListDraftRow> rows;
+    rows.reserve(cached_rows->size());
+    for (const CachedTableRow& cached : *cached_rows) {
+        if (cached.edit_id.empty()) {
+            add_log("[error]gui_kme.cpp: " + std::string(spec.row_kind) +
+                    " draft row has no edit ID");
+            return false;
+        }
+        std::string metadata_error;
+        const std::optional<InspectorTargetMetadata> metadata =
+            resolve_inspector_target_metadata(handle_, cached.edit_id, spec.row_kind,
+                                              &metadata_error);
+        if (!metadata) {
+            add_log("[error]gui_kme.cpp: " + std::string(spec.row_kind) +
+                    " draft initialization failed: " +
+                    (metadata_error.empty() ? std::string("metadata unavailable")
+                                            : metadata_error));
+            return false;
+        }
+        EditableListDraftRow row;
+        row.target_edit_id = cached.edit_id;
+        row.target_source_file = metadata->source.file_path;
+        row.target_expected_source_hash = metadata->expected_source_hash;
+        row.target_line = metadata->source.line;
+        row.target_column = metadata->source.column;
+        row.payload_edit_id = cached.edit_id;
+        row.payload_source_file = metadata->source.file_path;
+        row.payload_line = metadata->source.line;
+        row.payload_column = metadata->source.column;
+        row.payload_raw_statement = metadata->raw_statement;
+        for (size_t field = 0; field < spec.field_count; ++field) {
+            const size_t cached_column = spec.cache_column_offset + field;
+            if (cached_column < cached.cells.size()) {
+                row.values[field] = cached.cells[cached_column];
+            }
+        }
+        row.original_values = row.values;
+        row.resolved_path = cached.open_path;
+        rows.push_back(std::move(row));
+    }
+    edit.rows = std::move(rows);
+    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
+    edit.rows_initialized = true;
+    return true;
+}
+
+bool App::initialize_station_definition_draft_rows() {
+    return initialize_editable_list_draft_rows(
+        station_definition_edit_, k_station_definition_edit_spec);
+}
+
+void App::reset_editable_list_find_results(const EditableListSpec& spec) {
+    if (std::string_view(spec.row_kind) == "structure.model") {
+        reset_structure_model_find_results();
+    } else if (std::string_view(spec.row_kind) == "sound.list") {
+        reset_sound_file_find_results(false);
+    } else if (std::string_view(spec.row_kind) == "sound3D.list") {
+        reset_sound_file_find_results(true);
+    }
+}
+
+void App::commit_editable_list_active_edit(EditableListEditState& edit,
+                                           const EditableListSpec& spec) {
+    const bool value_changed =
+        !edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
+        edit.edit_buffer != edit.editing_baseline;
+    if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
+        static_cast<size_t>(edit.editing_column) < spec.field_count &&
+        initialize_editable_list_draft_rows(edit, spec)) {
+        const auto row = std::find_if(
+            edit.rows.begin(), edit.rows.end(), [&](const EditableListDraftRow& candidate) {
+                return candidate.target_edit_id == edit.editing_edit_id;
+            });
+        if (row != edit.rows.end() && !row->deleted) {
+            row->values[static_cast<size_t>(edit.editing_column)] = edit.edit_buffer;
+            if (edit.editing_column == spec.path_field) {
+                row->resolved_path = resolve_list_asset_path(
+                    row->target_source_file, edit.edit_buffer);
+            }
+        }
+    }
+    if (value_changed) reset_editable_list_find_results(spec);
     edit.editing_column = -1;
     edit.editing_edit_id.clear();
     edit.editing_baseline.clear();
@@ -3068,75 +3410,167 @@ void App::commit_station_definition_active_edit() {
     edit.edit_buffer_fresh = false;
 }
 
+void App::commit_station_definition_active_edit() {
+    commit_editable_list_active_edit(
+        station_definition_edit_, k_station_definition_edit_spec);
+}
+
 void App::discard_station_definition_drafts() {
     station_definition_edit_ = StationDefinitionEditState{};
 }
 
-void App::apply_station_definition_drafts() {
+void App::discard_all_editable_list_drafts() {
+    station_definition_edit_ = EditableListEditState{};
+    structure_model_edit_ = EditableListEditState{};
+    sound_list_edit_ = EditableListEditState{};
+    sound_3d_list_edit_ = EditableListEditState{};
+}
+
+bool App::move_editable_list_row(EditableListEditState& edit,
+                                 const EditableListSpec& spec,
+                                 int visible_row, int direction) {
+    commit_editable_list_active_edit(edit, spec);
+    if (!initialize_editable_list_draft_rows(edit, spec)) return false;
+    if (!move_editable_list_draft_row(
+            edit.rows, edit.visible_rows, visible_row, direction)) return false;
+    edit.selected_row = visible_row + direction;
+    reset_editable_list_find_results(spec);
+    return true;
+}
+
+bool App::clear_editable_list_cell(EditableListEditState& edit,
+                                   const EditableListSpec& spec,
+                                   int visible_row, int column) {
+    commit_editable_list_active_edit(edit, spec);
+    if (!initialize_editable_list_draft_rows(edit, spec)) return false;
+    if (!clear_editable_list_draft_cell(
+            edit.rows, edit.visible_rows, visible_row, column,
+            spec.field_count)) return false;
+    EditableListDraftRow& row =
+        edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]];
+    if (column == spec.path_field) row.resolved_path.clear();
+    edit.selected_row = visible_row;
+    edit.selected_column = column;
+    reset_editable_list_find_results(spec);
+    return true;
+}
+
+bool App::delete_editable_list_row(EditableListEditState& edit,
+                                   const EditableListSpec& spec,
+                                   int visible_row) {
+    commit_editable_list_active_edit(edit, spec);
+    if (!initialize_editable_list_draft_rows(edit, spec)) return false;
+    if (!delete_editable_list_draft_row(
+            edit.rows, edit.visible_rows, visible_row)) return false;
+    edit.visible_rows_dirty = true;
+    const int remaining = static_cast<int>(edit.visible_rows.size()) - 1;
+    edit.selected_row = remaining > 0 ? std::min(visible_row, remaining - 1) : -1;
+    reset_editable_list_find_results(spec);
+    return true;
+}
+
+void App::rebind_other_editable_list_drafts(
+    const EditableListEditState* applied) {
+    ensure_table_cache();
+    struct Binding {
+        EditableListEditState* edit;
+        const EditableListSpec* spec;
+        const std::vector<CachedTableRow>* cached_rows;
+    };
+    const std::array<Binding, 4> bindings = {{
+        {&station_definition_edit_, &k_station_definition_edit_spec,
+         &table_cache_.station_definition_rows},
+        {&structure_model_edit_, &k_structure_model_edit_spec,
+         &table_cache_.structure_model_rows},
+        {&sound_list_edit_, &k_sound_list_edit_spec,
+         &table_cache_.sound_list_rows},
+        {&sound_3d_list_edit_, &k_sound_3d_list_edit_spec,
+         &table_cache_.sound_3d_list_rows},
+    }};
+    for (const Binding& binding : bindings) {
+        if (binding.edit == applied || !binding.edit->rows_initialized) continue;
+        auto find_location = [&](const std::string& file, int line, int column)
+            -> const CachedTableRow* {
+            const auto found = std::find_if(
+                binding.cached_rows->begin(), binding.cached_rows->end(),
+                [&](const CachedTableRow& row) {
+                    return row.source.file_path == file &&
+                        row.source.line == line && row.source.column == column;
+                });
+            return found == binding.cached_rows->end() ? nullptr : &*found;
+        };
+        bool rebound = true;
+        for (EditableListDraftRow& row : binding.edit->rows) {
+            const CachedTableRow* target = find_location(
+                row.target_source_file, row.target_line, row.target_column);
+            const CachedTableRow* payload = find_location(
+                row.payload_source_file, row.payload_line, row.payload_column);
+            if (!target || !payload || target->edit_id.empty() ||
+                payload->edit_id.empty()) {
+                rebound = false;
+                break;
+            }
+            if (binding.edit->editing_edit_id == row.target_edit_id) {
+                binding.edit->editing_edit_id = target->edit_id;
+            }
+            row.target_edit_id = target->edit_id;
+            row.payload_edit_id = payload->edit_id;
+        }
+        if (!rebound) {
+            add_log("[error]gui_kme.cpp: discarded stale " +
+                    std::string(binding.spec->row_kind) +
+                    " drafts after source rows could not be rebound");
+            *binding.edit = EditableListEditState{};
+        }
+    }
+}
+
+void App::apply_editable_list_drafts(EditableListEditState& edit,
+                                     const EditableListSpec& spec) {
     if (!edit_actions_available()) return;
-    commit_station_definition_active_edit();
-    if (station_definition_edit_.drafts.empty()) return;
+    commit_editable_list_active_edit(edit, spec);
+    if (!has_editable_list_drafts(edit, spec)) return;
 
-    // Fold drafts into the shared pending-edit ledger. The drafts are keyed by
-    // (editId, columnIndex); group them by editId so each station.list row
-    // becomes one MapElementPendingChange with the same field names the
-    // maploader expects (k_station_list_field_names).
-    std::map<std::string, std::map<std::string, std::string>> grouped;
-    for (const auto& draft : station_definition_edit_.drafts) {
-        const std::string& edit_id = draft.first.first;
-        const int column_index = draft.first.second;
-        if (column_index < 0 ||
-            static_cast<size_t>(column_index) >= k_station_list_field_names.size()) {
-            continue;
-        }
-        grouped[edit_id][k_station_list_field_names[column_index]] = draft.second;
+    std::map<std::string, MapElementPendingChange> candidate;
+    std::string error;
+    if (!build_editable_list_pending_changes(
+            spec, edit.rows, pending_edit_changes_, candidate, error)) {
+        add_log("[error]gui_kme.cpp: " + std::string(spec.row_kind) +
+                " apply blocked: " + error);
+        set_program_status("status.edit.pending");
+        return;
     }
-
-    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-    for (const auto& entry : grouped) {
-        const std::string& edit_id = entry.first;
-        if (edit_id.empty()) continue;
-        auto existing = candidate.find(edit_id);
-        if (existing != candidate.end()) {
-            if (existing->second.row_kind != "station.list" ||
-                existing->second.operation != "update") {
-                add_log("[error]gui_kme.cpp: station.list apply blocked by an incompatible "
-                        "pending edit: " + edit_id);
-                set_program_status("status.edit.pending");
-                return;
-            }
-        } else {
-            MapElementPendingChange change;
-            change.change_id = "station-list-" + edit_id;
-            change.edit_id = edit_id;
-            change.row_kind = "station.list";
-            change.operation = "update";
-            std::string metadata_error;
-            const std::optional<InspectorTargetMetadata> metadata =
-                resolve_inspector_target_metadata(handle_, edit_id, "station.list",
-                                                  &metadata_error);
-            if (!metadata) {
-                add_log("[error]gui_kme.cpp: station.list apply blocked: " +
-                        (metadata_error.empty() ? std::string("metadata unavailable")
-                                                : metadata_error));
-                set_program_status("status.edit.pending");
-                return;
-            }
-            change.expected_source_hash = metadata->expected_source_hash;
-            existing = candidate.emplace(edit_id, std::move(change)).first;
-        }
-        for (const auto& field : entry.second) {
-            existing->second.field_changes[field.first] = field.second;
-        }
-    }
-
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
-        discard_station_definition_drafts();
+        EditableListEditState* applied = &edit;
+        edit = EditableListEditState{};
         invalidate_table_cache();
-        set_program_status("status.edit.pending");
-    } else {
-        set_program_status("status.edit.pending");
+        rebind_other_editable_list_drafts(applied);
+        reset_editable_list_find_results(spec);
     }
+    set_program_status("status.edit.pending");
+}
+
+bool App::move_station_definition_row(int visible_row, int direction) {
+    return move_editable_list_row(
+        station_definition_edit_, k_station_definition_edit_spec,
+        visible_row, direction);
+}
+
+bool App::clear_station_definition_cell(int visible_row, int column) {
+    return clear_editable_list_cell(
+        station_definition_edit_, k_station_definition_edit_spec,
+        visible_row, column);
+}
+
+bool App::delete_station_definition_row(int visible_row) {
+    return delete_editable_list_row(
+        station_definition_edit_, k_station_definition_edit_spec,
+        visible_row);
+}
+
+void App::apply_station_definition_drafts() {
+    apply_editable_list_drafts(
+        station_definition_edit_, k_station_definition_edit_spec);
 }
 
 std::string delete_expected_source_hash(
@@ -3339,6 +3773,7 @@ TypedEditBatchStorage typed_edit_batch(
         for (const auto& field : source.field_changes) {
             storage.fields.push_back({edit_utf8_view(field.first), edit_utf8_view(field.second)});
         }
+        change.replacement_statement = edit_utf8_view(source.replacement_statement);
         change.expected_source_hash = edit_utf8_view(source.expected_source_hash);
         change.distance_resolution_key = edit_utf8_view(source.distance_resolution_key);
         change.distance_boundary_token = edit_utf8_view(source.distance_boundary_token);
@@ -3449,9 +3884,9 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 7> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 9> k_committed_row_kinds = {
         "structure.model", "structure.put", "structure.between", "station.put",
-        "station.list", "repeater", "signal.put",
+        "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -3984,13 +4419,10 @@ void App::process_distance_resolution_retry() {
 bool App::save_pending_edits(bool refresh_inspector) {
     if (!edit_actions_available()) return false;
     if (load_state_.running) return false;
-    // Fold any unapplied Station Definitions drafts into the ledger first so
-    // the toolbar Save button is a one-step "write to disk" action even when
-    // the user skipped the table's Apply button.
-    commit_station_definition_active_edit();
-    if (has_station_definition_drafts()) {
-        apply_station_definition_drafts();
-        if (has_station_definition_drafts()) return false;
+    if (has_unapplied_editable_list_drafts()) {
+        add_log("[warning]gui_kme.cpp: Save blocked by unapplied editable-list drafts");
+        set_program_status("status.edit.apply_list_before_save");
+        return false;
     }
     if (!handle_ || !has_pending_edits()) return false;
 
@@ -4051,14 +4483,14 @@ bool App::discard_pending_edits() {
         distance_resolution_choices_.clear();
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
         text_preview_.placement = TextPreviewPlacementState{};
-        discard_station_definition_drafts();
+        discard_all_editable_list_drafts();
         return true;
     }
     if (!apply_edit_ledger_to_preview({}, std::nullopt, false)) return false;
     distance_resolution_choices_.clear();
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     text_preview_.placement = TextPreviewPlacementState{};
-    discard_station_definition_drafts();
+    discard_all_editable_list_drafts();
     return true;
 }
 
@@ -5210,7 +5642,8 @@ void App::render_toolbar() {
         }
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available() || !has_unsaved_edit_state());
+        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits() ||
+                             has_unapplied_editable_list_drafts());
         if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
         ImGui::EndDisabled();
 
@@ -6208,6 +6641,12 @@ void App::render_popups() {
         ImGui::TextUnformatted(tr(exiting
             ? "dialog.unsaved_exit_message"
             : "dialog.unsaved_close_edit_message").c_str());
+        const bool list_drafts_pending = has_unapplied_editable_list_drafts();
+        if (list_drafts_pending) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s",
+                               tr("dialog.apply_list_before_save").c_str());
+        }
         ImGui::PopTextWrapPos();
         ImGui::Separator();
         if (ImGui::Button(tr("button.cancel").c_str())) {
@@ -6215,11 +6654,13 @@ void App::render_popups() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
+        ImGui::BeginDisabled(list_drafts_pending);
         if (ImGui::Button(tr(exiting
                 ? "button.save_changes_and_exit"
                 : "button.save_changes_and_close_edit").c_str())) {
             if (resolve_pending_close_action(true)) ImGui::CloseCurrentPopup();
         }
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button(tr(exiting
                 ? "button.discard_changes_and_exit"
@@ -6963,6 +7404,18 @@ int main(int, char**) {
         return App::run_debug_headless_source_anchors(source_anchors.path,
                                                       source_anchors.unit_distance,
                                                       source_anchors.output_path);
+    }
+
+    HeadlessStationListEditOptions station_list_edit =
+        parse_headless_station_list_edit_options(args);
+    if (station_list_edit.requested) {
+        if (!station_list_edit.error.empty()) {
+            std::cerr << station_list_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-station-list-edit <map-path> "
+                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_station_list_edit(station_list_edit);
     }
 
     HeadlessDistanceEditBatchOptions distance_edit_batch =

@@ -35,6 +35,8 @@ struct EditableTarget {
     const SignalPut* signal_put = nullptr;
     const RepeaterEvent* repeater = nullptr;
     const StationListEntry* station_list = nullptr;
+    const StructureModel* structure_model = nullptr;
+    const SoundListEntry* sound_list = nullptr;
     int elements_for_statement = 0;
 };
 
@@ -616,6 +618,16 @@ struct CsvSourceLine {
     std::string_view comment_suffix;
 };
 
+bool editable_csv_list_values_equivalent(const char* field_name,
+                                         const std::string& edited,
+                                         const std::string& source) {
+    if (std::string_view(field_name) != "bufferCount") {
+        return edited == source;
+    }
+    const int edited_value = edited.empty() ? 1 : std::stoi(edited);
+    return edited_value == parse_sound_buffer_count(source);
+}
+
 CsvSourceLine split_csv_source_line(std::string_view line) {
     CsvSourceLine result;
     size_t field_start = 0;
@@ -652,45 +664,94 @@ CsvSourceLine split_csv_source_line(std::string_view line) {
     return result;
 }
 
-std::string build_structure_model_statement(const MapEditChange& change,
-                                            const ParsedStatement& statement) {
-    std::vector<std::string> fields = parse_comma_separated_fields(statement.raw_arguments, false);
-    if (fields.size() < 2) fields.resize(2);
-    std::string structure_key = required_string_field(change, "structureKey", fields[0]);
-    std::string file_path = required_string_field(change, "filePath", fields.size() > 1 ? fields[1] : "");
-    return csv_field(structure_key) + "," + csv_field(file_path);
-}
-
-std::string build_station_list_statement(const MapEditChange& change,
-                                         const ParsedStatement& statement,
-                                         const StationListEntry& row) {
-    const CsvSourceLine source = split_csv_source_line(statement.raw_arguments);
-    size_t output_count = source.fields.size();
-    for (size_t i = 0; i < k_station_list_field_names.size(); ++i) {
-        if (change.field_changes.find(k_station_list_field_names[i]) !=
-            change.field_changes.end()) {
-            output_count = std::max(output_count, i + 1);
-        }
-    }
+template <size_t FieldCount, typename Normalize>
+std::string build_editable_csv_list_statement(
+    const MapEditChange& change,
+    const ParsedStatement& statement,
+    const std::array<const char*, FieldCount>& field_names,
+    const std::array<std::string, FieldCount>& fallback_values,
+    Normalize&& normalize) {
+    // A moved row supplies the complete source row as its template. Fields
+    // whose semantic values already match that template keep their original
+    // quoting/spacing; only genuinely edited slots are serialized anew.
+    const std::string& source_text = change.replacement_statement.empty()
+        ? statement.raw_arguments
+        : change.replacement_statement;
+    const CsvSourceLine source = split_csv_source_line(source_text);
+    const std::vector<std::string> source_values =
+        parse_comma_separated_fields(source_text, true);
+    const size_t output_count =
+        std::max(source.fields.size(), FieldCount);
 
     std::ostringstream out;
     for (size_t i = 0; i < output_count; ++i) {
         if (i) out << ",";
-        if (i < k_station_list_field_names.size()) {
-            const auto edited = change.field_changes.find(k_station_list_field_names[i]);
+        if (i < FieldCount) {
+            const auto edited = change.field_changes.find(field_names[i]);
             if (edited != change.field_changes.end()) {
-                out << csv_field(normalized_station_list_edit_value(edited->second, i));
+                const std::string normalized = normalize(edited->second, i);
+                const bool preserves_source =
+                    i < source.fields.size() && i < source_values.size() &&
+                    (std::string_view(field_names[i]) == "bufferCount"
+                        ? editable_csv_list_values_equivalent(
+                            field_names[i], normalized, source_values[i])
+                        : normalized == normalize(source_values[i], i));
+                if (preserves_source) {
+                    out << source.fields[i];
+                } else {
+                    out << csv_field(normalized);
+                }
                 continue;
             }
         }
         if (i < source.fields.size()) {
             out << source.fields[i];
-        } else if (i < row.fields.size()) {
-            out << csv_field(row.fields[i]);
+        } else {
+            out << csv_field(fallback_values[i]);
         }
     }
     out << source.comment_suffix;
     return out.str();
+}
+
+std::string build_structure_model_statement(const MapEditChange& change,
+                                            const ParsedStatement& statement,
+                                            const StructureModel& row) {
+    const std::array<std::string, 2> fallback = {
+        row.structure_key, row.file_path
+    };
+    return build_editable_csv_list_statement(
+        change, statement, k_structure_list_field_names, fallback,
+        [](const std::string& value, size_t field_index) {
+            return normalized_resource_list_edit_value(
+                value, k_structure_list_field_names[field_index]);
+        });
+}
+
+std::string build_sound_list_statement(const MapEditChange& change,
+                                       const ParsedStatement& statement,
+                                       const SoundListEntry& row) {
+    const std::array<std::string, 3> fallback = {
+        row.sound_key, row.file_path, std::to_string(row.buffer_count)
+    };
+    return build_editable_csv_list_statement(
+        change, statement, k_sound_list_field_names, fallback,
+        [](const std::string& value, size_t field_index) {
+            return field_index == 2
+                ? normalized_sound_buffer_count_edit_value(value)
+                : normalized_resource_list_edit_value(
+                    value, k_sound_list_field_names[field_index]);
+        });
+}
+
+std::string build_station_list_statement(const MapEditChange& change,
+                                         const ParsedStatement& statement,
+                                         const StationListEntry& row) {
+    return build_editable_csv_list_statement(
+        change, statement, k_station_list_field_names, row.fields,
+        [](const std::string& value, size_t field_index) {
+            return normalized_station_list_edit_value(value, field_index);
+        });
 }
 
 std::string build_station_put_statement(const MapEditChange& change,
@@ -945,9 +1006,10 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     int count = 0;
     for (const auto& row : ctx.station_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.station_list) {
-        count_statement_ref(row.second.edit_ref, statement_index, count);
+        count_statement_ref(row.edit_ref, statement_index, count);
     }
     for (const auto& row : ctx.structure_models) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.sound_list) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_betweens) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.signal_puts) count_statement_ref(row.edit_ref, statement_index, count);
@@ -999,6 +1061,17 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
     for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
         const StructureModel& row = ctx.structure_models[i];
         if (match_edit_ref(ctx, row, "structure.model", i, edit_id, target)) {
+            target.structure_model = &row;
+            return target;
+        }
+    }
+    size_t sound_index = 0;
+    size_t sound_3d_index = 0;
+    for (const SoundListEntry& row : ctx.sound_list) {
+        const char* row_kind = row.is_3d ? "sound3D.list" : "sound.list";
+        const size_t row_index = row.is_3d ? sound_3d_index++ : sound_index++;
+        if (match_edit_ref(ctx, row, row_kind, row_index, edit_id, target)) {
+            target.sound_list = &row;
             return target;
         }
     }
@@ -1026,7 +1099,7 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
     {
         const auto entries = ordered_station_list_entries(ctx);
         for (size_t i = 0; i < entries.size(); ++i) {
-            const StationListEntry& row = entries[i]->second;
+            const StationListEntry& row = *entries[i];
             if (match_edit_ref(ctx, row, "station.list", i, edit_id, target)) {
                 target.station_list = &row;
                 return target;
@@ -1125,9 +1198,21 @@ const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
 std::string build_replacement_statement(const MapEditChange& change,
                                         const ParsedStatement& statement,
                                         const EditableTarget& target) {
-    if (!change.replacement_statement.empty()) return change.replacement_statement;
-    if (target.row_kind == "structure.model") {
-        return build_structure_model_statement(change, statement);
+    const bool editable_csv_list =
+        target.row_kind == "station.list" ||
+        target.row_kind == "structure.model" ||
+        target.row_kind == "sound.list" ||
+        target.row_kind == "sound3D.list";
+    if (!change.replacement_statement.empty() && !editable_csv_list) {
+        return change.replacement_statement;
+    }
+    if (target.row_kind == "structure.model" && target.structure_model) {
+        return build_structure_model_statement(change, statement,
+                                               *target.structure_model);
+    }
+    if ((target.row_kind == "sound.list" ||
+         target.row_kind == "sound3D.list") && target.sound_list) {
+        return build_sound_list_statement(change, statement, *target.sound_list);
     }
     if (target.row_kind == "structure.put" && target.structure_put) {
         return build_structure_put_statement(change, statement, *target.structure_put, false);
@@ -2404,11 +2489,14 @@ void validate_edit_report(MapContext& baseline,
     };
     try {
         collect_candidate_rows(candidate->structure_models, "structure.model");
+        for (const SoundListEntry& row : candidate->sound_list) {
+            collect_candidate_row(row, row.is_3d ? "sound3D.list" : "sound.list");
+        }
         collect_candidate_rows(candidate->structure_puts, "structure.put");
         collect_candidate_rows(candidate->structure_betweens, "structure.between");
         collect_candidate_rows(candidate->station_puts, "station.put");
         for (const auto& entry : ordered_station_list_entries(*candidate)) {
-            collect_candidate_row(entry->second, "station.list");
+            collect_candidate_row(*entry, "station.list");
         }
         collect_candidate_rows(candidate->signal_puts, "signal.put");
         collect_candidate_rows(candidate->repeaters, "repeater");
@@ -3800,6 +3888,15 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "structure.between", ctx.structure_betweens);
     append_committed_rows(ctx, report, "signal.put", ctx.signal_puts);
     append_committed_rows(ctx, report, "repeater", ctx.repeaters);
+    size_t sound_index = 0;
+    size_t sound_3d_index = 0;
+    for (const SoundListEntry& row : ctx.sound_list) {
+        const bool is_3d = row.is_3d;
+        append_committed_row(ctx, report,
+                             is_3d ? "sound3D.list" : "sound.list",
+                             is_3d ? sound_3d_index++ : sound_index++,
+                             row.edit_ref);
+    }
 
     std::vector<size_t> station_order;
     station_order.reserve(ctx.station_puts.size());
@@ -3815,13 +3912,12 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
                              ctx.station_puts[station_order[row_index]].edit_ref);
     }
 
-    // station.list rows live in a std::map keyed by lowercased station key but
-    // the snapshot exposes them in parse order. Reuse the same helper so that
-    // committed row indices line up with the snapshot and the GUI table cache.
+    // Reuse the canonical source-order helper so committed row indices line up
+    // with the snapshot and the GUI table cache.
     const auto station_list_entries = ordered_station_list_entries(ctx);
     for (size_t row_index = 0; row_index < station_list_entries.size(); ++row_index) {
         append_committed_row(ctx, report, "station.list", row_index,
-                             station_list_entries[row_index]->second.edit_ref);
+                             station_list_entries[row_index]->edit_ref);
     }
 }
 

@@ -292,6 +292,22 @@ void write_structure_model(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", changed_string(snapshot, change, "filePath", row.file_path));
 }
 
+void write_sound_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                      const KvSoundListRow& row,
+                      const MapEditChange* change = nullptr) {
+    const std::string* buffer_change = changed_field(change, "bufferCount");
+    int buffer_count = row.buffer_count;
+    if (buffer_change) {
+        const std::string normalized =
+            normalized_sound_buffer_count_edit_value(*buffer_change);
+        buffer_count = normalized.empty() ? 1 : std::stoi(normalized);
+    }
+    field(out, "soundKey", changed_string(snapshot, change, "soundKey", row.sound_key));
+    field(out, "filePath", changed_string(snapshot, change, "filePath", row.file_path));
+    field(out, "bufferCount", static_cast<std::int64_t>(buffer_count));
+    field(out, "is3D", row.is_3d != 0);
+}
+
 void write_structure_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
                          const KvStructurePutRow& row,
                          const MapEditChange* change = nullptr) {
@@ -435,6 +451,9 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
                    "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
                    "passengers", "arrivalSoundKey", "depertureSoundKey",
                    "doorReopen", "stuckInDoor"};
+    } else if (target.row_kind == "sound.list" ||
+               target.row_kind == "sound3D.list") {
+        allowed = {"soundKey", "filePath", "bufferCount"};
     } else if (target.row_kind == "signal.put") {
         allowed = {"distance", "form", "signalAspectKey", "section", "trackKey",
                    "x", "y", "z", "rx", "ry", "rz", "tilt", "span"};
@@ -687,15 +706,15 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
             field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
         });
     }
+    size_t sound_index = 0;
+    size_t sound_3d_index = 0;
     for (std::uint64_t i = 0; i < snapshot.sound_list_count; ++i) {
         const KvSoundListRow& row = snapshot.sound_list[i];
         const std::string kind = row.is_3d ? "sound3D.list" : "sound.list";
+        const size_t row_index = row.is_3d ? sound_3d_index++ : sound_index++;
         emit_element(output, full, snapshot, row.metadata, kind, "soundList",
-                     static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "soundKey", SemanticWriter::snapshot_text(snapshot, row.sound_key));
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
-            field(out, "bufferCount", static_cast<std::int64_t>(row.buffer_count));
-            field(out, "is3D", row.is_3d != 0);
+                     row_index, [&](SemanticWriter& out) {
+            write_sound_list(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.map_sound_count; ++i) {
@@ -855,6 +874,24 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("structure.model target row is out of bounds");
         }
         write_structure_model(out, snapshot, snapshot.structure_models[target.row_index], &change);
+    } else if (target.row_kind == "sound.list" ||
+               target.row_kind == "sound3D.list") {
+        const bool want_3d = target.row_kind == "sound3D.list";
+        const KvSoundListRow* selected = nullptr;
+        size_t matching_index = 0;
+        for (std::uint64_t i = 0; i < snapshot.sound_list_count; ++i) {
+            const KvSoundListRow& row = snapshot.sound_list[i];
+            if ((row.is_3d != 0) != want_3d) continue;
+            if (matching_index++ == target.row_index) {
+                selected = &row;
+                break;
+            }
+        }
+        if (!selected) {
+            throw std::runtime_error(target.row_kind +
+                                     " target row is out of bounds");
+        }
+        write_sound_list(out, snapshot, *selected, &change);
     } else if (target.row_kind == "structure.put") {
         if (target.row_index >= snapshot.structure_put_count || !snapshot.structure_puts) {
             throw std::runtime_error("structure.put target row is out of bounds");

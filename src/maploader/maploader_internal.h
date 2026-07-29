@@ -364,6 +364,7 @@ struct StructureLoad {
 struct StructureModel {
     std::string structure_key;
     std::string file_path;
+    size_t source_file_index = k_no_source_ref;
     EditSourceRef edit_ref;
 };
 
@@ -372,6 +373,7 @@ struct SoundListEntry {
     std::string file_path;
     int buffer_count = 1;
     bool is_3d = false;
+    size_t source_file_index = k_no_source_ref;
     EditSourceRef edit_ref;
 };
 
@@ -648,13 +650,45 @@ inline constexpr std::array<const char*, 13> k_station_list_field_names = {
 inline std::string normalized_station_list_edit_value(const std::string& input,
                                                       size_t field_index) {
     std::string value = trim_field_copy(input);
-    if (field_index == 0 && value.empty()) {
-        throw std::runtime_error("required edit field is empty: stationKey");
-    }
     if (value.find_first_of("\r\n") != std::string::npos) {
         throw std::runtime_error(
             std::string("Station.List field cannot contain a line break: ") +
             k_station_list_field_names[field_index]);
+    }
+    return value;
+}
+
+inline constexpr std::array<const char*, 2> k_structure_list_field_names = {
+    "structureKey", "filePath"
+};
+
+inline constexpr std::array<const char*, 3> k_sound_list_field_names = {
+    "soundKey", "filePath", "bufferCount"
+};
+
+inline std::string normalized_resource_list_edit_value(const std::string& input,
+                                                       const char* field_name) {
+    std::string value = trim_field_copy(input);
+    if (value.find_first_of("\r\n") != std::string::npos) {
+        throw std::runtime_error(
+            std::string("resource-list field cannot contain a line break: ") +
+            field_name);
+    }
+    return value;
+}
+
+inline std::string normalized_sound_buffer_count_edit_value(const std::string& input) {
+    const std::string value =
+        normalized_resource_list_edit_value(input, "bufferCount");
+    if (value.empty()) return {};
+
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = std::strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() || !end || *end != '\0' || errno == ERANGE ||
+        parsed < 1 || parsed > std::numeric_limits<int>::max()) {
+        throw std::runtime_error(
+            "bufferCount must be empty or a positive integer");
     }
     return value;
 }
@@ -785,7 +819,11 @@ struct MapContext {
     std::map<double, std::string> station_position;
     std::map<std::string, std::string> station_key;
     std::vector<StationPut> station_puts;
-    std::map<std::string, StationListEntry> station_list;
+    // Preserve every physical Station.List definition in source order. Empty
+    // keys remain editable source rows but never enter the lookup index;
+    // duplicate non-empty keys keep the last-definition-wins lookup contract.
+    std::vector<StationListEntry> station_list;
+    std::map<std::string, size_t> station_list_indices;
     std::map<std::string, std::vector<OtherTrackEvent>> othertrack;
     std::vector<std::string> othertrack_order;
     std::map<std::string, std::pair<double, double>> othertrack_range;
@@ -1027,8 +1065,8 @@ std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
 // snapshot builder. The same ordering must be used by edit-target lookup and
 // committed-row population so that station.list row indices stay stable
 // across map snapshots, edit reports, and the GUI table cache.
-std::vector<std::map<std::string, StationListEntry>::const_iterator>
-ordered_station_list_entries(const MapContext& ctx);
+void append_station_list_entry(MapContext& ctx, StationListEntry row);
+std::vector<const StationListEntry*> ordered_station_list_entries(const MapContext& ctx);
 struct MapEditChange {
     std::string change_id;
     std::string edit_id;

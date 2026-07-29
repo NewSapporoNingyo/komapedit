@@ -82,6 +82,14 @@ std::filesystem::path path_from_utf8(const std::string& utf8) {
 }
 #endif
 
+std::filesystem::path join_utf8_path(const std::filesystem::path& root,
+                                     const std::string& path_text) {
+    std::string normalized = path_text;
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+    std::filesystem::path path = path_from_utf8(normalized);
+    return path.is_absolute() ? path : root / path;
+}
+
 std::string read_binary_file(const std::filesystem::path& path) {
 #if defined(_WIN32)
     FILE* input = _wfopen(path.wstring().c_str(), L"rb");

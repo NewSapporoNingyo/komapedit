@@ -284,11 +284,7 @@ LoadedText load_header_text(const std::filesystem::path& path,
 }
 
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file) {
-    std::string normalized = file;
-    std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    std::filesystem::path p = path_from_utf8(normalized);
-    if (p.is_absolute()) return p;
-    return root / p;
+    return join_utf8_path(root, file);
 }
 
 double as_number(const Value& value, double fallback) {
