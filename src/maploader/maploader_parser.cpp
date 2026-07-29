@@ -1503,14 +1503,28 @@ private:
                                                          line_start, line_end, line, fields);
                 ctx_.signal_aspects.push_back(std::move(row));
                 current_aspect = &ctx_.signal_aspects.back();
-            } else if (current_aspect && !current_aspect->edit_ref.valid()) {
-                current_aspect->edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "SignalList.Row",
-                                                                     line_start, line_end, line, fields);
             }
             for (size_t i = 1; i < fields.size(); ++i) {
                 current_aspect->structure_keys.push_back(fields[i]);
                 add_loaded_deferred_key(DeferredKeyKind::Structure, fields[i], loaded,
                                         line_number, "SignalList.Row");
+            }
+            if (!starts_glare_row) {
+                current_aspect->main_structure_key_count =
+                    current_aspect->structure_keys.size();
+            }
+            if (starts_glare_row) {
+                std::vector<std::string> flattened_fields;
+                flattened_fields.reserve(
+                    current_aspect->structure_keys.size() + 1);
+                flattened_fields.push_back(current_aspect->signal_aspect_key);
+                flattened_fields.insert(
+                    flattened_fields.end(),
+                    current_aspect->structure_keys.begin(),
+                    current_aspect->structure_keys.end());
+                extend_loaded_line_statement(
+                    ctx_, loaded, stack, current_aspect->edit_ref,
+                    line_end, flattened_fields);
             }
         });
     }

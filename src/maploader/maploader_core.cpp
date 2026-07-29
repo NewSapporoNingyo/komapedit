@@ -770,6 +770,102 @@ EditSourceRef add_loaded_line_statement(MapContext& ctx,
     return EditSourceRef{statement_index, 0};
 }
 
+void extend_loaded_line_statement(
+    MapContext& ctx,
+    const LoadedText& loaded,
+    const std::vector<std::string>& include_stack,
+    const EditSourceRef& ref,
+    size_t line_end,
+    const std::vector<std::string>& fields) {
+    if (!ctx.parse_options.collect_edit_metadata || !ref.valid() ||
+        ref.statement_index >= ctx.parsed_statements.size()) {
+        return;
+    }
+    ParsedStatement& statement = ctx.parsed_statements[ref.statement_index];
+    if (statement.source.byte_start < loaded.body_offset) return;
+    const size_t body_start = statement.source.byte_start - loaded.body_offset;
+    if (body_start > line_end || line_end > loaded.body.size()) return;
+
+    statement.source =
+        make_source_span(ctx, loaded, body_start, line_end, include_stack);
+    statement.raw_text = loaded.body.substr(body_start, line_end - body_start);
+    statement.raw_text_preview = raw_text_preview(statement.raw_text);
+    statement.raw_arguments = statement.raw_text;
+    statement.evaluated_values = values_from_fields(fields);
+}
+
+SignalAspectSourceValues parse_signal_aspect_source_values(
+    const std::string& source_text) {
+    SignalAspectSourceValues result;
+    size_t pos = 0;
+    bool has_main_row = false;
+    while (pos <= source_text.size()) {
+        size_t line_end = source_text.find('\n', pos);
+        size_t content_end =
+            line_end == std::string::npos ? source_text.size() : line_end;
+        if (content_end > pos && source_text[content_end - 1] == '\r') {
+            --content_end;
+        }
+        const std::string line =
+            source_text.substr(pos, content_end - pos);
+        const std::string trimmed = trim_field_copy(line);
+        if (!trimmed.empty() && trimmed[0] != '#') {
+            std::vector<std::string> fields =
+                parse_comma_separated_fields(line, true);
+            trim_trailing_empty_fields(fields);
+            if (!fields.empty()) {
+                if (!has_main_row) {
+                    if (fields[0].empty()) {
+                        throw std::runtime_error(
+                            "Signal aspect source block has no main row");
+                    }
+                    result.signal_aspect_key = fields[0];
+                    has_main_row = true;
+                } else if (!fields[0].empty()) {
+                    throw std::runtime_error(
+                        "Signal aspect source block contains multiple main rows");
+                }
+                for (size_t field = 1; field < fields.size(); ++field) {
+                    result.structure_keys.push_back(fields[field]);
+                }
+            }
+        }
+        if (line_end == std::string::npos) break;
+        pos = line_end + 1;
+    }
+    if (!has_main_row) {
+        throw std::runtime_error("Signal aspect source block is empty");
+    }
+    return result;
+}
+
+std::string signal_aspect_structure_key_field_name(size_t zero_based_index) {
+    return "structureKey" + std::to_string(zero_based_index + 1);
+}
+
+bool parse_signal_aspect_structure_key_field_name(
+    const std::string& field_name,
+    size_t& zero_based_index) {
+    constexpr std::string_view prefix = "structureKey";
+    if (field_name.size() <= prefix.size() ||
+        field_name.compare(0, prefix.size(), prefix) != 0) {
+        return false;
+    }
+    size_t value = 0;
+    for (size_t index = prefix.size(); index < field_name.size(); ++index) {
+        const char ch = field_name[index];
+        if (ch < '0' || ch > '9') return false;
+        const size_t digit = static_cast<size_t>(ch - '0');
+        if (value > (std::numeric_limits<size_t>::max() - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+    }
+    if (value == 0) return false;
+    zero_based_index = value - 1;
+    return true;
+}
+
 bool value_equal(const Value& a, const Value& b) {
     if (a.kind != b.kind) return false;
     if (a.kind == ValueKind::Number) {

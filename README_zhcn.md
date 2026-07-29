@@ -83,7 +83,8 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - [x] 显示 `信号现示列表`、`地图信号列表` 和 `应答器列表`
 - [x] 显示 `轨道变位列表`、`粘着特性变化点列表`、走行音、轮缘摩擦音效和道岔音效相关表格
 - [x] 显示 `背景变化点列表`、`驾驶台亮度变化点列表`、`雾效果变化点列表` 和 `绘制距离变化点列表`
-- [ ] 编辑 `Signal.Load` 信号相位定义和应答器列表
+- [x] 通过源码回写的行内表格编辑器编辑 `Signal.Load` 信号现示定义；暂不支持新增行或列
+- [ ] 编辑应答器列表
 - [x] 为已支持的布景、`Signal.Put`、`Station.Put` 和关联 Repeater 行提供基于源锚点的“属性/编辑”检查器，并在 3D 场景中为可编辑的布景、信号机和 Repeater Begin 放置提供实时 X/Y/Z 操纵器
 - [ ] 将属性检查器扩展到 2D 标记和其余地图信息行
 
@@ -153,7 +154,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 | `Station.Put`                                 |   √   |    △     |     ✕      | 只可编辑距离和 `stationKey`，车门及停车余量等参数不可编辑                            |
 | `Section.Begin` / `Section.BeginNew`          |   ✕   |    ✕     |     ✕      | 会被解析到 typed map snapshot，但当前 GUI 尚不显示                                   |
 | `Section.SetSpeedLimit` / `Signal.SpeedLimit` |   ✕   |    ✕     |     ✕      | 会被解析到 typed map snapshot，但当前 GUI 尚不显示                                   |
-| `Signal.Load`                                 |   √   |    ✕     |     -      | 信号相位和模型数据可加载、展示                                                       |
+| `Signal.Load`                                 |   √   |    √     |     -      | 信号现示定义支持源码安全的行内编辑；暂不支持新增行或列                               |
 | `Signal.Put`                                  |   √   |    √     |     △      | 全部放置字段均可编辑；3D 支持 X/Y/Z 平移。短式编辑扩展字段前需确认转换为完整式       |
 | `Beacon.Put`                                  |   √   |    ✕     |     ✕      | 可进入列表及地图标记                                                                 |
 | `SpeedLimit.Begin` / `SpeedLimit.End`         |   √   |    ✕     |     ✕      | 可进入限速模型、列表及标记                                                           |

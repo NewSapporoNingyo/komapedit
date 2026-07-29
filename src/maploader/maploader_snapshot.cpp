@@ -368,6 +368,15 @@ private:
             row.signal_aspect_key = string_ref(input.signal_aspect_key);
             row.structure_keys = append_strings(input.structure_keys);
             row.metadata = metadata(input.edit_ref, "signal.aspect");
+            if (input.main_structure_key_count >
+                    input.structure_keys.size() ||
+                input.main_structure_key_count >
+                std::numeric_limits<std::uint32_t>::max()) {
+                throw std::runtime_error(
+                    "Signal aspect main-row structure-key count is invalid");
+            }
+            row.metadata.reserved = static_cast<std::uint32_t>(
+                input.main_structure_key_count);
             storage_.signal_aspects.push_back(row);
         }
         storage_.signal_puts.reserve(ctx_.signal_puts.size());

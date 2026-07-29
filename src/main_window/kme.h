@@ -367,12 +367,23 @@ struct TableColumnDef {
     float width = 0.0f;
 };
 
+struct EditableListDisplayRow {
+    size_t logical_row = 0;
+    size_t structure_field_offset = 0;
+    size_t structure_field_count = 0;
+    std::string sequence;
+    bool secondary = false;
+};
+
 struct CachedTableRow {
     std::vector<std::string> cells;
     std::string edit_id;
     EditSourceInfo source;
     std::string open_path;
     std::string tooltip_text;
+    size_t editable_field_count = 0;
+    size_t primary_structure_field_count = 0;
+    size_t secondary_structure_field_count = 0;
     size_t repeater_chain_begin_index = 0;
     size_t repeater_chain_begin_count = 1;
     bool invalid_track_key = false;
@@ -397,6 +408,7 @@ struct TableUiCache {
     std::vector<CachedOtherTrainStopGroup> other_train_stop_groups;
     std::vector<CachedTableRow> repeater_rows;
     std::vector<CachedTableRow> signal_aspect_rows;
+    std::vector<EditableListDisplayRow> signal_aspect_display_rows;
     std::vector<CachedTableRow> signal_rows;
     std::vector<CachedTableRow> beacon_rows;
     std::vector<CachedTableRow> irregularity_rows;
@@ -424,7 +436,8 @@ struct TableUiCache {
     float beacon_distance_width = 110.0f;
     float beacon_file_path_width = 200.0f;
     size_t signal_aspect_structure_key_columns = 0;
-    std::vector<float> signal_aspect_structure_key_widths;
+    std::vector<std::string> signal_aspect_column_headers;
+    std::vector<float> signal_aspect_column_widths;
     float sound_list_file_path_width = 200.0f;
     float sound_list_buffer_count_width = 80.0f;
     float sound_3d_list_file_path_width = 200.0f;
@@ -1175,23 +1188,27 @@ struct EditableListSpec {
     size_t field_count = 0;
     size_t cache_column_offset = 0;
     int path_field = -1;
+    bool numbered_structure_key_fields = false;
 };
 
 inline constexpr EditableListSpec k_station_definition_edit_spec = {
     "station.list", "station-list-", k_station_list_field_names.data(),
-    k_station_list_field_names.size(), 0, -1
+    k_station_list_field_names.size(), 0, -1, false
 };
 inline constexpr EditableListSpec k_structure_model_edit_spec = {
     "structure.model", "structure-model-", k_structure_model_field_names.data(),
-    k_structure_model_field_names.size(), 1, 1
+    k_structure_model_field_names.size(), 1, 1, false
 };
 inline constexpr EditableListSpec k_sound_list_edit_spec = {
     "sound.list", "sound-list-", k_sound_file_field_names.data(),
-    k_sound_file_field_names.size(), 1, 1
+    k_sound_file_field_names.size(), 1, 1, false
 };
 inline constexpr EditableListSpec k_sound_3d_list_edit_spec = {
     "sound3D.list", "sound3d-list-", k_sound_file_field_names.data(),
-    k_sound_file_field_names.size(), 1, 1
+    k_sound_file_field_names.size(), 1, 1, false
+};
+inline constexpr EditableListSpec k_signal_aspect_edit_spec = {
+    "signal.aspect", "signal-aspect-", nullptr, 0, 1, -1, true
 };
 
 struct EditableListDraftRow {
@@ -1200,20 +1217,24 @@ struct EditableListDraftRow {
     std::string target_expected_source_hash;
     int target_line = 0;
     int target_column = 0;
-    std::array<std::string, 13> original_values{};
+    std::vector<std::string> original_values;
     std::string payload_edit_id;
     std::string payload_source_file;
     int payload_line = 0;
     int payload_column = 0;
     std::string payload_raw_statement;
-    std::array<std::string, 13> values{};
+    std::vector<std::string> values;
     std::string resolved_path;
     bool deleted = false;
+    size_t primary_structure_field_count = 0;
+    size_t secondary_structure_field_count = 0;
+    bool secondary_row_deleted = false;
 };
 
 struct EditableListEditState {
     int selected_row = -1;
     int selected_column = -1;
+    bool selected_secondary_row = false;
     int editing_column = -1;
     std::string editing_edit_id;
     std::string editing_baseline;
@@ -1222,13 +1243,15 @@ struct EditableListEditState {
     bool rows_initialized = false;
     std::vector<EditableListDraftRow> rows;
     std::vector<size_t> visible_rows;
+    std::vector<EditableListDisplayRow> display_rows;
 };
 
 using StationDefinitionDraftRow = EditableListDraftRow;
 using StationDefinitionEditState = EditableListEditState;
 
-bool editable_list_row_has_draft(const EditableListDraftRow& row,
-                                 size_t field_count);
+bool editable_list_row_has_draft(const EditableListDraftRow& row);
+std::string editable_list_field_name(const EditableListSpec& spec,
+                                     size_t field_index);
 std::vector<size_t> editable_list_visible_row_indices(
     const std::vector<EditableListDraftRow>& rows);
 bool move_editable_list_draft_row(
@@ -1238,11 +1261,14 @@ bool move_editable_list_draft_row(
 bool clear_editable_list_draft_cell(
     std::vector<EditableListDraftRow>& rows,
     const std::vector<size_t>& visible_rows,
-    int visible_row, int column, size_t field_count);
+    int visible_row, int column);
 bool delete_editable_list_draft_row(
     std::vector<EditableListDraftRow>& rows,
     const std::vector<size_t>& visible_rows,
     int visible_row);
+void rebuild_editable_list_display_rows(
+    EditableListEditState& edit,
+    const EditableListSpec& spec);
 bool build_editable_list_pending_changes(
     const EditableListSpec& spec,
     const std::vector<EditableListDraftRow>& rows,
@@ -1392,6 +1418,7 @@ private:
     std::optional<MapElementDeleteRequest> pending_delete_request_;
     StationDefinitionEditState station_definition_edit_;
     EditableListEditState structure_model_edit_;
+    EditableListEditState signal_aspect_edit_;
     EditableListEditState sound_list_edit_;
     EditableListEditState sound_3d_list_edit_;
 
@@ -1805,6 +1832,10 @@ private:
     bool delete_editable_list_row(EditableListEditState& edit,
                                   const EditableListSpec& spec,
                                   int visible_row);
+    bool delete_editable_list_secondary_row(
+        EditableListEditState& edit,
+        const EditableListSpec& spec,
+        int visible_row);
     void apply_editable_list_drafts(EditableListEditState& edit,
                                     const EditableListSpec& spec);
     void rebind_other_editable_list_drafts(const EditableListEditState* applied);
@@ -1849,7 +1880,13 @@ private:
                                     const EditableListSpec& spec,
                                     float path_column_width = 0.0f,
                                     float last_column_width = 0.0f,
-                                    TableFindState* find_state = nullptr);
+                                    TableFindState* find_state = nullptr,
+                                    const std::vector<std::string>*
+                                        cached_column_headers = nullptr,
+                                    const std::vector<float>*
+                                        cached_column_widths = nullptr,
+                                    const std::vector<EditableListDisplayRow>*
+                                        cached_display_rows = nullptr);
     void render_structure_rows_window(bool put_between);
     void render_structures_window();
     void render_structures_between_window();

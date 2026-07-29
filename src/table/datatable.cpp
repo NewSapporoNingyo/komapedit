@@ -371,7 +371,9 @@ struct TableFindRowsView {
         }
         const size_t field = column - spec->cache_column_offset;
         const size_t draft_index = edit->visible_rows[row_index];
-        if (field >= spec->field_count || draft_index >= edit->rows.size()) {
+        if (draft_index >= edit->rows.size() ||
+            edit->rows[draft_index].deleted ||
+            field >= edit->rows[draft_index].values.size()) {
             return nullptr;
         }
         return &edit->rows[draft_index].values[field];
@@ -1672,28 +1674,98 @@ void App::ensure_table_cache() {
 
     cache.signal_aspect_structure_key_columns = 0;
     for (const TableRow& row : model_.signal_aspects) {
-        size_t structure_key_count = static_cast<size_t>(table_cell_number(row, "_structureKeyCount"));
+        const size_t main_structure_key_count =
+            static_cast<size_t>(table_cell_number(
+                row, "_signalMainStructureKeyCount"));
+        const size_t glare_structure_key_count =
+            static_cast<size_t>(table_cell_number(
+                row, "_signalGlareStructureKeyCount"));
         cache.signal_aspect_structure_key_columns =
-            std::max(cache.signal_aspect_structure_key_columns, structure_key_count);
+            std::max(
+                cache.signal_aspect_structure_key_columns,
+                std::max(main_structure_key_count,
+                         glare_structure_key_count));
     }
     cache.signal_aspect_structure_key_columns =
         std::min(cache.signal_aspect_structure_key_columns, k_max_signal_aspect_structure_key_columns);
-    cache.signal_aspect_structure_key_widths.assign(cache.signal_aspect_structure_key_columns, 120.0f);
+    cache.signal_aspect_column_headers.reserve(
+        k_signal_aspect_structure_key_column_offset +
+        cache.signal_aspect_structure_key_columns);
+    cache.signal_aspect_column_widths.reserve(
+        k_signal_aspect_structure_key_column_offset +
+        cache.signal_aspect_structure_key_columns);
+    for (const TableColumnDef& column :
+         k_signal_aspect_fixed_columns) {
+        cache.signal_aspect_column_headers.emplace_back(column.header);
+        cache.signal_aspect_column_widths.push_back(column.width);
+    }
+    for (size_t key_index = 0;
+         key_index < cache.signal_aspect_structure_key_columns;
+         ++key_index) {
+        cache.signal_aspect_column_headers.push_back(
+            "structureKey" + std::to_string(key_index + 1));
+        cache.signal_aspect_column_widths.push_back(120.0f);
+    }
     cache.signal_aspect_rows.reserve(model_.signal_aspects.size());
+    cache.signal_aspect_display_rows.reserve(
+        model_.signal_aspects.size() * 2);
     for (size_t row_index = 0; row_index < model_.signal_aspects.size(); ++row_index) {
         const TableRow& row = model_.signal_aspects[row_index];
+        const size_t structure_key_count = static_cast<size_t>(
+            table_cell_number(row, "_structureKeyCount"));
+        const size_t main_structure_key_count =
+            static_cast<size_t>(table_cell_number(
+                row, "_signalMainStructureKeyCount"));
+        const size_t glare_structure_key_count =
+            static_cast<size_t>(table_cell_number(
+                row, "_signalGlareStructureKeyCount"));
         CachedTableRow cached;
         copy_table_row_metadata(row, cached);
-        cached.cells.resize(k_signal_aspect_structure_key_column_offset + cache.signal_aspect_structure_key_columns);
+        cached.editable_field_count = 1 + structure_key_count;
+        cached.primary_structure_field_count =
+            main_structure_key_count;
+        cached.secondary_structure_field_count =
+            glare_structure_key_count;
+        cached.cells.resize(
+            k_signal_aspect_structure_key_column_offset +
+            std::max(structure_key_count,
+                     cache.signal_aspect_structure_key_columns));
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[1] = table_cell(row, "signalAspectKey");
-        for (size_t key_index = 0; key_index < cache.signal_aspect_structure_key_columns; ++key_index) {
+        for (size_t key_index = 0;
+             key_index < structure_key_count; ++key_index) {
             std::string column_key = "structureKey" + std::to_string(key_index + 1);
             std::string value = table_cell(row, column_key);
             cached.cells[k_signal_aspect_structure_key_column_offset + key_index] = value;
-            expand_width_for_text(cache.signal_aspect_structure_key_widths[key_index], value);
+            const size_t display_key_index =
+                key_index < main_structure_key_count
+                ? key_index
+                : key_index - main_structure_key_count;
+            if (display_key_index <
+                cache.signal_aspect_structure_key_columns) {
+                expand_width_for_text(
+                    cache.signal_aspect_column_widths[
+                        k_signal_aspect_structure_key_column_offset +
+                        display_key_index],
+                    value);
+            }
         }
         cache.signal_aspect_rows.push_back(std::move(cached));
+        const std::string sequence =
+            std::to_string(row_index + 1);
+        cache.signal_aspect_display_rows.push_back(
+            EditableListDisplayRow{
+                row_index, 1,
+                main_structure_key_count,
+                sequence, false});
+        if (glare_structure_key_count != 0) {
+            cache.signal_aspect_display_rows.push_back(
+                EditableListDisplayRow{
+                    row_index,
+                    1 + main_structure_key_count,
+                    glare_structure_key_count,
+                    sequence + "F", true});
+        }
     }
 
     cache.signal_distance_width = 0.0f;
@@ -1939,9 +2011,42 @@ void App::run_unused_structure_model_search() {
                     note_structure_key(row.cells[static_cast<size_t>(k_background_structure_key_column)]);
                 }
             }
-            for (const CachedTableRow& row : table_cache_.signal_aspect_rows) {
-                for (size_t i = k_signal_aspect_structure_key_column_offset; i < row.cells.size(); ++i) {
-                    note_structure_key(row.cells[i]);
+            if (signal_aspect_edit_.rows_initialized) {
+                for (size_t visible_index :
+                     signal_aspect_edit_.visible_rows) {
+                    if (visible_index >=
+                        signal_aspect_edit_.rows.size()) {
+                        continue;
+                    }
+                    const EditableListDraftRow& row =
+                        signal_aspect_edit_.rows[visible_index];
+                    if (row.deleted) continue;
+                    const size_t main_end = std::min(
+                        row.values.size(),
+                        1 + row.primary_structure_field_count);
+                    for (size_t field = 1;
+                         field < main_end; ++field) {
+                        note_structure_key(row.values[field]);
+                    }
+                    if (!row.secondary_row_deleted) {
+                        const size_t glare_end = std::min(
+                            row.values.size(),
+                            main_end +
+                                row.secondary_structure_field_count);
+                        for (size_t field = main_end;
+                             field < glare_end; ++field) {
+                            note_structure_key(row.values[field]);
+                        }
+                    }
+                }
+            } else {
+                for (const CachedTableRow& row :
+                     table_cache_.signal_aspect_rows) {
+                    for (size_t i =
+                             k_signal_aspect_structure_key_column_offset;
+                         i < row.cells.size(); ++i) {
+                        note_structure_key(row.cells[i]);
+                    }
                 }
             }
             for (const TableRow& row : model_.other_train_structure_keys) {
@@ -1986,19 +2091,30 @@ void App::reset_signal_aspect_find_results() {
 }
 
 void App::run_signal_aspect_find() {
+    commit_editable_list_active_edit(
+        signal_aspect_edit_, k_signal_aspect_edit_spec);
     ensure_table_cache();
-    run_table_find(signal_aspect_find_,
-                   cached_table_find_rows(table_cache_.signal_aspect_rows),
-                   {static_cast<size_t>(k_signal_aspect_key_column)});
+    run_table_find(
+        signal_aspect_find_,
+        editable_table_find_rows(
+            table_cache_.signal_aspect_rows,
+            signal_aspect_edit_,
+            k_signal_aspect_edit_spec),
+        {static_cast<size_t>(k_signal_aspect_key_column)});
 }
 
 void App::run_unused_signal_aspect_search() {
+    commit_editable_list_active_edit(
+        signal_aspect_edit_, k_signal_aspect_edit_spec);
     ensure_table_cache();
     add_log("[INFO]datatable.cpp: Searching unused signal aspects...");
 
     run_unused_key_search(
         signal_aspect_find_,
-        cached_table_find_rows(table_cache_.signal_aspect_rows),
+        editable_table_find_rows(
+            table_cache_.signal_aspect_rows,
+            signal_aspect_edit_,
+            k_signal_aspect_edit_spec),
         static_cast<size_t>(k_signal_aspect_key_column),
         [this](auto& note_signal_aspect_key) {
             for (const CachedTableRow& row : table_cache_.signal_rows) {
@@ -2207,16 +2323,55 @@ void App::render_editable_list_table(
     const EditableListSpec& spec,
     float path_column_width,
     float last_column_width,
-    TableFindState* find_state) {
-    const int row_count = edit.rows_initialized
-        ? static_cast<int>(edit.visible_rows.size())
-        : static_cast<int>(cached_rows.size());
-    if (find_state && find_state->scroll_row >= row_count) {
-        find_state->scroll_row = -1;
-    }
-    const int scroll_target_row = find_state ? find_state->scroll_row : -1;
+    TableFindState* find_state,
+    const std::vector<std::string>* cached_column_headers,
+    const std::vector<float>* cached_column_widths,
+    const std::vector<EditableListDisplayRow>* cached_display_rows) {
     const bool is_station = std::string_view(spec.row_kind) == "station.list";
     const bool is_structure = std::string_view(spec.row_kind) == "structure.model";
+    const bool is_signal_aspect =
+        std::string_view(spec.row_kind) == "signal.aspect";
+    const std::vector<EditableListDisplayRow>* display_rows =
+        is_signal_aspect
+        ? (edit.rows_initialized
+            ? &edit.display_rows
+            : cached_display_rows)
+        : nullptr;
+    const int logical_row_count = edit.rows_initialized
+        ? static_cast<int>(edit.visible_rows.size())
+        : static_cast<int>(cached_rows.size());
+    const int row_count = display_rows
+        ? static_cast<int>(display_rows->size())
+        : logical_row_count;
+    if (find_state &&
+        find_state->scroll_row >= logical_row_count) {
+        find_state->scroll_row = -1;
+    }
+    int scroll_target_row =
+        find_state ? find_state->scroll_row : -1;
+    if (display_rows && scroll_target_row >= 0) {
+        const auto target = std::find_if(
+            display_rows->begin(), display_rows->end(),
+            [&](const EditableListDisplayRow& row) {
+                return !row.secondary &&
+                    row.logical_row ==
+                        static_cast<size_t>(
+                            scroll_target_row);
+            });
+        scroll_target_row =
+            target == display_rows->end()
+            ? -1
+            : static_cast<int>(
+                std::distance(
+                    display_rows->begin(), target));
+    }
+    const bool has_cached_columns =
+        cached_column_headers && cached_column_widths &&
+        cached_column_headers->size() >=
+            static_cast<size_t>(column_count) &&
+        cached_column_widths->size() >=
+            static_cast<size_t>(column_count);
+    if (!columns && !has_cached_columns) return;
     const int path_column = spec.path_field < 0
         ? -1
         : static_cast<int>(spec.cache_column_offset) + spec.path_field;
@@ -2234,7 +2389,10 @@ void App::render_editable_list_table(
 
     const std::string file_name_header = tr("column.file_name");
     for (int column = 0; column < column_count; ++column) {
-        float width = columns[column].width;
+        const bool use_cached_columns = has_cached_columns;
+        float width = use_cached_columns
+            ? (*cached_column_widths)[static_cast<size_t>(column)]
+            : columns[column].width;
         if (column == path_column && path_column_width > 0.0f) {
             width = path_column_width;
         } else if (column == column_count - 1 && last_column_width > 0.0f) {
@@ -2242,7 +2400,10 @@ void App::render_editable_list_table(
         }
         const char* header = column == path_column
             ? file_name_header.c_str()
-            : columns[column].header;
+            : (use_cached_columns
+                ? (*cached_column_headers)[
+                    static_cast<size_t>(column)].c_str()
+                : columns[column].header);
         ImGui::TableSetupColumn(
             header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
     }
@@ -2252,26 +2413,45 @@ void App::render_editable_list_table(
     const bool can_edit = edit_actions_available();
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec4 preview_text_color(1.0f, 1.0f, 0.0f, 1.0f);
-    const auto draft_at = [&](int visible_row) -> EditableListDraftRow* {
-        return edit.rows_initialized
-            ? &edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]
+    const auto display_at =
+        [&](int row) -> const EditableListDisplayRow* {
+        return display_rows
+            ? &(*display_rows)[static_cast<size_t>(row)]
             : nullptr;
     };
-    const auto cached_at = [&](int visible_row) -> const CachedTableRow* {
+    const auto logical_row_at = [&](int row) {
+        const EditableListDisplayRow* display =
+            display_at(row);
+        return display
+            ? static_cast<int>(display->logical_row)
+            : row;
+    };
+    const auto draft_at = [&](int logical_row) -> EditableListDraftRow* {
+        return edit.rows_initialized
+            ? &edit.rows[
+                edit.visible_rows[
+                    static_cast<size_t>(logical_row)]]
+            : nullptr;
+    };
+    const auto cached_at = [&](int logical_row) -> const CachedTableRow* {
         return edit.rows_initialized
             ? nullptr
-            : &cached_rows[static_cast<size_t>(visible_row)];
+            : &cached_rows[static_cast<size_t>(logical_row)];
     };
-    const auto source_file_at = [&](int visible_row) -> const std::string& {
-        EditableListDraftRow* draft = draft_at(visible_row);
-        return draft ? draft->target_source_file : cached_at(visible_row)->source.file_path;
+    const auto source_file_at = [&](int logical_row) -> const std::string& {
+        EditableListDraftRow* draft = draft_at(logical_row);
+        return draft
+            ? draft->target_source_file
+            : cached_at(logical_row)->source.file_path;
     };
-    const auto edit_id_at = [&](int visible_row) -> const std::string& {
-        EditableListDraftRow* draft = draft_at(visible_row);
-        return draft ? draft->target_edit_id : cached_at(visible_row)->edit_id;
+    const auto edit_id_at = [&](int logical_row) -> const std::string& {
+        EditableListDraftRow* draft = draft_at(logical_row);
+        return draft
+            ? draft->target_edit_id
+            : cached_at(logical_row)->edit_id;
     };
-    const auto row_deleted_at = [&](int visible_row) {
-        EditableListDraftRow* draft = draft_at(visible_row);
+    const auto row_deleted_at = [&](int logical_row) {
+        EditableListDraftRow* draft = draft_at(logical_row);
         return draft && draft->deleted;
     };
 
@@ -2283,13 +2463,26 @@ void App::render_editable_list_table(
     while (clipper.Step()) {
         for (int row_index = clipper.DisplayStart;
              row_index < clipper.DisplayEnd; ++row_index) {
-            EditableListDraftRow* draft = draft_at(row_index);
-            const CachedTableRow* cached = cached_at(row_index);
+            const int logical_row =
+                logical_row_at(row_index);
+            const EditableListDisplayRow* display_row =
+                display_at(row_index);
+            const bool secondary_row =
+                display_row && display_row->secondary;
+            EditableListDraftRow* draft =
+                draft_at(logical_row);
+            const CachedTableRow* cached =
+                cached_at(logical_row);
             const std::string& target_edit_id =
                 draft ? draft->target_edit_id : cached->edit_id;
             const std::string& resolved_path =
                 draft ? draft->resolved_path : cached->open_path;
-            const bool draft_deleted = draft && draft->deleted;
+            const bool whole_draft_deleted =
+                draft && draft->deleted;
+            const bool draft_deleted =
+                whole_draft_deleted ||
+                (draft && secondary_row &&
+                 draft->secondary_row_deleted);
             const bool row_editable =
                 can_edit && !draft_deleted && !target_edit_id.empty();
             const bool is_preview_model =
@@ -2300,12 +2493,16 @@ void App::render_editable_list_table(
                 is_preview_model ? preview_text_color : ImGui::GetStyleColorVec4(ImGuiCol_Text));
             const bool is_find_match =
                 find_state &&
-                static_cast<size_t>(row_index) < find_state->row_matches.size() &&
-                find_state->row_matches[static_cast<size_t>(row_index)] != 0;
+                static_cast<size_t>(logical_row) <
+                    find_state->row_matches.size() &&
+                find_state->row_matches[
+                    static_cast<size_t>(logical_row)] != 0;
             const bool is_unused =
                 find_state &&
-                static_cast<size_t>(row_index) < find_state->unused_row_matches.size() &&
-                find_state->unused_row_matches[static_cast<size_t>(row_index)] != 0;
+                static_cast<size_t>(logical_row) <
+                    find_state->unused_row_matches.size() &&
+                find_state->unused_row_matches[
+                    static_cast<size_t>(logical_row)] != 0;
 
             ImGui::TableNextRow();
             if (draft_deleted || row_is_pending_delete(target_edit_id)) {
@@ -2318,8 +2515,7 @@ void App::render_editable_list_table(
                 ImGui::TableSetBgColor(
                     ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
             } else if (row_has_pending_edit(target_edit_id) ||
-                       (draft && editable_list_row_has_draft(
-                           *draft, spec.field_count))) {
+                       (draft && editable_list_row_has_draft(*draft))) {
                 ImGui::TableSetBgColor(
                     ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
             }
@@ -2332,23 +2528,63 @@ void App::render_editable_list_table(
             for (int column = 0; column < column_count; ++column) {
                 ImGui::TableSetColumnIndex(column);
                 ImGui::PushID(column);
-                const int field_index =
+                const int display_field_index =
                     column - static_cast<int>(spec.cache_column_offset);
+                const size_t editable_field_count = draft
+                    ? draft->values.size()
+                    : (cached->editable_field_count != 0
+                        ? cached->editable_field_count
+                        : spec.field_count);
+                int field_index = display_field_index;
+                if (display_row && display_field_index >= 0) {
+                    if (display_field_index == 0) {
+                        field_index =
+                            secondary_row ? -1 : 0;
+                    } else if (
+                        static_cast<size_t>(
+                            display_field_index - 1) <
+                        display_row->structure_field_count) {
+                        field_index = static_cast<int>(
+                            display_row->structure_field_offset +
+                            static_cast<size_t>(
+                                display_field_index - 1));
+                    } else {
+                        field_index = -1;
+                    }
+                }
                 const bool editable_cell =
                     field_index >= 0 &&
-                    static_cast<size_t>(field_index) < spec.field_count;
-                const std::string sequence =
-                    std::to_string(static_cast<size_t>(row_index) + 1);
+                    static_cast<size_t>(field_index) <
+                        editable_field_count;
+                const std::string sequence = display_row
+                    ? display_row->sequence
+                    : std::to_string(
+                        static_cast<size_t>(
+                            logical_row) + 1);
+                static const std::string empty;
+                const size_t cached_column = editable_cell
+                    ? spec.cache_column_offset +
+                        static_cast<size_t>(field_index)
+                    : static_cast<size_t>(column);
                 const std::string& display = draft
                     ? (editable_cell
                         ? draft->values[static_cast<size_t>(field_index)]
-                        : sequence)
-                    : cached->cells[static_cast<size_t>(column)];
+                        : (display_field_index < 0
+                            ? sequence : empty))
+                    : (display_field_index < 0
+                        ? sequence
+                        : (editable_cell &&
+                           cached_column <
+                            cached->cells.size()
+                            ? cached->cells[cached_column]
+                            : empty));
                 const bool is_editing =
                     editable_cell && edit.editing_edit_id == target_edit_id &&
                     edit.editing_column == field_index;
                 const bool is_selected =
-                    edit.selected_row == row_index &&
+                    edit.selected_row == logical_row &&
+                    edit.selected_secondary_row ==
+                        secondary_row &&
                     edit.selected_column == column;
 
                 const auto render_context_menu = [&]() {
@@ -2372,10 +2608,21 @@ void App::render_editable_list_table(
                         ImGui::EndDisabled();
                         has_top_action = true;
                     }
+                    if (is_signal_aspect &&
+                        display_field_index > 0) {
+                        ImGui::BeginDisabled(blank_ascii(display));
+                        if (ImGui::MenuItem(
+                                tr("menu.find_in_structure_models").c_str())) {
+                            find_structure_model_for_structure_key(display);
+                        }
+                        ImGui::EndDisabled();
+                        has_top_action = true;
+                    }
                     if (column == path_column) {
                         ImGui::BeginDisabled(!row_editable);
                         if (ImGui::MenuItem(tr("menu.select_file").c_str())) {
-                            choose_editable_list_file(edit, spec, row_index);
+                            choose_editable_list_file(
+                                edit, spec, logical_row);
                         }
                         ImGui::EndDisabled();
                         ImGui::BeginDisabled(blank_ascii(resolved_path));
@@ -2388,40 +2635,71 @@ void App::render_editable_list_table(
                     if (has_top_action) ImGui::Separator();
 
                     const bool move_up_available =
-                        row_editable && row_index > 0 &&
-                        !edit_id_at(row_index - 1).empty() &&
-                        !row_deleted_at(row_index - 1) &&
-                        source_file_at(row_index - 1) == source_file_at(row_index);
+                        row_editable && logical_row > 0 &&
+                        !edit_id_at(logical_row - 1).empty() &&
+                        !row_deleted_at(logical_row - 1) &&
+                        source_file_at(logical_row - 1) ==
+                            source_file_at(logical_row);
                     const bool move_down_available =
-                        row_editable && row_index + 1 < row_count &&
-                        !edit_id_at(row_index + 1).empty() &&
-                        !row_deleted_at(row_index + 1) &&
-                        source_file_at(row_index + 1) == source_file_at(row_index);
+                        row_editable &&
+                        logical_row + 1 < logical_row_count &&
+                        !edit_id_at(logical_row + 1).empty() &&
+                        !row_deleted_at(logical_row + 1) &&
+                        source_file_at(logical_row + 1) ==
+                            source_file_at(logical_row);
                     ImGui::BeginDisabled(!move_up_available);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.move_up").c_str())) {
-                        move_editable_list_row(edit, spec, row_index, -1);
+                        move_editable_list_row(
+                            edit, spec, logical_row, -1);
                     }
                     ImGui::EndDisabled();
                     ImGui::BeginDisabled(!move_down_available);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.move_down").c_str())) {
-                        move_editable_list_row(edit, spec, row_index, 1);
+                        move_editable_list_row(
+                            edit, spec, logical_row, 1);
                     }
                     ImGui::EndDisabled();
                     ImGui::BeginDisabled(!row_editable || !editable_cell);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.clear_cell").c_str())) {
-                        clear_editable_list_cell(
-                            edit, spec, row_index, field_index);
+                        if (clear_editable_list_cell(
+                                edit, spec, logical_row,
+                                field_index)) {
+                            edit.selected_secondary_row =
+                                secondary_row;
+                            edit.selected_column = column;
+                        }
                     }
                     ImGui::EndDisabled();
                     ImGui::BeginDisabled(!row_editable);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.delete_row").c_str())) {
-                        delete_editable_list_row(edit, spec, row_index);
+                        delete_editable_list_row(
+                            edit, spec, logical_row);
                     }
                     ImGui::EndDisabled();
+                    const size_t secondary_structure_field_count =
+                        draft
+                        ? draft->secondary_structure_field_count
+                        : cached->secondary_structure_field_count;
+                    if (is_signal_aspect &&
+                        secondary_structure_field_count != 0) {
+                        const bool delete_glare_available =
+                            row_editable &&
+                            (!draft ||
+                             !draft->secondary_row_deleted);
+                        ImGui::BeginDisabled(
+                            !delete_glare_available);
+                        if (ImGui::MenuItem(
+                                tr("context.signal_aspect.delete_glare")
+                                    .c_str())) {
+                            delete_editable_list_secondary_row(
+                                edit, spec, logical_row);
+                        }
+                        ImGui::EndDisabled();
+                    }
                     ImGui::EndPopup();
                 };
 
@@ -2473,7 +2751,9 @@ void App::render_editable_list_table(
                 }
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Left) ||
                     ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                    edit.selected_row = row_index;
+                    edit.selected_row = logical_row;
+                    edit.selected_secondary_row =
+                        secondary_row;
                     edit.selected_column = column;
                 }
                 render_context_menu();
@@ -2483,7 +2763,7 @@ void App::render_editable_list_table(
                     if (initialize_editable_list_draft_rows(edit, spec)) {
                         EditableListDraftRow& active =
                             edit.rows[edit.visible_rows[
-                                static_cast<size_t>(row_index)]];
+                                static_cast<size_t>(logical_row)]];
                         edit.editing_column = field_index;
                         edit.editing_edit_id = active.target_edit_id;
                         edit.editing_baseline =
@@ -3393,76 +3673,25 @@ void App::render_signal_aspects_window() {
         [this](int delta) { step_signal_aspect_find(delta); },
         [this]() { return signal_aspect_find_status_text(); });
 
-    const int column_count = static_cast<int>(k_signal_aspect_structure_key_column_offset +
-        table_cache_.signal_aspect_structure_key_columns);
-    if (ImGui::BeginTable("signal_aspects", column_count,
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        for (int i = 0; i < IM_ARRAYSIZE(k_signal_aspect_fixed_columns); ++i) {
-            ImGui::TableSetupColumn(k_signal_aspect_fixed_columns[i].header,
-                                    ImGuiTableColumnFlags_WidthFixed,
-                                    k_signal_aspect_fixed_columns[i].width);
-        }
-        std::vector<std::string> structure_headers;
-        structure_headers.reserve(table_cache_.signal_aspect_structure_key_columns);
-        for (size_t i = 0; i < table_cache_.signal_aspect_structure_key_columns; ++i) {
-            structure_headers.push_back("structureKey" + std::to_string(i + 1));
-            float width = i < table_cache_.signal_aspect_structure_key_widths.size()
-                ? table_cache_.signal_aspect_structure_key_widths[i]
-                : 120.0f;
-            ImGui::TableSetupColumn(structure_headers.back().c_str(),
-                                    ImGuiTableColumnFlags_WidthFixed, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.signal_aspect_rows.size());
-        if (signal_aspect_find_.scroll_row >= row_count) signal_aspect_find_.scroll_row = -1;
-        const int scroll_target_row = signal_aspect_find_.scroll_row;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.signal_aspect_rows[static_cast<size_t>(row_index)];
-                const bool is_find_match =
-                    static_cast<size_t>(row_index) < signal_aspect_find_.row_matches.size() &&
-                    signal_aspect_find_.row_matches[static_cast<size_t>(row_index)] != 0;
-                const bool is_unused =
-                    static_cast<size_t>(row_index) < signal_aspect_find_.unused_row_matches.size() &&
-                    signal_aspect_find_.unused_row_matches[static_cast<size_t>(row_index)] != 0;
-                ImGui::TableNextRow();
-                if (is_unused) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
-                } else if (is_find_match) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.0f);
-                    signal_aspect_find_.scroll_row = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < column_count; ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i >= k_signal_aspect_structure_key_column_offset) {
-                        ImGui::PushID(i);
-                        if (render_text_cell_with_context(value, tr("menu.find_in_structure_models"),
-                                                          !blank_ascii(value))) {
-                            find_structure_model_for_structure_key(value);
-                        }
-                        ImGui::PopID();
-                    } else if (!value.empty()) {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
+    ImGui::BeginDisabled(
+        !edit_actions_available() ||
+        !has_editable_list_drafts(
+            signal_aspect_edit_, k_signal_aspect_edit_spec));
+    if (ImGui::Button(tr("button.apply").c_str())) {
+        apply_editable_list_drafts(
+            signal_aspect_edit_, k_signal_aspect_edit_spec);
     }
+    ImGui::EndDisabled();
+    render_editable_list_table(
+        "signal_aspects", nullptr,
+        static_cast<int>(
+            table_cache_.signal_aspect_column_headers.size()),
+        table_cache_.signal_aspect_rows, signal_aspect_edit_,
+        k_signal_aspect_edit_spec, 0.0f, 0.0f,
+        &signal_aspect_find_,
+        &table_cache_.signal_aspect_column_headers,
+        &table_cache_.signal_aspect_column_widths,
+        &table_cache_.signal_aspect_display_rows);
     focus_signal_aspects_next_ = false;
     ImGui::End();
 }

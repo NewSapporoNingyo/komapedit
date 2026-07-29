@@ -89,7 +89,8 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`.
-- [ ] Edit `Signal.Load` aspect definitions and beacon lists.
+- [x] Edit `Signal.Load` aspect definitions through the source-backed inline table editor; adding rows or columns is not supported.
+- [ ] Edit beacon lists.
 - [x] Provide a source-backed `Properties/Edit` inspector for supported Structure, `Signal.Put`, `Station.Put`, and linked Repeater rows, including live 3D X/Y/Z gizmos for editable Structure, Signal, and Repeater Begin placements.
 - [ ] Extend the property inspector to 2D markers and remaining Map Info rows.
 
@@ -159,7 +160,7 @@ At this stage, komapedit provides source-backed editing for Structure model-list
 | `Station.Put`                                 |    √    |       △       |         ✕         | Only distance and `stationKey` are editable; door side, stop margins, and other parameters are not                       |
 | `Section.Begin` / `Section.BeginNew`          |    ✕    |       ✕       |         ✕         | Parsed into the typed map snapshot, but the current GUI does not display it                                               |
 | `Section.SetSpeedLimit` / `Signal.SpeedLimit` |    ✕    |       ✕       |         ✕         | Parsed into the typed map snapshot, but the current GUI does not display it                                               |
-| `Signal.Load`                                 |    √    |       ✕       |         -         | Signal aspects and model data can be loaded and displayed                                                               |
+| `Signal.Load`                                 |    √    |       √       |         -         | Signal-aspect definitions support source-backed inline editing; adding rows or columns is not supported                 |
 | `Signal.Put`                                  |    √    |       √       |         △         | All placement fields are editable; 3D supports X/Y/Z translation. Editing extended fields on the short form requires confirmation before conversion to the full form |
 | `Beacon.Put`                                  |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
 | `SpeedLimit.Begin` / `SpeedLimit.End`         |    √    |       ✕       |         ✕         | Feeds the speed-limit model, list, and markers                                                                           |

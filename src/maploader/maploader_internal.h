@@ -454,7 +454,13 @@ struct SectionSpeedLimit {
 struct SignalAspect {
     std::string signal_aspect_key;
     std::vector<std::string> structure_keys;
+    size_t main_structure_key_count = 0;
     EditSourceRef edit_ref;
+};
+
+struct SignalAspectSourceValues {
+    std::string signal_aspect_key;
+    std::vector<std::string> structure_keys;
 };
 
 struct SignalPut {
@@ -654,6 +660,22 @@ inline std::string normalized_station_list_edit_value(const std::string& input,
         throw std::runtime_error(
             std::string("Station.List field cannot contain a line break: ") +
             k_station_list_field_names[field_index]);
+    }
+    return value;
+}
+
+inline std::string normalized_signal_aspect_edit_value(
+    const std::string& input,
+    const std::string& field_name,
+    bool required) {
+    std::string value = trim_field_copy(input);
+    if (value.find_first_of("\r\n") != std::string::npos) {
+        throw std::runtime_error(
+            "Signal aspect field cannot contain a line break: " + field_name);
+    }
+    if (required && value.empty()) {
+        throw std::runtime_error(
+            "required edit field is empty: " + field_name);
     }
     return value;
 }
@@ -1022,6 +1044,23 @@ EditSourceRef add_loaded_line_statement(MapContext& ctx,
                                         size_t line_end,
                                         const std::string& line,
                                         const std::vector<std::string>& fields);
+void extend_loaded_line_statement(
+    MapContext& ctx,
+    const LoadedText& loaded,
+    const std::vector<std::string>& include_stack,
+    const EditSourceRef& ref,
+    size_t line_end,
+    const std::vector<std::string>& fields);
+SignalAspectSourceValues parse_signal_aspect_source_values(
+    const std::string& source_text);
+std::string signal_aspect_structure_key_field_name(size_t zero_based_index);
+bool parse_signal_aspect_structure_key_field_name(
+    const std::string& field_name,
+    size_t& zero_based_index);
+struct MapEditChange;
+std::string build_signal_aspect_statement(
+    const MapEditChange& change,
+    const ParsedStatement& statement);
 bool value_equal(const Value& a, const Value& b);
 bool variable_value_matches(const std::unordered_map<std::string, Value>& current,
                             const std::unordered_map<std::string, Value>& seed,

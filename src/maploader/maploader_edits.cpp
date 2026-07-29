@@ -33,6 +33,7 @@ struct EditableTarget {
     const StructurePut* structure_put = nullptr;
     const StationPut* station_put = nullptr;
     const SignalPut* signal_put = nullptr;
+    const SignalAspect* signal_aspect = nullptr;
     const RepeaterEvent* repeater = nullptr;
     const StationListEntry* station_list = nullptr;
     const StructureModel* structure_model = nullptr;
@@ -754,6 +755,153 @@ std::string build_station_list_statement(const MapEditChange& change,
         });
 }
 
+std::string build_signal_aspect_statement(
+    const MapEditChange& change,
+    const ParsedStatement& statement) {
+    const std::string& source_text = change.replacement_statement.empty()
+        ? statement.raw_arguments
+        : change.replacement_statement;
+    const SignalAspectSourceValues source_values =
+        parse_signal_aspect_source_values(source_text);
+    bool delete_glare = false;
+    if (const auto input =
+            change.field_changes.find("deleteGlare");
+        input != change.field_changes.end()) {
+        if (trim_field_copy(input->second) != "1") {
+            throw std::runtime_error(
+                "Signal aspect deleteGlare field must be 1");
+        }
+        delete_glare = true;
+    }
+
+    std::ostringstream out;
+    size_t pos = 0;
+    size_t structure_index = 0;
+    bool has_main_row = false;
+    while (pos <= source_text.size()) {
+        const size_t newline = source_text.find('\n', pos);
+        size_t content_end =
+            newline == std::string::npos ? source_text.size() : newline;
+        if (content_end > pos && source_text[content_end - 1] == '\r') {
+            --content_end;
+        }
+        const std::string_view line(
+            source_text.data() + pos, content_end - pos);
+        const std::string trimmed = trim_field_copy(std::string(line));
+        bool emit_line = true;
+        if (trimmed.empty() || trimmed[0] == '#') {
+            out << line;
+        } else {
+            const CsvSourceLine source = split_csv_source_line(line);
+            std::vector<std::string> semantic_fields =
+                parse_comma_separated_fields(std::string(line), true);
+            trim_trailing_empty_fields(semantic_fields);
+            if (semantic_fields.empty()) {
+                out << line;
+            } else {
+                const bool main_row = !has_main_row;
+                if (main_row) {
+                    if (semantic_fields[0].empty()) {
+                        throw std::runtime_error(
+                            "Signal aspect source block has no main row");
+                    }
+                    has_main_row = true;
+                } else if (!semantic_fields[0].empty()) {
+                    throw std::runtime_error(
+                        "Signal aspect source block contains multiple main rows");
+                }
+
+                if (delete_glare && !main_row) {
+                    structure_index += semantic_fields.size() - 1;
+                    emit_line = false;
+                } else {
+                    for (size_t field = 0; field < source.fields.size(); ++field) {
+                        if (field) out << ",";
+                        const bool semantic_field =
+                            field < semantic_fields.size();
+                        std::string field_name;
+                        bool required = false;
+                        if (main_row && field == 0) {
+                            field_name = "signalAspectKey";
+                            required = true;
+                        } else if (field > 0 && semantic_field) {
+                            field_name = signal_aspect_structure_key_field_name(
+                                structure_index++);
+                        }
+                        const auto edited = field_name.empty()
+                            ? change.field_changes.end()
+                            : change.field_changes.find(field_name);
+                        if (edited == change.field_changes.end()) {
+                            out << source.fields[field];
+                            continue;
+                        }
+                        const std::string normalized =
+                            normalized_signal_aspect_edit_value(
+                                edited->second, field_name, required);
+                        const std::string source_value =
+                            normalized_signal_aspect_edit_value(
+                                semantic_fields[field], field_name, required);
+                        if (normalized == source_value) {
+                            out << source.fields[field];
+                        } else {
+                            const std::string_view raw_field =
+                                source.fields[field];
+                            size_t value_begin = 0;
+                            while (value_begin < raw_field.size() &&
+                                   (raw_field[value_begin] == ' ' ||
+                                    raw_field[value_begin] == '\t')) {
+                                ++value_begin;
+                            }
+                            size_t value_end = raw_field.size();
+                            while (value_end > value_begin &&
+                                   (raw_field[value_end - 1] == ' ' ||
+                                    raw_field[value_end - 1] == '\t')) {
+                                --value_end;
+                            }
+                            out << raw_field.substr(0, value_begin)
+                                << csv_field(normalized)
+                                << raw_field.substr(value_end);
+                        }
+                    }
+                    out << source.comment_suffix;
+                }
+            }
+        }
+
+        const size_t line_after =
+            newline == std::string::npos ? source_text.size() : newline + 1;
+        if (emit_line && content_end < line_after) {
+            out << source_text.substr(content_end, line_after - content_end);
+        }
+        if (newline == std::string::npos) break;
+        pos = newline + 1;
+    }
+
+    if (!has_main_row ||
+        structure_index != source_values.structure_keys.size()) {
+        throw std::runtime_error(
+            "Signal aspect source block field mapping is inconsistent");
+    }
+    for (const auto& field : change.field_changes) {
+        if (field.first == "signalAspectKey" ||
+            field.first == "deleteGlare") {
+            continue;
+        }
+        size_t key_index = 0;
+        if (!parse_signal_aspect_structure_key_field_name(
+                field.first, key_index)) {
+            throw std::runtime_error(
+                "unsupported Signal aspect edit field: " + field.first);
+        }
+        if (key_index >= structure_index) {
+            throw std::runtime_error(
+                "Signal aspect edit cannot add a structure-key column: " +
+                field.first);
+        }
+    }
+    return out.str();
+}
+
 std::string build_station_put_statement(const MapEditChange& change,
                                         const ParsedStatement& statement,
                                         const StationPut& row) {
@@ -1008,6 +1156,9 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     for (const auto& row : ctx.station_list) {
         count_statement_ref(row.edit_ref, statement_index, count);
     }
+    for (const auto& row : ctx.signal_aspects) {
+        count_statement_ref(row.edit_ref, statement_index, count);
+    }
     for (const auto& row : ctx.structure_models) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.sound_list) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.structure_puts) count_statement_ref(row.edit_ref, statement_index, count);
@@ -1106,6 +1257,14 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
             }
         }
     }
+    for (size_t i = 0; i < ctx.signal_aspects.size(); ++i) {
+        const SignalAspect& row = ctx.signal_aspects[i];
+        if (match_edit_ref(
+                ctx, row, "signal.aspect", i, edit_id, target)) {
+            target.signal_aspect = &row;
+            return target;
+        }
+    }
     for (size_t i = 0; i < ctx.signal_puts.size(); ++i) {
         const SignalPut& row = ctx.signal_puts[i];
         if (match_edit_ref(ctx, row, "signal.put", i, edit_id, target)) {
@@ -1200,6 +1359,7 @@ std::string build_replacement_statement(const MapEditChange& change,
                                         const EditableTarget& target) {
     const bool editable_csv_list =
         target.row_kind == "station.list" ||
+        target.row_kind == "signal.aspect" ||
         target.row_kind == "structure.model" ||
         target.row_kind == "sound.list" ||
         target.row_kind == "sound3D.list";
@@ -1225,6 +1385,9 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "station.list" && target.station_list) {
         return build_station_list_statement(change, statement, *target.station_list);
+    }
+    if (target.row_kind == "signal.aspect" && target.signal_aspect) {
+        return build_signal_aspect_statement(change, statement);
     }
     if (target.row_kind == "signal.put" && target.signal_put) {
         return build_signal_put_statement(change, statement, *target.signal_put);
@@ -2498,6 +2661,7 @@ void validate_edit_report(MapContext& baseline,
         for (const auto& entry : ordered_station_list_entries(*candidate)) {
             collect_candidate_row(*entry, "station.list");
         }
+        collect_candidate_rows(candidate->signal_aspects, "signal.aspect");
         collect_candidate_rows(candidate->signal_puts, "signal.put");
         collect_candidate_rows(candidate->repeaters, "repeater");
     } catch (const std::exception& e) {
@@ -3886,6 +4050,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "structure.model", ctx.structure_models);
     append_committed_rows(ctx, report, "structure.put", ctx.structure_puts);
     append_committed_rows(ctx, report, "structure.between", ctx.structure_betweens);
+    append_committed_rows(ctx, report, "signal.aspect", ctx.signal_aspects);
     append_committed_rows(ctx, report, "signal.put", ctx.signal_puts);
     append_committed_rows(ctx, report, "repeater", ctx.repeaters);
     size_t sound_index = 0;

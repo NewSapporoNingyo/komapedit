@@ -662,6 +662,61 @@ void put_map_common_event_cells(TableRow& output, const KvMapSnapshot& snapshot,
     output.cells["order"] = std::to_string(input.order);
 }
 
+std::vector<TableRow> hydrate_signal_aspect_rows(
+    const KvMapSnapshot& snapshot) {
+    std::vector<TableRow> rows;
+    rows.reserve(static_cast<size_t>(
+        snapshot.signal_aspect_count));
+    for (std::uint64_t i = 0;
+         i < snapshot.signal_aspect_count; ++i) {
+        const KvSignalAspectRow& input =
+            snapshot.signal_aspects[i];
+        TableRow row;
+        row.cells["signalAspectKey"] =
+            map_snapshot_string(
+                snapshot, input.signal_aspect_key);
+        if (map_snapshot_span_valid(
+                input.structure_keys,
+                snapshot.string_ref_count) &&
+            (input.structure_keys.count == 0 ||
+             snapshot.string_refs)) {
+            for (std::uint64_t j = 0;
+                 j < input.structure_keys.count; ++j) {
+                row.cells[
+                    "structureKey" +
+                    std::to_string(j + 1)] =
+                    map_snapshot_string(
+                        snapshot,
+                        snapshot.string_refs[
+                            input.structure_keys.offset + j]);
+            }
+        }
+        row.cells["_structureKeyCount"] =
+            std::to_string(input.structure_keys.count);
+        const size_t total_structure_key_count =
+            static_cast<size_t>(
+                input.structure_keys.count);
+        const size_t main_structure_key_count =
+            static_cast<size_t>(input.metadata.reserved);
+        if (main_structure_key_count >
+            total_structure_key_count) {
+            throw std::runtime_error(
+                "Signal aspect snapshot has an invalid main-row structure-key count");
+        }
+        const size_t glare_structure_key_count =
+            total_structure_key_count -
+            main_structure_key_count;
+        row.cells["_signalMainStructureKeyCount"] =
+            std::to_string(main_structure_key_count);
+        row.cells["_signalGlareStructureKeyCount"] =
+            std::to_string(glare_structure_key_count);
+        apply_map_row_metadata(
+            row, snapshot, input.metadata);
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
 MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                               const std::string& path,
                               double snapshot_call_seconds) {
@@ -954,22 +1009,8 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.repeaters.push_back(std::move(row));
     }
-    model.signal_aspects.reserve(static_cast<size_t>(snapshot.signal_aspect_count));
-    for (std::uint64_t i = 0; i < snapshot.signal_aspect_count; ++i) {
-        const KvSignalAspectRow& input = snapshot.signal_aspects[i];
-        TableRow row;
-        row.cells["signalAspectKey"] = map_snapshot_string(snapshot, input.signal_aspect_key);
-        if (map_snapshot_span_valid(input.structure_keys, snapshot.string_ref_count) &&
-            (input.structure_keys.count == 0 || snapshot.string_refs)) {
-            for (std::uint64_t j = 0; j < input.structure_keys.count; ++j) {
-                row.cells["structureKey" + std::to_string(j + 1)] = map_snapshot_string(
-                    snapshot, snapshot.string_refs[input.structure_keys.offset + j]);
-            }
-        }
-        row.cells["_structureKeyCount"] = std::to_string(input.structure_keys.count);
-        apply_map_row_metadata(row, snapshot, input.metadata);
-        model.signal_aspects.push_back(std::move(row));
-    }
+    model.signal_aspects =
+        hydrate_signal_aspect_rows(snapshot);
     model.signals.reserve(static_cast<size_t>(snapshot.signal_put_count));
     for (std::uint64_t i = 0; i < snapshot.signal_put_count; ++i) {
         const KvSignalPutRow& input = snapshot.signal_puts[i];
@@ -1599,7 +1640,8 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     merge_table_row_edit_metadata(current.other_train_stops, edit_model.other_train_stops);
     merge_table_row_edit_metadata(current.other_train_structure_keys, edit_model.other_train_structure_keys);
     merge_table_row_edit_metadata(current.other_train_sound_3d_keys, edit_model.other_train_sound_3d_keys);
-    merge_table_row_edit_metadata(current.signal_aspects, edit_model.signal_aspects);
+    merge_table_row_edit_metadata(
+        current.signal_aspects, edit_model.signal_aspects);
     merge_table_row_edit_metadata(current.signals, edit_model.signals);
     merge_table_row_edit_metadata(current.beacons, edit_model.beacons);
     merge_table_row_edit_metadata(current.pretrains, edit_model.pretrains);
@@ -1832,6 +1874,7 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "sound3D.list") return &model.sound_3d_list;
     if (row_kind == "repeater") return &model.repeaters;
     if (row_kind == "signal.put") return &model.signals;
+    if (row_kind == "signal.aspect") return &model.signal_aspects;
     return nullptr;
 }
 
@@ -2007,7 +2050,9 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change,
     if (change.operation != "update" || !row_found) return false;
     TableRow& row = (*rows)[row_index];
     for (const auto& field : change.field_changes) {
-        set_inspector_row_field_value(row, change.row_kind, field.first, field.second, model_.distance_origin);
+        set_inspector_row_field_value(
+            row, change.row_kind, field.first, field.second,
+            model_.distance_origin);
     }
     if ((change.row_kind == "structure.model" ||
          change.row_kind == "sound.list" ||
@@ -3196,17 +3241,21 @@ void App::apply_inspector_changes() {
     }
 }
 
-bool editable_list_row_has_draft(const EditableListDraftRow& row,
-                                 size_t field_count) {
-    bool values_changed = false;
-    for (size_t field = 0; field < field_count; ++field) {
-        if (row.values[field] != row.original_values[field]) {
-            values_changed = true;
-            break;
-        }
+bool editable_list_row_has_draft(const EditableListDraftRow& row) {
+    return row.deleted || row.secondary_row_deleted ||
+        row.payload_edit_id != row.target_edit_id ||
+        row.values != row.original_values;
+}
+
+std::string editable_list_field_name(const EditableListSpec& spec,
+                                     size_t field_index) {
+    if (spec.numbered_structure_key_fields) {
+        return field_index == 0
+            ? "signalAspectKey"
+            : "structureKey" + std::to_string(field_index);
     }
-    return row.deleted || row.payload_edit_id != row.target_edit_id ||
-        values_changed;
+    if (!spec.field_names || field_index >= spec.field_count) return {};
+    return spec.field_names[field_index];
 }
 
 std::vector<size_t> editable_list_visible_row_indices(
@@ -3244,20 +3293,29 @@ bool move_editable_list_draft_row(
     std::swap(left.payload_raw_statement, right.payload_raw_statement);
     std::swap(left.values, right.values);
     std::swap(left.resolved_path, right.resolved_path);
+    std::swap(left.primary_structure_field_count,
+              right.primary_structure_field_count);
+    std::swap(left.secondary_structure_field_count,
+              right.secondary_structure_field_count);
+    std::swap(left.secondary_row_deleted,
+              right.secondary_row_deleted);
     return true;
 }
 
 bool clear_editable_list_draft_cell(
     std::vector<EditableListDraftRow>& rows,
     const std::vector<size_t>& visible_rows,
-    int visible_row, int column, size_t field_count) {
+    int visible_row, int column) {
     if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size()) ||
-        column < 0 || static_cast<size_t>(column) >= field_count) {
+        column < 0) {
         return false;
     }
     EditableListDraftRow& row =
         rows[visible_rows[static_cast<size_t>(visible_row)]];
-    if (row.deleted) return false;
+    if (row.deleted ||
+        static_cast<size_t>(column) >= row.values.size()) {
+        return false;
+    }
     row.values[static_cast<size_t>(column)].clear();
     return true;
 }
@@ -3274,6 +3332,39 @@ bool delete_editable_list_draft_row(
     return true;
 }
 
+void rebuild_editable_list_display_rows(
+    EditableListEditState& edit,
+    const EditableListSpec& spec) {
+    edit.display_rows.clear();
+    if (!spec.numbered_structure_key_fields) return;
+    edit.display_rows.reserve(
+        edit.visible_rows.size() * 2);
+    for (size_t visible_row = 0;
+         visible_row < edit.visible_rows.size();
+         ++visible_row) {
+        const size_t draft_index =
+            edit.visible_rows[visible_row];
+        if (draft_index >= edit.rows.size()) continue;
+        const EditableListDraftRow& row =
+            edit.rows[draft_index];
+        const std::string sequence =
+            std::to_string(visible_row + 1);
+        edit.display_rows.push_back(
+            EditableListDisplayRow{
+                visible_row, 1,
+                row.primary_structure_field_count,
+                sequence, false});
+        if (row.secondary_structure_field_count != 0) {
+            edit.display_rows.push_back(
+                EditableListDisplayRow{
+                    visible_row,
+                    1 + row.primary_structure_field_count,
+                    row.secondary_structure_field_count,
+                    sequence + "F", true});
+        }
+    }
+}
+
 bool build_editable_list_pending_changes(
     const EditableListSpec& spec,
     const std::vector<EditableListDraftRow>& rows,
@@ -3282,7 +3373,7 @@ bool build_editable_list_pending_changes(
     std::string& error_message) {
     candidate_changes = existing_changes;
     for (const EditableListDraftRow& row : rows) {
-        if (!editable_list_row_has_draft(row, spec.field_count)) continue;
+        if (!editable_list_row_has_draft(row)) continue;
         if (row.target_edit_id.empty()) {
             error_message = std::string(spec.row_kind) +
                 " draft has no target edit ID";
@@ -3329,17 +3420,40 @@ bool build_editable_list_pending_changes(
                     return false;
                 }
                 change.field_changes.clear();
-                for (size_t field = 0; field < spec.field_count; ++field) {
-                    change.field_changes[spec.field_names[field]] = row.values[field];
+                for (size_t field = 0; field < row.values.size(); ++field) {
+                    const std::string field_name =
+                        editable_list_field_name(spec, field);
+                    if (field_name.empty()) {
+                        error_message = std::string(spec.row_kind) +
+                            " draft has no field name for column " +
+                            std::to_string(field);
+                        return false;
+                    }
+                    change.field_changes[field_name] = row.values[field];
                 }
                 change.replacement_statement = row.payload_raw_statement;
             } else {
-                for (size_t field = 0; field < spec.field_count; ++field) {
+                if (row.values.size() != row.original_values.size()) {
+                    error_message = std::string(spec.row_kind) +
+                        " draft field count changed unexpectedly";
+                    return false;
+                }
+                for (size_t field = 0; field < row.values.size(); ++field) {
                     if (row.values[field] != row.original_values[field]) {
-                        change.field_changes[spec.field_names[field]] =
-                            row.values[field];
+                        const std::string field_name =
+                            editable_list_field_name(spec, field);
+                        if (field_name.empty()) {
+                            error_message = std::string(spec.row_kind) +
+                                " draft has no field name for column " +
+                                std::to_string(field);
+                            return false;
+                        }
+                        change.field_changes[field_name] = row.values[field];
                     }
                 }
+            }
+            if (row.secondary_row_deleted) {
+                change.field_changes["deleteGlare"] = "1";
             }
         }
         candidate_changes[row.target_edit_id] = std::move(change);
@@ -3349,8 +3463,7 @@ bool build_editable_list_pending_changes(
 }
 
 bool station_definition_row_has_draft(const StationDefinitionDraftRow& row) {
-    return editable_list_row_has_draft(
-        row, k_station_definition_edit_spec.field_count);
+    return editable_list_row_has_draft(row);
 }
 
 std::vector<size_t> station_definition_visible_row_indices(
@@ -3371,8 +3484,7 @@ bool clear_station_definition_draft_cell(
     const std::vector<size_t>& visible_rows,
     int visible_row, int column) {
     return clear_editable_list_draft_cell(
-        rows, visible_rows, visible_row, column,
-        k_station_definition_edit_spec.field_count);
+        rows, visible_rows, visible_row, column);
 }
 
 bool delete_station_definition_draft_row(
@@ -3403,6 +3515,8 @@ bool App::has_unapplied_editable_list_drafts() const {
         has_editable_list_drafts(
                structure_model_edit_, k_structure_model_edit_spec) ||
         has_editable_list_drafts(
+               signal_aspect_edit_, k_signal_aspect_edit_spec) ||
+        has_editable_list_drafts(
                sound_list_edit_, k_sound_list_edit_spec) ||
         has_editable_list_drafts(
                sound_3d_list_edit_, k_sound_3d_list_edit_spec);
@@ -3410,14 +3524,15 @@ bool App::has_unapplied_editable_list_drafts() const {
 
 bool App::has_editable_list_drafts(const EditableListEditState& edit,
                                    const EditableListSpec& spec) const {
+    (void)spec;
     if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
         edit.edit_buffer != edit.editing_baseline) {
         return true;
     }
     return edit.rows_initialized &&
         std::any_of(edit.rows.begin(), edit.rows.end(),
-                    [&](const EditableListDraftRow& row) {
-                        return editable_list_row_has_draft(row, spec.field_count);
+                    [](const EditableListDraftRow& row) {
+                        return editable_list_row_has_draft(row);
                     });
 }
 
@@ -3430,6 +3545,8 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
         cached_rows = &table_cache_.station_definition_rows;
     } else if (std::string_view(spec.row_kind) == "structure.model") {
         cached_rows = &table_cache_.structure_model_rows;
+    } else if (std::string_view(spec.row_kind) == "signal.aspect") {
+        cached_rows = &table_cache_.signal_aspect_rows;
     } else if (std::string_view(spec.row_kind) == "sound.list") {
         cached_rows = &table_cache_.sound_list_rows;
     } else if (std::string_view(spec.row_kind) == "sound3D.list") {
@@ -3467,7 +3584,11 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
         row.payload_line = metadata->source.line;
         row.payload_column = metadata->source.column;
         row.payload_raw_statement = metadata->raw_statement;
-        for (size_t field = 0; field < spec.field_count; ++field) {
+        const size_t field_count = cached.editable_field_count != 0
+            ? cached.editable_field_count
+            : spec.field_count;
+        row.values.resize(field_count);
+        for (size_t field = 0; field < field_count; ++field) {
             const size_t cached_column = spec.cache_column_offset + field;
             if (cached_column < cached.cells.size()) {
                 row.values[field] = cached.cells[cached_column];
@@ -3475,10 +3596,15 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
         }
         row.original_values = row.values;
         row.resolved_path = cached.open_path;
+        row.primary_structure_field_count =
+            cached.primary_structure_field_count;
+        row.secondary_structure_field_count =
+            cached.secondary_structure_field_count;
         rows.push_back(std::move(row));
     }
     edit.rows = std::move(rows);
     edit.visible_rows = editable_list_visible_row_indices(edit.rows);
+    rebuild_editable_list_display_rows(edit, spec);
     edit.rows_initialized = true;
     return true;
 }
@@ -3495,19 +3621,22 @@ void App::reset_editable_list_find_results(const EditableListSpec& spec) {
         reset_sound_file_find_results(false);
     } else if (std::string_view(spec.row_kind) == "sound3D.list") {
         reset_sound_file_find_results(true);
+    } else if (std::string_view(spec.row_kind) == "signal.aspect") {
+        reset_signal_aspect_find_results();
     }
 }
 
 void App::commit_editable_list_active_edit(EditableListEditState& edit,
                                            const EditableListSpec& spec) {
     if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
-        static_cast<size_t>(edit.editing_column) < spec.field_count &&
         initialize_editable_list_draft_rows(edit, spec)) {
         const auto row = std::find_if(
             edit.rows.begin(), edit.rows.end(), [&](const EditableListDraftRow& candidate) {
                 return candidate.target_edit_id == edit.editing_edit_id;
             });
-        if (row != edit.rows.end() && !row->deleted) {
+        if (row != edit.rows.end() && !row->deleted &&
+            static_cast<size_t>(edit.editing_column) <
+                row->values.size()) {
             row->values[static_cast<size_t>(edit.editing_column)] = edit.edit_buffer;
             if (edit.editing_column == spec.path_field) {
                 row->resolved_path = resolve_list_asset_path(
@@ -3534,6 +3663,7 @@ void App::discard_station_definition_drafts() {
 void App::discard_all_editable_list_drafts() {
     station_definition_edit_ = EditableListEditState{};
     structure_model_edit_ = EditableListEditState{};
+    signal_aspect_edit_ = EditableListEditState{};
     sound_list_edit_ = EditableListEditState{};
     sound_3d_list_edit_ = EditableListEditState{};
 }
@@ -3546,6 +3676,7 @@ bool App::move_editable_list_row(EditableListEditState& edit,
     if (!move_editable_list_draft_row(
             edit.rows, edit.visible_rows, visible_row, direction)) return false;
     edit.selected_row = visible_row + direction;
+    rebuild_editable_list_display_rows(edit, spec);
     return true;
 }
 
@@ -3555,8 +3686,7 @@ bool App::clear_editable_list_cell(EditableListEditState& edit,
     commit_editable_list_active_edit(edit, spec);
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
     if (!clear_editable_list_draft_cell(
-            edit.rows, edit.visible_rows, visible_row, column,
-            spec.field_count)) return false;
+            edit.rows, edit.visible_rows, visible_row, column)) return false;
     EditableListDraftRow& row =
         edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]];
     if (column == spec.path_field) row.resolved_path.clear();
@@ -3615,6 +3745,31 @@ bool App::delete_editable_list_row(EditableListEditState& edit,
     return true;
 }
 
+bool App::delete_editable_list_secondary_row(
+    EditableListEditState& edit,
+    const EditableListSpec& spec,
+    int visible_row) {
+    commit_editable_list_active_edit(edit, spec);
+    if (!initialize_editable_list_draft_rows(edit, spec) ||
+        visible_row < 0 ||
+        visible_row >=
+            static_cast<int>(edit.visible_rows.size())) {
+        return false;
+    }
+    EditableListDraftRow& row =
+        edit.rows[
+            edit.visible_rows[
+                static_cast<size_t>(visible_row)]];
+    if (row.deleted || row.secondary_row_deleted ||
+        row.secondary_structure_field_count == 0) {
+        return false;
+    }
+    row.secondary_row_deleted = true;
+    edit.selected_row = visible_row;
+    edit.selected_secondary_row = true;
+    return true;
+}
+
 void App::rebind_other_editable_list_drafts(
     const EditableListEditState* applied) {
     ensure_table_cache();
@@ -3623,11 +3778,13 @@ void App::rebind_other_editable_list_drafts(
         const EditableListSpec* spec;
         const std::vector<CachedTableRow>* cached_rows;
     };
-    const std::array<Binding, 4> bindings = {{
+    const std::array<Binding, 5> bindings = {{
         {&station_definition_edit_, &k_station_definition_edit_spec,
          &table_cache_.station_definition_rows},
         {&structure_model_edit_, &k_structure_model_edit_spec,
          &table_cache_.structure_model_rows},
+        {&signal_aspect_edit_, &k_signal_aspect_edit_spec,
+         &table_cache_.signal_aspect_rows},
         {&sound_list_edit_, &k_sound_list_edit_spec,
          &table_cache_.sound_list_rows},
         {&sound_3d_list_edit_, &k_sound_3d_list_edit_spec,
@@ -4030,9 +4187,10 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 9> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 10> k_committed_row_kinds = {
         "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
+        "signal.aspect",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -4279,6 +4437,39 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         return false;
     };
 
+    const bool signal_aspects_hydrated =
+        affected_row_kinds.find("signal.aspect") !=
+        affected_row_kinds.end();
+    if (signal_aspects_hydrated) {
+        KvMapSnapshot snapshot{};
+        if (!kv_get_map_snapshot(
+                handle_, KV_MAP_SNAPSHOT_VERSION,
+                &snapshot, sizeof(snapshot)) ||
+            snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
+            snapshot.structure_size < sizeof(KvMapSnapshot) ||
+            (snapshot.signal_aspect_count != 0 &&
+             !snapshot.signal_aspects)) {
+            const char* error = kv_get_last_error();
+            add_log(
+                "[error]gui_kme.cpp: failed to refresh Signal aspect "
+                "rows from the validated working copy" +
+                std::string(error && *error
+                    ? ": " + std::string(error)
+                    : std::string{}));
+            return rollback_local_preview();
+        }
+        model_.signal_aspects =
+            hydrate_signal_aspect_rows(snapshot);
+        for (auto original = original_edit_rows_.begin();
+             original != original_edit_rows_.end();) {
+            if (original->second.row_kind == "signal.aspect") {
+                original = original_edit_rows_.erase(original);
+            } else {
+                ++original;
+            }
+        }
+    }
+
     std::map<std::string, std::vector<std::string>> refresh_targets;
     auto note_refresh_target = [&](const std::string& row_kind, const std::string& edit_id,
                                    bool force_full_refresh) {
@@ -4290,9 +4481,16 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         if (!targets.empty() && targets.front().empty()) return;
         targets.push_back(edit_id);
     };
+    if (signal_aspects_hydrated) {
+        note_refresh_target("signal.aspect", std::string{}, true);
+    }
 
     for (const auto& kv : pending_edit_changes_) {
         if (changes.find(kv.first) != changes.end()) continue;
+        if (signal_aspects_hydrated &&
+            kv.second.row_kind == "signal.aspect") {
+            continue;
+        }
         if (!restore_local_preview_change(kv.first, kv.second.row_kind, false)) {
             add_log("[error]gui_kme.cpp: failed to restore local edit preview: " + kv.first);
             return rollback_local_preview();
@@ -4307,6 +4505,10 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     }
 
     for (const auto& kv : changes) {
+        if (signal_aspects_hydrated &&
+            kv.second.row_kind == "signal.aspect") {
+            continue;
+        }
         if (!apply_local_preview_change(kv.second, false)) {
             add_log("[error]gui_kme.cpp: failed to apply local edit preview: " + kv.first);
             return rollback_local_preview();

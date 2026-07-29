@@ -362,6 +362,47 @@ void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
     }
 }
 
+void write_signal_aspect_values(
+    SemanticWriter& out,
+    SignalAspectSourceValues values) {
+    values.signal_aspect_key =
+        normalized_signal_aspect_edit_value(
+            values.signal_aspect_key, "signalAspectKey", true);
+    field(out, "signalAspectKey", values.signal_aspect_key);
+    out.label("structureKeys");
+    out.signed_integer(
+        static_cast<std::int64_t>(values.structure_keys.size()));
+    for (size_t index = 0;
+         index < values.structure_keys.size(); ++index) {
+        const std::string field_name =
+            signal_aspect_structure_key_field_name(index);
+        out.string(normalized_signal_aspect_edit_value(
+            values.structure_keys[index], field_name, false));
+    }
+}
+
+void write_signal_aspect(SemanticWriter& out,
+                         const KvMapSnapshot& snapshot,
+                         const KvSignalAspectRow& row) {
+    SignalAspectSourceValues values;
+    values.signal_aspect_key = text(snapshot, row.signal_aspect_key);
+    if (!span_valid(row.structure_keys, snapshot.string_ref_count) ||
+        (row.structure_keys.count != 0 && !snapshot.string_refs)) {
+        throw std::runtime_error(
+            "typed snapshot Signal aspect structure-key span is out of bounds");
+    }
+    values.structure_keys.reserve(
+        static_cast<size_t>(row.structure_keys.count));
+    for (std::uint64_t index = 0;
+         index < row.structure_keys.count; ++index) {
+        values.structure_keys.push_back(text(
+            snapshot,
+            snapshot.string_refs[
+                row.structure_keys.offset + index]));
+    }
+    write_signal_aspect_values(out, std::move(values));
+}
+
 void write_signal_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
                       const KvSignalPutRow& row,
                       const MapEditChange* change = nullptr) {
@@ -454,6 +495,21 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
     } else if (target.row_kind == "sound.list" ||
                target.row_kind == "sound3D.list") {
         allowed = {"soundKey", "filePath", "bufferCount"};
+    } else if (target.row_kind == "signal.aspect") {
+        for (const auto& input : change.field_changes) {
+            if (input.first == "signalAspectKey" ||
+                input.first == "deleteGlare") {
+                continue;
+            }
+            size_t key_index = 0;
+            if (!parse_signal_aspect_structure_key_field_name(
+                    input.first, key_index)) {
+                throw std::runtime_error(
+                    "unsupported semantic edit field " + input.first +
+                    " for " + target.row_kind);
+            }
+        }
+        return;
     } else if (target.row_kind == "signal.put") {
         allowed = {"distance", "form", "signalAspectKey", "section", "trackKey",
                    "x", "y", "z", "rx", "ry", "rz", "tilt", "span"};
@@ -674,9 +730,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvSignalAspectRow& row = snapshot.signal_aspects[i];
         emit_element(output, full, snapshot, row.metadata, "signal.aspect", "signal.aspects",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "signalAspectKey",
-                  SemanticWriter::snapshot_text(snapshot, row.signal_aspect_key));
-            string_span(out, snapshot, "structureKeys", row.structure_keys);
+            write_signal_aspect(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.signal_put_count; ++i) {
@@ -912,6 +966,26 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("station.list target row is out of bounds");
         }
         write_station_list(out, snapshot, snapshot.station_list[target.row_index], &change);
+    } else if (target.row_kind == "signal.aspect") {
+        if (target.row_index >= snapshot.signal_aspect_count ||
+            !snapshot.signal_aspects ||
+            target.row_index >= ctx.signal_aspects.size()) {
+            throw std::runtime_error(
+                "signal.aspect target row is out of bounds");
+        }
+        const EditSourceRef ref =
+            ctx.signal_aspects[target.row_index].edit_ref;
+        if (!ref.valid() ||
+            ref.statement_index >= ctx.parsed_statements.size()) {
+            throw std::runtime_error(
+                "signal.aspect target has no source statement");
+        }
+        const std::string rebuilt_statement =
+            build_signal_aspect_statement(
+                change, ctx.parsed_statements[ref.statement_index]);
+        write_signal_aspect_values(
+            out, parse_signal_aspect_source_values(
+                     rebuilt_statement));
     } else if (target.row_kind == "signal.put") {
         if (target.row_index >= snapshot.signal_put_count || !snapshot.signal_puts) {
             throw std::runtime_error("signal.put target row is out of bounds");

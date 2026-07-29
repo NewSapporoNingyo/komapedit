@@ -230,6 +230,7 @@ typedef struct KvSectionRow {
 typedef struct KvSignalAspectRow {
     KvStringRef signal_aspect_key;
     KvSpan structure_keys;
+    /* metadata.reserved stores the main source row's structure-key count. */
     KvRowMetadata metadata;
 } KvSignalAspectRow;
 

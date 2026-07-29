@@ -830,16 +830,22 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
         app.model_.signal_aspects.push_back(make_row({
             {"signalAspectKey", "aspectA"},
             {"_structureKeyCount", "1"},
+            {"_signalMainStructureKeyCount", "1"},
+            {"_signalGlareStructureKeyCount", "0"},
             {"structureKey1", "structureOnlyKey"},
         }));
         app.model_.signal_aspects.push_back(make_row({
             {"signalAspectKey", "aspectB"},
             {"_structureKeyCount", "1"},
+            {"_signalMainStructureKeyCount", "1"},
+            {"_signalGlareStructureKeyCount", "0"},
             {"structureKey1", "modelB"},
         }));
         app.model_.signal_aspects.push_back(make_row({
             {"signalAspectKey", "unusedAspect"},
             {"_structureKeyCount", "1"},
+            {"_signalMainStructureKeyCount", "1"},
+            {"_signalGlareStructureKeyCount", "0"},
             {"structureKey1", "modelUnused"},
         }));
         app.model_.signals.push_back(make_row({
@@ -3528,11 +3534,12 @@ std::vector<StationDefinitionDraftRow> make_drafts(
         row.target_edit_id = source.edit_id;
         row.target_source_file = source.source_file;
         row.target_expected_source_hash = source.expected_source_hash;
-        row.original_values = source.values;
+        row.original_values.assign(
+            source.values.begin(), source.values.end());
         row.payload_edit_id = source.edit_id;
         row.payload_source_file = source.source_file;
         row.payload_raw_statement = source.raw_statement;
-        row.values = source.values;
+        row.values.assign(source.values.begin(), source.values.end());
         drafts.push_back(std::move(row));
     }
     return drafts;
