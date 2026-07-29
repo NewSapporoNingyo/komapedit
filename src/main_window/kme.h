@@ -1222,7 +1222,6 @@ struct EditableListEditState {
     bool rows_initialized = false;
     std::vector<EditableListDraftRow> rows;
     std::vector<size_t> visible_rows;
-    bool visible_rows_dirty = false;
 };
 
 using StationDefinitionDraftRow = EditableListDraftRow;
@@ -1800,6 +1799,9 @@ private:
     bool clear_editable_list_cell(EditableListEditState& edit,
                                   const EditableListSpec& spec,
                                   int visible_row, int column);
+    bool choose_editable_list_file(EditableListEditState& edit,
+                                   const EditableListSpec& spec,
+                                   int visible_row);
     bool delete_editable_list_row(EditableListEditState& edit,
                                   const EditableListSpec& spec,
                                   int visible_row);
@@ -2025,5 +2027,8 @@ private:
     void apply_background_alignment();
     std::string open_map_dialog();
     std::string open_image_dialog();
+    std::string open_editable_list_file_dialog(
+        const EditableListSpec& spec,
+        const std::string& initial_directory);
     std::string choose_folder_dialog();
 };

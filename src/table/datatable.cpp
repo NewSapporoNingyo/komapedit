@@ -336,6 +336,60 @@ std::string format_find_match_status(std::string format, size_t current, size_t 
     return format;
 }
 
+struct TableFindRowsView {
+    const std::vector<CachedTableRow>* cached_rows = nullptr;
+    const EditableListEditState* edit = nullptr;
+    const EditableListSpec* spec = nullptr;
+
+    size_t size() const {
+        return edit && edit->rows_initialized
+            ? edit->visible_rows.size()
+            : cached_rows->size();
+    }
+
+    bool searchable(size_t row_index) const {
+        if (!edit || !edit->rows_initialized) {
+            return row_index < cached_rows->size();
+        }
+        if (row_index >= edit->visible_rows.size()) return false;
+        const size_t draft_index = edit->visible_rows[row_index];
+        return draft_index < edit->rows.size() &&
+            !edit->rows[draft_index].deleted;
+    }
+
+    const std::string* cell(size_t row_index, size_t column) const {
+        if (!edit || !edit->rows_initialized) {
+            if (row_index >= cached_rows->size() ||
+                column >= (*cached_rows)[row_index].cells.size()) {
+                return nullptr;
+            }
+            return &(*cached_rows)[row_index].cells[column];
+        }
+        if (!spec || row_index >= edit->visible_rows.size() ||
+            column < spec->cache_column_offset) {
+            return nullptr;
+        }
+        const size_t field = column - spec->cache_column_offset;
+        const size_t draft_index = edit->visible_rows[row_index];
+        if (field >= spec->field_count || draft_index >= edit->rows.size()) {
+            return nullptr;
+        }
+        return &edit->rows[draft_index].values[field];
+    }
+};
+
+TableFindRowsView cached_table_find_rows(
+    const std::vector<CachedTableRow>& rows) {
+    return {&rows, nullptr, nullptr};
+}
+
+TableFindRowsView editable_table_find_rows(
+    const std::vector<CachedTableRow>& rows,
+    const EditableListEditState& edit,
+    const EditableListSpec& spec) {
+    return {&rows, &edit, &spec};
+}
+
 void reset_table_find_results(TableFindState& state) {
     state.committed.clear();
     state.matches.clear();
@@ -350,7 +404,7 @@ void reset_table_find_results(TableFindState& state) {
 }
 
 void run_table_find(TableFindState& state,
-                    const std::vector<CachedTableRow>& rows,
+                    const TableFindRowsView& rows,
                     std::initializer_list<size_t> search_columns) {
     state.committed = state.query;
     state.matches.clear();
@@ -366,11 +420,12 @@ void run_table_find(TableFindState& state,
     if (blank_ascii(state.committed)) return;
 
     for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
-        const CachedTableRow& row = rows[row_index];
+        if (!rows.searchable(row_index)) continue;
         bool matched = false;
         for (size_t column : search_columns) {
-            if (column < row.cells.size() &&
-                matches_find_query(row.cells[column], state.committed, state.exact)) {
+            const std::string* cell = rows.cell(row_index, column);
+            if (cell &&
+                matches_find_query(*cell, state.committed, state.exact)) {
                 matched = true;
                 break;
             }
@@ -427,7 +482,7 @@ std::string table_find_status_text(const TableFindState& state,
 
 template <typename NoteUsedKeysFn, typename UndefinedKeyFn>
 void run_unused_key_search(TableFindState& state,
-                           const std::vector<CachedTableRow>& definition_rows,
+                           const TableFindRowsView& definition_rows,
                            size_t definition_key_column,
                            NoteUsedKeysFn note_used_keys,
                            UndefinedKeyFn on_undefined_key) {
@@ -440,17 +495,18 @@ void run_unused_key_search(TableFindState& state,
     state.has_run = false;
     state.unused_row_matches.assign(definition_rows.size(), 0);
     state.unused_count = 0;
-    state.unused_total = definition_rows.size();
+    state.unused_total = 0;
     state.unused_has_run = true;
 
     std::unordered_map<std::string, std::vector<size_t>> rows_by_key;
     rows_by_key.reserve(definition_rows.size() * 2 + 1);
     for (size_t row_index = 0; row_index < definition_rows.size(); ++row_index) {
-        const CachedTableRow& row = definition_rows[row_index];
-        if (definition_key_column >= row.cells.size()) continue;
-        const std::string& key = row.cells[definition_key_column];
-        if (blank_ascii(key)) continue;
-        rows_by_key[ascii_case_key(key)].push_back(row_index);
+        if (!definition_rows.searchable(row_index)) continue;
+        ++state.unused_total;
+        const std::string* key =
+            definition_rows.cell(row_index, definition_key_column);
+        if (!key || blank_ascii(*key)) continue;
+        rows_by_key[ascii_case_key(*key)].push_back(row_index);
     }
 
     std::vector<unsigned char> used_rows(definition_rows.size(), 0);
@@ -472,6 +528,7 @@ void run_unused_key_search(TableFindState& state,
     note_used_keys(note_key);
 
     for (size_t row_index = 0; row_index < definition_rows.size(); ++row_index) {
+        if (!definition_rows.searchable(row_index)) continue;
         if (used_rows[row_index]) continue;
         state.unused_row_matches[row_index] = 1;
         if (state.scroll_row < 0) state.scroll_row = static_cast<int>(row_index);
@@ -1835,20 +1892,30 @@ void App::reset_structure_model_find_results() {
 }
 
 void App::run_structure_model_find() {
+    commit_editable_list_active_edit(
+        structure_model_edit_, k_structure_model_edit_spec);
     ensure_table_cache();
     run_table_find(structure_model_find_,
-                   table_cache_.structure_model_rows,
+                   editable_table_find_rows(
+                       table_cache_.structure_model_rows,
+                       structure_model_edit_,
+                       k_structure_model_edit_spec),
                    {static_cast<size_t>(k_structure_model_key_column),
                     static_cast<size_t>(k_structure_model_file_path_column)});
 }
 
 void App::run_unused_structure_model_search() {
+    commit_editable_list_active_edit(
+        structure_model_edit_, k_structure_model_edit_spec);
     ensure_table_cache();
     add_log("[INFO]datatable.cpp: Searching unused models...");
 
     run_unused_key_search(
         structure_model_find_,
-        table_cache_.structure_model_rows,
+        editable_table_find_rows(
+            table_cache_.structure_model_rows,
+            structure_model_edit_,
+            k_structure_model_edit_spec),
         static_cast<size_t>(k_structure_model_key_column),
         [this](auto& note_structure_key) {
             auto note_structure_rows = [&](const std::vector<CachedTableRow>& rows) {
@@ -1882,7 +1949,8 @@ void App::run_unused_structure_model_search() {
             }
         },
         [this](const std::string& key) {
-            add_log("[WARN]datatable.cpp: Found undefined structureKey:\"" + key + "\"");
+            add_log("[WARN]datatable.cpp: Found undefined structureKey:\"" +
+                    key + "\"");
         });
 
     if (structure_model_find_.unused_count == 0) {
@@ -1920,7 +1988,7 @@ void App::reset_signal_aspect_find_results() {
 void App::run_signal_aspect_find() {
     ensure_table_cache();
     run_table_find(signal_aspect_find_,
-                   table_cache_.signal_aspect_rows,
+                   cached_table_find_rows(table_cache_.signal_aspect_rows),
                    {static_cast<size_t>(k_signal_aspect_key_column)});
 }
 
@@ -1930,7 +1998,7 @@ void App::run_unused_signal_aspect_search() {
 
     run_unused_key_search(
         signal_aspect_find_,
-        table_cache_.signal_aspect_rows,
+        cached_table_find_rows(table_cache_.signal_aspect_rows),
         static_cast<size_t>(k_signal_aspect_key_column),
         [this](auto& note_signal_aspect_key) {
             for (const CachedTableRow& row : table_cache_.signal_rows) {
@@ -1978,6 +2046,11 @@ void App::reset_sound_file_find_results(bool is_3d) {
 }
 
 void App::run_sound_file_find(bool is_3d) {
+    EditableListEditState& edit =
+        is_3d ? sound_3d_list_edit_ : sound_list_edit_;
+    const EditableListSpec& spec =
+        is_3d ? k_sound_3d_list_edit_spec : k_sound_list_edit_spec;
+    commit_editable_list_active_edit(edit, spec);
     ensure_table_cache();
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
     const std::vector<CachedTableRow>& rows = is_3d
@@ -1985,12 +2058,17 @@ void App::run_sound_file_find(bool is_3d) {
         : table_cache_.sound_list_rows;
 
     run_table_find(state,
-                   rows,
+                   editable_table_find_rows(rows, edit, spec),
                    {static_cast<size_t>(k_sound_list_key_column),
                     static_cast<size_t>(k_sound_list_file_path_column)});
 }
 
 void App::run_unused_sound_file_search(bool is_3d) {
+    EditableListEditState& edit =
+        is_3d ? sound_3d_list_edit_ : sound_list_edit_;
+    const EditableListSpec& spec =
+        is_3d ? k_sound_3d_list_edit_spec : k_sound_list_edit_spec;
+    commit_editable_list_active_edit(edit, spec);
     ensure_table_cache();
     add_log(is_3d
         ? "[INFO]datatable.cpp: Searching unused 3D sounds..."
@@ -2006,7 +2084,7 @@ void App::run_unused_sound_file_search(bool is_3d) {
 
     run_unused_key_search(
         state,
-        file_rows,
+        editable_table_find_rows(file_rows, edit, spec),
         static_cast<size_t>(k_sound_list_key_column),
         [&](auto& note_sound_key) {
             for (const CachedTableRow& row : usage_rows) {
@@ -2130,10 +2208,6 @@ void App::render_editable_list_table(
     float path_column_width,
     float last_column_width,
     TableFindState* find_state) {
-    if (edit.rows_initialized && edit.visible_rows_dirty) {
-        edit.visible_rows = editable_list_visible_row_indices(edit.rows);
-        edit.visible_rows_dirty = false;
-    }
     const int row_count = edit.rows_initialized
         ? static_cast<int>(edit.visible_rows.size())
         : static_cast<int>(cached_rows.size());
@@ -2196,6 +2270,10 @@ void App::render_editable_list_table(
         EditableListDraftRow* draft = draft_at(visible_row);
         return draft ? draft->target_edit_id : cached_at(visible_row)->edit_id;
     };
+    const auto row_deleted_at = [&](int visible_row) {
+        EditableListDraftRow* draft = draft_at(visible_row);
+        return draft && draft->deleted;
+    };
 
     ImGuiListClipper clipper;
     clipper.Begin(row_count);
@@ -2211,7 +2289,9 @@ void App::render_editable_list_table(
                 draft ? draft->target_edit_id : cached->edit_id;
             const std::string& resolved_path =
                 draft ? draft->resolved_path : cached->open_path;
-            const bool row_editable = can_edit && !target_edit_id.empty();
+            const bool draft_deleted = draft && draft->deleted;
+            const bool row_editable =
+                can_edit && !draft_deleted && !target_edit_id.empty();
             const bool is_preview_model =
                 is_structure && model_preview_canvas_ &&
                 model_preview_canvas_->has_model() &&
@@ -2219,29 +2299,29 @@ void App::render_editable_list_table(
             const ImU32 text_color = ImGui::GetColorU32(
                 is_preview_model ? preview_text_color : ImGui::GetStyleColorVec4(ImGuiCol_Text));
             const bool is_find_match =
-                !draft && find_state &&
+                find_state &&
                 static_cast<size_t>(row_index) < find_state->row_matches.size() &&
                 find_state->row_matches[static_cast<size_t>(row_index)] != 0;
             const bool is_unused =
-                !draft && find_state &&
+                find_state &&
                 static_cast<size_t>(row_index) < find_state->unused_row_matches.size() &&
                 find_state->unused_row_matches[static_cast<size_t>(row_index)] != 0;
 
             ImGui::TableNextRow();
-            if (row_is_pending_delete(target_edit_id)) {
+            if (draft_deleted || row_is_pending_delete(target_edit_id)) {
                 ImGui::TableSetBgColor(
                     ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
-            } else if (row_has_pending_edit(target_edit_id) ||
-                       (draft && editable_list_row_has_draft(
-                           *draft, spec.field_count))) {
-                ImGui::TableSetBgColor(
-                    ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
             } else if (is_unused) {
                 ImGui::TableSetBgColor(
                     ImGuiTableBgTarget_RowBg0, k_unused_structure_model_row_color);
             } else if (is_find_match) {
                 ImGui::TableSetBgColor(
                     ImGuiTableBgTarget_RowBg0, k_find_match_row_color);
+            } else if (row_has_pending_edit(target_edit_id) ||
+                       (draft && editable_list_row_has_draft(
+                           *draft, spec.field_count))) {
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
             }
             if (row_index == scroll_target_row && find_state) {
                 ImGui::SetScrollHereY(0.0f);
@@ -2283,32 +2363,39 @@ void App::render_editable_list_table(
                             ImGuiPopupFlags_MouseButtonRight)) {
                         return;
                     }
-                    bool has_read_only_action = false;
+                    bool has_top_action = false;
                     if (is_structure) {
                         ImGui::BeginDisabled(blank_ascii(resolved_path));
                         if (ImGui::MenuItem(tr("menu.preview_model").c_str())) {
                             preview_structure_model(resolved_path);
                         }
                         ImGui::EndDisabled();
-                        has_read_only_action = true;
+                        has_top_action = true;
                     }
                     if (column == path_column) {
+                        ImGui::BeginDisabled(!row_editable);
+                        if (ImGui::MenuItem(tr("menu.select_file").c_str())) {
+                            choose_editable_list_file(edit, spec, row_index);
+                        }
+                        ImGui::EndDisabled();
                         ImGui::BeginDisabled(blank_ascii(resolved_path));
                         if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
                             open_parent_directory_in_explorer(resolved_path);
                         }
                         ImGui::EndDisabled();
-                        has_read_only_action = true;
+                        has_top_action = true;
                     }
-                    if (has_read_only_action) ImGui::Separator();
+                    if (has_top_action) ImGui::Separator();
 
                     const bool move_up_available =
                         row_editable && row_index > 0 &&
                         !edit_id_at(row_index - 1).empty() &&
+                        !row_deleted_at(row_index - 1) &&
                         source_file_at(row_index - 1) == source_file_at(row_index);
                     const bool move_down_available =
                         row_editable && row_index + 1 < row_count &&
                         !edit_id_at(row_index + 1).empty() &&
+                        !row_deleted_at(row_index + 1) &&
                         source_file_at(row_index + 1) == source_file_at(row_index);
                     ImGui::BeginDisabled(!move_up_available);
                     if (ImGui::MenuItem(
@@ -2504,10 +2591,6 @@ void App::render_station_list_window() {
         const int column_count = IM_ARRAYSIZE(k_station_definition_columns);
         const std::vector<CachedTableRow>& rows = table_cache_.station_definition_rows;
         StationDefinitionEditState& edit = station_definition_edit_;
-        if (edit.rows_initialized && edit.visible_rows_dirty) {
-            edit.visible_rows = station_definition_visible_row_indices(edit.rows);
-            edit.visible_rows_dirty = false;
-        }
         const int row_count = edit.rows_initialized
             ? static_cast<int>(edit.visible_rows.size())
             : static_cast<int>(rows.size());
@@ -2538,14 +2621,21 @@ void App::render_station_list_window() {
                 }
                 return rows[static_cast<size_t>(visible_row)].edit_id;
             };
+            const auto row_deleted_at = [&](int visible_row) {
+                return edit.rows_initialized &&
+                    edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]
+                        .deleted;
+            };
             const auto render_context_menu = [&](int visible_row, int column,
                                                  bool actions_available) {
                 const bool move_up_available = actions_available && visible_row > 0 &&
                     !edit_id_at(visible_row - 1).empty() &&
+                    !row_deleted_at(visible_row - 1) &&
                     source_file_at(visible_row - 1) == source_file_at(visible_row);
                 const bool move_down_available = actions_available &&
                     visible_row + 1 < row_count &&
                     !edit_id_at(visible_row + 1).empty() &&
+                    !row_deleted_at(visible_row + 1) &&
                     source_file_at(visible_row + 1) == source_file_at(visible_row);
                 if (!ImGui::BeginPopupContextItem("##station_definition_context")) return;
                 ImGui::BeginDisabled(!move_up_available);
@@ -2579,9 +2669,14 @@ void App::render_station_list_window() {
                         : nullptr;
                     const std::string& target_edit_id = draft_row
                         ? draft_row->target_edit_id : cached_row->edit_id;
-                    const bool row_editable = can_edit && !target_edit_id.empty();
+                    const bool draft_deleted = draft_row && draft_row->deleted;
+                    const bool row_editable =
+                        can_edit && !draft_deleted && !target_edit_id.empty();
                     ImGui::TableNextRow();
-                    if (row_has_pending_edit(target_edit_id) ||
+                    if (draft_deleted || row_is_pending_delete(target_edit_id)) {
+                        ImGui::TableSetBgColor(
+                            ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
+                    } else if (row_has_pending_edit(target_edit_id) ||
                         (draft_row && station_definition_row_has_draft(*draft_row))) {
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
                     }
@@ -2854,9 +2949,6 @@ void App::render_structure_models_window() {
         return;
     }
     ensure_table_cache();
-    const bool stale_find_results = structure_model_find_.has_run &&
-        structure_model_find_.committed != structure_model_find_.query;
-    if (stale_find_results) reset_structure_model_find_results();
 
     render_table_find_panel(
         structure_model_find_,
@@ -3065,8 +3157,6 @@ void App::render_other_trains_window() {
 
 void App::render_sound_file_find_panel(bool is_3d) {
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
-    const bool stale_find_results = state.has_run && state.committed != state.query;
-    if (stale_find_results) reset_sound_file_find_results(is_3d);
 
     render_table_find_panel(
         state,

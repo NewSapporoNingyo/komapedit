@@ -533,6 +533,114 @@ std::string resolve_list_asset_path(const std::string& list_file,
     return kme::maploader::path_to_utf8(resolved.lexically_normal());
 }
 
+namespace {
+
+struct ListAssetSourcePathResult {
+    std::string source_path;
+    std::string resolved_path;
+    std::string fallback_reason;
+};
+
+std::string preferred_utf8_path(std::filesystem::path path) {
+    path = path.lexically_normal();
+    path.make_preferred();
+    return kme::maploader::path_to_utf8(path);
+}
+
+std::string lowercase_ascii_path(std::filesystem::path path) {
+    std::string text = kme::maploader::path_to_utf8(path);
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(ascii_lower(ch));
+                   });
+    return text;
+}
+
+ListAssetSourcePathResult make_list_asset_source_path(
+    const std::string& list_file,
+    const std::string& selected_file) {
+    ListAssetSourcePathResult result;
+    const std::filesystem::path selected_path =
+        kme::maploader::path_from_utf8(selected_file);
+    std::error_code ec;
+    std::filesystem::path selected_absolute =
+        std::filesystem::absolute(selected_path, ec);
+    if (ec) {
+        result.resolved_path = preferred_utf8_path(selected_path);
+        if (result.resolved_path.empty()) result.resolved_path = selected_file;
+        result.source_path = result.resolved_path;
+        result.fallback_reason =
+            "failed to make the selected file path absolute: " + ec.message();
+        return result;
+    }
+    selected_absolute = selected_absolute.lexically_normal();
+    result.resolved_path = preferred_utf8_path(selected_absolute);
+
+    const auto use_absolute = [&](std::string reason) {
+        result.source_path = result.resolved_path;
+        result.fallback_reason = std::move(reason);
+        return result;
+    };
+    if (list_file.empty()) {
+        return use_absolute("the source list file is unavailable");
+    }
+
+    const std::filesystem::path list_path =
+        kme::maploader::path_from_utf8(list_file);
+    std::filesystem::path list_absolute =
+        std::filesystem::absolute(list_path, ec);
+    if (ec) {
+        return use_absolute(
+            "failed to make the source list path absolute: " + ec.message());
+    }
+    const std::filesystem::path list_directory =
+        list_absolute.lexically_normal().parent_path();
+    if (list_directory.empty()) {
+        return use_absolute("the source list directory is unavailable");
+    }
+    if (lowercase_ascii_path(selected_absolute.root_name()) !=
+            lowercase_ascii_path(list_directory.root_name()) ||
+        selected_absolute.has_root_directory() !=
+            list_directory.has_root_directory()) {
+        return use_absolute(
+            "the selected file and source list file are on different filesystem roots");
+    }
+
+    ec.clear();
+    std::filesystem::path relative =
+        std::filesystem::relative(selected_absolute, list_directory, ec);
+    if (ec) {
+        return use_absolute("relative path calculation failed: " + ec.message());
+    }
+    if (relative.empty() || relative.is_absolute()) {
+        return use_absolute("relative path calculation returned no usable path");
+    }
+    result.source_path = preferred_utf8_path(std::move(relative));
+    return result;
+}
+
+std::string list_asset_picker_initial_directory(
+    const std::string& resolved_file,
+    const std::string& list_file) {
+    const auto existing_parent = [](const std::string& file) {
+        if (file.empty()) return std::string{};
+        std::error_code ec;
+        std::filesystem::path absolute = std::filesystem::absolute(
+            kme::maploader::path_from_utf8(file), ec);
+        if (ec) return std::string{};
+        std::filesystem::path parent =
+            absolute.lexically_normal().parent_path();
+        if (parent.empty() || !std::filesystem::is_directory(parent, ec) || ec) {
+            return std::string{};
+        }
+        return preferred_utf8_path(std::move(parent));
+    };
+    std::string directory = existing_parent(resolved_file);
+    return directory.empty() ? existing_parent(list_file) : directory;
+}
+
+} // namespace
+
 std::string resolve_list_asset_path(const KvMapSnapshot& snapshot,
                                     const KvRowMetadata& metadata,
                                     const std::string& source_path) {
@@ -3106,7 +3214,7 @@ std::vector<size_t> editable_list_visible_row_indices(
     std::vector<size_t> result;
     result.reserve(rows.size());
     for (size_t index = 0; index < rows.size(); ++index) {
-        if (!rows[index].deleted) result.push_back(index);
+        result.push_back(index);
     }
     return result;
 }
@@ -3125,7 +3233,10 @@ bool move_editable_list_draft_row(
         rows[visible_rows[static_cast<size_t>(visible_row)]];
     EditableListDraftRow& right =
         rows[visible_rows[static_cast<size_t>(neighbor)]];
-    if (left.target_source_file != right.target_source_file) return false;
+    if (left.deleted || right.deleted ||
+        left.target_source_file != right.target_source_file) {
+        return false;
+    }
     std::swap(left.payload_edit_id, right.payload_edit_id);
     std::swap(left.payload_source_file, right.payload_source_file);
     std::swap(left.payload_line, right.payload_line);
@@ -3144,8 +3255,10 @@ bool clear_editable_list_draft_cell(
         column < 0 || static_cast<size_t>(column) >= field_count) {
         return false;
     }
-    rows[visible_rows[static_cast<size_t>(visible_row)]]
-        .values[static_cast<size_t>(column)].clear();
+    EditableListDraftRow& row =
+        rows[visible_rows[static_cast<size_t>(visible_row)]];
+    if (row.deleted) return false;
+    row.values[static_cast<size_t>(column)].clear();
     return true;
 }
 
@@ -3154,7 +3267,10 @@ bool delete_editable_list_draft_row(
     const std::vector<size_t>& visible_rows,
     int visible_row) {
     if (visible_row < 0 || visible_row >= static_cast<int>(visible_rows.size())) return false;
-    rows[visible_rows[static_cast<size_t>(visible_row)]].deleted = true;
+    EditableListDraftRow& row =
+        rows[visible_rows[static_cast<size_t>(visible_row)]];
+    if (row.deleted) return false;
+    row.deleted = true;
     return true;
 }
 
@@ -3384,9 +3500,6 @@ void App::reset_editable_list_find_results(const EditableListSpec& spec) {
 
 void App::commit_editable_list_active_edit(EditableListEditState& edit,
                                            const EditableListSpec& spec) {
-    const bool value_changed =
-        !edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
-        edit.edit_buffer != edit.editing_baseline;
     if (!edit.editing_edit_id.empty() && edit.editing_column >= 0 &&
         static_cast<size_t>(edit.editing_column) < spec.field_count &&
         initialize_editable_list_draft_rows(edit, spec)) {
@@ -3402,7 +3515,6 @@ void App::commit_editable_list_active_edit(EditableListEditState& edit,
             }
         }
     }
-    if (value_changed) reset_editable_list_find_results(spec);
     edit.editing_column = -1;
     edit.editing_edit_id.clear();
     edit.editing_baseline.clear();
@@ -3434,7 +3546,6 @@ bool App::move_editable_list_row(EditableListEditState& edit,
     if (!move_editable_list_draft_row(
             edit.rows, edit.visible_rows, visible_row, direction)) return false;
     edit.selected_row = visible_row + direction;
-    reset_editable_list_find_results(spec);
     return true;
 }
 
@@ -3451,7 +3562,45 @@ bool App::clear_editable_list_cell(EditableListEditState& edit,
     if (column == spec.path_field) row.resolved_path.clear();
     edit.selected_row = visible_row;
     edit.selected_column = column;
-    reset_editable_list_find_results(spec);
+    return true;
+}
+
+bool App::choose_editable_list_file(EditableListEditState& edit,
+                                    const EditableListSpec& spec,
+                                    int visible_row) {
+    commit_editable_list_active_edit(edit, spec);
+    if (spec.path_field < 0 ||
+        !initialize_editable_list_draft_rows(edit, spec) ||
+        visible_row < 0 ||
+        visible_row >= static_cast<int>(edit.visible_rows.size())) {
+        return false;
+    }
+    EditableListDraftRow& row =
+        edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]];
+    if (row.deleted || row.target_edit_id.empty()) return false;
+
+    const std::string selected_file = open_editable_list_file_dialog(
+        spec, list_asset_picker_initial_directory(
+                  row.resolved_path, row.target_source_file));
+    if (selected_file.empty()) return false;
+
+    ListAssetSourcePathResult selected_path =
+        make_list_asset_source_path(row.target_source_file, selected_file);
+    row.values[static_cast<size_t>(spec.path_field)] = selected_path.source_path;
+    row.resolved_path = selected_path.resolved_path;
+    edit.selected_row = visible_row;
+    edit.selected_column =
+        static_cast<int>(spec.cache_column_offset) + spec.path_field;
+
+    if (!selected_path.fallback_reason.empty()) {
+        add_log(
+            LogSeverity::Warning,
+            "[warning]gui_kme.cpp: unable to create a relative resource path; "
+            "using absolute path: reason=\"" + selected_path.fallback_reason +
+            "\", selected=\"" + selected_path.resolved_path +
+            "\", list=\"" + row.target_source_file + "\"");
+        set_program_status("status.edit.relative_path_fallback");
+    }
     return true;
 }
 
@@ -3462,10 +3611,7 @@ bool App::delete_editable_list_row(EditableListEditState& edit,
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
     if (!delete_editable_list_draft_row(
             edit.rows, edit.visible_rows, visible_row)) return false;
-    edit.visible_rows_dirty = true;
-    const int remaining = static_cast<int>(edit.visible_rows.size()) - 1;
-    edit.selected_row = remaining > 0 ? std::min(visible_row, remaining - 1) : -1;
-    reset_editable_list_find_results(spec);
+    edit.selected_row = visible_row;
     return true;
 }
 
@@ -4746,6 +4892,53 @@ std::string App::open_image_dialog() {
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrFilter = L"Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff\0All files\0*.*\0";
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
+    return {};
+}
+
+std::string App::open_editable_list_file_dialog(
+    const EditableListSpec& spec,
+    const std::string& initial_directory) {
+    const bool is_structure =
+        std::string_view(spec.row_kind) == "structure.model";
+    const wchar_t* pattern = is_structure
+        ? L"*.csv;*.b3d;*.x;*.obj;*.fbx;*.dae;*.gltf;*.glb"
+        : L"*.wav;*.ogg;*.mp3;*.flac";
+    std::wstring resource_label = utf8_to_wide(
+        tr(is_structure ? "dialog.filter.model_files"
+                        : "dialog.filter.audio_files"));
+    resource_label += L" (";
+    resource_label += pattern;
+    resource_label += L")";
+
+    std::wstring filter;
+    const auto append_filter =
+        [&](const std::wstring& label, const wchar_t* value) {
+            filter += label;
+            filter.push_back(L'\0');
+            filter += value;
+            filter.push_back(L'\0');
+        };
+    append_filter(resource_label, pattern);
+    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
+    filter.push_back(L'\0');
+
+    wchar_t file[MAX_PATH] = {};
+    const std::wstring initial_directory_wide =
+        utf8_to_wide(initial_directory);
+    const std::wstring title =
+        utf8_to_wide(tr("dialog.select_resource_file"));
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFilter = filter.c_str();
+    ofn.nFilterIndex = 1;
+    ofn.lpstrInitialDir = initial_directory_wide.empty()
+        ? nullptr : initial_directory_wide.c_str();
+    ofn.lpstrTitle = title.c_str();
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
     return {};
