@@ -15,6 +15,7 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -82,6 +83,7 @@ struct TempFixture {
             << "0;\n"
             << "Structure.Load('structures.csv');\n"
             << "Station.Load('stations.csv');\n"
+            << "Signal.Load('signals.csv');\n"
             << "Track['1'].Position(3.8,0);\n"
             << "100;\n"
             << "Station['STA'].Put();\n"
@@ -102,13 +104,27 @@ struct TempFixture {
         std::ofstream structures(directory / "structures.csv",
                                  std::ios::binary | std::ios::trunc);
         structures << "BveTs Structure List 1.00:utf-8\n"
-                   << "pole,pole.csv\n";
+                   << "pole,pole.csv\n"
+                   << "main1,main1.csv\n"
+                   << "main2,main2.csv\n"
+                   << "glare1,glare1.csv\n"
+                   << "glare2,glare2.csv\n"
+                   << "mainB,mainB.csv\n"
+                   << "glareB,glareB.csv\n";
         structures.close();
         std::ofstream stations(directory / "stations.csv",
                                std::ios::binary | std::ios::trunc);
         stations << "BveTs Station List 1.00:utf-8\n"
                  << "STA,Original,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0,"
                     "legacy-a,legacy-b # keep station comment\n";
+        stations.close();
+        std::ofstream signals(directory / "signals.csv",
+                              std::ios::binary | std::ios::trunc);
+        signals << "BveTs Signal Aspects List 2.00:utf-8\r\n"
+                << "aspectA,main1,main2\r\n"
+                << ",glare1,glare2\r\n"
+                << "aspectB,mainB\r\n"
+                << ",glareB\r\n";
     }
 
     ~TempFixture() {
@@ -500,6 +516,30 @@ const KvStationListRow* find_station_list_row(const KvMapSnapshot& snapshot,
     return nullptr;
 }
 
+const KvSignalAspectRow* find_signal_aspect(const KvMapSnapshot& snapshot,
+                                            std::string_view edit_id) {
+    for (std::uint64_t i = 0; i < snapshot.signal_aspect_count; ++i) {
+        const KvSignalAspectRow& row = snapshot.signal_aspects[i];
+        if (arena_view(snapshot.string_data, snapshot.string_size,
+                       row.metadata.edit_id) == edit_id) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
+const KvSignalAspectRow* find_signal_aspect_key(const KvMapSnapshot& snapshot,
+                                                std::string_view key) {
+    for (std::uint64_t i = 0; i < snapshot.signal_aspect_count; ++i) {
+        const KvSignalAspectRow& row = snapshot.signal_aspects[i];
+        if (arena_view(snapshot.string_data, snapshot.string_size,
+                       row.signal_aspect_key) == key) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
 int edit_contract() {
     TempFixture fixture;
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
@@ -655,6 +695,99 @@ int edit_contract() {
         }
     }
 
+    KvMapSnapshot signal_baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &signal_baseline, sizeof(signal_baseline)) != 0,
+          "Signal aspect baseline snapshot");
+    check(signal_baseline.signal_aspect_count == 2,
+          "Signal aspect fixture rows present");
+    if (signal_baseline.signal_aspect_count >= 1) {
+        const KvSignalAspectRow& signal_row = signal_baseline.signal_aspects[0];
+        const std::string signal_edit_id =
+            map_string(signal_baseline, signal_row.metadata.edit_id);
+        check(signal_row.metadata.source_file_index < signal_baseline.source_file_count,
+              "Signal aspect source index");
+        if (signal_row.metadata.source_file_index < signal_baseline.source_file_count) {
+            const KvSourceFileRow& signal_source =
+                signal_baseline.source_files[signal_row.metadata.source_file_index];
+            const std::string signal_source_hash =
+                map_string(signal_baseline, signal_source.source_hash);
+            const std::string signal_source_path =
+                map_string(signal_baseline, signal_source.file_path);
+            UpdateBatch delete_glare(
+                signal_edit_id, signal_source_hash, "1", "deleteGlare");
+            KvEditReportSnapshot delete_glare_dry_run{};
+            check(kv_edit_dry_run_typed(
+                      handle.value, &delete_glare.batch,
+                      &delete_glare_dry_run, sizeof(delete_glare_dry_run)) != 0 &&
+                      delete_glare_dry_run.ok &&
+                      delete_glare_dry_run.full_reparse_ok &&
+                      delete_glare_dry_run.non_target_changed_count == 0,
+                  "Signal aspect glare delete dry-run");
+            KvEditReportSnapshot delete_glare_applied{};
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &delete_glare.batch,
+                      &delete_glare_applied, sizeof(delete_glare_applied)) != 0 &&
+                      delete_glare_applied.ok,
+                  "Signal aspect glare delete apply-to-memory");
+            KvMapSnapshot glare_applied{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &glare_applied, sizeof(glare_applied)) != 0,
+                  "Signal aspect glare delete snapshot");
+            const KvSignalAspectRow* glare_deleted =
+                find_signal_aspect(glare_applied, signal_edit_id);
+            check(glare_deleted &&
+                      glare_deleted->metadata.reserved == 2 &&
+                      glare_deleted->structure_keys.count ==
+                          glare_deleted->metadata.reserved,
+                  "Signal aspect glare rows removed with stable identity");
+            const char* signal_source_text =
+                kv_get_source_text(handle.value, signal_source_path.c_str());
+            check(signal_source_text &&
+                      std::string_view(signal_source_text).find(
+                          "aspectA,main1,main2") != std::string_view::npos &&
+                      std::string_view(signal_source_text).find(
+                          "aspectB,mainB") != std::string_view::npos &&
+                      std::string_view(signal_source_text).find(
+                          ",glare1,glare2") == std::string_view::npos,
+                  "Signal aspect glare delete preserves the next logical row");
+            kv_free_string(signal_source_text);
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "Signal aspect glare delete reset");
+
+            KvEditReportSnapshot delete_glare_save_apply{};
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &delete_glare.batch,
+                      &delete_glare_save_apply, sizeof(delete_glare_save_apply)) != 0 &&
+                      delete_glare_save_apply.ok,
+                  "Signal aspect glare delete apply before save");
+            KvEditReportSnapshot delete_glare_save{};
+            check(kv_edit_commit_typed(handle.value, &delete_glare_save,
+                                       sizeof(delete_glare_save)) != 0 &&
+                      delete_glare_save.ok,
+                  "Signal aspect glare delete save");
+            MapHandle signal_reload(kv_load_map_ex(
+                fixture.path_utf8().c_str(), 25.0,
+                KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+            check(signal_reload.value != nullptr,
+                  "Signal aspect glare delete reload after save");
+            if (signal_reload.value) {
+                KvMapSnapshot signal_reload_snapshot{};
+                check(kv_get_map_snapshot(
+                          signal_reload.value, KV_MAP_SNAPSHOT_VERSION,
+                          &signal_reload_snapshot,
+                          sizeof(signal_reload_snapshot)) != 0,
+                      "Signal aspect glare delete reload snapshot");
+                const KvSignalAspectRow* reloaded_signal =
+                    find_signal_aspect_key(signal_reload_snapshot, "aspectA");
+                check(reloaded_signal &&
+                          reloaded_signal->structure_keys.count ==
+                              reloaded_signal->metadata.reserved,
+                      "Signal aspect glare delete saved value");
+            }
+        }
+    }
+
     RepeaterTrimBatch trim(trim_edit_id, trim_end_edit_id, source_hash);
     check(kv_edit_dry_run_typed(handle.value, &trim.batch,
                                 &report, sizeof(report)) != 0,
@@ -782,6 +915,239 @@ int edit_contract() {
     }
     std::cout << "typed edit contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures;
+}
+
+int signal_glare_headless(const std::filesystem::path& map_path, bool commit) {
+    constexpr size_t k_target_count = 3;
+    struct Target {
+        std::string edit_id;
+        std::string aspect_key;
+        std::string source_hash;
+        std::string source_file;
+        std::uint64_t main_structure_key_count = 0;
+        int line = 0;
+    };
+
+    std::cout << "signal glare headless path=\"" << map_path.u8string()
+              << "\" commit=" << (commit ? "true" : "false") << '\n';
+    try {
+        const std::string map_path_utf8 = map_path.u8string();
+        MapHandle handle(kv_load_map_ex(map_path_utf8.c_str(), 25.0,
+                                        KV_LOAD_EDIT_METADATA));
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "map load failed");
+        }
+
+        KvMapSnapshot baseline{};
+        if (!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                 &baseline, sizeof(baseline))) {
+            throw std::runtime_error("failed to retrieve the baseline map snapshot");
+        }
+        if (baseline.signal_aspect_count != 0 && !baseline.signal_aspects) {
+            throw std::runtime_error("baseline signal aspect array is null");
+        }
+
+        std::vector<Target> targets;
+        targets.reserve(k_target_count);
+        for (std::uint64_t i = 0;
+             i < baseline.signal_aspect_count && targets.size() < k_target_count;
+             ++i) {
+            const KvSignalAspectRow& row = baseline.signal_aspects[i];
+            if (row.metadata.reserved >= row.structure_keys.count ||
+                row.metadata.source_file_index >= baseline.source_file_count) {
+                continue;
+            }
+            const std::string aspect_key =
+                map_string(baseline, row.signal_aspect_key);
+            if (aspect_key.empty()) continue;
+            bool key_is_unique = true;
+            for (std::uint64_t j = 0; j < baseline.signal_aspect_count; ++j) {
+                if (i == j) continue;
+                if (map_string(baseline,
+                               baseline.signal_aspects[j].signal_aspect_key) == aspect_key) {
+                    key_is_unique = false;
+                    break;
+                }
+            }
+            if (!key_is_unique) continue;
+
+            const KvSourceFileRow& source =
+                baseline.source_files[row.metadata.source_file_index];
+            Target target;
+            target.edit_id = map_string(baseline, row.metadata.edit_id);
+            target.aspect_key = aspect_key;
+            target.source_hash = map_string(baseline, source.source_hash);
+            target.source_file = map_string(baseline, source.file_path);
+            target.main_structure_key_count = row.metadata.reserved;
+            target.line = row.metadata.line;
+            if (target.edit_id.empty() || target.source_hash.empty() ||
+                target.source_file.empty()) {
+                continue;
+            }
+            targets.push_back(std::move(target));
+        }
+        if (targets.size() != k_target_count) {
+            throw std::runtime_error(
+                "fewer than three uniquely addressable signal aspect glare rows were found");
+        }
+
+        const std::string field_name = "deleteGlare";
+        const std::string field_value = "1";
+        std::vector<std::string> change_ids;
+        std::vector<KvEditField> fields;
+        std::vector<KvEditChange> changes;
+        change_ids.reserve(targets.size());
+        fields.reserve(targets.size());
+        changes.reserve(targets.size());
+        for (size_t index = 0; index < targets.size(); ++index) {
+            change_ids.push_back("headless-delete-glare-" +
+                                 std::to_string(index + 1));
+            KvEditField field{};
+            field.name = utf8_view(field_name);
+            field.value = utf8_view(field_value);
+            fields.push_back(field);
+
+            KvEditChange change{};
+            change.change_id = utf8_view(change_ids.back());
+            change.edit_id = utf8_view(targets[index].edit_id);
+            change.operation = KV_EDIT_UPDATE;
+            change.fields = KvSpan{static_cast<std::uint64_t>(index), 1};
+            change.expected_source_hash = utf8_view(targets[index].source_hash);
+            changes.push_back(change);
+        }
+        const KvEditBatch batch{
+            changes.data(), static_cast<std::uint64_t>(changes.size()),
+            fields.data(), static_cast<std::uint64_t>(fields.size()),
+        };
+        auto first_blocking_error = [](const KvEditReportSnapshot& report) {
+            if (report.blocking_error_count == 0 || !report.blocking_errors) {
+                return std::string{};
+            }
+            const std::string_view error = arena_view(
+                report.string_data, report.string_size, report.blocking_errors[0]);
+            return std::string(error.data(), error.size());
+        };
+        auto require_edit_report = [&](const KvEditReportSnapshot& report,
+                                       const char* phase) {
+            if (report.ok && report.full_reparse_ok &&
+                report.update_count == static_cast<int>(targets.size()) &&
+                report.non_target_changed_count == 0) {
+                return;
+            }
+            std::string message = phase;
+            const std::string error = first_blocking_error(report);
+            if (!error.empty()) message += ": " + error;
+            throw std::runtime_error(message);
+        };
+        auto all_glare_rows_removed = [&](void* current_handle,
+                                          bool require_stable_edit_ids) {
+            KvMapSnapshot snapshot{};
+            if (!kv_get_map_snapshot(current_handle, KV_MAP_SNAPSHOT_VERSION,
+                                     &snapshot, sizeof(snapshot))) {
+                return false;
+            }
+            if (snapshot.signal_aspect_count != 0 && !snapshot.signal_aspects) {
+                return false;
+            }
+            for (const Target& target : targets) {
+                const KvSignalAspectRow* row = require_stable_edit_ids
+                    ? find_signal_aspect(snapshot, target.edit_id)
+                    : find_signal_aspect_key(snapshot, target.aspect_key);
+                if (!row ||
+                    row->metadata.reserved != target.main_structure_key_count ||
+                    row->structure_keys.count != target.main_structure_key_count) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        KvEditReportSnapshot dry_run{};
+        if (!kv_edit_dry_run_typed(handle.value, &batch, &dry_run,
+                                   sizeof(dry_run))) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "glare-delete dry-run failed");
+        }
+        require_edit_report(dry_run, "glare-delete dry-run validation failed");
+
+        KvEditReportSnapshot applied{};
+        if (!kv_edit_apply_to_memory_typed(handle.value, &batch, &applied,
+                                           sizeof(applied))) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "glare-delete Apply failed");
+        }
+        require_edit_report(applied, "glare-delete Apply validation failed");
+        if (!all_glare_rows_removed(handle.value, true)) {
+            throw std::runtime_error(
+                "glare-delete Apply did not retain target identities and main rows");
+        }
+
+        if (!kv_edit_reset_memory(handle.value)) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "glare-delete Reset failed");
+        }
+        KvMapSnapshot reset{};
+        if (!kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                 &reset, sizeof(reset))) {
+            throw std::runtime_error("failed to retrieve the reset map snapshot");
+        }
+        for (const Target& target : targets) {
+            const KvSignalAspectRow* row =
+                find_signal_aspect(reset, target.edit_id);
+            if (!row || row->metadata.reserved != target.main_structure_key_count ||
+                row->structure_keys.count <= target.main_structure_key_count) {
+                throw std::runtime_error(
+                    "glare-delete Reset did not restore the original glare row");
+            }
+        }
+
+        if (commit) {
+            KvEditReportSnapshot reapplied{};
+            if (!kv_edit_apply_to_memory_typed(handle.value, &batch, &reapplied,
+                                               sizeof(reapplied))) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(error ? error : "glare-delete re-Apply failed");
+            }
+            require_edit_report(reapplied,
+                                "glare-delete pre-Save validation failed");
+
+            KvEditReportSnapshot committed{};
+            if (!kv_edit_commit_typed(handle.value, &committed, sizeof(committed))) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(error ? error : "glare-delete Save failed");
+            }
+            if (!committed.ok || committed.committed_file_count == 0 ||
+                committed.non_target_changed_count != 0) {
+                std::string message = "glare-delete Save validation failed";
+                const std::string error = first_blocking_error(committed);
+                if (!error.empty()) message += ": " + error;
+                throw std::runtime_error(message);
+            }
+
+            MapHandle reloaded(kv_load_map_ex(map_path_utf8.c_str(), 25.0,
+                                               KV_LOAD_EDIT_METADATA));
+            if (!reloaded.value || !all_glare_rows_removed(reloaded.value, false)) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(error
+                    ? error
+                    : "glare-delete Save did not persist after a fresh reload");
+            }
+        }
+
+        for (const Target& target : targets) {
+            std::cout << "target aspect=" << target.aspect_key
+                      << " file=\"" << target.source_file
+                      << "\" line=" << target.line << '\n';
+        }
+        std::cout << "dry_run=PASS\napply_to_memory=PASS\nreset=PASS\n";
+        if (commit) std::cout << "save_reload=PASS\n";
+        std::cout << "result=PASS\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cout << "error=" << error.what() << "\nresult=FAIL\n";
+        return 1;
+    }
 }
 
 bool diagnostics_contain(std::string_view needle) {
@@ -912,7 +1278,8 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "usage: typed_snapshot_tests <snapshot|edit|diagnostics> [fixture-root]\n";
+        std::cerr << "usage: typed_snapshot_tests <snapshot|edit|diagnostics|signal-glare> "
+                     "[fixture-root|map-path] [--commit]\n";
         return 2;
     }
     const std::string mode = argv[1];
@@ -920,6 +1287,14 @@ int main(int argc, char** argv) {
     if (mode == "edit") return edit_contract() == 0 ? 0 : 1;
     if (mode == "diagnostics" && argc == 3) {
         return diagnostics_contract(std::filesystem::path(argv[2])) == 0 ? 0 : 1;
+    }
+    if (mode == "signal-glare" && (argc == 3 || argc == 4)) {
+        const bool commit = argc == 4 && std::string_view(argv[3]) == "--commit";
+        if (argc == 4 && !commit) {
+            std::cerr << "signal-glare accepts only --commit as its optional argument\n";
+            return 2;
+        }
+        return signal_glare_headless(std::filesystem::path(argv[2]), commit);
     }
     std::cerr << "unknown mode: " << mode << '\n';
     return 2;

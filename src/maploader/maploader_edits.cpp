@@ -3510,16 +3510,41 @@ MapEditReport build_edit_report(MapContext& ctx,
     std::map<std::pair<size_t, size_t>, std::vector<InsertionPart>> insertion_parts;
     std::map<std::tuple<size_t, size_t, size_t>, std::string> replacement_by_range;
 
+    auto source_identity_range = [&](const PreparedEdit& identity_edit,
+                                     const std::string& replacement_text) {
+        std::pair<size_t, size_t> range{0, replacement_text.size()};
+        if (identity_edit.target.row_kind != "signal.aspect" ||
+            !has_field_change(*identity_edit.change, "deleteGlare")) {
+            return range;
+        }
+
+        // Signal aspects are one logical source statement spanning a main row
+        // and its optional glare row. Deleting the glare retains the former
+        // separator newline in the file, while the reparser's surviving main
+        // row span deliberately excludes line endings. Keep the identity on
+        // that generated main row only so the strict source-range reconnect
+        // check still describes the parser's actual candidate statement.
+        const size_t line_end = replacement_text.find('\n');
+        if (line_end == std::string::npos) return range;
+        range.second = line_end;
+        if (range.second != 0 && replacement_text[range.second - 1] == '\r') {
+            --range.second;
+        }
+        return range;
+    };
+
     auto append_replacement_identity = [&](TextReplacement& replacement,
                                            const PreparedEdit* identity_edit) {
         if (!identity_edit || identity_edit->operation == "delete") return;
         const ParsedStatement& baseline_statement =
             ctx.parsed_statements[identity_edit->target.statement_index];
+        const auto identity_range =
+            source_identity_range(*identity_edit, replacement.text);
         replacement.identities.push_back({
             identity_edit->change->edit_id,
             identity_edit->target.row_kind,
-            0,
-            replacement.text.size(),
+            identity_range.first,
+            identity_range.second,
             identity_edit->target.element_index,
             baseline_statement.global_order,
         });
