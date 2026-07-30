@@ -139,7 +139,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 | 变量及参数变量                                |   √   |    ✕     |     -      | 可参与表达式求值                                                                     |
 | 算术、比较及逻辑运算符                        |   △   |    ✕     |     -      | 大部分可求值，字符串和数值混合等边界情况不完整                                       |
 | 数学函数                                      |   √   |    ✕     |     -      | 用于地图表达式求值                                                                   |
-| 距离声明及距离表达式                          |   √   |    △     |     ✕      | 仅 `Structure.Put/Put0/PutBetween`、`Signal.Put`、`Station.Put` 和关联 Repeater Begin/End 等编辑目标可修改距离 |
+| 距离声明及距离表达式                          |   √   |    △     |     ✕      | 仅 `Structure.Put/Put0/PutBetween`、`Signal.Put`、`Station.Put`、`Irregularity.Change` 和关联 Repeater Begin/End 等编辑目标可修改距离 |
 | `include`、带距离偏移的 `include`             |   √   |    △     |     ✕      | 可加载包含文件；其中受支持元素可以写回，但 include 路径本身不可编辑                  |
 | `Curve.*`                                     |   √   |    ✕     |     ✕      | 参与轨道几何生成                                                                     |
 | `Gradient.*`                                  |   √   |    ✕     |     ✕      | 参与轨道高程及坡度生成                                                               |
@@ -164,7 +164,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 | `Fog.Interpolate` / `Fog.Set`                 |   √   |    ✕     |     ✕      | 可进入表格/标记，并在 3D 场景预览中显示线性插值后的指数雾；尚不支持雾效果编辑        |
 | `DrawDistance.Change`                         |   √   |    ✕     |     ✕      | 可进入表格、平面/场景标记，并可选地控制场景绘制距离                                  |
 | `CabIlluminance.Set`                          |   √   |    ✕     |     ✕      | 可进入列表/标记，不模拟驾驶台亮度效果                                                |
-| `Irregularity.Change`                         |   √   |    ✕     |     ✕      | 可进入列表/标记，不模拟车辆振动                                                      |
+| `Irregularity.Change`                         |   √   |    √     |     ✕      | 距离与 6 个参数可在属性检查器中编辑并可删除对应行；不模拟车辆振动                                    |
 | `Adhesion.Change`                             |   √   |    ✕     |     ✕      | 可进入列表/标记，不模拟车辆黏着效果                                                  |
 | `Sound.Load` / `Sound.Play`                   |   √   |    △     |     ✕      | 已有 Sound.Load 文件列表行支持行内编辑、清空、调整顺序、删除和选文件；播放点仍只读，且不实际播放 |
 | `Sound3D.Load` / `Sound3D.Put`                |   √   |    △     |     ✕      | 已有 Sound3D.Load 文件列表行支持行内编辑、清空、调整顺序、删除和选文件；空间放置仍只读，且不实际播放 |

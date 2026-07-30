@@ -32,6 +32,7 @@ struct EditableTarget {
     int element_index = 0;
     const StructurePut* structure_put = nullptr;
     const StationPut* station_put = nullptr;
+    const IrregularityChange* irregularity = nullptr;
     const SignalPut* signal_put = nullptr;
     const SignalAspect* signal_aspect = nullptr;
     const RepeaterEvent* repeater = nullptr;
@@ -930,6 +931,22 @@ std::string build_station_put_statement(const MapEditChange& change,
     return out.str();
 }
 
+std::string build_irregularity_statement(const MapEditChange& change,
+                                         const ParsedStatement& statement,
+                                         const IrregularityChange& row) {
+    const std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
+    std::ostringstream out;
+    out << "Irregularity.Change("
+        << numeric_field(change, "x", row.x, raw_arg_at(raw_args, 0)) << ","
+        << numeric_field(change, "y", row.y, raw_arg_at(raw_args, 1)) << ","
+        << numeric_field(change, "r", row.r, raw_arg_at(raw_args, 2)) << ","
+        << numeric_field(change, "lx", row.lx, raw_arg_at(raw_args, 3)) << ","
+        << numeric_field(change, "ly", row.ly, raw_arg_at(raw_args, 4)) << ","
+        << numeric_field(change, "lr", row.lr, raw_arg_at(raw_args, 5))
+        << ");";
+    return out.str();
+}
+
 std::string build_structure_put_statement(const MapEditChange& change,
                                           const ParsedStatement& statement,
                                           const StructurePut& row,
@@ -1165,6 +1182,7 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     for (const auto& row : ctx.structure_betweens) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.signal_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.repeaters) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.irregularities) count_statement_ref(row.edit_ref, statement_index, count);
     return count;
 }
 
@@ -1276,6 +1294,13 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
         const RepeaterEvent& row = ctx.repeaters[i];
         if (match_edit_ref(ctx, row, "repeater", i, edit_id, target)) {
             target.repeater = &row;
+            return target;
+        }
+    }
+    for (size_t i = 0; i < ctx.irregularities.size(); ++i) {
+        const IrregularityChange& row = ctx.irregularities[i];
+        if (match_edit_ref(ctx, row, "irregularity.change", i, edit_id, target)) {
+            target.irregularity = &row;
             return target;
         }
     }
@@ -1394,6 +1419,9 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "repeater" && target.repeater) {
         return build_repeater_statement(change, statement, *target.repeater);
+    }
+    if (target.row_kind == "irregularity.change" && target.irregularity) {
+        return build_irregularity_statement(change, statement, *target.irregularity);
     }
     throw std::runtime_error("unsupported editable target: " + target.row_kind);
 }
@@ -2664,6 +2692,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->signal_aspects, "signal.aspect");
         collect_candidate_rows(candidate->signal_puts, "signal.put");
         collect_candidate_rows(candidate->repeaters, "repeater");
+        collect_candidate_rows(candidate->irregularities, "irregularity.change");
     } catch (const std::exception& e) {
         report.blocking_errors.push_back(
             std::string("failed to resolve edited target source provenance: ") + e.what());
@@ -4078,6 +4107,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "signal.aspect", ctx.signal_aspects);
     append_committed_rows(ctx, report, "signal.put", ctx.signal_puts);
     append_committed_rows(ctx, report, "repeater", ctx.repeaters);
+    append_committed_rows(ctx, report, "irregularity.change", ctx.irregularities);
     size_t sound_index = 0;
     size_t sound_3d_index = 0;
     for (const SoundListEntry& row : ctx.sound_list) {

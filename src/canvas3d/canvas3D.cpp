@@ -8232,9 +8232,11 @@ fail:
             marker.row_index.has_value();
     }
 
-    static bool scene_marker_has_station_edit_target(const Canvas3DSceneMarker& marker) {
-        return marker.kind == MapMarkerVisualKind::Station &&
-            marker.row_kind == "station.put";
+    static bool scene_marker_has_edit_target(const Canvas3DSceneMarker& marker) {
+        return (marker.kind == MapMarkerVisualKind::Station &&
+                marker.row_kind == "station.put") ||
+               (marker.kind == MapMarkerVisualKind::Irregularity &&
+                marker.row_kind == "irregularity.change");
     }
 
     Canvas3DSceneContextAction render_scene_marker_context_popup(
@@ -8257,12 +8259,20 @@ fail:
                 action.row_index = *marker.row_index;
             }
 
-            const bool station_edit_target = scene_marker_has_station_edit_target(marker);
-            if (station_edit_target) {
+            const bool edit_target = scene_marker_has_edit_target(marker);
+            if (edit_target) {
                 ImGui::BeginDisabled(!context_menu_options.element_properties_enabled ||
                                      marker.edit_id.empty());
                 if (ImGui::MenuItem(ui_text.element_properties)) {
                     action.kind = Canvas3DSceneContextActionKind::EditElement;
+                    action.edit_id = marker.edit_id;
+                    action.row_kind = marker.row_kind;
+                }
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!context_menu_options.element_properties_enabled ||
+                                     marker.edit_id.empty());
+                if (ImGui::MenuItem(ui_text.delete_element)) {
+                    action.kind = Canvas3DSceneContextActionKind::DeleteElement;
                     action.edit_id = marker.edit_id;
                     action.row_kind = marker.row_kind;
                 }
@@ -8361,7 +8371,7 @@ fail:
             static_cast<size_t>(scene_hovered_marker_index) < scene_data.markers.size() &&
             (scene_marker_has_list_target(
                  scene_data.markers[static_cast<size_t>(scene_hovered_marker_index)]) ||
-             scene_marker_has_station_edit_target(
+             scene_marker_has_edit_target(
                  scene_data.markers[static_cast<size_t>(scene_hovered_marker_index)]));
         if (!stats.loading && scene_structure_gizmo_consumes_left_input()) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);

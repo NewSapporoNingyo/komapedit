@@ -3950,7 +3950,11 @@ void App::render_irregularities_window() {
             for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                 const CachedTableRow& row = table_cache_.irregularity_rows[static_cast<size_t>(row_index)];
                 ImGui::TableNextRow();
-                if (row_index == irregularity_list_highlight_row_) {
+                if (row_is_pending_delete(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
+                } else if (row_has_pending_edit(row.edit_id)) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
+                } else if (row_index == irregularity_list_highlight_row_) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
                 }
                 if (row_index == scroll_target_row) {
@@ -3961,22 +3965,32 @@ void App::render_irregularities_window() {
                 for (int i = 0; i < IM_ARRAYSIZE(k_irregularity_columns); ++i) {
                     ImGui::TableSetColumnIndex(i);
                     const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_irregularity_distance_column) {
-                        size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < irregularity_marker_cache_.size() &&
-                            irregularity_marker_cache_[marker_index].has_value();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
-                            value,
-                            tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
-                        if (action == TextCellContextAction::Primary) {
-                            locate_irregularity_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::Irregularity, marker_index);
-                        }
-                        continue;
+                if (i == k_irregularity_distance_column) {
+                    size_t marker_index = static_cast<size_t>(row_index);
+                    const bool can_locate = marker_index < irregularity_marker_cache_.size() &&
+                        irregularity_marker_cache_[marker_index].has_value();
+                    const bool edit_enabled = edit_actions_available() && !row.edit_id.empty();
+                    const TextCellContextAction action = render_text_cell_with_context_actions(
+                        value,
+                        tr("menu.locate_on_plan"), can_locate,
+                        tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                        tr("dialog.element_properties"), edit_enabled,
+                        tr("button.delete"), edit_enabled);
+                    if (action == TextCellContextAction::Primary) {
+                        locate_irregularity_row_on_plan(marker_index);
+                    } else if (action == TextCellContextAction::Secondary) {
+                        locate_scene_marker_row_in_scene_preview(
+                            Canvas3DSceneMarkerListKind::Irregularity, marker_index);
+                    } else if (action == TextCellContextAction::Tertiary) {
+                        request_element_inspector(row.edit_id, "irregularity.change");
+                    } else if (action == TextCellContextAction::Quaternary) {
+                        request_element_delete(row.edit_id, "irregularity.change");
                     }
+                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        request_element_inspector(row.edit_id, "irregularity.change");
+                    }
+                    continue;
+                }
                     if (value.empty()) continue;
                     if (i == k_irregularity_file_path_column) {
                         render_file_path_cell_with_context(value, row.open_path,

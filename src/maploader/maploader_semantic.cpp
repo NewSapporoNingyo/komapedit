@@ -349,6 +349,19 @@ void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_irregularity(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                        const KvIrregularityRow& row,
+                        const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    field(out, "x", changed_number(change, "x", row.x));
+    field(out, "y", changed_number(change, "y", row.y));
+    field(out, "r", changed_number(change, "r", row.r));
+    field(out, "lx", changed_number(change, "lx", row.lx));
+    field(out, "ly", changed_number(change, "ly", row.ly));
+    field(out, "lr", changed_number(change, "lr", row.lr));
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
                         const KvStationListRow& row,
                         const MapEditChange* change = nullptr) {
@@ -487,6 +500,8 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "method", "structureKey", "trackKey1", "trackKey2", "flag"};
     } else if (target.row_kind == "station.put") {
         allowed = {"distance", "stationKey", "door", "margin1", "margin2"};
+    } else if (target.row_kind == "irregularity.change") {
+        allowed = {"distance", "x", "y", "r", "lx", "ly", "lr"};
     } else if (target.row_kind == "station.list") {
         allowed = {"stationKey", "stationName", "arrivalTime", "depertureTime",
                    "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
@@ -961,6 +976,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("station.put target row is out of bounds");
         }
         write_station_put(out, snapshot, snapshot.station_puts[target.row_index], &change);
+    } else if (target.row_kind == "irregularity.change") {
+        if (target.row_index >= snapshot.irregularity_count || !snapshot.irregularities) {
+            throw std::runtime_error("irregularity.change target row is out of bounds");
+        }
+        write_irregularity(out, snapshot, snapshot.irregularities[target.row_index], &change);
     } else if (target.row_kind == "station.list") {
         if (target.row_index >= snapshot.station_list_count || !snapshot.station_list) {
             throw std::runtime_error("station.list target row is out of bounds");

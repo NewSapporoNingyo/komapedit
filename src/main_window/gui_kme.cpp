@@ -1875,6 +1875,7 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "repeater") return &model.repeaters;
     if (row_kind == "signal.put") return &model.signals;
     if (row_kind == "signal.aspect") return &model.signal_aspects;
+    if (row_kind == "irregularity.change") return &model.irregularities;
     return nullptr;
 }
 
@@ -2117,16 +2118,18 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
                                            const std::string& edit_id) {
     if (row_kind == "station.put" || row_kind == "station.list") {
         normalize_station_preview_rows(model_);
-        if (scene_preview_started_ && scene_preview_canvas_) {
-            std::string error;
-            if (!scene_preview_canvas_->refresh_scene_route_stations(
-                    model_, error)) {
-                add_log("[warn]gui_kme.cpp: 3D scene station marker refresh failed, scheduling full rebuild: " +
-                        (error.empty() ? std::string("unknown error") : error));
-                scene_preview_dirty_ = true;
-                scene_preview_preserve_models_on_rebuild_ = true;
-                scene_preview_preserve_camera_on_rebuild_ = true;
-            }
+    }
+    if ((row_kind == "station.put" || row_kind == "station.list" ||
+         row_kind == "irregularity.change") &&
+        scene_preview_started_ && scene_preview_canvas_) {
+        std::string error;
+        if (!scene_preview_canvas_->refresh_scene_route_stations(
+                model_, error)) {
+            add_log("[warn]gui_kme.cpp: 3D scene marker refresh failed, scheduling full rebuild: " +
+                    (error.empty() ? std::string("unknown error") : error));
+            scene_preview_dirty_ = true;
+            scene_preview_preserve_models_on_rebuild_ = true;
+            scene_preview_preserve_camera_on_rebuild_ = true;
         }
     }
     invalidate_table_cache();
@@ -2190,7 +2193,7 @@ void App::process_pending_element_inspector() {
 bool row_kind_supports_delete(const std::string& row_kind) {
     return row_kind == "structure.model" || row_kind == "structure.put" ||
         row_kind == "structure.between" || row_kind == "station.put" ||
-        row_kind == "repeater";
+        row_kind == "repeater" || row_kind == "irregularity.change";
 }
 
 struct RepeaterDeleteChain {
@@ -2477,12 +2480,13 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 5> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 6> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
         "repeater",
         "signal.put",
+        "irregularity.change",
     };
     return std::any_of(k_distance_row_kinds.begin(), k_distance_row_kinds.end(),
                        [&](const char* value) { return row_kind == value; });
@@ -2787,6 +2791,11 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("door", "door", MapElementNumericConstraint::Finite, false);
         add_row_field("margin1", "back", MapElementNumericConstraint::Finite, false);
         add_row_field("margin2", "front", MapElementNumericConstraint::Finite, false);
+    } else if (request.row_kind == "irregularity.change") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        for (const char* key : {"x", "y", "r", "lx", "ly", "lr"}) {
+            add_row_field(key, key, MapElementNumericConstraint::Finite, true);
+        }
     } else if (request.row_kind == "signal.put") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("signalAspectKey", "signalAspectKey",
@@ -4187,10 +4196,10 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 10> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 11> k_committed_row_kinds = {
         "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
-        "signal.aspect",
+        "signal.aspect", "irregularity.change",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;

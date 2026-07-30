@@ -3058,6 +3058,20 @@ void App::render_plan_canvas(ImVec2 size) {
             locate_irregularity_row_in_list(static_cast<size_t>(plan_irregularity_popup_row_));
         }
         ImGui::EndDisabled();
+        const PlanIrregularityMarker* marker = nullptr;
+        if (can_locate && irregularity_marker_cache_[static_cast<size_t>(plan_irregularity_popup_row_)].has_value()) {
+            marker = &*irregularity_marker_cache_[static_cast<size_t>(plan_irregularity_popup_row_)];
+        }
+        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
+            request_element_inspector(marker->edit_id, "irregularity.change");
+        }
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
+        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
+            request_element_delete(marker->edit_id, "irregularity.change");
+        }
+        ImGui::EndDisabled();
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("plan_rolling_noise_marker_context")) {
