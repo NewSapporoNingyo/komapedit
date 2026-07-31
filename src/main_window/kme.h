@@ -214,6 +214,7 @@ struct OtherTrack {
 struct Station {
     std::string key;
     std::string name;
+    std::string edit_id;
     double distance = 0.0;
     double mileage = 0.0;
     double x = 0.0;
@@ -599,6 +600,7 @@ struct PlanStation {
     Station station;
     double x = 0.0;
     double y = 0.0;
+    size_t row_index = 0;
 };
 
 struct PlanSpeed {
@@ -648,6 +650,7 @@ struct PlanOtherTrainStopMarker {
 };
 enum class PlanMarkerKind {
     None,
+    Station,
     Structure,
     Repeater,
     Signal,
@@ -1687,6 +1690,7 @@ private:
     int draw_distance_list_highlight_row_ = -1;
     int plan_structure_popup_row_ = -1;
     int plan_repeater_popup_row_ = -1;
+    int plan_station_popup_row_ = -1;
     int plan_signal_popup_row_ = -1;
     int plan_beacon_popup_row_ = -1;
     int plan_other_train_stop_popup_row_ = -1;

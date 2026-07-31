@@ -51,6 +51,7 @@ void App::invalidate_table_cache() {
     draw_distance_list_highlight_row_ = -1;
     plan_structure_popup_row_ = -1;
     plan_repeater_popup_row_ = -1;
+    plan_station_popup_row_ = -1;
     plan_signal_popup_row_ = -1;
     plan_beacon_popup_row_ = -1;
     plan_other_train_stop_popup_row_ = -1;

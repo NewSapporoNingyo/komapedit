@@ -1393,39 +1393,6 @@ std::string canvas3d_scene_table_marker_label(
     return label;
 }
 
-const TableRow* canvas3d_scene_station_position_row(
-    const std::vector<TableRow>& rows,
-    size_t& row_cursor,
-    const Station& station) {
-    constexpr double k_station_row_distance_epsilon = 1e-6;
-    while (row_cursor < rows.size()) {
-        const double row_distance = table_cell_number(rows[row_cursor], "_distance");
-        if (std::isfinite(row_distance) &&
-            row_distance >= station.distance - k_station_row_distance_epsilon) {
-            break;
-        }
-        ++row_cursor;
-    }
-
-    const TableRow* matched_row = nullptr;
-    size_t scan = row_cursor;
-    while (scan < rows.size()) {
-        const double row_distance = table_cell_number(rows[scan], "_distance");
-        if (std::isfinite(row_distance) &&
-            row_distance > station.distance + k_station_row_distance_epsilon) {
-            break;
-        }
-        if (std::isfinite(row_distance) &&
-            std::abs(row_distance - station.distance) <= k_station_row_distance_epsilon &&
-            table_cell(rows[scan], "posKey") == station.key) {
-            matched_row = &rows[scan];
-        }
-        ++scan;
-    }
-    row_cursor = scan;
-    return matched_row;
-}
-
 void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model) {
     scene.markers.clear();
     const Canvas3DTrackPath* own_track = scene_own_track_path(scene);
@@ -1468,32 +1435,12 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         scene.markers.push_back(std::move(marker));
     };
 
-    size_t station_row_count = 0;
-    for (const TableRow& row : model.station_list_rows) {
-        if (!table_cell(row, "posKey").empty()) ++station_row_count;
-    }
-    const bool station_rows_align_with_positions =
-        station_row_count == model.station_positions.size();
-    size_t station_row_cursor = 0;
     for (const Station& station : model.station_positions) {
-        const TableRow* station_row = nullptr;
-        if (station_rows_align_with_positions) {
-            while (station_row_cursor < model.station_list_rows.size() &&
-                   table_cell(model.station_list_rows[station_row_cursor], "posKey").empty()) {
-                ++station_row_cursor;
-            }
-            if (station_row_cursor < model.station_list_rows.size()) {
-                station_row = &model.station_list_rows[station_row_cursor++];
-            }
-        } else if (std::isfinite(station.distance)) {
-            station_row = canvas3d_scene_station_position_row(
-                model.station_list_rows, station_row_cursor, station);
-        }
         append_marker(MapMarkerVisualKind::Station, station.distance,
                       station.name.empty() ? station.key : station.name,
                       MapMarkerIconVariant::StationRailDiagram,
                       Canvas3DSceneMarkerListKind::None, "station.put", std::nullopt,
-                      station_row ? station_row->edit_id : std::string{});
+                      station.edit_id);
     }
 
     for (const TrackEvent& event : model.own_events) {

@@ -896,10 +896,11 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         }
     }
 
-    for (const auto& s : model_.stations) {
+    for (size_t row_index = 0; row_index < model_.station_positions.size(); ++row_index) {
+        const Station& s = model_.station_positions[row_index];
         if (s.distance < dmin_ || s.distance > dmax_) continue;
         ImVec2 q = rotate_xy(s.x, s.y, angle);
-        out.stations.push_back({s, q.x, q.y});
+        out.stations.push_back({s, q.x, q.y, row_index});
     }
 
     for (const auto& s : model_.speedlimits) {
@@ -2183,6 +2184,8 @@ void App::render_plan_canvas(ImVec2 size) {
         return best_hit;
     };
     PlanScreenTransform hit_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
+    std::optional<MarkerHit> hovered_station_hit =
+        nearest_marker_hit(data.stations, hit_transform, !show_stations_);
     std::optional<MarkerHit> hovered_structure_hit =
         nearest_marker_hit(data.structure_markers, hit_transform);
     std::optional<MarkerHit> hovered_repeater_hit =
@@ -2218,6 +2221,9 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<MarkerHit> hovered_draw_distance_hit =
         nearest_marker_hit(data.draw_distance_markers, hit_transform);
     debug_plan_stage("hit_test");
+    std::optional<size_t> hovered_station_row = hovered_station_hit
+        ? std::optional<size_t>(hovered_station_hit->row_index)
+        : std::nullopt;
     std::optional<size_t> hovered_structure_row = hovered_structure_hit
         ? std::optional<size_t>(hovered_structure_hit->row_index)
         : std::nullopt;
@@ -2301,6 +2307,7 @@ void App::render_plan_canvas(ImVec2 size) {
             best_dist_sq = hit->dist_sq;
             best = PlanMarkerSelection{kind, hit->row_index};
         };
+        note(hovered_station_hit, PlanMarkerKind::Station);
         note(hovered_signal_hit, PlanMarkerKind::Signal);
         note(hovered_beacon_hit, PlanMarkerKind::Beacon);
         note(hovered_pretrain_hit, PlanMarkerKind::PreTrain);
@@ -2332,7 +2339,13 @@ void App::render_plan_canvas(ImVec2 size) {
                                                 &touch_long_press_pos);
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
-        if (hovered_draw_distance_hit &&
+        if (hovered_station_hit &&
+            closer_than_all_marker_context_hits(hovered_station_hit) &&
+            closer_or_equal(hovered_station_hit, hovered_draw_distance_hit) &&
+            closer_or_equal(hovered_station_hit, hovered_other_train_stop_hit)) {
+            plan_station_popup_row_ = static_cast<int>(hovered_station_hit->row_index);
+            ImGui::OpenPopup("plan_station_marker_context");
+        } else if (hovered_draw_distance_hit &&
             closer_than_all_marker_context_hits(hovered_draw_distance_hit) &&
             closer_or_equal(hovered_draw_distance_hit, hovered_other_train_stop_hit)) {
             plan_draw_distance_popup_row_ =
@@ -2712,13 +2725,22 @@ void App::render_plan_canvas(ImVec2 size) {
         const float station_label_offset = std::max(8.0f, station_marker_radius + 4.0f);
         for (const auto& st : data.stations) {
             ImVec2 p = transform.plan_to_screen(st.x, st.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            const bool marker_hovered =
+                hovered_station_row && st.row_index == *hovered_station_row;
+            const bool marker_active =
+                marker_emphasized(PlanMarkerKind::Station, st.row_index, marker_hovered);
+            const ImU32 marker_color =
+                map_marker_theme_color_u32(MapMarkerVisualKind::Station);
+            draw_selected_marker_ring(
+                p, PlanMarkerKind::Station, st.row_index, marker_color);
             draw_map_marker_icon(
                 draw, MapMarkerVisualKind::Station, p,
-                station_marker_radius / 0.46f);
+                station_marker_radius / 0.46f * (marker_active ? 1.2f : 1.0f));
             if (!overview_marker_lod && show_station_names_) {
                 draw->AddText(
                     ImVec2(p.x + station_label_offset, p.y - 16),
-                    map_marker_theme_color_u32(MapMarkerVisualKind::Station),
+                    marker_color,
                     st.station.name.c_str());
             }
             if (!overview_marker_lod && show_station_mileage_) {
@@ -2984,6 +3006,22 @@ void App::render_plan_canvas(ImVec2 size) {
     draw_scalebar(draw, plan_view_, origin, avail);
     draw->PopClipRect();
     debug_plan_stage("overlays_done");
+    if (ImGui::BeginPopup("plan_station_marker_context")) {
+        const Station* station = nullptr;
+        if (plan_station_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_station_popup_row_) <
+                model_.station_positions.size()) {
+            station = &model_.station_positions[
+                static_cast<size_t>(plan_station_popup_row_)];
+        }
+        ImGui::BeginDisabled(
+            !edit_actions_available() || !station || station->edit_id.empty());
+        if (ImGui::MenuItem(tr("button.delete").c_str()) && station) {
+            request_element_delete(station->edit_id, "station.put");
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
     if (ImGui::BeginPopup("plan_structure_marker_context")) {
         bool can_locate = plan_structure_popup_row_ >= 0 &&
             static_cast<size_t>(plan_structure_popup_row_) < structure_marker_cache_.size();

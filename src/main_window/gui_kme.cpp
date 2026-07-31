@@ -717,6 +717,62 @@ std::vector<TableRow> hydrate_signal_aspect_rows(
     return rows;
 }
 
+void bind_station_position_edit_ids(MapModel& model) {
+    for (Station& station : model.station_positions) station.edit_id.clear();
+
+    size_t station_row_count = 0;
+    for (const TableRow& row : model.station_list_rows) {
+        if (!table_cell(row, "posKey").empty()) ++station_row_count;
+    }
+
+    if (station_row_count == model.station_positions.size()) {
+        size_t row_cursor = 0;
+        for (Station& station : model.station_positions) {
+            while (row_cursor < model.station_list_rows.size() &&
+                   table_cell(model.station_list_rows[row_cursor], "posKey").empty()) {
+                ++row_cursor;
+            }
+            if (row_cursor >= model.station_list_rows.size()) return;
+            station.edit_id = model.station_list_rows[row_cursor++].edit_id;
+        }
+        return;
+    }
+
+    constexpr double k_station_row_distance_epsilon = 1e-6;
+    size_t row_cursor = 0;
+    for (Station& station : model.station_positions) {
+        while (row_cursor < model.station_list_rows.size()) {
+            const double row_distance =
+                table_cell_number(model.station_list_rows[row_cursor], "_distance");
+            if (std::isfinite(row_distance) &&
+                row_distance >= station.distance - k_station_row_distance_epsilon) {
+                break;
+            }
+            ++row_cursor;
+        }
+
+        const TableRow* matched_row = nullptr;
+        size_t scan = row_cursor;
+        while (scan < model.station_list_rows.size()) {
+            const TableRow& row = model.station_list_rows[scan];
+            const double row_distance = table_cell_number(row, "_distance");
+            if (std::isfinite(row_distance) &&
+                row_distance > station.distance + k_station_row_distance_epsilon) {
+                break;
+            }
+            if (std::isfinite(row_distance) &&
+                std::abs(row_distance - station.distance) <=
+                    k_station_row_distance_epsilon &&
+                table_cell(row, "posKey") == station.key) {
+                matched_row = &row;
+            }
+            ++scan;
+        }
+        row_cursor = scan;
+        if (matched_row) station.edit_id = matched_row->edit_id;
+    }
+}
+
 MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                               const std::string& path,
                               double snapshot_call_seconds) {
@@ -1195,6 +1251,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
     for (size_t i = 0; i < model.station_list_rows.size(); ++i) {
         model.station_list_rows[i].cells["rowNumber"] = std::to_string(i + 1);
     }
+    bind_station_position_edit_ids(model);
 
     if (!model.stations.empty()) {
         double minimum = model.stations.front().distance;
@@ -1659,6 +1716,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     merge_table_row_edit_metadata(current.cab_illuminance, edit_model.cab_illuminance);
     merge_table_row_edit_metadata(current.fogs, edit_model.fogs);
     merge_table_row_edit_metadata(current.draw_distances, edit_model.draw_distances);
+    bind_station_position_edit_ids(current);
 }
 
 void App::apply_edit_metadata_result(LoadResult result) {
@@ -2403,6 +2461,7 @@ void normalize_station_preview_rows(MapModel& model) {
         model.station_positions.push_back(station);
         if (seen.insert(key).second) model.stations.push_back(std::move(station));
     }
+    bind_station_position_edit_ids(model);
 }
 
 int inspector_request_match_score(const TableRow& row,
