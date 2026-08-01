@@ -161,11 +161,15 @@ TextCellContextAction render_text_cell_with_context_actions(const std::string& d
 TextCellContextAction render_marker_text_cell_with_context(
     const std::string& display_text,
     const std::string& locate_on_plan_label, bool locate_on_plan_enabled,
-    const std::string& locate_in_scene_label, bool locate_in_scene_enabled) {
+    const std::string& locate_in_scene_label, bool locate_in_scene_enabled,
+    const std::string& properties_label = {}, bool properties_enabled = false,
+    const std::string& delete_label = {}, bool delete_enabled = false) {
     return render_text_cell_with_context_actions(
         display_text,
         locate_on_plan_label, locate_on_plan_enabled,
-        locate_in_scene_label, locate_in_scene_enabled);
+        locate_in_scene_label, locate_in_scene_enabled,
+        properties_label, properties_enabled,
+        delete_label, delete_enabled);
 }
 
 struct RepeaterTextCellContextAction {
@@ -1310,7 +1314,8 @@ void render_event_table(const char* table_id,
     ImGui::EndTable();
 }
 
-template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn>
+template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn,
+          typename CanEditFn, typename EditFn, typename DeleteFn>
 void render_change_point_table(const char* table_id,
                                const TableColumnDef (&columns)[N],
                                int distance_column,
@@ -1328,7 +1333,12 @@ void render_change_point_table(const char* table_id,
                                CanLocateFn can_locate,
                                LocateFn locate_row_on_plan,
                                bool can_locate_scene,
-                               LocateSceneFn locate_row_in_scene) {
+                               LocateSceneFn locate_row_in_scene,
+                               const std::string& properties_label,
+                               const std::string& delete_label,
+                               CanEditFn can_edit_row,
+                               EditFn edit_row,
+                               DeleteFn delete_row) {
     render_event_table(
         table_id, columns, distance_column, file_path_column, rows,
         distance_width, file_path_width, file_name_header, open_menu_label,
@@ -1336,19 +1346,27 @@ void render_change_point_table(const char* table_id,
         [&](int row_index, int column, const std::string& value) {
             if (column != distance_column) return false;
             const size_t marker_index = static_cast<size_t>(row_index);
+            const bool can_edit = can_edit_row(marker_index);
             const TextCellContextAction action = render_marker_text_cell_with_context(
                 value,
                 locate_on_plan_label, can_locate(marker_index),
-                locate_in_scene_label, can_locate_scene);
+                locate_in_scene_label, can_locate_scene,
+                properties_label, can_edit,
+                delete_label, can_edit);
             if (action == TextCellContextAction::Primary) {
                 locate_row_on_plan(marker_index);
             } else if (action == TextCellContextAction::Secondary) {
                 locate_row_in_scene(marker_index);
+            } else if (action == TextCellContextAction::Tertiary) {
+                edit_row(marker_index);
+            } else if (action == TextCellContextAction::Quaternary) {
+                delete_row(marker_index);
             }
             return true;
         });
 }
-template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn, typename FindFn>
+template <size_t N, typename CanLocateFn, typename LocateFn, typename LocateSceneFn, typename FindFn,
+          typename CanEditFn, typename EditFn, typename DeleteFn>
 void render_map_sound_event_table(const char* table_id,
                                   const TableColumnDef (&columns)[N],
                                   int distance_column,
@@ -1369,7 +1387,12 @@ void render_map_sound_event_table(const char* table_id,
                                   LocateFn locate_row_on_plan,
                                   bool can_locate_scene,
                                   LocateSceneFn locate_row_in_scene,
-                                  FindFn find_sound_file) {
+                                  FindFn find_sound_file,
+                                  const std::string& properties_label,
+                                  const std::string& delete_label,
+                                  CanEditFn can_edit_row,
+                                  EditFn edit_row,
+                                  DeleteFn delete_row) {
     render_event_table(
         table_id, columns, distance_column, file_path_column, rows,
         distance_width, file_path_width, file_name_header, open_menu_label,
@@ -1377,16 +1400,23 @@ void render_map_sound_event_table(const char* table_id,
         [&](int row_index, int column, const std::string& value) {
             if (column == distance_column) {
                 const size_t marker_index = static_cast<size_t>(row_index);
+                const bool can_edit = can_edit_row(marker_index);
                 ImGui::PushID(column);
                 const TextCellContextAction action = render_marker_text_cell_with_context(
                     value,
                     locate_on_plan_label, can_locate(marker_index),
-                    locate_in_scene_label, can_locate_scene);
+                    locate_in_scene_label, can_locate_scene,
+                    properties_label, can_edit,
+                    delete_label, can_edit);
                 ImGui::PopID();
                 if (action == TextCellContextAction::Primary) {
                     locate_row_on_plan(marker_index);
                 } else if (action == TextCellContextAction::Secondary) {
                     locate_row_in_scene(marker_index);
+                } else if (action == TextCellContextAction::Tertiary) {
+                    edit_row(marker_index);
+                } else if (action == TextCellContextAction::Quaternary) {
+                    delete_row(marker_index);
                 }
                 return true;
             }
@@ -3873,15 +3903,24 @@ void App::render_beacons_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < beacon_marker_cache_.size() &&
                             beacon_marker_cache_[marker_index].has_value();
+                        const bool can_edit = edit_actions_available() &&
+                            marker_index < model_.beacons.size() &&
+                            !model_.beacons[marker_index].edit_id.empty();
                         const TextCellContextAction action = render_marker_text_cell_with_context(
                             value,
                             tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                            tr("dialog.element_properties"), can_edit,
+                            tr("button.delete"), can_edit);
                         if (action == TextCellContextAction::Primary) {
                             locate_beacon_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_scene_marker_row_in_scene_preview(
                                 Canvas3DSceneMarkerListKind::Beacon, marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(model_.beacons[marker_index].edit_id, "beacon.put");
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(model_.beacons[marker_index].edit_id, "beacon.put");
                         }
                         continue;
                     }
@@ -4047,6 +4086,17 @@ void App::render_rolling_noises_window() {
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
                 Canvas3DSceneMarkerListKind::RollingNoise, marker_index);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.rolling_noises.size() &&
+                !model_.rolling_noises[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.rolling_noises[row].edit_id, "rollingNoise.change");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.rolling_noises[row].edit_id, "rollingNoise.change");
         });
     focus_rolling_noises_next_ = false;
     ImGui::End();
@@ -4093,7 +4143,18 @@ void App::render_map_sounds_window() {
             locate_scene_marker_row_in_scene_preview(
                 Canvas3DSceneMarkerListKind::MapSound, marker_index);
         },
-        [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, false); });
+        [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, false); },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.map_sounds.size() &&
+                !model_.map_sounds[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.map_sounds[row].edit_id, "mapSound.play");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.map_sounds[row].edit_id, "mapSound.play");
+        });
     focus_map_sounds_next_ = false;
     ImGui::End();
 }
@@ -4139,7 +4200,18 @@ void App::render_map_sound_3d_window() {
             locate_scene_marker_row_in_scene_preview(
                 Canvas3DSceneMarkerListKind::MapSound3D, marker_index);
         },
-        [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, true); });
+        [this](const std::string& sound_key) { find_sound_file_for_sound_key(sound_key, true); },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.map_sound_3d.size() &&
+                !model_.map_sound_3d[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.map_sound_3d[row].edit_id, "mapSound3D.put");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.map_sound_3d[row].edit_id, "mapSound3D.put");
+        });
     focus_map_sound_3d_next_ = false;
     ImGui::End();
 }
@@ -4183,6 +4255,17 @@ void App::render_flange_noises_window() {
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
                 Canvas3DSceneMarkerListKind::FlangeNoise, marker_index);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.flange_noises.size() &&
+                !model_.flange_noises[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.flange_noises[row].edit_id, "flangeNoise.change");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.flange_noises[row].edit_id, "flangeNoise.change");
         });
     focus_flange_noises_next_ = false;
     ImGui::End();
@@ -4227,6 +4310,17 @@ void App::render_joint_noises_window() {
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
                 Canvas3DSceneMarkerListKind::JointNoise, marker_index);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.joint_noises.size() &&
+                !model_.joint_noises[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.joint_noises[row].edit_id, "jointNoise.play");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.joint_noises[row].edit_id, "jointNoise.play");
         });
     focus_joint_noises_next_ = false;
     ImGui::End();
@@ -4295,15 +4389,26 @@ void App::render_backgrounds_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < background_marker_cache_.size() &&
                             background_marker_cache_[marker_index].has_value();
+                        const bool can_edit = edit_actions_available() &&
+                            marker_index < model_.backgrounds.size() &&
+                            !model_.backgrounds[marker_index].edit_id.empty();
                         const TextCellContextAction action = render_marker_text_cell_with_context(
                             value,
                             tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                            tr("dialog.element_properties"), can_edit,
+                            tr("button.delete"), can_edit);
                         if (action == TextCellContextAction::Primary) {
                             locate_background_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_scene_marker_row_in_scene_preview(
                                 Canvas3DSceneMarkerListKind::Background, marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(model_.backgrounds[marker_index].edit_id,
+                                                      "background.change");
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(model_.backgrounds[marker_index].edit_id,
+                                                   "background.change");
                         }
                         continue;
                     }
@@ -4393,15 +4498,26 @@ void App::render_adhesions_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < adhesion_marker_cache_.size() &&
                             adhesion_marker_cache_[marker_index].has_value();
+                        const bool can_edit = edit_actions_available() &&
+                            marker_index < model_.adhesions.size() &&
+                            !model_.adhesions[marker_index].edit_id.empty();
                         const TextCellContextAction action = render_marker_text_cell_with_context(
                             value,
                             tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                            tr("dialog.element_properties"), can_edit,
+                            tr("button.delete"), can_edit);
                         if (action == TextCellContextAction::Primary) {
                             locate_adhesion_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_scene_marker_row_in_scene_preview(
                                 Canvas3DSceneMarkerListKind::Adhesion, marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(model_.adhesions[marker_index].edit_id,
+                                                      "adhesion.change");
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(model_.adhesions[marker_index].edit_id,
+                                                   "adhesion.change");
                         }
                         continue;
                     }
@@ -4485,15 +4601,26 @@ void App::render_cab_illuminance_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < cab_illuminance_marker_cache_.size() &&
                             cab_illuminance_marker_cache_[marker_index].has_value();
+                        const bool can_edit = edit_actions_available() &&
+                            marker_index < model_.cab_illuminance.size() &&
+                            !model_.cab_illuminance[marker_index].edit_id.empty();
                         const TextCellContextAction action = render_marker_text_cell_with_context(
                             value,
                             tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                            tr("dialog.element_properties"), can_edit,
+                            tr("button.delete"), can_edit);
                         if (action == TextCellContextAction::Primary) {
                             locate_cab_illuminance_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_scene_marker_row_in_scene_preview(
                                 Canvas3DSceneMarkerListKind::CabIlluminance, marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(model_.cab_illuminance[marker_index].edit_id,
+                                                      "cabIlluminance.change");
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(model_.cab_illuminance[marker_index].edit_id,
+                                                   "cabIlluminance.change");
                         }
                         continue;
                     }
@@ -4577,15 +4704,26 @@ void App::render_fogs_window() {
                         size_t marker_index = static_cast<size_t>(row_index);
                         bool can_locate = marker_index < fog_marker_cache_.size() &&
                             fog_marker_cache_[marker_index].has_value();
+                        const bool can_edit = edit_actions_available() &&
+                            marker_index < model_.fogs.size() &&
+                            !model_.fogs[marker_index].edit_id.empty();
                         const TextCellContextAction action = render_marker_text_cell_with_context(
                             value,
                             tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                            tr("dialog.element_properties"), can_edit,
+                            tr("button.delete"), can_edit);
                         if (action == TextCellContextAction::Primary) {
                             locate_fog_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_scene_marker_row_in_scene_preview(
                                 Canvas3DSceneMarkerListKind::Fog, marker_index);
+                        } else if (action == TextCellContextAction::Tertiary) {
+                            request_element_inspector(model_.fogs[marker_index].edit_id,
+                                                      "fog.change");
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(model_.fogs[marker_index].edit_id,
+                                                   "fog.change");
                         }
                         continue;
                     }
@@ -4645,6 +4783,17 @@ void App::render_draw_distances_window() {
         [this](size_t marker_index) {
             locate_scene_marker_row_in_scene_preview(
                 Canvas3DSceneMarkerListKind::DrawDistance, marker_index);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.draw_distances.size() &&
+                !model_.draw_distances[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.draw_distances[row].edit_id, "drawDistance.change");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.draw_distances[row].edit_id, "drawDistance.change");
         });
     focus_draw_distances_next_ = false;
     ImGui::End();

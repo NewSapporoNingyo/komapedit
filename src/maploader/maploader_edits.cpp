@@ -26,6 +26,9 @@ SemanticSnapshot semantic_snapshot_for_context(MapContext& ctx) {
 }
 
 struct EditableTarget {
+    using SimpleStatementBuilder = std::string (*)(
+        const MapEditChange&, const ParsedStatement&, const void*);
+
     size_t statement_index = k_no_source_ref;
     std::string row_kind;
     size_t row_index = 0;
@@ -39,6 +42,8 @@ struct EditableTarget {
     const StationListEntry* station_list = nullptr;
     const StructureModel* structure_model = nullptr;
     const SoundListEntry* sound_list = nullptr;
+    const void* simple_row = nullptr;
+    SimpleStatementBuilder simple_statement_builder = nullptr;
     int elements_for_statement = 0;
 };
 
@@ -947,6 +952,225 @@ std::string build_irregularity_statement(const MapEditChange& change,
     return out.str();
 }
 
+bool has_non_distance_field_change(const MapEditChange& change) {
+    return std::any_of(change.field_changes.begin(), change.field_changes.end(),
+                       [](const auto& field) { return field.first != "distance"; });
+}
+
+std::string raw_object_key_argument(const ParsedStatement& statement) {
+    const std::string& text = statement.raw_text;
+    const size_t open = text.find('[');
+    if (open == std::string::npos) return {};
+    bool single_quoted = false;
+    bool double_quoted = false;
+    int nested = 0;
+    for (size_t i = open + 1; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (ch == '\'' && !double_quoted) single_quoted = !single_quoted;
+        else if (ch == '"' && !single_quoted) double_quoted = !double_quoted;
+        else if (!single_quoted && !double_quoted) {
+            if (ch == '[') ++nested;
+            else if (ch == ']' && nested-- == 0) {
+                return trim_field_copy(text.substr(open + 1, i - open - 1));
+            }
+        }
+    }
+    return {};
+}
+
+std::string object_key_field_as_bve_arg(const MapEditChange& change,
+                                        const std::string& key,
+                                        const Value& fallback,
+                                        const ParsedStatement& statement) {
+    auto edited = change.field_changes.find(key);
+    if (edited != change.field_changes.end()) {
+        return quoted_bve_string(required_string_field(
+            change, key, value_to_edit_text(fallback)));
+    }
+    std::string raw = raw_object_key_argument(statement);
+    return raw.empty() ? value_to_bve_arg(fallback) : raw;
+}
+
+std::string string_value_field_as_bve_arg(const MapEditChange& change,
+                                          const std::string& key,
+                                          const Value& fallback,
+                                          const std::string* raw_fallback = nullptr) {
+    auto edited = change.field_changes.find(key);
+    if (edited == change.field_changes.end()) {
+        if (raw_fallback) return trim_field_copy(*raw_fallback);
+        return value_to_bve_arg(fallback);
+    }
+    return quoted_bve_string(required_string_field(
+        change, key, value_to_edit_text(fallback)));
+}
+
+std::string source_change_method(const ParsedStatement& statement,
+                                 const char* expected_object) {
+    const std::string lower = ascii_lower(statement.statement_kind);
+    const std::string prefix = ascii_lower(expected_object) + ".";
+    if (lower.rfind(prefix, 0) != 0) {
+        throw std::runtime_error("unexpected source statement kind: " +
+                                 statement.statement_kind);
+    }
+    const std::string method = lower.substr(prefix.size());
+    if (method == "set") return "Set";
+    if (method == "interpolate") return "Interpolate";
+    if (method == "change") return "Change";
+    if (method == "play") return "Play";
+    if (method == "put") return "Put";
+    throw std::runtime_error("unsupported source statement method: " +
+                             statement.statement_kind);
+}
+
+std::string build_beacon_statement(const MapEditChange& change,
+                                   const ParsedStatement& statement,
+                                   const BeaconPut& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    std::ostringstream out;
+    out << "Beacon.Put("
+        << required_numeric_value_field(change, "type", row.type, raw_arg_at(args, 0)) << ","
+        << required_numeric_value_field(change, "section", row.section, raw_arg_at(args, 1)) << ","
+        << required_numeric_value_field(change, "sendData", row.send_data, raw_arg_at(args, 2))
+        << ");";
+    return out.str();
+}
+
+std::string build_map_sound_statement(const MapEditChange& change,
+                                      const ParsedStatement& statement,
+                                      const MapSoundPlay& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    std::ostringstream out;
+    out << "Sound[" << object_key_field_as_bve_arg(
+        change, "soundKey", row.sound_key, statement) << "].Play();";
+    return out.str();
+}
+
+std::string build_map_sound_3d_statement(const MapEditChange& change,
+                                         const ParsedStatement& statement,
+                                         const MapSound3DPut& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    std::ostringstream out;
+    out << "Sound3D[" << object_key_field_as_bve_arg(
+        change, "soundKey", row.sound_key, statement) << "].Put("
+        << numeric_field(change, "x", row.x, raw_arg_at(args, 0)) << ","
+        << numeric_field(change, "y", row.y, raw_arg_at(args, 1)) << ");";
+    return out.str();
+}
+
+template <typename Row>
+std::string build_noise_statement(const MapEditChange& change,
+                                  const ParsedStatement& statement,
+                                  const Row& row,
+                                  const char* object_name,
+                                  const char* method_name) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    std::ostringstream out;
+    out << object_name << "." << method_name << "("
+        << required_numeric_value_field(change, "index", row.index, raw_arg_at(args, 0))
+        << ");";
+    return out.str();
+}
+
+std::string build_rolling_noise_statement(const MapEditChange& change,
+                                          const ParsedStatement& statement,
+                                          const RollingNoiseChange& row) {
+    return build_noise_statement(change, statement, row, "RollingNoise", "Change");
+}
+
+std::string build_flange_noise_statement(const MapEditChange& change,
+                                         const ParsedStatement& statement,
+                                         const FlangeNoiseChange& row) {
+    return build_noise_statement(change, statement, row, "FlangeNoise", "Change");
+}
+
+std::string build_joint_noise_statement(const MapEditChange& change,
+                                        const ParsedStatement& statement,
+                                        const JointNoisePlay& row) {
+    return build_noise_statement(change, statement, row, "JointNoise", "Play");
+}
+
+std::string build_background_statement(const MapEditChange& change,
+                                       const ParsedStatement& statement,
+                                       const BackgroundChange& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    return "Background.Change(" + string_value_field_as_bve_arg(
+        change, "structureKey", row.structure_key, raw_arg_at(args, 0)) + ");";
+}
+
+std::string build_adhesion_statement(const MapEditChange& change,
+                                     const ParsedStatement& statement,
+                                     const AdhesionChange& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    const std::string a = required_numeric_value_field(
+        change, "a", row.a, raw_arg_at(args, 0));
+    const std::string b = optional_numeric_value_field(
+        change, "b", row.b, raw_arg_at(args, 1));
+    const std::string c = optional_numeric_value_field(
+        change, "c", row.c, raw_arg_at(args, 2));
+    if (b.empty() != c.empty()) {
+        throw std::runtime_error("Adhesion.Change requires either 1 or 3 parameters");
+    }
+    return "Adhesion.Change(" + a + (b.empty() ? "" : "," + b + "," + c) + ");";
+}
+
+std::string build_cab_illuminance_statement(const MapEditChange& change,
+                                            const ParsedStatement& statement,
+                                            const CabIlluminanceChange& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    return "CabIlluminance." + source_change_method(statement, "CabIlluminance") + "(" +
+        required_numeric_value_field(change, "value", row.value, raw_arg_at(args, 0)) + ");";
+}
+
+std::string build_fog_statement(const MapEditChange& change,
+                                const ParsedStatement& statement,
+                                const FogChange& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::string method = source_change_method(statement, "Fog");
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    std::array<std::string, 4> values = {
+        optional_numeric_value_field(change, "density", row.density, raw_arg_at(args, 0)),
+        optional_numeric_value_field(change, "red", row.red, raw_arg_at(args, 1)),
+        optional_numeric_value_field(change, "green", row.green, raw_arg_at(args, 2)),
+        optional_numeric_value_field(change, "blue", row.blue, raw_arg_at(args, 3)),
+    };
+    const bool density = !values[0].empty();
+    const bool color = !values[1].empty() && !values[2].empty() && !values[3].empty();
+    const bool any_color = !values[1].empty() || !values[2].empty() || !values[3].empty();
+    if (method == "Set") {
+        if (!density || !color) throw std::runtime_error("Fog.Set requires 4 parameters");
+    } else if (any_color != color || (color && !density)) {
+        throw std::runtime_error("Fog.Interpolate requires 0, 1, or 4 parameters");
+    }
+    std::string arguments;
+    if (density) {
+        arguments = values[0];
+        if (color) arguments += "," + values[1] + "," + values[2] + "," + values[3];
+    }
+    return "Fog." + method + "(" + arguments + ");";
+}
+
+std::string build_draw_distance_statement(const MapEditChange& change,
+                                          const ParsedStatement& statement,
+                                          const DrawDistanceChange& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    return "DrawDistance.Change(" +
+        numeric_field(change, "value", row.value, raw_arg_at(args, 0)) + ");";
+}
+
+template <typename Row, auto Builder>
+std::string build_simple_statement_adapter(const MapEditChange& change,
+                                           const ParsedStatement& statement,
+                                           const void* row) {
+    return Builder(change, statement, *static_cast<const Row*>(row));
+}
+
 std::string build_structure_put_statement(const MapEditChange& change,
                                           const ParsedStatement& statement,
                                           const StructurePut& row,
@@ -1183,6 +1407,17 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     for (const auto& row : ctx.signal_puts) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.repeaters) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.irregularities) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.beacons) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.map_sounds) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.map_sound_3d) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.rolling_noises) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.flange_noises) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.joint_noises) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.backgrounds) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.adhesions) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.cab_illuminance) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.fogs) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.draw_distances) count_statement_ref(row.edit_ref, statement_index, count);
     return count;
 }
 
@@ -1223,6 +1458,27 @@ bool match_edit_ref(MapContext& ctx, const Row& row, const std::string& row_kind
     target.element_index = row.edit_ref.element_index;
     target.elements_for_statement = count_elements_for_statement(ctx, target.statement_index);
     return true;
+}
+
+template <typename Row, auto Builder>
+bool match_simple_edit_ref(MapContext& ctx, const Row& row,
+                           const std::string& row_kind, size_t row_index,
+                           const std::string& edit_id, EditableTarget& target) {
+    if (!match_edit_ref(ctx, row, row_kind, row_index, edit_id, target)) return false;
+    target.simple_row = &row;
+    target.simple_statement_builder = &build_simple_statement_adapter<Row, Builder>;
+    return true;
+}
+
+template <typename Rows, auto Builder>
+bool find_simple_target(MapContext& ctx, const Rows& rows,
+                        const std::string& row_kind, const std::string& edit_id,
+                        EditableTarget& target) {
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (match_simple_edit_ref<typename Rows::value_type, Builder>(
+                ctx, rows[i], row_kind, i, edit_id, target)) return true;
+    }
+    return false;
 }
 
 EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id) {
@@ -1303,6 +1559,30 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
             target.irregularity = &row;
             return target;
         }
+    }
+    if (find_simple_target<decltype(ctx.beacons), build_beacon_statement>(
+            ctx, ctx.beacons, "beacon.put", edit_id, target) ||
+        find_simple_target<decltype(ctx.map_sounds), build_map_sound_statement>(
+            ctx, ctx.map_sounds, "mapSound.play", edit_id, target) ||
+        find_simple_target<decltype(ctx.map_sound_3d), build_map_sound_3d_statement>(
+            ctx, ctx.map_sound_3d, "mapSound3D.put", edit_id, target) ||
+        find_simple_target<decltype(ctx.rolling_noises), build_rolling_noise_statement>(
+            ctx, ctx.rolling_noises, "rollingNoise.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.flange_noises), build_flange_noise_statement>(
+            ctx, ctx.flange_noises, "flangeNoise.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.joint_noises), build_joint_noise_statement>(
+            ctx, ctx.joint_noises, "jointNoise.play", edit_id, target) ||
+        find_simple_target<decltype(ctx.backgrounds), build_background_statement>(
+            ctx, ctx.backgrounds, "background.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.adhesions), build_adhesion_statement>(
+            ctx, ctx.adhesions, "adhesion.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.cab_illuminance), build_cab_illuminance_statement>(
+            ctx, ctx.cab_illuminance, "cabIlluminance.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.fogs), build_fog_statement>(
+            ctx, ctx.fogs, "fog.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.draw_distances), build_draw_distance_statement>(
+            ctx, ctx.draw_distances, "drawDistance.change", edit_id, target)) {
+        return target;
     }
     return target;
 }
@@ -1422,6 +1702,9 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "irregularity.change" && target.irregularity) {
         return build_irregularity_statement(change, statement, *target.irregularity);
+    }
+    if (target.simple_statement_builder && target.simple_row) {
+        return target.simple_statement_builder(change, statement, target.simple_row);
     }
     throw std::runtime_error("unsupported editable target: " + target.row_kind);
 }
@@ -2693,6 +2976,17 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->signal_puts, "signal.put");
         collect_candidate_rows(candidate->repeaters, "repeater");
         collect_candidate_rows(candidate->irregularities, "irregularity.change");
+        collect_candidate_rows(candidate->beacons, "beacon.put");
+        collect_candidate_rows(candidate->map_sounds, "mapSound.play");
+        collect_candidate_rows(candidate->map_sound_3d, "mapSound3D.put");
+        collect_candidate_rows(candidate->rolling_noises, "rollingNoise.change");
+        collect_candidate_rows(candidate->flange_noises, "flangeNoise.change");
+        collect_candidate_rows(candidate->joint_noises, "jointNoise.play");
+        collect_candidate_rows(candidate->backgrounds, "background.change");
+        collect_candidate_rows(candidate->adhesions, "adhesion.change");
+        collect_candidate_rows(candidate->cab_illuminance, "cabIlluminance.change");
+        collect_candidate_rows(candidate->fogs, "fog.change");
+        collect_candidate_rows(candidate->draw_distances, "drawDistance.change");
     } catch (const std::exception& e) {
         report.blocking_errors.push_back(
             std::string("failed to resolve edited target source provenance: ") + e.what());
@@ -4108,6 +4402,17 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "signal.put", ctx.signal_puts);
     append_committed_rows(ctx, report, "repeater", ctx.repeaters);
     append_committed_rows(ctx, report, "irregularity.change", ctx.irregularities);
+    append_committed_rows(ctx, report, "beacon.put", ctx.beacons);
+    append_committed_rows(ctx, report, "mapSound.play", ctx.map_sounds);
+    append_committed_rows(ctx, report, "mapSound3D.put", ctx.map_sound_3d);
+    append_committed_rows(ctx, report, "rollingNoise.change", ctx.rolling_noises);
+    append_committed_rows(ctx, report, "flangeNoise.change", ctx.flange_noises);
+    append_committed_rows(ctx, report, "jointNoise.play", ctx.joint_noises);
+    append_committed_rows(ctx, report, "background.change", ctx.backgrounds);
+    append_committed_rows(ctx, report, "adhesion.change", ctx.adhesions);
+    append_committed_rows(ctx, report, "cabIlluminance.change", ctx.cab_illuminance);
+    append_committed_rows(ctx, report, "fog.change", ctx.fogs);
+    append_committed_rows(ctx, report, "drawDistance.change", ctx.draw_distances);
     size_t sound_index = 0;
     size_t sound_3d_index = 0;
     for (const SoundListEntry& row : ctx.sound_list) {

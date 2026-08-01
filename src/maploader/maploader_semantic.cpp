@@ -362,6 +362,103 @@ void write_irregularity(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+bool optional_number_present(const MapEditChange* change, const char* key,
+                             const KvValue& fallback) {
+    const std::string* input = changed_field(change, key);
+    if (input) return !trim_field_copy(*input).empty();
+    return fallback.kind != KV_VALUE_NULL;
+}
+
+void write_beacon(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                  const KvBeaconRow& row, const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_required_number_value(out, snapshot, change, "type", row.type);
+    changed_required_number_value(out, snapshot, change, "section", row.section);
+    changed_required_number_value(out, snapshot, change, "sendData", row.send_data);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_map_sound(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                     const KvMapSoundRow& row, const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_value(out, snapshot, change, "soundKey", row.sound_key);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_map_sound_3d(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                        const KvMapSound3DRow& row,
+                        const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_value(out, snapshot, change, "soundKey", row.sound_key);
+    field(out, "x", changed_number(change, "x", row.x));
+    field(out, "y", changed_number(change, "y", row.y));
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_noise(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                 const KvNoiseRow& row, const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_required_number_value(out, snapshot, change, "index", row.index);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_background(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                      const KvBackgroundRow& row,
+                      const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_value(out, snapshot, change, "structureKey", row.structure_key);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_adhesion(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                    const KvAdhesionRow& row,
+                    const MapEditChange* change = nullptr) {
+    const bool has_b = optional_number_present(change, "b", row.b);
+    const bool has_c = optional_number_present(change, "c", row.c);
+    if (has_b != has_c) {
+        throw std::runtime_error("Adhesion.Change requires either 1 or 3 parameters");
+    }
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_required_number_value(out, snapshot, change, "a", row.a);
+    changed_optional_number(out, snapshot, change, "b", row.b);
+    changed_optional_number(out, snapshot, change, "c", row.c);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_cab_illuminance(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                           const KvCabIlluminanceRow& row,
+                           const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_required_number_value(out, snapshot, change, "value", row.value);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
+               const KvFogRow& row, const MapEditChange* change = nullptr) {
+    const bool density = optional_number_present(change, "density", row.density);
+    const bool red = optional_number_present(change, "red", row.red);
+    const bool green = optional_number_present(change, "green", row.green);
+    const bool blue = optional_number_present(change, "blue", row.blue);
+    const bool all_colors = red && green && blue;
+    if ((red || green || blue) != all_colors || (all_colors && !density)) {
+        throw std::runtime_error("Fog requires 0, 1, or 4 parameters");
+    }
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    changed_optional_number(out, snapshot, change, "density", row.density);
+    changed_optional_number(out, snapshot, change, "red", row.red);
+    changed_optional_number(out, snapshot, change, "green", row.green);
+    changed_optional_number(out, snapshot, change, "blue", row.blue);
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_draw_distance(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                         const KvDrawDistanceRow& row,
+                         const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    field(out, "value", changed_number(change, "value", row.value));
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
                         const KvStationListRow& row,
                         const MapEditChange* change = nullptr) {
@@ -502,6 +599,26 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "stationKey", "door", "margin1", "margin2"};
     } else if (target.row_kind == "irregularity.change") {
         allowed = {"distance", "x", "y", "r", "lx", "ly", "lr"};
+    } else if (target.row_kind == "beacon.put") {
+        allowed = {"distance", "type", "section", "sendData"};
+    } else if (target.row_kind == "mapSound.play") {
+        allowed = {"distance", "soundKey"};
+    } else if (target.row_kind == "mapSound3D.put") {
+        allowed = {"distance", "soundKey", "x", "y"};
+    } else if (target.row_kind == "rollingNoise.change" ||
+               target.row_kind == "flangeNoise.change" ||
+               target.row_kind == "jointNoise.play") {
+        allowed = {"distance", "index"};
+    } else if (target.row_kind == "background.change") {
+        allowed = {"distance", "structureKey"};
+    } else if (target.row_kind == "adhesion.change") {
+        allowed = {"distance", "a", "b", "c"};
+    } else if (target.row_kind == "cabIlluminance.change") {
+        allowed = {"distance", "value"};
+    } else if (target.row_kind == "fog.change") {
+        allowed = {"distance", "density", "red", "green", "blue"};
+    } else if (target.row_kind == "drawDistance.change") {
+        allowed = {"distance", "value"};
     } else if (target.row_kind == "station.list") {
         allowed = {"stationKey", "stationName", "arrivalTime", "depertureTime",
                    "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
@@ -759,11 +876,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvBeaconRow& row = snapshot.beacons[i];
         emit_element(output, full, snapshot, row.metadata, "beacon.put", "beacon",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "type", row.type);
-            field(out, snapshot, "section", row.section);
-            field(out, snapshot, "sendData", row.send_data);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_beacon(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.pretrain_count; ++i) {
@@ -790,19 +903,14 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvMapSoundRow& row = snapshot.map_sounds[i];
         emit_element(output, full, snapshot, row.metadata, "mapSound.play", "mapSound",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "soundKey", row.sound_key);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_map_sound(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.map_sound_3d_count; ++i) {
         const KvMapSound3DRow& row = snapshot.map_sounds_3d[i];
         emit_element(output, full, snapshot, row.metadata, "mapSound3D.put", "mapSound3D",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "soundKey", row.sound_key);
-            field(out, "x", row.x); field(out, "y", row.y);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_map_sound_3d(out, snapshot, row);
         });
     }
     auto emit_noises = [&](const KvNoiseRow* rows, std::uint64_t count,
@@ -811,9 +919,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
             const KvNoiseRow& row = rows[i];
             emit_element(output, full, snapshot, row.metadata, kind, container,
                          static_cast<size_t>(i), [&](SemanticWriter& out) {
-                field(out, "distance", row.distance);
-                field(out, snapshot, "index", row.index);
-                field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+                write_noise(out, snapshot, row);
             });
         }
     };
@@ -853,38 +959,28 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvBackgroundRow& row = snapshot.backgrounds[i];
         emit_element(output, full, snapshot, row.metadata, "background.change", "background",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "structureKey", row.structure_key);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_background(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.adhesion_count; ++i) {
         const KvAdhesionRow& row = snapshot.adhesions[i];
         emit_element(output, full, snapshot, row.metadata, "adhesion.change", "adhesion",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "a", row.a); field(out, snapshot, "b", row.b);
-            field(out, snapshot, "c", row.c);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_adhesion(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.cab_illuminance_count; ++i) {
         const KvCabIlluminanceRow& row = snapshot.cab_illuminance[i];
         emit_element(output, full, snapshot, row.metadata, "cabIlluminance.change", "cabIlluminance",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "value", row.value);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_cab_illuminance(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.fog_count; ++i) {
         const KvFogRow& row = snapshot.fogs[i];
         emit_element(output, full, snapshot, row.metadata, "fog.change", "fog",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "density", row.density); field(out, snapshot, "red", row.red);
-            field(out, snapshot, "green", row.green); field(out, snapshot, "blue", row.blue);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_fog(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {
@@ -892,9 +988,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         emit_element(output, full, snapshot, row.metadata,
                      "drawDistance.change", "drawDistance",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, "value", row.value);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_draw_distance(out, snapshot, row);
         });
     }
     for (std::uint64_t i = 0; i < snapshot.speed_limit_count; ++i) {
@@ -981,6 +1075,61 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("irregularity.change target row is out of bounds");
         }
         write_irregularity(out, snapshot, snapshot.irregularities[target.row_index], &change);
+    } else if (target.row_kind == "beacon.put") {
+        if (target.row_index >= snapshot.beacon_count || !snapshot.beacons) {
+            throw std::runtime_error("beacon.put target row is out of bounds");
+        }
+        write_beacon(out, snapshot, snapshot.beacons[target.row_index], &change);
+    } else if (target.row_kind == "mapSound.play") {
+        if (target.row_index >= snapshot.map_sound_count || !snapshot.map_sounds) {
+            throw std::runtime_error("mapSound.play target row is out of bounds");
+        }
+        write_map_sound(out, snapshot, snapshot.map_sounds[target.row_index], &change);
+    } else if (target.row_kind == "mapSound3D.put") {
+        if (target.row_index >= snapshot.map_sound_3d_count || !snapshot.map_sounds_3d) {
+            throw std::runtime_error("mapSound3D.put target row is out of bounds");
+        }
+        write_map_sound_3d(out, snapshot, snapshot.map_sounds_3d[target.row_index], &change);
+    } else if (target.row_kind == "rollingNoise.change" ||
+               target.row_kind == "flangeNoise.change" ||
+               target.row_kind == "jointNoise.play") {
+        const KvNoiseRow* rows = target.row_kind == "rollingNoise.change"
+            ? snapshot.rolling_noises
+            : target.row_kind == "flangeNoise.change" ? snapshot.flange_noises
+                                                        : snapshot.joint_noises;
+        const std::uint64_t count = target.row_kind == "rollingNoise.change"
+            ? snapshot.rolling_noise_count
+            : target.row_kind == "flangeNoise.change" ? snapshot.flange_noise_count
+                                                        : snapshot.joint_noise_count;
+        if (target.row_index >= count || !rows) {
+            throw std::runtime_error(target.row_kind + " target row is out of bounds");
+        }
+        write_noise(out, snapshot, rows[target.row_index], &change);
+    } else if (target.row_kind == "background.change") {
+        if (target.row_index >= snapshot.background_count || !snapshot.backgrounds) {
+            throw std::runtime_error("background.change target row is out of bounds");
+        }
+        write_background(out, snapshot, snapshot.backgrounds[target.row_index], &change);
+    } else if (target.row_kind == "adhesion.change") {
+        if (target.row_index >= snapshot.adhesion_count || !snapshot.adhesions) {
+            throw std::runtime_error("adhesion.change target row is out of bounds");
+        }
+        write_adhesion(out, snapshot, snapshot.adhesions[target.row_index], &change);
+    } else if (target.row_kind == "cabIlluminance.change") {
+        if (target.row_index >= snapshot.cab_illuminance_count || !snapshot.cab_illuminance) {
+            throw std::runtime_error("cabIlluminance.change target row is out of bounds");
+        }
+        write_cab_illuminance(out, snapshot, snapshot.cab_illuminance[target.row_index], &change);
+    } else if (target.row_kind == "fog.change") {
+        if (target.row_index >= snapshot.fog_count || !snapshot.fogs) {
+            throw std::runtime_error("fog.change target row is out of bounds");
+        }
+        write_fog(out, snapshot, snapshot.fogs[target.row_index], &change);
+    } else if (target.row_kind == "drawDistance.change") {
+        if (target.row_index >= snapshot.draw_distance_count || !snapshot.draw_distances) {
+            throw std::runtime_error("drawDistance.change target row is out of bounds");
+        }
+        write_draw_distance(out, snapshot, snapshot.draw_distances[target.row_index], &change);
     } else if (target.row_kind == "station.list") {
         if (target.row_index >= snapshot.station_list_count || !snapshot.station_list) {
             throw std::runtime_error("station.list target row is out of bounds");

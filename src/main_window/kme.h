@@ -1064,6 +1064,7 @@ struct MapElementInspectorState {
     int line = 0;
     int column = 0;
     std::string raw_statement;
+    std::string statement_kind;
     std::string end_source_file;
     std::string end_source_file_name;
     std::string end_expected_source_hash;

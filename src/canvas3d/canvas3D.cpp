@@ -2871,18 +2871,35 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    bool refresh_scene_route_stations(const MapModel& model, std::string& error) {
+    bool refresh_scene_map_content(const MapModel& model,
+                                   const Canvas3DSceneMapRefreshOptions& options,
+                                   std::string& error) {
         error.clear();
         if (!scene_active) return true;
-        populate_canvas3d_scene_route_stations(scene_data.route_info, model);
-        populate_canvas3d_scene_markers(scene_data, model);
-        release_scene_marker_chunks();
-        if (!build_scene_marker_chunks(error)) {
-            if (!error.empty()) scene_last_error = error;
+        if (options.route_stations) {
+            populate_canvas3d_scene_route_stations(scene_data.route_info, model);
+        }
+        if (options.fog) populate_canvas3d_scene_fog(scene_data, model);
+        if (options.draw_distances) {
+            populate_canvas3d_scene_draw_distances(scene_data, model);
+        }
+        if (options.markers) {
+            populate_canvas3d_scene_markers(scene_data, model);
             release_scene_marker_chunks();
-            return false;
+            if (!build_scene_marker_chunks(error)) {
+                if (!error.empty()) scene_last_error = error;
+                release_scene_marker_chunks();
+                return false;
+            }
         }
         return true;
+    }
+
+    bool refresh_scene_route_stations(const MapModel& model, std::string& error) {
+        Canvas3DSceneMapRefreshOptions options;
+        options.route_stations = true;
+        options.markers = true;
+        return refresh_scene_map_content(model, options, error);
     }
 
     void clear_scene() {
@@ -8181,9 +8198,8 @@ fail:
 
     static bool scene_marker_has_edit_target(const Canvas3DSceneMarker& marker) {
         return (marker.kind == MapMarkerVisualKind::Station &&
-                marker.row_kind == "station.put") ||
-               (marker.kind == MapMarkerVisualKind::Irregularity &&
-                marker.row_kind == "irregularity.change");
+                 marker.row_kind == "station.put") ||
+               scene_marker_has_list_target(marker);
     }
 
     Canvas3DSceneContextAction render_scene_marker_context_popup(
@@ -8724,6 +8740,13 @@ bool Canvas3D::refresh_scene_route_stations(
     const MapModel& model,
     std::string& error) {
     return impl_->refresh_scene_route_stations(model, error);
+}
+
+bool Canvas3D::refresh_scene_map_content(
+    const MapModel& model,
+    const Canvas3DSceneMapRefreshOptions& options,
+    std::string& error) {
+    return impl_->refresh_scene_map_content(model, options, error);
 }
 
 void Canvas3D::clear_scene() {

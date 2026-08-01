@@ -1934,6 +1934,17 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "signal.put") return &model.signals;
     if (row_kind == "signal.aspect") return &model.signal_aspects;
     if (row_kind == "irregularity.change") return &model.irregularities;
+    if (row_kind == "beacon.put") return &model.beacons;
+    if (row_kind == "mapSound.play") return &model.map_sounds;
+    if (row_kind == "mapSound3D.put") return &model.map_sound_3d;
+    if (row_kind == "rollingNoise.change") return &model.rolling_noises;
+    if (row_kind == "flangeNoise.change") return &model.flange_noises;
+    if (row_kind == "jointNoise.play") return &model.joint_noises;
+    if (row_kind == "background.change") return &model.backgrounds;
+    if (row_kind == "adhesion.change") return &model.adhesions;
+    if (row_kind == "cabIlluminance.change") return &model.cab_illuminance;
+    if (row_kind == "fog.change") return &model.fogs;
+    if (row_kind == "drawDistance.change") return &model.draw_distances;
     return nullptr;
 }
 
@@ -2177,12 +2188,24 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     if (row_kind == "station.put" || row_kind == "station.list") {
         normalize_station_preview_rows(model_);
     }
-    if ((row_kind == "station.put" || row_kind == "station.list" ||
-         row_kind == "irregularity.change") &&
-        scene_preview_started_ && scene_preview_canvas_) {
+    Canvas3DSceneMapRefreshOptions map_refresh;
+    map_refresh.route_stations = row_kind == "station.put" || row_kind == "station.list";
+    static constexpr std::array<const char*, 14> k_marker_row_kinds = {
+        "station.put", "station.list", "irregularity.change", "beacon.put",
+        "mapSound.play", "mapSound3D.put", "rollingNoise.change",
+        "flangeNoise.change", "jointNoise.play", "background.change",
+        "adhesion.change", "cabIlluminance.change", "fog.change",
+        "drawDistance.change",
+    };
+    map_refresh.markers = std::any_of(
+        k_marker_row_kinds.begin(), k_marker_row_kinds.end(),
+        [&](const char* candidate) { return row_kind == candidate; });
+    map_refresh.fog = row_kind == "fog.change";
+    map_refresh.draw_distances = row_kind == "drawDistance.change";
+    if ((map_refresh.route_stations || map_refresh.markers || map_refresh.fog ||
+         map_refresh.draw_distances) && scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
-        if (!scene_preview_canvas_->refresh_scene_route_stations(
-                model_, error)) {
+        if (!scene_preview_canvas_->refresh_scene_map_content(model_, map_refresh, error)) {
             add_log("[warn]gui_kme.cpp: 3D scene marker refresh failed, scheduling full rebuild: " +
                     (error.empty() ? std::string("unknown error") : error));
             scene_preview_dirty_ = true;
@@ -2217,7 +2240,8 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
         ((row_kind == "structure.put" || row_kind == "signal.put") &&
          !placement_instance_synced) ||
         row_kind == "structure.between" || row_kind == "structure.model" ||
-        (row_kind == "repeater" && !repeater_segment_synced);
+        (row_kind == "repeater" && !repeater_segment_synced) ||
+        row_kind == "background.change";
     if (affects_scene_dynamic && scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, error)) {
@@ -2251,7 +2275,13 @@ void App::process_pending_element_inspector() {
 bool row_kind_supports_delete(const std::string& row_kind) {
     return row_kind == "structure.model" || row_kind == "structure.put" ||
         row_kind == "structure.between" || row_kind == "station.put" ||
-        row_kind == "repeater" || row_kind == "irregularity.change";
+        row_kind == "repeater" || row_kind == "irregularity.change" ||
+        row_kind == "beacon.put" || row_kind == "mapSound.play" ||
+        row_kind == "mapSound3D.put" || row_kind == "rollingNoise.change" ||
+        row_kind == "flangeNoise.change" || row_kind == "jointNoise.play" ||
+        row_kind == "background.change" || row_kind == "adhesion.change" ||
+        row_kind == "cabIlluminance.change" || row_kind == "fog.change" ||
+        row_kind == "drawDistance.change";
 }
 
 struct RepeaterDeleteChain {
@@ -2539,13 +2569,24 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 6> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 17> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
         "repeater",
         "signal.put",
         "irregularity.change",
+        "beacon.put",
+        "mapSound.play",
+        "mapSound3D.put",
+        "rollingNoise.change",
+        "flangeNoise.change",
+        "jointNoise.play",
+        "background.change",
+        "adhesion.change",
+        "cabIlluminance.change",
+        "fog.change",
+        "drawDistance.change",
     };
     return std::any_of(k_distance_row_kinds.begin(), k_distance_row_kinds.end(),
                        [&](const char* value) { return row_kind == value; });
@@ -2767,6 +2808,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.raw_statement = target_info && !target_info->raw_statement.empty()
         ? target_info->raw_statement
         : source.raw_text_preview;
+    if (target_info) next.statement_kind = target_info->statement_kind;
     next.source_signal_short_form = target_info &&
         (target_info->flags & KV_EDIT_TARGET_FLAG_SIGNAL_SHORT_FORM) != 0;
     next.owned_edit_ids.push_back(edit_id);
@@ -2855,6 +2897,45 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         for (const char* key : {"x", "y", "r", "lx", "ly", "lr"}) {
             add_row_field(key, key, MapElementNumericConstraint::Finite, true);
         }
+    } else if (request.row_kind == "beacon.put") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        for (const char* key : {"type", "section", "sendData"}) {
+            add_row_field(key, key, MapElementNumericConstraint::Finite, true);
+        }
+    } else if (request.row_kind == "mapSound.play") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("soundKey", "soundKey", MapElementNumericConstraint::None, true);
+    } else if (request.row_kind == "mapSound3D.put") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("soundKey", "soundKey", MapElementNumericConstraint::None, true);
+        add_row_field("x", "x", MapElementNumericConstraint::Finite, true);
+        add_row_field("y", "y", MapElementNumericConstraint::Finite, true);
+    } else if (request.row_kind == "rollingNoise.change" ||
+               request.row_kind == "flangeNoise.change" ||
+               request.row_kind == "jointNoise.play") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("index", "index", MapElementNumericConstraint::Finite, true);
+    } else if (request.row_kind == "background.change") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("structureKey", "structureKey", MapElementNumericConstraint::None, true);
+    } else if (request.row_kind == "adhesion.change") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("a", "a", MapElementNumericConstraint::Finite, true);
+        add_row_field("b", "b", MapElementNumericConstraint::Finite, false);
+        add_row_field("c", "c", MapElementNumericConstraint::Finite, false);
+    } else if (request.row_kind == "cabIlluminance.change") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("value", "value", MapElementNumericConstraint::Finite, true);
+    } else if (request.row_kind == "fog.change") {
+        const bool source_set = target_info &&
+            ascii_lower(target_info->statement_kind) == "fog.set";
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        for (const char* key : {"density", "red", "green", "blue"}) {
+            add_row_field(key, key, MapElementNumericConstraint::Finite, source_set);
+        }
+    } else if (request.row_kind == "drawDistance.change") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        add_row_field("value", "value", MapElementNumericConstraint::Finite, true);
     } else if (request.row_kind == "signal.put") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("signalAspectKey", "signalAspectKey",
@@ -3017,6 +3098,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             field.expected_source_hash = inspector_.expected_source_hash;
         }
     }
+
     restore_repeater_inspector_draft(inspector_);
     return true;
 }
@@ -3213,6 +3295,29 @@ void App::apply_inspector_changes() {
             MapElementPendingChange& change = change_for(field);
             const std::string& backend_key = field.backend_key.empty() ? field.key : field.backend_key;
             change.field_changes[backend_key] = value;
+        }
+    }
+
+    auto inspector_field_is_blank = [&](const char* key) {
+        const MapElementEditFieldState* field = find_inspector_field(inspector_, key);
+        return !field || trim_gui_ascii_copy(edit_field_buffer_text(*field)).empty();
+    };
+    if (inspector_.row_kind == "adhesion.change" &&
+        inspector_field_is_blank("b") != inspector_field_is_blank("c")) {
+        set_program_status("status.edit.required_field");
+        return;
+    }
+    if (inspector_.row_kind == "fog.change") {
+        const bool density = !inspector_field_is_blank("density");
+        const bool red = !inspector_field_is_blank("red");
+        const bool green = !inspector_field_is_blank("green");
+        const bool blue = !inspector_field_is_blank("blue");
+        const bool all_colors = red && green && blue;
+        const bool source_set = ascii_lower(inspector_.statement_kind) == "fog.set";
+        if ((red || green || blue) != all_colors || (all_colors && !density) ||
+            (source_set && (!density || !all_colors))) {
+            set_program_status("status.edit.required_field");
+            return;
         }
     }
 
@@ -4255,10 +4360,14 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 11> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 22> k_committed_row_kinds = {
         "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
         "signal.aspect", "irregularity.change",
+        "beacon.put", "mapSound.play", "mapSound3D.put",
+        "rollingNoise.change", "flangeNoise.change", "jointNoise.play",
+        "background.change", "adhesion.change", "cabIlluminance.change",
+        "fog.change", "drawDistance.change",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;

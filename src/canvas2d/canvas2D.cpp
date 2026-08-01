@@ -3016,6 +3016,9 @@ void App::render_plan_canvas(ImVec2 size) {
         }
         ImGui::BeginDisabled(
             !edit_actions_available() || !station || station->edit_id.empty());
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && station) {
+            request_element_inspector(station->edit_id, "station.put");
+        }
         if (ImGui::MenuItem(tr("button.delete").c_str()) && station) {
             request_element_delete(station->edit_id, "station.put");
         }
@@ -3067,16 +3070,38 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::EndDisabled();
         ImGui::EndPopup();
     }
-    if (ImGui::BeginPopup("plan_beacon_marker_context")) {
-        bool can_locate = plan_beacon_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_beacon_popup_row_) < beacon_marker_cache_.size();
+    auto render_table_marker_context = [&](const char* popup_id, int popup_row,
+                                           const auto& marker_cache,
+                                           const char* locate_label_key,
+                                           const char* row_kind,
+                                           auto locate_row) {
+        if (!ImGui::BeginPopup(popup_id)) return;
+        const bool can_locate = popup_row >= 0 &&
+            static_cast<size_t>(popup_row) < marker_cache.size();
         ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_beacon_list").c_str()) && can_locate) {
-            locate_beacon_row_in_list(static_cast<size_t>(plan_beacon_popup_row_));
+        if (ImGui::MenuItem(tr(locate_label_key).c_str()) && can_locate) {
+            locate_row(static_cast<size_t>(popup_row));
+        }
+        ImGui::EndDisabled();
+        const PlanMarker* marker = can_locate &&
+            marker_cache[static_cast<size_t>(popup_row)].has_value()
+                ? &*marker_cache[static_cast<size_t>(popup_row)]
+                : nullptr;
+        const bool can_edit = edit_actions_available() && marker && !marker->edit_id.empty();
+        ImGui::BeginDisabled(!can_edit);
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
+            request_element_inspector(marker->edit_id, row_kind);
+        }
+        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
+            request_element_delete(marker->edit_id, row_kind);
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();
-    }
+    };
+    render_table_marker_context(
+        "plan_beacon_marker_context", plan_beacon_popup_row_, beacon_marker_cache_,
+        "menu.locate_in_beacon_list", "beacon.put",
+        [&](size_t row) { locate_beacon_row_in_list(row); });
     if (ImGui::BeginPopup("plan_other_train_stop_marker_context")) {
         bool can_locate = plan_other_train_stop_popup_row_ >= 0 &&
             static_cast<size_t>(plan_other_train_stop_popup_row_) < other_train_stop_marker_cache_.size() &&
@@ -3088,133 +3113,50 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::EndDisabled();
         ImGui::EndPopup();
     }
-    if (ImGui::BeginPopup("plan_irregularity_marker_context")) {
-        bool can_locate = plan_irregularity_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_irregularity_popup_row_) < irregularity_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_irregularity_list").c_str()) && can_locate) {
-            locate_irregularity_row_in_list(static_cast<size_t>(plan_irregularity_popup_row_));
-        }
-        ImGui::EndDisabled();
-        const PlanIrregularityMarker* marker = nullptr;
-        if (can_locate && irregularity_marker_cache_[static_cast<size_t>(plan_irregularity_popup_row_)].has_value()) {
-            marker = &*irregularity_marker_cache_[static_cast<size_t>(plan_irregularity_popup_row_)];
-        }
-        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
-            request_element_inspector(marker->edit_id, "irregularity.change");
-        }
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
-        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
-            request_element_delete(marker->edit_id, "irregularity.change");
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_rolling_noise_marker_context")) {
-        bool can_locate = plan_rolling_noise_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_rolling_noise_popup_row_) < rolling_noise_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_rolling_noise_list").c_str()) && can_locate) {
-            locate_rolling_noise_row_in_list(static_cast<size_t>(plan_rolling_noise_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_map_sound_marker_context")) {
-        bool can_locate = plan_map_sound_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_map_sound_popup_row_) < map_sound_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_map_sound_list").c_str()) && can_locate) {
-            locate_map_sound_row_in_list(static_cast<size_t>(plan_map_sound_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_map_sound_3d_marker_context")) {
-        bool can_locate = plan_map_sound_3d_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_map_sound_3d_popup_row_) < map_sound_3d_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_map_sound_3d_list").c_str()) && can_locate) {
-            locate_map_sound_3d_row_in_list(static_cast<size_t>(plan_map_sound_3d_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_flange_noise_marker_context")) {
-        bool can_locate = plan_flange_noise_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_flange_noise_popup_row_) < flange_noise_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_flange_noise_list").c_str()) && can_locate) {
-            locate_flange_noise_row_in_list(static_cast<size_t>(plan_flange_noise_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_joint_noise_marker_context")) {
-        bool can_locate = plan_joint_noise_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_joint_noise_popup_row_) < joint_noise_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_joint_noise_list").c_str()) && can_locate) {
-            locate_joint_noise_row_in_list(static_cast<size_t>(plan_joint_noise_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_background_marker_context")) {
-        bool can_locate = plan_background_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_background_popup_row_) < background_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_background_list").c_str()) && can_locate) {
-            locate_background_row_in_list(static_cast<size_t>(plan_background_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_adhesion_marker_context")) {
-        bool can_locate = plan_adhesion_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_adhesion_popup_row_) < adhesion_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_adhesion_list").c_str()) && can_locate) {
-            locate_adhesion_row_in_list(static_cast<size_t>(plan_adhesion_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_cab_illuminance_marker_context")) {
-        bool can_locate = plan_cab_illuminance_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_cab_illuminance_popup_row_) < cab_illuminance_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_cab_illuminance_list").c_str()) && can_locate) {
-            locate_cab_illuminance_row_in_list(static_cast<size_t>(plan_cab_illuminance_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_fog_marker_context")) {
-        bool can_locate = plan_fog_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_fog_popup_row_) < fog_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_fog_list").c_str()) && can_locate) {
-            locate_fog_row_in_list(static_cast<size_t>(plan_fog_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_draw_distance_marker_context")) {
-        bool can_locate = plan_draw_distance_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_draw_distance_popup_row_) <
-                draw_distance_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_draw_distance_list").c_str()) &&
-            can_locate) {
-            locate_draw_distance_row_in_list(
-                static_cast<size_t>(plan_draw_distance_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
+    render_table_marker_context(
+        "plan_irregularity_marker_context", plan_irregularity_popup_row_,
+        irregularity_marker_cache_, "menu.locate_in_irregularity_list",
+        "irregularity.change", [&](size_t row) { locate_irregularity_row_in_list(row); });
+    render_table_marker_context(
+        "plan_rolling_noise_marker_context", plan_rolling_noise_popup_row_,
+        rolling_noise_marker_cache_, "menu.locate_in_rolling_noise_list",
+        "rollingNoise.change", [&](size_t row) { locate_rolling_noise_row_in_list(row); });
+    render_table_marker_context(
+        "plan_map_sound_marker_context", plan_map_sound_popup_row_, map_sound_marker_cache_,
+        "menu.locate_in_map_sound_list", "mapSound.play",
+        [&](size_t row) { locate_map_sound_row_in_list(row); });
+    render_table_marker_context(
+        "plan_map_sound_3d_marker_context", plan_map_sound_3d_popup_row_,
+        map_sound_3d_marker_cache_, "menu.locate_in_map_sound_3d_list", "mapSound3D.put",
+        [&](size_t row) { locate_map_sound_3d_row_in_list(row); });
+    render_table_marker_context(
+        "plan_flange_noise_marker_context", plan_flange_noise_popup_row_,
+        flange_noise_marker_cache_, "menu.locate_in_flange_noise_list", "flangeNoise.change",
+        [&](size_t row) { locate_flange_noise_row_in_list(row); });
+    render_table_marker_context(
+        "plan_joint_noise_marker_context", plan_joint_noise_popup_row_, joint_noise_marker_cache_,
+        "menu.locate_in_joint_noise_list", "jointNoise.play",
+        [&](size_t row) { locate_joint_noise_row_in_list(row); });
+    render_table_marker_context(
+        "plan_background_marker_context", plan_background_popup_row_, background_marker_cache_,
+        "menu.locate_in_background_list", "background.change",
+        [&](size_t row) { locate_background_row_in_list(row); });
+    render_table_marker_context(
+        "plan_adhesion_marker_context", plan_adhesion_popup_row_, adhesion_marker_cache_,
+        "menu.locate_in_adhesion_list", "adhesion.change",
+        [&](size_t row) { locate_adhesion_row_in_list(row); });
+    render_table_marker_context(
+        "plan_cab_illuminance_marker_context", plan_cab_illuminance_popup_row_,
+        cab_illuminance_marker_cache_, "menu.locate_in_cab_illuminance_list",
+        "cabIlluminance.change", [&](size_t row) { locate_cab_illuminance_row_in_list(row); });
+    render_table_marker_context(
+        "plan_fog_marker_context", plan_fog_popup_row_, fog_marker_cache_,
+        "menu.locate_in_fog_list", "fog.change",
+        [&](size_t row) { locate_fog_row_in_list(row); });
+    render_table_marker_context(
+        "plan_draw_distance_marker_context", plan_draw_distance_popup_row_,
+        draw_distance_marker_cache_, "menu.locate_in_draw_distance_list",
+        "drawDistance.change", [&](size_t row) { locate_draw_distance_row_in_list(row); });
     ImGui::EndChild();
     debug_plan_stage("end");
 }

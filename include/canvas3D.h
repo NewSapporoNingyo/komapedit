@@ -292,6 +292,13 @@ struct Canvas3DSceneBuildResult {
     std::vector<std::string> log_messages;
 };
 
+struct Canvas3DSceneMapRefreshOptions {
+    bool route_stations = false;
+    bool markers = false;
+    bool fog = false;
+    bool draw_distances = false;
+};
+
 struct Canvas3DSceneUiText {
     const char* switch_signal_aspect = "Switch Signal Aspect";
     const char* element_properties = "Properties/Edit";
@@ -435,6 +442,9 @@ public:
     bool set_scene_marker_visibility(const Canvas3DSceneMarkerVisibility& visibility,
                                      std::string& error);
     bool refresh_scene_route_stations(const MapModel& model, std::string& error);
+    bool refresh_scene_map_content(const MapModel& model,
+                                   const Canvas3DSceneMapRefreshOptions& options,
+                                   std::string& error);
     void set_scene_window(double back_m, double forward_m);
     void set_scene_edit_component_scale(float scale);
     void set_scene_interaction_mode(Canvas3DSceneInteractionMode mode);
