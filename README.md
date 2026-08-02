@@ -18,7 +18,7 @@ The application has three main runtime components:
 
 The bundled executable and `maploader.dll` use maploader API v2. `KvMapSnapshot` v2 carries all map, regular-geometry, source, and edit metadata; the independently invalidated `KvSceneGeometrySnapshot` v1 carries dense 3D own/other-track geometry. Typed edit batches and handle-owned typed reports cover dry-run, in-memory Apply, direct Apply, Save/commit, and target lookup. These views are process-memory only: Open and Reload always read the current route sources, and no route snapshot or geometry cache is written to disk.
 
-At this stage, komapedit provides source-backed editing for existing list rows referenced by `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load`, plus `Structure.Put`/`Put0`/`PutBetween`, `Signal.Put`, `Station.Put`, and linked `Repeater.Begin`/`Begin0`/`End` segments. It supports live X/Y/Z Structure, Signal, and Repeater-Begin placement edits in the 3D scene. It is not yet a full map editor: curve/gradient, map sound/event, environmental-effect, and new-element editing are still planned.
+At this stage, komapedit provides source-backed editing for existing list rows referenced by `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load`; supported Structure, Signal, and Station placements; linked `Repeater.Begin`/`Begin0`/`End` segments; and the irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance statements listed below. It supports live X/Y/Z Structure, Signal, and Repeater-Begin placement edits in the 3D scene. It is not yet a full map editor: own-track curve/gradient, speed-limit/PreTrain/other-train, and new-element editing are still planned.
 
 ## Development Status (TODO List)
 
@@ -32,7 +32,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
 - [x] Expose source anchors and stable edit metadata for editable map/list statements through the versioned typed map snapshot.
 - [x] Apply supported updates/deletions to an in-memory working copy and save them to source map/include/list files, preserving include structure, distance semantics, original encodings, and line endings where possible.
-- [ ] Add new-element insertion and extend source-backed editing beyond the currently supported existing list rows, Structure/Signal/Station placements, and linked Repeater rows.
+- [ ] Add new-element insertion and extend source-backed editing beyond the currently supported existing list rows, placement/Repeater statements, and map event/effect rows.
 
 ### Own-Track and Other-Track Geometry
 
@@ -84,15 +84,15 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Display linked `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` segments, with Begin/End/change boundaries merged for readability.
 - [x] Provide shared find and unused-entry search panels for Structure models, signal aspects, and sound lists.
 - [x] Edit, clear, reorder, or delete existing Structure model-list keys and file paths through the source-backed inline table editor; selecting a file writes a relative path where possible.
-- [x] Edit `Station.Put` distance and `stationKey` fields.
+- [x] Edit or delete existing `Station.Put` rows, including distance, `stationKey`, door side, and stop margins.
 - [x] Edit, clear, reorder, or delete existing station-definition rows loaded through `Station.Load`; adding station rows is not supported.
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`.
 - [x] Edit, clear, reorder, or delete existing `Signal.Load` aspect definitions through the source-backed inline table editor; adding rows or structure-key columns is not supported.
-- [ ] Edit beacon lists.
-- [x] Provide a source-backed `Properties/Edit` inspector for supported Structure, `Signal.Put`, `Station.Put`, and linked Repeater rows; a 3D station-position marker can open its matching `Station.Put` inspector, and editable Structure, Signal, and Repeater Begin placements have live X/Y/Z gizmos.
-- [ ] Extend the property inspector to 2D markers and remaining Map Info rows.
+- [x] Edit or delete existing `Beacon.Put` rows through the source-backed property inspector.
+- [x] Provide a source-backed `Properties/Edit` inspector for supported Structure/Signal/Station/Repeater placements and irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows; expose it from applicable tables and 2D/3D markers, with live X/Y/Z gizmos for editable Structure, Signal, and Repeater Begin placements.
+- [ ] Extend 2D marker editing to Structure/Signal placements and the property inspector to remaining unsupported Map Info rows.
 
 ### 3D Canvas
 
@@ -113,9 +113,9 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 
 - [x] Display `Sound File List`, `3D Sound File List`, `Map Sound List`, and `Map 3D Sound List`.
 - [x] Edit, clear, reorder, or delete existing `Sound.Load` and `Sound3D.Load` file-list rows through source-backed inline tables; selecting a file writes a relative path where possible.
-- [ ] Add Sound/Sound3D file-list rows or edit map sounds, rolling-noises, joint-noises, station announcement sound fields, and 3D sound placements.
-- [ ] Edit cab-illuminance setting positions.
-- [ ] Edit fog effects.
+- [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; Sound/Sound3D file-list row insertion and station announcement sound-field editing remain unsupported.
+- [x] Edit or delete existing cab-illuminance setting positions.
+- [x] Edit or delete existing fog effects.
 
 ### User Interface and Utilities
 
@@ -145,7 +145,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 | Variables and argument variables              |    √    |       ✕       |         -         | Can participate in expression evaluation                                                                                |
 | Arithmetic, comparison, and logical operators |    △    |       ✕       |         -         | Most expressions can be evaluated, but edge cases such as mixed strings and numbers are incomplete                      |
 | Mathematical functions                        |    √    |       ✕       |         -         | Used to evaluate map expressions                                                                                        |
-| Distance declarations and expressions         |    √    |       △       |         ✕         | Distance can be changed only for edit targets such as `Structure.Put/Put0/PutBetween`, `Signal.Put`, `Station.Put`, `Irregularity.Change`, and linked Repeater Begin/End |
+| Distance declarations and expressions         |    √    |       △       |         ✕         | Distance can be changed for the supported placement, Repeater, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance targets listed below |
 | `include` and distance-offset `include`        |    √    |       △       |         ✕         | Include files can be loaded and supported elements in them can be written back, but Include paths are not editable       |
 | `Curve.*`                                     |    √    |       ✕       |         ✕         | Participates in track-geometry generation                                                                               |
 | `Gradient.*`                                  |    √    |       ✕       |         ✕         | Participates in track elevation and gradient generation                                                                 |
@@ -156,27 +156,27 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 | `Structure.Put0`                              |    √    |       √       |         △         | Basic fields are editable; the X/Y/Z gizmo appears only after confirming conversion to `Structure.Put`                  |
 | `Structure.PutBetween`                        |    √    |       √       |         ✕         | Editable in the property inspector, but has no 2D/3D gizmo                                                              |
 | `Repeater.Begin` / `Begin0` / `End`           |    √    |       △       |         △         | Linked Begin fields, End distance, and linked deletion are supported; a Begin supports X/Y/Z motion in 3D after explicit `Begin0` conversion |
-| `Background.Change`                           |    √    |       ✕       |         ✕         | Feeds background data and the scene preview                                                                             |
+| `Background.Change`                           |    √    |       √       |         ✕         | Distance and Structure key can be edited and the entry can be deleted; it feeds background data and the scene preview   |
 | `Station.Load`                                |    √    |       △       |         -         | Existing referenced station-definition rows can be edited, cleared, reordered, or deleted; the Load path and new rows are not editable |
-| `Station.Put`                                 |    √    |       △       |         ✕         | Only distance and `stationKey` are editable; door side, stop margins, and other parameters are not                       |
+| `Station.Put`                                 |    √    |       √       |         ✕         | Distance, `stationKey`, door side, and stop margins can be edited, and the entry can be deleted                           |
 | `Section.Begin` / `Section.BeginNew`          |    ✕    |       ✕       |         ✕         | Parsed into the typed map snapshot, but the current GUI does not display it                                               |
 | `Section.SetSpeedLimit` / `Signal.SpeedLimit` |    ✕    |       ✕       |         ✕         | Parsed into the typed map snapshot, but the current GUI does not display it                                               |
 | `Signal.Load`                                 |    √    |       √       |         -         | Existing signal-aspect rows support inline edits, clearing, reordering, and deletion; adding rows or structure-key columns is not supported |
 | `Signal.Put`                                  |    √    |       √       |         △         | All placement fields are editable; 3D supports X/Y/Z translation. Editing extended fields on the short form requires confirmation before conversion to the full form |
-| `Beacon.Put`                                  |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
+| `Beacon.Put`                                  |    √    |       √       |         ✕         | Distance, type, section, and send data can be edited, and the entry can be deleted                                       |
 | `SpeedLimit.Begin` / `SpeedLimit.End`         |    √    |       ✕       |         ✕         | Feeds the speed-limit model, list, and markers                                                                           |
 | `PreTrain.Pass`                               |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
 | `Light.Ambient/Diffuse/Direction`             |    -    |       -       |         -         | Lighting syntax is not supported                                                                                        |
-| `Fog.Interpolate` / `Fog.Set`                 |    √    |       ✕       |         ✕         | Feeds tables/markers and linearly interpolated exponential fog in the 3D scene preview; fog editing is not supported     |
-| `DrawDistance.Change`                         |    √    |       ✕       |         ✕         | Feeds its table, plan/scene markers, and optional scene draw-distance control                                           |
-| `CabIlluminance.Set`                          |    √    |       ✕       |         ✕         | Feeds lists/markers, but cab brightness is not simulated                                                                 |
+| `Fog.Interpolate` / `Fog.Set`                 |    √    |       √       |         ✕         | Distance and method-appropriate density/color fields can be edited and the entry deleted; 3D preview applies interpolated exponential fog |
+| `DrawDistance.Change`                         |    √    |       √       |         ✕         | Distance/value can be edited and the entry deleted; it can optionally control scene draw distance                       |
+| `CabIlluminance.Interpolate` / `Set`          |    √    |       √       |         ✕         | Distance/value can be edited and the entry deleted; cab brightness is not simulated                                     |
 | `Irregularity.Change`                         |    √    |       √       |         ✕         | Distance and 6 parameters can be edited in the Properties inspector and the entry can be deleted; vehicle vibration is not simulated |
-| `Adhesion.Change`                             |    √    |       ✕       |         ✕         | Feeds lists/markers, but vehicle adhesion effects are not simulated                                                      |
-| `Sound.Load` / `Sound.Play`                   |    √    |       △       |         ✕         | Existing Sound.Load file-list rows support inline edits, clearing, reordering, deletion, and file selection; playback points stay read-only and audio is not played |
-| `Sound3D.Load` / `Sound3D.Put`                |    √    |       △       |         ✕         | Existing Sound3D.Load file-list rows support inline edits, clearing, reordering, deletion, and file selection; spatial placements stay read-only and audio is not played |
-| `RollingNoise.Change`                         |    √    |       ✕       |         ✕         | Feeds lists/markers                                                                                                      |
-| `FlangeNoise.Change`                          |    √    |       ✕       |         ✕         | Feeds lists/markers                                                                                                      |
-| `JointNoise.Play`                             |    √    |       ✕       |         ✕         | Feeds lists/markers                                                                                                      |
+| `Adhesion.Change`                             |    √    |       √       |         ✕         | Distance and the 1- or 3-parameter adhesion values can be edited and the entry deleted; effects are not simulated       |
+| `Sound.Load` / `Sound.Play`                   |    √    |       △       |         ✕         | Existing Sound.Load rows support inline list editing; Sound.Play distance/key support Properties/Edit and deletion, but audio is not played |
+| `Sound3D.Load` / `Sound3D.Put`                |    √    |       △       |         ✕         | Existing Sound3D.Load rows support inline list editing; Sound3D.Put distance/key/X/Y support Properties/Edit and deletion, but audio is not played |
+| `RollingNoise.Change`                         |    √    |       √       |         ✕         | Distance/index can be edited and the entry deleted                                                                       |
+| `FlangeNoise.Change`                          |    √    |       √       |         ✕         | Distance/index can be edited and the entry deleted                                                                       |
+| `JointNoise.Play`                             |    √    |       √       |         ✕         | Distance/index can be edited and the entry deleted                                                                       |
 | `Train.Add` / `Train.Load`                    |    △    |       ✕       |         ✕         | Other-train definitions can be displayed, but external train files are only partially modeled                           |
 | `Train.Enable`                                |    ✕    |       ✕       |         ✕         | Parsed into the typed map snapshot but not exposed in the current GUI                                                   |
 | `Train.Stop`                                  |    √    |       ✕       |         ✕         | Generates other-train stop tables, paths, and map markers                                                               |
@@ -216,21 +216,21 @@ of overwriting either file.
 8. Use the `Map Info` menu to open the data tables for stations, tracks, other trains, Structures, repeaters, signals, beacons, sounds, irregularity/adhesion data, backgrounds, cab-illuminance, fog, and draw distance. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
    - `Signal Aspect List`: view and find signal aspect definitions; with Edit enabled, edit, reorder, clear, or delete existing aspect rows.
    - `Map Signal List`: view signal positions and use the row `Show` checkboxes to toggle markers on the plan.
-   - `Beacon List`: view beacon positions.
+   - `Beacon List`: view and locate beacon positions; with Edit enabled, open `Properties/Edit` or delete existing `Beacon.Put` rows.
    - `Sound File List` and `3D Sound File List`: view the loaded sound file entries, find matching keys, find unused entries, and open linked files. With Edit enabled, existing keys, paths, and buffer counts can be edited, reordered, cleared, or deleted; `Select File` writes a relative path where possible.
-   - `Map Sound List`, `Map 3D Sound List`, `Rolling Noise Change Point List`, `Flange Noise Change Point List`, and `Joint Noise Play Point List`: view sound playback/change positions and locate them on the plan.
-    - `Track Irregularity List`, `Adhesion Change Point List`, `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`: view the corresponding change-point tables.
+   - `Map Sound List`, `Map 3D Sound List`, `Rolling Noise Change Point List`, `Flange Noise Change Point List`, and `Joint Noise Play Point List`: view and locate sound playback/change positions; with Edit enabled, open `Properties/Edit` or delete existing events.
+    - `Track Irregularity List`, `Adhesion Change Point List`, `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`: view and locate the corresponding change points; with Edit enabled, open `Properties/Edit` or delete supported rows.
    - `Other Tracks`: toggle other-track display and adjust visible range and color.
    - `Other Train List`: view other-train definitions and stop points, toggle path visibility, and locate stop points on the plan.
-    - `Station List`: view `Station.Put` position rows separately from `Station.Load` definitions. With Edit enabled, existing definition rows can be edited, reordered, cleared, or deleted.
+    - `Station List`: view `Station.Put` position rows separately from `Station.Load` definitions. With Edit enabled, position rows support `Properties/Edit` and deletion, while existing definition rows can be edited, reordered, cleared, or deleted.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map, and locate rendered objects in the 3D scene preview when it is loaded.
    - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. Right-click a structure key and choose `Preview Model` to open the 3D model preview; with Edit enabled, existing keys and paths can be edited, reordered, cleared, or deleted.
     - `Repeater List`: inspect linked `Repeater.Begin`/`Begin0`/`End` segments, edit them through `Properties/Edit`, and locate generated repeaters in the 3D scene preview when it is loaded.
-    - Turn on `Enable Edit` to use `Properties/Edit` on supported `Station.Put`, `Signal.Put`, Structure placements, and linked Repeater rows. Existing definition/resource rows from `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load` are edited in their respective inline tables; no currently supported list editor creates a new row. `Apply` updates the in-memory preview; the toolbar `Save` writes pending changes to source files, `Revert` discards all pending in-memory changes, and `Reload` reads the map from disk again.
+    - Turn on `Enable Edit` to use `Properties/Edit` on supported placement, Repeater, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows from their tables or applicable 2D/3D markers. Existing definition/resource rows from `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load` are edited in their respective inline tables; no currently supported list editor creates a new row. `Apply` updates the in-memory preview; the toolbar `Save` writes pending changes to source files, `Revert` discards all pending in-memory changes, and `Reload` reads the map from disk again.
      The first enablement asks for confirmation because editing is an unstable, experimental feature that may make destructive changes. Back up map files or manage them with version control such as Git; selecting `Don't show again` and confirming suppresses later warnings.
 9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
-11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, and next-station information. `Options -> 3D Canvas Settings -> Fog effect` immediately toggles route fog in the scene preview and is enabled by default; the same settings also control map-driven draw distance, camera speed, and instance-performance warnings. In select mode, scene objects and supported map-element markers can be located back in their matching tables. With edit mode enabled, right-click a Structure, Signal, Repeater, or station-position marker and choose `Properties/Edit`; supported `Structure.Put`, `Signal.Put`, and `Repeater.Begin` coordinates can be dragged with the X/Y/Z gizmo.
+11. Use `3D View -> 3D Scene Preview` to show the scene preview window, then click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, and next-station information. `Options -> 3D Canvas Settings -> Fog effect` immediately toggles route fog in the scene preview and is enabled by default; the same settings also control map-driven draw distance, camera speed, and instance-performance warnings. In select mode, scene objects and supported map-element markers can be located back in their matching tables. With edit mode enabled, right-click a Structure, Signal, Repeater, station-position, or supported map-event/effect marker to open `Properties/Edit`; supported source-backed entries also expose deletion, and `Structure.Put`, `Signal.Put`, and `Repeater.Begin` coordinates can be dragged with the X/Y/Z gizmo.
 12. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
 13. Press `F5` or use `File -> Reload` to reload the current map.
 
