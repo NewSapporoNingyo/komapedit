@@ -1331,29 +1331,6 @@ void populate_canvas3d_scene_route_stations(Canvas3DSceneRouteInfo& route_info,
     }
 }
 
-std::vector<std::string> canvas3d_scene_section_values(const TableRow& row) {
-    const double count_value = table_cell_number(row, "valueCount");
-    if (!std::isfinite(count_value) || count_value <= 0.0) return {};
-    const size_t value_count = static_cast<size_t>(count_value);
-    std::vector<std::string> values;
-    values.reserve(value_count);
-    for (size_t value_index = 0; value_index < value_count; ++value_index) {
-        values.push_back(
-            table_cell(row, "value" + std::to_string(value_index)));
-    }
-    return values;
-}
-
-std::string join_canvas3d_scene_values(
-    const std::vector<std::string>& values, const char* separator) {
-    std::string text;
-    for (size_t index = 0; index < values.size(); ++index) {
-        if (index) text += separator;
-        text += values[index];
-    }
-    return text;
-}
-
 std::optional<size_t> canvas3d_scene_signal_speed_index(
     const std::string& value) {
     if (value.empty()) return std::nullopt;
@@ -1382,7 +1359,7 @@ std::string canvas3d_scene_selected_signal_speeds(
                 ? speed_limits[*index]
                 : "null");
     }
-    return join_canvas3d_scene_values(selected, " | ");
+    return join_table_values(selected, " | ");
 }
 
 void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& model) {
@@ -1438,9 +1415,9 @@ void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& mo
     std::vector<std::string> signal_indices;
     for (const SectionSignalStateSource& source : section_signal_sources) {
         if (source.kind == SectionSignalStateKind::SpeedLimits) {
-            speed_limits = canvas3d_scene_section_values(*source.row);
+            speed_limits = section_row_values(*source.row);
         } else {
-            signal_indices = canvas3d_scene_section_values(*source.row);
+            signal_indices = section_row_values(*source.row);
         }
         std::string selected = canvas3d_scene_selected_signal_speeds(
             signal_indices, speed_limits);
@@ -1634,8 +1611,8 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     append_table_markers(model.section_begins, MapMarkerVisualKind::Section,
                          Canvas3DSceneMarkerListKind::Section, "section.begin",
                          [](const TableRow& row) {
-                             return join_canvas3d_scene_values(
-                                 canvas3d_scene_section_values(row), " ");
+                             return join_table_values(
+                                 section_row_values(row), " ");
                          });
 
     append_table_markers(model.beacons, MapMarkerVisualKind::Beacon,

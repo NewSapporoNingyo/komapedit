@@ -1111,6 +1111,32 @@ double table_cell_number(const TableRow& row, const std::string& key) {
     return end == text.c_str() ? 0.0 : value;
 }
 
+std::vector<std::string> section_row_values(const TableRow& row) {
+    const double count_value = table_cell_number(row, "valueCount");
+    if (!std::isfinite(count_value) || count_value <= 0.0) return {};
+    const size_t value_count = static_cast<size_t>(count_value);
+    std::vector<std::string> values;
+    values.reserve(value_count);
+    for (size_t value_index = 0; value_index < value_count; ++value_index) {
+        values.push_back(
+            table_cell(row, "value" + std::to_string(value_index)));
+    }
+    return values;
+}
+
+std::string join_table_values(const std::vector<std::string>& values,
+                              std::string_view separator) {
+    size_t text_size = separator.size() * (values.empty() ? 0 : values.size() - 1);
+    for (const std::string& value : values) text_size += value.size();
+    std::string text;
+    text.reserve(text_size);
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index) text.append(separator.data(), separator.size());
+        text += values[index];
+    }
+    return text;
+}
+
 namespace {
 
 bool is_scene_table_own_track_key(const std::string& normalized_key) {
@@ -1688,16 +1714,15 @@ void App::ensure_table_cache() {
         for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
             const TableRow& row = rows[row_index];
             CachedTableRow cached;
-            cached.cells.resize(4 + value_columns);
+            cached.cells.resize(3 + value_columns);
             cached.cells[0] = std::to_string(row_index + 1);
             cached.cells[1] = table_cell(row, "distance");
-            cached.cells[2] = table_cell(row, "method");
             for (size_t value_index = 0; value_index < value_columns; ++value_index) {
-                cached.cells[3 + value_index] =
+                cached.cells[2 + value_index] =
                     table_cell(row, "value" + std::to_string(value_index));
             }
             cached.open_path = table_cell(row, "filePath");
-            cached.cells[3 + value_columns] = display_name_from_path(cached.open_path);
+            cached.cells[2 + value_columns] = display_name_from_path(cached.open_path);
             cached.tooltip_text = cached.open_path;
             output.push_back(std::move(cached));
         }
@@ -3999,7 +4024,7 @@ void App::render_sections_window() {
                                     const char* value_prefix,
                                     bool has_markers) {
         ImGui::TextUnformatted(heading.c_str());
-        const int column_count = static_cast<int>(4 + value_columns);
+        const int column_count = static_cast<int>(3 + value_columns);
         if (!ImGui::BeginTable(
                 table_id, column_count,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -4011,7 +4036,6 @@ void App::render_sections_window() {
         }
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 45.0f);
         ImGui::TableSetupColumn("distance", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-        ImGui::TableSetupColumn("method", ImGuiTableColumnFlags_WidthFixed, 160.0f);
         for (size_t i = 0; i < value_columns; ++i) {
             const std::string header = value_prefix + std::to_string(i);
             ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);

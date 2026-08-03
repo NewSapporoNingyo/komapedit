@@ -414,8 +414,11 @@ void App::rebuild_marker_overlay_cache() {
 
     build_standard_markers(model_.signals, signal_marker_cache_, "signalAspectKey", true);
     build_standard_markers(model_.section_begins, section_marker_cache_, "");
-    for (auto& marker : section_marker_cache_) {
-        if (marker) marker->label = "S";
+    for (size_t row_index = 0; row_index < section_marker_cache_.size(); ++row_index) {
+        if (section_marker_cache_[row_index]) {
+            section_marker_cache_[row_index]->label = join_table_values(
+                section_row_values(model_.section_begins[row_index]), ",");
+        }
     }
     build_standard_markers(model_.beacons, beacon_marker_cache_, "type");
     build_standard_markers(model_.pretrains, pretrain_marker_cache_, "passTime");
