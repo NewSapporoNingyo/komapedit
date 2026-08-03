@@ -16,8 +16,6 @@
 std::string narrow_path(const std::filesystem::path& path);
 double round_to_100(double value);
 std::string sanitize_filename(std::string text);
-std::string trim_ascii(const std::string& text);
-std::string ascii_lower(std::string text);
 std::string normalized_storage_path(const std::string& path);
 std::string normalized_path_key(const std::string& path);
 const std::array<ImVec4, 12>& ui_theme_palette();

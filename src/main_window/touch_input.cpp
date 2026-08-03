@@ -35,10 +35,8 @@ constexpr float k_move_cancel_pixels_sq = k_move_cancel_pixels * k_move_cancel_p
 constexpr float k_scroll_start_pixels = 8.0f;
 constexpr float k_scroll_start_pixels_sq = k_scroll_start_pixels * k_scroll_start_pixels;
 constexpr float k_axis_pinch_min_pixels = 8.0f;
-constexpr double k_touch_recent_seconds = 2.0;
 
 struct ActiveTouch {
-    std::uint32_t id = 0;
     ImVec2 start_pos = ImVec2(0.0f, 0.0f);
     ImVec2 pos = ImVec2(0.0f, 0.0f);
     ImVec2 prev_pos = ImVec2(0.0f, 0.0f);
@@ -68,7 +66,6 @@ struct TouchManager {
     TouchFrame frame;
     bool tap_consumed = false;
     bool long_press_consumed = false;
-    double last_touch_at = -1000.0;
     std::optional<double> debug_time;
 
     double now() const {
@@ -86,13 +83,7 @@ struct TouchManager {
         frame = TouchFrame{};
         tap_consumed = false;
         long_press_consumed = false;
-        last_touch_at = -1000.0;
         debug_time = now_seconds;
-    }
-
-    void note_touch_time() {
-        last_touch_at = now();
-        pending.touch_recent = true;
     }
 
     ActiveTouch* primary_touch() {
@@ -187,9 +178,7 @@ struct TouchManager {
     }
 
     void down(std::uint32_t id, ImVec2 pos) {
-        note_touch_time();
         ActiveTouch touch;
-        touch.id = id;
         touch.start_pos = pos;
         touch.pos = pos;
         touch.prev_pos = pos;
@@ -205,7 +194,6 @@ struct TouchManager {
     }
 
     void move(std::uint32_t id, ImVec2 pos) {
-        note_touch_time();
         auto it = touches.find(id);
         if (it == touches.end()) {
             down(id, pos);
@@ -228,7 +216,6 @@ struct TouchManager {
     }
 
     void up(std::uint32_t id, ImVec2 pos) {
-        note_touch_time();
         auto it = touches.find(id);
         if (it == touches.end()) {
             update_pair_gesture();
@@ -280,7 +267,6 @@ struct TouchManager {
         emit_due_long_press();
         frame = pending;
         frame.active_count = static_cast<int>(touches.size());
-        frame.touch_recent = frame.touch_recent || !touches.empty() || (now() - last_touch_at <= k_touch_recent_seconds);
         if (ActiveTouch* touch = primary_touch()) {
             frame.single_pos = touch->pos;
             frame.single_start_pos = touch->start_pos;

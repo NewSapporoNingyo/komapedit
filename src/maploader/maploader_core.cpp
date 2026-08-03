@@ -308,10 +308,16 @@ std::string as_text(const Value& value) {
     return "";
 }
 
+std::string truncated_integer_or_number_text(double value) {
+    if (std::isfinite(value) && value >= -0x1p63 && value < 0x1p63) {
+        return std::to_string(static_cast<long long>(value));
+    }
+    return as_text(Value::num(value));
+}
+
 std::string key_text(const Value& value) {
     if (value.kind == ValueKind::Number) {
-        long long i = static_cast<long long>(value.number);
-        return ascii_lower(std::to_string(i));
+        return ascii_lower(truncated_integer_or_number_text(value.number));
     }
     return ascii_lower(as_text(value));
 }

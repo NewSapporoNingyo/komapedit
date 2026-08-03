@@ -150,6 +150,7 @@ bool parse_double_option(const std::vector<std::string>& args, size_t& index,
 struct FrameTimingStats {
     double average_ms = 0.0;
     double minimum_ms = 0.0;
+    double median_ms = 0.0;
     double p95_ms = 0.0;
     double maximum_ms = 0.0;
     double p95_fps = 0.0;
@@ -167,6 +168,10 @@ FrameTimingStats calculate_frame_timing_stats(const std::vector<double>& frame_m
         sorted_ms.size() - 1);
     stats.average_ms = sum_ms / static_cast<double>(frame_ms.size());
     stats.minimum_ms = sorted_ms.front();
+    const size_t middle = sorted_ms.size() / 2;
+    stats.median_ms = sorted_ms.size() % 2 == 0
+        ? (sorted_ms[middle - 1] + sorted_ms[middle]) * 0.5
+        : sorted_ms[middle];
     stats.p95_ms = sorted_ms[p95_index];
     stats.maximum_ms = sorted_ms.back();
     stats.p95_fps = stats.p95_ms > 0.0 ? 1000.0 / stats.p95_ms : 0.0;
@@ -633,16 +638,14 @@ HeadlessBufferSummary summarize_headless_buffer(KvDoubleBuffer buffer) {
     summary.rows = buffer.rows;
     summary.cols = buffer.cols;
     if (!buffer.data || buffer.rows == 0 || buffer.cols == 0) return summary;
+    KmeByteHash64 hash;
     const size_t count = buffer.rows * buffer.cols;
     for (size_t i = 0; i < count; ++i) {
         const double value = buffer.data[i];
         summary.finite = summary.finite && std::isfinite(value);
-        std::uint64_t bits = hash_double_bits(value);
-        for (int byte = 0; byte < 8; ++byte) {
-            summary.hash ^= static_cast<unsigned char>((bits >> (byte * 8)) & 0xff);
-            summary.hash *= 1099511628211ULL;
-        }
+        hash.integer(hash_double_bits(value));
     }
+    summary.hash = hash.value;
     return summary;
 }
 
@@ -1143,12 +1146,6 @@ struct Resolution {
     std::vector<Boundary> allowed_boundaries;
 };
 
-struct Preview {
-    std::string file_path;
-    std::string before;
-    std::string after;
-};
-
 struct CommittedFile {
     std::string file_path;
     std::string source_hash;
@@ -1183,7 +1180,7 @@ struct Report {
     std::vector<std::string> warnings;
     std::vector<std::string> blocking_errors;
     std::vector<Resolution> resolution_requests;
-    std::vector<Preview> previews;
+    std::vector<std::string> previews;
 };
 
 KvUtf8View view(const std::string& text) {
@@ -1345,8 +1342,7 @@ Report copy_report(const KvEditReportSnapshot& input) {
     output.previews.reserve(static_cast<size_t>(input.preview_snippet_count));
     for (std::uint64_t i = 0; i < input.preview_snippet_count; ++i) {
         const KvEditPreviewRow& row = input.preview_snippets[i];
-        output.previews.push_back({text(row.file_path), text(row.before_text),
-                                   text(row.after_text)});
+        output.previews.push_back(text(row.after_text));
     }
     return output;
 }
@@ -1957,13 +1953,10 @@ std::string edit_number(double value) {
 }
 
 std::string hash_text(const std::string& text) {
-    std::uint64_t hash = 1469598103934665603ull;
-    for (unsigned char ch : text) {
-        hash ^= ch;
-        hash *= 1099511628211ull;
-    }
+    KmeByteHash64 hash;
+    hash.bytes(text);
     std::ostringstream out;
-    out << std::hex << std::setw(16) << std::setfill('0') << hash;
+    out << std::hex << std::setw(16) << std::setfill('0') << hash.value;
     return out.str();
 }
 
@@ -2319,8 +2312,7 @@ bool preview_has_local_wrapper(const EditReport& report,
             return true;
         }
     }
-    for (const typed_edit_headless::Preview& preview : report.previews) {
-        const std::string& after = preview.after;
+    for (const std::string& after : report.previews) {
         std::vector<std::string> lines;
         size_t start = 0;
         while (start <= after.size()) {
@@ -2349,8 +2341,7 @@ bool preview_has_local_wrapper(const EditReport& report,
 
 size_t count_preview_occurrences(const EditReport& report, const std::string& needle) {
     size_t count = 0;
-    for (const typed_edit_headless::Preview& preview : report.previews) {
-        const std::string& after = preview.after;
+    for (const std::string& after : report.previews) {
         size_t position = 0;
         while ((position = after.find(needle, position)) != std::string::npos) {
             ++count;
@@ -3525,12 +3516,12 @@ std::vector<std::string> csv_values(const std::string& line) {
     return result;
 }
 
-std::vector<StationDefinitionDraftRow> make_drafts(
+std::vector<EditableListDraftRow> make_drafts(
     const std::vector<StationRow>& rows) {
-    std::vector<StationDefinitionDraftRow> drafts;
+    std::vector<EditableListDraftRow> drafts;
     drafts.reserve(rows.size());
     for (const StationRow& source : rows) {
-        StationDefinitionDraftRow row;
+        EditableListDraftRow row;
         row.target_edit_id = source.edit_id;
         row.target_source_file = source.source_file;
         row.target_expected_source_hash = source.expected_source_hash;
@@ -3582,10 +3573,11 @@ std::string pending_signature(
 }
 
 std::map<std::string, MapElementPendingChange> build_pending(
-    const std::vector<StationDefinitionDraftRow>& drafts) {
+    const std::vector<EditableListDraftRow>& drafts) {
     std::map<std::string, MapElementPendingChange> result;
     std::string error;
-    if (!build_station_definition_pending_changes(drafts, {}, result, error)) {
+    if (!build_editable_list_pending_changes(
+            k_station_definition_edit_spec, drafts, {}, result, error)) {
         throw std::runtime_error(error.empty()
             ? "shared Station.List draft builder failed" : error);
     }
@@ -3873,29 +3865,29 @@ int run_debug_headless_station_list_edit(
         const std::vector<std::string> baseline_lines = physical_lines(baseline_bytes);
         facts.baseline_physical_line_count = baseline_lines.size();
 
-        std::vector<StationDefinitionDraftRow> boundary_drafts =
+        std::vector<EditableListDraftRow> boundary_drafts =
             make_drafts(baseline);
         const std::vector<size_t> boundary_visible =
-            station_definition_visible_row_indices(boundary_drafts);
-        facts.first_move_up_disabled = !move_station_definition_draft_row(
+            editable_list_visible_row_indices(boundary_drafts);
+        facts.first_move_up_disabled = !move_editable_list_draft_row(
             boundary_drafts, boundary_visible, 0, -1);
-        facts.last_move_down_disabled = !move_station_definition_draft_row(
+        facts.last_move_down_disabled = !move_editable_list_draft_row(
             boundary_drafts, boundary_visible,
             static_cast<int>(boundary_visible.size()) - 1, 1);
 
-        std::vector<StationDefinitionDraftRow> down_drafts = make_drafts(baseline);
+        std::vector<EditableListDraftRow> down_drafts = make_drafts(baseline);
         const std::vector<size_t> down_visible =
-            station_definition_visible_row_indices(down_drafts);
-        if (!move_station_definition_draft_row(
+            editable_list_visible_row_indices(down_drafts);
+        if (!move_editable_list_draft_row(
                 down_drafts, down_visible, static_cast<int>(run), 1)) {
             throw std::runtime_error("shared first-row move-down operation failed");
         }
         const auto down_pending = build_pending(down_drafts);
 
-        std::vector<StationDefinitionDraftRow> up_drafts = make_drafts(baseline);
+        std::vector<EditableListDraftRow> up_drafts = make_drafts(baseline);
         const std::vector<size_t> up_visible =
-            station_definition_visible_row_indices(up_drafts);
-        if (!move_station_definition_draft_row(
+            editable_list_visible_row_indices(up_drafts);
+        if (!move_editable_list_draft_row(
                 up_drafts, up_visible, static_cast<int>(run + 1), -1)) {
             throw std::runtime_error("shared second-row move-up operation failed");
         }
@@ -3914,16 +3906,16 @@ int run_debug_headless_station_list_edit(
             second_change->second.replacement_statement ==
                 baseline[run].raw_statement;
 
-        std::vector<StationDefinitionDraftRow> drafts = make_drafts(baseline);
+        std::vector<EditableListDraftRow> drafts = make_drafts(baseline);
         const std::vector<size_t> visible =
-            station_definition_visible_row_indices(drafts);
-        if (!move_station_definition_draft_row(
+            editable_list_visible_row_indices(drafts);
+        if (!move_editable_list_draft_row(
                 drafts, visible, static_cast<int>(run), 1) ||
-            !clear_station_definition_draft_cell(
+            !clear_editable_list_draft_cell(
                 drafts, visible, static_cast<int>(run + 2), 1) ||
-            !clear_station_definition_draft_cell(
+            !clear_editable_list_draft_cell(
                 drafts, visible, static_cast<int>(run + 3), 0) ||
-            !delete_station_definition_draft_row(
+            !delete_editable_list_draft_row(
                 drafts, visible, static_cast<int>(run + 4))) {
             throw std::runtime_error("shared composite Station.List draft operation failed");
         }
@@ -4493,33 +4485,21 @@ struct OpenBenchSample {
     double plan_data_seconds = 0.0;
     double plan_draw_seconds = 0.0;
     double profile_data_seconds = 0.0;
+    double profile_cache_hit_seconds = 0.0;
     double profile_draw_seconds = 0.0;
     double radius_draw_seconds = 0.0;
     double first_2d_frame_seconds = 0.0;
     std::uint64_t geometry_hash = 0;
     std::uint64_t overlay_hash = 0;
 };
-struct DebugHash64 {
-    std::uint64_t value = 1469598103934665603ULL;
-
-    void byte(unsigned char input) {
-        value ^= input;
-        value *= 1099511628211ULL;
-    }
-
-    void integer(std::uint64_t input) {
-        for (unsigned shift = 0; shift < 64; shift += 8) {
-            byte(static_cast<unsigned char>((input >> shift) & 0xffu));
-        }
-    }
-
+struct DebugHash64 : KmeByteHash64 {
     void number(double input) {
         integer(hash_double_bits(input));
     }
 
     void text(std::string_view input) {
         integer(static_cast<std::uint64_t>(input.size()));
-        for (unsigned char ch : input) byte(ch);
+        bytes(input);
     }
 };
 
@@ -4749,16 +4729,23 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
             std::chrono::steady_clock::now() - plan_draw_started_at).count();
 
         const auto profile_data_started_at = std::chrono::steady_clock::now();
-        ProfileData profile = app.build_profile_data();
+        const ProfileData& profile = app.current_profile_data();
         sample.profile_data_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - profile_data_started_at).count();
+        const std::uint64_t profile_rebuilds = app.profile_data_cache_.rebuild_count;
+        const auto profile_hit_started_at = std::chrono::steady_clock::now();
+        const ProfileData& cached_profile = app.current_profile_data();
+        sample.profile_cache_hit_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - profile_hit_started_at).count();
+        workflow_ok = workflow_ok && &cached_profile == &profile &&
+            app.profile_data_cache_.rebuild_count == profile_rebuilds;
         const auto profile_draw_started_at = std::chrono::steady_clock::now();
-        app.render_profile_plot(profile, ImVec2(625.0f, 250.0f));
+        app.render_profile_plot(cached_profile, ImVec2(625.0f, 250.0f));
         sample.profile_draw_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - profile_draw_started_at).count();
         ImGui::SameLine();
         const auto radius_draw_started_at = std::chrono::steady_clock::now();
-        app.render_radius_plot(profile, ImVec2(625.0f, 250.0f));
+        app.render_radius_plot(cached_profile, ImVec2(625.0f, 250.0f));
         sample.radius_draw_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - radius_draw_started_at).count();
         ImGui::End();
@@ -4783,9 +4770,10 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
              << " buffer_copy=" << sample.buffer_copy_seconds << "s"
              << " overlay=" << sample.overlay_seconds << "s"
              << " plan_data=" << sample.plan_data_seconds << "s"
-             << " plan_draw=" << sample.plan_draw_seconds << "s"
-             << " profile_data=" << sample.profile_data_seconds << "s"
-             << " profile_draw=" << sample.profile_draw_seconds << "s"
+              << " plan_draw=" << sample.plan_draw_seconds << "s"
+              << " profile_data=" << sample.profile_data_seconds << "s"
+              << " profile_cache_hit=" << sample.profile_cache_hit_seconds << "s"
+              << " profile_draw=" << sample.profile_draw_seconds << "s"
              << " radius_draw=" << sample.radius_draw_seconds << "s"
              << " first_2d_frame=" << sample.first_2d_frame_seconds << "s"
              << " ready_total=" << sample.ready_seconds << "s"
@@ -4798,6 +4786,36 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
     for (int run = 1; run <= options.repeat && benchmark_ok; ++run) {
         if (auto sample = run_one(run)) samples.push_back(*sample);
     }
+
+    bool profile_cache_checks_ok = false;
+    if (!samples.empty()) {
+        auto key = [&]() -> auto& { return *app.profile_data_cache_.key; };
+        auto require_miss = [&](auto& cached, auto mismatched) {
+            const std::uint64_t before = app.profile_data_cache_.rebuild_count;
+            cached = std::move(mismatched);
+            app.current_profile_data();
+            return app.profile_data_cache_.rebuild_count == before + 1;
+        };
+        bool keyed_state_pass = require_miss(key().source_revision, key().source_revision + 1);
+        keyed_state_pass &= require_miss(key().has_model, !app.has_model_);
+        keyed_state_pass &= require_miss(key().distance_min, NAN);
+        keyed_state_pass &= require_miss(key().distance_max, NAN);
+        keyed_state_pass &= require_miss(key().show_other, !app.show_profile_other_);
+        keyed_state_pass &= require_miss(key().language,
+            app.lang_ == Language::En ? Language::Zh : Language::En);
+        if (!key().other_tracks.empty()) {
+            auto track = [&]() -> auto& { return key().other_tracks.front(); };
+            keyed_state_pass &= require_miss(track().key, track().key + "#");
+            keyed_state_pass &= require_miss(track().visible, !app.model_.other_tracks[0].visible);
+            keyed_state_pass &= require_miss(track().range_min, NAN);
+            keyed_state_pass &= require_miss(track().range_max, NAN);
+            keyed_state_pass &= require_miss(
+                track().color, std::array<float, 4>{NAN, NAN, NAN, NAN});
+        }
+        profile_cache_checks_ok = keyed_state_pass;
+        *out << "profile_cache_checks result=" << (profile_cache_checks_ok ? "PASS" : "FAIL") << "\n";
+    }
+    workflow_ok = workflow_ok && profile_cache_checks_ok;
 
     auto ref_valid = [](const char* data, std::uint64_t size, KvStringRef ref) {
         return ref.offset <= size && ref.length <= size - ref.offset &&
@@ -5682,6 +5700,29 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
              << " result=" << (load_completed && terminal_model_state ? "PASS" : "TIMEOUT") << "\n";
         out->flush();
 
+        bool inspector_cache_checks_ok = true;
+        if (!app.model_.structures.empty()) {
+            std::string saved_edit_id = std::move(app.model_.structures.front().edit_id);
+            app.model_.structures.front().edit_id = "debug:inspector-row-cache";
+            app.inspector_ = {};
+            app.inspector_.open = true;
+            app.inspector_.edit_id = app.model_.structures.front().edit_id;
+            app.inspector_.row_kind = "structure.put";
+            app.inspector_.model_row_index = 0;
+            app.inspector_.model_row_source_revision = app.plan_data_source_revision_;
+            app.sync_scene_placement_edit_from_inspector();
+            ++app.plan_data_source_revision_;
+            app.sync_scene_placement_edit_from_inspector();
+            inspector_cache_checks_ok = app.inspector_.model_row_cache_scans == 1 &&
+                app.inspector_.model_row_source_revision == app.plan_data_source_revision_;
+            app.model_.structures.front().edit_id = std::move(saved_edit_id);
+            app.inspector_ = {};
+            app.clear_scene_placement_edit_target();
+            *out << "inspector_row_cache_checks result=" << (inspector_cache_checks_ok ? "PASS" : "FAIL") << "\n";
+        } else {
+            *out << "inspector_row_cache_checks result=SKIP_NO_EDITABLE_PLACEMENT\n";
+        }
+
         std::vector<double> frame_ms;
         frame_ms.reserve(static_cast<size_t>(frames));
         for (int frame = 0; frame < frames; ++frame) {
@@ -5694,7 +5735,8 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         out->flush();
 
         const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
-        bool pass = load_completed && terminal_model_state && timing.p95_ms <= max_frame_ms;
+        bool pass = load_completed && terminal_model_state && inspector_cache_checks_ok &&
+            timing.p95_ms <= max_frame_ms;
         Canvas3DSceneStats final_stats = app.scene_preview_canvas_->scene_stats();
 
         const size_t fog_row_count = app.model_.fogs.size();
@@ -5791,6 +5833,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
         *out << std::fixed << std::setprecision(3)
              << "scene3d_bench avg_ms=" << timing.average_ms
              << " min_ms=" << timing.minimum_ms
+             << " median_ms=" << timing.median_ms
              << " p95_ms=" << timing.p95_ms
              << " max_ms=" << timing.maximum_ms
              << " p95_fps=" << timing.p95_fps
@@ -5873,8 +5916,6 @@ int App::run_debug_headless_scene_camera_transfer(const std::string& path, doubl
         options.model = &load_result.model;
         options.map_handle = load_result.handle;
         options.unit_distance = unit_distance;
-        options.control_point_start = load_result.model.cp_arb[0];
-        options.control_point_end = load_result.model.cp_arb[1];
         options.control_point_interval = load_result.model.cp_arb[2];
         options.show_own_track_markers = true;
         Canvas3DSceneBuildResult build_result = build_canvas3d_scene_preview(options);

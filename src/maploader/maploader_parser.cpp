@@ -936,9 +936,9 @@ private:
                 return Value::num(as_number(lhs) + as_number(rhs));
             }
             if (lhs.is_string()) {
-                return Value::str(lhs.text + std::to_string(static_cast<long long>(as_number(rhs))));
+                return Value::str(lhs.text + truncated_integer_or_number_text(as_number(rhs)));
             }
-            return Value::str(std::to_string(static_cast<long long>(as_number(lhs))) + rhs.text);
+            return Value::str(truncated_integer_or_number_text(as_number(lhs)) + rhs.text);
         }
         if (op == '-') return Value::num(as_number(lhs) - as_number(rhs));
         if (op == '*') return Value::num(as_number(lhs) * as_number(rhs));

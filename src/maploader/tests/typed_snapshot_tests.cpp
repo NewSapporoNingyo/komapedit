@@ -398,6 +398,85 @@ int snapshot_contract() {
         }
     }
 
+    {
+        TempFixture numeric_fixture;
+        std::ofstream map(numeric_fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "$finiteLeft='x'+12.75;\n"
+            << "$finiteRight=12.75+'x';\n"
+            << "$positiveInfinity='x'+(1/0);\n"
+            << "$negativeInfinity='x'+((-1)/0);\n"
+            << "$notANumber='x'+((1/0)-(1/0));\n"
+            << "$largeFinite='x'+1e300;\n"
+            << "$smallFinite='x'+(-1e300);\n"
+            << "Track[1/0].Position(3.8,0);\n";
+        map.close();
+
+        MapHandle numeric_handle(kv_load_map_ex(
+            numeric_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(numeric_handle.value != nullptr, "non-finite numeric text preview load");
+        if (numeric_handle.value) {
+            KvMapSnapshot numeric{};
+            check(kv_get_map_snapshot(numeric_handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &numeric, sizeof(numeric)) != 0,
+                  "non-finite numeric text snapshot");
+            auto assignment_text = [&](std::string_view name) {
+                for (std::uint64_t i = 0; i < numeric.variable_assignment_count; ++i) {
+                    const KvVariableAssignmentRow& row = numeric.variable_assignments[i];
+                    if (map_string(numeric, row.normalized_name) == name &&
+                        row.value.kind == KV_VALUE_STRING) {
+                        return map_string(numeric, row.value.string_value);
+                    }
+                }
+                return std::string{};
+            };
+            check(assignment_text("finiteleft") == "x12", "finite right operand truncation bytes");
+            check(assignment_text("finiteright") == "12x", "finite left operand truncation bytes");
+            check(assignment_text("positiveinfinity").find("inf") != std::string::npos,
+                  "positive infinity uses numeric text");
+            check(assignment_text("negativeinfinity").find("-inf") != std::string::npos,
+                  "negative infinity uses numeric text");
+            check(assignment_text("notanumber").find("nan") != std::string::npos,
+                  "NaN uses numeric text");
+            check(assignment_text("largefinite").find("e+300") != std::string::npos,
+                  "large finite value uses numeric text");
+            check(assignment_text("smallfinite").find("e+300") != std::string::npos,
+                  "small finite value uses numeric text");
+            check(numeric.other_track_count == 1 &&
+                      map_string(numeric, numeric.other_tracks[0].key) == "1e999",
+                  "non-finite numeric key uses numeric text");
+        }
+    }
+
+    {
+        TempFixture nan_curve_fixture;
+        std::ofstream map(nan_curve_fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Curve.BeginTransition();\n"
+            << "25;\n"
+            << "Curve.Begin((1/0)-(1/0),0);\n"
+            << "50;\n";
+        map.close();
+        MapHandle nan_curve_handle(kv_load_map_ex(
+            nan_curve_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(nan_curve_handle.value != nullptr, "NaN transition preview load");
+        if (nan_curve_handle.value) {
+            KvMapSnapshot nan_curve{};
+            check(kv_get_map_snapshot(nan_curve_handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &nan_curve, sizeof(nan_curve)) != 0,
+                  "NaN transition snapshot");
+            bool propagated_nan = false;
+            const std::uint64_t value_count = nan_curve.own_track_geometry.rows *
+                nan_curve.own_track_geometry.cols;
+            for (std::uint64_t i = 0; i < value_count; ++i) {
+                propagated_nan = propagated_nan || std::isnan(nan_curve.own_track_geometry.data[i]);
+            }
+            check(propagated_nan, "NaN Fresnel input propagates into transition geometry");
+        }
+    }
+
     std::cout << "typed snapshot contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures;
 }

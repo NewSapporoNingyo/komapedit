@@ -219,6 +219,7 @@ using VariableEnvironmentSnapshot = std::shared_ptr<const VariableEnvironment>;
 
 double as_number(const Value& value, double fallback = 0.0);
 std::string as_text(const Value& value);
+std::string truncated_integer_or_number_text(double value);
 std::string key_text(const Value& value);
 std::string track_key_display_text(const Value& value);
 Value track_key_from_display_text(const std::string& text);
@@ -273,14 +274,6 @@ struct ParsedStatement {
     int global_order = 0;
 };
 
-struct MapElementRef {
-    std::string edit_id;
-    std::string row_kind;
-    size_t row_index = 0;
-    std::string source_file_path;
-    int global_order = 0;
-};
-
 struct EditSourceRef {
     size_t statement_index = k_no_source_ref;
     int element_index = 0;
@@ -290,12 +283,7 @@ struct EditSourceRef {
     }
 };
 
-enum class MapDiagnosticKind {
-    Warning,
-};
-
 struct MapDiagnostic {
-    MapDiagnosticKind kind = MapDiagnosticKind::Warning;
     std::string file_path;
     int line = 1;
     int column = 1;

@@ -199,6 +199,7 @@ std::pair<double, double> fresnel_cs_asymptotic(double x) {
 }
 
 std::pair<double, double> fresnel_cs(double x) {
+    if (std::isnan(x)) return {x, x};
     if (x == 0.0) return {0.0, 0.0};
     const double sign = x < 0.0 ? -1.0 : 1.0;
     const double ax = std::fabs(x);

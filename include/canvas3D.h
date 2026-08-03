@@ -296,8 +296,6 @@ struct Canvas3DSceneBuildOptions {
     const MapModel* model = nullptr;
     void* map_handle = nullptr;
     double unit_distance = 25.0;
-    double control_point_start = 0.0;
-    double control_point_end = 0.0;
     double control_point_interval = 25.0;
     int station_index = 0;
     bool show_own_track_markers = true;

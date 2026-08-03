@@ -99,12 +99,38 @@ inline constexpr bool k_default_scene_map_draw_distance_enabled = true;
 inline constexpr size_t k_max_recent_maps = 10;
 inline constexpr const char* k_own_track_lookup_aliases[] = {"", "0", "1", "\\", "own", "main"};
 
+struct KmeByteHash64 {
+    std::uint64_t value = 1469598103934665603ULL;
+    void byte(unsigned char input) {
+        value = (value ^ input) * 1099511628211ULL;
+    }
+    void integer(std::uint64_t input) {
+        for (unsigned shift = 0; shift < 64; shift += 8)
+            byte(static_cast<unsigned char>((input >> shift) & 0xffu));
+    }
+    void bytes(std::string_view input) {
+        for (unsigned char ch : input) byte(ch);
+    }
+};
+
+inline std::string trim_ascii(const std::string& text) {
+    size_t first = 0;
+    while (first < text.size() && std::isspace(static_cast<unsigned char>(text[first]))) ++first;
+    size_t last = text.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1]))) --last;
+    return text.substr(first, last - first);
+}
+
+inline std::string ascii_lower(std::string text) {
+    for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return text;
+}
+
 inline std::string normalize_track_lookup_key(std::string key) {
     key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char ch) {
         return std::isspace(ch) != 0;
     }), key.end());
-    for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return key;
+    return ascii_lower(std::move(key));
 }
 
 inline double angle_lerp(double a, double b, double t) {
@@ -1112,6 +1138,11 @@ struct MapElementInspectorState {
     bool open = false;
     std::string edit_id;
     std::string row_kind;
+    size_t model_row_index = std::numeric_limits<size_t>::max();
+    std::uint64_t model_row_source_revision = 0;
+#ifndef NDEBUG
+    std::uint64_t model_row_cache_scans = 0;
+#endif
     std::string title;
     std::string source_file;
     std::string source_file_name;
@@ -1306,9 +1337,6 @@ struct EditableListEditState {
     std::vector<EditableListDisplayRow> display_rows;
 };
 
-using StationDefinitionDraftRow = EditableListDraftRow;
-using StationDefinitionEditState = EditableListEditState;
-
 bool editable_list_row_has_draft(const EditableListDraftRow& row);
 std::string editable_list_field_name(const EditableListSpec& spec,
                                      size_t field_index);
@@ -1332,27 +1360,6 @@ void rebuild_editable_list_display_rows(
 bool build_editable_list_pending_changes(
     const EditableListSpec& spec,
     const std::vector<EditableListDraftRow>& rows,
-    const std::map<std::string, MapElementPendingChange>& existing_changes,
-    std::map<std::string, MapElementPendingChange>& candidate_changes,
-    std::string& error_message);
-
-bool station_definition_row_has_draft(const StationDefinitionDraftRow& row);
-std::vector<size_t> station_definition_visible_row_indices(
-    const std::vector<StationDefinitionDraftRow>& rows);
-bool move_station_definition_draft_row(
-    std::vector<StationDefinitionDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
-    int visible_row, int direction);
-bool clear_station_definition_draft_cell(
-    std::vector<StationDefinitionDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
-    int visible_row, int column);
-bool delete_station_definition_draft_row(
-    std::vector<StationDefinitionDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
-    int visible_row);
-bool build_station_definition_pending_changes(
-    const std::vector<StationDefinitionDraftRow>& rows,
     const std::map<std::string, MapElementPendingChange>& existing_changes,
     std::map<std::string, MapElementPendingChange>& candidate_changes,
     std::string& error_message);
@@ -1476,7 +1483,7 @@ private:
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
-    StationDefinitionEditState station_definition_edit_;
+    EditableListEditState station_definition_edit_;
     EditableListEditState structure_model_edit_;
     EditableListEditState signal_aspect_edit_;
     EditableListEditState sound_list_edit_;
@@ -1717,6 +1724,28 @@ private:
 #endif
     };
     PlanDataCache plan_data_cache_;
+    struct ProfileDataCacheKey {
+        struct OtherTrackState {
+            std::string key;
+            bool visible = false;
+            double range_min = 0.0, range_max = 0.0;
+            std::array<float, 4> color{};
+        };
+        std::uint64_t source_revision = 0;
+        bool has_model = false;
+        double distance_min = 0.0, distance_max = 0.0;
+        bool show_other = false;
+        Language language = Language::Zh;
+        std::vector<OtherTrackState> other_tracks;
+    };
+    struct ProfileDataCache {
+        std::optional<ProfileDataCacheKey> key;
+        ProfileData data;
+#ifndef NDEBUG
+        std::uint64_t rebuild_count = 0;
+#endif
+    };
+    ProfileDataCache profile_data_cache_;
     std::uint64_t plan_data_source_revision_ = 0;
     int structure_list_scroll_row_ = -1;
     int structure_list_highlight_row_ = -1;
@@ -1880,7 +1909,6 @@ private:
     bool revert_all_pending_edits();
     void apply_inspector_changes();
     bool has_unsaved_edit_state() const;
-    bool has_station_definition_drafts() const;
     bool has_unapplied_editable_list_drafts() const;
     bool has_editable_list_drafts(const EditableListEditState& edit,
                                   const EditableListSpec& spec) const;
@@ -1909,13 +1937,6 @@ private:
                                     const EditableListSpec& spec);
     void rebind_other_editable_list_drafts(const EditableListEditState* applied);
     void reset_editable_list_find_results(const EditableListSpec& spec);
-    bool initialize_station_definition_draft_rows();
-    void commit_station_definition_active_edit();
-    void discard_station_definition_drafts();
-    bool move_station_definition_row(int visible_row, int direction);
-    bool clear_station_definition_cell(int visible_row, int column);
-    bool delete_station_definition_row(int visible_row);
-    void apply_station_definition_drafts();
     void enable_inspector_put0_conversion();
     bool navigate_repeater_inspector(bool toward_next);
     void sync_scene_placement_edit_from_inspector();
@@ -2105,6 +2126,7 @@ private:
     PlanData build_plan_data(bool include_other_tracks = true) const;
     const PlanData& current_plan_data();
     ProfileData build_profile_data() const;
+    const ProfileData& current_profile_data();
     std::vector<Section> curve_sections(bool transition) const;
     size_t nearest_own_index(double distance) const;
     double interp_own_z(double distance) const;

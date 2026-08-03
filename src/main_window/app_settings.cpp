@@ -31,19 +31,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-std::string trim_ascii(const std::string& text) {
-    size_t begin = 0;
-    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
-    size_t end = text.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
-    return text.substr(begin, end - begin);
-}
-
-std::string ascii_lower(std::string text) {
-    for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return text;
-}
-
 std::string normalized_storage_path(const std::string& path) {
     if (trim_ascii(path).empty()) return {};
     try {

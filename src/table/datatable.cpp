@@ -819,6 +819,60 @@ void render_table_find_panel(TableFindState& state,
     ImGui::Spacing();
 }
 
+struct EditableCellInteraction {
+    bool hovered = false;
+    bool left_clicked = false;
+    bool right_clicked = false;
+    bool double_clicked = false;
+};
+
+template <typename ContextMenu>
+bool render_editable_cell_input(std::string& buffer, bool& fresh,
+                                ContextMenu&& render_context_menu) {
+    if (fresh) {
+        ImGui::SetKeyboardFocusHere(0);
+        fresh = false;
+    }
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+    const bool returned = ImGui::InputText(
+        "##cell_edit", &buffer,
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+    ImGui::PopItemWidth();
+    render_context_menu();
+    return returned || ImGui::IsItemDeactivated();
+}
+
+EditableCellInteraction render_editable_cell_button(
+    const std::string& display, bool selected, ImU32 text_color,
+    float width, float height) {
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("cell", ImVec2(width, height));
+    EditableCellInteraction interaction;
+    interaction.hovered = ImGui::IsItemHovered();
+    interaction.left_clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    interaction.right_clicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+    interaction.double_clicked = interaction.hovered &&
+        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImVec2 max(pos.x + width, pos.y + height);
+    if (selected) {
+        draw_list->AddRect(pos, max, ImGui::GetColorU32(ImGuiCol_HeaderActive),
+                           0.0f, 0, 1.5f);
+    } else if (interaction.hovered) {
+        draw_list->AddRect(pos, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+    }
+    if (!display.empty()) {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        draw_list->PushClipRect(pos, max, true);
+        draw_list->AddText(ImVec2(pos.x + style.CellPadding.x,
+                                  pos.y + style.CellPadding.y),
+                           text_color, display.c_str());
+        draw_list->PopClipRect();
+    }
+    return interaction;
+}
+
 } // namespace
 
 constexpr float k_show_column_width = 56.0f;
@@ -2580,7 +2634,6 @@ void App::render_editable_list_table(
     ImGui::TableHeadersRow();
 
     const bool can_edit = edit_actions_available();
-    const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec4 preview_text_color(1.0f, 1.0f, 0.0f, 1.0f);
     const auto display_at =
         [&](int row) -> const EditableListDisplayRow* {
@@ -2873,61 +2926,28 @@ void App::render_editable_list_table(
                 };
 
                 if (row_editable && is_editing) {
-                    if (edit.edit_buffer_fresh) {
-                        ImGui::SetKeyboardFocusHere(0);
-                        edit.edit_buffer_fresh = false;
-                    }
-                    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-                    const bool returned = ImGui::InputText(
-                        "##cell_edit", &edit.edit_buffer,
-                        ImGuiInputTextFlags_EnterReturnsTrue |
-                            ImGuiInputTextFlags_AutoSelectAll);
-                    ImGui::PopItemWidth();
-                    render_context_menu();
-                    if (returned || ImGui::IsItemDeactivated()) {
+                    if (render_editable_cell_input(
+                            edit.edit_buffer, edit.edit_buffer_fresh,
+                            render_context_menu)) {
                         commit_editable_list_active_edit(edit, spec);
                     }
                     ImGui::PopID();
                     continue;
                 }
 
-                const ImVec2 pos = ImGui::GetCursorScreenPos();
                 const float cell_width =
                     std::max(1.0f, ImGui::GetContentRegionAvail().x);
                 const float cell_height = ImGui::GetFrameHeight();
-                ImGui::InvisibleButton(
-                    "cell", ImVec2(cell_width, cell_height));
-                const bool hovered = ImGui::IsItemHovered();
-                if (is_selected) {
-                    ImGui::GetWindowDrawList()->AddRect(
-                        pos, ImVec2(pos.x + cell_width, pos.y + cell_height),
-                        ImGui::GetColorU32(ImGuiCol_HeaderActive),
-                        0.0f, 0, 1.5f);
-                } else if (hovered) {
-                    ImGui::GetWindowDrawList()->AddRect(
-                        pos, ImVec2(pos.x + cell_width, pos.y + cell_height),
-                        ImGui::GetColorU32(ImGuiCol_HeaderHovered));
-                }
-                if (!display.empty()) {
-                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                    draw_list->PushClipRect(
-                        pos, ImVec2(pos.x + cell_width, pos.y + cell_height), true);
-                    draw_list->AddText(
-                        ImVec2(pos.x + style.CellPadding.x,
-                               pos.y + style.CellPadding.y),
-                        text_color, display.c_str());
-                    draw_list->PopClipRect();
-                }
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Left) ||
-                    ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                const EditableCellInteraction interaction = render_editable_cell_button(
+                    display, is_selected, text_color, cell_width, cell_height);
+                if (interaction.left_clicked || interaction.right_clicked) {
                     edit.selected_row = logical_row;
                     edit.selected_secondary_row =
                         secondary_row;
                     edit.selected_column = column;
                 }
                 render_context_menu();
-                if (row_editable && editable_cell && hovered &&
-                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (row_editable && editable_cell && interaction.double_clicked) {
                     commit_editable_list_active_edit(edit, spec);
                     if (initialize_editable_list_draft_rows(edit, spec)) {
                         EditableListDraftRow& active =
@@ -3035,14 +3055,17 @@ void App::render_station_list_window() {
     ImGui::Separator();
     ImGui::TextUnformatted(tr("frame.station_definitions").c_str());
     ImGui::SameLine();
-    ImGui::BeginDisabled(!edit_actions_available() || !has_station_definition_drafts());
-    if (ImGui::Button(tr("button.apply").c_str())) apply_station_definition_drafts();
+    ImGui::BeginDisabled(!edit_actions_available() ||
+        !has_editable_list_drafts(station_definition_edit_, k_station_definition_edit_spec));
+    if (ImGui::Button(tr("button.apply").c_str())) {
+        apply_editable_list_drafts(station_definition_edit_, k_station_definition_edit_spec);
+    }
     ImGui::EndDisabled();
     {
         const TableColumnDef* columns = k_station_definition_columns;
         const int column_count = IM_ARRAYSIZE(k_station_definition_columns);
         const std::vector<CachedTableRow>& rows = table_cache_.station_definition_rows;
-        StationDefinitionEditState& edit = station_definition_edit_;
+        EditableListEditState& edit = station_definition_edit_;
         const int row_count = edit.rows_initialized
             ? static_cast<int>(edit.visible_rows.size())
             : static_cast<int>(rows.size());
@@ -3058,7 +3081,6 @@ void App::render_station_list_window() {
             }
             setup_fixed_table_header();
             ImGui::TableHeadersRow();
-            const ImGuiStyle& style = ImGui::GetStyle();
             const auto source_file_at = [&](int visible_row) -> const std::string& {
                 if (edit.rows_initialized) {
                     return edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]
@@ -3092,20 +3114,24 @@ void App::render_station_list_window() {
                 if (!ImGui::BeginPopupContextItem("##station_definition_context")) return;
                 ImGui::BeginDisabled(!move_up_available);
                 if (ImGui::MenuItem(tr("context.station_list.move_up").c_str())) {
-                    move_station_definition_row(visible_row, -1);
+                    move_editable_list_row(
+                        edit, k_station_definition_edit_spec, visible_row, -1);
                 }
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!move_down_available);
                 if (ImGui::MenuItem(tr("context.station_list.move_down").c_str())) {
-                    move_station_definition_row(visible_row, 1);
+                    move_editable_list_row(
+                        edit, k_station_definition_edit_spec, visible_row, 1);
                 }
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!actions_available);
                 if (ImGui::MenuItem(tr("context.station_list.clear_cell").c_str())) {
-                    clear_station_definition_cell(visible_row, column);
+                    clear_editable_list_cell(
+                        edit, k_station_definition_edit_spec, visible_row, column);
                 }
                 if (ImGui::MenuItem(tr("context.station_list.delete_row").c_str())) {
-                    delete_station_definition_row(visible_row);
+                    delete_editable_list_row(
+                        edit, k_station_definition_edit_spec, visible_row);
                 }
                 ImGui::EndDisabled();
                 ImGui::EndPopup();
@@ -3116,7 +3142,7 @@ void App::render_station_list_window() {
                 for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
                     const CachedTableRow* cached_row = edit.rows_initialized ? nullptr :
                         &rows[static_cast<size_t>(row_index)];
-                    StationDefinitionDraftRow* draft_row = edit.rows_initialized
+                    EditableListDraftRow* draft_row = edit.rows_initialized
                         ? &edit.rows[edit.visible_rows[static_cast<size_t>(row_index)]]
                         : nullptr;
                     const std::string& target_edit_id = draft_row
@@ -3129,7 +3155,7 @@ void App::render_station_list_window() {
                         ImGui::TableSetBgColor(
                             ImGuiTableBgTarget_RowBg0, k_pending_delete_row_color);
                     } else if (row_has_pending_edit(target_edit_id) ||
-                        (draft_row && station_definition_row_has_draft(*draft_row))) {
+                        (draft_row && editable_list_row_has_draft(*draft_row))) {
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, k_pending_edit_row_color);
                     }
                     ImGui::PushID(row_index);
@@ -3145,63 +3171,42 @@ void App::render_station_list_window() {
                         const bool is_selected = (edit.selected_row == row_index && edit.selected_column == col);
 
                         if (row_editable && is_editing) {
-                            if (edit.edit_buffer_fresh) {
-                                ImGui::SetKeyboardFocusHere(0);
-                                edit.edit_buffer_fresh = false;
-                            }
-                            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-                            const bool returned = ImGui::InputText(
-                                "##cell_edit", &edit.edit_buffer,
-                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-                            ImGui::PopItemWidth();
-                            render_context_menu(row_index, col, row_editable);
-                            if (returned || ImGui::IsItemDeactivated()) {
-                                commit_station_definition_active_edit();
+                            if (render_editable_cell_input(
+                                    edit.edit_buffer, edit.edit_buffer_fresh,
+                                    [&]() {
+                                        render_context_menu(row_index, col, row_editable);
+                                    })) {
+                                commit_editable_list_active_edit(
+                                    edit, k_station_definition_edit_spec);
                             }
                             ImGui::PopID();
                             continue;
                         }
 
-                        ImVec2 pos = ImGui::GetCursorScreenPos();
                         float cell_w = ImGui::GetContentRegionAvail().x;
                         float cell_h = ImGui::GetFrameHeight();
-                        ImGui::InvisibleButton("cell", ImVec2(cell_w, cell_h));
-                        const bool hovered = ImGui::IsItemHovered();
-                        if (is_selected) {
-                            ImGui::GetWindowDrawList()->AddRect(
-                                pos, ImVec2(pos.x + cell_w, pos.y + cell_h),
-                                ImGui::GetColorU32(ImGuiCol_HeaderActive), 0.0f, 0, 1.5f);
-                        } else if (hovered) {
-                            ImGui::GetWindowDrawList()->AddRect(
-                                pos, ImVec2(pos.x + cell_w, pos.y + cell_h),
-                                ImGui::GetColorU32(ImGuiCol_HeaderHovered), 0.0f, 0, 1.0f);
-                        }
-                        if (!display.empty()) {
-                            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                            draw_list->PushClipRect(
-                                pos, ImVec2(pos.x + cell_w, pos.y + cell_h), true);
-                            draw_list->AddText(
-                                ImVec2(pos.x + style.CellPadding.x, pos.y + style.CellPadding.y),
-                                ImGui::GetColorU32(ImGuiCol_Text), display.c_str());
-                            draw_list->PopClipRect();
-                        }
-                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                        const EditableCellInteraction interaction = render_editable_cell_button(
+                            display, is_selected, ImGui::GetColorU32(ImGuiCol_Text),
+                            cell_w, cell_h);
+                        if (interaction.right_clicked) {
                             edit.selected_row = row_index;
                             edit.selected_column = col;
                         }
                         render_context_menu(row_index, col, row_editable);
                         if (row_editable) {
-                            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                            if (interaction.left_clicked) {
                                 edit.selected_row = row_index;
                                 edit.selected_column = col;
                             }
-                            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                                commit_station_definition_active_edit();
-                                if (!initialize_station_definition_draft_rows()) {
+                            if (interaction.double_clicked) {
+                                commit_editable_list_active_edit(
+                                    edit, k_station_definition_edit_spec);
+                                if (!initialize_editable_list_draft_rows(
+                                        edit, k_station_definition_edit_spec)) {
                                     ImGui::PopID();
                                     continue;
                                 }
-                                StationDefinitionDraftRow& active_row =
+                                EditableListDraftRow& active_row =
                                     edit.rows[edit.visible_rows[static_cast<size_t>(row_index)]];
                                 edit.editing_column = col;
                                 edit.editing_edit_id = active_row.target_edit_id;

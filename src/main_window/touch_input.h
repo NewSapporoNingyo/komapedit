@@ -22,7 +22,6 @@ enum class PinchAxis {
 };
 
 struct TouchFrame {
-    bool touch_recent = false;
     int active_count = 0;
 
     bool tap = false;

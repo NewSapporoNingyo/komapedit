@@ -347,27 +347,18 @@ std::string sanitize_filename(std::string text) {
 }
 
 std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& nodes) {
-    std::uint64_t hash = 1469598103934665603ull;
-    auto mix_byte = [&hash](unsigned char byte) {
-        hash ^= byte;
-        hash *= 1099511628211ull;
-    };
-    auto mix_string = [&mix_byte](const std::string& text) {
-        for (unsigned char ch : text) mix_byte(ch);
-        mix_byte(0xff);
-    };
-
+    KmeByteHash64 hash;
     for (const FileStructureNode& node : nodes) {
         const std::uint64_t parent = node.parent_index == k_no_file_structure_parent
             ? std::numeric_limits<std::uint64_t>::max()
             : static_cast<std::uint64_t>(node.parent_index);
-        for (unsigned shift = 0; shift < 64; shift += 8) {
-            mix_byte(static_cast<unsigned char>((parent >> shift) & 0xffu));
-        }
-        mix_string(node.include_path);
-        mix_string(node.absolute_path);
+        hash.integer(parent);
+        hash.bytes(node.include_path);
+        hash.byte(0xff);
+        hash.bytes(node.absolute_path);
+        hash.byte(0xff);
     }
-    return hash;
+    return hash.value;
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind);
@@ -2592,13 +2583,15 @@ int inspector_request_match_score(const TableRow& row,
 
 const TableRow* find_model_row_for_inspector_request(const MapModel& model,
                                                      const MapElementInspectorRequest& request,
-                                                     std::string& resolved_edit_id) {
+                                                     std::string& resolved_edit_id,
+                                                     size_t& resolved_row_index) {
     const std::vector<TableRow>* rows = inspector_rows_for_kind(model, request.row_kind);
     if (!rows) return nullptr;
 
     for (const TableRow& row : *rows) {
         if (!request.edit_id.empty() && row.edit_id == request.edit_id) {
             resolved_edit_id = request.edit_id;
+            resolved_row_index = static_cast<size_t>(&row - rows->data());
             return &row;
         }
     }
@@ -2622,6 +2615,7 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 
     if (!best || ambiguous || best_score == std::numeric_limits<int>::min()) return nullptr;
     resolved_edit_id = best->edit_id;
+    resolved_row_index = static_cast<size_t>(best - rows->data());
     return best;
 }
 
@@ -2818,7 +2812,9 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     if (request.edit_id.empty() && request.field_values.empty()) return false;
 
     std::string edit_id = request.edit_id;
-    const TableRow* row = find_model_row_for_inspector_request(model_, request, edit_id);
+    size_t model_row_index = 0;
+    const TableRow* row = find_model_row_for_inspector_request(
+        model_, request, edit_id, model_row_index);
     if (!row) {
         add_log("[warn]gui_kme.cpp: edit target row not found: " + request.edit_id);
         return false;
@@ -2854,6 +2850,8 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     next.open = true;
     next.edit_id = edit_id;
     next.row_kind = request.row_kind;
+    next.model_row_index = model_row_index;
+    next.model_row_source_revision = plan_data_source_revision_;
     next.title = tr("dialog.element_properties");
     if (request.inspector_session) next.session = *request.inspector_session;
     next.source_file = source.file_path;
@@ -3183,12 +3181,21 @@ void App::sync_scene_placement_edit_from_inspector() {
         return;
     }
 
-    size_t row_index = 0;
     const std::vector<TableRow>& rows = structure_target ? model_.structures :
         signal_target ? model_.signals : model_.repeaters;
-    if (!find_row_index_by_edit_id(rows, inspector_.edit_id, row_index)) {
+    size_t row_index = inspector_.model_row_index;
+    const bool cache_hit = inspector_.model_row_source_revision == plan_data_source_revision_ &&
+        row_index < rows.size() && rows[row_index].edit_id == inspector_.edit_id;
+    if (!cache_hit && !find_row_index_by_edit_id(rows, inspector_.edit_id, row_index)) {
         clear_scene_placement_edit_target();
         return;
+    }
+#ifndef NDEBUG
+    if (!cache_hit) ++inspector_.model_row_cache_scans;
+#endif
+    if (!cache_hit) {
+        inspector_.model_row_index = row_index;
+        inspector_.model_row_source_revision = plan_data_source_revision_;
     }
     Canvas3DPlacementEditTarget target =
         scene_edit_target_from_row(rows[row_index], repeater_target
@@ -3675,53 +3682,6 @@ bool build_editable_list_pending_changes(
     return true;
 }
 
-bool station_definition_row_has_draft(const StationDefinitionDraftRow& row) {
-    return editable_list_row_has_draft(row);
-}
-
-std::vector<size_t> station_definition_visible_row_indices(
-    const std::vector<StationDefinitionDraftRow>& rows) {
-    return editable_list_visible_row_indices(rows);
-}
-
-bool move_station_definition_draft_row(
-    std::vector<StationDefinitionDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
-    int visible_row, int direction) {
-    return move_editable_list_draft_row(
-        rows, visible_rows, visible_row, direction);
-}
-
-bool clear_station_definition_draft_cell(
-    std::vector<StationDefinitionDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
-    int visible_row, int column) {
-    return clear_editable_list_draft_cell(
-        rows, visible_rows, visible_row, column);
-}
-
-bool delete_station_definition_draft_row(
-    std::vector<StationDefinitionDraftRow>& rows,
-    const std::vector<size_t>& visible_rows,
-    int visible_row) {
-    return delete_editable_list_draft_row(rows, visible_rows, visible_row);
-}
-
-bool build_station_definition_pending_changes(
-    const std::vector<StationDefinitionDraftRow>& rows,
-    const std::map<std::string, MapElementPendingChange>& existing_changes,
-    std::map<std::string, MapElementPendingChange>& candidate_changes,
-    std::string& error_message) {
-    return build_editable_list_pending_changes(
-        k_station_definition_edit_spec, rows, existing_changes,
-        candidate_changes, error_message);
-}
-
-bool App::has_station_definition_drafts() const {
-    return has_editable_list_drafts(
-        station_definition_edit_, k_station_definition_edit_spec);
-}
-
 bool App::has_unapplied_editable_list_drafts() const {
     return has_editable_list_drafts(
                station_definition_edit_, k_station_definition_edit_spec) ||
@@ -3822,11 +3782,6 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
     return true;
 }
 
-bool App::initialize_station_definition_draft_rows() {
-    return initialize_editable_list_draft_rows(
-        station_definition_edit_, k_station_definition_edit_spec);
-}
-
 void App::reset_editable_list_find_results(const EditableListSpec& spec) {
     if (std::string_view(spec.row_kind) == "structure.model") {
         reset_structure_model_find_results();
@@ -3862,15 +3817,6 @@ void App::commit_editable_list_active_edit(EditableListEditState& edit,
     edit.editing_baseline.clear();
     edit.edit_buffer.clear();
     edit.edit_buffer_fresh = false;
-}
-
-void App::commit_station_definition_active_edit() {
-    commit_editable_list_active_edit(
-        station_definition_edit_, k_station_definition_edit_spec);
-}
-
-void App::discard_station_definition_drafts() {
-    station_definition_edit_ = StationDefinitionEditState{};
 }
 
 void App::discard_all_editable_list_drafts() {
@@ -4064,29 +4010,6 @@ void App::apply_editable_list_drafts(EditableListEditState& edit,
         reset_editable_list_find_results(spec);
     }
     set_program_status("status.edit.pending");
-}
-
-bool App::move_station_definition_row(int visible_row, int direction) {
-    return move_editable_list_row(
-        station_definition_edit_, k_station_definition_edit_spec,
-        visible_row, direction);
-}
-
-bool App::clear_station_definition_cell(int visible_row, int column) {
-    return clear_editable_list_cell(
-        station_definition_edit_, k_station_definition_edit_spec,
-        visible_row, column);
-}
-
-bool App::delete_station_definition_row(int visible_row) {
-    return delete_editable_list_row(
-        station_definition_edit_, k_station_definition_edit_spec,
-        visible_row);
-}
-
-void App::apply_station_definition_drafts() {
-    apply_editable_list_drafts(
-        station_definition_edit_, k_station_definition_edit_spec);
 }
 
 std::string delete_expected_source_hash(
@@ -7352,8 +7275,6 @@ double App::rebuild_scene_preview(bool preserve_loaded_models, bool preserve_cam
     options.model = &model_;
     options.map_handle = handle_;
     options.unit_distance = unit_distance_;
-    options.control_point_start = cp_start_;
-    options.control_point_end = cp_end_;
     options.control_point_interval = cp_interval_;
     options.station_index = station_jump_index_;
     options.show_own_track_markers = show_scene_owntrack_markers_;

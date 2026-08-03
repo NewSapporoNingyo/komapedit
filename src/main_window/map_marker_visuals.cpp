@@ -530,13 +530,25 @@ MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind,
     return {};
 }
 
+static const MapMarkerIconRecipe& default_map_marker_icon_recipe(MapMarkerVisualKind kind) {
+    constexpr std::size_t k_kind_count = static_cast<std::size_t>(MapMarkerVisualKind::Count);
+    static const std::array<MapMarkerIconRecipe, k_kind_count> recipes = [] {
+        std::array<MapMarkerIconRecipe, k_kind_count> values{};
+        for (std::size_t i = 0; i < values.size(); ++i)
+            values[i] = map_marker_icon_recipe(static_cast<MapMarkerVisualKind>(i));
+        return values;
+    }();
+    return recipes[static_cast<std::size_t>(kind)];
+}
+
 void draw_map_marker_icon(ImDrawList* draw,
                           MapMarkerVisualKind kind,
                           ImVec2 center,
                           float half_extent,
                           float rotation_radians) {
     if (!draw || half_extent <= 0.0f) return;
-    const MapMarkerIconRecipe recipe = map_marker_icon_recipe(kind);
+    if (static_cast<std::size_t>(kind) >= static_cast<std::size_t>(MapMarkerVisualKind::Count)) return;
+    const MapMarkerIconRecipe& recipe = default_map_marker_icon_recipe(kind);
     for (std::size_t primitive_index = 0;
          primitive_index < recipe.primitive_count;
          ++primitive_index) {

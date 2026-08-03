@@ -505,7 +505,7 @@ void App::render_plots() {
             plan_height_ += ImGui::GetIO().MouseDelta.y / std::max(1.0f, avail.y);
             plan_height_ = std::clamp(plan_height_, 0.2, 0.86);
         }
-        ProfileData profile = build_profile_data();
+        const ProfileData& profile = current_profile_data();
         ImVec2 graph_avail = ImGui::GetContentRegionAvail();
         if (show_profile_graph_ && show_radius_graph_) {
             float left_w = graph_avail.x * static_cast<float>(graph_split_);

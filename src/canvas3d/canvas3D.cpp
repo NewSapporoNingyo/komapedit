@@ -893,18 +893,8 @@ void apply_euler(DVec3& right, DVec3& up, DVec3& forward,
     }
 }
 
-std::string trim_scene_ascii(const std::string& text) {
-    size_t first = 0;
-    while (first < text.size() && std::isspace(static_cast<unsigned char>(text[first]))) ++first;
-    size_t last = text.size();
-    while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1]))) --last;
-    return text.substr(first, last - first);
-}
-
 std::string scene_model_key(std::string key) {
-    key = trim_scene_ascii(key);
-    for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return key;
+    return ascii_lower(trim_ascii(key));
 }
 
 struct SceneTrackBufferView {
@@ -987,14 +977,14 @@ std::vector<std::string> scene_split_key_list(const std::string& text) {
     std::string current;
     for (char ch : text) {
         if (ch == ',' || ch == ';' || std::isspace(static_cast<unsigned char>(ch))) {
-            std::string key = trim_scene_ascii(current);
+            std::string key = trim_ascii(current);
             if (!key.empty()) keys.push_back(key);
             current.clear();
         } else {
             current.push_back(ch);
         }
     }
-    std::string key = trim_scene_ascii(current);
+    std::string key = trim_ascii(current);
     if (!key.empty()) keys.push_back(key);
     return keys;
 }
@@ -1887,6 +1877,33 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         const Canvas3DTrackPath* path = scene_placement_track_path_for_key(scene, key);
         return path ? scene_sample_track_path_points(*path, distance) : std::nullopt;
     };
+    auto scene_object = [](Canvas3DSceneObjectKind kind, size_t source_row,
+                           const TableRow& row, const char* label_column) {
+        Canvas3DSceneObject object;
+        object.kind = kind;
+        object.source_row = source_row;
+        object.label = table_cell(row, label_column);
+        object.edit_id = row.edit_id;
+        return object;
+    };
+    auto track_following_instance = [](std::string model_path, const TableRow& row,
+                                       double distance, int object_index) {
+        Canvas3DModelInstance instance;
+        instance.model_path = std::move(model_path);
+        instance.track_key = table_cell(row, "trackKey");
+        instance.distance = distance;
+        instance.object_index = object_index;
+        instance.follow_track = true;
+        instance.x = table_cell_number(row, "x");
+        instance.y = table_cell_number(row, "y");
+        instance.z = table_cell_number(row, "z");
+        instance.rx = table_cell_number(row, "rx");
+        instance.ry = table_cell_number(row, "ry");
+        instance.rz = table_cell_number(row, "rz");
+        instance.tilt = table_cell_number(row, "tilt");
+        instance.span = table_cell_number(row, "span");
+        return instance;
+    };
 
     std::map<std::string, std::string> model_paths;
     for (const TableRow& row : model.structure_models) {
@@ -1907,7 +1924,7 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         std::vector<Canvas3DSceneModelOption> options;
         options.reserve(static_cast<size_t>(key_count));
         for (int key_index = 1; key_index <= key_count; ++key_index) {
-            std::string structure_key = trim_scene_ascii(table_cell(row, "structureKey" + std::to_string(key_index)));
+            std::string structure_key = trim_ascii(table_cell(row, "structureKey" + std::to_string(key_index)));
             if (structure_key.empty()) continue;
             Canvas3DSceneModelOption option;
             option.structure_key_index = key_index;
@@ -1924,29 +1941,11 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         double distance = table_cell_number(row, "distance");
         auto point = sample_placement_track(table_cell(row, "trackKey"), distance);
         if (!point) return;
-        Canvas3DSceneObject object;
-        object.kind = Canvas3DSceneObjectKind::Structure;
-        object.source_row = source_row;
-        object.label = table_cell(row, "structureKey");
-        object.edit_id = row.edit_id;
         const int object_index = static_cast<int>(scene.objects.size());
-        scene.objects.push_back(std::move(object));
-
-        Canvas3DModelInstance instance;
-        instance.model_path = path;
-        instance.track_key = table_cell(row, "trackKey");
-        instance.distance = distance;
-        instance.object_index = object_index;
-        instance.follow_track = true;
-        instance.x = table_cell_number(row, "x");
-        instance.y = table_cell_number(row, "y");
-        instance.z = table_cell_number(row, "z");
-        instance.rx = table_cell_number(row, "rx");
-        instance.ry = table_cell_number(row, "ry");
-        instance.rz = table_cell_number(row, "rz");
-        instance.tilt = table_cell_number(row, "tilt");
-        instance.span = table_cell_number(row, "span");
-        scene.instances.push_back(std::move(instance));
+        scene.objects.push_back(scene_object(
+            Canvas3DSceneObjectKind::Structure, source_row, row, "structureKey"));
+        scene.instances.push_back(track_following_instance(
+            std::move(path), row, distance, object_index));
     };
     for (size_t row_index = 0; row_index < model.structures.size(); ++row_index) {
         append_structure_instance(model.structures[row_index], row_index);
@@ -1961,12 +1960,10 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         auto p2 = sample_placement_track(table_cell(row, "trackKey2"), distance);
         auto own = scene_sample_track_path_points(*own_path, distance);
         if (!p1 || !p2 || !own) continue;
-        Canvas3DSceneObject object;
-        object.kind = Canvas3DSceneObjectKind::Structure;
-        object.source_row = model.structures.size() + between_index;
+        Canvas3DSceneObject object = scene_object(
+            Canvas3DSceneObjectKind::Structure,
+            model.structures.size() + between_index, row, "structureKey");
         object.structure_put_between = true;
-        object.label = table_cell(row, "structureKey");
-        object.edit_id = row.edit_id;
         const int object_index = static_cast<int>(scene.objects.size());
         scene.objects.push_back(std::move(object));
 
@@ -1999,32 +1996,15 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         auto point = sample_placement_track(table_cell(row, "trackKey"), distance);
         if (!point) return;
 
-        Canvas3DSceneObject object;
-        object.kind = Canvas3DSceneObjectKind::Signal;
-        object.source_row = row_index;
-        object.label = table_cell(row, "signalAspectKey");
-        object.edit_id = row.edit_id;
+        Canvas3DSceneObject object = scene_object(
+            Canvas3DSceneObjectKind::Signal, row_index, row, "signalAspectKey");
         object.model_options = options;
         object.selected_model_option = static_cast<size_t>(selected_it - options.begin());
 
         const int object_index = static_cast<int>(scene.objects.size());
         scene.objects.push_back(std::move(object));
-
-        Canvas3DModelInstance instance;
-        instance.model_path = scene.objects.back().model_options[scene.objects.back().selected_model_option].model_path;
-        instance.track_key = table_cell(row, "trackKey");
-        instance.distance = distance;
-        instance.object_index = object_index;
-        instance.follow_track = true;
-        instance.x = table_cell_number(row, "x");
-        instance.y = table_cell_number(row, "y");
-        instance.z = table_cell_number(row, "z");
-        instance.rx = table_cell_number(row, "rx");
-        instance.ry = table_cell_number(row, "ry");
-        instance.rz = table_cell_number(row, "rz");
-        instance.tilt = table_cell_number(row, "tilt");
-        instance.span = table_cell_number(row, "span");
-        scene.instances.push_back(std::move(instance));
+        scene.instances.push_back(track_following_instance(
+            selected_it->model_path, row, distance, object_index));
     };
     for (size_t row_index = 0; row_index < model.signals.size(); ++row_index) {
         append_signal_instance(model.signals[row_index], row_index);
@@ -2066,11 +2046,9 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         }
         if (segment.model_paths.empty()) continue;
 
-        Canvas3DSceneObject object;
-        object.kind = Canvas3DSceneObjectKind::Repeater;
-        object.source_row = linked.display_index - 1;
-        object.label = table_cell(begin, "repeaterKey");
-        object.edit_id = begin.edit_id;
+        Canvas3DSceneObject object = scene_object(
+            Canvas3DSceneObjectKind::Repeater, linked.display_index - 1,
+            begin, "repeaterKey");
         segment.object_index = static_cast<int>(scene.objects.size());
         scene.objects.push_back(std::move(object));
         scene.repeaters.push_back(std::move(segment));

@@ -272,6 +272,7 @@ void debug_plan_stage(const char*) {}
 
 void App::rebuild_marker_overlay_cache() {
     plan_data_cache_.valid = false;
+    profile_data_cache_.key.reset();
     ++plan_data_source_revision_;
     structure_marker_cache_.clear();
     repeater_marker_cache_.clear();
@@ -1122,6 +1123,8 @@ ProfileData App::build_profile_data() const {
     ProfileData out;
     if (!has_model_ || model_.own.empty()) return out;
 
+    out.own_x.reserve(model_.own.rows);
+    out.own_y.reserve(model_.own.rows);
     for (size_t r = 0; r < model_.own.rows; ++r) {
         double d = model_.own.at(r, 0);
         if (d < dmin_ || d > dmax_) continue;
@@ -1139,6 +1142,8 @@ ProfileData App::build_profile_data() const {
         }
     }
 
+    out.curve_x.reserve(model_.curve.rows);
+    out.curve_y.reserve(model_.curve.rows);
     for (size_t r = 0; r < model_.curve.rows; ++r) {
         double d = model_.curve.at(r, 0);
         if (d < dmin_ || d > dmax_) continue;
@@ -1148,6 +1153,7 @@ ProfileData App::build_profile_data() const {
     }
 
     if (show_profile_other_) {
+        out.other.reserve(model_.other_tracks.size());
         for (const auto& t : model_.other_tracks) {
             if (!t.visible || t.points.empty()) continue;
             ProfileOther po;
@@ -1165,6 +1171,7 @@ ProfileData App::build_profile_data() const {
         }
     }
 
+    out.stations.reserve(model_.stations.size());
     for (const auto& s : model_.stations) {
         if (s.distance >= dmin_ && s.distance <= dmax_) out.stations.push_back(s);
     }
@@ -1212,6 +1219,38 @@ ProfileData App::build_profile_data() const {
         }
     }
     return out;
+}
+
+const ProfileData& App::current_profile_data() {
+    auto key_matches = [&]() {
+        if (!profile_data_cache_.key) return false;
+        const ProfileDataCacheKey& key = *profile_data_cache_.key;
+        if (key.source_revision != plan_data_source_revision_ || key.has_model != has_model_ ||
+            key.distance_min != dmin_ || key.distance_max != dmax_ ||
+            key.show_other != show_profile_other_ || key.language != lang_ ||
+            key.other_tracks.size() != model_.other_tracks.size()) return false;
+        return std::equal(key.other_tracks.begin(), key.other_tracks.end(),
+            model_.other_tracks.begin(), [](const auto& cached, const OtherTrack& track) {
+            return cached.key == track.key && cached.visible == track.visible &&
+                cached.range_min == track.range_min && cached.range_max == track.range_max &&
+                cached.color == std::array<float, 4>{track.color.x, track.color.y,
+                                                     track.color.z, track.color.w};
+        });
+    };
+    if (key_matches()) return profile_data_cache_.data;
+    profile_data_cache_.data = build_profile_data();
+    ProfileDataCacheKey key{plan_data_source_revision_, has_model_, dmin_, dmax_,
+                            show_profile_other_, lang_, {}};
+    key.other_tracks.reserve(model_.other_tracks.size());
+    for (const OtherTrack& track : model_.other_tracks) {
+        key.other_tracks.push_back({track.key, track.visible, track.range_min, track.range_max,
+                                    {track.color.x, track.color.y, track.color.z, track.color.w}});
+    }
+    profile_data_cache_.key = std::move(key);
+#ifndef NDEBUG
+    ++profile_data_cache_.rebuild_count;
+#endif
+    return profile_data_cache_.data;
 }
 
 void App::clear_measure() {
