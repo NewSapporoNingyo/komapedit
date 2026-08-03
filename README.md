@@ -32,6 +32,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
 - [x] Expose source anchors and stable edit metadata for editable map/list statements through the versioned typed map snapshot.
 - [x] Apply supported updates/deletions to an in-memory working copy and save them to source map/include/list files, preserving include structure, distance semantics, original encodings, and line endings where possible.
+- [x] Reject ambiguous maps with multiple same-kind unkeyed resource-list `Load` statements or multiple case-insensitively matching `Train[].Enable` declarations.
 - [ ] Add new-element insertion and extend source-backed editing beyond the currently supported existing list rows, placement/Repeater statements, and map event/effect rows.
 
 ### Own-Track and Other-Track Geometry
@@ -62,6 +63,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Align a background image using two station positions.
 - [x] Structure and repeater placement markers on the plan view.
 - [x] Display signal position markers on the plan view.
+- [x] Display `Section.Begin`/`Section.BeginNew` markers with their signal-index parameter labels on the plan view.
 - [x] Display beacon position markers on the plan view.
 - [x] Display PreTrain pass-point markers on the plan view.
 - [x] Display other-train paths and stop-point markers on the plan view.
@@ -78,10 +80,13 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Load the station list specified by `Station.Load`.
 - [x] Display `Station.Put` position rows separately from `Station.Load` definition rows.
 - [x] Display the other-track list, with controls for visibility, range, and color.
-- [x] Display other-train definitions and stop-point lists, with plan-path visibility and stop-point location.
+- [x] Display other-train definitions and stop-point lists, including each group's unique read-only `Train.Enable` time, with plan-path visibility and stop-point location.
 - [x] Display map Structure placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
 - [x] Load and display Structure model lists referenced by `Structure.Load` (`.txt` or `.csv`).
 - [x] Display linked `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` segments, with Begin/End/change boundaries merged for readability.
+- [x] Display read-only dynamic-column `Section.Begin`/`BeginNew` and `Section.SetSpeedLimit`/`Signal.SpeedLimit` tables, including explicit `null` arguments and source files.
+- [x] Display a read-only variable-assignment list grouped by case-insensitive name, preserving parse order, original expressions, and source files.
+- [x] Show evaluated `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load` arguments with their raw expressions and resolved paths above the corresponding list tables.
 - [x] Provide shared find and unused-entry search panels for Structure models, signal aspects, and sound lists.
 - [x] Edit, clear, reorder, or delete existing Structure model-list keys and file paths through the source-backed inline table editor; selecting a file writes a relative path where possible.
 - [x] Edit or delete existing `Station.Put` rows, including distance, `stationKey`, door side, and stop margins.
@@ -103,7 +108,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Jump the 3D scene camera from station selections and numeric distance jumps, and show the current 3D position on the plan view.
 - [x] Locate Structure, Repeater, signal, and supported map-marker table rows in the 3D scene preview, and locate picked scene objects or markers back in their tables.
 - [ ] 3D scene quality settings for render scale, MSAA, texture filtering, and outline quality.
-- [x] Display the current curve radius/cant, gradient, and distance to the next station in the 3D scene route overlay.
+- [x] Display the current curve radius/cant, gradient, active speed limit, section-selected signal speeds, and distance to the next station in the 3D scene route overlay.
 - [ ] Extend the 3D route overlay with previous-station information and unsupported interpolation cases.
 - [x] Edit `Structure.Put`, `Signal.Put`, and `Repeater.Begin` positions along X/Y/Z with live 3D gizmos, including explicit `Put0`/`Begin0` conversion and configurable gizmo size.
 - [ ] Add 3D gizmo editing for Structure rotation and other placement fields.
@@ -159,7 +164,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 | `Background.Change`                           |    √    |       √       |         ✕         | Distance and Structure key can be edited and the entry can be deleted; it feeds background data and the scene preview   |
 | `Station.Load`                                |    √    |       △       |         -         | Existing referenced station-definition rows can be edited, cleared, reordered, or deleted; the Load path and new rows are not editable |
 | `Station.Put`                                 |    √    |       √       |         ✕         | Distance, `stationKey`, door side, and stop margins can be edited, and the entry can be deleted                           |
-| `Section.Begin` / `Section.BeginNew`          |    √    |       ✕       |         ✕         | Read-only dynamic-column table plus optional green `S` markers in the 2D plan and 3D scene                               |
+| `Section.Begin` / `Section.BeginNew`          |    √    |       ✕       |         ✕         | Read-only dynamic-column table plus optional green `S` markers labeled with their signal-index arguments in the 2D plan and 3D scene |
 | `Section.SetSpeedLimit` / `Signal.SpeedLimit` |    √    |       ✕       |         ✕         | Read-only dynamic-column table; the latest row at the current position feeds the 3D `Signal:` summary                    |
 | `Signal.Load`                                 |    √    |       √       |         -         | Existing signal-aspect rows support inline edits, clearing, reordering, and deletion; adding rows or structure-key columns is not supported |
 | `Signal.Put`                                  |    √    |       √       |         △         | All placement fields are editable; 3D supports X/Y/Z translation. Editing extended fields on the short form requires confirmation before conversion to the full form |
@@ -211,7 +216,7 @@ of overwriting either file.
    - Double-click the plan view to fit the map to the current viewport.
 4. Use `Station Jump` or `Jump to distance(m)` on the toolbar to jump to a station or numeric map distance.
 5. Use the `2D View` menu to show or hide the 2D view window, profile chart, curve-radius chart, gradient overlays, profile other-track display, and background-image controls.
-6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. `Section Markers` is off by default and controls the green `S` markers in both 2D and 3D. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files; right-click a source-file node to open its read-only text preview. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
+6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. `Section Markers` is off by default and controls the green `S` markers and their signal-index parameter labels in both 2D and 3D. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files; right-click a source-file node to open its read-only text preview. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
 7. Switch `Mode` to `Measure`, then move near the track or double-click to view mileage, elevation, gradient, curve radius, and speed limit.
 8. Use the `Map Info` menu to open the data tables for stations, tracks, other trains, Structures, repeaters, signals, beacons, sounds, irregularity/adhesion data, backgrounds, cab-illuminance, fog, and draw distance. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
    - `Signal Aspect List`: view and find signal aspect definitions; with Edit enabled, edit, reorder, clear, or delete existing aspect rows.
