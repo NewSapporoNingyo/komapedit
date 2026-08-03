@@ -20,6 +20,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -36,6 +37,15 @@ namespace {
 
 bool blank_ascii(const std::string& text) {
     return text.find_first_not_of(" \t\r\n") == std::string::npos;
+}
+
+std::string normalize_train_lookup_key(const std::string& key) {
+    std::string normalized = trim_gui_ascii_copy(key);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return normalized;
 }
 
 float scroll_x_table_height_for_rows(int row_count) {
@@ -75,6 +85,28 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
         ImGui::EndDisabled();
         ImGui::EndPopup();
     }
+}
+
+void render_resource_list_source(const ResourceListSource& source,
+                                 const std::string& label,
+                                 const std::string& open_label) {
+    ImGui::TextUnformatted((label + ":").c_str());
+    ImGui::SameLine();
+    if (!source.present) {
+        ImGui::TextDisabled("-");
+        return;
+    }
+    std::string tooltip;
+    if (!source.raw_argument.empty()) {
+        tooltip = source.raw_argument;
+    }
+    if (!source.resolved_path.empty()) {
+        if (!tooltip.empty()) tooltip += "\n";
+        tooltip += source.resolved_path;
+    }
+    render_file_path_cell_with_context(
+        source.evaluated_path.empty() ? "-" : source.evaluated_path,
+        source.resolved_path, open_label, tooltip);
 }
 
 bool begin_text_cell_context_popup(const std::string& display_text, const char* item_id,
@@ -1561,7 +1593,7 @@ void App::ensure_table_cache() {
         cached.cells[0] = std::to_string(row_index + 1);
         cached.cells[k_other_train_distance_column] = table_cell(row, "distance");
         cached.cells[2] = table_cell(row, "trainKey");
-        std::string normalized_train_key = normalize_track_lookup_key(cached.cells[2]);
+        std::string normalized_train_key = normalize_train_lookup_key(cached.cells[2]);
         if (seen_definition_train_keys.insert(normalized_train_key).second) {
             definition_train_keys.emplace_back(std::move(normalized_train_key), cached.cells[2]);
         }
@@ -1586,6 +1618,13 @@ void App::ensure_table_cache() {
     std::vector<CachedOtherTrainStopGroup> stop_groups;
     std::unordered_map<std::string, size_t> stop_group_index_by_train_key;
     cache.other_train_stop_rows.reserve(model_.other_train_stops.size());
+    std::unordered_map<std::string, std::string> enable_time_by_train_key;
+    enable_time_by_train_key.reserve(model_.other_train_enables.size());
+    for (const TableRow& row : model_.other_train_enables) {
+        enable_time_by_train_key.emplace(
+            normalize_train_lookup_key(table_cell(row, "trainKey")),
+            table_cell(row, "time"));
+    }
     for (size_t row_index = 0; row_index < model_.other_train_stops.size(); ++row_index) {
         const TableRow& row = model_.other_train_stops[row_index];
         CachedTableRow cached;
@@ -1593,12 +1632,16 @@ void App::ensure_table_cache() {
         cached.cells.resize(IM_ARRAYSIZE(k_other_train_stop_columns));
         cached.cells[k_other_train_stop_distance_column] = table_cell(row, "distance");
         cached.cells[2] = table_cell(row, "trainKey");
-        std::string normalized_train_key = normalize_track_lookup_key(cached.cells[2]);
+        std::string normalized_train_key = normalize_train_lookup_key(cached.cells[2]);
         auto group_it = stop_group_index_by_train_key.find(normalized_train_key);
         if (group_it == stop_group_index_by_train_key.end()) {
             const size_t group_index = stop_groups.size();
             CachedOtherTrainStopGroup group;
             group.train_key = cached.cells[2];
+            const auto enable = enable_time_by_train_key.find(normalized_train_key);
+            if (enable != enable_time_by_train_key.end() && !enable->second.empty()) {
+                group.enable_time = enable->second;
+            }
             stop_groups.push_back(std::move(group));
             group_it = stop_group_index_by_train_key.emplace(std::move(normalized_train_key), group_index).first;
         }
@@ -1628,9 +1671,79 @@ void App::ensure_table_cache() {
         appended_stop_group_keys.insert(definition_key.first);
     }
     for (auto& group : stop_groups) {
-        std::string normalized_train_key = normalize_track_lookup_key(group.train_key);
+        std::string normalized_train_key = normalize_train_lookup_key(group.train_key);
         if (appended_stop_group_keys.find(normalized_train_key) != appended_stop_group_keys.end()) continue;
         cache.other_train_stop_groups.push_back(std::move(group));
+    }
+
+    auto append_section_rows = [&](const std::vector<TableRow>& rows,
+                                   std::vector<CachedTableRow>& output,
+                                   size_t& value_columns) {
+        for (const TableRow& row : rows) {
+            value_columns = std::max(
+                value_columns,
+                static_cast<size_t>(std::max(0.0, table_cell_number(row, "valueCount"))));
+        }
+        output.reserve(rows.size());
+        for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+            const TableRow& row = rows[row_index];
+            CachedTableRow cached;
+            cached.cells.resize(4 + value_columns);
+            cached.cells[0] = std::to_string(row_index + 1);
+            cached.cells[1] = table_cell(row, "distance");
+            cached.cells[2] = table_cell(row, "method");
+            for (size_t value_index = 0; value_index < value_columns; ++value_index) {
+                cached.cells[3 + value_index] =
+                    table_cell(row, "value" + std::to_string(value_index));
+            }
+            cached.open_path = table_cell(row, "filePath");
+            cached.cells[3 + value_columns] = display_name_from_path(cached.open_path);
+            cached.tooltip_text = cached.open_path;
+            output.push_back(std::move(cached));
+        }
+    };
+    append_section_rows(model_.section_begins, cache.section_begin_rows,
+                        cache.section_begin_value_columns);
+    append_section_rows(model_.section_speed_limits,
+                        cache.section_speed_limit_rows,
+                        cache.section_speed_limit_value_columns);
+
+    std::vector<const TableRow*> variable_rows;
+    variable_rows.reserve(model_.variable_assignments.size());
+    for (const TableRow& row : model_.variable_assignments) {
+        variable_rows.push_back(&row);
+    }
+    std::stable_sort(variable_rows.begin(), variable_rows.end(),
+                     [](const TableRow* left, const TableRow* right) {
+                         return table_cell_number(*left, "order") <
+                                table_cell_number(*right, "order");
+                     });
+    std::vector<std::string> variable_group_order;
+    std::unordered_map<std::string, std::vector<const TableRow*>> variable_groups;
+    std::unordered_map<std::string, std::string> variable_group_names;
+    for (const TableRow* row : variable_rows) {
+        const std::string normalized = table_cell(*row, "normalizedName");
+        auto inserted = variable_groups.emplace(
+            normalized, std::vector<const TableRow*>{});
+        if (inserted.second) {
+            variable_group_order.push_back(normalized);
+            variable_group_names.emplace(normalized, table_cell(*row, "sourceName"));
+        }
+        inserted.first->second.push_back(row);
+    }
+    cache.variable_rows.reserve(variable_rows.size() + variable_group_order.size());
+    for (const std::string& group_key : variable_group_order) {
+        CachedVariableRow heading;
+        heading.group_header = true;
+        heading.name = variable_group_names[group_key];
+        cache.variable_rows.push_back(std::move(heading));
+        for (const TableRow* row : variable_groups[group_key]) {
+            CachedVariableRow cached;
+            cached.value = table_cell(*row, "value");
+            cached.expression = table_cell(*row, "expression");
+            cached.file_path = table_cell(*row, "filePath");
+            cache.variable_rows.push_back(std::move(cached));
+        }
     }
 
     cache.sound_list_buffer_count_width = 0.0f;
@@ -2823,6 +2936,9 @@ void App::render_station_list_window() {
         ImGui::End();
         return;
     }
+    render_resource_list_source(
+        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Station)],
+        tr("label.source_path"), tr("menu.open_in_explorer"));
     ensure_table_cache();
     auto render_station_table = [&](const char* table_id,
                                     const TableColumnDef* columns,
@@ -3258,6 +3374,9 @@ void App::render_structure_models_window() {
         ImGui::End();
         return;
     }
+    render_resource_list_source(
+        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Structure)],
+        tr("label.source_path"), tr("menu.open_in_explorer"));
     ensure_table_cache();
 
     render_table_find_panel(
@@ -3373,12 +3492,16 @@ void App::render_other_trains_window() {
         if (other_train_stop_list_highlight_row_ >= total_stop_rows) other_train_stop_list_highlight_row_ = -1;
         const int scroll_target_row = other_train_stop_list_scroll_row_;
         for (size_t group_index = 0; group_index < table_cache_.other_train_stop_groups.size(); ++group_index) {
-            const CachedOtherTrainStopGroup& group = table_cache_.other_train_stop_groups[group_index];
+            CachedOtherTrainStopGroup& group = table_cache_.other_train_stop_groups[group_index];
             if (group.row_indices.empty()) continue;
 
             ImGui::Separator();
             std::string stop_title = tr("frame.other_train_stops") + " - [" + group.train_key + "]";
             ImGui::TextUnformatted(stop_title.c_str());
+            ImGui::SetNextItemWidth(220.0f);
+            ImGui::InputText((tr("label.enable_time") + "##enable_" +
+                              std::to_string(group_index)).c_str(),
+                             &group.enable_time, ImGuiInputTextFlags_ReadOnly);
 
             const int row_count = static_cast<int>(group.row_indices.size());
             ImVec2 table_size(0.0f, scroll_x_table_height_for_rows(row_count));
@@ -3494,6 +3617,9 @@ void App::render_sound_list_window() {
         ImGui::End();
         return;
     }
+    render_resource_list_source(
+        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Sound)],
+        tr("label.source_path"), tr("menu.open_in_explorer"));
     ensure_table_cache();
     render_sound_file_find_panel(false);
     ImGui::BeginDisabled(
@@ -3524,6 +3650,9 @@ void App::render_sound_3d_list_window() {
         ImGui::End();
         return;
     }
+    render_resource_list_source(
+        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Sound3D)],
+        tr("label.source_path"), tr("menu.open_in_explorer"));
     ensure_table_cache();
     render_sound_file_find_panel(true);
     ImGui::BeginDisabled(
@@ -3686,6 +3815,10 @@ void App::render_signal_aspects_window() {
         ImGui::End();
         return;
     }
+    render_resource_list_source(
+        model_.resource_list_sources[
+            static_cast<size_t>(ResourceListKind::Signal)],
+        tr("label.source_path"), tr("menu.open_in_explorer"));
     ensure_table_cache();
     const bool stale_find_results = signal_aspect_find_.has_run &&
         signal_aspect_find_.committed != signal_aspect_find_.query;
@@ -3837,6 +3970,160 @@ void App::render_signals_window() {
         ImGui::EndTable();
     }
     focus_signals_next_ = false;
+    ImGui::End();
+}
+
+void App::render_sections_window() {
+    if (!show_sections_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(
+        dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_sections_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.sections") + "###Sections";
+    if (!ImGui::Begin(title.c_str(), &show_sections_window_)) {
+        focus_sections_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_sections_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    const bool can_locate_scene = can_locate_scene_preview_row();
+    auto render_section_table = [&](const char* table_id,
+                                    const std::string& heading,
+                                    const std::vector<CachedTableRow>& rows,
+                                    size_t value_columns,
+                                    const char* value_prefix,
+                                    bool has_markers) {
+        ImGui::TextUnformatted(heading.c_str());
+        const int column_count = static_cast<int>(4 + value_columns);
+        if (!ImGui::BeginTable(
+                table_id, column_count,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                ImGuiTableFlags_ScrollY,
+                ImVec2(0.0f, scroll_x_table_height_for_rows(
+                    static_cast<int>(rows.size()))))) {
+            return;
+        }
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 45.0f);
+        ImGui::TableSetupColumn("distance", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableSetupColumn("method", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+        for (size_t i = 0; i < value_columns; ++i) {
+            const std::string header = value_prefix + std::to_string(i);
+            ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        }
+        ImGui::TableSetupColumn("filePath", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+            const CachedTableRow& row = rows[row_index];
+            ImGui::TableNextRow();
+            if (has_markers && static_cast<int>(row_index) == section_list_highlight_row_) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       table_row_highlight_color(theme_color_));
+            }
+            if (has_markers && static_cast<int>(row_index) == section_list_scroll_row_) {
+                ImGui::SetScrollHereY(0.5f);
+                section_list_scroll_row_ = -1;
+            }
+            ImGui::PushID(static_cast<int>(row_index));
+            for (int column = 0; column < column_count; ++column) {
+                ImGui::TableSetColumnIndex(column);
+                const std::string& value = row.cells[static_cast<size_t>(column)];
+                if (column == 1) {
+                    const TextCellContextAction action =
+                        render_marker_text_cell_with_context(
+                            value, tr("menu.locate_on_plan"), true,
+                            tr("menu.locate_in_scene_preview"),
+                            has_markers && can_locate_scene);
+                    if (action == TextCellContextAction::Primary) {
+                        if (has_markers) {
+                            locate_section_row_on_plan(row_index);
+                        } else {
+                            focus_plan_at_distance(
+                                std::strtod(value.c_str(), nullptr));
+                        }
+                    } else if (action == TextCellContextAction::Secondary) {
+                        locate_scene_marker_row_in_scene_preview(
+                            Canvas3DSceneMarkerListKind::Section, row_index);
+                    }
+                } else if (column == column_count - 1) {
+                    render_file_path_cell_with_context(
+                        value, row.open_path, tr("menu.open_in_explorer"),
+                        row.tooltip_text);
+                } else if (!value.empty()) {
+                    ImGui::TextUnformatted(value.c_str());
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    };
+
+    render_section_table(
+        "section_begins", tr("frame.section_begins"),
+        table_cache_.section_begin_rows,
+        table_cache_.section_begin_value_columns, "signal", true);
+    ImGui::Separator();
+    render_section_table(
+        "section_speed_limits", tr("frame.section_speed_limits"),
+        table_cache_.section_speed_limit_rows,
+        table_cache_.section_speed_limit_value_columns, "v", false);
+    focus_sections_next_ = false;
+    ImGui::End();
+}
+
+void App::render_variables_window() {
+    if (!show_variables_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(
+        dock_right_id_, ImGuiCond_FirstUseEver);
+    std::string title = tr("frame.variables") + "###Variables";
+    if (!ImGui::Begin(title.c_str(), &show_variables_window_)) {
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable(
+            "variables", 3,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+            ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn(tr("column.variable").c_str());
+        ImGui::TableSetupColumn(tr("column.value").c_str());
+        ImGui::TableSetupColumn("filePath");
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        for (size_t row_index = 0; row_index < table_cache_.variable_rows.size();
+             ++row_index) {
+            const CachedVariableRow& row = table_cache_.variable_rows[row_index];
+            ImGui::TableNextRow();
+            ImGui::PushID(static_cast<int>(row_index));
+            if (row.group_header) {
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(theme_color_, "$%s", row.name.c_str());
+            } else {
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(row.value.c_str());
+                if (ImGui::IsItemHovered() && !row.expression.empty()) {
+                    ImGui::SetTooltip("%s", row.expression.c_str());
+                }
+                ImGui::TableSetColumnIndex(2);
+                render_file_path_cell_with_context(
+                    display_name_from_path(row.file_path), row.file_path,
+                    tr("menu.open_in_explorer"), row.file_path);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
     ImGui::End();
 }
 

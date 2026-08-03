@@ -276,6 +276,7 @@ void App::rebuild_marker_overlay_cache() {
     structure_marker_cache_.clear();
     repeater_marker_cache_.clear();
     signal_marker_cache_.clear();
+    section_marker_cache_.clear();
     beacon_marker_cache_.clear();
     pretrain_marker_cache_.clear();
     other_train_stop_marker_cache_.clear();
@@ -412,6 +413,10 @@ void App::rebuild_marker_overlay_cache() {
     };
 
     build_standard_markers(model_.signals, signal_marker_cache_, "signalAspectKey", true);
+    build_standard_markers(model_.section_begins, section_marker_cache_, "");
+    for (auto& marker : section_marker_cache_) {
+        if (marker) marker->label = "S";
+    }
     build_standard_markers(model_.beacons, beacon_marker_cache_, "type");
     build_standard_markers(model_.pretrains, pretrain_marker_cache_, "passTime");
     auto build_other_train_path_points = [&](const std::string& key, double start, double end) {
@@ -954,6 +959,9 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
 
     append_markers(structure_marker_cache_, out.structure_markers, &structure_row_visible_);
     append_markers(signal_marker_cache_, out.signal_markers, &signal_row_visible_);
+    if (show_section_markers_) {
+        append_markers(section_marker_cache_, out.section_markers);
+    }
     if (show_beacon_markers_) append_markers(beacon_marker_cache_, out.beacon_markers);
     if (show_pretrain_markers_) append_markers(pretrain_marker_cache_, out.pretrain_markers);
     auto is_other_train_path_visible = [this](size_t definition_row_index) {
@@ -1086,6 +1094,7 @@ const PlanData& App::current_plan_data() {
     include_visibility(show_cab_illuminance_markers_, 10);
     include_visibility(show_fog_markers_, 11);
     include_visibility(show_draw_distance_markers_, 12);
+    include_visibility(show_section_markers_, 13);
 
     const bool cache_matches = plan_data_cache_.valid &&
         plan_data_cache_.source_revision == plan_data_source_revision_ &&
@@ -1257,6 +1266,15 @@ void App::center_plan_at_distance(double distance) {
     plan_view_.cy = rotated.y;
     plan_view_.fitted = true;
     keep_plan_view_ = true;
+}
+
+void App::focus_plan_at_distance(double distance) {
+    if (!has_model_ || model_.own.empty()) return;
+    const double clamped_distance = std::clamp(distance, dmin_, dmax_);
+    const auto point = sample_matrix_track_point(
+        model_.own, clamped_distance, true);
+    if (!point) return;
+    focus_plan_at_model_point(point->x, point->y);
 }
 
 std::optional<ImVec2> App::plan_point_from_model_xy(double x, double y) const {
@@ -2192,6 +2210,8 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.repeater_markers, hit_transform, dense_repeater_marker_lod);
     std::optional<MarkerHit> hovered_signal_hit =
         nearest_marker_hit(data.signal_markers, hit_transform);
+    std::optional<MarkerHit> hovered_section_hit =
+        nearest_marker_hit(data.section_markers, hit_transform);
     std::optional<MarkerHit> hovered_beacon_hit =
         nearest_marker_hit(data.beacon_markers, hit_transform);
     std::optional<MarkerHit> hovered_pretrain_hit =
@@ -2232,6 +2252,9 @@ void App::render_plan_canvas(ImVec2 size) {
         : std::nullopt;
     std::optional<size_t> hovered_signal_row = hovered_signal_hit
         ? std::optional<size_t>(hovered_signal_hit->row_index)
+        : std::nullopt;
+    std::optional<size_t> hovered_section_row = hovered_section_hit
+        ? std::optional<size_t>(hovered_section_hit->row_index)
         : std::nullopt;
     std::optional<size_t> hovered_beacon_row = hovered_beacon_hit
         ? std::optional<size_t>(hovered_beacon_hit->row_index)
@@ -2285,6 +2308,7 @@ void App::render_plan_canvas(ImVec2 size) {
             return !other || hit->dist_sq < other->dist_sq;
         };
         return closer_than(hovered_signal_hit) &&
+               closer_than(hovered_section_hit) &&
                closer_than(hovered_beacon_hit) &&
                closer_than(hovered_adhesion_hit) &&
                closer_than(hovered_irregularity_hit) &&
@@ -2309,6 +2333,7 @@ void App::render_plan_canvas(ImVec2 size) {
         };
         note(hovered_station_hit, PlanMarkerKind::Station);
         note(hovered_signal_hit, PlanMarkerKind::Signal);
+        note(hovered_section_hit, PlanMarkerKind::Section);
         note(hovered_beacon_hit, PlanMarkerKind::Beacon);
         note(hovered_pretrain_hit, PlanMarkerKind::PreTrain);
         note(hovered_other_train_stop_hit, PlanMarkerKind::OtherTrainStop);
@@ -2326,6 +2351,29 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_fog_hit, PlanMarkerKind::Fog);
         note(hovered_draw_distance_hit, PlanMarkerKind::DrawDistance);
         if (best) plan_marker_selection_ = *best;
+    };
+    auto section_is_nearest_context_hit = [&]() {
+        if (!hovered_section_hit) return false;
+        auto no_farther_than = [&](const std::optional<MarkerHit>& other) {
+            return !other || hovered_section_hit->dist_sq <= other->dist_sq;
+        };
+        return no_farther_than(hovered_station_hit) &&
+               no_farther_than(hovered_structure_hit) &&
+               no_farther_than(hovered_repeater_hit) &&
+               no_farther_than(hovered_signal_hit) &&
+               no_farther_than(hovered_beacon_hit) &&
+               no_farther_than(hovered_other_train_stop_hit) &&
+               no_farther_than(hovered_irregularity_hit) &&
+               no_farther_than(hovered_rolling_noise_hit) &&
+               no_farther_than(hovered_map_sound_hit) &&
+               no_farther_than(hovered_map_sound_3d_hit) &&
+               no_farther_than(hovered_flange_noise_hit) &&
+               no_farther_than(hovered_joint_noise_hit) &&
+               no_farther_than(hovered_background_hit) &&
+               no_farther_than(hovered_adhesion_hit) &&
+               no_farther_than(hovered_cab_illuminance_hit) &&
+               no_farther_than(hovered_fog_hit) &&
+               no_farther_than(hovered_draw_distance_hit);
     };
     ImVec2 touch_tap_pos;
     if (touch_input::consume_tap_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), &touch_tap_pos)) {
@@ -2355,6 +2403,9 @@ void App::render_plan_canvas(ImVec2 size) {
             closer_than_all_marker_context_hits(hovered_other_train_stop_hit)) {
             plan_other_train_stop_popup_row_ = static_cast<int>(hovered_other_train_stop_hit->row_index);
             ImGui::OpenPopup("plan_other_train_stop_marker_context");
+        } else if (section_is_nearest_context_hit()) {
+            plan_section_popup_row_ = static_cast<int>(hovered_section_hit->row_index);
+            ImGui::OpenPopup("plan_section_marker_context");
         } else if (hovered_signal_hit &&
             closer_or_equal(hovered_signal_hit, hovered_beacon_hit) &&
             closer_or_equal(hovered_signal_hit, hovered_adhesion_hit) &&
@@ -2816,6 +2867,11 @@ void App::render_plan_canvas(ImVec2 size) {
         }
     };
 
+    draw_colored_marker_set(data.section_markers, PlanMarkerKind::Section,
+                            hovered_section_row,
+                            MapMarkerVisualKind::Section, 14.0f);
+    debug_plan_stage("section_markers");
+
     draw_colored_marker_set(data.beacon_markers, PlanMarkerKind::Beacon,
                             hovered_beacon_row, MapMarkerVisualKind::Beacon, 7.0f);
     debug_plan_stage("beacon_markers");
@@ -3066,6 +3122,17 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_signal_list").c_str()) && can_locate) {
             locate_signal_row_in_list(static_cast<size_t>(plan_signal_popup_row_));
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_section_marker_context")) {
+        const bool can_locate = plan_section_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_section_popup_row_) < section_marker_cache_.size();
+        ImGui::BeginDisabled(!can_locate);
+        if (ImGui::MenuItem(tr("menu.locate_in_section_list").c_str()) && can_locate) {
+            locate_section_row_in_list(
+                static_cast<size_t>(plan_section_popup_row_));
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();

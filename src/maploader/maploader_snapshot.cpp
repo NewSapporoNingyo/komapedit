@@ -38,8 +38,11 @@ public:
             ctx_.irregularities.size() + ctx_.backgrounds.size() +
             ctx_.adhesions.size() + ctx_.cab_illuminance.size() +
             ctx_.fogs.size() + ctx_.draw_distances.size() + ctx_.speedlimits.size();
-        storage_.string_arena.reserve(std::max<size_t>(256 * 1024, row_count * 32));
-        storage_.values.reserve(row_count * 2);
+        const size_t preview_row_count =
+            ctx_.variable_assignments.size() + ctx_.resource_list_loads.size();
+        storage_.string_arena.reserve(
+            std::max<size_t>(256 * 1024, (row_count + preview_row_count) * 32));
+        storage_.values.reserve(row_count * 2 + preview_row_count);
         storage_.string_refs.reserve(row_count);
         storage_.elements.reserve(row_count);
     }
@@ -52,6 +55,7 @@ public:
         add_other_trains();
         add_sections_signals_and_sounds();
         add_environment();
+        add_preview_rows();
         add_edit_registry();
         finalize();
     }
@@ -344,6 +348,7 @@ private:
             for (const SectionBegin& input : inputs) {
                 KvSectionRow row{};
                 row.distance = input.distance;
+                row.method = string_ref(input.method);
                 row.values = append_values(input.signal_indices);
                 row.file_path = string_ref(input.file_path);
                 row.order = input.order;
@@ -356,6 +361,7 @@ private:
         for (const SectionSpeedLimit& input : ctx_.section_speed_limits) {
             KvSectionRow row{};
             row.distance = input.distance;
+            row.method = string_ref(input.method);
             row.values = append_values(input.speeds);
             row.file_path = string_ref(input.file_path);
             row.order = input.order;
@@ -561,6 +567,31 @@ private:
         }
     }
 
+    void add_preview_rows() {
+        storage_.variable_assignments.reserve(ctx_.variable_assignments.size());
+        for (const VariableAssignment& input : ctx_.variable_assignments) {
+            KvVariableAssignmentRow row{};
+            row.normalized_name = string_ref(input.normalized_name);
+            row.source_name = string_ref(input.source_name);
+            row.value = value(input.value);
+            row.expression = string_ref(input.expression);
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            storage_.variable_assignments.push_back(row);
+        }
+        storage_.resource_list_loads.reserve(ctx_.resource_list_loads.size());
+        for (const ResourceListLoad& input : ctx_.resource_list_loads) {
+            KvResourceListLoadRow row{};
+            row.kind = static_cast<std::uint32_t>(input.kind);
+            row.evaluated_path = string_ref(input.evaluated_path);
+            row.raw_argument = string_ref(input.raw_argument);
+            row.resolved_path = string_ref(input.resolved_path);
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            storage_.resource_list_loads.push_back(row);
+        }
+    }
+
     void add_element(const std::string& row_kind, size_t row_index,
                      const EditSourceRef& ref) {
         if (!ref.valid() || ref.statement_index >= ctx_.parsed_statements.size()) return;
@@ -730,6 +761,10 @@ private:
         bind(storage_.fogs, view.fogs, view.fog_count);
         bind(storage_.draw_distances, view.draw_distances, view.draw_distance_count);
         bind(storage_.speed_limits, view.speed_limits, view.speed_limit_count);
+        bind(storage_.variable_assignments, view.variable_assignments,
+             view.variable_assignment_count);
+        bind(storage_.resource_list_loads, view.resource_list_loads,
+             view.resource_list_load_count);
         bind(storage_.statements, view.statements, view.statement_count);
         bind(storage_.elements, view.elements, view.element_count);
     }

@@ -226,6 +226,25 @@ struct SpeedLimit {
     double distance = 0.0;
     bool has_speed = false;
     double speed = 0.0;
+    int order = 0;
+};
+
+enum class ResourceListKind : std::uint8_t {
+    Station,
+    Structure,
+    Signal,
+    Sound,
+    Sound3D,
+    Count,
+};
+
+struct ResourceListSource {
+    bool present = false;
+    std::string evaluated_path;
+    std::string raw_argument;
+    std::string resolved_path;
+    std::string source_file_path;
+    int order = 0;
 };
 
 struct EditSourceInfo {
@@ -392,7 +411,16 @@ struct CachedTableRow {
 
 struct CachedOtherTrainStopGroup {
     std::string train_key;
+    std::string enable_time = "-";
     std::vector<size_t> row_indices;
+};
+
+struct CachedVariableRow {
+    bool group_header = false;
+    std::string name;
+    std::string value;
+    std::string expression;
+    std::string file_path;
 };
 
 struct TableUiCache {
@@ -407,6 +435,11 @@ struct TableUiCache {
     std::vector<CachedTableRow> other_train_rows;
     std::vector<CachedTableRow> other_train_stop_rows;
     std::vector<CachedOtherTrainStopGroup> other_train_stop_groups;
+    std::vector<CachedTableRow> section_begin_rows;
+    std::vector<CachedTableRow> section_speed_limit_rows;
+    size_t section_begin_value_columns = 0;
+    size_t section_speed_limit_value_columns = 0;
+    std::vector<CachedVariableRow> variable_rows;
     std::vector<CachedTableRow> repeater_rows;
     std::vector<CachedTableRow> signal_aspect_rows;
     std::vector<EditableListDisplayRow> signal_aspect_display_rows;
@@ -496,6 +529,7 @@ struct MapModel {
     std::vector<TableRow> structures;
     std::vector<TableRow> structure_models;
     std::vector<TableRow> other_trains;
+    std::vector<TableRow> other_train_enables;
     std::vector<TableRow> other_train_stops;
     std::vector<TableRow> other_train_structure_keys;
     std::vector<TableRow> other_train_sound_3d_keys;
@@ -505,6 +539,8 @@ struct MapModel {
     std::vector<TableRow> repeaters;
     std::vector<TableRow> signal_aspects;
     std::vector<TableRow> signals;
+    std::vector<TableRow> section_begins;
+    std::vector<TableRow> section_speed_limits;
     std::vector<TableRow> beacons;
     std::vector<TableRow> pretrains;
     std::vector<TableRow> irregularities;
@@ -518,6 +554,9 @@ struct MapModel {
     std::vector<TableRow> cab_illuminance;
     std::vector<TableRow> fogs;
     std::vector<TableRow> draw_distances;
+    std::vector<TableRow> variable_assignments;
+    std::array<ResourceListSource,
+               static_cast<size_t>(ResourceListKind::Count)> resource_list_sources;
     std::vector<std::string> scene_track_key_warnings;
     double distance_origin = 0.0;
     double height_origin = 0.0;
@@ -623,6 +662,7 @@ struct PlanMarker {
 using PlanStructureMarker = PlanMarker;
 using PlanRepeaterMarker = PlanMarker;
 using PlanSignalMarker = PlanMarker;
+using PlanSectionMarker = PlanMarker;
 using PlanBeaconMarker = PlanMarker;
 using PlanPreTrainMarker = PlanMarker;
 using PlanIrregularityMarker = PlanMarker;
@@ -654,6 +694,7 @@ enum class PlanMarkerKind {
     Structure,
     Repeater,
     Signal,
+    Section,
     Beacon,
     PreTrain,
     OtherTrainStop,
@@ -731,6 +772,7 @@ struct PlanData {
     std::vector<PlanStructureMarker> structure_markers;
     std::vector<PlanRepeaterMarker> repeater_markers;
     std::vector<PlanSignalMarker> signal_markers;
+    std::vector<PlanSectionMarker> section_markers;
     std::vector<PlanBeaconMarker> beacon_markers;
     std::vector<PlanPreTrainMarker> pretrain_markers;
     std::vector<PlanOtherTrainStopMarker> other_train_stop_markers;
@@ -816,6 +858,8 @@ struct WindowVisibilitySettings {
     bool show_repeaters_window = false;
     bool show_signal_aspects_window = false;
     bool show_signals_window = false;
+    bool show_sections_window = false;
+    bool show_variables_window = false;
     bool show_beacons_window = false;
     bool show_irregularities_window = false;
     bool show_map_sounds_window = false;
@@ -846,6 +890,8 @@ struct WindowVisibilitySettings {
             show_repeaters_window == other.show_repeaters_window &&
             show_signal_aspects_window == other.show_signal_aspects_window &&
             show_signals_window == other.show_signals_window &&
+            show_sections_window == other.show_sections_window &&
+            show_variables_window == other.show_variables_window &&
             show_beacons_window == other.show_beacons_window &&
             show_irregularities_window == other.show_irregularities_window &&
             show_map_sounds_window == other.show_map_sounds_window &&
@@ -882,6 +928,7 @@ struct View2DSettings {
     bool show_curve_values = k_default_non_station_aux_info_visible;
     bool show_profile_other = false;
     bool show_speedlimits = k_default_non_station_aux_info_visible;
+    bool show_section_markers = k_default_non_station_aux_info_visible;
     bool show_irregularity_markers = k_default_non_station_aux_info_visible;
     bool show_beacon_markers = k_default_non_station_aux_info_visible;
     bool show_pretrain_markers = k_default_non_station_aux_info_visible;
@@ -910,6 +957,7 @@ struct View2DSettings {
             show_curve_values == other.show_curve_values &&
             show_profile_other == other.show_profile_other &&
             show_speedlimits == other.show_speedlimits &&
+            show_section_markers == other.show_section_markers &&
             show_irregularity_markers == other.show_irregularity_markers &&
             show_beacon_markers == other.show_beacon_markers &&
             show_pretrain_markers == other.show_pretrain_markers &&
@@ -1482,6 +1530,7 @@ private:
     bool show_curve_values_ = k_default_non_station_aux_info_visible;
     bool show_profile_other_ = false;
     bool show_speedlimits_ = k_default_non_station_aux_info_visible;
+    bool show_section_markers_ = k_default_non_station_aux_info_visible;
     bool show_irregularity_markers_ = k_default_non_station_aux_info_visible;
     bool show_beacon_markers_ = k_default_non_station_aux_info_visible;
     bool show_pretrain_markers_ = k_default_non_station_aux_info_visible;
@@ -1544,6 +1593,8 @@ private:
     bool show_repeaters_window_ = false;
     bool show_signal_aspects_window_ = false;
     bool show_signals_window_ = false;
+    bool show_sections_window_ = false;
+    bool show_variables_window_ = false;
     bool show_beacons_window_ = false;
     bool show_irregularities_window_ = false;
     bool show_map_sounds_window_ = false;
@@ -1567,6 +1618,7 @@ private:
     bool focus_repeaters_next_ = false;
     bool focus_signal_aspects_next_ = false;
     bool focus_signals_next_ = false;
+    bool focus_sections_next_ = false;
     bool focus_beacons_next_ = false;
     bool focus_irregularities_next_ = false;
     bool focus_map_sounds_next_ = false;
@@ -1616,6 +1668,7 @@ private:
     std::vector<std::optional<PlanStructureMarker>> structure_marker_cache_;
     std::vector<RepeaterOverlayRow> repeater_marker_cache_;
     std::vector<std::optional<PlanSignalMarker>> signal_marker_cache_;
+    std::vector<std::optional<PlanSectionMarker>> section_marker_cache_;
     std::vector<std::optional<PlanBeaconMarker>> beacon_marker_cache_;
     std::vector<std::optional<PlanPreTrainMarker>> pretrain_marker_cache_;
     std::vector<std::optional<PlanOtherTrainStopMarker>> other_train_stop_marker_cache_;
@@ -1663,6 +1716,8 @@ private:
     int repeater_list_highlight_row_ = -1;
     int signal_list_scroll_row_ = -1;
     int signal_list_highlight_row_ = -1;
+    int section_list_scroll_row_ = -1;
+    int section_list_highlight_row_ = -1;
     int other_train_stop_list_scroll_row_ = -1;
     int other_train_stop_list_highlight_row_ = -1;
     int beacon_list_scroll_row_ = -1;
@@ -1693,6 +1748,7 @@ private:
     int plan_repeater_popup_row_ = -1;
     int plan_station_popup_row_ = -1;
     int plan_signal_popup_row_ = -1;
+    int plan_section_popup_row_ = -1;
     int plan_beacon_popup_row_ = -1;
     int plan_other_train_stop_popup_row_ = -1;
     int plan_irregularity_popup_row_ = -1;
@@ -1903,6 +1959,8 @@ private:
     void render_repeaters_window();
     void render_signal_aspects_window();
     void render_signals_window();
+    void render_sections_window();
+    void render_variables_window();
     void render_beacons_window();
     void render_irregularities_window();
     void render_map_sounds_window();
@@ -1994,6 +2052,8 @@ private:
     void locate_signal_row_on_plan(size_t row_index);
     void locate_signal_row_in_list(size_t row_index);
     void locate_signal_row_in_scene_preview(size_t row_index);
+    void locate_section_row_on_plan(size_t row_index);
+    void locate_section_row_in_list(size_t row_index);
     void locate_standard_marker_on_plan(
         const std::vector<std::optional<PlanMarker>>& cache,
         size_t row_index, bool& markers_visible);
@@ -2045,6 +2105,7 @@ private:
     void clear_measure();
     void update_measure(double distance);
     void center_plan_at_distance(double distance);
+    void focus_plan_at_distance(double distance);
     std::optional<ImVec2> plan_point_from_model_xy(double x, double y) const;
     void focus_plan_at_model_point(double x, double y);
     void request_plot_focus(double distance, bool include_profile, bool include_radius);

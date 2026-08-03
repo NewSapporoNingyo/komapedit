@@ -19,6 +19,20 @@ struct Translation {
 
     Translation() {
         en = {
+            {"frame.sections", "Section List"},
+            {"frame.section_begins", "Section Begin Positions"},
+            {"frame.section_speed_limits", "Section Speed Limits"},
+            {"frame.variables", "Variable List"},
+            {"menu.map_info.sections", "Sections"},
+            {"menu.map_info.variables", "Variables"},
+            {"menu.locate_in_section_list", "Locate in Section List"},
+            {"chk.section_markers", "Section Markers"},
+            {"label.source_path", "Source path"},
+            {"label.enable_time", "Enable time"},
+            {"column.variable", "Variable"},
+            {"column.value", "Value"},
+            {"scene.route_info.speed_limit", "Speedlimit:"},
+            {"scene.route_info.signal", "Signal:"},
             {"dialog.repeater_begin0_convert_title", "Convert Begin0"},
             {"dialog.repeater_begin0_convert_message", "This Repeater uses Begin0, so its coordinates cannot be edited directly. Convert it to Begin?"},
             {"label.repeater_end_source", "End source:"},
@@ -114,6 +128,20 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
         zh = {
+            {"frame.sections", "闭塞列表"},
+            {"frame.section_begins", "闭塞开始位置"},
+            {"frame.section_speed_limits", "闭塞限速"},
+            {"frame.variables", "变量列表"},
+            {"menu.map_info.sections", "闭塞"},
+            {"menu.map_info.variables", "变量"},
+            {"menu.locate_in_section_list", "在闭塞列表中定位"},
+            {"chk.section_markers", "闭塞标记"},
+            {"label.source_path", "源文件路径"},
+            {"label.enable_time", "启用时间"},
+            {"column.variable", "变量"},
+            {"column.value", "赋值"},
+            {"scene.route_info.speed_limit", "限速:"},
+            {"scene.route_info.signal", "信号:"},
             {"dialog.repeater_begin0_convert_title", "转换 Begin0"},
             {"dialog.repeater_begin0_convert_message", "此 Repeater 使用 Begin0，无法直接编辑坐标。是否转换为 Begin？"},
             {"label.repeater_end_source", "结束位置源："},
@@ -209,6 +237,20 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
         ja = {
+            {"frame.sections", "閉そく一覧"},
+            {"frame.section_begins", "閉そく開始位置"},
+            {"frame.section_speed_limits", "閉そく速度制限"},
+            {"frame.variables", "変数一覧"},
+            {"menu.map_info.sections", "閉そく"},
+            {"menu.map_info.variables", "変数"},
+            {"menu.locate_in_section_list", "閉そく一覧で表示"},
+            {"chk.section_markers", "閉そくマーカー"},
+            {"label.source_path", "ソースパス"},
+            {"label.enable_time", "有効時刻"},
+            {"column.variable", "変数"},
+            {"column.value", "代入値"},
+            {"scene.route_info.speed_limit", "速度制限:"},
+            {"scene.route_info.signal", "信号:"},
             {"dialog.repeater_begin0_convert_title", "Begin0 の変換"},
             {"dialog.repeater_begin0_convert_message", "この Repeater は Begin0 を使用しているため、座標を直接編集できません。Begin に変換しますか？"},
             {"label.repeater_end_source", "終了位置のソース："},

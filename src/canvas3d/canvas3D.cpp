@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -1330,9 +1331,126 @@ void populate_canvas3d_scene_route_stations(Canvas3DSceneRouteInfo& route_info,
     }
 }
 
+std::vector<std::string> canvas3d_scene_section_values(const TableRow& row) {
+    const double count_value = table_cell_number(row, "valueCount");
+    if (!std::isfinite(count_value) || count_value <= 0.0) return {};
+    const size_t value_count = static_cast<size_t>(count_value);
+    std::vector<std::string> values;
+    values.reserve(value_count);
+    for (size_t value_index = 0; value_index < value_count; ++value_index) {
+        values.push_back(
+            table_cell(row, "value" + std::to_string(value_index)));
+    }
+    return values;
+}
+
+std::string join_canvas3d_scene_values(
+    const std::vector<std::string>& values, const char* separator) {
+    std::string text;
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index) text += separator;
+        text += values[index];
+    }
+    return text;
+}
+
+std::optional<size_t> canvas3d_scene_signal_speed_index(
+    const std::string& value) {
+    if (value.empty()) return std::nullopt;
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end == value.c_str() || !end || *end != '\0' ||
+        !std::isfinite(parsed) || parsed < 0.0 || std::floor(parsed) != parsed ||
+        parsed > static_cast<double>(std::numeric_limits<size_t>::max())) {
+        return std::nullopt;
+    }
+    return static_cast<size_t>(parsed);
+}
+
+std::string canvas3d_scene_selected_signal_speeds(
+    const std::vector<std::string>& signal_indices,
+    const std::vector<std::string>& speed_limits) {
+    if (signal_indices.empty() || speed_limits.empty()) return {};
+    std::vector<std::string> selected;
+    selected.reserve(signal_indices.size());
+    for (const std::string& value : signal_indices) {
+        const std::optional<size_t> index =
+            canvas3d_scene_signal_speed_index(value);
+        selected.push_back(
+            index && *index < speed_limits.size() &&
+                    !speed_limits[*index].empty()
+                ? speed_limits[*index]
+                : "null");
+    }
+    return join_canvas3d_scene_values(selected, " | ");
+}
+
 void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& model) {
     Canvas3DSceneRouteInfo route_info;
     populate_canvas3d_scene_route_values(route_info, model);
+    route_info.speed_limit_events.reserve(model.speedlimits.size());
+    for (const SpeedLimit& input : model.speedlimits) {
+        route_info.speed_limit_events.push_back(
+            {input.distance, input.has_speed, input.speed, input.order});
+    }
+    std::stable_sort(
+        route_info.speed_limit_events.begin(), route_info.speed_limit_events.end(),
+        [](const Canvas3DSceneSpeedLimitEvent& left,
+           const Canvas3DSceneSpeedLimitEvent& right) {
+            if (left.distance != right.distance) return left.distance < right.distance;
+            return left.order < right.order;
+        });
+    enum class SectionSignalStateKind { SpeedLimits, SectionBegin };
+    struct SectionSignalStateSource {
+        double distance = 0.0;
+        int order = 0;
+        SectionSignalStateKind kind = SectionSignalStateKind::SpeedLimits;
+        const TableRow* row = nullptr;
+    };
+    std::vector<SectionSignalStateSource> section_signal_sources;
+    section_signal_sources.reserve(
+        model.section_speed_limits.size() + model.section_begins.size());
+    auto append_section_signal_sources = [&](const std::vector<TableRow>& rows,
+                                             SectionSignalStateKind kind) {
+        for (const TableRow& row : rows) {
+            section_signal_sources.push_back({
+                table_cell_number(row, "distance"),
+                static_cast<int>(table_cell_number(row, "order")),
+                kind,
+                &row});
+        }
+    };
+    append_section_signal_sources(
+        model.section_speed_limits, SectionSignalStateKind::SpeedLimits);
+    append_section_signal_sources(
+        model.section_begins, SectionSignalStateKind::SectionBegin);
+    std::stable_sort(
+        section_signal_sources.begin(), section_signal_sources.end(),
+        [](const SectionSignalStateSource& left,
+           const SectionSignalStateSource& right) {
+            if (left.distance != right.distance) {
+                return left.distance < right.distance;
+            }
+            return left.order < right.order;
+        });
+    route_info.section_signal_events.reserve(section_signal_sources.size());
+    std::vector<std::string> speed_limits;
+    std::vector<std::string> signal_indices;
+    for (const SectionSignalStateSource& source : section_signal_sources) {
+        if (source.kind == SectionSignalStateKind::SpeedLimits) {
+            speed_limits = canvas3d_scene_section_values(*source.row);
+        } else {
+            signal_indices = canvas3d_scene_section_values(*source.row);
+        }
+        std::string selected = canvas3d_scene_selected_signal_speeds(
+            signal_indices, speed_limits);
+        if (!route_info.section_signal_events.empty() &&
+            route_info.section_signal_events.back().values == selected) {
+            continue;
+        }
+        route_info.section_signal_events.push_back(
+            {source.distance, source.order, std::move(selected)});
+    }
     populate_canvas3d_scene_route_stations(route_info, model);
     scene.route_info = std::move(route_info);
 }
@@ -1400,7 +1518,8 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     const size_t estimated_count =
         model.station_positions.size() + model.own_events.size() +
-        model.speedlimits.size() + model.beacons.size() + model.pretrains.size() +
+        model.speedlimits.size() + model.section_begins.size() +
+        model.beacons.size() + model.pretrains.size() +
         model.irregularities.size() + model.map_sounds.size() +
         model.map_sound_3d.size() + model.rolling_noises.size() +
         model.flange_noises.size() + model.joint_noises.size() +
@@ -1511,6 +1630,13 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
             return canvas3d_scene_table_marker_label(row, {key});
         };
     };
+
+    append_table_markers(model.section_begins, MapMarkerVisualKind::Section,
+                         Canvas3DSceneMarkerListKind::Section, "section.begin",
+                         [](const TableRow& row) {
+                             return join_canvas3d_scene_values(
+                                 canvas3d_scene_section_values(row), " ");
+                         });
 
     append_table_markers(model.beacons, MapMarkerVisualKind::Beacon,
                          Canvas3DSceneMarkerListKind::Beacon, "beacon.put",
@@ -7981,6 +8107,41 @@ fail:
                           gradient_text);
         }
 
+        char speed_limit_line[160] = {};
+        const auto speed_limit_next = std::upper_bound(
+            scene_data.route_info.speed_limit_events.begin(),
+            scene_data.route_info.speed_limit_events.end(), scene_camera_distance,
+            [](double distance, const Canvas3DSceneSpeedLimitEvent& event) {
+                return distance < event.distance;
+            });
+        if (speed_limit_next == scene_data.route_info.speed_limit_events.begin() ||
+            !(speed_limit_next - 1)->has_speed) {
+            std::snprintf(speed_limit_line, sizeof(speed_limit_line), "%s -",
+                          ui_text.speed_limit);
+        } else {
+            char speed_text[64] = {};
+            format_scene_route_number(speed_text, sizeof(speed_text),
+                                      (speed_limit_next - 1)->speed);
+            std::snprintf(speed_limit_line, sizeof(speed_limit_line),
+                          "%s %s km/h", ui_text.speed_limit, speed_text);
+        }
+
+        char signal_line[768] = {};
+        const auto section_signal_next = std::upper_bound(
+            scene_data.route_info.section_signal_events.begin(),
+            scene_data.route_info.section_signal_events.end(), scene_camera_distance,
+            [](double distance, const Canvas3DSceneSectionSignalEvent& event) {
+                return distance < event.distance;
+            });
+        if (section_signal_next ==
+                scene_data.route_info.section_signal_events.begin() ||
+            (section_signal_next - 1)->values.empty()) {
+            std::snprintf(signal_line, sizeof(signal_line), "%s -", ui_text.signal);
+        } else {
+            std::snprintf(signal_line, sizeof(signal_line), "%s %s", ui_text.signal,
+                          (section_signal_next - 1)->values.c_str());
+        }
+
         char station_line[768] = {};
         const auto next_station = std::upper_bound(
             scene_data.route_info.stations.begin(), scene_data.route_info.stations.end(),
@@ -7997,9 +8158,10 @@ fail:
                           ui_text.next_station, next_station->name.c_str(), remaining_m);
         }
 
-        char buffer[1152] = {};
-        std::snprintf(buffer, sizeof(buffer), "%s\n%s\n%s",
-                      curve_line, gradient_line, station_line);
+        char buffer[2048] = {};
+        std::snprintf(buffer, sizeof(buffer), "%s\n%s\n%s\n%s\n%s",
+                      curve_line, gradient_line, speed_limit_line,
+                      signal_line, station_line);
         draw_scene_overlay_label(draw, origin, size, buffer, SceneOverlayCorner::TopRight);
     }
 

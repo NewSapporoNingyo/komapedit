@@ -277,12 +277,23 @@ private:
         if (peek() == '$' && next_is_variable_assignment()) {
             flush_pending_includes();
             ++pos_;
-            std::string name = ascii_lower(parse_variable_name());
+            std::string source_name = parse_variable_name();
+            std::string name = ascii_lower(source_name);
             expect('=');
             size_t args_start = pos_;
             Value value = parse_expression();
             size_t args_end = pos_;
             finish_statement(statement_start, "Variable.Assign");
+            VariableAssignment preview;
+            preview.normalized_name = name;
+            preview.source_name = source_name;
+            preview.value = value;
+            preview.expression = trim_field_copy(
+                src_.substr(args_start, args_end - args_start));
+            preview.file_path = ctx_.current_file_path;
+            preview.order = ctx_.next_parse_order();
+            preview.source = diagnostic_source(statement_start, "Variable.Assign");
+            ctx_.variable_assignments.push_back(std::move(preview));
             if (ctx_.parse_options.collect_edit_metadata) {
                 add_parsed_statement(ctx_, "Variable.Assign",
                                      make_source_span(ctx_, loaded_, statement_start, pos_, ctx_.include_stack),
@@ -604,6 +615,8 @@ private:
         for (auto& row : child.fogs) offset_order(row.order);
         for (auto& row : child.draw_distances) offset_order(row.order);
         for (auto& row : child.speedlimits) offset_order(row.order);
+        for (auto& row : child.variable_assignments) offset_order(row.order);
+        for (auto& row : child.resource_list_loads) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
         if (child.has_distance_assignment) {
@@ -668,6 +681,12 @@ private:
         for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
         for (auto& row : child.draw_distances) ctx_.draw_distances.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
+        for (auto& row : child.variable_assignments) {
+            ctx_.variable_assignments.push_back(std::move(row));
+        }
+        for (auto& row : child.resource_list_loads) {
+            ctx_.resource_list_loads.push_back(std::move(row));
+        }
         for (auto& diagnostic : child.diagnostics) {
             ctx_.diagnostics.push_back(std::move(diagnostic));
         }
@@ -1310,7 +1329,7 @@ private:
         } else if (first == "station") {
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_station(fn, args);
+            dispatch_station(fn, args, function.raw_arguments);
         } else if (first == "track") {
             if (!objects.front().has_key) throw std::runtime_error("Track key is required");
             dispatch_track(objects.front().key, labels, fn, function.args);
@@ -1321,18 +1340,20 @@ private:
         } else if (first == "signal") {
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_signal(fn, args, objects.front().has_key);
+            dispatch_signal(fn, args, objects.front().has_key,
+                            function.raw_arguments);
         } else if (first == "structure") {
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
-            dispatch_structure(fn, args);
+            dispatch_structure(fn, args, function.raw_arguments);
         } else if (first == "beacon") {
             dispatch_beacon(fn, function.args);
         } else if (first == "pretrain") {
             dispatch_pretrain(fn, function.args);
         } else if (first == "sound" || first == "sound3d") {
             dispatch_sound(fn, function.args, first == "sound3d",
-                           objects.front().has_key, objects.front().key);
+                           objects.front().has_key, objects.front().key,
+                           function.raw_arguments);
         } else if (first == "train") {
             std::vector<Value> args = function.args;
             if (objects.front().has_key) args.insert(args.begin(), objects.front().key);
@@ -1415,7 +1436,27 @@ private:
         }
     }
 
-    void dispatch_station(const std::string& fn, const std::vector<Value>& a) {
+    void record_resource_list_load(ResourceListLoadKind kind,
+                                   const std::string& path_text,
+                                   const std::string& raw_argument,
+                                   const std::string& statement_kind) {
+        ResourceListLoad row;
+        row.kind = kind;
+        row.evaluated_path = path_text;
+        row.raw_argument = trim_field_copy(raw_argument);
+        const std::filesystem::path joined = join_path(ctx_.rootpath, path_text);
+        std::error_code ec;
+        std::filesystem::path resolved = std::filesystem::absolute(joined, ec);
+        if (ec) resolved = joined;
+        row.resolved_path = path_to_utf8(resolved.lexically_normal());
+        row.file_path = ctx_.current_file_path;
+        row.order = ctx_.next_parse_order();
+        row.source = diagnostic_source(current_statement_start_, statement_kind);
+        ctx_.resource_list_loads.push_back(std::move(row));
+    }
+
+    void dispatch_station(const std::string& fn, const std::vector<Value>& a,
+                          const std::string& raw_arguments) {
         if (fn == "put" && !a.empty()) {
             note_distance_use(ctx_);
             std::string key = key_text(a.at(0));
@@ -1431,6 +1472,9 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.station_puts.push_back(std::move(row));
         } else if (fn == "load" && !a.empty()) {
+            record_resource_list_load(ResourceListLoadKind::Station,
+                                      as_text(a.at(0)), raw_arguments,
+                                      "station.load");
             load_resource_list(as_text(a.at(0)), "BveTs Station List ", 0.04,
                                "station.load",
                                [&](const LoadedText& loaded) { parse_station_list(loaded); });
@@ -1683,6 +1727,7 @@ private:
             note_distance_use(ctx_);
             SectionBegin row;
             row.distance = ctx_.distance;
+            row.method = fn == "beginnew" ? "Section.BeginNew" : "Section.Begin";
             row.signal_indices = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
@@ -1692,6 +1737,7 @@ private:
             note_distance_use(ctx_);
             SectionSpeedLimit row;
             row.distance = ctx_.distance;
+            row.method = "Section.SetSpeedLimit";
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
@@ -1700,9 +1746,14 @@ private:
         }
     }
 
-    void dispatch_signal(const std::string& fn, const std::vector<Value>& a, bool has_signal_key) {
+    void dispatch_signal(const std::string& fn, const std::vector<Value>& a,
+                         bool has_signal_key,
+                         const std::string& raw_arguments) {
         if (fn == "load" && !has_signal_key && !a.empty()) {
             std::string list_path_text = as_text(a.at(0));
+            record_resource_list_load(ResourceListLoadKind::Signal,
+                                      list_path_text, raw_arguments,
+                                      "signal.load");
             load_resource_list(list_path_text, "BveTs Signal Aspects List ", 2.0,
                                "signal.load",
                                [&](const LoadedText& loaded) { parse_signal_aspect_list(loaded); });
@@ -1710,6 +1761,7 @@ private:
             note_distance_use(ctx_);
             SectionSpeedLimit row;
             row.distance = ctx_.distance;
+            row.method = "Signal.SpeedLimit";
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
@@ -1765,7 +1817,8 @@ private:
         ctx_.pretrains.push_back(std::move(row));
     }
 
-    void dispatch_structure(const std::string& fn, const std::vector<Value>& a) {
+    void dispatch_structure(const std::string& fn, const std::vector<Value>& a,
+                            const std::string& raw_arguments) {
         if (fn == "load") {
             note_distance_use(ctx_);
             StructureLoad row;
@@ -1777,6 +1830,9 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.structure_loads.push_back(row);
             std::string list_path_text = as_text(row.load_file_path);
+            record_resource_list_load(ResourceListLoadKind::Structure,
+                                      list_path_text, raw_arguments,
+                                      "structure.load");
             load_resource_list(list_path_text, "BveTs Structure List ", 1.0,
                                "structure.load",
                                [&](const LoadedText& loaded) { parse_structure_list(loaded); });
@@ -1823,9 +1879,14 @@ private:
     }
 
     void dispatch_sound(const std::string& fn, const std::vector<Value>& a,
-                        bool is_3d, bool has_key, const Value& sound_key) {
+                        bool is_3d, bool has_key, const Value& sound_key,
+                        const std::string& raw_arguments) {
         if (fn == "load" && !has_key && !a.empty()) {
             std::string list_path_text = as_text(a.at(0));
+            record_resource_list_load(
+                is_3d ? ResourceListLoadKind::Sound3D : ResourceListLoadKind::Sound,
+                list_path_text, raw_arguments,
+                is_3d ? "sound3d.load" : "sound.load");
             load_resource_list(
                 list_path_text, "BveTs Sound List ", 2.0,
                 is_3d ? "sound3d.load" : "sound.load",
@@ -1902,6 +1963,7 @@ private:
             row.time = a[1];
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            row.source = diagnostic_source(current_statement_start_, "train.enable");
             attach_active_edit_ref(ctx_, row);
             ctx_.other_train_enables.push_back(std::move(row));
         } else if (fn == "stop" && has_train_key && a.size() >= 5) {
@@ -2107,6 +2169,74 @@ std::string format_diagnostic(const MapDiagnostic& diagnostic) {
     return out.str();
 }
 
+std::string diagnostic_location(const MapDiagnostic& diagnostic) {
+    std::ostringstream out;
+    out << diagnostic.file_path << ":" << diagnostic.line << ":" << diagnostic.column;
+    return out.str();
+}
+
+const char* resource_list_statement_name(ResourceListLoadKind kind) {
+    switch (kind) {
+    case ResourceListLoadKind::Station: return "Station.Load";
+    case ResourceListLoadKind::Structure: return "Structure.Load";
+    case ResourceListLoadKind::Signal: return "Signal.Load";
+    case ResourceListLoadKind::Sound: return "Sound.Load";
+    case ResourceListLoadKind::Sound3D: return "Sound3D.Load";
+    }
+    return "Load";
+}
+
+[[noreturn]] void throw_duplicate_statement(const MapDiagnostic& second,
+                                            const MapDiagnostic& first,
+                                            const std::string& statement) {
+    MapDiagnostic diagnostic = second;
+    diagnostic.message = "Duplicate " + statement +
+                         "; first declaration is at " +
+                         diagnostic_location(first) + ".";
+    throw std::runtime_error(format_diagnostic(diagnostic));
+}
+
+void validate_unique_preview_statements(const MapContext& ctx) {
+    std::vector<const ResourceListLoad*> loads;
+    loads.reserve(ctx.resource_list_loads.size());
+    for (const ResourceListLoad& row : ctx.resource_list_loads) loads.push_back(&row);
+    std::stable_sort(loads.begin(), loads.end(),
+                     [](const ResourceListLoad* left,
+                        const ResourceListLoad* right) {
+                         return left->order < right->order;
+                     });
+    std::array<const ResourceListLoad*, 5> first_loads{};
+    for (const ResourceListLoad* row : loads) {
+        const size_t index = static_cast<size_t>(row->kind);
+        if (first_loads[index]) {
+            throw_duplicate_statement(
+                row->source, first_loads[index]->source,
+                resource_list_statement_name(row->kind));
+        }
+        first_loads[index] = row;
+    }
+
+    std::vector<const OtherTrainEnable*> enables;
+    enables.reserve(ctx.other_train_enables.size());
+    for (const OtherTrainEnable& row : ctx.other_train_enables) enables.push_back(&row);
+    std::stable_sort(enables.begin(), enables.end(),
+                     [](const OtherTrainEnable* left,
+                        const OtherTrainEnable* right) {
+                         return left->order < right->order;
+                     });
+    std::unordered_map<std::string, const OtherTrainEnable*> first_enables;
+    for (const OtherTrainEnable* row : enables) {
+        const std::string key = ascii_lower(
+            trim_field_copy(key_text(row->train_key)));
+        const auto inserted = first_enables.emplace(key, row);
+        if (!inserted.second) {
+            throw_duplicate_statement(
+                row->source, inserted.first->second->source,
+                "Train[" + key + "].Enable");
+        }
+    }
+}
+
 void append_transition_diagnostics(MapContext& ctx) {
     bool curve_transition_pending = false;
     bool gradient_transition_pending = false;
@@ -2234,6 +2364,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
         ScopedTimer timer(&ctx->timing.parse_seconds);
         Parser parser(*ctx, std::move(loaded));
         parser.parse();
+        validate_unique_preview_statements(*ctx);
     } catch (...) {
         emit_diagnostics(*ctx);
         throw;

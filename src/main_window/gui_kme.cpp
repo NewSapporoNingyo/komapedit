@@ -481,6 +481,12 @@ std::string map_snapshot_value_text(const KvMapSnapshot& snapshot, const KvValue
     }
 }
 
+std::string map_snapshot_preview_value_text(const KvMapSnapshot& snapshot,
+                                            const KvValue& value) {
+    if (value.kind == KV_VALUE_NULL) return "null";
+    return map_snapshot_value_text(snapshot, value);
+}
+
 std::string map_snapshot_track_key_text(const KvMapSnapshot& snapshot, const KvValue& value) {
     if (value.kind == KV_VALUE_STRING) {
         return "'" + map_snapshot_string(snapshot, value.string_value) + "'";
@@ -912,6 +918,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
             speed.has_speed = true;
             speed.speed = input.speed.number_value;
         }
+        speed.order = input.order;
         model.speedlimits.push_back(speed);
     }
     for (std::uint64_t i = 0; i < snapshot.station_name_count; ++i) {
@@ -1002,6 +1009,17 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.other_trains.push_back(std::move(row));
     }
+    model.other_train_enables.reserve(
+        static_cast<size_t>(snapshot.other_train_enable_count));
+    for (std::uint64_t i = 0; i < snapshot.other_train_enable_count; ++i) {
+        const KvOtherTrainEnableRow& input = snapshot.other_train_enables[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["trainKey"] = map_snapshot_value_text(snapshot, input.train_key);
+        row.cells["time"] = map_snapshot_value_text(snapshot, input.time);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.other_train_enables.push_back(std::move(row));
+    }
     model.other_train_stops.reserve(static_cast<size_t>(snapshot.other_train_stop_count));
     for (std::uint64_t i = 0; i < snapshot.other_train_stop_count; ++i) {
         const KvOtherTrainStopRow& input = snapshot.other_train_stops[i];
@@ -1032,6 +1050,36 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
     add_referenced_keys(snapshot.other_train_sound_3d_keys,
                         snapshot.other_train_sound_3d_key_count,
                         model.other_train_sound_3d_keys);
+    auto add_sections = [&](const KvSectionRow* inputs, std::uint64_t count,
+                            std::vector<TableRow>& output) {
+        output.reserve(static_cast<size_t>(count));
+        for (std::uint64_t i = 0; i < count; ++i) {
+            const KvSectionRow& input = inputs[i];
+            TableRow row;
+            row.cells["distance"] = format_double(input.distance, 6);
+            row.cells["method"] = map_snapshot_string(snapshot, input.method);
+            row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+            row.cells["order"] = std::to_string(input.order);
+            if (map_snapshot_span_valid(input.values, snapshot.value_count) &&
+                (input.values.count == 0 || snapshot.values)) {
+                for (std::uint64_t value_index = 0;
+                     value_index < input.values.count; ++value_index) {
+                    row.cells["value" + std::to_string(value_index)] =
+                        map_snapshot_preview_value_text(
+                            snapshot,
+                            snapshot.values[input.values.offset + value_index]);
+                }
+            }
+            row.cells["valueCount"] = std::to_string(input.values.count);
+            apply_map_row_metadata(row, snapshot, input.metadata);
+            output.push_back(std::move(row));
+        }
+    };
+    add_sections(snapshot.section_begins, snapshot.section_begin_count,
+                 model.section_begins);
+    add_sections(snapshot.section_speed_limits,
+                 snapshot.section_speed_limit_count,
+                 model.section_speed_limits);
     model.sound_list.reserve(static_cast<size_t>(snapshot.sound_list_count));
     model.sound_3d_list.reserve(static_cast<size_t>(snapshot.sound_list_count));
     for (std::uint64_t i = 0; i < snapshot.sound_list_count; ++i) {
@@ -1196,6 +1244,32 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         row.cells["value"] = format_double(input.value, 6);
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.draw_distances.push_back(std::move(row));
+    }
+
+    model.variable_assignments.reserve(
+        static_cast<size_t>(snapshot.variable_assignment_count));
+    for (std::uint64_t i = 0; i < snapshot.variable_assignment_count; ++i) {
+        const KvVariableAssignmentRow& input = snapshot.variable_assignments[i];
+        TableRow row;
+        row.cells["normalizedName"] =
+            map_snapshot_string(snapshot, input.normalized_name);
+        row.cells["sourceName"] = map_snapshot_string(snapshot, input.source_name);
+        row.cells["value"] = map_snapshot_preview_value_text(snapshot, input.value);
+        row.cells["expression"] = map_snapshot_string(snapshot, input.expression);
+        row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        row.cells["order"] = std::to_string(input.order);
+        model.variable_assignments.push_back(std::move(row));
+    }
+    for (std::uint64_t i = 0; i < snapshot.resource_list_load_count; ++i) {
+        const KvResourceListLoadRow& input = snapshot.resource_list_loads[i];
+        if (input.kind >= static_cast<std::uint32_t>(ResourceListKind::Count)) continue;
+        ResourceListSource& output = model.resource_list_sources[input.kind];
+        output.present = true;
+        output.evaluated_path = map_snapshot_string(snapshot, input.evaluated_path);
+        output.raw_argument = map_snapshot_string(snapshot, input.raw_argument);
+        output.resolved_path = map_snapshot_string(snapshot, input.resolved_path);
+        output.source_file_path = map_snapshot_string(snapshot, input.file_path);
+        output.order = input.order;
     }
 
     static const char* station_keys[] = {
@@ -5597,6 +5671,8 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Repeaters", dock_right);
     ImGui::DockBuilderDockWindow("SignalAspects", dock_right);
     ImGui::DockBuilderDockWindow("Signals", dock_right);
+    ImGui::DockBuilderDockWindow("Sections", dock_right);
+    ImGui::DockBuilderDockWindow("Variables", dock_right);
     ImGui::DockBuilderDockWindow("Beacons", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
     ImGui::DockBuilderDockWindow("MapSounds", dock_right);
@@ -5635,6 +5711,8 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_repeaters_window = show_repeaters_window_;
     visibility.show_signal_aspects_window = show_signal_aspects_window_;
     visibility.show_signals_window = show_signals_window_;
+    visibility.show_sections_window = show_sections_window_;
+    visibility.show_variables_window = show_variables_window_;
     visibility.show_beacons_window = show_beacons_window_;
     visibility.show_irregularities_window = show_irregularities_window_;
     visibility.show_map_sounds_window = show_map_sounds_window_;
@@ -5667,6 +5745,8 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_repeaters_window_ = visibility.show_repeaters_window;
     show_signal_aspects_window_ = visibility.show_signal_aspects_window;
     show_signals_window_ = visibility.show_signals_window;
+    show_sections_window_ = visibility.show_sections_window;
+    show_variables_window_ = visibility.show_variables_window;
     show_beacons_window_ = visibility.show_beacons_window;
     show_irregularities_window_ = visibility.show_irregularities_window;
     show_map_sounds_window_ = visibility.show_map_sounds_window;
@@ -5696,6 +5776,7 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_curve_values = show_curve_values_;
     view.show_profile_other = show_profile_other_;
     view.show_speedlimits = show_speedlimits_;
+    view.show_section_markers = show_section_markers_;
     view.show_irregularity_markers = show_irregularity_markers_;
     view.show_beacon_markers = show_beacon_markers_;
     view.show_pretrain_markers = show_pretrain_markers_;
@@ -5726,6 +5807,7 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_curve_values_ = settings.show_curve_values;
     show_profile_other_ = settings.show_profile_other;
     show_speedlimits_ = settings.show_speedlimits;
+    show_section_markers_ = settings.show_section_markers;
     show_irregularity_markers_ = settings.show_irregularity_markers;
     show_beacon_markers_ = settings.show_beacon_markers;
     show_pretrain_markers_ = settings.show_pretrain_markers;
@@ -5996,7 +6078,7 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 29> k_map_info_menu_entries = {{
+        static constexpr std::array<MapInfoMenuEntry, 31> k_map_info_menu_entries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
@@ -6012,7 +6094,9 @@ void App::render_menu() {
             {"aux.signal", nullptr},
             {"menu.map_info.signal_aspects", &App::show_signal_aspects_window_},
             {"menu.map_info.signals", &App::show_signals_window_},
+            {"menu.map_info.sections", &App::show_sections_window_},
             {"menu.map_info.beacons", &App::show_beacons_window_},
+            {"menu.map_info.variables", &App::show_variables_window_},
             {"aux.sound", nullptr},
             {"menu.map_info.sound_files", &App::show_sound_list_window_},
             {"menu.map_info.sound_3d_files", &App::show_sound_3d_list_window_},
@@ -6055,6 +6139,8 @@ void App::render_menu() {
         ImGui::Separator();
         ImGui::MenuItem(tr("aux.signal").c_str(), nullptr, false, false);
         ImGui::MenuItem(tr("chk.speedlimit").c_str(), nullptr, &show_speedlimits_);
+        ImGui::MenuItem(tr("chk.section_markers").c_str(), nullptr,
+                        &show_section_markers_);
         ImGui::MenuItem(tr("chk.beacon_markers").c_str(), nullptr, &show_beacon_markers_);
         ImGui::MenuItem(tr("chk.pretrain_markers").c_str(), nullptr, &show_pretrain_markers_);
         ImGui::Separator();
@@ -7442,6 +7528,7 @@ void App::sync_scene_preview_marker_visibility() {
     }
 
     set_marker_and_label(MapMarkerVisualKind::SpeedLimit, show_speedlimits_);
+    set_marker_and_label(MapMarkerVisualKind::Section, show_section_markers_);
     set_marker_and_label(MapMarkerVisualKind::Beacon, show_beacon_markers_);
     set_marker_and_label(MapMarkerVisualKind::PreTrain, show_pretrain_markers_);
     set_marker_and_label(MapMarkerVisualKind::Irregularity, show_irregularity_markers_);
@@ -7544,6 +7631,8 @@ void App::render_scene_preview_window() {
         };
         set_marker_list_label(Canvas3DSceneMarkerListKind::Beacon,
                               tr("menu.locate_in_beacon_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::Section,
+                              tr("menu.locate_in_section_list"));
         set_marker_list_label(Canvas3DSceneMarkerListKind::Irregularity,
                               tr("menu.locate_in_irregularity_list"));
         set_marker_list_label(Canvas3DSceneMarkerListKind::MapSound,
@@ -7573,6 +7662,8 @@ void App::render_scene_preview_window() {
         scene_ui_text.straight = tr("scene.route_info.straight").c_str();
         scene_ui_text.interpolate_unsupported = tr("scene.route_info.interpolate_unsupported").c_str();
         scene_ui_text.next_station = tr("scene.route_info.next_station").c_str();
+        scene_ui_text.speed_limit = tr("scene.route_info.speed_limit").c_str();
+        scene_ui_text.signal = tr("scene.route_info.signal").c_str();
         scene_ui_text.no_station_ahead = tr("scene.route_info.no_station_ahead").c_str();
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();
@@ -7800,6 +7891,8 @@ void App::render() {
     render_repeaters_window();
     render_signal_aspects_window();
     render_signals_window();
+    render_sections_window();
+    render_variables_window();
     render_beacons_window();
     render_irregularities_window();
     render_map_sounds_window();

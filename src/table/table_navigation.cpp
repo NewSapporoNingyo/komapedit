@@ -23,6 +23,8 @@ void App::invalidate_table_cache() {
     repeater_list_highlight_row_ = -1;
     signal_list_scroll_row_ = -1;
     signal_list_highlight_row_ = -1;
+    section_list_scroll_row_ = -1;
+    section_list_highlight_row_ = -1;
     other_train_stop_list_scroll_row_ = -1;
     other_train_stop_list_highlight_row_ = -1;
     beacon_list_scroll_row_ = -1;
@@ -53,6 +55,7 @@ void App::invalidate_table_cache() {
     plan_repeater_popup_row_ = -1;
     plan_station_popup_row_ = -1;
     plan_signal_popup_row_ = -1;
+    plan_section_popup_row_ = -1;
     plan_beacon_popup_row_ = -1;
     plan_other_train_stop_popup_row_ = -1;
     plan_irregularity_popup_row_ = -1;
@@ -185,6 +188,18 @@ void App::locate_standard_marker_in_list(
 
 void App::locate_beacon_row_on_plan(size_t row_index) {
     locate_standard_marker_on_plan(beacon_marker_cache_, row_index, show_beacon_markers_);
+}
+
+void App::locate_section_row_on_plan(size_t row_index) {
+    locate_standard_marker_on_plan(
+        section_marker_cache_, row_index, show_section_markers_);
+}
+
+void App::locate_section_row_in_list(size_t row_index) {
+    locate_standard_marker_in_list(
+        section_marker_cache_, row_index, show_sections_window_,
+        focus_sections_next_, section_list_scroll_row_,
+        section_list_highlight_row_);
 }
 
 void App::locate_beacon_row_in_list(size_t row_index) {
@@ -334,6 +349,9 @@ void App::locate_draw_distance_row_in_list(size_t row_index) {
 void App::locate_scene_marker_row_in_list(
     Canvas3DSceneMarkerListKind list_kind, size_t row_index) {
     switch (list_kind) {
+    case Canvas3DSceneMarkerListKind::Section:
+        locate_section_row_in_list(row_index);
+        return;
     case Canvas3DSceneMarkerListKind::Beacon:
         locate_beacon_row_in_list(row_index);
         return;
@@ -381,6 +399,9 @@ void App::locate_scene_marker_row_in_scene_preview(
     if (!can_locate_scene_preview_row()) return;
 
     switch (list_kind) {
+    case Canvas3DSceneMarkerListKind::Section:
+        show_section_markers_ = true;
+        break;
     case Canvas3DSceneMarkerListKind::Beacon:
         show_beacon_markers_ = true;
         break;

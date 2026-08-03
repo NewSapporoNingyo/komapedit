@@ -303,6 +303,34 @@ struct MapDiagnostic {
     std::string message;
 };
 
+enum class ResourceListLoadKind {
+    Station,
+    Structure,
+    Signal,
+    Sound,
+    Sound3D,
+};
+
+struct VariableAssignment {
+    std::string normalized_name;
+    std::string source_name;
+    Value value;
+    std::string expression;
+    std::string file_path;
+    int order = 0;
+    MapDiagnostic source;
+};
+
+struct ResourceListLoad {
+    ResourceListLoadKind kind = ResourceListLoadKind::Station;
+    std::string evaluated_path;
+    std::string raw_argument;
+    std::string resolved_path;
+    std::string file_path;
+    int order = 0;
+    MapDiagnostic source;
+};
+
 enum class DeferredKeyKind {
     Structure,
     Sound,
@@ -397,6 +425,7 @@ struct OtherTrainEnable {
     std::string file_path;
     int order = 0;
     EditSourceRef edit_ref;
+    MapDiagnostic source;
 };
 
 struct OtherTrainStop {
@@ -437,6 +466,7 @@ struct MapSound3DPut {
 
 struct SectionBegin {
     double distance = 0.0;
+    std::string method;
     std::vector<Value> signal_indices;
     std::string file_path;
     int order = 0;
@@ -445,6 +475,7 @@ struct SectionBegin {
 
 struct SectionSpeedLimit {
     double distance = 0.0;
+    std::string method;
     std::vector<Value> speeds;
     std::string file_path;
     int order = 0;
@@ -786,6 +817,8 @@ struct MapSnapshotStorage {
     std::vector<KvFogRow> fogs;
     std::vector<KvDrawDistanceRow> draw_distances;
     std::vector<KvSpeedLimitRow> speed_limits;
+    std::vector<KvVariableAssignmentRow> variable_assignments;
+    std::vector<KvResourceListLoadRow> resource_list_loads;
     std::vector<KvStatementRow> statements;
     std::vector<KvElementRow> elements;
 };
@@ -831,6 +864,8 @@ struct MapContext {
     int parse_order = 0;
     int edit_order = 0;
     VariableEnvironment variables;
+    std::vector<VariableAssignment> variable_assignments;
+    std::vector<ResourceListLoad> resource_list_loads;
     VariableEnvironmentSnapshot variable_environment_snapshot;
     std::set<std::string> external_variable_reads;
     std::set<std::string> variable_writes;

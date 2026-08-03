@@ -370,6 +370,8 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
     out << "show_signal_aspects_window=" << bool_to_string(settings.window_visibility.show_signal_aspects_window) << "\n";
     out << "show_signals_window=" << bool_to_string(settings.window_visibility.show_signals_window) << "\n";
+    out << "show_sections_window=" << bool_to_string(settings.window_visibility.show_sections_window) << "\n";
+    out << "show_variables_window=" << bool_to_string(settings.window_visibility.show_variables_window) << "\n";
     out << "show_beacons_window=" << bool_to_string(settings.window_visibility.show_beacons_window) << "\n";
     out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
     out << "show_map_sounds_window=" << bool_to_string(settings.window_visibility.show_map_sounds_window) << "\n";
@@ -396,6 +398,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_curve_values=" << bool_to_string(settings.view_2d.show_curve_values) << "\n";
     out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
     out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
+    out << "show_section_markers=" << bool_to_string(settings.view_2d.show_section_markers) << "\n";
     out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
     out << "show_beacon_markers=" << bool_to_string(settings.view_2d.show_beacon_markers) << "\n";
     out << "show_pretrain_markers=" << bool_to_string(settings.view_2d.show_pretrain_markers) << "\n";
@@ -562,6 +565,10 @@ UserSettings load_user_settings() {
             settings.window_visibility.show_signal_aspects_window = parse_bool(value, settings.window_visibility.show_signal_aspects_window);
         } else if (key == "show_signals_window" || key == "show_signal_window") {
             settings.window_visibility.show_signals_window = parse_bool(value, settings.window_visibility.show_signals_window);
+        } else if (key == "show_sections_window" || key == "show_section_window") {
+            settings.window_visibility.show_sections_window = parse_bool(value, settings.window_visibility.show_sections_window);
+        } else if (key == "show_variables_window" || key == "show_variable_window") {
+            settings.window_visibility.show_variables_window = parse_bool(value, settings.window_visibility.show_variables_window);
         } else if (key == "show_beacons_window" || key == "show_beacon_window") {
             settings.window_visibility.show_beacons_window = parse_bool(value, settings.window_visibility.show_beacons_window);
         } else if (key == "show_irregularities_window") {
@@ -622,6 +629,10 @@ UserSettings load_user_settings() {
         } else if (key == "show_speedlimits" || key == "show_speedlimit") {
             view_2d_keys_seen.insert("show_speedlimits");
             settings.view_2d.show_speedlimits = parse_bool(value, settings.view_2d.show_speedlimits);
+        } else if (key == "show_section_markers") {
+            view_2d_keys_seen.insert("show_section_markers");
+            settings.view_2d.show_section_markers =
+                parse_bool(value, settings.view_2d.show_section_markers);
         } else if (key == "show_irregularity_markers" || key == "show_irregularities" || key == "show_irregularity_points") {
             view_2d_keys_seen.insert("show_irregularity_markers");
             settings.view_2d.show_irregularity_markers = parse_bool(value, settings.view_2d.show_irregularity_markers);
@@ -770,8 +781,9 @@ UserSettings load_user_settings() {
     normalize_scene_instance_warning_thresholds(
         settings.view_3d.scene_instance_warning_threshold,
         settings.view_3d.scene_instance_critical_warning_threshold);
-    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 23 || view_3d_keys_seen.size() < 6 ||
+    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 24 || view_3d_keys_seen.size() < 6 ||
         view_2d_keys_seen.count("show_draw_distance_markers") == 0 ||
+        view_2d_keys_seen.count("show_section_markers") == 0 ||
         view_3d_keys_seen.count("scene_map_draw_distance_enabled") == 0 ||
         view_3d_keys_seen.count("scene_performance_warning_enabled") == 0 ||
         view_3d_keys_seen.count("scene_instance_warning_threshold") == 0 ||

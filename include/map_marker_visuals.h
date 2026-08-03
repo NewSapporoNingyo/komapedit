@@ -21,6 +21,7 @@ enum class MapMarkerVisualKind : std::uint8_t {
     GradientStart,
     GradientEnd,
     SpeedLimit,
+    Section,
     Beacon,
     PreTrain,
     Irregularity,

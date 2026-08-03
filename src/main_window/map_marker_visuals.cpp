@@ -412,6 +412,8 @@ ImVec4 map_marker_theme_color(MapMarkerVisualKind kind) {
             return rgba(255, 255, 255);
         case MapMarkerVisualKind::SpeedLimit:
             return rgba(136, 204, 255);
+        case MapMarkerVisualKind::Section:
+            return rgba(158, 255, 184);
         case MapMarkerVisualKind::Beacon:
             return rgba(148, 242, 178);
         case MapMarkerVisualKind::Irregularity:
@@ -493,6 +495,8 @@ MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind,
                             {ImVec2(-0.88f, 0.0f), ImVec2(0.88f, 0.0f)}, 0.13f);
             return recipe;
         }
+        case MapMarkerVisualKind::Section:
+            return glyph_recipe('S', MapMarkerColorRole::Black);
         case MapMarkerVisualKind::Beacon:
             return beacon_recipe();
         case MapMarkerVisualKind::PreTrain:

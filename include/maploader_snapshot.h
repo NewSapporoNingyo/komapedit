@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 3u
-#define KV_MAP_SNAPSHOT_VERSION 3u
+#define KV_MAPLOADER_API_VERSION 4u
+#define KV_MAP_SNAPSHOT_VERSION 4u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
@@ -225,7 +225,37 @@ typedef struct KvSectionRow {
     int32_t order;
     uint32_t reserved;
     KvRowMetadata metadata;
+    KvStringRef method;
 } KvSectionRow;
+
+enum KvResourceListLoadKind {
+    KV_RESOURCE_LIST_STATION = 0,
+    KV_RESOURCE_LIST_STRUCTURE = 1,
+    KV_RESOURCE_LIST_SIGNAL = 2,
+    KV_RESOURCE_LIST_SOUND = 3,
+    KV_RESOURCE_LIST_SOUND_3D = 4
+};
+
+typedef struct KvVariableAssignmentRow {
+    KvStringRef normalized_name;
+    KvStringRef source_name;
+    KvValue value;
+    KvStringRef expression;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved;
+} KvVariableAssignmentRow;
+
+typedef struct KvResourceListLoadRow {
+    uint32_t kind;
+    uint32_t reserved;
+    KvStringRef evaluated_path;
+    KvStringRef raw_argument;
+    KvStringRef resolved_path;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved2;
+} KvResourceListLoadRow;
 
 typedef struct KvSignalAspectRow {
     KvStringRef signal_aspect_key;
@@ -550,6 +580,11 @@ typedef struct KvMapSnapshot {
     uint64_t draw_distance_count;
     const KvSpeedLimitRow* speed_limits;
     uint64_t speed_limit_count;
+
+    const KvVariableAssignmentRow* variable_assignments;
+    uint64_t variable_assignment_count;
+    const KvResourceListLoadRow* resource_list_loads;
+    uint64_t resource_list_load_count;
 
     const KvStatementRow* statements;
     uint64_t statement_count;

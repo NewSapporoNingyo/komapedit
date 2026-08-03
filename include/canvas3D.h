@@ -60,6 +60,7 @@ enum class Canvas3DSceneObjectKind {
 // marker kinds have no table and must not expose list navigation.
 enum class Canvas3DSceneMarkerListKind : std::uint8_t {
     None,
+    Section,
     Beacon,
     Irregularity,
     MapSound,
@@ -172,10 +173,25 @@ struct Canvas3DSceneRouteStation {
     std::string name;
 };
 
+struct Canvas3DSceneSpeedLimitEvent {
+    double distance = 0.0;
+    bool has_speed = false;
+    double speed = 0.0;
+    int order = 0;
+};
+
+struct Canvas3DSceneSectionSignalEvent {
+    double distance = 0.0;
+    int order = 0;
+    std::string values;
+};
+
 struct Canvas3DSceneRouteInfo {
     std::vector<Canvas3DSceneRouteValueEvent> radius_events;
     std::vector<Canvas3DSceneRouteValueEvent> cant_events;
     std::vector<Canvas3DSceneRouteValueEvent> gradient_events;
+    std::vector<Canvas3DSceneSpeedLimitEvent> speed_limit_events;
+    std::vector<Canvas3DSceneSectionSignalEvent> section_signal_events;
     std::vector<Canvas3DSceneRouteStation> stations;
 };
 
@@ -319,6 +335,8 @@ struct Canvas3DSceneUiText {
     const char* straight = "Straight";
     const char* interpolate_unsupported = "interpolate(unsupported)";
     const char* next_station = "Next sta. :";
+    const char* speed_limit = "Speedlimit:";
+    const char* signal = "Signal:";
     const char* no_station_ahead = "No station ahead";
 };
 
