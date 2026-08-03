@@ -158,20 +158,6 @@ void value_span(SemanticWriter& out, const KvMapSnapshot& snapshot,
     }
 }
 
-void string_span(SemanticWriter& out, const KvMapSnapshot& snapshot,
-                 const char* name, KvSpan span) {
-    if (!span_valid(span, snapshot.string_ref_count) ||
-        (span.count != 0 && !snapshot.string_refs)) {
-        throw std::runtime_error("typed snapshot string span is out of bounds");
-    }
-    out.label(name);
-    out.signed_integer(static_cast<std::int64_t>(span.count));
-    for (std::uint64_t i = 0; i < span.count; ++i) {
-        out.string(SemanticWriter::snapshot_text(
-            snapshot, snapshot.string_refs[span.offset + i]));
-    }
-}
-
 std::string source_path(const KvMapSnapshot& snapshot, const KvRowMetadata& metadata) {
     if (metadata.source_file_index >= snapshot.source_file_count || !snapshot.source_files) return {};
     return text(snapshot, snapshot.source_files[metadata.source_file_index].file_path);
@@ -747,7 +733,8 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
     }
     for (std::uint64_t i = 0; i < snapshot.station_list_count; ++i) {
         const KvStationListRow& row = snapshot.station_list[i];
-        const std::string object_key = text(snapshot, row.object_key);
+        const std::string object_key = ascii_lower(
+            normalized_station_list_edit_value(text(snapshot, row.object_key), 0));
         emit_element(output, full, snapshot, row.metadata, "station.list",
                      "station.list." + object_key, static_cast<size_t>(i),
                      [&](SemanticWriter& out) {

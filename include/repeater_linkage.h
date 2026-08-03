@@ -49,7 +49,6 @@ struct Segment {
     size_t chain_begin_count = 1;
     std::optional<size_t> previous_begin_source_index;
     std::optional<size_t> boundary_source_index;
-    std::optional<size_t> chain_end_source_index;
     std::optional<size_t> next_begin_display_index;
     double begin_distance = 0.0;
     double end_distance = 0.0;
@@ -147,7 +146,6 @@ inline Linkage pair_linkage(std::vector<Event> events) {
             segment.chain_index = chain_index;
             segment.chain_begin_index = begin_index;
             segment.chain_begin_count = chain.begin_source_indices.size();
-            segment.chain_end_source_index = chain.end_source_index;
         }
     }
     return result;

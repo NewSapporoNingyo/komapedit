@@ -38,9 +38,6 @@ enum class MapMarkerVisualKind : std::uint8_t {
     Count
 };
 
-inline constexpr std::size_t k_map_marker_visual_kind_count =
-    static_cast<std::size_t>(MapMarkerVisualKind::Count);
-
 inline constexpr std::uint64_t map_marker_visual_bit(MapMarkerVisualKind kind) {
     return std::uint64_t{1} << static_cast<unsigned int>(kind);
 }

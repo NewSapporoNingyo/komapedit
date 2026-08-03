@@ -845,13 +845,6 @@ const KvSceneGeometrySnapshot& build_scene_geometry_snapshot(MapContext& ctx) {
     return ctx.scene_snapshot->view;
 }
 
-void append_station_list_entry(MapContext& ctx, StationListEntry row) {
-    const std::string key = ascii_lower(trim_field_copy(row.fields[0]));
-    const size_t index = ctx.station_list.size();
-    ctx.station_list.push_back(std::move(row));
-    if (!key.empty()) ctx.station_list_indices[key] = index;
-}
-
 std::vector<const StationListEntry*> ordered_station_list_entries(const MapContext& ctx) {
     std::vector<const StationListEntry*> entries;
     entries.reserve(ctx.station_list.size());

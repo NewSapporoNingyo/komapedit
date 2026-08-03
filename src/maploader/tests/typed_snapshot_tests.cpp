@@ -72,7 +72,7 @@ struct TempFixture {
     std::filesystem::path directory;
     std::filesystem::path map_path;
 
-    TempFixture() {
+    explicit TempFixture(bool snapshot_arrays = false) {
         directory = std::filesystem::temp_directory_path() /
             ("komapedit-typed-contract-" + std::to_string(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -83,8 +83,12 @@ struct TempFixture {
             << "0;\n"
             << "Structure.Load('structures.csv');\n"
             << "Station.Load('stations.csv');\n"
-            << "Signal.Load('signals.csv');\n"
-            << "Track['1'].Position(3.8,0);\n"
+            << "Signal.Load('signals.csv');\n";
+        if (snapshot_arrays) {
+            map << "$snapshotContract=1;\n"
+                << "DrawDistance.Change(600);\n";
+        }
+        map << "Track['1'].Position(3.8,0);\n"
             << "100;\n"
             << "Station['STA'].Put();\n"
             << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n"
@@ -185,7 +189,10 @@ void validate_arrays(const KvMapSnapshot& snapshot) {
     CHECK_ARRAY(adhesions, adhesion_count);
     CHECK_ARRAY(cab_illuminance, cab_illuminance_count);
     CHECK_ARRAY(fogs, fog_count);
+    CHECK_ARRAY(draw_distances, draw_distance_count);
     CHECK_ARRAY(speed_limits, speed_limit_count);
+    CHECK_ARRAY(variable_assignments, variable_assignment_count);
+    CHECK_ARRAY(resource_list_loads, resource_list_load_count);
     CHECK_ARRAY(statements, statement_count);
     CHECK_ARRAY(elements, element_count);
 #undef CHECK_ARRAY
@@ -254,7 +261,7 @@ void validate_map(const KvMapSnapshot& snapshot, bool edit_metadata) {
 }
 
 int snapshot_contract() {
-    TempFixture fixture;
+    TempFixture fixture(true);
     check(kv_api_version() == KV_MAPLOADER_API_VERSION, "API version");
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
     check(handle.value != nullptr, "preview load");
@@ -276,6 +283,9 @@ int snapshot_contract() {
                               &first, sizeof(first)) != 0,
           "first map snapshot");
     validate_map(first, false);
+    check(first.draw_distance_count == 1, "draw-distance fixture row present");
+    check(first.variable_assignment_count == 1, "variable-assignment fixture row present");
+    check(first.resource_list_load_count == 3, "resource-list Load fixture rows present");
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                               &cached, sizeof(cached)) != 0,
           "cached map snapshot");
@@ -1169,8 +1179,36 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
         return (fixture_root / name).u8string();
     };
 
+    TempFixture diagnostic_fixture;
+    std::filesystem::copy(
+        fixture_root / "map_error_assets",
+        diagnostic_fixture.directory / "map_error_assets",
+        std::filesystem::copy_options::recursive);
+    std::ifstream diagnostic_input(fixture_root / "map_errors.txt", std::ios::binary);
+    std::ofstream diagnostic_output(
+        diagnostic_fixture.map_path, std::ios::binary | std::ios::trunc);
+    const std::array<std::string_view, 4> resource_error_statements{{
+        "Station.Load('map_error_assets/missing_stations.csv');",
+        "Structure.Load('map_error_assets/not_a_list.csv');",
+        "Signal.Load('map_error_assets/unopenable');",
+        "Sound.Load('map_error_assets/missing_sounds.csv');",
+    }};
+    std::string diagnostic_line;
+    while (std::getline(diagnostic_input, diagnostic_line)) {
+        std::string_view comparable_line = diagnostic_line;
+        if (!comparable_line.empty() && comparable_line.back() == '\r') {
+            comparable_line.remove_suffix(1);
+        }
+        if (std::find(resource_error_statements.begin(), resource_error_statements.end(),
+                      comparable_line) != resource_error_statements.end()) {
+            continue;
+        }
+        diagnostic_output << diagnostic_line << '\n';
+    }
+    diagnostic_output.close();
+
     clear_diagnostics();
-    MapHandle nonfatal(kv_load_map_ex(fixture_path("map_errors.txt").c_str(), 25.0,
+    MapHandle nonfatal(kv_load_map_ex(diagnostic_fixture.path_utf8().c_str(), 25.0,
                                       KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
     check(nonfatal.value != nullptr, "nonfatal diagnostics map returns a handle");
     check(diagnostics_contain("[WARN]"), "nonfatal diagnostics use warning severity");
@@ -1185,12 +1223,6 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
     check(diagnostics_contain("Unknown TrainKey"), "unknown train key warning");
     check(diagnostics_contain("Undefined variable"), "undefined variable warning");
     check(diagnostics_contain("Missing statement terminator ';'"), "missing semicolon warning");
-    check(diagnostics_contain("Resource list load failed: File not found"),
-          "missing resource list warning");
-    check(diagnostics_contain("file exists but cannot be opened"),
-          "existing but unopenable resource list warning");
-    check(diagnostics_contain("Invalid file header"),
-          "invalid resource list header warning");
     check(diagnostics_contain("'BeginTransition' is required before 'Begin'."),
           "BeginTransition Begin warning");
     check(diagnostics_contain("'BeginTransition' is required before 'End'."),
@@ -1203,6 +1235,28 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
         check(snapshot.speed_limit_count == 1,
               "valid statement after syntax errors reaches IR");
     }
+
+    const std::filesystem::path resource_error_path =
+        diagnostic_fixture.directory / "resource_errors.txt";
+    {
+        std::ofstream resource_error_map(
+            resource_error_path, std::ios::binary | std::ios::trunc);
+        resource_error_map << "BveTs Map 2.02:utf-8\n0;\n";
+        for (std::string_view statement : resource_error_statements) {
+            resource_error_map << statement << '\n';
+        }
+    }
+    clear_diagnostics();
+    MapHandle resource_errors(kv_load_map_ex(
+        resource_error_path.u8string().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(resource_errors.value != nullptr, "resource diagnostics map returns a handle");
+    check(diagnostics_contain("Resource list load failed: File not found"),
+          "missing resource list warning");
+    check(diagnostics_contain("file exists but cannot be opened"),
+          "existing but unopenable resource list warning");
+    check(diagnostics_contain("Invalid file header"),
+          "invalid resource list header warning");
 
     clear_diagnostics();
     MapHandle clean(kv_load_map_ex(

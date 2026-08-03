@@ -643,7 +643,7 @@ private:
         for (auto& row : child.own_track) ctx_.own_track.push_back(std::move(row));
         for (auto& kv : child.station_position) ctx_.station_position[kv.first] = std::move(kv.second);
         for (auto& kv : child.station_key) ctx_.station_key[kv.first] = std::move(kv.second);
-        for (auto& row : child.station_list) append_station_list_entry(ctx_, std::move(row));
+        for (auto& row : child.station_list) ctx_.station_list.push_back(std::move(row));
         for (auto& row : child.station_puts) ctx_.station_puts.push_back(std::move(row));
         for (const std::string& key : child.othertrack_order) {
             ensure_othertrack(ctx_, key);
@@ -1500,7 +1500,7 @@ private:
                                     line_number, "StationList.Row");
             add_loaded_deferred_key(DeferredKeyKind::Sound, row.fields[10], loaded,
                                     line_number, "StationList.Row");
-            append_station_list_entry(ctx_, std::move(row));
+            ctx_.station_list.push_back(std::move(row));
         });
     }
 

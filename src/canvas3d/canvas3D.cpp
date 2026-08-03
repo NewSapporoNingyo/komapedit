@@ -64,8 +64,6 @@ constexpr float k_scene_depth_clear = 0.0f;
 constexpr float k_material_opaque_alpha_threshold = 0.98f;
 constexpr float k_scene_track_marker_width = 0.5f;
 constexpr float k_scene_track_marker_alpha = 0.8f;
-constexpr float k_scene_selection_min_screen_radius = 6.0f;
-constexpr float k_scene_selection_hit_padding = 4.0f;
 constexpr float k_scene_highlight_outline_width_px = 5.0f;
 constexpr float k_model_preview_fov_y = 0.78539816339f;
 constexpr double k_scene_object_jump_back_m = 25.0;
@@ -2032,25 +2030,8 @@ bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
         append_signal_instance(model.signals[row_index], row_index);
     }
 
-    std::vector<repeater_linkage::Event> repeater_events;
-    repeater_events.reserve(model.repeaters.size());
-    for (size_t row_index = 0; row_index < model.repeaters.size(); ++row_index) {
-        const TableRow& row = model.repeaters[row_index];
-        repeater_linkage::Event event;
-        event.source_index = row_index;
-        event.distance = table_cell_number(row, "distance");
-        event.order = table_cell_number(row, "order");
-        event.key = table_cell(row, "repeaterKey");
-        const std::string& method = table_cell(row, "method");
-        if (method == "Begin" || method == "Begin0") {
-            event.kind = repeater_linkage::EventKind::Begin;
-        } else if (method == "End") {
-            event.kind = repeater_linkage::EventKind::End;
-        }
-        repeater_events.push_back(std::move(event));
-    }
     const repeater_linkage::Linkage linkage =
-        repeater_linkage::pair_linkage(std::move(repeater_events));
+        repeater_linkage::pair_linkage(table_repeater_events(model.repeaters));
     scene.repeaters.reserve(linkage.segments.size());
     for (const repeater_linkage::Segment& linked : linkage.segments) {
         if (linked.begin_source_index >= model.repeaters.size()) continue;

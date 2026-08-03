@@ -663,27 +663,9 @@ void App::rebuild_marker_overlay_cache() {
         }
     };
 
-    std::vector<repeater_linkage::Event> repeater_events;
-    repeater_events.reserve(model_.repeaters.size());
-    for (size_t index = 0; index < model_.repeaters.size(); ++index) {
-        const TableRow& row = model_.repeaters[index];
-        repeater_linkage::Event event;
-        event.source_index = index;
-        event.distance = table_cell_number(row, "distance");
-        event.order = table_cell_number(row, "order");
-        event.key = table_cell(row, "repeaterKey");
-        const std::string& method = table_cell(row, "method");
-        if (method == "Begin" || method == "Begin0") {
-            event.kind = repeater_linkage::EventKind::Begin;
-        } else if (method == "End") {
-            event.kind = repeater_linkage::EventKind::End;
-        }
-        repeater_events.push_back(std::move(event));
-    }
-
     repeater_marker_cache_.reserve(model_.repeaters.size());
     for (const repeater_linkage::Segment& segment :
-         repeater_linkage::pair_segments(std::move(repeater_events))) {
+         repeater_linkage::pair_segments(table_repeater_events(model_.repeaters))) {
         if (segment.begin_source_index >= model_.repeaters.size()) continue;
         const TableRow& row = model_.repeaters[segment.begin_source_index];
         const std::string key = table_cell(row, "repeaterKey");

@@ -880,7 +880,6 @@ struct MapContext {
     // keys remain editable source rows but never enter the lookup index;
     // duplicate non-empty keys keep the last-definition-wins lookup contract.
     std::vector<StationListEntry> station_list;
-    std::map<std::string, size_t> station_list_indices;
     std::map<std::string, std::vector<OtherTrackEvent>> othertrack;
     std::vector<std::string> othertrack_order;
     std::map<std::string, std::pair<double, double>> othertrack_range;
@@ -1139,7 +1138,6 @@ std::string element_edit_id(const MapContext& ctx, const EditSourceRef& ref,
 // snapshot builder. The same ordering must be used by edit-target lookup and
 // committed-row population so that station.list row indices stay stable
 // across map snapshots, edit reports, and the GUI table cache.
-void append_station_list_entry(MapContext& ctx, StationListEntry row);
 std::vector<const StationListEntry*> ordered_station_list_entries(const MapContext& ctx);
 struct MapEditChange {
     std::string change_id;

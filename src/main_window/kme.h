@@ -39,6 +39,9 @@ enum class Canvas3DSceneMarkerListKind : std::uint8_t;
 struct Canvas3DPlacementDragUpdate;
 struct Canvas3DPlacementEditTarget;
 struct KvEditReportSnapshot;
+namespace repeater_linkage {
+struct Event;
+}
 
 template <typename T>
 inline void release_com(T*& pointer) {
@@ -505,6 +508,8 @@ struct TableUiCache {
 
 const std::string& table_cell(const TableRow& row, const std::string& key);
 double table_cell_number(const TableRow& row, const std::string& key);
+std::vector<repeater_linkage::Event> table_repeater_events(
+    const std::vector<TableRow>& rows);
 std::vector<std::string> section_row_values(const TableRow& row);
 std::string join_table_values(const std::vector<std::string>& values,
                               std::string_view separator);

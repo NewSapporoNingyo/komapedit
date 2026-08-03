@@ -416,11 +416,6 @@ struct TableFindRowsView {
     }
 };
 
-TableFindRowsView cached_table_find_rows(
-    const std::vector<CachedTableRow>& rows) {
-    return {&rows, nullptr, nullptr};
-}
-
 TableFindRowsView editable_table_find_rows(
     const std::vector<CachedTableRow>& rows,
     const EditableListEditState& edit,
@@ -1111,6 +1106,28 @@ double table_cell_number(const TableRow& row, const std::string& key) {
     return end == text.c_str() ? 0.0 : value;
 }
 
+std::vector<repeater_linkage::Event> table_repeater_events(
+    const std::vector<TableRow>& rows) {
+    std::vector<repeater_linkage::Event> events;
+    events.reserve(rows.size());
+    for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+        const TableRow& row = rows[row_index];
+        repeater_linkage::Event event;
+        event.source_index = row_index;
+        event.distance = table_cell_number(row, "distance");
+        event.order = table_cell_number(row, "order");
+        event.key = table_cell(row, "repeaterKey");
+        const std::string& method = table_cell(row, "method");
+        if (method == "Begin" || method == "Begin0") {
+            event.kind = repeater_linkage::EventKind::Begin;
+        } else if (method == "End") {
+            event.kind = repeater_linkage::EventKind::End;
+        }
+        events.push_back(std::move(event));
+    }
+    return events;
+}
+
 std::vector<std::string> section_row_values(const TableRow& row) {
     const double count_value = table_cell_number(row, "valueCount");
     if (!std::isfinite(count_value) || count_value <= 0.0) return {};
@@ -1514,25 +1531,9 @@ std::string format_repeater_file_path_tooltip(const std::string& begin_path, con
 }
 
 std::vector<TableRow> merged_repeater_rows(const std::vector<TableRow>& data) {
-    std::vector<repeater_linkage::Event> events;
-    events.reserve(data.size());
-    for (size_t index = 0; index < data.size(); ++index) {
-        const TableRow& row = data[index];
-        repeater_linkage::Event event;
-        event.source_index = index;
-        event.distance = table_cell_number(row, "distance");
-        event.order = table_cell_number(row, "order");
-        event.key = table_cell(row, "repeaterKey");
-        const std::string& method = table_cell(row, "method");
-        if (method == "Begin" || method == "Begin0") {
-            event.kind = repeater_linkage::EventKind::Begin;
-        } else if (method == "End") {
-            event.kind = repeater_linkage::EventKind::End;
-        }
-        events.push_back(std::move(event));
-    }
     std::vector<TableRow> merged_rows;
-    const repeater_linkage::Linkage linkage = repeater_linkage::pair_linkage(std::move(events));
+    const repeater_linkage::Linkage linkage =
+        repeater_linkage::pair_linkage(table_repeater_events(data));
     merged_rows.reserve(linkage.segments.size());
     for (const repeater_linkage::Segment& segment : linkage.segments) {
         if (segment.begin_source_index >= data.size()) continue;

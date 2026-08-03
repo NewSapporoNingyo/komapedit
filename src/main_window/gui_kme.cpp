@@ -2366,25 +2366,8 @@ struct RepeaterDeleteChain {
 
 std::optional<RepeaterDeleteChain> repeater_delete_chain_for_edit_id(
     const std::vector<TableRow>& rows, const std::string& edit_id) {
-    std::vector<repeater_linkage::Event> events;
-    events.reserve(rows.size());
-    for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
-        const TableRow& row = rows[row_index];
-        repeater_linkage::Event event;
-        event.source_index = row_index;
-        event.distance = table_cell_number(row, "distance");
-        event.order = table_cell_number(row, "order");
-        event.key = table_cell(row, "repeaterKey");
-        const std::string& method = table_cell(row, "method");
-        if (method == "Begin" || method == "Begin0") {
-            event.kind = repeater_linkage::EventKind::Begin;
-        } else if (method == "End") {
-            event.kind = repeater_linkage::EventKind::End;
-        }
-        events.push_back(std::move(event));
-    }
-
-    const repeater_linkage::Linkage linkage = repeater_linkage::pair_linkage(std::move(events));
+    const repeater_linkage::Linkage linkage =
+        repeater_linkage::pair_linkage(table_repeater_events(rows));
     for (const repeater_linkage::Segment& segment : linkage.segments) {
         if (segment.begin_source_index >= rows.size() ||
             rows[segment.begin_source_index].edit_id != edit_id ||
@@ -3025,25 +3008,8 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             }
         }
     } else if (request.row_kind == "repeater") {
-        std::vector<repeater_linkage::Event> events;
-        events.reserve(model_.repeaters.size());
-        for (size_t row_index = 0; row_index < model_.repeaters.size(); ++row_index) {
-            const TableRow& event_row = model_.repeaters[row_index];
-            repeater_linkage::Event event;
-            event.source_index = row_index;
-            event.distance = table_cell_number(event_row, "distance");
-            event.order = table_cell_number(event_row, "order");
-            event.key = table_cell(event_row, "repeaterKey");
-            const std::string& method = table_cell(event_row, "method");
-            if (method == "Begin" || method == "Begin0") {
-                event.kind = repeater_linkage::EventKind::Begin;
-            } else if (method == "End") {
-                event.kind = repeater_linkage::EventKind::End;
-            }
-            events.push_back(std::move(event));
-        }
         const std::vector<repeater_linkage::Segment> segments =
-            repeater_linkage::pair_segments(std::move(events));
+            repeater_linkage::pair_segments(table_repeater_events(model_.repeaters));
         const auto linked = std::find_if(
             segments.begin(), segments.end(), [&](const repeater_linkage::Segment& segment) {
                 return segment.begin_source_index < model_.repeaters.size() &&
