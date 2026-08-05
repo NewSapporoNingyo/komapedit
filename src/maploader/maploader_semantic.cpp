@@ -445,6 +445,23 @@ void write_draw_distance(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_speed_limit(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                       const KvSpeedLimitRow& row,
+                       const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    if (row.speed.kind == KV_VALUE_NULL) {
+        if (changed_field(change, "speed")) {
+            throw std::runtime_error(
+                "SpeedLimit.End does not have a speed field");
+        }
+        field(out, snapshot, "speed", row.speed);
+    } else {
+        changed_required_number_value(
+            out, snapshot, change, "speed", row.speed);
+    }
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
                         const KvStationListRow& row,
                         const MapEditChange* change = nullptr) {
@@ -605,6 +622,8 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "density", "red", "green", "blue"};
     } else if (target.row_kind == "drawDistance.change") {
         allowed = {"distance", "value"};
+    } else if (target.row_kind == "speedlimit") {
+        allowed = {"distance", "speed"};
     } else if (target.row_kind == "station.list") {
         allowed = {"stationKey", "stationName", "arrivalTime", "depertureTime",
                    "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
@@ -982,9 +1001,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         const KvSpeedLimitRow& row = snapshot.speed_limits[i];
         emit_element(output, full, snapshot, row.metadata, "speedlimit", "speedlimit",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
-            field(out, "distance", row.distance);
-            field(out, snapshot, "speed", row.speed);
-            field(out, "filePath", SemanticWriter::snapshot_text(snapshot, row.file_path));
+            write_speed_limit(out, snapshot, row);
         });
     }
 
@@ -1117,6 +1134,11 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("drawDistance.change target row is out of bounds");
         }
         write_draw_distance(out, snapshot, snapshot.draw_distances[target.row_index], &change);
+    } else if (target.row_kind == "speedlimit") {
+        if (target.row_index >= snapshot.speed_limit_count || !snapshot.speed_limits) {
+            throw std::runtime_error("speedlimit target row is out of bounds");
+        }
+        write_speed_limit(out, snapshot, snapshot.speed_limits[target.row_index], &change);
     } else if (target.row_kind == "station.list") {
         if (target.row_index >= snapshot.station_list_count || !snapshot.station_list) {
             throw std::runtime_error("station.list target row is out of bounds");

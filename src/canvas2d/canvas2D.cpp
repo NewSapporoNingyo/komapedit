@@ -268,7 +268,41 @@ void debug_plan_stage(const char* stage) {
 void debug_plan_stage(const char*) {}
 #endif
 
+void populate_speed_limit_marker_cache(
+    const MapModel& model,
+    std::vector<std::optional<PlanMarker>>& cache) {
+    cache.assign(model.speed_limit_rows.size(), std::nullopt);
+    if (model.own.empty()) return;
+    for (size_t row_index = 0; row_index < model.speed_limit_rows.size();
+         ++row_index) {
+        const TableRow& row = model.speed_limit_rows[row_index];
+        const double distance = table_cell_number(row, "distance");
+        const std::optional<TrackPoint> point =
+            sample_matrix_track_point(model.own, distance, true);
+        if (!point) continue;
+        PlanMarker marker;
+        marker.d = distance;
+        marker.x = point->x;
+        marker.y = point->y;
+        marker.label = table_cell(row, "speed");
+        marker.edit_id = row.edit_id;
+        marker.row_index = row_index;
+        cache[row_index] = std::move(marker);
+    }
+}
+
 } // namespace
+
+void App::rebuild_speed_limit_marker_overlay_cache() {
+    plan_data_cache_.valid = false;
+    profile_data_cache_.key.reset();
+    ++plan_data_source_revision_;
+    if (!has_model_) {
+        speed_limit_marker_cache_.clear();
+        return;
+    }
+    populate_speed_limit_marker_cache(model_, speed_limit_marker_cache_);
+}
 
 void App::rebuild_marker_overlay_cache() {
     plan_data_cache_.valid = false;
@@ -293,6 +327,7 @@ void App::rebuild_marker_overlay_cache() {
     cab_illuminance_marker_cache_.clear();
     fog_marker_cache_.clear();
     draw_distance_marker_cache_.clear();
+    speed_limit_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
 
     std::map<std::string, TrackSource> track_sources;
@@ -580,6 +615,7 @@ void App::rebuild_marker_overlay_cache() {
     build_standard_markers(model_.cab_illuminance, cab_illuminance_marker_cache_, "");
     build_standard_markers(model_.fogs, fog_marker_cache_, "");
     build_standard_markers(model_.draw_distances, draw_distance_marker_cache_, "value");
+    populate_speed_limit_marker_cache(model_, speed_limit_marker_cache_);
     auto build_repeater_segment = [&](TrackSource source, double start, double end,
                                       double lateral, double forward) -> PlanRepeaterSegment {
         PlanRepeaterSegment segment;
@@ -902,7 +938,13 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         p.y = model_.own.at(idx, 2);
         p.theta = model_.own.at(idx, 4);
         p = rotate_point(p);
-        out.speedlimits.push_back({p.x, p.y, p.theta, s.has_speed, s.speed});
+        const TableRow* source = s.row_index < model_.speed_limit_rows.size()
+            ? &model_.speed_limit_rows[s.row_index]
+            : nullptr;
+        out.speedlimits.push_back({s.distance, p.x, p.y, p.theta,
+                                   s.has_speed, s.speed,
+                                   source ? source->edit_id : std::string{},
+                                   s.row_index});
     }
 
     auto append_marker_bounds = [&](double x, double y) {
@@ -2264,6 +2306,8 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.fog_markers, hit_transform);
     std::optional<MarkerHit> hovered_draw_distance_hit =
         nearest_marker_hit(data.draw_distance_markers, hit_transform);
+    std::optional<MarkerHit> hovered_speed_limit_hit =
+        nearest_marker_hit(data.speedlimits, hit_transform, !show_speedlimits_);
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_station_row = hovered_station_hit
         ? std::optional<size_t>(hovered_station_hit->row_index)
@@ -2322,6 +2366,9 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<size_t> hovered_draw_distance_row = hovered_draw_distance_hit
         ? std::optional<size_t>(hovered_draw_distance_hit->row_index)
         : std::nullopt;
+    std::optional<size_t> hovered_speed_limit_row = hovered_speed_limit_hit
+        ? std::optional<size_t>(hovered_speed_limit_hit->row_index)
+        : std::nullopt;
 
     auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
         return hit && (!other || hit->dist_sq <= other->dist_sq);
@@ -2374,6 +2421,7 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_joint_noise_hit, PlanMarkerKind::JointNoise);
         note(hovered_fog_hit, PlanMarkerKind::Fog);
         note(hovered_draw_distance_hit, PlanMarkerKind::DrawDistance);
+        note(hovered_speed_limit_hit, PlanMarkerKind::SpeedLimit);
         if (best) plan_marker_selection_ = *best;
     };
     auto section_is_nearest_context_hit = [&]() {
@@ -2397,7 +2445,8 @@ void App::render_plan_canvas(ImVec2 size) {
                no_farther_than(hovered_adhesion_hit) &&
                no_farther_than(hovered_cab_illuminance_hit) &&
                no_farther_than(hovered_fog_hit) &&
-               no_farther_than(hovered_draw_distance_hit);
+               no_farther_than(hovered_draw_distance_hit) &&
+               no_farther_than(hovered_speed_limit_hit);
     };
     ImVec2 touch_tap_pos;
     if (touch_input::consume_tap_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), &touch_tap_pos)) {
@@ -2414,17 +2463,27 @@ void App::render_plan_canvas(ImVec2 size) {
         if (hovered_station_hit &&
             closer_than_all_marker_context_hits(hovered_station_hit) &&
             closer_or_equal(hovered_station_hit, hovered_draw_distance_hit) &&
+            closer_or_equal(hovered_station_hit, hovered_speed_limit_hit) &&
             closer_or_equal(hovered_station_hit, hovered_other_train_stop_hit)) {
             plan_station_popup_row_ = static_cast<int>(hovered_station_hit->row_index);
             ImGui::OpenPopup("plan_station_marker_context");
         } else if (hovered_draw_distance_hit &&
             closer_than_all_marker_context_hits(hovered_draw_distance_hit) &&
+            closer_or_equal(hovered_draw_distance_hit, hovered_speed_limit_hit) &&
             closer_or_equal(hovered_draw_distance_hit, hovered_other_train_stop_hit)) {
             plan_draw_distance_popup_row_ =
                 static_cast<int>(hovered_draw_distance_hit->row_index);
             ImGui::OpenPopup("plan_draw_distance_marker_context");
+        } else if (hovered_speed_limit_hit &&
+            closer_than_all_marker_context_hits(hovered_speed_limit_hit) &&
+            closer_or_equal(hovered_speed_limit_hit, hovered_draw_distance_hit) &&
+            closer_or_equal(hovered_speed_limit_hit, hovered_other_train_stop_hit)) {
+            plan_speed_limit_popup_row_ =
+                static_cast<int>(hovered_speed_limit_hit->row_index);
+            ImGui::OpenPopup("plan_speed_limit_marker_context");
         } else if (hovered_other_train_stop_hit &&
-            closer_than_all_marker_context_hits(hovered_other_train_stop_hit)) {
+            closer_than_all_marker_context_hits(hovered_other_train_stop_hit) &&
+            closer_or_equal(hovered_other_train_stop_hit, hovered_speed_limit_hit)) {
             plan_other_train_stop_popup_row_ = static_cast<int>(hovered_other_train_stop_hit->row_index);
             ImGui::OpenPopup("plan_other_train_stop_marker_context");
         } else if (section_is_nearest_context_hit()) {
@@ -2827,6 +2886,15 @@ void App::render_plan_canvas(ImVec2 size) {
     if (show_speedlimits_) {
         for (const auto& sp : data.speedlimits) {
             ImVec2 p = transform.plan_to_screen(sp.x, sp.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            const bool marker_hovered = hovered_speed_limit_row &&
+                sp.row_index == *hovered_speed_limit_row;
+            const bool marker_active = marker_emphasized(
+                PlanMarkerKind::SpeedLimit, sp.row_index, marker_hovered);
+            const ImU32 marker_color =
+                map_marker_theme_color_u32(MapMarkerVisualKind::SpeedLimit);
+            draw_selected_marker_ring(
+                p, PlanMarkerKind::SpeedLimit, sp.row_index, marker_color);
             double wx = sp.x - std::sin(sp.theta);
             double wy = sp.y + std::cos(sp.theta);
             ImVec2 q = transform.plan_to_screen(wx, wy);
@@ -2835,12 +2903,13 @@ void App::render_plan_canvas(ImVec2 size) {
             const float rotation = std::atan2(d.y / len, d.x / len);
             draw_map_marker_icon(
                 draw, MapMarkerVisualKind::SpeedLimit, p,
-                8.0f * marker_size_scale / 0.88f, rotation);
+                8.0f * marker_size_scale / 0.88f *
+                    (marker_active ? 1.2f : 1.0f), rotation);
             if (!overview_marker_lod) {
                 std::string label = sp.has_speed ? format_double(sp.speed, 0) : "x";
                 draw->AddText(
                     ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15),
-                    map_marker_theme_color_u32(MapMarkerVisualKind::SpeedLimit),
+                    marker_color,
                     label.c_str());
             }
         }
@@ -3248,6 +3317,10 @@ void App::render_plan_canvas(ImVec2 size) {
         "plan_draw_distance_marker_context", plan_draw_distance_popup_row_,
         draw_distance_marker_cache_, "menu.locate_in_draw_distance_list",
         "drawDistance.change", [&](size_t row) { locate_draw_distance_row_in_list(row); });
+    render_table_marker_context(
+        "plan_speed_limit_marker_context", plan_speed_limit_popup_row_,
+        speed_limit_marker_cache_, "menu.locate_in_speed_limit_list",
+        "speedlimit", [&](size_t row) { locate_speed_limit_row_in_list(row); });
     ImGui::EndChild();
     debug_plan_stage("end");
 }

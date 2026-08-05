@@ -770,6 +770,31 @@ void bind_station_position_edit_ids(MapModel& model) {
     }
 }
 
+void rebuild_speed_limit_runtime_cache(MapModel& model) {
+    model.speedlimits.clear();
+    model.speedlimits.reserve(model.speed_limit_rows.size());
+    for (size_t row_index = 0; row_index < model.speed_limit_rows.size();
+         ++row_index) {
+        const TableRow& row = model.speed_limit_rows[row_index];
+        SpeedLimit speed;
+        speed.distance = table_cell_number(row, "distance");
+        speed.has_speed = ascii_lower(table_cell(row, "method")) == "begin";
+        if (speed.has_speed) speed.speed = table_cell_number(row, "speed");
+        speed.order = static_cast<int>(table_cell_number(row, "order"));
+        speed.row_index = row_index;
+        model.speedlimits.push_back(speed);
+    }
+    std::stable_sort(
+        model.speedlimits.begin(), model.speedlimits.end(),
+        [](const SpeedLimit& left, const SpeedLimit& right) {
+            if (left.distance != right.distance) {
+                return left.distance < right.distance;
+            }
+            if (left.order != right.order) return left.order < right.order;
+            return left.row_index < right.row_index;
+        });
+}
+
 MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                               const std::string& path,
                               double snapshot_call_seconds) {
@@ -900,18 +925,23 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         }
         model.own_events.push_back(std::move(event));
     }
-    model.speedlimits.reserve(static_cast<size_t>(snapshot.speed_limit_count));
+    model.speed_limit_rows.reserve(
+        static_cast<size_t>(snapshot.speed_limit_count));
     for (std::uint64_t i = 0; i < snapshot.speed_limit_count; ++i) {
         const KvSpeedLimitRow& input = snapshot.speed_limits[i];
-        SpeedLimit speed;
-        speed.distance = input.distance;
-        if (input.speed.kind == KV_VALUE_NUMBER) {
-            speed.has_speed = true;
-            speed.speed = input.speed.number_value;
-        }
-        speed.order = input.order;
-        model.speedlimits.push_back(speed);
+        TableRow row;
+        row.cells["distance"] = format_double(input.distance, 6);
+        row.cells["method"] =
+            input.speed.kind == KV_VALUE_NUMBER ? "Begin" : "End";
+        row.cells["speed"] = input.speed.kind == KV_VALUE_NUMBER
+            ? map_snapshot_value_text(snapshot, input.speed)
+            : std::string{};
+        row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        row.cells["order"] = std::to_string(input.order);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.speed_limit_rows.push_back(std::move(row));
     }
+    rebuild_speed_limit_runtime_cache(model);
     for (std::uint64_t i = 0; i < snapshot.station_name_count; ++i) {
         const KvStationNameRow& input = snapshot.station_names[i];
         model.station_names[map_snapshot_string(snapshot, input.key)] =
@@ -1738,7 +1768,9 @@ bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edi
         table_row_count_matches("cabIlluminance.change", current.cab_illuminance, edit_model.cab_illuminance, error) &&
         table_row_count_matches("fog.change", current.fogs, edit_model.fogs, error) &&
         table_row_count_matches("drawDistance.change", current.draw_distances,
-                                edit_model.draw_distances, error);
+                                edit_model.draw_distances, error) &&
+        table_row_count_matches("speedlimit", current.speed_limit_rows,
+                                edit_model.speed_limit_rows, error);
 }
 
 void merge_table_row_edit_metadata(std::vector<TableRow>& current,
@@ -1781,6 +1813,8 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     merge_table_row_edit_metadata(current.cab_illuminance, edit_model.cab_illuminance);
     merge_table_row_edit_metadata(current.fogs, edit_model.fogs);
     merge_table_row_edit_metadata(current.draw_distances, edit_model.draw_distances);
+    merge_table_row_edit_metadata(current.speed_limit_rows,
+                                  edit_model.speed_limit_rows);
     bind_station_position_edit_ids(current);
 }
 
@@ -2010,6 +2044,7 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "cabIlluminance.change") return &model.cab_illuminance;
     if (row_kind == "fog.change") return &model.fogs;
     if (row_kind == "drawDistance.change") return &model.draw_distances;
+    if (row_kind == "speedlimit") return &model.speed_limit_rows;
     return nullptr;
 }
 
@@ -2253,22 +2288,25 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     if (row_kind == "station.put" || row_kind == "station.list") {
         normalize_station_preview_rows(model_);
     }
+    if (row_kind == "speedlimit") rebuild_speed_limit_runtime_cache(model_);
     Canvas3DSceneMapRefreshOptions map_refresh;
     map_refresh.route_stations = row_kind == "station.put" || row_kind == "station.list";
-    static constexpr std::array<const char*, 14> k_marker_row_kinds = {
+    static constexpr std::array<const char*, 15> k_marker_row_kinds = {
         "station.put", "station.list", "irregularity.change", "beacon.put",
         "mapSound.play", "mapSound3D.put", "rollingNoise.change",
         "flangeNoise.change", "jointNoise.play", "background.change",
         "adhesion.change", "cabIlluminance.change", "fog.change",
-        "drawDistance.change",
+        "drawDistance.change", "speedlimit",
     };
     map_refresh.markers = std::any_of(
         k_marker_row_kinds.begin(), k_marker_row_kinds.end(),
         [&](const char* candidate) { return row_kind == candidate; });
     map_refresh.fog = row_kind == "fog.change";
     map_refresh.draw_distances = row_kind == "drawDistance.change";
+    map_refresh.speed_limits = row_kind == "speedlimit";
     if ((map_refresh.route_stations || map_refresh.markers || map_refresh.fog ||
-         map_refresh.draw_distances) && scene_preview_started_ && scene_preview_canvas_) {
+         map_refresh.draw_distances || map_refresh.speed_limits) &&
+        scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_map_content(model_, map_refresh, error)) {
             add_log("[warn]gui_kme.cpp: 3D scene marker refresh failed, scheduling full rebuild: " +
@@ -2278,8 +2316,13 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
             scene_preview_preserve_camera_on_rebuild_ = true;
         }
     }
-    invalidate_table_cache();
-    rebuild_marker_overlay_cache();
+    if (row_kind == "speedlimit") {
+        refresh_speed_limit_table_cache();
+        rebuild_speed_limit_marker_overlay_cache();
+    } else {
+        invalidate_table_cache();
+        rebuild_marker_overlay_cache();
+    }
     sync_marker_visibility_sizes();
 
     bool placement_instance_synced = false;
@@ -2346,7 +2389,7 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "flangeNoise.change" || row_kind == "jointNoise.play" ||
         row_kind == "background.change" || row_kind == "adhesion.change" ||
         row_kind == "cabIlluminance.change" || row_kind == "fog.change" ||
-        row_kind == "drawDistance.change";
+        row_kind == "drawDistance.change" || row_kind == "speedlimit";
 }
 
 struct RepeaterDeleteChain {
@@ -2620,7 +2663,7 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 17> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 18> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
@@ -2638,6 +2681,7 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
         "cabIlluminance.change",
         "fog.change",
         "drawDistance.change",
+        "speedlimit",
     };
     return std::any_of(k_distance_row_kinds.begin(), k_distance_row_kinds.end(),
                        [&](const char* value) { return row_kind == value; });
@@ -2991,6 +3035,11 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     } else if (request.row_kind == "drawDistance.change") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("value", "value", MapElementNumericConstraint::Finite, true);
+    } else if (request.row_kind == "speedlimit") {
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        if (ascii_lower(table_cell(*row, "method")) == "begin") {
+            add_row_field("speed", "speed", MapElementNumericConstraint::Finite, true);
+        }
     } else if (request.row_kind == "signal.put") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("signalAspectKey", "signalAspectKey",
@@ -4323,14 +4372,14 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 22> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 23> k_committed_row_kinds = {
         "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
         "signal.aspect", "irregularity.change",
         "beacon.put", "mapSound.play", "mapSound3D.put",
         "rollingNoise.change", "flangeNoise.change", "jointNoise.play",
         "background.change", "adhesion.change", "cabIlluminance.change",
-        "fog.change", "drawDistance.change",
+        "fog.change", "drawDistance.change", "speedlimit",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -5614,6 +5663,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
     visibility.show_fogs_window = show_fogs_window_;
     visibility.show_draw_distances_window = show_draw_distances_window_;
+    visibility.show_speed_limits_window = show_speed_limits_window_;
     visibility.show_file_structure_window = show_file_structure_window_;
     visibility.show_console_window = show_console_window_;
     visibility.show_plots_window = show_plots_window_;
@@ -5648,6 +5698,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
     show_fogs_window_ = visibility.show_fogs_window;
     show_draw_distances_window_ = visibility.show_draw_distances_window;
+    show_speed_limits_window_ = visibility.show_speed_limits_window;
     show_file_structure_window_ = visibility.show_file_structure_window;
     show_console_window_ = visibility.show_console_window;
     show_plots_window_ = visibility.show_plots_window;
@@ -5967,7 +6018,7 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 31> k_map_info_menu_entries = {{
+        static constexpr std::array<MapInfoMenuEntry, 32> k_map_info_menu_entries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
@@ -5980,6 +6031,7 @@ void App::render_menu() {
             {"menu.map_info.othertracks", &App::show_othertracks_window_},
             {"menu.map_info.irregularities", &App::show_irregularities_window_},
             {"menu.map_info.adhesions", &App::show_adhesions_window_},
+            {"menu.map_info.speed_limits", &App::show_speed_limits_window_},
             {"aux.signal", nullptr},
             {"menu.map_info.signal_aspects", &App::show_signal_aspects_window_},
             {"menu.map_info.signals", &App::show_signals_window_},
@@ -7542,6 +7594,8 @@ void App::render_scene_preview_window() {
                               tr("menu.locate_in_fog_list"));
         set_marker_list_label(Canvas3DSceneMarkerListKind::DrawDistance,
                               tr("menu.locate_in_draw_distance_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::SpeedLimit,
+                              tr("menu.locate_in_speed_limit_list"));
         scene_ui_text.jump_to_repeater_start_position = tr("menu.jump_to_repeater_start_position").c_str();
         scene_ui_text.jump_to_repeater_end_or_change_position =
             tr("menu.jump_to_repeater_end_or_change_position").c_str();
@@ -7792,6 +7846,7 @@ void App::render() {
     render_cab_illuminance_window();
     render_fogs_window();
     render_draw_distances_window();
+    render_speed_limits_window();
     process_pending_element_delete();
     process_pending_element_inspector();
     render_element_inspector();

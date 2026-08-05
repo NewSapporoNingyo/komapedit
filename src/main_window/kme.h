@@ -256,6 +256,7 @@ struct SpeedLimit {
     bool has_speed = false;
     double speed = 0.0;
     int order = 0;
+    size_t row_index = 0;
 };
 
 enum class ResourceListKind : std::uint8_t {
@@ -485,6 +486,7 @@ struct TableUiCache {
     std::vector<CachedTableRow> cab_illuminance_rows;
     std::vector<CachedTableRow> fog_rows;
     std::vector<CachedTableRow> draw_distance_rows;
+    std::vector<CachedTableRow> speed_limit_rows;
     std::vector<CachedTableRow> sound_list_rows;
     std::vector<CachedTableRow> sound_3d_list_rows;
     float structure_file_path_width = 200.0f;
@@ -530,6 +532,8 @@ struct TableUiCache {
     float fog_file_path_width = 200.0f;
     float draw_distance_distance_width = 110.0f;
     float draw_distance_file_path_width = 200.0f;
+    float speed_limit_distance_width = 110.0f;
+    float speed_limit_file_path_width = 200.0f;
 };
 
 const std::string& table_cell(const TableRow& row, const std::string& key);
@@ -557,6 +561,7 @@ struct MapModel {
     std::map<std::string, std::string> station_names;
     std::vector<TrackEvent> own_events;
     std::vector<SpeedLimit> speedlimits;
+    std::vector<TableRow> speed_limit_rows;
     std::vector<double> controlpoints;
     std::vector<TableRow> station_list_rows;
     std::vector<TableRow> station_definition_rows;
@@ -677,11 +682,14 @@ struct PlanStation {
 };
 
 struct PlanSpeed {
+    double d = 0.0;
     double x = 0.0;
     double y = 0.0;
     double theta = 0.0;
     bool has_speed = false;
     double speed = 0.0;
+    std::string edit_id;
+    size_t row_index = 0;
 };
 
 struct PlanMarker {
@@ -742,7 +750,8 @@ enum class PlanMarkerKind {
     Adhesion,
     CabIlluminance,
     Fog,
-    DrawDistance
+    DrawDistance,
+    SpeedLimit
 };
 
 struct PlanMarkerSelection {
@@ -906,6 +915,7 @@ struct WindowVisibilitySettings {
     bool show_cab_illuminance_window = false;
     bool show_fogs_window = false;
     bool show_draw_distances_window = false;
+    bool show_speed_limits_window = false;
     bool show_file_structure_window = false;
     bool show_console_window = true;
     bool show_plots_window = true;
@@ -938,6 +948,7 @@ struct WindowVisibilitySettings {
             show_cab_illuminance_window == other.show_cab_illuminance_window &&
             show_fogs_window == other.show_fogs_window &&
             show_draw_distances_window == other.show_draw_distances_window &&
+            show_speed_limits_window == other.show_speed_limits_window &&
             show_file_structure_window == other.show_file_structure_window &&
             show_console_window == other.show_console_window &&
             show_plots_window == other.show_plots_window &&
@@ -1622,6 +1633,7 @@ private:
     bool show_cab_illuminance_window_ = false;
     bool show_fogs_window_ = false;
     bool show_draw_distances_window_ = false;
+    bool show_speed_limits_window_ = false;
     bool show_file_structure_window_ = false;
     bool show_console_window_ = true;
     bool show_plots_window_ = true;
@@ -1646,6 +1658,7 @@ private:
     bool focus_cab_illuminance_next_ = false;
     bool focus_fogs_next_ = false;
     bool focus_draw_distances_next_ = false;
+    bool focus_speed_limits_next_ = false;
     bool focus_file_structure_next_ = false;
     bool focus_model_preview_next_ = false;
     bool focus_scene_preview_next_ = false;
@@ -1700,6 +1713,7 @@ private:
     std::vector<std::optional<PlanCabIlluminanceMarker>> cab_illuminance_marker_cache_;
     std::vector<std::optional<PlanFogMarker>> fog_marker_cache_;
     std::vector<std::optional<PlanDrawDistanceMarker>> draw_distance_marker_cache_;
+    std::vector<std::optional<PlanMarker>> speed_limit_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
     std::vector<unsigned char> signal_row_visible_;
@@ -1781,6 +1795,8 @@ private:
     int fog_list_highlight_row_ = -1;
     int draw_distance_list_scroll_row_ = -1;
     int draw_distance_list_highlight_row_ = -1;
+    int speed_limit_list_scroll_row_ = -1;
+    int speed_limit_list_highlight_row_ = -1;
     int plan_structure_popup_row_ = -1;
     int plan_repeater_popup_row_ = -1;
     int plan_station_popup_row_ = -1;
@@ -1799,6 +1815,7 @@ private:
     int plan_cab_illuminance_popup_row_ = -1;
     int plan_fog_popup_row_ = -1;
     int plan_draw_distance_popup_row_ = -1;
+    int plan_speed_limit_popup_row_ = -1;
     PlanMarkerSelection plan_marker_selection_;
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;
@@ -2002,6 +2019,7 @@ private:
     void render_cab_illuminance_window();
     void render_fogs_window();
     void render_draw_distances_window();
+    void render_speed_limits_window();
     void render_file_structure_window();
     void render_source_file_context_menu(const char* popup_id,
                                          const std::string& file_path);
@@ -2051,6 +2069,7 @@ private:
     void save_runtime_settings_if_changed();
     void invalidate_table_cache();
     void ensure_table_cache();
+    void refresh_speed_limit_table_cache();
     void reset_structure_model_find_results();
     void run_structure_model_find();
     void run_unused_structure_model_search();
@@ -2070,6 +2089,7 @@ private:
     void step_sound_file_find(bool is_3d, int delta);
     std::string sound_file_find_status_text(bool is_3d) const;
     void rebuild_marker_overlay_cache();
+    void rebuild_speed_limit_marker_overlay_cache();
     void reset_marker_visibility();
     void sync_marker_visibility_sizes();
     void locate_structure_row_on_plan(size_t row_index);
@@ -2116,6 +2136,8 @@ private:
     void locate_fog_row_in_list(size_t row_index);
     void locate_draw_distance_row_on_plan(size_t row_index);
     void locate_draw_distance_row_in_list(size_t row_index);
+    void locate_speed_limit_row_on_plan(size_t row_index);
+    void locate_speed_limit_row_in_list(size_t row_index);
     void locate_scene_marker_row_in_list(Canvas3DSceneMarkerListKind list_kind,
                                          size_t row_index);
     void locate_scene_marker_row_in_scene_preview(Canvas3DSceneMarkerListKind list_kind,

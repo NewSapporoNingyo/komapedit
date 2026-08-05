@@ -73,6 +73,7 @@ enum class Canvas3DSceneMarkerListKind : std::uint8_t {
     CabIlluminance,
     Fog,
     DrawDistance,
+    SpeedLimit,
     Count,
 };
 
@@ -311,6 +312,7 @@ struct Canvas3DSceneMapRefreshOptions {
     bool markers = false;
     bool fog = false;
     bool draw_distances = false;
+    bool speed_limits = false;
 };
 
 struct Canvas3DSceneUiText {

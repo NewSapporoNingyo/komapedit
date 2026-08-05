@@ -1164,6 +1164,19 @@ std::string build_draw_distance_statement(const MapEditChange& change,
         numeric_field(change, "value", row.value, raw_arg_at(args, 0)) + ");";
 }
 
+std::string build_speed_limit_statement(const MapEditChange& change,
+                                        const ParsedStatement& statement,
+                                        const SpeedLimitEvent& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    if (row.speed.is_null()) {
+        throw std::runtime_error("SpeedLimit.End does not have a speed field");
+    }
+    const std::vector<std::string> args =
+        parse_bve_argument_fields(statement.raw_arguments);
+    return "SpeedLimit.Begin(" + required_numeric_value_field(
+        change, "speed", row.speed, raw_arg_at(args, 0)) + ");";
+}
+
 template <typename Row, auto Builder>
 std::string build_simple_statement_adapter(const MapEditChange& change,
                                            const ParsedStatement& statement,
@@ -1418,6 +1431,7 @@ int count_elements_for_statement(const MapContext& ctx, size_t statement_index) 
     for (const auto& row : ctx.cab_illuminance) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.fogs) count_statement_ref(row.edit_ref, statement_index, count);
     for (const auto& row : ctx.draw_distances) count_statement_ref(row.edit_ref, statement_index, count);
+    for (const auto& row : ctx.speedlimits) count_statement_ref(row.edit_ref, statement_index, count);
     return count;
 }
 
@@ -1581,7 +1595,9 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
         find_simple_target<decltype(ctx.fogs), build_fog_statement>(
             ctx, ctx.fogs, "fog.change", edit_id, target) ||
         find_simple_target<decltype(ctx.draw_distances), build_draw_distance_statement>(
-            ctx, ctx.draw_distances, "drawDistance.change", edit_id, target)) {
+            ctx, ctx.draw_distances, "drawDistance.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.speedlimits), build_speed_limit_statement>(
+            ctx, ctx.speedlimits, "speedlimit", edit_id, target)) {
         return target;
     }
     return target;
@@ -2987,6 +3003,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->cab_illuminance, "cabIlluminance.change");
         collect_candidate_rows(candidate->fogs, "fog.change");
         collect_candidate_rows(candidate->draw_distances, "drawDistance.change");
+        collect_candidate_rows(candidate->speedlimits, "speedlimit");
     } catch (const std::exception& e) {
         report.blocking_errors.push_back(
             std::string("failed to resolve edited target source provenance: ") + e.what());
@@ -4413,6 +4430,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "cabIlluminance.change", ctx.cab_illuminance);
     append_committed_rows(ctx, report, "fog.change", ctx.fogs);
     append_committed_rows(ctx, report, "drawDistance.change", ctx.draw_distances);
+    append_committed_rows(ctx, report, "speedlimit", ctx.speedlimits);
     size_t sound_index = 0;
     size_t sound_3d_index = 0;
     for (const SoundListEntry& row : ctx.sound_list) {

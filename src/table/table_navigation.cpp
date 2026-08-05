@@ -51,6 +51,8 @@ void App::invalidate_table_cache() {
     fog_list_highlight_row_ = -1;
     draw_distance_list_scroll_row_ = -1;
     draw_distance_list_highlight_row_ = -1;
+    speed_limit_list_scroll_row_ = -1;
+    speed_limit_list_highlight_row_ = -1;
     plan_structure_popup_row_ = -1;
     plan_repeater_popup_row_ = -1;
     plan_station_popup_row_ = -1;
@@ -69,6 +71,7 @@ void App::invalidate_table_cache() {
     plan_cab_illuminance_popup_row_ = -1;
     plan_fog_popup_row_ = -1;
     plan_draw_distance_popup_row_ = -1;
+    plan_speed_limit_popup_row_ = -1;
     plan_marker_selection_.clear();
 }
 
@@ -346,6 +349,18 @@ void App::locate_draw_distance_row_in_list(size_t row_index) {
                                    draw_distance_list_highlight_row_);
 }
 
+void App::locate_speed_limit_row_on_plan(size_t row_index) {
+    locate_standard_marker_on_plan(
+        speed_limit_marker_cache_, row_index, show_speedlimits_);
+}
+
+void App::locate_speed_limit_row_in_list(size_t row_index) {
+    locate_standard_marker_in_list(speed_limit_marker_cache_, row_index,
+                                   show_speed_limits_window_, focus_speed_limits_next_,
+                                   speed_limit_list_scroll_row_,
+                                   speed_limit_list_highlight_row_);
+}
+
 void App::locate_scene_marker_row_in_list(
     Canvas3DSceneMarkerListKind list_kind, size_t row_index) {
     switch (list_kind) {
@@ -387,6 +402,9 @@ void App::locate_scene_marker_row_in_list(
         return;
     case Canvas3DSceneMarkerListKind::DrawDistance:
         locate_draw_distance_row_in_list(row_index);
+        return;
+    case Canvas3DSceneMarkerListKind::SpeedLimit:
+        locate_speed_limit_row_in_list(row_index);
         return;
     case Canvas3DSceneMarkerListKind::None:
     case Canvas3DSceneMarkerListKind::Count:
@@ -437,6 +455,9 @@ void App::locate_scene_marker_row_in_scene_preview(
         break;
     case Canvas3DSceneMarkerListKind::DrawDistance:
         show_draw_distance_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::SpeedLimit:
+        show_speedlimits_ = true;
         break;
     case Canvas3DSceneMarkerListKind::None:
     case Canvas3DSceneMarkerListKind::Count:

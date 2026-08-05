@@ -1350,9 +1350,9 @@ std::string canvas3d_scene_selected_signal_speeds(
     return join_table_values(selected, " | ");
 }
 
-void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& model) {
-    Canvas3DSceneRouteInfo route_info;
-    populate_canvas3d_scene_route_values(route_info, model);
+void populate_canvas3d_scene_speed_limits(Canvas3DSceneRouteInfo& route_info,
+                                          const MapModel& model) {
+    route_info.speed_limit_events.clear();
     route_info.speed_limit_events.reserve(model.speedlimits.size());
     for (const SpeedLimit& input : model.speedlimits) {
         route_info.speed_limit_events.push_back(
@@ -1365,6 +1365,12 @@ void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& mo
             if (left.distance != right.distance) return left.distance < right.distance;
             return left.order < right.order;
         });
+}
+
+void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& model) {
+    Canvas3DSceneRouteInfo route_info;
+    populate_canvas3d_scene_route_values(route_info, model);
+    populate_canvas3d_scene_speed_limits(route_info, model);
     enum class SectionSignalStateKind { SpeedLimits, SectionBegin };
     struct SectionSignalStateSource {
         double distance = 0.0;
@@ -1560,16 +1566,24 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     }
 
     for (const SpeedLimit& speed : model.speedlimits) {
+        const TableRow* source = speed.row_index < model.speed_limit_rows.size()
+            ? &model.speed_limit_rows[speed.row_index]
+            : nullptr;
+        const std::string edit_id = source ? source->edit_id : std::string{};
         char value[64] = {};
         if (speed.has_speed && std::isfinite(speed.speed)) {
             format_scene_route_number(value, sizeof(value), speed.speed);
             append_marker(
                 MapMarkerVisualKind::SpeedLimit, speed.distance, value,
-                MapMarkerIconVariant::SpeedLimitBegin);
+                MapMarkerIconVariant::SpeedLimitBegin,
+                Canvas3DSceneMarkerListKind::SpeedLimit, "speedlimit",
+                speed.row_index, edit_id);
         } else {
             append_marker(
                 MapMarkerVisualKind::SpeedLimit, speed.distance, {},
-                MapMarkerIconVariant::SpeedLimitEnd);
+                MapMarkerIconVariant::SpeedLimitEnd,
+                Canvas3DSceneMarkerListKind::SpeedLimit, "speedlimit",
+                speed.row_index, edit_id);
         }
     }
 
@@ -2944,6 +2958,9 @@ struct Canvas3D::Impl {
         if (options.fog) populate_canvas3d_scene_fog(scene_data, model);
         if (options.draw_distances) {
             populate_canvas3d_scene_draw_distances(scene_data, model);
+        }
+        if (options.speed_limits) {
+            populate_canvas3d_scene_speed_limits(scene_data.route_info, model);
         }
         if (options.markers) {
             populate_canvas3d_scene_markers(scene_data, model);

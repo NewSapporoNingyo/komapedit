@@ -371,6 +371,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
     out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
     out << "show_draw_distances_window=" << bool_to_string(settings.window_visibility.show_draw_distances_window) << "\n";
+    out << "show_speed_limits_window=" << bool_to_string(settings.window_visibility.show_speed_limits_window) << "\n";
     out << "show_file_structure_window=" << bool_to_string(settings.window_visibility.show_file_structure_window) << "\n";
     out << "show_console_window=" << bool_to_string(settings.window_visibility.show_console_window) << "\n";
     out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
@@ -581,6 +582,9 @@ UserSettings load_user_settings() {
         } else if (key == "show_draw_distances_window") {
             settings.window_visibility.show_draw_distances_window =
                 parse_bool(value, settings.window_visibility.show_draw_distances_window);
+        } else if (key == "show_speed_limits_window") {
+            settings.window_visibility.show_speed_limits_window =
+                parse_bool(value, settings.window_visibility.show_speed_limits_window);
         } else if (key == "show_file_structure_window" || key == "show_file_structure_diagram_window") {
             settings.window_visibility.show_file_structure_window =
                 parse_bool(value, settings.window_visibility.show_file_structure_window);

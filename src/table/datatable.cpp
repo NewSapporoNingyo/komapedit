@@ -1121,6 +1121,16 @@ static const TableColumnDef k_draw_distance_columns[] = {
 constexpr int k_draw_distance_distance_column = 1;
 constexpr int k_draw_distance_file_path_column = IM_ARRAYSIZE(k_draw_distance_columns) - 1;
 
+static const TableColumnDef k_speed_limit_columns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"method", "Begin/End", 80.0f},
+    {"speed", "speed", 70.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int k_speed_limit_distance_column = 1;
+constexpr int k_speed_limit_file_path_column = IM_ARRAYSIZE(k_speed_limit_columns) - 1;
+
 static const TableColumnDef k_station_position_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"dist", "dist", 70.0f},
@@ -2090,6 +2100,11 @@ void App::ensure_table_cache() {
                              cache.draw_distance_rows,
                              cache.draw_distance_distance_width,
                              cache.draw_distance_file_path_width);
+    append_change_point_rows(model_.speed_limit_rows, k_speed_limit_columns,
+                             k_speed_limit_distance_column, k_speed_limit_file_path_column,
+                             cache.speed_limit_rows,
+                             cache.speed_limit_distance_width,
+                             cache.speed_limit_file_path_width);
 
     cache.background_distance_width = 0.0f;
     expand_width_for_text(cache.background_distance_width, k_background_columns[k_background_distance_column].header);
@@ -2180,6 +2195,22 @@ void App::ensure_table_cache() {
     }
 
     table_cache_ = std::move(cache);
+}
+
+void App::refresh_speed_limit_table_cache() {
+    if (!table_cache_.valid) return;
+    table_cache_.speed_limit_rows.clear();
+    table_cache_.speed_limit_distance_width = 110.0f;
+    table_cache_.speed_limit_file_path_width = 200.0f;
+    append_change_point_rows(model_.speed_limit_rows, k_speed_limit_columns,
+                             k_speed_limit_distance_column,
+                             k_speed_limit_file_path_column,
+                             table_cache_.speed_limit_rows,
+                             table_cache_.speed_limit_distance_width,
+                             table_cache_.speed_limit_file_path_width);
+    speed_limit_list_scroll_row_ = -1;
+    speed_limit_list_highlight_row_ = -1;
+    plan_speed_limit_popup_row_ = -1;
 }
 
 void App::reset_structure_model_find_results() {
@@ -5113,5 +5144,57 @@ void App::render_draw_distances_window() {
             request_element_delete(model_.draw_distances[row].edit_id, "drawDistance.change");
         });
     focus_draw_distances_next_ = false;
+    ImGui::End();
+}
+
+void App::render_speed_limits_window() {
+    if (!show_speed_limits_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_speed_limits_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.speed_limits") + "###SpeedLimits";
+    if (!ImGui::Begin(title.c_str(), &show_speed_limits_window_)) {
+        focus_speed_limits_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_speed_limits_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    render_change_point_table(
+        "speed_limits", k_speed_limit_columns,
+        k_speed_limit_distance_column, k_speed_limit_file_path_column,
+        table_cache_.speed_limit_rows,
+        table_cache_.speed_limit_distance_width,
+        table_cache_.speed_limit_file_path_width,
+        tr("column.file_name"), tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"), tr("menu.open_in_explorer"),
+        speed_limit_list_scroll_row_, speed_limit_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this](size_t row) {
+            return row < speed_limit_marker_cache_.size() &&
+                speed_limit_marker_cache_[row].has_value();
+        },
+        [this](size_t row) { locate_speed_limit_row_on_plan(row); },
+        can_locate_scene_preview_row(),
+        [this](size_t row) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::SpeedLimit, row);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.speed_limit_rows.size() &&
+                !model_.speed_limit_rows[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.speed_limit_rows[row].edit_id, "speedlimit");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.speed_limit_rows[row].edit_id, "speedlimit");
+        });
+    focus_speed_limits_next_ = false;
     ImGui::End();
 }
