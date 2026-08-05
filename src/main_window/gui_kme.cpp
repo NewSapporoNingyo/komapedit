@@ -6018,7 +6018,7 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 32> k_map_info_menu_entries = {{
+        static constexpr std::array<MapInfoMenuEntry, 33> k_map_info_menu_entries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
@@ -6031,13 +6031,12 @@ void App::render_menu() {
             {"menu.map_info.othertracks", &App::show_othertracks_window_},
             {"menu.map_info.irregularities", &App::show_irregularities_window_},
             {"menu.map_info.adhesions", &App::show_adhesions_window_},
-            {"menu.map_info.speed_limits", &App::show_speed_limits_window_},
             {"aux.signal", nullptr},
             {"menu.map_info.signal_aspects", &App::show_signal_aspects_window_},
             {"menu.map_info.signals", &App::show_signals_window_},
             {"menu.map_info.sections", &App::show_sections_window_},
             {"menu.map_info.beacons", &App::show_beacons_window_},
-            {"menu.map_info.variables", &App::show_variables_window_},
+            {"menu.map_info.speed_limits", &App::show_speed_limits_window_},
             {"aux.sound", nullptr},
             {"menu.map_info.sound_files", &App::show_sound_list_window_},
             {"menu.map_info.sound_3d_files", &App::show_sound_3d_list_window_},
@@ -6051,6 +6050,8 @@ void App::render_menu() {
             {"menu.map_info.cab_illuminance", &App::show_cab_illuminance_window_},
             {"menu.map_info.fogs", &App::show_fogs_window_},
             {"menu.map_info.draw_distances", &App::show_draw_distances_window_},
+            {"aux.other", nullptr},
+            {"menu.map_info.variables", &App::show_variables_window_},
         }};
         bool has_category = false;
         for (const MapInfoMenuEntry& entry : k_map_info_menu_entries) {
