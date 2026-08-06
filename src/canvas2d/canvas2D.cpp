@@ -3230,6 +3230,9 @@ void App::render_plan_canvas(ImVec2 size) {
         if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
             request_element_inspector(marker->edit_id, "signal.put");
         }
+        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
+            request_element_delete(marker->edit_id, "signal.put");
+        }
         ImGui::EndDisabled();
         ImGui::EndPopup();
     }

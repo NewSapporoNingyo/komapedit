@@ -8315,6 +8315,11 @@ fail:
                     action.edit_id = object.edit_id;
                     action.row_kind = edit_row_kind;
                 }
+                if (ImGui::MenuItem(ui_text.delete_element)) {
+                    action.kind = Canvas3DSceneContextActionKind::DeleteElement;
+                    action.edit_id = object.edit_id;
+                    action.row_kind = edit_row_kind;
+                }
                 ImGui::EndDisabled();
                 if (ImGui::BeginMenu(ui_text.switch_signal_aspect, !object.model_options.empty())) {
                     for (size_t i = 0; i < object.model_options.size(); ++i) {

@@ -4003,13 +4003,16 @@ void App::render_signals_window() {
                             tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
                             tr("dialog.element_properties"),
                             edit_actions_available() && !row.edit_id.empty(),
-                            {}, false);
+                            tr("button.delete"),
+                            edit_actions_available() && !row.edit_id.empty());
                         if (action == TextCellContextAction::Primary) {
                             locate_signal_row_on_plan(marker_index);
                         } else if (action == TextCellContextAction::Secondary) {
                             locate_signal_row_in_scene_preview(marker_index);
                         } else if (action == TextCellContextAction::Tertiary) {
                             request_element_inspector(row.edit_id, "signal.put");
+                        } else if (action == TextCellContextAction::Quaternary) {
+                            request_element_delete(row.edit_id, "signal.put");
                         }
                         continue;
                     }

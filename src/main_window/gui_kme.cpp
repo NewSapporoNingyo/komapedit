@@ -2390,7 +2390,8 @@ void App::process_pending_element_inspector() {
 bool row_kind_supports_delete(const std::string& row_kind) {
     return row_kind == "structure.model" || row_kind == "structure.put" ||
         row_kind == "structure.between" || row_kind == "station.put" ||
-        row_kind == "repeater" || row_kind == "irregularity.change" ||
+        row_kind == "signal.put" || row_kind == "repeater" ||
+        row_kind == "irregularity.change" ||
         row_kind == "beacon.put" || row_kind == "mapSound.play" ||
         row_kind == "mapSound3D.put" || row_kind == "rollingNoise.change" ||
         row_kind == "flangeNoise.change" || row_kind == "jointNoise.play" ||
