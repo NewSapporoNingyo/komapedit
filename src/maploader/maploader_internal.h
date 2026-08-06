@@ -360,6 +360,27 @@ struct OwnTrackEvent {
     EditSourceRef edit_ref;
 };
 
+struct CurveEditRow {
+    double distance = 0.0;
+    std::string method;
+    Value radius;
+    Value cant;
+    int argument_count = 0;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
+};
+
+struct GradientEditRow {
+    double distance = 0.0;
+    std::string method;
+    Value gradient;
+    int argument_count = 0;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
+};
+
 struct OtherTrackEvent {
     double distance = 0.0;
     std::string track_key;
@@ -773,6 +794,8 @@ struct MapSnapshotStorage {
     std::vector<KvOtherTrackRow> other_tracks;
     std::vector<KvTrackEventRow> own_track_events;
     std::vector<KvTrackEventRow> other_track_events;
+    std::vector<KvCurveRow> curves;
+    std::vector<KvGradientRow> gradients;
     std::vector<KvStationPositionRow> station_positions;
     std::vector<KvStationNameRow> station_names;
     std::vector<KvStationPutRow> station_puts;
@@ -862,6 +885,8 @@ struct MapContext {
     bool has_distance_assignment = false;
     std::vector<double> controlpoints;
     std::vector<OwnTrackEvent> own_track;
+    std::vector<CurveEditRow> curves;
+    std::vector<GradientEditRow> gradients;
     std::map<double, std::string> station_position;
     std::map<std::string, std::string> station_key;
     std::vector<StationPut> station_puts;

@@ -313,6 +313,7 @@ void App::rebuild_marker_overlay_cache() {
     fog_marker_cache_.clear();
     draw_distance_marker_cache_.clear();
     speed_limit_marker_cache_.clear();
+    own_track_edit_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
 
     std::map<std::string, TrackSource> track_sources;
@@ -320,6 +321,37 @@ void App::rebuild_marker_overlay_cache() {
     for (const char* key : k_own_track_lookup_aliases) {
         track_sources[normalize_track_lookup_key(key)] = own_source;
     }
+
+    auto append_own_track_edit_markers = [&](const std::vector<TableRow>& rows,
+                                             bool gradient) {
+        for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+            const TableRow& row = rows[row_index];
+            const double distance = table_cell_number(row, "distance");
+            const std::optional<TrackPoint> point =
+                sample_matrix_track_point(model_.own, distance, true);
+            if (!point) continue;
+            const std::string method = ascii_lower(table_cell(row, "method"));
+            const bool transition = method == (gradient
+                ? "gradient.begintransition" : "curve.begintransition");
+            OwnTrackEditMarker marker;
+            marker.d = distance;
+            marker.x = point->x;
+            marker.y = point->y;
+            marker.label = table_cell(row, "method");
+            marker.edit_id = row.edit_id;
+            marker.target_edit_id = transition
+                ? table_cell(row, "_primaryEditId") : row.edit_id;
+            marker.row_kind = gradient ? "gradient" : "curve";
+            marker.row_index = row_index;
+            marker.gradient = gradient;
+            marker.transition = transition;
+            marker.paired = !transition ||
+                table_cell(row, "_transitionStatus") == "paired";
+            own_track_edit_marker_cache_.push_back(std::move(marker));
+        }
+    };
+    append_own_track_edit_markers(model_.curve_rows, false);
+    append_own_track_edit_markers(model_.gradient_rows, true);
     for (const auto& track : model_.other_tracks) {
         track_sources[normalize_track_lookup_key(track.key)] = TrackSource{&track.points, false};
     }
@@ -1087,6 +1119,21 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         out.curve_sections = curve_sections(false);
         out.transition_sections = curve_sections(true);
     }
+    if (edit_mode_enabled_) {
+        for (const OwnTrackEditMarker& source : own_track_edit_marker_cache_) {
+            if (source.d < dmin_ || source.d > dmax_) continue;
+            if ((!source.gradient && !show_curve_values_) ||
+                (source.gradient && !show_gradient_pos_)) {
+                continue;
+            }
+            OwnTrackEditMarker marker = source;
+            const ImVec2 rotated = rotate_xy(marker.x, marker.y, angle);
+            marker.x = rotated.x;
+            marker.y = rotated.y;
+            if (marker.gradient) out.gradient_edit_markers.push_back(std::move(marker));
+            else out.curve_edit_markers.push_back(std::move(marker));
+        }
+    }
 
     double pad = std::max({out.xmax - out.xmin, out.ymax - out.ymin, 1.0}) * 0.05;
     out.xmin -= pad; out.xmax += pad; out.ymin -= pad; out.ymax += pad;
@@ -1122,6 +1169,8 @@ const PlanData& App::current_plan_data() {
         plan_data_cache_.fitted == plan_view_.fitted &&
         plan_data_cache_.scale == plan_view_.scale &&
         plan_data_cache_.show_curve_values == show_curve_values_ &&
+        plan_data_cache_.show_gradient_positions == show_gradient_pos_ &&
+        plan_data_cache_.edit_mode_enabled == edit_mode_enabled_ &&
         plan_data_cache_.marker_visibility_mask == marker_visibility_mask &&
         plan_data_cache_.structure_row_visible == structure_row_visible_ &&
         plan_data_cache_.repeater_row_visible == repeater_row_visible_ &&
@@ -1138,6 +1187,8 @@ const PlanData& App::current_plan_data() {
     plan_data_cache_.fitted = plan_view_.fitted;
     plan_data_cache_.scale = plan_view_.scale;
     plan_data_cache_.show_curve_values = show_curve_values_;
+    plan_data_cache_.show_gradient_positions = show_gradient_pos_;
+    plan_data_cache_.edit_mode_enabled = edit_mode_enabled_;
     plan_data_cache_.marker_visibility_mask = marker_visibility_mask;
     plan_data_cache_.structure_row_visible = structure_row_visible_;
     plan_data_cache_.repeater_row_visible = repeater_row_visible_;
@@ -1221,6 +1272,13 @@ ProfileData App::build_profile_data() const {
         if (e.distance >= dmin_ && e.distance <= dmax_) {
             out.gradient_points.push_back({e.distance, interp_own_z(e.distance), ""});
         }
+    }
+    for (const OwnTrackEditMarker& marker : own_track_edit_marker_cache_) {
+        if (!marker.gradient || marker.d < dmin_ || marker.d > dmax_) continue;
+        OwnTrackEditMarker profile_marker = marker;
+        profile_marker.x = marker.d;
+        profile_marker.y = interp_own_z(marker.d);
+        out.gradient_edit_markers.push_back(std::move(profile_marker));
     }
     double last_d = model_.own.empty() ? dmin_ : model_.own.at(0, 0);
     double last_g = 0.0;
@@ -2301,6 +2359,10 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.draw_distance_markers, hit_transform);
     std::optional<MarkerHit> hovered_speed_limit_hit =
         nearest_marker_hit(data.speedlimits, hit_transform, !show_speedlimits_);
+    std::optional<MarkerHit> hovered_curve_edit_hit =
+        nearest_marker_hit(data.curve_edit_markers, hit_transform);
+    std::optional<MarkerHit> hovered_gradient_edit_hit =
+        nearest_marker_hit(data.gradient_edit_markers, hit_transform);
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_station_row = hovered_station_hit
         ? std::optional<size_t>(hovered_station_hit->row_index)
@@ -2415,6 +2477,8 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_fog_hit, PlanMarkerKind::Fog);
         note(hovered_draw_distance_hit, PlanMarkerKind::DrawDistance);
         note(hovered_speed_limit_hit, PlanMarkerKind::SpeedLimit);
+        note(hovered_curve_edit_hit, PlanMarkerKind::Curve);
+        note(hovered_gradient_edit_hit, PlanMarkerKind::Gradient);
         if (best) plan_marker_selection_ = *best;
     };
     auto section_is_nearest_context_hit = [&]() {
@@ -2453,7 +2517,23 @@ void App::render_plan_canvas(ImVec2 size) {
                                                 &touch_long_press_pos);
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
-        if (hovered_station_hit &&
+        if (hovered_curve_edit_hit || hovered_gradient_edit_hit) {
+            const bool gradient = hovered_gradient_edit_hit &&
+                (!hovered_curve_edit_hit ||
+                 hovered_gradient_edit_hit->dist_sq <= hovered_curve_edit_hit->dist_sq);
+            const auto& markers = gradient
+                ? data.gradient_edit_markers : data.curve_edit_markers;
+            const size_t row_index = gradient
+                ? hovered_gradient_edit_hit->row_index : hovered_curve_edit_hit->row_index;
+            const auto marker = std::find_if(
+                markers.begin(), markers.end(), [&](const OwnTrackEditMarker& candidate) {
+                    return candidate.row_index == row_index;
+                });
+            if (marker != markers.end()) {
+                plan_own_track_popup_marker_ = *marker;
+                ImGui::OpenPopup("plan_own_track_edit_marker_context");
+            }
+        } else if (hovered_station_hit &&
             closer_than_all_marker_context_hits(hovered_station_hit) &&
             closer_or_equal(hovered_station_hit, hovered_draw_distance_hit) &&
             closer_or_equal(hovered_station_hit, hovered_speed_limit_hit) &&
@@ -2791,6 +2871,33 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const auto& s : data.transition_sections) draw_section(s, IM_COL32(84, 84, 84, 220), 8.0f * marker_size_scale);
     }
     draw_polyline(draw, data.own, transform, origin, avail, IM_COL32(245, 245, 245, 255), line_widths.own_track_px);
+    auto draw_own_track_edit_markers = [&](const std::vector<OwnTrackEditMarker>& markers,
+                                           PlanMarkerKind kind) {
+        for (const OwnTrackEditMarker& marker : markers) {
+            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail)) continue;
+            const ImU32 color = marker.transition
+                ? IM_COL32(38, 130, 66, 255)
+                : IM_COL32(62, 214, 102, 255);
+            const bool hovered_marker = kind == PlanMarkerKind::Curve
+                ? (hovered_curve_edit_hit &&
+                   hovered_curve_edit_hit->row_index == marker.row_index)
+                : (hovered_gradient_edit_hit &&
+                   hovered_gradient_edit_hit->row_index == marker.row_index);
+            const bool active = marker_emphasized(kind, marker.row_index,
+                                                  hovered_marker);
+            draw_selected_marker_ring(point, kind, marker.row_index, color);
+            const float scale = marker_size_scale * (active ? 1.28f : 1.0f);
+            if (marker.gradient) {
+                draw_plan_triangle_marker(draw, point, color, scale);
+            } else {
+                draw->AddCircleFilled(point, 5.0f * scale, color, 18);
+            }
+            if (active) draw_plan_small_text(draw, point, color, marker.label);
+        }
+    };
+    draw_own_track_edit_markers(data.curve_edit_markers, PlanMarkerKind::Curve);
+    draw_own_track_edit_markers(data.gradient_edit_markers, PlanMarkerKind::Gradient);
     for (const auto& t : model_.other_tracks) {
         if (!t.visible || t.points.empty()) continue;
         double rmin = std::max(dmin_, t.range_min);
@@ -3338,6 +3445,25 @@ void App::render_plan_canvas(ImVec2 size) {
         "plan_speed_limit_marker_context", plan_speed_limit_popup_row_,
         speed_limit_marker_cache_, "menu.locate_in_speed_limit_list",
         "speedlimit", [&](size_t row) { locate_speed_limit_row_in_list(row); });
+    if (ImGui::BeginPopup("plan_own_track_edit_marker_context")) {
+        const OwnTrackEditMarker* marker = plan_own_track_popup_marker_
+            ? &*plan_own_track_popup_marker_ : nullptr;
+        const bool can_edit = edit_actions_available() && marker && marker->paired &&
+            !marker->target_edit_id.empty();
+        ImGui::BeginDisabled(!can_edit);
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+            request_element_inspector(marker->target_edit_id, marker->row_kind);
+        }
+        if (ImGui::MenuItem(tr("button.delete").c_str())) {
+            request_element_delete(marker->target_edit_id, marker->row_kind);
+        }
+        ImGui::EndDisabled();
+        if (marker && marker->transition && !marker->paired) {
+            ImGui::Separator();
+            ImGui::TextWrapped("%s", tr("status.transition_unpaired").c_str());
+        }
+        ImGui::EndPopup();
+    }
     ImGui::EndChild();
     debug_plan_stage("end");
 }

@@ -173,7 +173,7 @@ template <typename Fn>
 void emit_element(SemanticMapSnapshot& output, SemanticWriter& full,
                   const KvMapSnapshot& snapshot, const KvRowMetadata& metadata,
                   std::string row_kind, std::string container, size_t row_index,
-                  Fn&& append_fields) {
+                  Fn&& append_fields, bool expose_editable_element = true) {
     SemanticWriter canonical;
     const std::string source = source_path(snapshot, metadata);
     begin_element(canonical, source, container);
@@ -181,6 +181,7 @@ void emit_element(SemanticMapSnapshot& output, SemanticWriter& full,
     const std::string canonical_data = canonical.take();
     full.label("element");
     full.string(canonical_data);
+    if (!expose_editable_element) return;
     const std::string edit_id = text(snapshot, metadata.edit_id);
     if (edit_id.empty()) return;
     output.elements.push_back({edit_id, std::move(row_kind), std::move(container),
@@ -460,6 +461,49 @@ void write_speed_limit(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_curve(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                 const KvCurveRow& row,
+                 const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    field(out, "method", text(snapshot, row.method));
+    field(out, "argumentCount", static_cast<std::int64_t>(row.argument_count));
+    if (row.argument_count == 0) {
+        if (changed_field(change, "radius") || changed_field(change, "cant")) {
+            throw std::runtime_error("curve statement has no editable value fields");
+        }
+        field(out, snapshot, "radius", row.radius);
+        field(out, snapshot, "cant", row.cant);
+    } else {
+        changed_required_number_value(out, snapshot, change, "radius", row.radius);
+        if (row.argument_count == 2) {
+            changed_required_number_value(out, snapshot, change, "cant", row.cant);
+        } else {
+            if (changed_field(change, "cant")) {
+                throw std::runtime_error("curve source statement has no cant field");
+            }
+            field(out, snapshot, "cant", row.cant);
+        }
+    }
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_gradient(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                    const KvGradientRow& row,
+                    const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    field(out, "method", text(snapshot, row.method));
+    field(out, "argumentCount", static_cast<std::int64_t>(row.argument_count));
+    if (row.argument_count == 0) {
+        if (changed_field(change, "gradient")) {
+            throw std::runtime_error("gradient statement has no editable value field");
+        }
+        field(out, snapshot, "gradient", row.gradient);
+    } else {
+        changed_required_number_value(out, snapshot, change, "gradient", row.gradient);
+    }
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
                         const KvStationListRow& row,
                         const MapEditChange* change = nullptr) {
@@ -622,6 +666,10 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "value"};
     } else if (target.row_kind == "speedlimit") {
         allowed = {"distance", "speed"};
+    } else if (target.row_kind == "curve") {
+        allowed = {"distance", "radius", "cant"};
+    } else if (target.row_kind == "gradient") {
+        allowed = {"distance", "gradient"};
     } else if (target.row_kind == "station.list") {
         allowed = {"stationKey", "stationName", "arrivalTime", "depertureTime",
                    "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
@@ -709,14 +757,53 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
               SemanticWriter::snapshot_text(snapshot, snapshot.station_names[i].name));
     }
 
+    using SourceStatementAnchor =
+        std::tuple<std::uint64_t, std::int32_t, std::int32_t,
+                   std::int32_t, std::int32_t>;
+    auto source_statement_anchor = [](const KvRowMetadata& metadata) {
+        return SourceStatementAnchor{metadata.source_file_index, metadata.line,
+                                     metadata.column, metadata.line_end,
+                                     metadata.column_end};
+    };
+    std::set<SourceStatementAnchor> typed_own_track_statements;
+    for (std::uint64_t i = 0; i < snapshot.curve_count; ++i) {
+        const KvRowMetadata& metadata = snapshot.curves[i].metadata;
+        if (metadata.line > 0) {
+            typed_own_track_statements.insert(source_statement_anchor(metadata));
+        }
+    }
+    for (std::uint64_t i = 0; i < snapshot.gradient_count; ++i) {
+        const KvRowMetadata& metadata = snapshot.gradients[i].metadata;
+        if (metadata.line > 0) {
+            typed_own_track_statements.insert(source_statement_anchor(metadata));
+        }
+    }
+
     for (std::uint64_t i = 0; i < snapshot.own_track_event_count; ++i) {
         const KvTrackEventRow& row = snapshot.own_track_events[i];
+        const bool typed_statement = row.metadata.line > 0 &&
+            typed_own_track_statements.find(source_statement_anchor(row.metadata)) !=
+                typed_own_track_statements.end();
         emit_element(output, full, snapshot, row.metadata, "own_track", "own_track",
                      static_cast<size_t>(i), [&](SemanticWriter& out) {
             field(out, "distance", row.distance);
             field(out, "key", SemanticWriter::snapshot_text(snapshot, row.key));
             field(out, snapshot, "value", row.value);
             field(out, "flag", SemanticWriter::snapshot_text(snapshot, row.flag));
+        }, !typed_statement);
+    }
+    for (std::uint64_t i = 0; i < snapshot.curve_count; ++i) {
+        const KvCurveRow& row = snapshot.curves[i];
+        emit_element(output, full, snapshot, row.metadata, "curve", "curve",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            write_curve(out, snapshot, row);
+        });
+    }
+    for (std::uint64_t i = 0; i < snapshot.gradient_count; ++i) {
+        const KvGradientRow& row = snapshot.gradients[i];
+        emit_element(output, full, snapshot, row.metadata, "gradient", "gradient",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            write_gradient(out, snapshot, row);
         });
     }
     for (std::uint64_t track_index = 0; track_index < snapshot.other_track_count; ++track_index) {
@@ -1057,6 +1144,16 @@ std::string expected_target_semantic(MapContext& ctx,
                                      " target row is out of bounds");
         }
         write_sound_list(out, snapshot, *selected, &change);
+    } else if (target.row_kind == "curve") {
+        if (target.row_index >= snapshot.curve_count || !snapshot.curves) {
+            throw std::runtime_error("curve target row is out of bounds");
+        }
+        write_curve(out, snapshot, snapshot.curves[target.row_index], &change);
+    } else if (target.row_kind == "gradient") {
+        if (target.row_index >= snapshot.gradient_count || !snapshot.gradients) {
+            throw std::runtime_error("gradient target row is out of bounds");
+        }
+        write_gradient(out, snapshot, snapshot.gradients[target.row_index], &change);
     } else if (target.row_kind == "structure.put") {
         if (target.row_index >= snapshot.structure_put_count || !snapshot.structure_puts) {
             throw std::runtime_error("structure.put target row is out of bounds");

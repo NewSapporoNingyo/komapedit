@@ -90,6 +90,14 @@ struct HeadlessDistanceEditBatchOptions {
     std::string error;
 };
 
+struct HeadlessOwnTrackEditOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessStationListEditOptions {
     bool requested = false;
     std::string path;
@@ -128,6 +136,8 @@ HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const s
 HeadlessSceneCameraTransferOptions parse_headless_scene_camera_transfer_options(const std::vector<std::string>& args);
 HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vector<std::string>& args);
 HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::vector<std::string>& args);
+HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
+    const std::vector<std::string>& args);
 HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     const std::vector<std::string>& args);
 HeadlessStationListEditOptions parse_headless_station_list_edit_options(

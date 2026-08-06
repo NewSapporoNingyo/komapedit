@@ -548,6 +548,8 @@ private:
         }
         ctx_.edit_order += child.edit_order;
         offset_row_edit_refs(child.own_track, statement_index_base);
+        offset_row_edit_refs(child.curves, statement_index_base);
+        offset_row_edit_refs(child.gradients, statement_index_base);
         for (auto& row : child.station_list) offset_edit_ref(row.edit_ref, statement_index_base);
         for (auto& row : child.station_puts) offset_row_edit_ref(row, statement_index_base);
         for (auto& kv : child.othertrack) offset_row_edit_refs(kv.second, statement_index_base);
@@ -597,6 +599,8 @@ private:
             if (order > 0) order += order_base;
         };
         for (auto& row : child.station_puts) offset_order(row.order);
+        for (auto& row : child.curves) offset_order(row.order);
+        for (auto& row : child.gradients) offset_order(row.order);
         for (auto& row : child.station_list) offset_order(row.order);
         for (auto& row : child.structure_loads) offset_order(row.order);
         for (auto& row : child.structure_puts) offset_order(row.order);
@@ -648,6 +652,8 @@ private:
         }
         ctx_.controlpoints.insert(ctx_.controlpoints.end(), child.controlpoints.begin(), child.controlpoints.end());
         for (auto& row : child.own_track) ctx_.own_track.push_back(std::move(row));
+        for (auto& row : child.curves) ctx_.curves.push_back(std::move(row));
+        for (auto& row : child.gradients) ctx_.gradients.push_back(std::move(row));
         for (auto& kv : child.station_position) ctx_.station_position[kv.first] = std::move(kv.second);
         for (auto& kv : child.station_key) ctx_.station_key[kv.first] = std::move(kv.second);
         for (auto& row : child.station_list) ctx_.station_list.push_back(std::move(row));
@@ -1393,16 +1399,32 @@ private:
     }
 
     void dispatch_curve(const std::string& fn, const std::vector<Value>& a) {
+        auto add_edit_row = [&](const std::string& method) {
+            CurveEditRow row;
+            row.distance = ctx_.distance;
+            row.method = method;
+            row.radius = a.empty() ? Value::null() : a[0];
+            row.cant = a.size() > 1 ? a[1] : Value::null();
+            row.argument_count = static_cast<int>(a.size());
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
+            ctx_.curves.push_back(std::move(row));
+        };
         if (fn == "setgauge" || fn == "gauge") put_own(ctx_, "gauge", arg_or_null(a));
         else if (fn == "setcenter") put_own(ctx_, "center", arg_or_null(a));
         else if (fn == "setfunction") put_own(ctx_, "interpolate_func", Value::str(as_number(arg_or_null(a)) == 0.0 ? "sin" : "line"));
         else if (fn == "begintransition") {
+            add_edit_row("Curve.BeginTransition");
             put_own(ctx_, "radius", Value::null(), "bt");
             put_own(ctx_, "cant", Value::null(), "bt");
         } else if (fn == "begincircular" || fn == "begin" || fn == "change") {
+            add_edit_row(fn == "begincircular" ? "Curve.BeginCircular" :
+                         fn == "begin" ? "Curve.Begin" : "Curve.Change");
             put_own(ctx_, "radius", arg_or_null(a));
             put_own(ctx_, "cant", a.size() > 1 ? a.at(1) : Value::num(0.0));
         } else if (fn == "end") {
+            add_edit_row("Curve.End");
             put_own(ctx_, "radius", Value::num(0.0));
             put_own(ctx_, "cant", Value::num(0.0));
         } else if (fn == "interpolate") {
@@ -1412,15 +1434,43 @@ private:
     }
 
     void dispatch_gradient(const std::string& fn, const std::vector<Value>& a) {
-        if (fn == "begintransition") put_own(ctx_, "gradient", Value::null(), "bt");
-        else if (fn == "begin" || fn == "beginconst") put_own(ctx_, "gradient", arg_or_null(a));
-        else if (fn == "end") put_own(ctx_, "gradient", Value::num(0.0));
+        auto add_edit_row = [&](const std::string& method) {
+            GradientEditRow row;
+            row.distance = ctx_.distance;
+            row.method = method;
+            row.gradient = a.empty() ? Value::null() : a[0];
+            row.argument_count = static_cast<int>(a.size());
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
+            ctx_.gradients.push_back(std::move(row));
+        };
+        if (fn == "begintransition") {
+            add_edit_row("Gradient.BeginTransition");
+            put_own(ctx_, "gradient", Value::null(), "bt");
+        } else if (fn == "begin" || fn == "beginconst") {
+            add_edit_row(fn == "begin" ? "Gradient.Begin" : "Gradient.BeginConst");
+            put_own(ctx_, "gradient", arg_or_null(a));
+        } else if (fn == "end") {
+            add_edit_row("Gradient.End");
+            put_own(ctx_, "gradient", Value::num(0.0));
+        }
         else if (fn == "interpolate") put_own(ctx_, "gradient", arg_or_null(a), "i");
     }
 
     void dispatch_legacy(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "turn") put_own(ctx_, "turn", arg_or_null(a));
         else if (fn == "curve") {
+            CurveEditRow row;
+            row.distance = ctx_.distance;
+            row.method = "Legacy.Curve";
+            row.radius = a.empty() ? Value::null() : a[0];
+            row.cant = a.size() > 1 ? a[1] : Value::null();
+            row.argument_count = static_cast<int>(a.size());
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
+            ctx_.curves.push_back(std::move(row));
             put_own(ctx_, "radius", arg_or_null(a));
             put_own(ctx_, "cant", a.size() > 1 ? a.at(1) : Value::num(0.0));
         } else if (fn == "pitch") {

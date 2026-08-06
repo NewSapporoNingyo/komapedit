@@ -9,6 +9,7 @@
  */
 
 #include "maploader_internal.h"
+#include "own_track_transition_linkage.h"
 
 namespace kme::maploader::detail {
 
@@ -39,6 +40,8 @@ struct EditableTarget {
     const SignalPut* signal_put = nullptr;
     const SignalAspect* signal_aspect = nullptr;
     const RepeaterEvent* repeater = nullptr;
+    const CurveEditRow* curve = nullptr;
+    const GradientEditRow* gradient = nullptr;
     const StationListEntry* station_list = nullptr;
     const StructureModel* structure_model = nullptr;
     const SoundListEntry* sound_list = nullptr;
@@ -1171,6 +1174,39 @@ std::string build_speed_limit_statement(const MapEditChange& change,
         change, "speed", row.speed, raw_arg_at(args, 0)) + ");";
 }
 
+std::string build_curve_statement(const MapEditChange& change,
+                                  const ParsedStatement& statement,
+                                  const CurveEditRow& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    if (row.argument_count == 0) {
+        throw std::runtime_error(row.method + " has no editable value fields");
+    }
+    const std::vector<std::string> args =
+        parse_bve_argument_fields(statement.raw_arguments);
+    std::string arguments = required_numeric_value_field(
+        change, "radius", row.radius, raw_arg_at(args, 0));
+    if (row.argument_count == 2) {
+        arguments += "," + required_numeric_value_field(
+            change, "cant", row.cant, raw_arg_at(args, 1));
+    } else if (change.field_changes.find("cant") != change.field_changes.end()) {
+        throw std::runtime_error(row.method + " source statement has no cant field");
+    }
+    return row.method + "(" + arguments + ");";
+}
+
+std::string build_gradient_statement(const MapEditChange& change,
+                                     const ParsedStatement& statement,
+                                     const GradientEditRow& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    if (row.argument_count == 0) {
+        throw std::runtime_error(row.method + " has no editable gradient field");
+    }
+    const std::vector<std::string> args =
+        parse_bve_argument_fields(statement.raw_arguments);
+    return row.method + "(" + required_numeric_value_field(
+        change, "gradient", row.gradient, raw_arg_at(args, 0)) + ");";
+}
+
 template <typename Row, auto Builder>
 std::string build_simple_statement_adapter(const MapEditChange& change,
                                            const ParsedStatement& statement,
@@ -1457,6 +1493,20 @@ bool find_simple_target(MapContext& ctx, const Rows& rows,
 
 EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id) {
     EditableTarget target;
+    for (size_t i = 0; i < ctx.curves.size(); ++i) {
+        const CurveEditRow& row = ctx.curves[i];
+        if (match_edit_ref(ctx, row, "curve", i, edit_id, target)) {
+            target.curve = &row;
+            return target;
+        }
+    }
+    for (size_t i = 0; i < ctx.gradients.size(); ++i) {
+        const GradientEditRow& row = ctx.gradients[i];
+        if (match_edit_ref(ctx, row, "gradient", i, edit_id, target)) {
+            target.gradient = &row;
+            return target;
+        }
+    }
     for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
         const StructureModel& row = ctx.structure_models[i];
         if (match_edit_ref(ctx, row, "structure.model", i, edit_id, target)) {
@@ -1678,6 +1728,12 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "irregularity.change" && target.irregularity) {
         return build_irregularity_statement(change, statement, *target.irregularity);
+    }
+    if (target.row_kind == "curve" && target.curve) {
+        return build_curve_statement(change, statement, *target.curve);
+    }
+    if (target.row_kind == "gradient" && target.gradient) {
+        return build_gradient_statement(change, statement, *target.gradient);
     }
     if (target.simple_statement_builder && target.simple_row) {
         return target.simple_statement_builder(change, statement, target.simple_row);
@@ -2818,6 +2874,57 @@ std::unique_ptr<MapContext> parse_report_candidate(MapContext& ctx,
                              ctx.cp_arbdistribution, options);
 }
 
+struct OwnTrackTransitionState {
+    std::set<std::pair<std::string, std::string>> pairs;
+    std::set<std::string> orphan_transition_ids;
+};
+
+OwnTrackTransitionState own_track_transition_state(MapContext& ctx) {
+    using namespace own_track_transition_linkage;
+    std::vector<Event> events;
+    events.reserve(ctx.curves.size() + ctx.gradients.size());
+    auto curve_kind = [](const CurveEditRow& row) {
+        const std::string method = ascii_lower(row.method);
+        if (method == "curve.begintransition") return EventKind::CurveBeginTransition;
+        if (method == "curve.begin") return EventKind::CurveBegin;
+        if (method == "curve.begincircular") return EventKind::CurveBeginCircular;
+        if (method == "curve.end") return EventKind::CurveEnd;
+        return EventKind::CurveOther;
+    };
+    for (size_t i = 0; i < ctx.curves.size(); ++i) {
+        events.push_back(Event{i, ctx.curves[i].order,
+                               ctx.curves[i].argument_count, curve_kind(ctx.curves[i])});
+    }
+    const size_t gradient_base = ctx.curves.size();
+    for (size_t i = 0; i < ctx.gradients.size(); ++i) {
+        const std::string method = ascii_lower(ctx.gradients[i].method);
+        const EventKind kind = method == "gradient.begintransition"
+            ? EventKind::GradientBeginTransition
+            : method == "gradient.end" ? EventKind::GradientEnd
+                                          : EventKind::GradientBegin;
+        events.push_back(Event{gradient_base + i, ctx.gradients[i].order,
+                               ctx.gradients[i].argument_count, kind});
+    }
+    auto edit_id_at = [&](size_t source_index) {
+        if (source_index < gradient_base) {
+            return element_edit_id(ctx, ctx.curves[source_index].edit_ref, "curve");
+        }
+        const size_t index = source_index - gradient_base;
+        return element_edit_id(ctx, ctx.gradients[index].edit_ref, "gradient");
+    };
+
+    OwnTrackTransitionState state;
+    const Linkage linkage = pair_transitions(std::move(events));
+    for (const Pair& pair : linkage.pairs) {
+        state.pairs.emplace(edit_id_at(pair.transition_source_index),
+                            edit_id_at(pair.primary_source_index));
+    }
+    for (size_t source_index : linkage.orphan_transition_source_indices) {
+        state.orphan_transition_ids.insert(edit_id_at(source_index));
+    }
+    return state;
+}
+
 void validate_edit_report(MapContext& baseline,
                           const std::vector<MapEditChange>& changes,
                           MapEditReport& report) {
@@ -2939,6 +3046,8 @@ void validate_edit_report(MapContext& baseline,
     };
     try {
         collect_candidate_rows(candidate->structure_models, "structure.model");
+        collect_candidate_rows(candidate->curves, "curve");
+        collect_candidate_rows(candidate->gradients, "gradient");
         for (const SoundListEntry& row : candidate->sound_list) {
             collect_candidate_row(row, row.is_3d ? "sound3D.list" : "sound.list");
         }
@@ -3074,6 +3183,32 @@ void validate_edit_report(MapContext& baseline,
             identity.first, identity.second);
     }
     candidate->element_edit_id_cache.clear();
+
+    std::set<std::string> deleted_ids;
+    for (const MapEditChange& change : changes) {
+        if (ascii_lower(change.operation.empty() ? "update" : change.operation) == "delete") {
+            deleted_ids.insert(change.edit_id);
+        }
+    }
+    OwnTrackTransitionState expected_links = own_track_transition_state(baseline);
+    for (auto it = expected_links.pairs.begin(); it != expected_links.pairs.end();) {
+        if (deleted_ids.find(it->first) != deleted_ids.end() ||
+            deleted_ids.find(it->second) != deleted_ids.end()) {
+            it = expected_links.pairs.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const std::string& edit_id : deleted_ids) {
+        expected_links.orphan_transition_ids.erase(edit_id);
+    }
+    const OwnTrackTransitionState candidate_links = own_track_transition_state(*candidate);
+    if (candidate_links.pairs != expected_links.pairs ||
+        candidate_links.orphan_transition_ids != expected_links.orphan_transition_ids) {
+        report.blocking_errors.push_back(
+            "full reparse changed a BeginTransition pairing outside the requested edit");
+        return;
+    }
 
     candidate->disk_native_element_edit_id_to_stable =
         baseline.disk_native_element_edit_id_to_stable;
@@ -3614,6 +3749,35 @@ MapEditReport build_edit_report(MapContext& ctx,
         }
         edit_signatures.emplace(change.edit_id, std::move(signature));
         effective_changes.push_back(&change);
+    }
+    if (!report.blocking_errors.empty()) return report;
+
+    {
+        const OwnTrackTransitionState transition_state = own_track_transition_state(ctx);
+        std::map<std::string, std::string> paired_ids;
+        for (const auto& pair : transition_state.pairs) {
+            paired_ids[pair.first] = pair.second;
+            paired_ids[pair.second] = pair.first;
+        }
+        std::set<std::string> delete_ids;
+        for (const MapEditChange* change : effective_changes) {
+            if (ascii_lower(change->operation.empty() ? "update" : change->operation) == "delete") {
+                delete_ids.insert(change->edit_id);
+            }
+        }
+        for (const std::string& edit_id : delete_ids) {
+            if (transition_state.orphan_transition_ids.find(edit_id) !=
+                transition_state.orphan_transition_ids.end()) {
+                report.blocking_errors.push_back(
+                    "BeginTransition cannot be deleted without a paired Begin/End: " + edit_id);
+                continue;
+            }
+            auto paired = paired_ids.find(edit_id);
+            if (paired != paired_ids.end() && delete_ids.find(paired->second) == delete_ids.end()) {
+                report.blocking_errors.push_back(
+                    "paired BeginTransition and Begin/End must be deleted together: " + edit_id);
+            }
+        }
     }
     if (!report.blocking_errors.empty()) return report;
 
@@ -4373,6 +4537,8 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     }
 
     append_committed_rows(ctx, report, "structure.model", ctx.structure_models);
+    append_committed_rows(ctx, report, "curve", ctx.curves);
+    append_committed_rows(ctx, report, "gradient", ctx.gradients);
     append_committed_rows(ctx, report, "structure.put", ctx.structure_puts);
     append_committed_rows(ctx, report, "structure.between", ctx.structure_betweens);
     append_committed_rows(ctx, report, "signal.aspect", ctx.signal_aspects);

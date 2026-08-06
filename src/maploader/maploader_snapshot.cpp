@@ -24,7 +24,8 @@ class MapSnapshotBuilder {
 public:
     MapSnapshotBuilder(MapContext& context, MapSnapshotStorage& storage)
         : ctx_(context), storage_(storage) {
-        const size_t row_count = ctx_.own_track.size() + ctx_.station_puts.size() +
+        const size_t row_count = ctx_.own_track.size() + ctx_.curves.size() +
+            ctx_.gradients.size() + ctx_.station_puts.size() +
             ctx_.station_list.size() + ctx_.structure_loads.size() +
             ctx_.structure_puts.size() + ctx_.structure_betweens.size() +
             ctx_.structure_models.size() + ctx_.other_trains.size() +
@@ -163,6 +164,32 @@ private:
             row.value = value(input.value);
             row.metadata = metadata(input.edit_ref, "own_track");
             storage_.own_track_events.push_back(row);
+        }
+
+        storage_.curves.reserve(ctx_.curves.size());
+        for (const CurveEditRow& input : ctx_.curves) {
+            KvCurveRow row{};
+            row.distance = input.distance;
+            row.method = string_ref(input.method);
+            row.radius = value(input.radius);
+            row.cant = value(input.cant);
+            row.argument_count = static_cast<std::uint32_t>(std::max(0, input.argument_count));
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "curve");
+            storage_.curves.push_back(row);
+        }
+        storage_.gradients.reserve(ctx_.gradients.size());
+        for (const GradientEditRow& input : ctx_.gradients) {
+            KvGradientRow row{};
+            row.distance = input.distance;
+            row.method = string_ref(input.method);
+            row.gradient = value(input.gradient);
+            row.argument_count = static_cast<std::uint32_t>(std::max(0, input.argument_count));
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "gradient");
+            storage_.gradients.push_back(row);
         }
 
         storage_.other_tracks.reserve(ctx_.othertrack_order.size());
@@ -638,6 +665,8 @@ private:
         }
 
         add_elements("own_track", ctx_.own_track);
+        add_elements("curve", ctx_.curves);
+        add_elements("gradient", ctx_.gradients);
         for (const std::string& key : ctx_.othertrack_order) {
             auto found = ctx_.othertrack.find(key);
             if (found == ctx_.othertrack.end()) continue;
@@ -725,6 +754,8 @@ private:
         bind(storage_.other_tracks, view.other_tracks, view.other_track_count);
         bind(storage_.own_track_events, view.own_track_events, view.own_track_event_count);
         bind(storage_.other_track_events, view.other_track_events, view.other_track_event_count);
+        bind(storage_.curves, view.curves, view.curve_count);
+        bind(storage_.gradients, view.gradients, view.gradient_count);
         bind(storage_.station_positions, view.station_positions, view.station_position_count);
         bind(storage_.station_names, view.station_names, view.station_name_count);
         bind(storage_.station_puts, view.station_puts, view.station_put_count);

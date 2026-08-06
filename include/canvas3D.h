@@ -319,6 +319,7 @@ struct Canvas3DSceneUiText {
     const char* switch_signal_aspect = "Switch Signal Aspect";
     const char* element_properties = "Properties/Edit";
     const char* delete_element = "Delete";
+    const char* unpaired_transition = "This BeginTransition has no corresponding Begin/End.";
     const char* delete_repeater_all = "Delete All";
     const char* delete_repeater_change_point = "Delete Change Point";
     const char* trim_repeater_to_change_point = "Trim to Change Point";

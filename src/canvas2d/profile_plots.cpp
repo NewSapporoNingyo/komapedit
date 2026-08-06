@@ -302,6 +302,7 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     ImPlot::PushStyleVar(ImPlotStyleVar_MinorGridSize, grid_line_size);
     bool consumed_profile_x_zoom = false;
     bool consumed_profile_y_zoom = false;
+    bool open_profile_marker_popup = false;
     if (ImPlot::BeginPlot("##ProfilePlot", size, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
         ImVec2 frame_min = ImGui::GetItemRectMin();
         ImVec2 frame_max = ImGui::GetItemRectMax();
@@ -330,7 +331,59 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         if (show_gradient_pos_) {
             for (const auto& p : data.gradient_points) {
                 draw_profile_vertical_marker(p.x, p.y, ProfileMarkerDirection::Down,
-                                             IM_COL32(255, 255, 255, 140), line_widths.chart_marker_px, false);
+                                             IM_COL32(255, 255, 255, 140),
+                                             line_widths.chart_marker_px, false);
+            }
+            if (edit_mode_enabled_) {
+                ImDrawList* draw = ImPlot::GetPlotDrawList();
+                const float marker_scale = marker_size_scale_from_percent(marker_size_percent_);
+                const ImVec2 plot_pos = ImPlot::GetPlotPos();
+                const ImVec2 plot_size = ImPlot::GetPlotSize();
+                const ImVec2 plot_max(plot_pos.x + plot_size.x, plot_pos.y + plot_size.y);
+                const OwnTrackEditMarker* hovered_marker = nullptr;
+                double best_distance_sq = 144.0;
+                if (ImPlot::IsPlotHovered()) {
+                    for (const OwnTrackEditMarker& marker : data.gradient_edit_markers) {
+                        const ImVec2 point = ImPlot::PlotToPixels(marker.x, marker.y);
+                        if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                            point.x < plot_pos.x || point.x > plot_max.x ||
+                            point.y < plot_pos.y || point.y > plot_max.y) {
+                            continue;
+                        }
+                        const double dx = static_cast<double>(io.MousePos.x - point.x);
+                        const double dy = static_cast<double>(io.MousePos.y - point.y);
+                        const double distance_sq = dx * dx + dy * dy;
+                        if (distance_sq <= best_distance_sq) {
+                            best_distance_sq = distance_sq;
+                            hovered_marker = &marker;
+                        }
+                    }
+                }
+                draw->PushClipRect(plot_pos, plot_max, true);
+                for (const OwnTrackEditMarker& marker : data.gradient_edit_markers) {
+                    const ImVec2 point = ImPlot::PlotToPixels(marker.x, marker.y);
+                    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                        point.x < plot_pos.x || point.x > plot_max.x ||
+                        point.y < plot_pos.y || point.y > plot_max.y) {
+                        continue;
+                    }
+                    const ImU32 color = marker.transition
+                        ? IM_COL32(38, 130, 66, 255)
+                        : IM_COL32(62, 214, 102, 255);
+                    const float radius = (hovered_marker == &marker ? 7.5f : 6.0f) *
+                        marker_scale;
+                    const ImVec2 a(point.x, point.y - radius);
+                    const ImVec2 b(point.x - radius, point.y + radius);
+                    const ImVec2 c(point.x + radius, point.y + radius);
+                    draw->AddTriangleFilled(a, b, c, color);
+                    draw->AddTriangle(a, b, c, IM_COL32(12, 44, 22, 255),
+                                      std::max(1.0f, marker_scale));
+                }
+                draw->PopClipRect();
+                if (hovered_marker && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                    profile_own_track_popup_marker_ = *hovered_marker;
+                    open_profile_marker_popup = true;
+                }
             }
             if (show_gradient_values_) {
                 draw_bottom_locked_plot_labels(data.gradient_labels);
@@ -403,6 +456,28 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         ImPlot::EndPlot();
     }
     ImPlot::PopStyleVar(4);
+    if (open_profile_marker_popup) {
+        ImGui::OpenPopup("profile_own_track_edit_marker_context");
+    }
+    if (ImGui::BeginPopup("profile_own_track_edit_marker_context")) {
+        const OwnTrackEditMarker* marker = profile_own_track_popup_marker_
+            ? &*profile_own_track_popup_marker_ : nullptr;
+        const bool can_edit = edit_actions_available() && marker && marker->paired &&
+            !marker->target_edit_id.empty();
+        ImGui::BeginDisabled(!can_edit);
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+            request_element_inspector(marker->target_edit_id, marker->row_kind);
+        }
+        if (ImGui::MenuItem(tr("button.delete").c_str())) {
+            request_element_delete(marker->target_edit_id, marker->row_kind);
+        }
+        ImGui::EndDisabled();
+        if (marker && marker->transition && !marker->paired) {
+            ImGui::Separator();
+            ImGui::TextWrapped("%s", tr("status.transition_unpaired").c_str());
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void App::render_radius_plot(const ProfileData& data, ImVec2 size) {

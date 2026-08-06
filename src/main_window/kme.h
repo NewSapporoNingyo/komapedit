@@ -55,6 +55,7 @@ inline void release_com(T*& pointer) {
 #ifndef NDEBUG
 extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
+struct HeadlessOwnTrackEditOptions;
 #endif
 
 
@@ -235,6 +236,20 @@ struct TrackEvent {
     bool value_number = false;
     double number = 0.0;
     std::string text;
+};
+
+struct OwnTrackEditMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    std::string label;
+    std::string edit_id;
+    std::string target_edit_id;
+    std::string row_kind;
+    size_t row_index = 0;
+    bool gradient = false;
+    bool transition = false;
+    bool paired = false;
 };
 
 struct OtherTrack {
@@ -565,6 +580,8 @@ struct MapModel {
     std::vector<Station> stations;
     std::map<std::string, std::string> station_names;
     std::vector<TrackEvent> own_events;
+    std::vector<TableRow> curve_rows;
+    std::vector<TableRow> gradient_rows;
     std::vector<SpeedLimit> speedlimits;
     std::vector<TableRow> speed_limit_rows;
     std::vector<double> controlpoints;
@@ -759,7 +776,9 @@ enum class PlanMarkerKind {
     CabIlluminance,
     Fog,
     DrawDistance,
-    SpeedLimit
+    SpeedLimit,
+    Curve,
+    Gradient
 };
 
 struct PlanMarkerSelection {
@@ -839,6 +858,8 @@ struct PlanData {
     std::vector<PlanCabIlluminanceMarker> cab_illuminance_markers;
     std::vector<PlanFogMarker> fog_markers;
     std::vector<PlanDrawDistanceMarker> draw_distance_markers;
+    std::vector<OwnTrackEditMarker> curve_edit_markers;
+    std::vector<OwnTrackEditMarker> gradient_edit_markers;
     std::vector<Section> curve_sections;
     std::vector<Section> transition_sections;
     double origin_angle = 0.0;
@@ -872,6 +893,7 @@ struct ProfileData {
     std::vector<LabelPoint> gradient_points;
     std::vector<LabelPoint> gradient_labels;
     std::vector<LabelPoint> radius_labels;
+    std::vector<OwnTrackEditMarker> gradient_edit_markers;
     double ymin = -5.0;
     double ymax = 5.0;
 };
@@ -1428,6 +1450,8 @@ public:
                                                  const std::string& output_path);
     static int run_debug_headless_edit_roundtrip(const std::string& path, double unit_distance,
                                                  const std::string& output_path);
+    static int run_debug_headless_own_track_edit(
+        const HeadlessOwnTrackEditOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 
@@ -1723,6 +1747,7 @@ private:
     std::vector<std::optional<PlanFogMarker>> fog_marker_cache_;
     std::vector<std::optional<PlanDrawDistanceMarker>> draw_distance_marker_cache_;
     std::vector<std::optional<PlanMarker>> speed_limit_marker_cache_;
+    std::vector<OwnTrackEditMarker> own_track_edit_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
     std::vector<unsigned char> signal_row_visible_;
@@ -1736,6 +1761,8 @@ private:
         bool fitted = false;
         double scale = 1.0;
         bool show_curve_values = false;
+        bool show_gradient_positions = false;
+        bool edit_mode_enabled = false;
         std::uint32_t marker_visibility_mask = 0;
         std::vector<unsigned char> structure_row_visible;
         std::vector<unsigned char> repeater_row_visible;
@@ -1825,6 +1852,8 @@ private:
     int plan_fog_popup_row_ = -1;
     int plan_draw_distance_popup_row_ = -1;
     int plan_speed_limit_popup_row_ = -1;
+    std::optional<OwnTrackEditMarker> plan_own_track_popup_marker_;
+    std::optional<OwnTrackEditMarker> profile_own_track_popup_marker_;
     PlanMarkerSelection plan_marker_selection_;
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;

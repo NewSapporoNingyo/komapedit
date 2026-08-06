@@ -1474,7 +1474,8 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     if (!own_track || own_track->points.empty()) return;
 
     const size_t estimated_count =
-        model.station_positions.size() + model.own_events.size() +
+        model.station_positions.size() + model.curve_rows.size() +
+        model.gradient_rows.size() +
         model.speedlimits.size() + model.section_begins.size() +
         model.beacons.size() + model.pretrains.size() +
         model.irregularities.size() + model.map_sounds.size() +
@@ -1519,35 +1520,68 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                       station.edit_id);
     }
 
-    for (const TrackEvent& event : model.own_events) {
-        if (event.key == "radius") {
-            if (event.flag == "bt") {
-                append_marker(MapMarkerVisualKind::CurveTransitionStart, event.distance,
-                              "Curve\nTr.");
-            } else if (event.flag.empty() && event.value_number &&
-                       std::isfinite(event.number)) {
-                if (std::abs(event.number) <= k_scene_route_display_zero_epsilon) {
-                    append_marker(MapMarkerVisualKind::CurveEnd, event.distance, "End");
-                } else {
-                    append_marker(MapMarkerVisualKind::CurveCircularStart,
-                                  event.distance,
-                                  canvas3d_scene_curve_marker_label(scene.route_info, event));
-                }
-            }
-        } else if (event.key == "gradient") {
-            if (event.flag == "bt") {
-                append_marker(MapMarkerVisualKind::GradientTransitionStart, event.distance,
-                              "Gradient\nTr.");
-            } else if (event.flag.empty() && event.value_number &&
-                       std::isfinite(event.number)) {
-                if (std::abs(event.number) <= k_scene_route_display_zero_epsilon) {
-                    append_marker(MapMarkerVisualKind::GradientEnd, event.distance, "End");
-                } else {
-                    append_marker(MapMarkerVisualKind::GradientStart,
-                                  event.distance,
-                                  canvas3d_scene_gradient_marker_label(event.number));
-                }
-            }
+    for (size_t row_index = 0; row_index < model.curve_rows.size(); ++row_index) {
+        const TableRow& row = model.curve_rows[row_index];
+        const std::string method = ascii_lower(table_cell(row, "method"));
+        const bool transition = method == "curve.begintransition";
+        const double radius = table_cell_number(row, "radius");
+        const bool end = method == "curve.end" ||
+            (!transition && std::isfinite(radius) &&
+             std::abs(radius) <= k_scene_route_display_zero_epsilon);
+        const std::string edit_id = transition
+            ? table_cell(row, "_primaryEditId") : row.edit_id;
+        if (transition) {
+            append_marker(MapMarkerVisualKind::CurveTransitionStart,
+                          table_cell_number(row, "distance"), "Curve\nTr.",
+                          MapMarkerIconVariant::Default,
+                          Canvas3DSceneMarkerListKind::None, "curve", row_index,
+                          edit_id);
+        } else if (end) {
+            append_marker(MapMarkerVisualKind::CurveEnd,
+                          table_cell_number(row, "distance"), "End",
+                          MapMarkerIconVariant::Default,
+                          Canvas3DSceneMarkerListKind::None, "curve", row_index,
+                          edit_id);
+        } else {
+            TrackEvent event;
+            event.distance = table_cell_number(row, "distance");
+            event.value_number = true;
+            event.number = radius;
+            append_marker(MapMarkerVisualKind::CurveCircularStart, event.distance,
+                          canvas3d_scene_curve_marker_label(scene.route_info, event),
+                          MapMarkerIconVariant::Default,
+                          Canvas3DSceneMarkerListKind::None, "curve", row_index,
+                          edit_id);
+        }
+    }
+    for (size_t row_index = 0; row_index < model.gradient_rows.size(); ++row_index) {
+        const TableRow& row = model.gradient_rows[row_index];
+        const std::string method = ascii_lower(table_cell(row, "method"));
+        const bool transition = method == "gradient.begintransition";
+        const double gradient = table_cell_number(row, "gradient");
+        const bool end = method == "gradient.end" ||
+            (!transition && std::isfinite(gradient) &&
+             std::abs(gradient) <= k_scene_route_display_zero_epsilon);
+        const double distance = table_cell_number(row, "distance");
+        const std::string edit_id = transition
+            ? table_cell(row, "_primaryEditId") : row.edit_id;
+        if (transition) {
+            append_marker(MapMarkerVisualKind::GradientTransitionStart, distance,
+                          "Gradient\nTr.", MapMarkerIconVariant::Default,
+                          Canvas3DSceneMarkerListKind::None, "gradient", row_index,
+                          edit_id);
+        } else if (end) {
+            append_marker(MapMarkerVisualKind::GradientEnd, distance, "End",
+                          MapMarkerIconVariant::Default,
+                          Canvas3DSceneMarkerListKind::None, "gradient", row_index,
+                          edit_id);
+        } else {
+            append_marker(MapMarkerVisualKind::GradientStart, distance,
+                          canvas3d_scene_gradient_marker_label(
+                              gradient),
+                          MapMarkerIconVariant::Default,
+                          Canvas3DSceneMarkerListKind::None, "gradient", row_index,
+                          edit_id);
         }
     }
 
@@ -8349,6 +8383,7 @@ fail:
     static bool scene_marker_has_edit_target(const Canvas3DSceneMarker& marker) {
         return (marker.kind == MapMarkerVisualKind::Station &&
                  marker.row_kind == "station.put") ||
+               marker.row_kind == "curve" || marker.row_kind == "gradient" ||
                scene_marker_has_list_target(marker);
     }
 
@@ -8390,6 +8425,11 @@ fail:
                     action.row_kind = marker.row_kind;
                 }
                 ImGui::EndDisabled();
+            }
+            if ((marker.row_kind == "curve" || marker.row_kind == "gradient") &&
+                marker.edit_id.empty()) {
+                ImGui::Separator();
+                ImGui::TextWrapped("%s", ui_text.unpaired_transition);
             }
         }
 

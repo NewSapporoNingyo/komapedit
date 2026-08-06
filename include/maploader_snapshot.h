@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 4u
-#define KV_MAP_SNAPSHOT_VERSION 4u
+#define KV_MAPLOADER_API_VERSION 5u
+#define KV_MAP_SNAPSHOT_VERSION 5u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
@@ -90,6 +90,31 @@ typedef struct KvTrackEventRow {
     KvValue value;
     KvRowMetadata metadata;
 } KvTrackEventRow;
+
+typedef struct KvCurveRow {
+    double distance;
+    KvStringRef method;
+    KvValue radius;
+    KvValue cant;
+    uint32_t argument_count;
+    uint32_t reserved;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved2;
+    KvRowMetadata metadata;
+} KvCurveRow;
+
+typedef struct KvGradientRow {
+    double distance;
+    KvStringRef method;
+    KvValue gradient;
+    uint32_t argument_count;
+    uint32_t reserved;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved2;
+    KvRowMetadata metadata;
+} KvGradientRow;
 
 typedef struct KvOtherTrackRow {
     KvStringRef key;
@@ -510,6 +535,10 @@ typedef struct KvMapSnapshot {
     uint64_t own_track_event_count;
     const KvTrackEventRow* other_track_events;
     uint64_t other_track_event_count;
+    const KvCurveRow* curves;
+    uint64_t curve_count;
+    const KvGradientRow* gradients;
+    uint64_t gradient_count;
 
     const KvStationPositionRow* station_positions;
     uint64_t station_position_count;

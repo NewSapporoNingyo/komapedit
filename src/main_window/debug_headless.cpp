@@ -489,6 +489,39 @@ HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::ve
     return options;
 }
 
+HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
+    const std::vector<std::string>& args) {
+    static constexpr const char* k_default_map_path =
+        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
+        "Config_Map121M-ATSP+Ps_Ask.txt";
+    HeadlessOwnTrackEditOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-own-track-edit") {
+            options.requested = true;
+            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
+                options.path = args[++i];
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    if (options.requested && options.path.empty()) options.path = k_default_map_path;
+    return options;
+}
+
 HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     const std::vector<std::string>& args) {
     static constexpr const char* k_default_map_path =
@@ -1398,6 +1431,216 @@ Change update(std::string change_id, std::string edit_id,
 }
 
 } // namespace typed_edit_headless
+
+int App::run_debug_headless_own_track_edit(
+    const HeadlessOwnTrackEditOptions& options) {
+    using typed_edit_headless::Change;
+    using typed_edit_headless::Field;
+    using typed_edit_headless::Report;
+
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "command=debug-headless-own-track-edit\n"
+         << "map_path=\"" << options.path << "\"\n";
+    LoadResult load = load_map_worker(options.path, options.unit_distance,
+                                      false, 0.0, 0.0, options.unit_distance,
+                                      LoadModelOptions{true});
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        return 2;
+    }
+
+    auto source_hash = [&](const TableRow& row) {
+        const auto file = std::find_if(
+            load.model.edit_files.begin(), load.model.edit_files.end(),
+            [&](const EditSourceFileInfo& candidate) {
+                return candidate.file_path == row.source.file_path;
+            });
+        return file == load.model.edit_files.end() ? std::string{} : file->source_hash;
+    };
+    auto rows_for_kind = [](const MapModel& model,
+                            const std::string& kind) -> const std::vector<TableRow>& {
+        return kind == "curve" ? model.curve_rows : model.gradient_rows;
+    };
+    auto find_row = [&](const MapModel& model, const std::string& kind,
+                        const std::string& edit_id) -> const TableRow* {
+        const std::vector<TableRow>& rows = rows_for_kind(model, kind);
+        const auto found = std::find_if(rows.begin(), rows.end(),
+                                        [&](const TableRow& row) {
+                                            return row.edit_id == edit_id;
+                                        });
+        return found == rows.end() ? nullptr : &*found;
+    };
+    auto update_change = [&](const TableRow& row, const std::string& field,
+                             const std::string& value) {
+        return typed_edit_headless::update(
+            "own-track-update-" + row.edit_id, row.edit_id, source_hash(row),
+            std::vector<Field>{{field, value}});
+    };
+    auto delete_change = [&](const TableRow& row) {
+        Change change;
+        change.change_id = "own-track-delete-" + row.edit_id;
+        change.edit_id = row.edit_id;
+        change.operation = KV_EDIT_DELETE;
+        change.expected_source_hash = source_hash(row);
+        return change;
+    };
+    auto print_report_errors = [&](const Report& report) {
+        for (const std::string& error : report.blocking_errors) {
+            *out << "blocking_error=" << error << "\n";
+        }
+    };
+
+    int failed_cases = 0;
+    auto apply_update_case = [&](const char* label, const std::string& kind,
+                                 const TableRow* target, const char* field,
+                                 double delta) {
+        if (!target) {
+            *out << label << "_target_found=0\n";
+            ++failed_cases;
+            return;
+        }
+        const double expected = table_cell_number(*target, field) + delta;
+        const std::string expected_text = format_double(expected, 9);
+        const Report report = typed_edit_headless::apply_to_memory(
+            load.handle, {update_change(*target, field, expected_text)});
+        const MapModel applied = report.ok
+            ? build_model_from_handle(load.handle, options.path, LoadModelOptions{true})
+            : MapModel{};
+        const TableRow* applied_row = report.ok
+            ? find_row(applied, kind, target->edit_id) : nullptr;
+        const bool value_ok = applied_row &&
+            std::abs(table_cell_number(*applied_row, field) - expected) < 1e-8;
+        const bool ok = report.ok && report.full_reparse_ok && value_ok;
+        *out << label << "_target_found=1\n"
+             << label << "_apply_ok=" << (report.ok ? 1 : 0) << "\n"
+             << label << "_full_reparse_ok=" << (report.full_reparse_ok ? 1 : 0) << "\n"
+             << label << "_value_ok=" << (value_ok ? 1 : 0) << "\n";
+        print_report_errors(report);
+        if (!ok) ++failed_cases;
+        if (!kv_edit_reset_memory(load.handle)) {
+            *out << label << "_reset_ok=0\n";
+            ++failed_cases;
+        } else {
+            *out << label << "_reset_ok=1\n";
+        }
+    };
+
+    auto editable_value_row = [](const TableRow& row, const char* transition_method,
+                                 const char* field) {
+        return !row.edit_id.empty() &&
+            ascii_lower(table_cell(row, "method")) != transition_method &&
+            table_cell_number(row, "argumentCount") > 0.0 &&
+            !table_cell(row, field).empty();
+    };
+    const auto curve_update_it = std::find_if(
+        load.model.curve_rows.begin(), load.model.curve_rows.end(),
+        [&](const TableRow& row) {
+            return editable_value_row(row, "curve.begintransition", "radius");
+        });
+    const auto gradient_update_it = std::find_if(
+        load.model.gradient_rows.begin(), load.model.gradient_rows.end(),
+        [&](const TableRow& row) {
+            return editable_value_row(row, "gradient.begintransition", "gradient");
+        });
+    const TableRow* curve_update = curve_update_it == load.model.curve_rows.end()
+        ? nullptr : &*curve_update_it;
+    const TableRow* gradient_update = gradient_update_it == load.model.gradient_rows.end()
+        ? nullptr : &*gradient_update_it;
+
+    *out << "curve_row_count=" << load.model.curve_rows.size() << "\n"
+         << "gradient_row_count=" << load.model.gradient_rows.size() << "\n";
+    apply_update_case("curve_update", "curve", curve_update, "radius", 1.0);
+    apply_update_case("gradient_update", "gradient", gradient_update, "gradient", 0.001);
+
+    const TableRow* delete_target = nullptr;
+    std::string delete_kind;
+    auto select_delete_target = [&](const std::vector<TableRow>& rows,
+                                    const std::string& kind) {
+        const auto standalone = std::find_if(rows.begin(), rows.end(),
+                                             [&](const TableRow& row) {
+            const std::string method = ascii_lower(table_cell(row, "method"));
+            return !row.edit_id.empty() &&
+                method != kind + ".begintransition" &&
+                table_cell(row, "_transitionEditId").empty();
+        });
+        if (standalone != rows.end()) {
+            delete_target = &*standalone;
+            delete_kind = kind;
+            return true;
+        }
+        const auto paired = std::find_if(rows.begin(), rows.end(),
+                                         [&](const TableRow& row) {
+            const std::string method = ascii_lower(table_cell(row, "method"));
+            return !row.edit_id.empty() &&
+                method != kind + ".begintransition" &&
+                !table_cell(row, "_transitionEditId").empty();
+        });
+        if (paired == rows.end()) return false;
+        delete_target = &*paired;
+        delete_kind = kind;
+        return true;
+    };
+    if (!select_delete_target(load.model.curve_rows, "curve")) {
+        select_delete_target(load.model.gradient_rows, "gradient");
+    }
+
+    if (!delete_target) {
+        *out << "delete_target_found=0\n";
+        ++failed_cases;
+    } else {
+        std::vector<Change> deletes{delete_change(*delete_target)};
+        std::vector<std::string> deleted_ids{delete_target->edit_id};
+        const std::string transition_id = table_cell(*delete_target, "_transitionEditId");
+        if (!transition_id.empty()) {
+            const TableRow* transition = find_row(load.model, delete_kind, transition_id);
+            if (transition) {
+                deletes.push_back(delete_change(*transition));
+                deleted_ids.push_back(transition_id);
+            }
+        }
+        const Report report = typed_edit_headless::apply_to_memory(load.handle, deletes);
+        const MapModel applied = report.ok
+            ? build_model_from_handle(load.handle, options.path, LoadModelOptions{true})
+            : MapModel{};
+        const bool rows_removed = report.ok && std::all_of(
+            deleted_ids.begin(), deleted_ids.end(), [&](const std::string& edit_id) {
+                return find_row(applied, delete_kind, edit_id) == nullptr;
+            });
+        const bool ok = report.ok && report.full_reparse_ok && rows_removed;
+        *out << "delete_target_found=1\n"
+             << "delete_kind=" << delete_kind << "\n"
+             << "delete_change_count=" << deletes.size() << "\n"
+             << "delete_apply_ok=" << (report.ok ? 1 : 0) << "\n"
+             << "delete_full_reparse_ok=" << (report.full_reparse_ok ? 1 : 0) << "\n"
+             << "delete_rows_removed=" << (rows_removed ? 1 : 0) << "\n";
+        print_report_errors(report);
+        if (!ok) ++failed_cases;
+        if (!kv_edit_reset_memory(load.handle)) {
+            *out << "delete_reset_ok=0\n";
+            ++failed_cases;
+        } else {
+            *out << "delete_reset_ok=1\n";
+        }
+    }
+
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    if (load.handle) kv_free(load.handle);
+    return failed_cases == 0 ? 0 : 3;
+}
 
 int App::run_debug_headless_edit_roundtrip(const std::string& path, double unit_distance,
                                            const std::string& output_path) {
