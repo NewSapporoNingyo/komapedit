@@ -4896,6 +4896,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             model_.default_min = refreshed.default_min;
             model_.default_max = refreshed.default_max;
             for (size_t i = 0; i < 3; ++i) model_.cp_arb[i] = refreshed.cp_arb[i];
+            normalize_station_preview_rows(model_);
         }
         for (auto original = original_edit_rows_.begin();
              original != original_edit_rows_.end();) {

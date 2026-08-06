@@ -1636,6 +1636,99 @@ int App::run_debug_headless_own_track_edit(
         }
     }
 
+    if (!curve_update) {
+        *out << "gui_station_sync_target_found=0\n";
+        ++failed_cases;
+    } else {
+        const std::string target_edit_id = curve_update->edit_id;
+        const std::string target_hash = source_hash(*curve_update);
+        const double target_radius = table_cell_number(*curve_update, "radius") + 25.0;
+        const std::vector<Station> baseline_stations = load.model.station_positions;
+        bool apply_ok = false;
+        bool expected_geometry_changed = false;
+        bool station_coordinates_match = false;
+        std::string exception_text;
+
+        ImGui::CreateContext();
+        ImPlot::CreateContext();
+        ImGui::GetIO().IniFilename = nullptr;
+        try {
+            UserSettings settings;
+            settings.language = Language::En;
+            App app(nullptr, settings, 1.0f, false, false);
+            app.handle_ = load.handle;
+            load.handle = nullptr;
+            app.model_ = std::move(load.model);
+            app.file_path_ = options.path;
+            app.has_model_ = true;
+            app.edit_mode_enabled_ = true;
+            app.edit_registry_loaded_ = true;
+            app.edit_memory_matches_pending_ledger_ = true;
+            app.dmin_ = app.model_.default_min;
+            app.dmax_ = app.model_.default_max;
+
+            MapElementPendingChange pending;
+            pending.change_id = "own-track-gui-station-sync";
+            pending.edit_id = target_edit_id;
+            pending.row_kind = "curve";
+            pending.operation = "update";
+            pending.expected_source_hash = target_hash;
+            pending.field_changes["radius"] = format_double(target_radius, 9);
+            std::map<std::string, MapElementPendingChange> ledger;
+            ledger.emplace(target_edit_id, std::move(pending));
+            apply_ok = app.apply_edit_ledger_to_preview(
+                ledger, std::nullopt, false);
+
+            if (apply_ok) {
+                const MapModel expected = build_model_from_handle(
+                    app.handle_, options.path, LoadModelOptions{true});
+                const size_t count = std::min(
+                    baseline_stations.size(), expected.station_positions.size());
+                for (size_t i = 0; i < count; ++i) {
+                    const Station& before = baseline_stations[i];
+                    const Station& after = expected.station_positions[i];
+                    if (std::abs(before.x - after.x) > 1e-7 ||
+                        std::abs(before.y - after.y) > 1e-7 ||
+                        std::abs(before.z - after.z) > 1e-7) {
+                        expected_geometry_changed = true;
+                        break;
+                    }
+                }
+                station_coordinates_match =
+                    app.model_.station_positions.size() ==
+                        expected.station_positions.size();
+                for (size_t i = 0;
+                     station_coordinates_match &&
+                     i < expected.station_positions.size(); ++i) {
+                    const Station& actual = app.model_.station_positions[i];
+                    const Station& wanted = expected.station_positions[i];
+                    station_coordinates_match = actual.key == wanted.key &&
+                        std::abs(actual.distance - wanted.distance) < 1e-9 &&
+                        std::abs(actual.x - wanted.x) < 1e-9 &&
+                        std::abs(actual.y - wanted.y) < 1e-9 &&
+                        std::abs(actual.z - wanted.z) < 1e-9;
+                }
+            }
+        } catch (const std::exception& e) {
+            exception_text = e.what();
+        }
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
+
+        const bool station_sync_ok = apply_ok && expected_geometry_changed &&
+            station_coordinates_match && exception_text.empty();
+        *out << "gui_station_sync_target_found=1\n"
+             << "gui_station_sync_apply_ok=" << (apply_ok ? 1 : 0) << "\n"
+             << "gui_station_sync_geometry_changed="
+             << (expected_geometry_changed ? 1 : 0) << "\n"
+             << "gui_station_sync_coordinates_match="
+             << (station_coordinates_match ? 1 : 0) << "\n";
+        if (!exception_text.empty()) {
+            *out << "gui_station_sync_exception=" << exception_text << "\n";
+        }
+        if (!station_sync_ok) ++failed_cases;
+    }
+
     *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();
     if (load.handle) kv_free(load.handle);
