@@ -3186,6 +3186,16 @@ void App::render_plan_canvas(ImVec2 size) {
             locate_structure_row_in_list(static_cast<size_t>(plan_structure_popup_row_));
         }
         ImGui::EndDisabled();
+        const PlanStructureMarker* marker = can_locate &&
+            structure_marker_cache_[static_cast<size_t>(plan_structure_popup_row_)].has_value()
+                ? &*structure_marker_cache_[static_cast<size_t>(plan_structure_popup_row_)]
+                : nullptr;
+        const char* row_kind = put_between ? "structure.between" : "structure.put";
+        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
+            request_element_inspector(marker->edit_id, row_kind);
+        }
+        ImGui::EndDisabled();
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("plan_repeater_marker_context")) {
@@ -3215,6 +3225,15 @@ void App::render_plan_canvas(ImVec2 size) {
         ImGui::BeginDisabled(!can_locate);
         if (ImGui::MenuItem(tr("menu.locate_in_signal_list").c_str()) && can_locate) {
             locate_signal_row_in_list(static_cast<size_t>(plan_signal_popup_row_));
+        }
+        ImGui::EndDisabled();
+        const PlanSignalMarker* marker = can_locate &&
+            signal_marker_cache_[static_cast<size_t>(plan_signal_popup_row_)].has_value()
+                ? &*signal_marker_cache_[static_cast<size_t>(plan_signal_popup_row_)]
+                : nullptr;
+        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
+            request_element_inspector(marker->edit_id, "signal.put");
         }
         ImGui::EndDisabled();
         ImGui::EndPopup();
