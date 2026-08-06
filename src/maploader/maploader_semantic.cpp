@@ -194,13 +194,11 @@ const std::string* changed_field(const MapEditChange* change, const char* key) {
 }
 
 double parse_changed_number(const std::string& input, const char* key) {
-    const std::string trimmed = trim_field_copy(input);
-    if (trimmed.empty()) throw std::runtime_error(std::string("empty numeric edit field: ") + key);
-    const char* begin = trimmed.c_str();
-    char* end = nullptr;
-    errno = 0;
-    const double value = std::strtod(begin, &end);
-    if (end == begin || !end || *end != '\0' || errno == ERANGE || !std::isfinite(value)) {
+    double value = 0.0;
+    if (trim_field_copy(input).empty()) {
+        throw std::runtime_error(std::string("empty numeric edit field: ") + key);
+    }
+    if (!parse_finite_number(input, value)) {
         throw std::runtime_error(std::string("invalid numeric edit field ") + key + ": " + input);
     }
     return value;

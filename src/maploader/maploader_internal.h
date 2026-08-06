@@ -134,8 +134,8 @@ private:
 };
 
 std::string ascii_lower(std::string s);
-std::string trim_copy(const std::string& s);
 std::string trim_field_copy(const std::string& s);
+bool parse_finite_number(const std::string& text, double& value);
 std::string canonical_number(double value);
 std::uint64_t stable_hash64(const std::string& text);
 std::string hex64(std::uint64_t value);
@@ -272,6 +272,7 @@ struct ParsedStatement {
     std::string distance_expression;
     double distance_value = 0.0;
     int global_order = 0;
+    int editable_element_count = 0;
 };
 
 struct EditSourceRef {
@@ -980,8 +981,6 @@ size_t intern_include_invocation_key(MapContext& ctx, const std::string& key);
 const SourceFileRecord* source_file_record(const MapContext& ctx, const SourceSpan& span);
 const std::string& source_file_path(const MapContext& ctx, const SourceSpan& span);
 const std::string& source_file_key(const MapContext& ctx, const SourceSpan& span);
-const std::string& source_file_encoding(const MapContext& ctx, const SourceSpan& span);
-const std::string& source_file_newline(const MapContext& ctx, const SourceSpan& span);
 const std::vector<std::string>& source_include_stack(const MapContext& ctx, const SourceSpan& span);
 const std::string& source_include_invocation_key(const MapContext& ctx, const SourceSpan& span);
 int utf8_column_count(const std::string& text, size_t begin, size_t end);
@@ -1003,10 +1002,14 @@ size_t add_parsed_statement(MapContext& ctx,
                             std::vector<Value> evaluated_values,
                             std::string distance_expression,
                             double distance_value);
-EditSourceRef next_active_edit_ref(MapContext& ctx);
+EditSourceRef next_active_edit_ref(MapContext& ctx, bool editable = true);
 template <typename Row>
 void attach_active_edit_ref(MapContext& ctx, Row& row) {
     row.edit_ref = next_active_edit_ref(ctx);
+}
+template <typename Row>
+void attach_active_noneditable_ref(MapContext& ctx, Row& row) {
+    row.edit_ref = next_active_edit_ref(ctx, false);
 }
 
 struct ActiveStatementScope {
@@ -1065,7 +1068,8 @@ EditSourceRef add_loaded_line_statement(MapContext& ctx,
                                         size_t line_start,
                                         size_t line_end,
                                         const std::string& line,
-                                        const std::vector<std::string>& fields);
+                                        const std::vector<std::string>& fields,
+                                        bool editable);
 void extend_loaded_line_statement(
     MapContext& ctx,
     const LoadedText& loaded,

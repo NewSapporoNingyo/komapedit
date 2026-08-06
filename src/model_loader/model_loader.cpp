@@ -6,6 +6,7 @@
 
 #define MODEL_LOADER_EXPORTS
 #include "model_loader.h"
+#include "text_decoder.h"
 
 #include <assimp/Importer.hpp>
 #include <assimp/material.h>
@@ -14,101 +15,26 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <vector>
-
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace {
 
 thread_local std::string g_last_error;
 
-#if defined(_WIN32)
-std::wstring utf8_to_wide_local(const std::string& text) {
-    if (text.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (n <= 0) {
-        n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    }
-    if (n <= 0) throw std::runtime_error("UTF-8 path decode failed");
-    std::wstring out(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), n);
-    return out;
-}
-
-std::string wide_to_utf8_local(const std::wstring& text) {
-    if (text.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return {};
-    std::string out(n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), n, nullptr, nullptr);
-    return out;
-}
-
-std::filesystem::path path_from_utf8(const std::string& path) {
-    return std::filesystem::path(utf8_to_wide_local(path));
-}
-
-std::string path_to_utf8(const std::filesystem::path& path) {
-    return wide_to_utf8_local(path.wstring());
-}
-#else
-std::filesystem::path path_from_utf8(const std::string& path) {
-    return std::filesystem::path(path);
-}
-
-std::string path_to_utf8(const std::filesystem::path& path) {
-#if defined(__cpp_char8_t)
-    auto s = path.u8string();
-    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
-#else
-    return path.u8string();
-#endif
-}
-#endif
+using kme::maploader::path_from_utf8;
+using kme::maploader::path_to_utf8;
+using kme::maploader::read_binary_file;
 
 std::string ascii_lower(std::string text) {
     for (char& ch : text) {
         if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
     }
     return text;
-}
-
-std::vector<unsigned char> read_binary_file(const std::string& path_utf8) {
-#if defined(_WIN32)
-    FILE* input = _wfopen(utf8_to_wide_local(path_utf8).c_str(), L"rb");
-#else
-    FILE* input = std::fopen(path_utf8.c_str(), "rb");
-#endif
-    if (!input) throw std::runtime_error("file open failed: " + path_utf8);
-
-    std::vector<unsigned char> data;
-    unsigned char buffer[8192];
-    while (true) {
-        size_t n = std::fread(buffer, 1, sizeof(buffer), input);
-        if (n > 0) data.insert(data.end(), buffer, buffer + n);
-        if (n < sizeof(buffer)) {
-            if (std::ferror(input)) {
-                std::fclose(input);
-                throw std::runtime_error("file read failed: " + path_utf8);
-            }
-            break;
-        }
-    }
-    std::fclose(input);
-    if (data.empty()) throw std::runtime_error("file is empty: " + path_utf8);
-    return data;
 }
 
 std::string extension_hint(const std::string& path_utf8) {
@@ -151,6 +77,18 @@ void free_mesh(MlMeshData& model) {
     model = {};
 }
 
+class MeshCleanupGuard {
+public:
+    explicit MeshCleanupGuard(MlMeshData& model) : model_(&model) {}
+    ~MeshCleanupGuard() {
+        if (model_) free_mesh(*model_);
+    }
+    void release() { model_ = nullptr; }
+
+private:
+    MlMeshData* model_;
+};
+
 void assign_bounds(MlMeshData& out) {
     float mn[3] = {
         std::numeric_limits<float>::max(),
@@ -189,9 +127,11 @@ void assign_bounds(MlMeshData& out) {
 }
 
 MlMeshData load_with_assimp(const std::string& path_utf8) {
-    const std::vector<unsigned char> bytes = read_binary_file(path_utf8);
+    const std::filesystem::path input_path = path_from_utf8(path_utf8);
+    const std::string bytes = read_binary_file(input_path);
+    if (bytes.empty()) throw std::runtime_error("file is empty: " + path_utf8);
     const std::string hint = extension_hint(path_utf8);
-    std::filesystem::path model_path = path_from_utf8(path_utf8);
+    std::filesystem::path model_path = input_path;
     std::error_code ec;
     std::filesystem::path abs_model_path = std::filesystem::absolute(model_path, ec);
     if (!ec) model_path = abs_model_path;
@@ -237,13 +177,13 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
     }
 
     MlMeshData out = {};
+    MeshCleanupGuard cleanup(out);
     out.vertices = static_cast<MlVertex*>(std::malloc(sizeof(MlVertex) * vertex_count));
     out.indices = static_cast<unsigned int*>(std::malloc(sizeof(unsigned int) * index_count));
     out.parts = static_cast<MlMeshPart*>(std::malloc(sizeof(MlMeshPart) * part_count));
     out.material_count = std::max<size_t>(scene->mNumMaterials, 1);
     out.materials = static_cast<MlMaterial*>(std::calloc(out.material_count, sizeof(MlMaterial)));
     if (!out.vertices || !out.indices || !out.parts || !out.materials) {
-        free_mesh(out);
         throw std::runtime_error("memory allocation failed");
     }
     out.vertex_count = vertex_count;
@@ -317,6 +257,7 @@ MlMeshData load_with_assimp(const std::string& path_utf8) {
     }
 
     assign_bounds(out);
+    cleanup.release();
     return out;
 }
 

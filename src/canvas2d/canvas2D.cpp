@@ -167,36 +167,21 @@ bool dense_repeater_segment_lod(size_t visible_repeater_count, double scale) {
         scale < k_dense_repeater_segment_scale;
 }
 
-void include_repeater_chunk_bounds(PlanRepeaterSegment::Chunk& chunk, const TrackPoint& p) {
-    if (!chunk.bounds_valid) {
-        chunk.d_min = chunk.d_max = p.d;
-        chunk.x_min = chunk.x_max = p.x;
-        chunk.y_min = chunk.y_max = p.y;
-        chunk.bounds_valid = true;
+template <typename Bounds>
+void include_repeater_bounds(Bounds& bounds, const TrackPoint& p) {
+    if (!bounds.bounds_valid) {
+        bounds.d_min = bounds.d_max = p.d;
+        bounds.x_min = bounds.x_max = p.x;
+        bounds.y_min = bounds.y_max = p.y;
+        bounds.bounds_valid = true;
         return;
     }
-    chunk.d_min = std::min(chunk.d_min, p.d);
-    chunk.d_max = std::max(chunk.d_max, p.d);
-    chunk.x_min = std::min(chunk.x_min, p.x);
-    chunk.x_max = std::max(chunk.x_max, p.x);
-    chunk.y_min = std::min(chunk.y_min, p.y);
-    chunk.y_max = std::max(chunk.y_max, p.y);
-}
-
-void include_repeater_segment_bounds(PlanRepeaterSegment& segment, const TrackPoint& p) {
-    if (!segment.bounds_valid) {
-        segment.d_min = segment.d_max = p.d;
-        segment.x_min = segment.x_max = p.x;
-        segment.y_min = segment.y_max = p.y;
-        segment.bounds_valid = true;
-        return;
-    }
-    segment.d_min = std::min(segment.d_min, p.d);
-    segment.d_max = std::max(segment.d_max, p.d);
-    segment.x_min = std::min(segment.x_min, p.x);
-    segment.x_max = std::max(segment.x_max, p.x);
-    segment.y_min = std::min(segment.y_min, p.y);
-    segment.y_max = std::max(segment.y_max, p.y);
+    bounds.d_min = std::min(bounds.d_min, p.d);
+    bounds.d_max = std::max(bounds.d_max, p.d);
+    bounds.x_min = std::min(bounds.x_min, p.x);
+    bounds.x_max = std::max(bounds.x_max, p.x);
+    bounds.y_min = std::min(bounds.y_min, p.y);
+    bounds.y_max = std::max(bounds.y_max, p.y);
 }
 
 void include_repeater_segment_endpoint(PlanRepeaterSegment& segment, const TrackPoint& p) {
@@ -218,8 +203,8 @@ void append_repeater_segment_point(PlanRepeaterSegment& segment, const TrackPoin
         PlanRepeaterSegment::Chunk& tail_chunk = segment.chunks.back();
         if (!tail_chunk.points.empty() && std::abs(tail_chunk.points.back().d - p.d) < 1e-6) {
             tail_chunk.points.back() = p;
-            include_repeater_chunk_bounds(tail_chunk, p);
-            include_repeater_segment_bounds(segment, p);
+            include_repeater_bounds(tail_chunk, p);
+            include_repeater_bounds(segment, p);
             include_repeater_segment_endpoint(segment, p);
             return;
         }
@@ -235,14 +220,14 @@ void append_repeater_segment_point(PlanRepeaterSegment& segment, const TrackPoin
         segment.chunks.back().points.reserve(k_repeater_segment_chunk_point_limit);
         if (tail) {
             segment.chunks.back().points.push_back(*tail);
-            include_repeater_chunk_bounds(segment.chunks.back(), *tail);
+            include_repeater_bounds(segment.chunks.back(), *tail);
         }
     }
 
     PlanRepeaterSegment::Chunk& chunk = segment.chunks.back();
     chunk.points.push_back(p);
-    include_repeater_chunk_bounds(chunk, p);
-    include_repeater_segment_bounds(segment, p);
+    include_repeater_bounds(chunk, p);
+    include_repeater_bounds(segment, p);
     include_repeater_segment_endpoint(segment, p);
 }
 
@@ -812,7 +797,8 @@ std::vector<Section> App::curve_sections(bool transition) const {
                 ++i;
             }
             if (start < dmax_ && end > dmin_) {
-                sections.push_back({std::max(start, dmin_), std::min(end, dmax_), value});
+                sections.push_back({std::max(start, dmin_), std::min(end, dmax_), value,
+                                    format_double(value, 0)});
             }
         } else if (transition && e.flag == "bt") {
             double start = e.distance;
@@ -826,7 +812,8 @@ std::vector<Section> App::curve_sections(bool transition) const {
                 ++i;
             }
             if (start < dmax_ && end > dmin_) {
-                sections.push_back({std::max(start, dmin_), std::min(end, dmax_), 0.0});
+                sections.push_back(
+                    {std::max(start, dmin_), std::min(end, dmax_), 0.0, {}});
             }
         } else {
             ++i;
@@ -927,7 +914,8 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         const Station& s = model_.station_positions[row_index];
         if (s.distance < dmin_ || s.distance > dmax_) continue;
         ImVec2 q = rotate_xy(s.x, s.y, angle);
-        out.stations.push_back({s, q.x, q.y, row_index});
+        out.stations.push_back({s, q.x, q.y, row_index,
+                                format_double(s.mileage, 0) + "m"});
     }
 
     for (const auto& s : model_.speedlimits) {
@@ -944,7 +932,8 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         out.speedlimits.push_back({s.distance, p.x, p.y, p.theta,
                                    s.has_speed, s.speed,
                                    source ? source->edit_id : std::string{},
-                                   s.row_index});
+                                   s.row_index,
+                                   s.has_speed ? format_double(s.speed, 0) : "x"});
     }
 
     auto append_marker_bounds = [&](double x, double y) {
@@ -1214,8 +1203,12 @@ ProfileData App::build_profile_data() const {
     }
 
     out.stations.reserve(model_.stations.size());
+    out.station_mileage_labels.reserve(model_.stations.size());
     for (const auto& s : model_.stations) {
-        if (s.distance >= dmin_ && s.distance <= dmax_) out.stations.push_back(s);
+        if (s.distance >= dmin_ && s.distance <= dmax_) {
+            out.stations.push_back(s);
+            out.station_mileage_labels.push_back(format_double(s.mileage, 0) + "m");
+        }
     }
 
     std::vector<TrackEvent> gradients;
@@ -2878,7 +2871,9 @@ void App::render_plan_canvas(ImVec2 size) {
                     st.station.name.c_str());
             }
             if (!overview_marker_lod && show_station_mileage_) {
-                draw->AddText(ImVec2(p.x + station_label_offset, p.y + 4), IM_COL32(255, 216, 77, 255), (format_double(st.station.mileage, 0) + "m").c_str());
+                draw->AddText(ImVec2(p.x + station_label_offset, p.y + 4),
+                              IM_COL32(255, 216, 77, 255),
+                              st.mileage_label.c_str());
             }
         }
     }
@@ -2906,11 +2901,10 @@ void App::render_plan_canvas(ImVec2 size) {
                 8.0f * marker_size_scale / 0.88f *
                     (marker_active ? 1.2f : 1.0f), rotation);
             if (!overview_marker_lod) {
-                std::string label = sp.has_speed ? format_double(sp.speed, 0) : "x";
                 draw->AddText(
                     ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15),
                     marker_color,
-                    label.c_str());
+                    sp.label.c_str());
             }
         }
     }
@@ -3108,7 +3102,8 @@ void App::render_plan_canvas(ImVec2 size) {
             auto it = std::lower_bound(data.own.begin(), data.own.end(), mid, [](const TrackPoint& p, double d) { return p.d < d; });
             if (it != data.own.end()) {
                 ImVec2 p = transform.plan_to_screen(it->x, it->y);
-                draw->AddText(ImVec2(p.x + 8, p.y - 16), IM_COL32(136, 255, 136, 255), format_double(sec.value, 0).c_str());
+                draw->AddText(ImVec2(p.x + 8, p.y - 16),
+                              IM_COL32(136, 255, 136, 255), sec.label.c_str());
             }
         }
     }

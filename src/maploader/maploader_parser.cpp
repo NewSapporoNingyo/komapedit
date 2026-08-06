@@ -16,6 +16,8 @@ using kme::maploader::log_info;
 using kme::maploader::log_warn;
 using kme::maploader::path_to_utf8;
 
+constexpr size_t k_max_include_depth = 64;
+
 struct MapObject {
     std::string label;
     Value key;
@@ -440,6 +442,11 @@ private:
                 throw FatalParseError("Include cycle detected: " + child_path);
             }
         }
+        if (ctx_.include_stack.size() >= k_max_include_depth) {
+            throw FatalParseError(
+                "Include depth exceeds the supported limit of " +
+                std::to_string(k_max_include_depth) + ": " + child_path);
+        }
         log_info("including " + path_to_utf8(child));
         const size_t byte_start = loaded_.body_offset + body_start;
         const size_t byte_end = loaded_.body_offset + body_end;
@@ -710,9 +717,11 @@ private:
                 result.error = e.what();
             }
             if (!result.error.empty()) {
-                result = parse_include_context(
-                    make_child_seed(pending.path, pending.include_path,
-                                    pending.include_invocation_key), pending.path);
+                if (include_result_is_stale(pending, result.context)) {
+                    result = parse_include_context(
+                        make_child_seed(pending.path, pending.include_path,
+                                        pending.include_invocation_key), pending.path);
+                }
                 if (!result.error.empty()) {
                     for (auto& diagnostic : result.context.diagnostics) {
                         ctx_.diagnostics.push_back(std::move(diagnostic));
@@ -1493,7 +1502,7 @@ private:
             for (size_t i = 0; i < row.fields.size() && i < fields.size(); ++i) row.fields[i] = fields[i];
             row.order = ctx_.next_parse_order();
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StationList.Row",
-                                                     line_start, line_end, line, fields);
+                                                     line_start, line_end, line, fields, true);
             std::string key = ascii_lower(row.fields[0]);
             if (!key.empty()) ctx_.station_key[key] = row.fields[1];
             add_loaded_deferred_key(DeferredKeyKind::Sound, row.fields[9], loaded,
@@ -1520,7 +1529,7 @@ private:
             if (fields.size() > 1) row.file_path = fields[1];
             row.source_file_index = source_file_index;
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "StructureList.Row",
-                                                     line_start, line_end, line, fields);
+                                                     line_start, line_end, line, fields, true);
             ctx_.structure_models.push_back(std::move(row));
         });
     }
@@ -1544,7 +1553,7 @@ private:
                 SignalAspect row;
                 row.signal_aspect_key = fields[0];
                 row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack, "SignalList.Row",
-                                                         line_start, line_end, line, fields);
+                                                         line_start, line_end, line, fields, true);
                 ctx_.signal_aspects.push_back(std::move(row));
                 current_aspect = &ctx_.signal_aspects.back();
             }
@@ -1594,7 +1603,7 @@ private:
             row.source_file_index = source_file_index;
             row.edit_ref = add_loaded_line_statement(ctx_, loaded, stack,
                                                      is_3d ? "Sound3DList.Row" : "SoundList.Row",
-                                                     line_start, line_end, line, fields);
+                                                     line_start, line_end, line, fields, true);
             ctx_.sound_list.push_back(std::move(row));
         });
     }
@@ -1629,7 +1638,7 @@ private:
             if (value.empty()) return;
             std::vector<std::string> fields{key, value};
             EditSourceRef ref = add_loaded_line_statement(ctx_, loaded, stack, "OtherTrainFile.Row",
-                                                          line_start, line_end, line, fields);
+                                                          line_start, line_end, line, fields, false);
             if (section == "structure") {
                 ctx_.other_train_structure_keys.push_back({value, path_key, ref});
                 add_loaded_deferred_key(DeferredKeyKind::Structure, value, loaded,
@@ -1731,7 +1740,7 @@ private:
             row.signal_indices = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
+            attach_active_noneditable_ref(ctx_, row);
             ctx_.section_begins.push_back(std::move(row));
         } else if (fn == "setspeedlimit") {
             note_distance_use(ctx_);
@@ -1741,7 +1750,7 @@ private:
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
+            attach_active_noneditable_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
         }
     }
@@ -1765,7 +1774,7 @@ private:
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
+            attach_active_noneditable_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
         } else if (fn == "put" && has_signal_key && a.size() >= 4) {
             note_distance_use(ctx_);
@@ -1813,7 +1822,7 @@ private:
         row.pass_time = a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
-        attach_active_edit_ref(ctx_, row);
+        attach_active_noneditable_ref(ctx_, row);
         ctx_.pretrains.push_back(std::move(row));
     }
 
@@ -1827,7 +1836,7 @@ private:
             row.load_file_path = a.empty() ? Value::str("") : a[0];
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
+            attach_active_noneditable_ref(ctx_, row);
             ctx_.structure_loads.push_back(row);
             std::string list_path_text = as_text(row.load_file_path);
             record_resource_list_load(ResourceListLoadKind::Structure,
@@ -1929,7 +1938,7 @@ private:
         row.direction = direction;
         row.source_file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
-        attach_active_edit_ref(ctx_, row);
+        attach_active_noneditable_ref(ctx_, row);
 
         std::string path_text = as_text(file_path);
         if (!path_text.empty()) {
@@ -1964,7 +1973,7 @@ private:
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             row.source = diagnostic_source(current_statement_start_, "train.enable");
-            attach_active_edit_ref(ctx_, row);
+            attach_active_noneditable_ref(ctx_, row);
             ctx_.other_train_enables.push_back(std::move(row));
         } else if (fn == "stop" && has_train_key && a.size() >= 5) {
             note_distance_use(ctx_);
@@ -1977,7 +1986,7 @@ private:
             row.speed = a[4];
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_edit_ref(ctx_, row);
+            attach_active_noneditable_ref(ctx_, row);
             ctx_.other_train_stops.push_back(std::move(row));
         }
     }

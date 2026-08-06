@@ -35,10 +35,6 @@
 
 namespace {
 
-bool blank_ascii(const std::string& text) {
-    return text.find_first_not_of(" \t\r\n") == std::string::npos;
-}
-
 std::string normalize_train_lookup_key(const std::string& key) {
     std::string normalized = trim_gui_ascii_copy(key);
     std::transform(normalized.begin(), normalized.end(), normalized.begin(),
@@ -2539,24 +2535,30 @@ void App::render_othertracks_window() {
                 ImGui::TableSetupColumn("Color");
                 setup_fixed_table_header();
                 ImGui::TableHeadersRow();
-                for (auto& t : model_.other_tracks) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::PushID(t.key.c_str());
-                    if (ImGui::Checkbox("##show", &t.visible)) {
-                        scene_track_visibility_changed = true;
+                ImGuiListClipper clipper;
+                clipper.Begin(static_cast<int>(model_.other_tracks.size()));
+                while (clipper.Step()) {
+                    for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                        OtherTrack& t = model_.other_tracks[static_cast<size_t>(row)];
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::PushID(t.key.c_str());
+                        if (ImGui::Checkbox("##show", &t.visible)) {
+                            scene_track_visibility_changed = true;
+                        }
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(t.key.empty() ? "\\" : t.key.c_str());
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::SetNextItemWidth(-1);
+                        ImGui::InputDouble("##min", &t.range_min, 0, 0, "%.1f");
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::SetNextItemWidth(-1);
+                        ImGui::InputDouble("##max", &t.range_max, 0, 0, "%.1f");
+                        ImGui::TableSetColumnIndex(4);
+                        ImGui::ColorEdit3(
+                            "##color", &t.color.x, ImGuiColorEditFlags_NoInputs);
+                        ImGui::PopID();
                     }
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(t.key.empty() ? "\\" : t.key.c_str());
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::SetNextItemWidth(-1);
-                    ImGui::InputDouble("##min", &t.range_min, 0, 0, "%.1f");
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::SetNextItemWidth(-1);
-                    ImGui::InputDouble("##max", &t.range_max, 0, 0, "%.1f");
-                    ImGui::TableSetColumnIndex(4);
-                    ImGui::ColorEdit3("##color", &t.color.x, ImGuiColorEditFlags_NoInputs);
-                    ImGui::PopID();
                 }
                 ImGui::EndTable();
             }

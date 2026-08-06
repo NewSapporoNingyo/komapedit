@@ -59,6 +59,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -1472,6 +1473,16 @@ void App::add_log(std::string text) {
 void App::add_log(LogSeverity severity, std::string text) {
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
+        if (logs_.size() >= k_max_console_log_lines) {
+            const LogSeverity dropped = logs_.front().severity;
+            logs_.pop_front();
+            if (dropped == LogSeverity::Error) {
+                error_count_.fetch_sub(1, std::memory_order_relaxed);
+            }
+            if (dropped == LogSeverity::Warning) {
+                warn_count_.fetch_sub(1, std::memory_order_relaxed);
+            }
+        }
         logs_.push_back({std::move(text), severity});
         if (severity == LogSeverity::Error) {
             error_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1989,10 +2000,6 @@ App::LoadResult App::load_map_worker(std::string path, double unit_distance, boo
         kv_free(handle);
     }
     return out;
-}
-
-MapModel App::build_model_from_handle(void* handle, const std::string& path) {
-    return build_model_from_handle(handle, path, LoadModelOptions{});
 }
 
 MapModel App::build_model_from_handle(void* handle, const std::string& path,
@@ -4000,15 +4007,18 @@ void App::rebind_other_editable_list_drafts(
     }};
     for (const Binding& binding : bindings) {
         if (binding.edit == applied || !binding.edit->rows_initialized) continue;
+        using LocationKey = std::tuple<std::string_view, int, int>;
+        std::map<LocationKey, const CachedTableRow*> rows_by_location;
+        for (const CachedTableRow& row : *binding.cached_rows) {
+            rows_by_location.emplace(
+                LocationKey{row.source.file_path, row.source.line, row.source.column},
+                &row);
+        }
         auto find_location = [&](const std::string& file, int line, int column)
             -> const CachedTableRow* {
-            const auto found = std::find_if(
-                binding.cached_rows->begin(), binding.cached_rows->end(),
-                [&](const CachedTableRow& row) {
-                    return row.source.file_path == file &&
-                        row.source.line == line && row.source.column == column;
-                });
-            return found == binding.cached_rows->end() ? nullptr : &*found;
+            const auto found = rows_by_location.find(
+                LocationKey{file, line, column});
+            return found == rows_by_location.end() ? nullptr : found->second;
         };
         bool rebound = true;
         for (EditableListDraftRow& row : binding.edit->rows) {
@@ -6473,8 +6483,14 @@ void App::render_console() {
         touch.single_drag && touch.active_count == 1 && std::abs(touch.single_drag_delta.y) > 0.01f &&
         (console_rect.Contains(touch.single_start_pos) || console_rect.Contains(touch.single_pos));
     std::lock_guard<std::mutex> lock(log_mutex_);
-    for (const auto& line : logs_) {
-        ImGui::TextColored(log_severity_color(line.severity), "%s", line.text.c_str());
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(logs_.size()));
+    while (clipper.Step()) {
+        for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
+            const LogLine& line = logs_[static_cast<size_t>(index)];
+            ImGui::TextColored(
+                log_severity_color(line.severity), "%s", line.text.c_str());
+        }
     }
     if (was_at_bottom && !touch_vertical_scroll) ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();

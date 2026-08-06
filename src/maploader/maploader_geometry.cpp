@@ -326,6 +326,8 @@ struct HalfSinResult {
     double radius = k_inf;
 };
 
+constexpr int k_max_half_sine_integration_panels = 100000;
+
 HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_intermediate, double dL = 1.0) {
     (void)dL;
     if (l_intermediate <= 0.0) {
@@ -340,8 +342,17 @@ HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_inte
         return k0 * x + 0.5 * dk * (x - L / k_pi * std::sin(k_pi * x / L));
     };
     const double tau = tau_at(l_intermediate);
-    const int panels = std::max(1, static_cast<int>(std::ceil(std::max(l_intermediate / 250.0,
-                                                                         std::fabs(tau) / 0.25))));
+    const double required_panels = std::ceil(std::max(
+        l_intermediate / 250.0, std::fabs(tau) / 0.25));
+    if (std::isinf(required_panels) ||
+        required_panels > k_max_half_sine_integration_panels) {
+        throw std::runtime_error(
+            "Half-sine transition exceeds the supported integration limit of " +
+            std::to_string(k_max_half_sine_integration_panels) + " panels");
+    }
+    const int panels = std::isnan(required_panels)
+        ? 1
+        : std::max(1, static_cast<int>(required_panels));
     auto [X, Y] = integrate_unit_tangent_gauss8(0.0, l_intermediate, panels, tau_at);
     const double k = k0 + 0.5 * dk * (1.0 - std::cos(k_pi * l_intermediate / L));
     double r = radius_from_curvature(k);

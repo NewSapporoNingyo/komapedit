@@ -446,7 +446,6 @@ public:
     bool has_model() const;
     const std::string& model_path() const;
     void set_background_color(ImVec4 color);
-    ImVec4 background_color() const;
 
     void render(ImVec2 size);
     bool load_scene(Canvas3DScene scene, std::string& error,

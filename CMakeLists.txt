@@ -143,7 +143,7 @@ target_compile_definitions(model_loader PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN
 )
-target_link_libraries(model_loader PRIVATE assimp::assimp)
+target_link_libraries(model_loader PRIVATE assimp::assimp kme_text_decoder)
 set_target_properties(model_loader PROPERTIES
     OUTPUT_NAME "model_loader"
     PREFIX ""

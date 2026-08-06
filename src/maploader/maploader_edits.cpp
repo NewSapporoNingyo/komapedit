@@ -242,13 +242,7 @@ std::string preview_fragment(const std::string& text, size_t begin, size_t end) 
 }
 
 bool parse_edit_number(const std::string& text, double& value) {
-    std::string trimmed = trim_field_copy(text);
-    if (trimmed.empty()) return false;
-    const char* begin = trimmed.c_str();
-    char* end = nullptr;
-    errno = 0;
-    value = std::strtod(begin, &end);
-    return end != begin && errno != ERANGE && end && *end == '\0' && std::isfinite(value);
+    return parse_finite_number(text, value);
 }
 
 std::string fallback_edit_number(double value) {
@@ -1400,41 +1394,6 @@ std::string build_repeater_statement(const MapEditChange& change,
     return out.str();
 }
 
-void count_statement_ref(const EditSourceRef& ref, size_t statement_index, int& count) {
-    if (ref.valid() && ref.statement_index == statement_index) ++count;
-}
-
-int count_elements_for_statement(const MapContext& ctx, size_t statement_index) {
-    int count = 0;
-    for (const auto& row : ctx.station_puts) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.station_list) {
-        count_statement_ref(row.edit_ref, statement_index, count);
-    }
-    for (const auto& row : ctx.signal_aspects) {
-        count_statement_ref(row.edit_ref, statement_index, count);
-    }
-    for (const auto& row : ctx.structure_models) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.sound_list) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.structure_puts) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.structure_betweens) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.signal_puts) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.repeaters) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.irregularities) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.beacons) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.map_sounds) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.map_sound_3d) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.rolling_noises) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.flange_noises) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.joint_noises) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.backgrounds) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.adhesions) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.cab_illuminance) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.fogs) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.draw_distances) count_statement_ref(row.edit_ref, statement_index, count);
-    for (const auto& row : ctx.speedlimits) count_statement_ref(row.edit_ref, statement_index, count);
-    return count;
-}
-
 bool source_start_less(const SourceSpan& a, const SourceSpan& b) {
     if (a.line != b.line) return a.line < b.line;
     if (a.column != b.column) return a.column < b.column;
@@ -1470,7 +1429,8 @@ bool match_edit_ref(MapContext& ctx, const Row& row, const std::string& row_kind
     target.row_kind = row_kind;
     target.row_index = row_index;
     target.element_index = row.edit_ref.element_index;
-    target.elements_for_statement = count_elements_for_statement(ctx, target.statement_index);
+    target.elements_for_statement =
+        ctx.parsed_statements[target.statement_index].editable_element_count;
     return true;
 }
 

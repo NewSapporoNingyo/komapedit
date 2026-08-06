@@ -79,6 +79,7 @@ constexpr float k_scene_gizmo_arrow_half_width_px = 5.5f;
 constexpr float k_scene_gizmo_center_radius_px = 4.0f;
 constexpr double k_scene_route_display_zero_epsilon = 0.0000005;
 constexpr size_t k_scene_model_max_workers = 8;
+constexpr size_t k_scene_chunk_count_limit = 100000;
 constexpr double k_default_scene_fog_density = 0.001;
 constexpr double k_default_scene_fog_color = 0.875;
 constexpr float k_scene_marker_board_width = 1.0f;
@@ -116,21 +117,6 @@ struct SceneOverlayLabelLayout {
     ImVec2 pos{};
     float pad = 0.0f;
 };
-
-std::string path_filename_utf8(const std::string& path) {
-    try {
-        std::filesystem::path p = utf8_to_wide(path);
-#if defined(__cpp_char8_t)
-        auto s = p.filename().u8string();
-        std::string name(reinterpret_cast<const char*>(s.data()), s.size());
-#else
-        std::string name = p.filename().u8string();
-#endif
-        return name.empty() ? path : name;
-    } catch (...) {
-        return path;
-    }
-}
 
 float normalize_material_alpha(float value) {
     float alpha = clamp_color_component(value);
@@ -2770,7 +2756,10 @@ struct Canvas3D::Impl {
         scene_active = true;
 
         const auto track_gpu_setup_started_at = std::chrono::steady_clock::now();
-        build_scene_chunks();
+        if (!build_scene_chunks(error)) {
+            clear_scene();
+            return false;
+        }
         if (!build_scene_track_chunks(error)) {
             clear_scene();
             return false;
@@ -2874,7 +2863,10 @@ struct Canvas3D::Impl {
             std::swap(scene_data.min_distance, scene_data.max_distance);
         }
 
-        build_scene_chunks();
+        if (!build_scene_chunks(error)) {
+            restore_dynamic_content();
+            return false;
+        }
         auto same_chunk_signature = [](const std::vector<SceneChunk>& a,
                                        const std::vector<SceneChunk>& b) {
             if (a.size() != b.size()) return false;
@@ -3320,9 +3312,15 @@ struct Canvas3D::Impl {
     size_t scene_chunk_index_for_distance(double distance) const {
         if (scene_chunks.empty()) return 0;
         const double first = scene_chunks.front().d_min;
-        int index = static_cast<int>(std::floor((distance - first) / scene_chunk_m));
-        index = std::clamp(index, 0, static_cast<int>(scene_chunks.size()) - 1);
-        return static_cast<size_t>(index);
+        const double relative = (distance - first) / scene_chunk_m;
+        if (!std::isfinite(relative)) {
+            return relative > 0.0 ? scene_chunks.size() - 1 : 0;
+        }
+        if (relative <= 0.0) return 0;
+        if (relative >= static_cast<double>(scene_chunks.size())) {
+            return scene_chunks.size() - 1;
+        }
+        return static_cast<size_t>(std::floor(relative));
     }
 
     Canvas3DModelInstance placement_instance_from_target(
@@ -3898,6 +3896,8 @@ struct Canvas3D::Impl {
         IWICFormatConverter* converter = nullptr;
         UINT width = 0;
         UINT height = 0;
+        UINT row_stride = 0;
+        size_t pixel_bytes = 0;
         std::vector<unsigned char> pixels;
 
         HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
@@ -3937,13 +3937,34 @@ struct Canvas3D::Impl {
             error = "Texture file exists but cannot be opened or decoded: " + path;
             goto fail;
         }
-        converter->GetSize(&width, &height);
+        hr = converter->GetSize(&width, &height);
+        if (FAILED(hr)) {
+            error = "failed to read texture dimensions: " + path;
+            goto fail;
+        }
         if (width == 0 || height == 0) {
             error = "texture has invalid size: " + path;
             goto fail;
         }
-        pixels.resize(static_cast<size_t>(width) * height * 4);
-        hr = converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size()), pixels.data());
+        if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+            height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+            width > std::numeric_limits<UINT>::max() / 4) {
+            error = "texture dimensions exceed the Direct3D 11 limit: " + path;
+            goto fail;
+        }
+        row_stride = width * 4;
+        if (height > std::numeric_limits<size_t>::max() / row_stride) {
+            error = "texture byte size overflows the host address space: " + path;
+            goto fail;
+        }
+        pixel_bytes = static_cast<size_t>(row_stride) * height;
+        if (pixel_bytes > std::numeric_limits<UINT>::max()) {
+            error = "texture byte size exceeds the WIC copy limit: " + path;
+            goto fail;
+        }
+        pixels.resize(pixel_bytes);
+        hr = converter->CopyPixels(
+            nullptr, row_stride, static_cast<UINT>(pixel_bytes), pixels.data());
         if (FAILED(hr)) {
             error = "failed to copy texture pixels: " + path;
             goto fail;
@@ -3962,7 +3983,7 @@ struct Canvas3D::Impl {
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
             D3D11_SUBRESOURCE_DATA sub = {};
             sub.pSysMem = pixels.data();
-            sub.SysMemPitch = width * 4;
+            sub.SysMemPitch = row_stride;
             ID3D11Texture2D* texture = nullptr;
             hr = device->CreateTexture2D(&desc, &sub, &texture);
             if (FAILED(hr)) {
@@ -5825,19 +5846,35 @@ fail:
         return true;
     }
 
-    void build_scene_chunks() {
+    bool build_scene_chunks(std::string& error) {
         scene_chunks.clear();
         scene_placement_locations.clear();
         scene_repeater_locations.clear();
+        if (!std::isfinite(scene_chunk_m) || scene_chunk_m <= 0.0) {
+            error = "3D scene chunk size is invalid";
+            return false;
+        }
         double min_d = scene_data.min_distance;
         double max_d = scene_data.max_distance;
         if (max_d <= min_d) {
             min_d = scene_camera_distance - scene_window_back_m;
             max_d = scene_camera_distance + scene_window_forward_m;
         }
-        double first = std::floor(min_d / scene_chunk_m) * scene_chunk_m;
-        double last = std::ceil(max_d / scene_chunk_m) * scene_chunk_m;
-        size_t count = static_cast<size_t>(std::max(1.0, (last - first) / scene_chunk_m));
+        if (!std::isfinite(min_d) || !std::isfinite(max_d)) {
+            error = "3D scene distance range is not finite";
+            return false;
+        }
+        const double first = std::floor(min_d / scene_chunk_m) * scene_chunk_m;
+        const double last = std::ceil(max_d / scene_chunk_m) * scene_chunk_m;
+        const double count_value = std::max(1.0, (last - first) / scene_chunk_m);
+        if (!std::isfinite(first) || !std::isfinite(last) ||
+            !std::isfinite(count_value) ||
+            count_value > static_cast<double>(k_scene_chunk_count_limit)) {
+            error = "3D scene chunk count exceeds the supported limit of " +
+                std::to_string(k_scene_chunk_count_limit);
+            return false;
+        }
+        const size_t count = static_cast<size_t>(count_value);
         scene_chunks.resize(count);
         for (size_t i = 0; i < count; ++i) {
             scene_chunks[i].d_min = first + static_cast<double>(i) * scene_chunk_m;
@@ -5850,8 +5887,7 @@ fail:
         for (size_t source_index = 0; source_index < scene_data.instances.size(); ++source_index) {
             const Canvas3DModelInstance& source = scene_data.instances[source_index];
             if (source.model_path.empty()) continue;
-            int index = static_cast<int>(std::floor((source.distance - first) / scene_chunk_m));
-            index = std::clamp(index, 0, static_cast<int>(scene_chunks.size()) - 1);
+            const size_t index = scene_chunk_index_for_distance(source.distance);
             SceneInstance instance;
             instance.model_path = scene_model_key_for_instance(source, scene_geometry_generation);
             instance.distance = source.distance;
@@ -5867,7 +5903,7 @@ fail:
             } else {
                 std::copy(source.world, source.world + 16, instance.world);
             }
-            SceneChunk& chunk = scene_chunks[static_cast<size_t>(index)];
+            SceneChunk& chunk = scene_chunks[index];
             const size_t chunk_instance_index = chunk.instances.size();
             chunk.instances.push_back(std::move(instance));
             if (scene_object_index_valid(source.object_index)) {
@@ -5880,7 +5916,7 @@ fail:
                 if (editable_placement && !object.edit_id.empty()) {
                     scene_placement_locations[object.edit_id] = ScenePlacementInstanceLocation{
                         source_index,
-                        static_cast<size_t>(index),
+                        index,
                         chunk_instance_index
                     };
                 }
@@ -5894,14 +5930,14 @@ fail:
             double repeater_first = 0.0;
             double repeater_last = 0.0;
             if (!scene_repeater_render_distance_span(repeater, repeater_first, repeater_last)) continue;
-            int begin_index = static_cast<int>(std::floor((repeater_first - first) / scene_chunk_m));
-            int end_index = static_cast<int>(std::floor((repeater_last - first) / scene_chunk_m));
-            begin_index = std::clamp(begin_index, 0, static_cast<int>(scene_chunks.size()) - 1);
-            end_index = std::clamp(end_index, 0, static_cast<int>(scene_chunks.size()) - 1);
-            for (int index = begin_index; index <= end_index; ++index) {
-                scene_chunks[static_cast<size_t>(index)].repeater_indices.push_back(repeater_index);
+            const size_t begin_index = scene_chunk_index_for_distance(repeater_first);
+            const size_t end_index = scene_chunk_index_for_distance(repeater_last);
+            for (size_t index = std::min(begin_index, end_index);
+                 index <= std::max(begin_index, end_index); ++index) {
+                scene_chunks[index].repeater_indices.push_back(repeater_index);
             }
         }
+        return true;
     }
 
     static void append_track_quad(std::vector<GpuVertex>& vertices,
@@ -6620,18 +6656,12 @@ fail:
         }
 
         std::vector<std::vector<size_t>> marker_indices(scene_chunks.size());
-        const double first_distance = scene_chunks.front().d_min;
         for (size_t marker_index = 0;
              marker_index < scene_data.markers.size();
              ++marker_index) {
             const double distance =
                 scene_data.markers[marker_index].track_point.distance;
-            int chunk_index = static_cast<int>(
-                std::floor((distance - first_distance) / scene_chunk_m));
-            chunk_index = std::clamp(
-                chunk_index, 0, static_cast<int>(scene_chunks.size()) - 1);
-            marker_indices[static_cast<size_t>(chunk_index)].push_back(
-                marker_index);
+            marker_indices[scene_chunk_index_for_distance(distance)].push_back(marker_index);
         }
 
         for (size_t chunk_index = 0;
@@ -8551,7 +8581,7 @@ fail:
         const ImU32 bg_color = IM_COL32(0, 0, 0, 150);
         ImVec2 end(origin.x + size.x, origin.y + size.y);
 
-        std::string file_name = path_filename_utf8(model_path_value);
+        std::string file_name = display_name_from_path(model_path_value);
         ImVec2 name_size = ImGui::CalcTextSize(file_name.c_str());
         float max_name_width = std::max(0.0f, size.x - pad * 4.0f);
         if (max_name_width <= 1.0f) return;
@@ -8825,10 +8855,6 @@ const std::string& Canvas3D::model_path() const {
 
 void Canvas3D::set_background_color(ImVec4 color) {
     impl_->background_color_value = clamp_theme_color(color);
-}
-
-ImVec4 Canvas3D::background_color() const {
-    return impl_->background_color_value;
 }
 
 void Canvas3D::render(ImVec2 size) {

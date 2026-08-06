@@ -139,6 +139,26 @@ struct TempFixture {
     std::string path_utf8() const { return map_path.u8string(); }
 };
 
+void write_utf16_file(const std::filesystem::path& path,
+                      const std::u16string& text,
+                      bool little_endian,
+                      bool append_incomplete_byte = false) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    const char bom[2] = {
+        static_cast<char>(little_endian ? 0xff : 0xfe),
+        static_cast<char>(little_endian ? 0xfe : 0xff),
+    };
+    output.write(bom, 2);
+    for (char16_t unit : text) {
+        const char bytes[2] = {
+            static_cast<char>(little_endian ? unit & 0xff : unit >> 8),
+            static_cast<char>(little_endian ? unit >> 8 : unit & 0xff),
+        };
+        output.write(bytes, 2);
+    }
+    if (append_incomplete_byte) output.put('\0');
+}
+
 struct MapHandle {
     void* value = nullptr;
     explicit MapHandle(void* input) : value(input) {}
@@ -475,6 +495,73 @@ int snapshot_contract() {
             }
             check(propagated_nan, "NaN Fresnel input propagates into transition geometry");
         }
+    }
+
+    {
+        TempFixture half_sine_limit_fixture;
+        std::ofstream map(half_sine_limit_fixture.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Curve.SetFunction(0);\n"
+            << "Curve.BeginTransition();\n"
+            << "25;\n"
+            << "Curve.Begin(0.0001,0);\n"
+            << "50;\n";
+        map.close();
+        MapHandle half_sine_handle(kv_load_map_ex(
+            half_sine_limit_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(half_sine_handle.value == nullptr,
+              "pathological half-sine transition is rejected");
+        const char* error = kv_get_last_error();
+        check(error && std::string_view(error).find(
+                           "Half-sine transition exceeds the supported integration limit") !=
+                           std::string_view::npos,
+              "pathological half-sine transition reports its integration limit");
+    }
+
+    {
+        TempFixture utf16_fixture;
+        write_utf16_file(
+            utf16_fixture.map_path,
+            u"BveTs Map 2.02:utf-16le\n# \U0001F642\n0;\n", true);
+        MapHandle valid_le(kv_load_map_ex(
+            utf16_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(valid_le.value != nullptr, "valid UTF-16LE surrogate pair loads");
+
+        write_utf16_file(
+            utf16_fixture.map_path,
+            u"BveTs Map 2.02:utf-16be\n# \U0001F642\n0;\n", false);
+        MapHandle valid_be(kv_load_map_ex(
+            utf16_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(valid_be.value != nullptr, "valid UTF-16BE surrogate pair loads");
+
+        write_utf16_file(
+            utf16_fixture.map_path,
+            u"BveTs Map 2.02:utf-16le\n0;\n", true, true);
+        MapHandle odd_length(kv_load_map_ex(
+            utf16_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(odd_length.value == nullptr, "odd-length UTF-16 input is rejected");
+        const char* odd_error = kv_get_last_error();
+        check(odd_error && std::string_view(odd_error).find(
+                               "incomplete trailing code unit") != std::string_view::npos,
+              "odd-length UTF-16 input reports its cause");
+
+        std::u16string high = u"BveTs Map 2.02:utf-16le\n#";
+        high.push_back(static_cast<char16_t>(0xd800));
+        high += u"\n0;\n";
+        write_utf16_file(utf16_fixture.map_path, high, true);
+        MapHandle unpaired_high(kv_load_map_ex(
+            utf16_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(unpaired_high.value == nullptr, "unpaired UTF-16 high surrogate is rejected");
+
+        std::u16string low = u"BveTs Map 2.02:utf-16le\n#";
+        low.push_back(static_cast<char16_t>(0xdc00));
+        low += u"\n0;\n";
+        write_utf16_file(utf16_fixture.map_path, low, true);
+        MapHandle unpaired_low(kv_load_map_ex(
+            utf16_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(unpaired_low.value == nullptr, "unpaired UTF-16 low surrogate is rejected");
     }
 
     std::cout << "typed snapshot contract " << (failures ? "FAIL" : "PASS") << '\n';
@@ -1400,6 +1487,41 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
                   std::string_view::npos,
           "cyclic Include reports its cause");
     check(diagnostics_contain("[ERROR]"), "cyclic Include uses error severity");
+
+    auto write_include_chain = [](TempFixture& fixture, size_t depth) {
+        for (size_t level = 0; level < depth; ++level) {
+            const std::filesystem::path path = level == 0
+                ? fixture.map_path
+                : fixture.directory / ("include-" + std::to_string(level) + ".txt");
+            std::ofstream map(path, std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\n";
+            if (level + 1 < depth) {
+                map << "Include 'include-" << level + 1 << ".txt';\n";
+            } else {
+                map << "0;\n";
+            }
+        }
+    };
+
+    TempFixture include_depth_64;
+    write_include_chain(include_depth_64, 64);
+    clear_diagnostics();
+    MapHandle depth_64_handle(kv_load_map_ex(
+        include_depth_64.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(depth_64_handle.value != nullptr, "64-level Include chain loads");
+
+    TempFixture include_depth_65;
+    write_include_chain(include_depth_65, 65);
+    clear_diagnostics();
+    MapHandle depth_65_handle(kv_load_map_ex(
+        include_depth_65.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(depth_65_handle.value == nullptr, "65-level Include chain is rejected");
+    const char* depth_error = kv_get_last_error();
+    check(depth_error && std::string_view(depth_error).find(
+                             "Include depth exceeds the supported limit of 64") !=
+                             std::string_view::npos,
+          "65-level Include chain reports its depth limit");
+    check(diagnostics_contain("[ERROR]"), "Include depth error uses error severity");
 
     kv_set_log_callback(nullptr);
     std::cout << "maploader diagnostics contract "

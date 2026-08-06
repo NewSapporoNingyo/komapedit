@@ -123,10 +123,6 @@ enum class FixedPlotY {
     Bottom
 };
 
-static std::string station_mileage_text(const Station& station) {
-    return format_double(station.mileage, 0) + "m";
-}
-
 static void draw_fixed_y_plot_text(double x, const std::string& text, ImU32 color, FixedPlotY fixed_y) {
     if (text.empty()) return;
     ImDrawList* draw = ImPlot::GetPlotDrawList();
@@ -343,13 +339,19 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
         if (show_stations_) {
             const float station_marker_radius =
                 k_default_station_marker_size * marker_size_scale_from_percent(marker_size_percent_);
-            for (const auto& s : data.stations) {
+            for (size_t station_index = 0;
+                 station_index < data.stations.size(); ++station_index) {
+                const Station& s = data.stations[station_index];
                 double x = s.distance;
                 double y = s.z - model_.height_origin;
                 draw_profile_vertical_marker(x, y, ProfileMarkerDirection::Up,
                                              IM_COL32(255, 255, 255, 191), line_widths.chart_marker_px, true, station_marker_radius);
                 if (show_station_names_) draw_plot_point_right_text(x, y, s.name, IM_COL32(255, 255, 255, 255));
-                if (show_station_mileage_) draw_fixed_y_plot_text(x, station_mileage_text(s), IM_COL32(255, 216, 77, 255), FixedPlotY::Top);
+                if (show_station_mileage_) {
+                    draw_fixed_y_plot_text(
+                        x, data.station_mileage_labels[station_index],
+                        IM_COL32(255, 216, 77, 255), FixedPlotY::Top);
+                }
             }
         }
         if (mode_ == Mode::Measure && ImPlot::IsPlotHovered()) {
@@ -434,11 +436,17 @@ void App::render_radius_plot(const ProfileData& data, ImVec2 size) {
         plot_line_vec("RadiusSign", data.curve_x, data.curve_y, ImVec4(1, 1, 1, 1), line_widths.own_track_px);
         for (const auto& label : data.radius_labels) ImPlot::PlotText(label.text.c_str(), label.x, label.y, ImVec2(-6, 0), {ImPlotProp_Flags, ImPlotTextFlags_Vertical});
         if (show_stations_) {
-            for (const auto& s : data.stations) {
+            for (size_t station_index = 0;
+                 station_index < data.stations.size(); ++station_index) {
+                const Station& s = data.stations[station_index];
                 double x = s.distance;
                 ImPlot::PlotInfLines(("##rst" + s.key).c_str(), &x, 1, {ImPlotProp_LineColor, ImVec4(1, 1, 1, 0.55f), ImPlotProp_LineWeight, line_widths.chart_marker_px, ImPlotProp_Flags, ImPlotItemFlags_NoLegend});
                 if (show_station_names_) draw_fixed_y_plot_text(x, s.name, IM_COL32(255, 255, 255, 255), FixedPlotY::Top);
-                if (show_station_mileage_) draw_fixed_y_plot_text(x, station_mileage_text(s), IM_COL32(255, 216, 77, 255), FixedPlotY::Bottom);
+                if (show_station_mileage_) {
+                    draw_fixed_y_plot_text(
+                        x, data.station_mileage_labels[station_index],
+                        IM_COL32(255, 216, 77, 255), FixedPlotY::Bottom);
+                }
             }
         }
         if (mode_ == Mode::Measure && ImPlot::IsPlotHovered()) {

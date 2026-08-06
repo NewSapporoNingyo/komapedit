@@ -3374,18 +3374,11 @@ struct Facts {
     }
 };
 
-std::string lower_ascii_copy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
 bool same_path(const std::string& left, const std::string& right) {
     const std::filesystem::path a(utf8_to_wide(left));
     const std::filesystem::path b(utf8_to_wide(right));
-    return lower_ascii_copy(wide_to_utf8(a.lexically_normal().wstring())) ==
-        lower_ascii_copy(wide_to_utf8(b.lexically_normal().wstring()));
+    return ascii_lower(wide_to_utf8(a.lexically_normal().wstring())) ==
+        ascii_lower(wide_to_utf8(b.lexically_normal().wstring()));
 }
 
 std::vector<StationRow> collect_station_rows(void* handle) {
@@ -3587,7 +3580,7 @@ std::map<std::string, MapElementPendingChange> build_pending(
 size_t select_consecutive_run(const std::vector<StationRow>& rows) {
     std::map<std::string, int> key_counts;
     for (const StationRow& row : rows) {
-        const std::string key = lower_ascii_copy(row.values[0]);
+        const std::string key = ascii_lower(row.values[0]);
         if (!key.empty()) ++key_counts[key];
     }
     for (size_t begin = 0; begin + 6 <= rows.size(); ++begin) {
@@ -3595,7 +3588,7 @@ size_t select_consecutive_run(const std::vector<StationRow>& rows) {
         std::set<std::string> keys;
         for (size_t offset = 0; valid && offset < 6; ++offset) {
             const StationRow& row = rows[begin + offset];
-            const std::string key = lower_ascii_copy(row.values[0]);
+            const std::string key = ascii_lower(row.values[0]);
             valid = !key.empty() && key_counts[key] == 1 && keys.insert(key).second;
             if (offset != 0) {
                 valid = valid &&
@@ -3623,7 +3616,7 @@ bool station_name_key_absent(void* handle, const std::string& key) {
     for (std::uint64_t index = 0; index < snapshot.station_name_count; ++index) {
         const std::string candidate = distance_batch_headless::snapshot_text(
             snapshot, snapshot.station_names[index].key);
-        if (lower_ascii_copy(candidate) == lower_ascii_copy(key)) return false;
+        if (ascii_lower(candidate) == ascii_lower(key)) return false;
     }
     return true;
 }
@@ -3827,7 +3820,7 @@ int run_debug_headless_station_list_edit(
         for (const StationRow& row : all_rows) rows_by_file[row.source_file].push_back(row);
         const auto preferred = std::find_if(
             rows_by_file.begin(), rows_by_file.end(), [](const auto& entry) {
-                return lower_ascii_copy(wide_to_utf8(
+                return ascii_lower(wide_to_utf8(
                     std::filesystem::path(utf8_to_wide(entry.first)).filename().wstring())) ==
                     "stations121m.txt";
             });

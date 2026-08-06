@@ -69,14 +69,6 @@ std::string ascii_lower(std::string s) {
     return s;
 }
 
-std::string trim_copy(const std::string& s) {
-    size_t begin = 0;
-    while (begin < s.size() && std::isspace(static_cast<unsigned char>(s[begin]))) ++begin;
-    size_t end = s.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1]))) --end;
-    return s.substr(begin, end - begin);
-}
-
 std::string trim_field_copy(const std::string& s) {
     size_t begin = 0;
     size_t end = s.size();
@@ -103,6 +95,17 @@ std::string trim_field_copy(const std::string& s) {
         }
     }
     return s.substr(begin, end - begin);
+}
+
+bool parse_finite_number(const std::string& text, double& value) {
+    const std::string trimmed = trim_field_copy(text);
+    if (trimmed.empty()) return false;
+    const char* begin = trimmed.c_str();
+    char* end = nullptr;
+    errno = 0;
+    value = std::strtod(begin, &end);
+    return end != begin && end && *end == '\0' && errno != ERANGE &&
+        std::isfinite(value);
 }
 
 std::string canonical_number(double value) {
@@ -568,18 +571,6 @@ const std::string& source_file_key(const MapContext& ctx, const SourceSpan& span
     return record ? record->source_key : empty;
 }
 
-const std::string& source_file_encoding(const MapContext& ctx, const SourceSpan& span) {
-    static const std::string empty;
-    const SourceFileRecord* record = source_file_record(ctx, span);
-    return record ? record->encoding : empty;
-}
-
-const std::string& source_file_newline(const MapContext& ctx, const SourceSpan& span) {
-    static const std::string empty;
-    const SourceFileRecord* record = source_file_record(ctx, span);
-    return record ? record->newline : empty;
-}
-
 const std::vector<std::string>& source_include_stack(const MapContext& ctx, const SourceSpan& span) {
     static const std::vector<std::string> empty;
     if (span.include_stack_index >= ctx.include_stacks.size()) return empty;
@@ -702,12 +693,15 @@ size_t add_parsed_statement(MapContext& ctx,
     return ctx.parsed_statements.size() - 1;
 }
 
-EditSourceRef next_active_edit_ref(MapContext& ctx) {
+EditSourceRef next_active_edit_ref(MapContext& ctx, bool editable) {
     if (!ctx.parse_options.collect_edit_metadata) return {};
     if (ctx.active_statement_index == k_no_source_ref) return {};
     EditSourceRef ref;
     ref.statement_index = ctx.active_statement_index;
     ref.element_index = ctx.active_statement_next_element_index++;
+    if (editable && ref.statement_index < ctx.parsed_statements.size()) {
+        ++ctx.parsed_statements[ref.statement_index].editable_element_count;
+    }
     return ref;
 }
 
@@ -763,7 +757,8 @@ EditSourceRef add_loaded_line_statement(MapContext& ctx,
                                         size_t line_start,
                                         size_t line_end,
                                         const std::string& line,
-                                        const std::vector<std::string>& fields) {
+                                        const std::vector<std::string>& fields,
+                                        bool editable) {
     if (!ctx.parse_options.collect_edit_metadata) return {};
     size_t statement_index = add_parsed_statement(
         ctx, kind,
@@ -773,6 +768,9 @@ EditSourceRef add_loaded_line_statement(MapContext& ctx,
         values_from_fields(fields),
         ctx.distance_expression,
         ctx.distance);
+    if (editable && statement_index < ctx.parsed_statements.size()) {
+        ctx.parsed_statements[statement_index].editable_element_count = 1;
+    }
     return EditSourceRef{statement_index, 0};
 }
 
@@ -941,7 +939,7 @@ void put_own(MapContext& ctx, const std::string& key, const Value& value, const 
     row.key = key;
     row.value = stored;
     row.flag = flag;
-    attach_active_edit_ref(ctx, row);
+    attach_active_noneditable_ref(ctx, row);
     ctx.own_track.push_back(std::move(row));
 }
 
@@ -966,7 +964,7 @@ void put_other(MapContext& ctx, const Value& track_key, const std::string& eleme
     row.key = element_key;
     row.value = stored;
     row.flag = flag;
-    attach_active_edit_ref(ctx, row);
+    attach_active_noneditable_ref(ctx, row);
     ctx.othertrack[key].push_back(std::move(row));
 }
 

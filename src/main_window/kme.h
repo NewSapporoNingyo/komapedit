@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
@@ -97,6 +98,7 @@ inline constexpr double k_scene_window_back_distance_m = 100.0;
 inline constexpr bool k_default_scene_fog_enabled = true;
 inline constexpr bool k_default_scene_map_draw_distance_enabled = true;
 inline constexpr size_t k_max_recent_maps = 10;
+inline constexpr size_t k_max_console_log_lines = 100000;
 inline constexpr const char* k_own_track_lookup_aliases[] = {"", "0", "1", "\\", "own", "main"};
 
 struct KmeByteHash64 {
@@ -124,6 +126,10 @@ inline std::string trim_ascii(const std::string& text) {
 inline std::string ascii_lower(std::string text) {
     for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     return text;
+}
+
+inline bool blank_ascii(const std::string& text) {
+    return text.find_first_not_of(" \t\r\n") == std::string::npos;
 }
 
 inline std::string normalize_track_lookup_key(std::string key) {
@@ -320,12 +326,11 @@ struct TextPreviewLineRange {
     size_t end = 0;
 };
 
-enum class TextPreviewSelectionKind { None, Line, BetweenLines };
+enum class TextPreviewSelectionKind { None, Line };
 
 struct TextPreviewSelection {
     TextPreviewSelectionKind kind = TextPreviewSelectionKind::None;
-    // Line uses a zero-based line index. BetweenLines uses a gap index in
-    // [0, line_count], so future insert/move tools can target source gaps.
+    // Line uses a zero-based line index.
     size_t index = 0;
 };
 
@@ -672,6 +677,7 @@ struct Section {
     double start = 0.0;
     double end = 0.0;
     double value = 0.0;
+    std::string label;
 };
 
 struct PlanStation {
@@ -679,6 +685,7 @@ struct PlanStation {
     double x = 0.0;
     double y = 0.0;
     size_t row_index = 0;
+    std::string mileage_label;
 };
 
 struct PlanSpeed {
@@ -690,6 +697,7 @@ struct PlanSpeed {
     double speed = 0.0;
     std::string edit_id;
     size_t row_index = 0;
+    std::string label;
 };
 
 struct PlanMarker {
@@ -860,6 +868,7 @@ struct ProfileData {
     std::vector<double> curve_y;
     std::vector<ProfileOther> other;
     std::vector<Station> stations;
+    std::vector<std::string> station_mileage_labels;
     std::vector<LabelPoint> gradient_points;
     std::vector<LabelPoint> gradient_labels;
     std::vector<LabelPoint> radius_labels;
@@ -1500,7 +1509,7 @@ private:
     EditableListEditState sound_list_edit_;
     EditableListEditState sound_3d_list_edit_;
 
-    std::vector<LogLine> logs_;
+    std::deque<LogLine> logs_;
     std::mutex log_mutex_;
     std::atomic<int> error_count_{0};
     std::atomic<int> warn_count_{0};
@@ -1871,7 +1880,6 @@ private:
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step);
     static LoadResult load_map_worker(std::string path, double unit_distance, bool has_cp, double cp_start, double cp_end, double cp_step,
                                       LoadModelOptions options);
-    static MapModel build_model_from_handle(void* handle, const std::string& path);
     static MapModel build_model_from_handle(void* handle, const std::string& path,
                                             LoadModelOptions options);
     void clear_pending_edit_state();

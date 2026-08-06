@@ -24,10 +24,6 @@
 
 namespace {
 
-bool blank_ascii(const std::string& text) {
-    return text.find_first_not_of(" \t\r\n") == std::string::npos;
-}
-
 bool same_vec2(const ImVec2& a, const ImVec2& b) {
     return a.x == b.x && a.y == b.y;
 }
