@@ -1007,6 +1007,31 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.gradient_rows.push_back(std::move(row));
     }
+    model.other_track_changes.reserve(
+        static_cast<size_t>(snapshot.other_track_change_count));
+    for (std::uint64_t i = 0; i < snapshot.other_track_change_count; ++i) {
+        const KvOtherTrackChangeRow& input = snapshot.other_track_changes[i];
+        TableRow row;
+        row.cells["distance"] = format_double(input.distance, 6);
+        row.cells["trackKey"] = map_snapshot_track_key_text(snapshot, input.track_key);
+        row.cells["method"] = map_snapshot_string(snapshot, input.method);
+        row.cells["parameterCount"] = std::to_string(input.parameters.count);
+        row.cells["parameters"] = map_snapshot_value_span_text(snapshot, input.parameters);
+        if (map_snapshot_span_valid(input.parameters, snapshot.value_count) &&
+            (input.parameters.count == 0 || snapshot.values)) {
+            for (std::uint64_t parameter = 0;
+                 parameter < input.parameters.count; ++parameter) {
+                row.cells["parameter" + std::to_string(parameter)] =
+                    map_snapshot_value_text(
+                        snapshot,
+                        snapshot.values[input.parameters.offset + parameter]);
+            }
+        }
+        row.cells["filePath"] = map_snapshot_string(snapshot, input.file_path);
+        row.cells["order"] = std::to_string(input.order);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.other_track_changes.push_back(std::move(row));
+    }
     annotate_own_track_transition_links(model);
     model.speed_limit_rows.reserve(
         static_cast<size_t>(snapshot.speed_limit_count));
@@ -1835,6 +1860,8 @@ bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edi
                                     std::string& error) {
     return table_row_count_matches("curve", current.curve_rows, edit_model.curve_rows, error) &&
         table_row_count_matches("gradient", current.gradient_rows, edit_model.gradient_rows, error) &&
+        table_row_count_matches("otherTrack.change", current.other_track_changes,
+                                edit_model.other_track_changes, error) &&
         table_row_count_matches("station.put", current.station_list_rows, edit_model.station_list_rows, error) &&
         table_row_count_matches("station.list", current.station_definition_rows, edit_model.station_definition_rows, error) &&
         table_row_count_matches("structure.put", current.structures, edit_model.structures, error) &&
@@ -1882,6 +1909,8 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     current.edit_elements = std::move(edit_model.edit_elements);
     merge_table_row_edit_metadata(current.curve_rows, edit_model.curve_rows);
     merge_table_row_edit_metadata(current.gradient_rows, edit_model.gradient_rows);
+    merge_table_row_edit_metadata(current.other_track_changes,
+                                  edit_model.other_track_changes);
     annotate_own_track_transition_links(current);
     merge_table_row_edit_metadata(current.station_list_rows, edit_model.station_list_rows);
     merge_table_row_edit_metadata(current.station_definition_rows, edit_model.station_definition_rows);
@@ -2141,6 +2170,7 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "speedlimit") return &model.speed_limit_rows;
     if (row_kind == "curve") return &model.curve_rows;
     if (row_kind == "gradient") return &model.gradient_rows;
+    if (row_kind == "otherTrack.change") return &model.other_track_changes;
     return nullptr;
 }
 
@@ -2385,7 +2415,8 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
         normalize_station_preview_rows(model_);
     }
     if (row_kind == "speedlimit") rebuild_speed_limit_runtime_cache(model_);
-    const bool alignment_changed = row_kind == "curve" || row_kind == "gradient";
+    const bool alignment_changed = row_kind == "curve" || row_kind == "gradient" ||
+        row_kind == "otherTrack.change";
     if (alignment_changed && scene_preview_started_ && scene_preview_canvas_) {
         scene_preview_dirty_ = true;
         scene_preview_preserve_models_on_rebuild_ = true;
@@ -2393,12 +2424,13 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     }
     Canvas3DSceneMapRefreshOptions map_refresh;
     map_refresh.route_stations = row_kind == "station.put" || row_kind == "station.list";
-    static constexpr std::array<const char*, 17> k_marker_row_kinds = {
+    static constexpr std::array<const char*, 18> k_marker_row_kinds = {
         "station.put", "station.list", "irregularity.change", "beacon.put",
         "mapSound.play", "mapSound3D.put", "rollingNoise.change",
         "flangeNoise.change", "jointNoise.play", "background.change",
         "adhesion.change", "cabIlluminance.change", "fog.change",
         "drawDistance.change", "speedlimit", "curve", "gradient",
+        "otherTrack.change",
     };
     map_refresh.markers = std::any_of(
         k_marker_row_kinds.begin(), k_marker_row_kinds.end(),
@@ -2493,7 +2525,8 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "background.change" || row_kind == "adhesion.change" ||
         row_kind == "cabIlluminance.change" || row_kind == "fog.change" ||
         row_kind == "drawDistance.change" || row_kind == "speedlimit" ||
-        row_kind == "curve" || row_kind == "gradient";
+        row_kind == "curve" || row_kind == "gradient" ||
+        row_kind == "otherTrack.change";
 }
 
 struct RepeaterDeleteChain {
@@ -3218,6 +3251,51 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             }
         } else if (!curve && argument_count > 0) {
             add_row_field("gradient", tr("field.gradient"),
+                          MapElementNumericConstraint::Finite, true);
+        }
+    } else if (request.row_kind == "otherTrack.change") {
+        add_row_field("trackKey", tr("field.track_key"),
+                      MapElementNumericConstraint::None, true);
+        next.fields.back().read_only = true;
+        add_row_field("method", tr("field.method"),
+                      MapElementNumericConstraint::None, true);
+        next.fields.back().read_only = true;
+        add_row_field("distance", tr("field.distance"),
+                      MapElementNumericConstraint::Finite, true);
+
+        const std::string method = ascii_lower(table_cell(*row, "method"));
+        const size_t parameter_count = static_cast<size_t>(std::max(
+            0.0, table_cell_number(*row, "parameterCount")));
+        auto parameter_label = [&](size_t index) -> std::string {
+            if (method == "track.position") {
+                static const char* keys[] = {
+                    "field.other_track_lateral_position",
+                    "field.other_track_vertical_position",
+                    "field.other_track_lateral_radius",
+                    "field.other_track_vertical_radius",
+                };
+                if (index < std::size(keys)) return tr(keys[index]);
+            } else if (method == "track.x.interpolate" ||
+                       method == "track.y.interpolate") {
+                return tr(index == 0 ? "field.other_track_position"
+                                     : "field.other_track_radius");
+            } else if (method == "track.gauge" ||
+                       method == "track.cant.setgauge") {
+                return tr("field.other_track_gauge");
+            } else if (method == "track.cant.setcenter") {
+                return tr("field.other_track_center");
+            } else if (method == "track.cant.setfunction") {
+                return tr("field.other_track_function");
+            } else if (method == "track.cant" ||
+                       method == "track.cant.begin" ||
+                       method == "track.cant.interpolate") {
+                return tr("field.cant");
+            }
+            return tr("field.parameter") + " " + std::to_string(index + 1);
+        };
+        for (size_t index = 0; index < parameter_count; ++index) {
+            const std::string key = "parameter" + std::to_string(index);
+            add_row_field(key, parameter_label(index),
                           MapElementNumericConstraint::Finite, true);
         }
     } else if (request.row_kind == "signal.put") {
@@ -4800,7 +4878,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
     }
     for (const auto& entry : changes) {
-        if (entry.second.row_kind == "curve" || entry.second.row_kind == "gradient") {
+        if (entry.second.row_kind == "curve" || entry.second.row_kind == "gradient" ||
+            entry.second.row_kind == "otherTrack.change") {
             snapshot_local_preview_row(entry.first, entry.second.row_kind);
         }
     }
@@ -4845,7 +4924,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         affected_row_kinds.end();
     const bool alignment_hydrated =
         affected_row_kinds.find("curve") != affected_row_kinds.end() ||
-        affected_row_kinds.find("gradient") != affected_row_kinds.end();
+        affected_row_kinds.find("gradient") != affected_row_kinds.end() ||
+        affected_row_kinds.find("otherTrack.change") != affected_row_kinds.end();
     if (signal_aspects_hydrated || alignment_hydrated) {
         KvMapSnapshot snapshot{};
         if (!kv_get_map_snapshot(
@@ -4857,7 +4937,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
              !snapshot.signal_aspects) ||
             (alignment_hydrated &&
              ((snapshot.curve_count != 0 && !snapshot.curves) ||
-              (snapshot.gradient_count != 0 && !snapshot.gradients)))) {
+              (snapshot.gradient_count != 0 && !snapshot.gradients) ||
+              (snapshot.other_track_change_count != 0 &&
+               !snapshot.other_track_changes)))) {
             const char* error = kv_get_last_error();
             add_log(
                 "[error]gui_kme.cpp: failed to refresh typed rows from the "
@@ -4890,6 +4972,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             model_.own_events = std::move(refreshed.own_events);
             model_.curve_rows = std::move(refreshed.curve_rows);
             model_.gradient_rows = std::move(refreshed.gradient_rows);
+            model_.other_track_changes = std::move(refreshed.other_track_changes);
             model_.distance_origin = refreshed.distance_origin;
             model_.height_origin = refreshed.height_origin;
             model_.origin_angle = refreshed.origin_angle;
@@ -4926,13 +5009,15 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     if (alignment_hydrated) {
         note_refresh_target("curve", std::string{}, true);
         note_refresh_target("gradient", std::string{}, true);
+        note_refresh_target("otherTrack.change", std::string{}, true);
     }
 
     for (const auto& kv : pending_edit_changes_) {
         if (changes.find(kv.first) != changes.end()) continue;
         if ((signal_aspects_hydrated && kv.second.row_kind == "signal.aspect") ||
             (alignment_hydrated &&
-             (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient"))) {
+             (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient" ||
+              kv.second.row_kind == "otherTrack.change"))) {
             continue;
         }
         if (!restore_local_preview_change(kv.first, kv.second.row_kind, false)) {
@@ -4951,7 +5036,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
     for (const auto& kv : changes) {
         if ((signal_aspects_hydrated && kv.second.row_kind == "signal.aspect") ||
             (alignment_hydrated &&
-             (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient"))) {
+             (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient" ||
+              kv.second.row_kind == "otherTrack.change"))) {
             continue;
         }
         if (!apply_local_preview_change(kv.second, false)) {
@@ -4970,7 +5056,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         for (auto original = original_edit_rows_.begin();
              original != original_edit_rows_.end();) {
             const bool alignment_row = original->second.row_kind == "curve" ||
-                original->second.row_kind == "gradient";
+                original->second.row_kind == "gradient" ||
+                original->second.row_kind == "otherTrack.change";
             if (alignment_row && changes.find(original->first) == changes.end()) {
                 original = original_edit_rows_.erase(original);
             } else {
@@ -7756,6 +7843,8 @@ void App::sync_scene_preview_marker_visibility() {
     set_marker_and_label(MapMarkerVisualKind::CabIlluminance, show_cab_illuminance_markers_);
     set_marker_and_label(MapMarkerVisualKind::Fog, show_fog_markers_);
     set_marker_and_label(MapMarkerVisualKind::DrawDistance, show_draw_distance_markers_);
+    set_marker_and_label(MapMarkerVisualKind::OtherTrackChange,
+                         edit_actions_available());
 
     std::string error;
     if (!scene_preview_canvas_->set_scene_marker_visibility(
@@ -8348,6 +8437,18 @@ int main(int, char**) {
             return 2;
         }
         return App::run_debug_headless_own_track_edit(own_track_edit);
+    }
+
+    HeadlessOtherTrackEditOptions other_track_edit =
+        parse_headless_other_track_edit_options(args);
+    if (other_track_edit.requested) {
+        if (!other_track_edit.error.empty()) {
+            std::cerr << other_track_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-other-track-edit [map-path] "
+                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_other_track_edit(other_track_edit);
     }
 
     HeadlessOpenBenchmarkOptions open_bench = parse_headless_open_benchmark_options(args);

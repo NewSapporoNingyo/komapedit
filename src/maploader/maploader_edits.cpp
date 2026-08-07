@@ -42,6 +42,7 @@ struct EditableTarget {
     const RepeaterEvent* repeater = nullptr;
     const CurveEditRow* curve = nullptr;
     const GradientEditRow* gradient = nullptr;
+    const OtherTrackChange* other_track_change = nullptr;
     const StationListEntry* station_list = nullptr;
     const StructureModel* structure_model = nullptr;
     const SoundListEntry* sound_list = nullptr;
@@ -491,35 +492,46 @@ std::string adjust_distance_expression_by_delta(const std::string& expression, d
     return append_delta_to_distance_expression(trimmed, delta);
 }
 
-std::vector<std::string> parse_bve_argument_fields(const std::string& line) {
+std::vector<std::string> parse_bve_argument_fields(
+    const std::string& line,
+    std::vector<std::pair<size_t, size_t>>* value_spans = nullptr) {
     std::vector<std::string> fields;
     if (line.empty()) return fields;
 
-    std::string field;
     bool single_quoted = false;
     bool double_quoted = false;
     int paren_depth = 0;
-    for (char ch : line) {
-        if (ch == '\'' && !double_quoted) {
+    size_t field_begin = 0;
+    for (size_t index = 0; index <= line.size(); ++index) {
+        const bool at_end = index == line.size();
+        const char ch = at_end ? '\0' : line[index];
+        if (!at_end && ch == '\'' && !double_quoted) {
             single_quoted = !single_quoted;
-            field.push_back(ch);
-        } else if (ch == '"' && !single_quoted) {
+        } else if (!at_end && ch == '"' && !single_quoted) {
             double_quoted = !double_quoted;
-            field.push_back(ch);
-        } else if (ch == '(' && !single_quoted && !double_quoted) {
+        } else if (!at_end && ch == '(' && !single_quoted && !double_quoted) {
             ++paren_depth;
-            field.push_back(ch);
-        } else if (ch == ')' && !single_quoted && !double_quoted && paren_depth > 0) {
+        } else if (!at_end && ch == ')' && !single_quoted && !double_quoted &&
+                   paren_depth > 0) {
             --paren_depth;
-            field.push_back(ch);
-        } else if (ch == ',' && !single_quoted && !double_quoted && paren_depth == 0) {
-            fields.push_back(trim_field_copy(field));
-            field.clear();
-        } else {
-            field.push_back(ch);
         }
+        if (!at_end && (ch != ',' || single_quoted || double_quoted ||
+                        paren_depth != 0)) continue;
+
+        size_t value_begin = field_begin;
+        size_t value_end = index;
+        while (value_begin < value_end &&
+               (line[value_begin] == ' ' || line[value_begin] == '\t')) {
+            ++value_begin;
+        }
+        while (value_end > value_begin &&
+               (line[value_end - 1] == ' ' || line[value_end - 1] == '\t')) {
+            --value_end;
+        }
+        fields.push_back(line.substr(value_begin, value_end - value_begin));
+        if (value_spans) value_spans->emplace_back(value_begin, value_end);
+        field_begin = index + 1;
     }
-    fields.push_back(trim_field_copy(field));
     return fields;
 }
 
@@ -1207,6 +1219,61 @@ std::string build_gradient_statement(const MapEditChange& change,
         change, "gradient", row.gradient, raw_arg_at(args, 0)) + ");";
 }
 
+std::string build_other_track_change_statement(
+    const MapEditChange& change, const ParsedStatement& statement,
+    const OtherTrackChange& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    std::vector<std::pair<size_t, size_t>> argument_spans;
+    std::vector<std::string> args =
+        parse_bve_argument_fields(statement.raw_arguments, &argument_spans);
+    if (args.size() != row.parameters.size()) {
+        throw std::runtime_error(
+            "other-track source parameter count no longer matches parsed row");
+    }
+    std::vector<std::optional<std::string>> replacements(args.size());
+    for (const auto& field : change.field_changes) {
+        if (field.first == "distance") continue;
+        constexpr std::string_view prefix = "parameter";
+        if (field.first.compare(0, prefix.size(), prefix) != 0) {
+            throw std::runtime_error("track key and method are read-only");
+        }
+        const std::string suffix = field.first.substr(prefix.size());
+        if (suffix.empty() ||
+            suffix.find_first_not_of("0123456789") != std::string::npos) {
+            throw std::runtime_error("invalid other-track parameter field: " +
+                                     field.first);
+        }
+        const size_t index = static_cast<size_t>(std::stoull(suffix));
+        if (index >= args.size()) {
+            throw std::runtime_error(
+                "other-track source statement has no " + field.first);
+        }
+        replacements[index] = required_numeric_value_field(
+            change, field.first, row.parameters[index], raw_arg_at(args, index));
+    }
+
+    if (argument_spans.size() != args.size()) {
+        throw std::runtime_error(
+            "other-track source argument layout no longer matches parsed row");
+    }
+    std::string raw_arguments = statement.raw_arguments;
+    for (size_t index = replacements.size(); index-- > 0;) {
+        if (!replacements[index]) continue;
+        const auto [begin, end] = argument_spans[index];
+        raw_arguments.replace(begin, end - begin, *replacements[index]);
+    }
+
+    const size_t open = statement.raw_text.find('(');
+    const size_t close = statement.raw_text.rfind(')');
+    if (open == std::string::npos || close == std::string::npos || close < open) {
+        throw std::runtime_error("other-track source statement shape is invalid");
+    }
+    std::string output = statement.raw_text.substr(0, open + 1);
+    output += raw_arguments;
+    output += statement.raw_text.substr(close);
+    return output;
+}
+
 template <typename Row, auto Builder>
 std::string build_simple_statement_adapter(const MapEditChange& change,
                                            const ParsedStatement& statement,
@@ -1507,6 +1574,13 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
             return target;
         }
     }
+    for (size_t i = 0; i < ctx.other_track_changes.size(); ++i) {
+        const OtherTrackChange& row = ctx.other_track_changes[i];
+        if (match_edit_ref(ctx, row, "otherTrack.change", i, edit_id, target)) {
+            target.other_track_change = &row;
+            return target;
+        }
+    }
     for (size_t i = 0; i < ctx.structure_models.size(); ++i) {
         const StructureModel& row = ctx.structure_models[i];
         if (match_edit_ref(ctx, row, "structure.model", i, edit_id, target)) {
@@ -1734,6 +1808,10 @@ std::string build_replacement_statement(const MapEditChange& change,
     }
     if (target.row_kind == "gradient" && target.gradient) {
         return build_gradient_statement(change, statement, *target.gradient);
+    }
+    if (target.row_kind == "otherTrack.change" && target.other_track_change) {
+        return build_other_track_change_statement(
+            change, statement, *target.other_track_change);
     }
     if (target.simple_statement_builder && target.simple_row) {
         return target.simple_statement_builder(change, statement, target.simple_row);
@@ -3048,6 +3126,7 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->structure_models, "structure.model");
         collect_candidate_rows(candidate->curves, "curve");
         collect_candidate_rows(candidate->gradients, "gradient");
+        collect_candidate_rows(candidate->other_track_changes, "otherTrack.change");
         for (const SoundListEntry& row : candidate->sound_list) {
             collect_candidate_row(row, row.is_3d ? "sound3D.list" : "sound.list");
         }
@@ -4539,6 +4618,7 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "structure.model", ctx.structure_models);
     append_committed_rows(ctx, report, "curve", ctx.curves);
     append_committed_rows(ctx, report, "gradient", ctx.gradients);
+    append_committed_rows(ctx, report, "otherTrack.change", ctx.other_track_changes);
     append_committed_rows(ctx, report, "structure.put", ctx.structure_puts);
     append_committed_rows(ctx, report, "structure.between", ctx.structure_betweens);
     append_committed_rows(ctx, report, "signal.aspect", ctx.signal_aspects);

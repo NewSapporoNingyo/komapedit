@@ -314,6 +314,7 @@ void App::rebuild_marker_overlay_cache() {
     draw_distance_marker_cache_.clear();
     speed_limit_marker_cache_.clear();
     own_track_edit_marker_cache_.clear();
+    other_track_change_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
 
     std::map<std::string, TrackSource> track_sources;
@@ -354,6 +355,37 @@ void App::rebuild_marker_overlay_cache() {
     append_own_track_edit_markers(model_.gradient_rows, true);
     for (const auto& track : model_.other_tracks) {
         track_sources[normalize_track_lookup_key(track.key)] = TrackSource{&track.points, false};
+    }
+
+    other_track_change_marker_cache_.reserve(model_.other_track_changes.size());
+    for (size_t row_index = 0; row_index < model_.other_track_changes.size(); ++row_index) {
+        const TableRow& row = model_.other_track_changes[row_index];
+        if (row.edit_id.empty()) continue;
+        const std::string normalized_key =
+            normalize_track_lookup_key(table_cell(row, "trackKey"));
+        const auto track_it = std::find_if(
+            model_.other_tracks.begin(), model_.other_tracks.end(),
+            [&](const OtherTrack& track) {
+                return normalize_track_lookup_key(track.key) == normalized_key;
+            });
+        if (track_it == model_.other_tracks.end()) continue;
+        const size_t track_index = static_cast<size_t>(
+            track_it - model_.other_tracks.begin());
+        const double distance = table_cell_number(row, "distance");
+        if (distance < track_it->range_min || distance > track_it->range_max) continue;
+        const std::optional<TrackPoint> point =
+            sample_matrix_track_point(track_it->points, distance, false);
+        if (!point) continue;
+        OtherTrackChangeMarker marker;
+        marker.d = distance;
+        marker.x = point->x;
+        marker.y = point->y;
+        marker.label = table_cell(row, "trackKey") + " " +
+            table_cell(row, "method") + "(" + table_cell(row, "parameters") + ")";
+        marker.edit_id = row.edit_id;
+        marker.row_index = row_index;
+        marker.track_index = track_index;
+        other_track_change_marker_cache_.push_back(std::move(marker));
     }
 
     auto find_track_source = [&](const std::string& normalized_key) -> std::optional<TrackSource> {
@@ -2363,6 +2395,27 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.curve_edit_markers, hit_transform);
     std::optional<MarkerHit> hovered_gradient_edit_hit =
         nearest_marker_hit(data.gradient_edit_markers, hit_transform);
+    std::optional<MarkerHit> hovered_other_track_change_hit;
+    if (hovered && mode_ == Mode::Pan && !picking_background_station &&
+        edit_actions_available()) {
+        double best = marker_hover_radius_sq;
+        for (const OtherTrackChangeMarker& marker : other_track_change_marker_cache_) {
+            if (marker.track_index >= model_.other_tracks.size()) continue;
+            const OtherTrack& track = model_.other_tracks[marker.track_index];
+            if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
+                marker.d > std::min(dmax_, track.range_max)) continue;
+            const ImVec2 point = hit_transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail, marker_canvas_margin)) continue;
+            const double dx = static_cast<double>(point.x - mouse.x);
+            const double dy = static_cast<double>(point.y - mouse.y);
+            const double dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= best) {
+                best = dist_sq;
+                hovered_other_track_change_hit =
+                    MarkerHit{marker.row_index, dist_sq};
+            }
+        }
+    }
     debug_plan_stage("hit_test");
     std::optional<size_t> hovered_station_row = hovered_station_hit
         ? std::optional<size_t>(hovered_station_hit->row_index)
@@ -2479,6 +2532,7 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_speed_limit_hit, PlanMarkerKind::SpeedLimit);
         note(hovered_curve_edit_hit, PlanMarkerKind::Curve);
         note(hovered_gradient_edit_hit, PlanMarkerKind::Gradient);
+        note(hovered_other_track_change_hit, PlanMarkerKind::OtherTrackChange);
         if (best) plan_marker_selection_ = *best;
     };
     auto section_is_nearest_context_hit = [&]() {
@@ -2505,6 +2559,34 @@ void App::render_plan_canvas(ImVec2 size) {
                no_farther_than(hovered_draw_distance_hit) &&
                no_farther_than(hovered_speed_limit_hit);
     };
+    auto other_track_change_is_nearest_context_hit = [&]() {
+        if (!hovered_other_track_change_hit) return false;
+        auto no_farther_than = [&](const std::optional<MarkerHit>& other) {
+            return !other || hovered_other_track_change_hit->dist_sq <= other->dist_sq;
+        };
+        return no_farther_than(hovered_station_hit) &&
+               no_farther_than(hovered_signal_hit) &&
+               no_farther_than(hovered_section_hit) &&
+               no_farther_than(hovered_beacon_hit) &&
+               no_farther_than(hovered_pretrain_hit) &&
+               no_farther_than(hovered_other_train_stop_hit) &&
+               no_farther_than(hovered_adhesion_hit) &&
+               no_farther_than(hovered_irregularity_hit) &&
+               no_farther_than(hovered_background_hit) &&
+               no_farther_than(hovered_repeater_hit) &&
+               no_farther_than(hovered_structure_hit) &&
+               no_farther_than(hovered_cab_illuminance_hit) &&
+               no_farther_than(hovered_rolling_noise_hit) &&
+               no_farther_than(hovered_map_sound_hit) &&
+               no_farther_than(hovered_map_sound_3d_hit) &&
+               no_farther_than(hovered_flange_noise_hit) &&
+               no_farther_than(hovered_joint_noise_hit) &&
+               no_farther_than(hovered_fog_hit) &&
+               no_farther_than(hovered_draw_distance_hit) &&
+               no_farther_than(hovered_speed_limit_hit) &&
+               no_farther_than(hovered_curve_edit_hit) &&
+               no_farther_than(hovered_gradient_edit_hit);
+    };
     ImVec2 touch_tap_pos;
     if (touch_input::consume_tap_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), &touch_tap_pos)) {
         (void)touch_tap_pos;
@@ -2517,7 +2599,11 @@ void App::render_plan_canvas(ImVec2 size) {
                                                 &touch_long_press_pos);
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
-        if (hovered_curve_edit_hit || hovered_gradient_edit_hit) {
+        if (other_track_change_is_nearest_context_hit()) {
+            plan_other_track_change_popup_row_ = static_cast<int>(
+                hovered_other_track_change_hit->row_index);
+            ImGui::OpenPopup("plan_other_track_change_marker_context");
+        } else if (hovered_curve_edit_hit || hovered_gradient_edit_hit) {
             const bool gradient = hovered_gradient_edit_hit &&
                 (!hovered_curve_edit_hit ||
                  hovered_gradient_edit_hit->dist_sq <= hovered_curve_edit_hit->dist_sq);
@@ -2903,6 +2989,30 @@ void App::render_plan_canvas(ImVec2 size) {
         double rmin = std::max(dmin_, t.range_min);
         double rmax = std::min(dmax_, t.range_max);
         draw_matrix_plan_polyline(draw, t.points, rmin, rmax, transform, origin, avail, color_u32(t.color), line_widths.other_track_px);
+    }
+    if (edit_actions_available()) {
+        for (const OtherTrackChangeMarker& marker : other_track_change_marker_cache_) {
+            if (marker.track_index >= model_.other_tracks.size()) continue;
+            const OtherTrack& track = model_.other_tracks[marker.track_index];
+            if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
+                marker.d > std::min(dmax_, track.range_max)) continue;
+            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail)) continue;
+            const bool hovered_marker = hovered_other_track_change_hit &&
+                hovered_other_track_change_hit->row_index == marker.row_index;
+            const bool active = marker_emphasized(
+                PlanMarkerKind::OtherTrackChange, marker.row_index,
+                hovered_marker);
+            const ImU32 color = color_u32(track.color);
+            draw_selected_marker_ring(point, PlanMarkerKind::OtherTrackChange,
+                                      marker.row_index, color);
+            const float radius = 5.0f * marker_size_scale *
+                (active ? 1.28f : 1.0f);
+            draw_map_marker_icon(
+                draw, MapMarkerVisualKind::OtherTrackChange, point,
+                (radius + 1.5f) / 0.64f, 0.0f, &track.color);
+            if (active) draw_plan_small_text(draw, point, color, marker.label);
+        }
     }
     debug_plan_stage("tracks");
 
@@ -3462,6 +3572,25 @@ void App::render_plan_canvas(ImVec2 size) {
             ImGui::Separator();
             ImGui::TextWrapped("%s", tr("status.transition_unpaired").c_str());
         }
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("plan_other_track_change_marker_context")) {
+        const TableRow* row = plan_other_track_change_popup_row_ >= 0 &&
+            static_cast<size_t>(plan_other_track_change_popup_row_) <
+                model_.other_track_changes.size()
+            ? &model_.other_track_changes[
+                static_cast<size_t>(plan_other_track_change_popup_row_)]
+            : nullptr;
+        const bool can_edit = edit_actions_available() && row &&
+            !row->edit_id.empty();
+        ImGui::BeginDisabled(!can_edit);
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && row) {
+            request_element_inspector(row->edit_id, "otherTrack.change");
+        }
+        if (ImGui::MenuItem(tr("button.delete").c_str()) && row) {
+            request_element_delete(row->edit_id, "otherTrack.change");
+        }
+        ImGui::EndDisabled();
         ImGui::EndPopup();
     }
     ImGui::EndChild();

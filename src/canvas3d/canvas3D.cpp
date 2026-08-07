@@ -1475,7 +1475,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
 
     const size_t estimated_count =
         model.station_positions.size() + model.curve_rows.size() +
-        model.gradient_rows.size() +
+        model.gradient_rows.size() + model.other_track_changes.size() +
         model.speedlimits.size() + model.section_begins.size() +
         model.beacons.size() + model.pretrains.size() +
         model.irregularities.size() + model.map_sounds.size() +
@@ -1583,6 +1583,36 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                           Canvas3DSceneMarkerListKind::None, "gradient", row_index,
                           edit_id);
         }
+    }
+
+    for (size_t row_index = 0; row_index < model.other_track_changes.size();
+         ++row_index) {
+        const TableRow& row = model.other_track_changes[row_index];
+        if (row.edit_id.empty()) continue;
+        const std::string track_key = table_cell(row, "trackKey");
+        const std::string normalized_key = normalize_track_lookup_key(track_key);
+        const Canvas3DTrackPath* path =
+            scene_other_track_path_for_key(scene, normalized_key);
+        if (!path || path->points.empty()) continue;
+        const double distance = table_cell_number(row, "distance");
+        if (!std::isfinite(distance) ||
+            distance < path->points.front().distance ||
+            distance > path->points.back().distance) continue;
+        const std::optional<Canvas3DTrackPoint> point =
+            scene_sample_track_path_points(*path, distance);
+        if (!point) continue;
+        Canvas3DSceneMarker marker;
+        marker.kind = MapMarkerVisualKind::OtherTrackChange;
+        marker.track_point = *point;
+        marker.label = track_key + " " + table_cell(row, "method") +
+            "(" + table_cell(row, "parameters") + ")";
+        marker.row_kind = "otherTrack.change";
+        marker.row_index = row_index;
+        marker.edit_id = row.edit_id;
+        marker.track_key = path->key;
+        marker.theme_color = path->color;
+        marker.has_theme_color = true;
+        scene.markers.push_back(std::move(marker));
     }
 
     for (const SpeedLimit& speed : model.speedlimits) {
@@ -1708,7 +1738,11 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     std::stable_sort(scene.markers.begin(), scene.markers.end(),
                      [](const Canvas3DSceneMarker& a,
                         const Canvas3DSceneMarker& b) {
-                         return a.track_point.distance < b.track_point.distance;
+                         if (a.track_point.distance != b.track_point.distance) {
+                             return a.track_point.distance < b.track_point.distance;
+                         }
+                         return normalize_track_lookup_key(a.track_key) <
+                             normalize_track_lookup_key(b.track_key);
                      });
 }
 
@@ -3076,6 +3110,10 @@ struct Canvas3D::Impl {
         if (!build_scene_track_chunks(error)) {
             if (!error.empty()) scene_last_error = error;
             release_scene_track_chunks();
+            return false;
+        }
+        if (!rebuild_scene_marker_visible_indices(error)) {
+            if (!error.empty()) scene_last_error = error;
             return false;
         }
         return true;
@@ -6419,7 +6457,8 @@ fail:
         ImFontBaked& baked,
         MapMarkerVisualKind kind,
         MapMarkerIconVariant variant,
-        float face_sign) {
+        float face_sign,
+        const ImVec4* theme_override) {
         const MapMarkerIconRecipe recipe =
             map_marker_icon_recipe(kind, variant);
         for (size_t primitive_index = 0;
@@ -6428,7 +6467,7 @@ fail:
             const MapMarkerIconPrimitive& primitive =
                 recipe.primitives[primitive_index];
             const ImU32 color = ImGui::ColorConvertFloat4ToU32(
-                map_marker_role_color(kind, primitive.color));
+                map_marker_role_color(kind, primitive.color, theme_override));
             switch (primitive.kind) {
                 case MapMarkerPrimitiveKind::Polyline: {
                     if (primitive.point_count < 2) break;
@@ -6569,6 +6608,10 @@ fail:
 
     bool rebuild_scene_marker_visible_indices(std::string& error) {
         error.clear();
+        std::map<std::string, bool> track_visible;
+        for (const Canvas3DTrackPath& path : scene_data.tracks) {
+            track_visible[normalize_track_lookup_key(path.key)] = path.visible;
+        }
         for (SceneMarkerChunkGpu& chunk : scene_marker_chunks) {
             chunk.visible_index_count = 0;
             chunk.visible_pick_index_count = 0;
@@ -6597,9 +6640,18 @@ fail:
             unsigned int* pick_destination =
                 static_cast<unsigned int*>(pick_mapped.pData);
             for (SceneMarkerIndexRange& range : chunk.ranges) {
-                const bool visible = range.label
+                bool visible = range.label
                     ? scene_marker_visibility.label_visible(range.kind)
                     : scene_marker_visibility.marker_visible(range.kind);
+                if (visible && range.marker_index < scene_data.markers.size()) {
+                    const std::string& marker_track_key =
+                        scene_data.markers[range.marker_index].track_key;
+                    if (!marker_track_key.empty()) {
+                        const auto found = track_visible.find(
+                            normalize_track_lookup_key(marker_track_key));
+                        visible = found != track_visible.end() && found->second;
+                    }
+                }
                 range.visible = visible && range.count > 0;
                 range.visible_first = 0;
                 if (!range.visible) continue;
@@ -6672,9 +6724,14 @@ fail:
             size_t group_end = group_begin + 1;
             const double group_distance =
                 scene_data.markers[group_begin].track_point.distance;
+            const std::string group_track_key = normalize_track_lookup_key(
+                scene_data.markers[group_begin].track_key);
             while (group_end < scene_data.markers.size() &&
                    scene_data.markers[group_end].track_point.distance ==
-                       group_distance) {
+                       group_distance &&
+                   normalize_track_lookup_key(
+                       scene_data.markers[group_end].track_key) ==
+                       group_track_key) {
                 ++group_end;
             }
             const size_t group_size = group_end - group_begin;
@@ -6732,7 +6789,8 @@ fail:
                 const size_t marker_vertex_first = vertices.size();
                 const std::uint32_t marker_first =
                     static_cast<std::uint32_t>(indices.size());
-                ImVec4 board_color = map_marker_theme_color(marker.kind);
+                ImVec4 board_color = marker.has_theme_color
+                    ? marker.theme_color : map_marker_theme_color(marker.kind);
                 board_color.w = k_scene_marker_board_alpha;
                 const ImU32 board_color_u32 =
                     ImGui::ColorConvertFloat4ToU32(board_color);
@@ -6746,7 +6804,8 @@ fail:
                 append_scene_marker_icon(
                     vertices, indices, gpu_chunk.origin, content_center,
                     right, up, forward, *baked, marker.kind,
-                    marker.icon_variant, face_sign);
+                    marker.icon_variant, face_sign,
+                    marker.has_theme_color ? &marker.theme_color : nullptr);
                 const bool label_in_icon =
                     marker.icon_variant ==
                     MapMarkerIconVariant::SpeedLimitBegin;
@@ -6786,7 +6845,8 @@ fail:
                                 marker.kind, MapMarkerColorRole::Shadow));
                     const ImU32 text_color =
                         ImGui::ColorConvertFloat4ToU32(
-                            map_marker_theme_color(marker.kind));
+                            marker.has_theme_color ? marker.theme_color
+                                                   : map_marker_theme_color(marker.kind));
                     for (const ImVec2 offset : {
                              ImVec2(-k_scene_marker_outline_width, 0.0f),
                              ImVec2(k_scene_marker_outline_width, 0.0f),
@@ -8384,6 +8444,7 @@ fail:
         return (marker.kind == MapMarkerVisualKind::Station &&
                  marker.row_kind == "station.put") ||
                marker.row_kind == "curve" || marker.row_kind == "gradient" ||
+               marker.row_kind == "otherTrack.change" ||
                scene_marker_has_list_target(marker);
     }
 

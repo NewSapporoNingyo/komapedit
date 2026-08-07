@@ -25,7 +25,8 @@ public:
     MapSnapshotBuilder(MapContext& context, MapSnapshotStorage& storage)
         : ctx_(context), storage_(storage) {
         const size_t row_count = ctx_.own_track.size() + ctx_.curves.size() +
-            ctx_.gradients.size() + ctx_.station_puts.size() +
+            ctx_.gradients.size() + ctx_.other_track_changes.size() +
+            ctx_.station_puts.size() +
             ctx_.station_list.size() + ctx_.structure_loads.size() +
             ctx_.structure_puts.size() + ctx_.structure_betweens.size() +
             ctx_.structure_models.size() + ctx_.other_trains.size() +
@@ -190,6 +191,19 @@ private:
             row.order = input.order;
             row.metadata = metadata(input.edit_ref, "gradient");
             storage_.gradients.push_back(row);
+        }
+
+        storage_.other_track_changes.reserve(ctx_.other_track_changes.size());
+        for (const OtherTrackChange& input : ctx_.other_track_changes) {
+            KvOtherTrackChangeRow row{};
+            row.distance = input.distance;
+            row.track_key = value(input.track_key);
+            row.method = string_ref(input.method);
+            row.parameters = append_values(input.parameters);
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "otherTrack.change");
+            storage_.other_track_changes.push_back(row);
         }
 
         storage_.other_tracks.reserve(ctx_.othertrack_order.size());
@@ -667,14 +681,7 @@ private:
         add_elements("own_track", ctx_.own_track);
         add_elements("curve", ctx_.curves);
         add_elements("gradient", ctx_.gradients);
-        for (const std::string& key : ctx_.othertrack_order) {
-            auto found = ctx_.othertrack.find(key);
-            if (found == ctx_.othertrack.end()) continue;
-            const std::string row_kind = "othertrack." + key;
-            for (size_t i = 0; i < found->second.size(); ++i) {
-                add_element(row_kind, i, found->second[i].edit_ref);
-            }
-        }
+        add_elements("otherTrack.change", ctx_.other_track_changes);
         add_elements("station.put", ctx_.station_puts);
         const auto& station_list_entries = ordered_station_list_entries(ctx_);
         for (size_t station_index = 0; station_index < station_list_entries.size(); ++station_index) {
@@ -756,6 +763,8 @@ private:
         bind(storage_.other_track_events, view.other_track_events, view.other_track_event_count);
         bind(storage_.curves, view.curves, view.curve_count);
         bind(storage_.gradients, view.gradients, view.gradient_count);
+        bind(storage_.other_track_changes, view.other_track_changes,
+             view.other_track_change_count);
         bind(storage_.station_positions, view.station_positions, view.station_position_count);
         bind(storage_.station_names, view.station_names, view.station_name_count);
         bind(storage_.station_puts, view.station_puts, view.station_put_count);

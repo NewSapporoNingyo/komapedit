@@ -386,6 +386,15 @@ MapMarkerIconRecipe fog_recipe() {
     return recipe;
 }
 
+MapMarkerIconRecipe other_track_change_recipe() {
+    MapMarkerIconRecipe recipe;
+    append_circle(recipe, MapMarkerColorRole::Black,
+                  ImVec2(0.0f, 0.0f), 0.64f, 0.0f, true);
+    append_circle(recipe, MapMarkerColorRole::Theme,
+                  ImVec2(0.0f, 0.0f), 0.48f, 0.0f, true);
+    return recipe;
+}
+
 ImVec2 transform_icon_point(ImVec2 point,
                             ImVec2 center,
                             float half_extent,
@@ -435,6 +444,8 @@ ImVec4 map_marker_theme_color(MapMarkerVisualKind kind) {
             return rgba(255, 226, 64);
         case MapMarkerVisualKind::DrawDistance:
             return rgba(255, 224, 48);
+        case MapMarkerVisualKind::OtherTrackChange:
+            return rgba(90, 180, 255);
         case MapMarkerVisualKind::Count:
             break;
     }
@@ -447,10 +458,11 @@ ImU32 map_marker_theme_color_u32(MapMarkerVisualKind kind, float alpha) {
     return ImGui::ColorConvertFloat4ToU32(color);
 }
 
-ImVec4 map_marker_role_color(MapMarkerVisualKind kind, MapMarkerColorRole role) {
+ImVec4 map_marker_role_color(MapMarkerVisualKind kind, MapMarkerColorRole role,
+                             const ImVec4* theme_override) {
     switch (role) {
         case MapMarkerColorRole::Theme:
-            return map_marker_theme_color(kind);
+            return theme_override ? *theme_override : map_marker_theme_color(kind);
         case MapMarkerColorRole::Outline:
             return rgba(48, 34, 66);
         case MapMarkerColorRole::White:
@@ -524,6 +536,8 @@ MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind,
             return fog_recipe();
         case MapMarkerVisualKind::DrawDistance:
             return glyph_recipe('D', MapMarkerColorRole::Outline);
+        case MapMarkerVisualKind::OtherTrackChange:
+            return other_track_change_recipe();
         case MapMarkerVisualKind::Count:
             break;
     }
@@ -545,7 +559,8 @@ void draw_map_marker_icon(ImDrawList* draw,
                           MapMarkerVisualKind kind,
                           ImVec2 center,
                           float half_extent,
-                          float rotation_radians) {
+                          float rotation_radians,
+                          const ImVec4* theme_override) {
     if (!draw || half_extent <= 0.0f) return;
     if (static_cast<std::size_t>(kind) >= static_cast<std::size_t>(MapMarkerVisualKind::Count)) return;
     const MapMarkerIconRecipe& recipe = default_map_marker_icon_recipe(kind);
@@ -554,7 +569,7 @@ void draw_map_marker_icon(ImDrawList* draw,
          ++primitive_index) {
         const MapMarkerIconPrimitive& primitive = recipe.primitives[primitive_index];
         ImU32 color = ImGui::ColorConvertFloat4ToU32(
-            map_marker_role_color(kind, primitive.color));
+            map_marker_role_color(kind, primitive.color, theme_override));
         switch (primitive.kind) {
             case MapMarkerPrimitiveKind::Polyline: {
                 std::array<ImVec2, 24> points{};

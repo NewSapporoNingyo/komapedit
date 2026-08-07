@@ -522,6 +522,41 @@ HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
     return options;
 }
 
+HeadlessOtherTrackEditOptions parse_headless_other_track_edit_options(
+    const std::vector<std::string>& args) {
+    static constexpr const char* k_default_map_path =
+        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
+        "Config_Map121M-ATSP+Ps_Ask.txt";
+    HeadlessOtherTrackEditOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-other-track-edit") {
+            options.requested = true;
+            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
+                options.path = args[++i];
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (options.requested && options.path.empty()) options.path = k_default_map_path;
+    return options;
+}
+
 HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     const std::vector<std::string>& args) {
     static constexpr const char* k_default_map_path =
@@ -1431,6 +1466,280 @@ Change update(std::string change_id, std::string edit_id,
 }
 
 } // namespace typed_edit_headless
+
+int App::run_debug_headless_other_track_edit(
+    const HeadlessOtherTrackEditOptions& options) {
+    using typed_edit_headless::Change;
+    using typed_edit_headless::Field;
+    using typed_edit_headless::Report;
+
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "command=debug-headless-other-track-edit\n"
+         << "map_path=\"" << options.path << "\"\n"
+         << "commit_requested=" << (options.commit ? 1 : 0) << "\n";
+    LoadResult load = load_map_worker(options.path, options.unit_distance,
+                                      false, 0.0, 0.0, options.unit_distance,
+                                      LoadModelOptions{true});
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        return 2;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* label, bool value) {
+        *out << label << '=' << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+    };
+    auto source_hash = [&](const TableRow& row) {
+        const auto found = std::find_if(
+            load.model.edit_files.begin(), load.model.edit_files.end(),
+            [&](const EditSourceFileInfo& file) {
+                return file.file_path == row.source.file_path;
+            });
+        return found == load.model.edit_files.end() ? std::string{} : found->source_hash;
+    };
+    auto find_row = [](const MapModel& model,
+                       const std::string& edit_id) -> const TableRow* {
+        const auto found = std::find_if(
+            model.other_track_changes.begin(), model.other_track_changes.end(),
+            [&](const TableRow& row) { return row.edit_id == edit_id; });
+        return found == model.other_track_changes.end() ? nullptr : &*found;
+    };
+    auto find_track = [](const MapModel& model,
+                         const std::string& key) -> const OtherTrack* {
+        const std::string normalized = normalize_track_lookup_key(key);
+        const auto found = std::find_if(
+            model.other_tracks.begin(), model.other_tracks.end(),
+            [&](const OtherTrack& track) {
+                return normalize_track_lookup_key(track.key) == normalized;
+            });
+        return found == model.other_tracks.end() ? nullptr : &*found;
+    };
+    auto geometry_fingerprint = [&](const MapModel& model, const std::string& key) {
+        const OtherTrack* track = find_track(model, key);
+        double fingerprint = 0.0;
+        if (!track) return fingerprint;
+        for (size_t row = 0; row < track->points.rows; ++row) {
+            for (size_t column = 0; column < track->points.cols; ++column) {
+                fingerprint += track->points.at(row, column) *
+                    static_cast<double>((row + 1) * (column + 3));
+            }
+        }
+        return fingerprint;
+    };
+    auto report_errors = [&](const Report& report) {
+        for (const std::string& error : report.blocking_errors) {
+            *out << "blocking_error=" << error << "\n";
+        }
+    };
+
+    KvMapSnapshot snapshot{};
+    const bool snapshot_ok = kv_get_map_snapshot(
+        load.handle, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) != 0;
+    check("snapshot_ok", snapshot_ok);
+    check("logical_rows_present", !load.model.other_track_changes.empty());
+    check("typed_row_count_match", snapshot_ok &&
+          snapshot.other_track_change_count == load.model.other_track_changes.size());
+
+    const auto target_it = std::find_if(
+        load.model.other_track_changes.begin(), load.model.other_track_changes.end(),
+        [](const TableRow& row) {
+            return !row.edit_id.empty() &&
+                ascii_lower(table_cell(row, "method")) == "track.position" &&
+                table_cell_number(row, "parameterCount") >= 1.0;
+        });
+    const TableRow* target = target_it == load.model.other_track_changes.end()
+        ? nullptr : &*target_it;
+    check("position_target_found", target != nullptr);
+    if (!target) {
+        *out << "result=FAIL\n";
+        kv_free(load.handle);
+        return 3;
+    }
+
+    size_t bound_event_count = 0;
+    if (snapshot_ok) {
+        const size_t row_index = static_cast<size_t>(target_it -
+            load.model.other_track_changes.begin());
+        const KvOtherTrackChangeRow& typed = snapshot.other_track_changes[row_index];
+        for (std::uint64_t i = 0; i < snapshot.other_track_event_count; ++i) {
+            const KvTrackEventRow& event = snapshot.other_track_events[i];
+            if (event.metadata.source_file_index == typed.metadata.source_file_index &&
+                event.metadata.line == typed.metadata.line &&
+                event.metadata.column == typed.metadata.column) {
+                ++bound_event_count;
+            }
+        }
+    }
+    *out << "derived_event_binding_count=" << bound_event_count << "\n";
+    check("derived_events_bound", bound_event_count >= 2);
+
+    const std::string edit_id = target->edit_id;
+    const std::string track_key = table_cell(*target, "trackKey");
+    const std::string expected_hash = source_hash(*target);
+    const std::string original_text = table_cell(*target, "parameter0");
+    const double original_value = table_cell_number(*target, "parameter0");
+    const double updated_value = original_value + 0.001;
+    const std::string updated_text = format_double(updated_value, 9);
+    const std::string source_path = target->source.file_path;
+    const double baseline_geometry = geometry_fingerprint(load.model, track_key);
+    const Change update = typed_edit_headless::update(
+        "other-track-position-update", edit_id, expected_hash,
+        std::vector<Field>{{"parameter0", updated_text}});
+
+    Report apply_report = typed_edit_headless::apply_to_memory(load.handle, {update});
+    report_errors(apply_report);
+    check("update_apply_ok", apply_report.ok && apply_report.full_reparse_ok);
+    check("update_non_target_clean", apply_report.non_target_changed_count == 0);
+    MapModel applied = apply_report.ok
+        ? build_model_from_handle(load.handle, options.path, LoadModelOptions{true})
+        : MapModel{};
+    const TableRow* applied_row = find_row(applied, edit_id);
+    check("stable_edit_id", applied_row != nullptr);
+    check("updated_parameter_match", applied_row &&
+          std::abs(table_cell_number(*applied_row, "parameter0") - updated_value) < 1e-9);
+    check("derived_geometry_changed", applied_row &&
+          std::abs(geometry_fingerprint(applied, track_key) - baseline_geometry) > 1e-8);
+
+    if (applied_row) {
+        const std::string normalized_key = normalize_track_lookup_key(track_key);
+        auto applied_track = std::find_if(
+            applied.other_tracks.begin(), applied.other_tracks.end(),
+            [&](const OtherTrack& track) {
+                return normalize_track_lookup_key(track.key) == normalized_key;
+            });
+        if (applied_track != applied.other_tracks.end()) {
+            applied_track->visible = true;
+            applied_track->color = ImVec4(0.17f, 0.63f, 0.91f, 1.0f);
+        }
+
+        bool marker_2d_ok = false;
+        bool marker_2d_label_ok = false;
+        ImGui::CreateContext();
+        ImPlot::CreateContext();
+        ImGui::GetIO().IniFilename = nullptr;
+        try {
+            UserSettings settings;
+            settings.language = Language::En;
+            App app(nullptr, settings, 1.0f, false, false);
+            app.model_ = applied;
+            app.has_model_ = true;
+            app.edit_mode_enabled_ = true;
+            app.edit_registry_loaded_ = true;
+            app.dmin_ = applied.default_min;
+            app.dmax_ = applied.default_max;
+            app.rebuild_marker_overlay_cache();
+            const auto marker = std::find_if(
+                app.other_track_change_marker_cache_.begin(),
+                app.other_track_change_marker_cache_.end(),
+                [&](const OtherTrackChangeMarker& candidate) {
+                    return candidate.edit_id == edit_id;
+                });
+            marker_2d_ok = marker != app.other_track_change_marker_cache_.end() &&
+                marker->track_index < app.model_.other_tracks.size() &&
+                app.model_.other_tracks[marker->track_index].visible &&
+                marker->d >= app.model_.other_tracks[marker->track_index].range_min &&
+                marker->d <= app.model_.other_tracks[marker->track_index].range_max;
+            marker_2d_label_ok = marker_2d_ok &&
+                marker->label.find(track_key) != std::string::npos &&
+                marker->label.find(table_cell(*applied_row, "method")) != std::string::npos &&
+                marker->label.find(updated_text) != std::string::npos;
+        } catch (...) {
+            marker_2d_ok = false;
+        }
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
+        check("marker_2d_coordinate_and_filter_ok", marker_2d_ok);
+        check("marker_2d_label_ok", marker_2d_label_ok);
+
+        Canvas3DSceneBuildOptions scene_options;
+        scene_options.model = &applied;
+        scene_options.map_handle = load.handle;
+        scene_options.unit_distance = options.unit_distance;
+        scene_options.control_point_interval = options.unit_distance;
+        Canvas3DSceneBuildResult scene = build_canvas3d_scene_preview(scene_options);
+        const auto marker_3d = std::find_if(
+            scene.scene.markers.begin(), scene.scene.markers.end(),
+            [&](const Canvas3DSceneMarker& marker) {
+                return marker.row_kind == "otherTrack.change" &&
+                    marker.edit_id == edit_id;
+            });
+        const bool marker_3d_ok = marker_3d != scene.scene.markers.end() &&
+            marker_3d->has_theme_color && marker_3d->track_key ==
+                (applied_track == applied.other_tracks.end()
+                    ? std::string{} : applied_track->key) &&
+            std::abs(marker_3d->track_point.distance -
+                     table_cell_number(*applied_row, "distance")) < 1e-8;
+        const bool marker_3d_color_ok = marker_3d_ok &&
+            std::abs(marker_3d->theme_color.x - 0.17f) < 1e-6f &&
+            std::abs(marker_3d->theme_color.y - 0.63f) < 1e-6f &&
+            std::abs(marker_3d->theme_color.z - 0.91f) < 1e-6f;
+        const bool marker_3d_label_ok = marker_3d_ok &&
+            marker_3d->label.find(track_key) != std::string::npos &&
+            marker_3d->label.find(updated_text) != std::string::npos;
+        check("marker_3d_coordinate_ok", marker_3d_ok);
+        check("marker_3d_color_ok", marker_3d_color_ok);
+        check("marker_3d_label_ok", marker_3d_label_ok);
+    }
+
+    check("update_reset_ok", kv_edit_reset_memory(load.handle) != 0);
+    Change deletion;
+    deletion.change_id = "other-track-delete";
+    deletion.edit_id = edit_id;
+    deletion.operation = KV_EDIT_DELETE;
+    deletion.expected_source_hash = expected_hash;
+    const Report delete_report = typed_edit_headless::apply_to_memory(
+        load.handle, {deletion});
+    report_errors(delete_report);
+    const MapModel deleted = delete_report.ok
+        ? build_model_from_handle(load.handle, options.path, LoadModelOptions{true})
+        : MapModel{};
+    check("delete_apply_ok", delete_report.ok && delete_report.full_reparse_ok);
+    check("delete_row_removed", delete_report.ok && find_row(deleted, edit_id) == nullptr);
+    check("delete_reset_ok", kv_edit_reset_memory(load.handle) != 0);
+
+    if (options.commit) {
+        const Report commit_apply = typed_edit_headless::apply_to_memory(load.handle, {update});
+        check("commit_apply_ok", commit_apply.ok && commit_apply.full_reparse_ok);
+        const Report commit_report = commit_apply.ok
+            ? typed_edit_headless::commit(load.handle) : Report{};
+        report_errors(commit_report);
+        check("commit_ok", commit_report.ok);
+        LoadResult reloaded = commit_report.ok
+            ? load_map_worker(options.path, options.unit_distance, false, 0.0, 0.0,
+                              options.unit_distance, LoadModelOptions{true})
+            : LoadResult{};
+        const TableRow* reloaded_row = reloaded.ok
+            ? find_row(reloaded.model, edit_id) : nullptr;
+        check("commit_reload_ok", reloaded.ok && reloaded_row &&
+              std::abs(table_cell_number(*reloaded_row, "parameter0") -
+                       updated_value) < 1e-9);
+        *out << "committed_file=\"" << source_path << "\"\n"
+             << "committed_field=parameter0\n"
+             << "committed_original=\"" << original_text << "\"\n"
+             << "committed_new=\"" << updated_text << "\"\n";
+        if (reloaded.handle) kv_free(reloaded.handle);
+    }
+
+    *out << "logical_row_count=" << load.model.other_track_changes.size() << "\n"
+         << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    kv_free(load.handle);
+    return failed_cases == 0 ? 0 : 3;
+}
 
 int App::run_debug_headless_own_track_edit(
     const HeadlessOwnTrackEditOptions& options) {

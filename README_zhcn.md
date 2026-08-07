@@ -10,7 +10,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - `model_loader.dll`：通过 Assimp 读取布景模型文件，并向 3D 预览提供网格/材质数据。
 - `komapedit.exe`：基于 Dear ImGui、ImPlot、Win32、DirectX 11 和 WIC 的桌面 GUI。
 
-随程序提供的 EXE 与 `maploader.dll` 统一使用 maploader API v5。`KvMapSnapshot` v5 传递全部地图数据、常规几何、source/edit metadata；独立失效的 `KvSceneGeometrySnapshot` v1 传递稠密 3D 自轨道/他轨道几何。编辑目标、dry-run、内存 Apply、direct Apply 和 Save/commit 均使用 typed batch 与由 map handle 持有的 typed report。所有快照只存在于进程内存中；Open/Reload 始终重新读取当前线路源文件，不向磁盘写入线路快照或几何缓存。
+随程序提供的 EXE 与 `maploader.dll` 统一使用 maploader API v6。`KvMapSnapshot` v6 传递全部地图数据、常规几何、source/edit metadata，并为每条受支持的他轨道变化语句提供一个 typed 逻辑行；独立失效的 `KvSceneGeometrySnapshot` v1 传递稠密 3D 自轨道/他轨道几何。编辑目标、dry-run、内存 Apply、direct Apply 和 Save/commit 均使用 typed batch 与由 map handle 持有的 typed report。所有快照只存在于进程内存中；Open/Reload 始终重新读取当前线路源文件，不向磁盘写入线路快照或几何缓存。
 
 当前项目已经支持由 `Station.Load`、`Structure.Load`、`Signal.Load`、`Sound.Load` 和 `Sound3D.Load` 引用的既有列表行、已支持的自轨道曲线/坡度变化点、布景/信号机/车站放置、相互关联的 `Repeater.Begin`/`Begin0`/`End` 段，以及下表所列限速点、轨道变位、应答器、音效/噪声、背景、粘着、驾驶台亮度、雾和绘制距离语句的源文件关联编辑，并可在 3D 场景中实时拖动布景、信号机和 Repeater Begin 的 X/Y/Z 位置；但尚不是完整的地图编辑器，先行列车/他列车、新建元素、曲线/坡度语句的新建或方法转换，以及根据曲线半径自动计算限速等编辑仍在开发计划中。
 
@@ -39,6 +39,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 - [x] 支持限速区间读取与显示
 - [x] 编辑或删除已有自轨道曲线变化点，并在适用时联动成对的 `Curve.BeginTransition`；暂不支持新建和方法转换
 - [x] 编辑或删除已有自轨道坡度变化点，并在适用时联动成对的 `Gradient.BeginTransition`；暂不支持新建和方法转换
+- [x] 从编辑模式下的 2D/3D 标记编辑或删除受支持的既有他轨道变化语句；track key、方法和参数个数只读，暂不支持新建、拖动、gizmo 或方法转换
 
 ### 2D 平面图与图表显示
 
@@ -232,7 +233,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
      首次启用时会显示确认提示：编辑属于不稳定的测试性功能，可能会对地图文件产生破坏性更改。请先备份地图文件，或使用 Git 等版本控制工具管理；勾选“不再显示”并确认后，之后不再提示。
 9. 在 `2D 视图 -> 背景图` 中导入背景图，可手动调整位置、尺寸、旋转和亮度，也可按两个车站对齐
 10. 在 `3D 视图 -> 布景模型预览` 中显示或隐藏布景模型预览窗口。预览窗口内可用鼠标左键拖动旋转模型，用鼠标滚轮缩放
-11. 在 `3D 视图 -> 3D场景预览` 中显示场景预览窗口，然后点击 `启动3D场景预览`。场景预览可在窗口中重新加载或关闭；加载场景后，车站跳转和里程跳转也会移动场景相机。叠加层会显示当前曲线/超高、坡度、生效中的 `SpeedLimit.Begin`/`End` 状态、当前 `Section.Begin` 索引从生效中的 `Section.SetSpeedLimit`/`Signal.SpeedLimit` 定义所选择的信号限速，以及下一站信息。`选项 -> 3D画布设置 -> 雾效果` 可即时切换场景预览中的线路雾效果，且默认开启；同一设置还可控制地图语句驱动的绘制距离、相机速度和场景实例性能警告。选择模式下可从场景对象和支持的地图元素标记定位回对应表格；打开编辑模式后，右键布景、信号机、连续布景、车站位置或受支持的地图事件/效果标记可打开“属性/编辑”，其中受支持的源文件关联条目还可删除，`Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 坐标也可使用 X/Y/Z 操纵器拖动。
+11. 在 `3D 视图 -> 3D场景预览` 中显示场景预览窗口，然后点击 `启动3D场景预览`。场景预览可在窗口中重新加载或关闭；加载场景后，车站跳转和里程跳转也会移动场景相机。叠加层会显示当前曲线/超高、坡度、生效中的 `SpeedLimit.Begin`/`End` 状态、当前 `Section.Begin` 索引从生效中的 `Section.SetSpeedLimit`/`Signal.SpeedLimit` 定义所选择的信号限速，以及下一站信息。`选项 -> 3D画布设置 -> 雾效果` 可即时切换场景预览中的线路雾效果，且默认开启；同一设置还可控制地图语句驱动的绘制距离、相机速度和场景实例性能警告。选择模式下可从场景对象和支持的地图元素标记定位回对应表格；打开编辑模式后，受支持的他轨道变化点会在 2D 平面图中显示为轨道颜色圆点，并在已启动的 3D 场景中显示为轨道颜色标牌，右键可打开“属性/编辑”或删除。其他受支持的场景标记沿用相同菜单路径，`Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 坐标还可使用 X/Y/Z 操纵器拖动。
 12. 在 `文件 -> 导出 CSV...` 中选择输出目录，导出自轨道和他轨道几何 CSV
 13. 按 `F5` 或菜单 `文件 -> 重新加载` 可重新读取当前地图
 

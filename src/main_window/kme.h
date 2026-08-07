@@ -56,6 +56,7 @@ inline void release_com(T*& pointer) {
 extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
+struct HeadlessOtherTrackEditOptions;
 #endif
 
 
@@ -582,6 +583,7 @@ struct MapModel {
     std::vector<TrackEvent> own_events;
     std::vector<TableRow> curve_rows;
     std::vector<TableRow> gradient_rows;
+    std::vector<TableRow> other_track_changes;
     std::vector<SpeedLimit> speedlimits;
     std::vector<TableRow> speed_limit_rows;
     std::vector<double> controlpoints;
@@ -726,6 +728,10 @@ struct PlanMarker {
     size_t row_index = 0;
 };
 
+struct OtherTrackChangeMarker : PlanMarker {
+    size_t track_index = 0;
+};
+
 using PlanStructureMarker = PlanMarker;
 using PlanRepeaterMarker = PlanMarker;
 using PlanSignalMarker = PlanMarker;
@@ -778,7 +784,8 @@ enum class PlanMarkerKind {
     DrawDistance,
     SpeedLimit,
     Curve,
-    Gradient
+    Gradient,
+    OtherTrackChange
 };
 
 struct PlanMarkerSelection {
@@ -1452,6 +1459,8 @@ public:
                                                  const std::string& output_path);
     static int run_debug_headless_own_track_edit(
         const HeadlessOwnTrackEditOptions& options);
+    static int run_debug_headless_other_track_edit(
+        const HeadlessOtherTrackEditOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 
@@ -1748,6 +1757,7 @@ private:
     std::vector<std::optional<PlanDrawDistanceMarker>> draw_distance_marker_cache_;
     std::vector<std::optional<PlanMarker>> speed_limit_marker_cache_;
     std::vector<OwnTrackEditMarker> own_track_edit_marker_cache_;
+    std::vector<OtherTrackChangeMarker> other_track_change_marker_cache_;
     std::vector<unsigned char> structure_row_visible_;
     std::vector<unsigned char> repeater_row_visible_;
     std::vector<unsigned char> signal_row_visible_;
@@ -1852,6 +1862,7 @@ private:
     int plan_fog_popup_row_ = -1;
     int plan_draw_distance_popup_row_ = -1;
     int plan_speed_limit_popup_row_ = -1;
+    int plan_other_track_change_popup_row_ = -1;
     std::optional<OwnTrackEditMarker> plan_own_track_popup_marker_;
     std::optional<OwnTrackEditMarker> profile_own_track_popup_marker_;
     PlanMarkerSelection plan_marker_selection_;

@@ -504,6 +504,28 @@ void write_gradient(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_other_track_change(SemanticWriter& out,
+                              const KvMapSnapshot& snapshot,
+                              const KvOtherTrackChangeRow& row,
+                              const MapEditChange* change = nullptr) {
+    if (!span_valid(row.parameters, snapshot.value_count) ||
+        (row.parameters.count != 0 && !snapshot.values)) {
+        throw std::runtime_error(
+            "typed snapshot other-track parameter span is out of bounds");
+    }
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    field(out, snapshot, "trackKey", row.track_key);
+    field(out, "method", text(snapshot, row.method));
+    field(out, "parameterCount",
+          static_cast<std::int64_t>(row.parameters.count));
+    for (std::uint64_t index = 0; index < row.parameters.count; ++index) {
+        const std::string name = "parameter" + std::to_string(index);
+        changed_optional_number(out, snapshot, change, name.c_str(),
+                                snapshot.values[row.parameters.offset + index]);
+    }
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
                         const KvStationListRow& row,
                         const MapEditChange* change = nullptr) {
@@ -670,6 +692,19 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "radius", "cant"};
     } else if (target.row_kind == "gradient") {
         allowed = {"distance", "gradient"};
+    } else if (target.row_kind == "otherTrack.change") {
+        for (const auto& input : change.field_changes) {
+            if (input.first == "distance" ||
+                (input.first.compare(0, 9, "parameter") == 0 &&
+                 input.first.size() > 9 &&
+                 input.first.find_first_not_of("0123456789", 9) ==
+                     std::string::npos)) {
+                continue;
+            }
+            throw std::runtime_error("unsupported semantic edit field " +
+                                     input.first + " for " + target.row_kind);
+        }
+        return;
     } else if (target.row_kind == "station.list") {
         allowed = {"stationKey", "stationName", "arrivalTime", "depertureTime",
                    "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
@@ -806,6 +841,19 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
             write_gradient(out, snapshot, row);
         });
     }
+    std::set<SourceStatementAnchor> typed_other_track_statements;
+    for (std::uint64_t i = 0; i < snapshot.other_track_change_count; ++i) {
+        const KvOtherTrackChangeRow& row = snapshot.other_track_changes[i];
+        if (row.metadata.line > 0) {
+            typed_other_track_statements.insert(
+                source_statement_anchor(row.metadata));
+        }
+        emit_element(output, full, snapshot, row.metadata,
+                     "otherTrack.change", "otherTrack.change",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            write_other_track_change(out, snapshot, row);
+        });
+    }
     for (std::uint64_t track_index = 0; track_index < snapshot.other_track_count; ++track_index) {
         const KvOtherTrackRow& track = snapshot.other_tracks[track_index];
         const std::string key = text(snapshot, track.key);
@@ -818,6 +866,10 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
         }
         for (std::uint64_t i = 0; i < track.events.count; ++i) {
             const KvTrackEventRow& row = snapshot.other_track_events[track.events.offset + i];
+            const bool typed_statement = row.metadata.line > 0 &&
+                typed_other_track_statements.find(
+                    source_statement_anchor(row.metadata)) !=
+                    typed_other_track_statements.end();
             emit_element(output, full, snapshot, row.metadata, "othertrack",
                          "othertrack." + key, static_cast<size_t>(i),
                          [&](SemanticWriter& out) {
@@ -825,7 +877,7 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
                 field(out, "key", SemanticWriter::snapshot_text(snapshot, row.key));
                 field(out, snapshot, "value", row.value);
                 field(out, "flag", SemanticWriter::snapshot_text(snapshot, row.flag));
-            });
+            }, !typed_statement);
         }
     }
     for (std::uint64_t i = 0; i < snapshot.station_put_count; ++i) {
@@ -1154,6 +1206,15 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("gradient target row is out of bounds");
         }
         write_gradient(out, snapshot, snapshot.gradients[target.row_index], &change);
+    } else if (target.row_kind == "otherTrack.change") {
+        if (target.row_index >= snapshot.other_track_change_count ||
+            !snapshot.other_track_changes) {
+            throw std::runtime_error(
+                "otherTrack.change target row is out of bounds");
+        }
+        write_other_track_change(
+            out, snapshot, snapshot.other_track_changes[target.row_index],
+            &change);
     } else if (target.row_kind == "structure.put") {
         if (target.row_index >= snapshot.structure_put_count || !snapshot.structure_puts) {
             throw std::runtime_error("structure.put target row is out of bounds");

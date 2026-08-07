@@ -381,6 +381,16 @@ struct GradientEditRow {
     EditSourceRef edit_ref;
 };
 
+struct OtherTrackChange {
+    double distance = 0.0;
+    Value track_key;
+    std::string method;
+    std::vector<Value> parameters;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
+};
+
 struct OtherTrackEvent {
     double distance = 0.0;
     std::string track_key;
@@ -796,6 +806,7 @@ struct MapSnapshotStorage {
     std::vector<KvTrackEventRow> other_track_events;
     std::vector<KvCurveRow> curves;
     std::vector<KvGradientRow> gradients;
+    std::vector<KvOtherTrackChangeRow> other_track_changes;
     std::vector<KvStationPositionRow> station_positions;
     std::vector<KvStationNameRow> station_names;
     std::vector<KvStationPutRow> station_puts;
@@ -887,6 +898,7 @@ struct MapContext {
     std::vector<OwnTrackEvent> own_track;
     std::vector<CurveEditRow> curves;
     std::vector<GradientEditRow> gradients;
+    std::vector<OtherTrackChange> other_track_changes;
     std::map<double, std::string> station_position;
     std::map<std::string, std::string> station_key;
     std::vector<StationPut> station_puts;

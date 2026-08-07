@@ -550,6 +550,7 @@ private:
         offset_row_edit_refs(child.own_track, statement_index_base);
         offset_row_edit_refs(child.curves, statement_index_base);
         offset_row_edit_refs(child.gradients, statement_index_base);
+        offset_row_edit_refs(child.other_track_changes, statement_index_base);
         for (auto& row : child.station_list) offset_edit_ref(row.edit_ref, statement_index_base);
         for (auto& row : child.station_puts) offset_row_edit_ref(row, statement_index_base);
         for (auto& kv : child.othertrack) offset_row_edit_refs(kv.second, statement_index_base);
@@ -601,6 +602,7 @@ private:
         for (auto& row : child.station_puts) offset_order(row.order);
         for (auto& row : child.curves) offset_order(row.order);
         for (auto& row : child.gradients) offset_order(row.order);
+        for (auto& row : child.other_track_changes) offset_order(row.order);
         for (auto& row : child.station_list) offset_order(row.order);
         for (auto& row : child.structure_loads) offset_order(row.order);
         for (auto& row : child.structure_puts) offset_order(row.order);
@@ -654,6 +656,7 @@ private:
         for (auto& row : child.own_track) ctx_.own_track.push_back(std::move(row));
         for (auto& row : child.curves) ctx_.curves.push_back(std::move(row));
         for (auto& row : child.gradients) ctx_.gradients.push_back(std::move(row));
+        for (auto& row : child.other_track_changes) ctx_.other_track_changes.push_back(std::move(row));
         for (auto& kv : child.station_position) ctx_.station_position[kv.first] = std::move(kv.second);
         for (auto& kv : child.station_key) ctx_.station_key[kv.first] = std::move(kv.second);
         for (auto& row : child.station_list) ctx_.station_list.push_back(std::move(row));
@@ -1061,7 +1064,6 @@ private:
             {"track.cant.begin", {{2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
             {"track.cant.end", {{1}, 0, 0, {}, A::Any, K::Required}},
             {"track.cant.interpolate", {{1, 2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
-            {"track.cant.cant", {{1, 2}, 0, 0, {A::Any, A::Number}, A::Any, K::Required}},
             {"speedlimit.begin", {{1}, 0, 0, {A::Number}}},
             {"speedlimit.end", {{0}}},
             {"section.begin", {{}, 1, std::numeric_limits<size_t>::max(), {},
@@ -1347,7 +1349,8 @@ private:
             dispatch_station(fn, args, function.raw_arguments);
         } else if (first == "track") {
             if (!objects.front().has_key) throw std::runtime_error("Track key is required");
-            dispatch_track(objects.front().key, labels, fn, function.args);
+            dispatch_track(objects.front().key, labels, fn, function.args,
+                           function.explicit_argument_count);
         } else if (first == "speedlimit") {
             dispatch_speedlimit(fn, function.args);
         } else if (first == "section") {
@@ -1702,34 +1705,57 @@ private:
     }
 
     void dispatch_track(const Value& track_key, const std::vector<std::string>& labels,
-                        const std::string& fn, const std::vector<Value>& a) {
-        if (labels.size() >= 2 && labels[1] == "cant" && fn == "cant") {
-            return;
-        }
+                        const std::string& fn, const std::vector<Value>& a,
+                        size_t explicit_argument_count) {
+        auto add_change = [&](const std::string& method) {
+            OtherTrackChange row;
+            row.distance = ctx_.distance;
+            row.track_key = track_key;
+            row.method = method;
+            row.parameters.assign(
+                a.begin(), a.begin() + static_cast<std::ptrdiff_t>(
+                    std::min(explicit_argument_count, a.size())));
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
+            ctx_.other_track_changes.push_back(std::move(row));
+        };
         if (labels.size() == 1 && fn == "position") {
+            add_change("Track.Position");
             track_position(track_key, a);
             return;
         }
         if (labels.size() == 1 && fn == "cant") {
+            add_change("Track.Cant");
             put_other(ctx_, track_key, "cant", arg_or_null(a), "i");
             return;
         }
         if (labels.size() == 1 && fn == "gauge") {
+            add_change("Track.Gauge");
             put_other(ctx_, track_key, "gauge", arg_or_null(a));
             return;
         }
         if (labels.size() >= 2 && (labels[1] == "x" || labels[1] == "y") && fn == "interpolate") {
+            add_change(labels[1] == "x" ? "Track.X.Interpolate" : "Track.Y.Interpolate");
             setposition_interpolate(track_key, labels[1], a);
             return;
         }
         if (labels.size() >= 2 && labels[1] == "cant") {
+            const std::string suffix =
+                fn == "setgauge" ? "SetGauge" :
+                fn == "setcenter" ? "SetCenter" :
+                fn == "setfunction" ? "SetFunction" :
+                fn == "begintransition" ? "BeginTransition" :
+                fn == "begin" ? "Begin" :
+                fn == "end" ? "End" : "Interpolate";
+            add_change("Track.Cant." + suffix);
             if (fn == "setgauge") put_other(ctx_, track_key, "gauge", arg_or_null(a));
             else if (fn == "setcenter") put_other(ctx_, track_key, "center", arg_or_null(a));
             else if (fn == "setfunction") put_other(ctx_, track_key, "interpolate_func", Value::str(as_number(arg_or_null(a)) == 0.0 ? "sin" : "line"));
             else if (fn == "begintransition") put_other(ctx_, track_key, "cant", Value::null(), "bt");
             else if (fn == "begin") put_other(ctx_, track_key, "cant", arg_or_null(a), "i");
             else if (fn == "end") put_other(ctx_, track_key, "cant", Value::num(0.0), "i");
-            else if (fn == "interpolate" || fn == "cant") put_other(ctx_, track_key, "cant", arg_or_null(a), "i");
+            else if (fn == "interpolate") put_other(ctx_, track_key, "cant", arg_or_null(a), "i");
         }
     }
 

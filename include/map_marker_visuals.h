@@ -35,6 +35,7 @@ enum class MapMarkerVisualKind : std::uint8_t {
     CabIlluminance,
     Fog,
     DrawDistance,
+    OtherTrackChange,
     Count
 };
 
@@ -84,7 +85,8 @@ struct MapMarkerIconRecipe {
 
 ImVec4 map_marker_theme_color(MapMarkerVisualKind kind);
 ImU32 map_marker_theme_color_u32(MapMarkerVisualKind kind, float alpha = 1.0f);
-ImVec4 map_marker_role_color(MapMarkerVisualKind kind, MapMarkerColorRole role);
+ImVec4 map_marker_role_color(MapMarkerVisualKind kind, MapMarkerColorRole role,
+                             const ImVec4* theme_override = nullptr);
 MapMarkerIconRecipe map_marker_icon_recipe(
     MapMarkerVisualKind kind,
     MapMarkerIconVariant variant = MapMarkerIconVariant::Default);
@@ -93,4 +95,5 @@ void draw_map_marker_icon(ImDrawList* draw,
                           MapMarkerVisualKind kind,
                           ImVec2 center,
                           float half_extent,
-                          float rotation_radians = 0.0f);
+                          float rotation_radians = 0.0f,
+                          const ImVec4* theme_override = nullptr);

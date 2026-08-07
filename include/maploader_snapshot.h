@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 5u
-#define KV_MAP_SNAPSHOT_VERSION 5u
+#define KV_MAPLOADER_API_VERSION 6u
+#define KV_MAP_SNAPSHOT_VERSION 6u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
@@ -115,6 +115,17 @@ typedef struct KvGradientRow {
     uint32_t reserved2;
     KvRowMetadata metadata;
 } KvGradientRow;
+
+typedef struct KvOtherTrackChangeRow {
+    double distance;
+    KvValue track_key;
+    KvStringRef method;
+    KvSpan parameters;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved;
+    KvRowMetadata metadata;
+} KvOtherTrackChangeRow;
 
 typedef struct KvOtherTrackRow {
     KvStringRef key;
@@ -539,6 +550,8 @@ typedef struct KvMapSnapshot {
     uint64_t curve_count;
     const KvGradientRow* gradients;
     uint64_t gradient_count;
+    const KvOtherTrackChangeRow* other_track_changes;
+    uint64_t other_track_change_count;
 
     const KvStationPositionRow* station_positions;
     uint64_t station_position_count;

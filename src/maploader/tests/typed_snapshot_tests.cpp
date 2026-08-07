@@ -102,7 +102,7 @@ struct TempFixture {
             map << "$snapshotContract=1;\n"
                 << "DrawDistance.Change(600);\n";
         }
-        map << "Track['1'].Position(3.8,0);\n"
+        map << "Track['1'].Position(3.8, 0); # preserve other-track layout\n"
             << "100;\n"
             << "Station['STA'].Put();\n"
             << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n"
@@ -192,6 +192,7 @@ void validate_arrays(const KvMapSnapshot& snapshot) {
     CHECK_ARRAY(other_tracks, other_track_count);
     CHECK_ARRAY(own_track_events, own_track_event_count);
     CHECK_ARRAY(other_track_events, other_track_event_count);
+    CHECK_ARRAY(other_track_changes, other_track_change_count);
     CHECK_ARRAY(station_positions, station_position_count);
     CHECK_ARRAY(station_names, station_name_count);
     CHECK_ARRAY(station_puts, station_put_count);
@@ -267,6 +268,18 @@ void validate_map(const KvMapSnapshot& snapshot, bool edit_metadata) {
                          snapshot.other_track_event_count),
               "other-track event span");
     }
+    for (std::uint64_t i = 0; i < snapshot.other_track_change_count; ++i) {
+        const KvOtherTrackChangeRow& row = snapshot.other_track_changes[i];
+        check(ref_valid(snapshot.string_data, snapshot.string_size, row.method),
+              "other-track change method bounds");
+        check(ref_valid(snapshot.string_data, snapshot.string_size, row.file_path),
+              "other-track change file path bounds");
+        check(span_valid(row.parameters, snapshot.value_count),
+              "other-track change parameter span");
+        check(row.track_key.kind == KV_VALUE_NUMBER ||
+                  row.track_key.kind == KV_VALUE_STRING,
+              "other-track change key value kind");
+    }
     if (!edit_metadata) return;
     check(snapshot.source_file_count != 0 && snapshot.statement_count != 0 &&
               snapshot.element_count != 0,
@@ -317,6 +330,14 @@ int snapshot_contract() {
                               &first, sizeof(first)) != 0,
           "first map snapshot");
     validate_map(first, false);
+    check(first.other_track_change_count == 2,
+          "one logical other-track row per source statement");
+    if (first.other_track_change_count == 2) {
+        check(map_string(first, first.other_track_changes[0].method) ==
+                  "Track.Position" &&
+              first.other_track_changes[0].parameters.count == 2,
+              "other-track Position typed row");
+    }
     check(first.draw_distance_count == 1, "draw-distance fixture row present");
     check(first.variable_assignment_count == 1, "variable-assignment fixture row present");
     check(first.resource_list_load_count == 3, "resource-list Load fixture rows present");
@@ -576,6 +597,82 @@ int snapshot_contract() {
         MapHandle unpaired_low(kv_load_map_ex(
             utf16_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
         check(unpaired_low.value == nullptr, "unpaired UTF-16 low surrogate is rejected");
+    }
+
+    {
+        TempFixture other_track_fixture;
+        std::ofstream map(other_track_fixture.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Track['alpha'].Position(null, 0, 100, 200);\n"
+            << "Track[2].X.Interpolate(1, 50);\n"
+            << "Track['alpha'].Y.Interpolate();\n"
+            << "Track['alpha'].Gauge(1.067);\n"
+            << "Track['alpha'].Cant(0.1);\n"
+            << "Track['alpha'].Cant.SetGauge(1.067);\n"
+            << "Track['alpha'].Cant.SetCenter(0.2);\n"
+            << "Track['alpha'].Cant.SetFunction(1);\n"
+            << "Track['alpha'].Cant.BeginTransition();\n"
+            << "Track['alpha'].Cant.Begin(0.12);\n"
+            << "Track['alpha'].Cant.End();\n"
+            << "Track['alpha'].Cant.Interpolate(null);\n"
+            << "Include('other-track.txt');\n";
+        map.close();
+        std::ofstream included(other_track_fixture.directory / "other-track.txt",
+                               std::ios::binary | std::ios::trunc);
+        included << "BveTs Map 2.02:utf-8\n"
+                 << "10;\n"
+                 << "Track['included'].Gauge(1.435);\n";
+        included.close();
+        MapHandle other_track_handle(kv_load_map_ex(
+            other_track_fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(other_track_handle.value != nullptr,
+              "all supported other-track methods load");
+        if (other_track_handle.value) {
+            KvMapSnapshot typed{};
+            check(kv_get_map_snapshot(other_track_handle.value,
+                                      KV_MAP_SNAPSHOT_VERSION, &typed,
+                                      sizeof(typed)) != 0,
+                  "all supported other-track methods snapshot");
+            static constexpr std::array<std::string_view, 13> k_methods = {
+                "Track.Position", "Track.X.Interpolate", "Track.Y.Interpolate",
+                "Track.Gauge", "Track.Cant", "Track.Cant.SetGauge",
+                "Track.Cant.SetCenter", "Track.Cant.SetFunction",
+                "Track.Cant.BeginTransition", "Track.Cant.Begin",
+                "Track.Cant.End", "Track.Cant.Interpolate", "Track.Gauge",
+            };
+            static constexpr std::array<std::uint64_t, 13> k_counts = {
+                4, 2, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1,
+            };
+            check(typed.other_track_change_count == k_methods.size(),
+                  "all supported methods produce one logical row");
+            if (typed.other_track_change_count == k_methods.size()) {
+                bool rows_match = true;
+                for (size_t index = 0; index < k_methods.size(); ++index) {
+                    const KvOtherTrackChangeRow& row =
+                        typed.other_track_changes[index];
+                    rows_match = rows_match &&
+                        map_string(typed, row.method) == k_methods[index] &&
+                        row.parameters.count == k_counts[index] &&
+                        !map_string(typed, row.metadata.edit_id).empty();
+                }
+                check(rows_match, "other-track methods, shapes, and edit ids");
+                check(typed.other_track_changes[0].track_key.kind == KV_VALUE_STRING &&
+                          typed.other_track_changes[1].track_key.kind == KV_VALUE_NUMBER,
+                      "string and numeric other-track keys retain value type");
+                const KvOtherTrackChangeRow& position = typed.other_track_changes[0];
+                const KvOtherTrackChangeRow& interpolate =
+                    typed.other_track_changes[11];
+                check(typed.values[position.parameters.offset].kind == KV_VALUE_NULL &&
+                          typed.values[interpolate.parameters.offset].kind == KV_VALUE_NULL,
+                      "explicit null other-track parameters are retained");
+                check(map_string(typed, typed.other_track_changes[12].file_path).find(
+                          "other-track.txt") != std::string::npos,
+                      "Include-owned other-track statement retains its source file");
+            }
+        }
     }
 
     std::cout << "typed snapshot contract " << (failures ? "FAIL" : "PASS") << '\n';
@@ -932,6 +1029,85 @@ int edit_contract() {
         map_string(baseline, baseline.repeaters[1].metadata.edit_id);
     const std::string trim_end_edit_id =
         map_string(baseline, baseline.repeaters[2].metadata.edit_id);
+
+    check(baseline.other_track_change_count == 2,
+          "other-track editable rows present");
+    if (baseline.other_track_change_count >= 1) {
+        const KvOtherTrackChangeRow& other = baseline.other_track_changes[0];
+        const std::string other_edit_id =
+            map_string(baseline, other.metadata.edit_id);
+        const KvSourceFileRow& other_source =
+            baseline.source_files[other.metadata.source_file_index];
+        UpdateBatch other_update(
+            other_edit_id, map_string(baseline, other_source.source_hash),
+            "4.25", "parameter0");
+        KvEditReportSnapshot other_report{};
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &other_update.batch, &other_report,
+                  sizeof(other_report)) != 0 && other_report.ok &&
+                  other_report.non_target_changed_count == 0,
+              "other-track parameter apply-to-memory");
+        bool layout_preserved = false;
+        for (std::uint64_t i = 0; i < other_report.preview_snippet_count; ++i) {
+            const std::string_view after = arena_view(
+                other_report.string_data, other_report.string_size,
+                other_report.preview_snippets[i].after_text);
+            layout_preserved = layout_preserved ||
+                after.find("Position(4.25, 0);") !=
+                    std::string_view::npos;
+        }
+        check(layout_preserved,
+              "other-track writeback preserves untouched argument layout");
+        KvMapSnapshot other_applied{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &other_applied, sizeof(other_applied)) != 0,
+              "other-track applied snapshot");
+        const KvOtherTrackChangeRow* applied_other = nullptr;
+        for (std::uint64_t i = 0; i < other_applied.other_track_change_count; ++i) {
+            if (map_string(other_applied,
+                           other_applied.other_track_changes[i].metadata.edit_id) ==
+                other_edit_id) {
+                applied_other = &other_applied.other_track_changes[i];
+                break;
+            }
+        }
+        check(applied_other && applied_other->parameters.count == 2 &&
+                  other_applied.values[
+                      applied_other->parameters.offset].kind == KV_VALUE_NUMBER &&
+                  nearly_equal(other_applied.values[
+                      applied_other->parameters.offset].number_value, 4.25),
+              "other-track value and stable identity");
+        check(kv_edit_reset_memory(handle.value) != 0,
+              "other-track parameter reset");
+        baseline = {};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &baseline, sizeof(baseline)) != 0,
+              "other-track reset refreshes borrowed snapshot view");
+        UpdateBatch other_distance_update(
+            other_edit_id, map_string(baseline,
+                baseline.source_files[
+                    baseline.other_track_changes[0].metadata.source_file_index]
+                    .source_hash),
+            "25", "distance");
+        KvEditReportSnapshot distance_report{};
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &other_distance_update.batch, &distance_report,
+                  sizeof(distance_report)) != 0 && distance_report.ok &&
+                  distance_report.full_reparse_ok,
+              "other-track distance apply-to-memory");
+        KvMapSnapshot moved{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &moved, sizeof(moved)) != 0 &&
+                  moved.other_track_change_count == 2 &&
+                  nearly_equal(moved.other_track_changes[0].distance, 25.0),
+              "other-track distance movement and committed-row mapping");
+        check(kv_edit_reset_memory(handle.value) != 0,
+              "other-track distance reset");
+        baseline = {};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &baseline, sizeof(baseline)) != 0,
+              "other-track distance reset refreshes borrowed snapshot view");
+    }
 
     KvEditTargetSnapshot target{};
     check(kv_get_edit_target_typed(handle.value, utf8_view(edit_id),
@@ -1590,6 +1766,23 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
         check(snapshot.speed_limit_count == 1,
               "valid statement after syntax errors reaches IR");
     }
+
+    TempFixture invalid_cant_cant;
+    {
+        std::ofstream map(invalid_cant_cant.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Track['1'].Cant.Cant(10);\n";
+    }
+    clear_diagnostics();
+    MapHandle invalid_cant_handle(kv_load_map_ex(
+        invalid_cant_cant.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(invalid_cant_handle.value != nullptr,
+          "invalid Cant.Cant remains a nonfatal unsupported statement");
+    check(diagnostics_contain("Unknown submethod") &&
+              diagnostics_contain("track.cant.cant"),
+          "invalid Track[].Cant.Cant is diagnosed instead of ignored");
 
     const std::filesystem::path resource_error_path =
         diagnostic_fixture.directory / "resource_errors.txt";

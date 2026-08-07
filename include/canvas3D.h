@@ -205,6 +205,9 @@ struct Canvas3DSceneMarker {
     std::string row_kind;
     std::optional<size_t> row_index;
     std::string edit_id;
+    std::string track_key;
+    ImVec4 theme_color{};
+    bool has_theme_color = false;
 };
 
 // String views remain valid until the scene or its marker data is refreshed.
