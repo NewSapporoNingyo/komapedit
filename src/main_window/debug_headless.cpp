@@ -1653,9 +1653,12 @@ int App::run_debug_headless_other_track_edit(
                 app.model_.other_tracks[marker->track_index].visible &&
                 marker->d >= app.model_.other_tracks[marker->track_index].range_min &&
                 marker->d <= app.model_.other_tracks[marker->track_index].range_max;
+            const std::string method = table_cell(*applied_row, "method");
+            const std::string method_suffix =
+                method.compare(0, 6, "Track.") == 0 ? method.substr(6) : method;
             marker_2d_label_ok = marker_2d_ok &&
-                marker->label.find(track_key) != std::string::npos &&
-                marker->label.find(table_cell(*applied_row, "method")) != std::string::npos &&
+                marker->label.find("Track[" + track_key + "].") != std::string::npos &&
+                marker->label.find(method_suffix) != std::string::npos &&
                 marker->label.find(updated_text) != std::string::npos;
         } catch (...) {
             marker_2d_ok = false;

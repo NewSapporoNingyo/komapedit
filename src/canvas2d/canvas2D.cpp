@@ -334,11 +334,23 @@ void App::rebuild_marker_overlay_cache() {
             const std::string method = ascii_lower(table_cell(row, "method"));
             const bool transition = method == (gradient
                 ? "gradient.begintransition" : "curve.begintransition");
+            std::string label;
+            if (transition) {
+                label = "Tr.";
+            } else if (method == (gradient ? "gradient.end" : "curve.end")) {
+                label = "End";
+            } else if (gradient) {
+                label = table_cell(row, "gradient");
+            } else {
+                label = table_cell(row, "radius");
+                const std::string cant = table_cell(row, "cant");
+                if (!cant.empty()) label += ", " + cant;
+            }
             OwnTrackEditMarker marker;
             marker.d = distance;
             marker.x = point->x;
             marker.y = point->y;
-            marker.label = table_cell(row, "method");
+            marker.label = std::move(label);
             marker.edit_id = row.edit_id;
             marker.target_edit_id = transition
                 ? table_cell(row, "_primaryEditId") : row.edit_id;
@@ -380,8 +392,11 @@ void App::rebuild_marker_overlay_cache() {
         marker.d = distance;
         marker.x = point->x;
         marker.y = point->y;
-        marker.label = table_cell(row, "trackKey") + " " +
-            table_cell(row, "method") + "(" + table_cell(row, "parameters") + ")";
+        const std::string method = table_cell(row, "method");
+        const std::string method_suffix =
+            method.compare(0, 6, "Track.") == 0 ? method.substr(6) : method;
+        marker.label = "Track[" + table_cell(row, "trackKey") + "]." +
+            method_suffix + "(" + table_cell(row, "parameters") + ")";
         marker.edit_id = row.edit_id;
         marker.row_index = row_index;
         marker.track_index = track_index;
