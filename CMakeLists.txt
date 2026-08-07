@@ -118,6 +118,9 @@ if(BUILD_TESTING)
     add_test(NAME typed_snapshot_contract
         COMMAND $<TARGET_FILE:typed_snapshot_tests> snapshot
     )
+    add_test(NAME maploader_gradient_projection_contract
+        COMMAND $<TARGET_FILE:typed_snapshot_tests> geometry
+    )
     add_test(NAME typed_edit_contract
         COMMAND $<TARGET_FILE:typed_snapshot_tests> edit
     )

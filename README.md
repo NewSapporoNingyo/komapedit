@@ -38,7 +38,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 ### Own-Track and Other-Track Geometry
 
 - [x] Parse and calculate own-track curves.
-- [x] Parse and calculate own-track gradients.
+- [x] Parse and calculate own-track gradients, including their horizontal projection in plan geometry.
 - [x] Support legacy syntax.
 - [x] Parse and calculate parts of other-track position data, lateral/vertical interpolation, gauge, center offset, and cant.
 - [x] Support control-point range and interval settings, with geometry regeneration.
@@ -386,8 +386,8 @@ Field reference:
 | Field | Description |
 | --- | --- |
 | distance | Absolute map distance, in meters |
-| x | Calculated own-track plan X coordinate |
-| y | Calculated own-track plan Y coordinate |
+| x | Calculated own-track plan X coordinate after gradient projection |
+| y | Calculated own-track plan Y coordinate after gradient projection |
 | z | Elevation |
 | direction | Track direction angle, in radians |
 | radius | Current curve radius |
@@ -416,8 +416,8 @@ Field reference:
 | Field | Description |
 | --- | --- |
 | distance | Absolute map distance, in meters |
-| x | Calculated other-track plan X coordinate |
-| y | Calculated other-track plan Y coordinate |
+| x | Calculated other-track plan X coordinate derived from the projected own track |
+| y | Calculated other-track plan Y coordinate derived from the projected own track |
 | z | Other-track elevation |
 | interpolate_func | Interpolation type: `0` means `sin`, `1` means `line` |
 | cant | Cant |

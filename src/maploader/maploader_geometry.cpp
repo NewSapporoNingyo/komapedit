@@ -19,6 +19,7 @@ struct LastPos {
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
+    double projected_distance = 0.0;
     double theta = 0.0;
     double radius = 0.0;
     double gradient = 0.0;
@@ -436,13 +437,130 @@ CurveResult transition_curve(double L, double r1, double r2, double theta,
     return {x, y, local.tau, std::fabs(local.radius) < 1e6 ? local.radius : 0.0};
 }
 
-std::pair<double, double> gradient_transition(double L, double gr1, double gr2, double l_intermediate) {
-    double theta1 = std::atan(gr1 / 1000.0);
-    double theta2 = std::atan(gr2 / 1000.0);
-    double z = L / (theta2 - theta1) * std::cos(theta1) -
-               L / (theta2 - theta1) * std::cos((theta2 - theta1) / L * l_intermediate + theta1);
-    double gradient = 1000.0 * std::tan((theta2 - theta1) / L * l_intermediate + theta1);
-    return {z, gradient};
+struct GradientProjection {
+    double horizontal = 0.0;
+    double vertical = 0.0;
+    double gradient = 0.0;
+};
+
+GradientProjection constant_gradient_projection(double length, double gradient) {
+    if (gradient == 0.0) return {length, 0.0, gradient};
+    if (std::isfinite(gradient)) {
+        const double norm = std::hypot(1000.0, gradient);
+        return {length * (1000.0 / norm),
+                length * (gradient / norm),
+                gradient};
+    }
+    const double theta = std::atan(gradient / 1000.0);
+    return {length * std::cos(theta), length * std::sin(theta), gradient};
+}
+
+double sinc(double value) {
+    const double absolute = std::fabs(value);
+    if (absolute < 1e-4) {
+        const double squared = value * value;
+        return 1.0 - squared / 6.0 + squared * squared / 120.0;
+    }
+    return std::sin(value) / value;
+}
+
+GradientProjection gradient_transition(double length, double gradient0, double gradient1,
+                                       double intermediate_length) {
+    if (length == 0.0 || gradient0 == gradient1) {
+        return constant_gradient_projection(intermediate_length,
+                                            length == 0.0 ? gradient1 : gradient0);
+    }
+    const double theta0 = std::atan(gradient0 / 1000.0);
+    const double theta1 = std::atan(gradient1 / 1000.0);
+    const double delta = (theta1 - theta0) * intermediate_length / length;
+    const double half_delta = delta * 0.5;
+    // Integrate cos(theta) and sin(theta) exactly while the slope angle changes
+    // linearly. The sinc form avoids cancellation when the angle change is tiny.
+    const double scale = sinc(half_delta);
+    const double midpoint = theta0 + half_delta;
+    const double end_theta = theta0 + delta;
+    return {intermediate_length * std::cos(midpoint) * scale,
+            intermediate_length * std::sin(midpoint) * scale,
+            1000.0 * std::tan(end_theta)};
+}
+
+struct GradientProjectionSample {
+    double projected_distance = 0.0;
+    double elevation = 0.0;
+    double gradient = 0.0;
+};
+
+std::vector<GradientProjectionSample> build_gradient_projection_samples(
+    const std::vector<OwnTrackEvent>& own_track,
+    const std::vector<double>& controlpoints) {
+    std::vector<GradientProjectionSample> result;
+    result.reserve(controlpoints.size());
+    if (controlpoints.empty()) return result;
+
+    TrackPointer gradient_pointer(own_track, "gradient");
+    double last_distance = controlpoints.front();
+    double last_gradient = 0.0;
+    double projected_distance = 0.0;
+    double elevation = 0.0;
+
+    for (double distance : controlpoints) {
+        while (gradient_pointer.over_nextpoint(distance)) {
+            const int origin = gradient_pointer.seekoriginofcontinuous(
+                gradient_pointer.next());
+            if (origin >= 0) {
+                last_gradient = as_number(gradient_pointer.event(origin).value);
+            }
+            gradient_pointer.seeknext();
+        }
+
+        const double segment_length = distance - last_distance;
+        GradientProjection segment =
+            constant_gradient_projection(segment_length, last_gradient);
+        if (gradient_pointer.last() >= 0 && gradient_pointer.next() >= 0) {
+            const OwnTrackEvent& next = gradient_pointer.event(gradient_pointer.next());
+            if (!next.value.is_continue() &&
+                (next.flag == "i" ||
+                 gradient_pointer.event(gradient_pointer.last()).flag == "bt") &&
+                last_gradient != as_number(next.value)) {
+                segment = gradient_transition(next.distance - last_distance,
+                                              last_gradient,
+                                              as_number(next.value),
+                                              segment_length);
+            }
+        }
+
+        projected_distance += segment.horizontal;
+        elevation += segment.vertical;
+        last_gradient = segment.gradient;
+        last_distance = distance;
+        result.push_back({projected_distance, elevation, last_gradient});
+    }
+    return result;
+}
+
+std::vector<double> build_event_projected_distances(
+    const std::vector<OwnTrackEvent>& own_track,
+    const std::vector<double>& controlpoints,
+    const std::vector<GradientProjectionSample>& projection) {
+    // Every own-track event originates at a distance control point. Preserve a
+    // direct event-index lookup so transition curves stay linear-time overall.
+    std::vector<double> result(own_track.size(), 0.0);
+    size_t controlpoint_index = 0;
+    for (size_t event_index = 0; event_index < own_track.size(); ++event_index) {
+        const double distance = own_track[event_index].distance;
+        while (controlpoint_index < controlpoints.size() &&
+               controlpoints[controlpoint_index] < distance) {
+            ++controlpoint_index;
+        }
+        if (controlpoint_index >= controlpoints.size() ||
+            controlpoints[controlpoint_index] != distance ||
+            controlpoint_index >= projection.size()) {
+            throw std::runtime_error(
+                "own-track event is missing its geometry control point");
+        }
+        result[event_index] = projection[controlpoint_index].projected_distance;
+    }
+    return result;
 }
 
 class CantProcessor {
@@ -572,8 +690,12 @@ void generate_owntrack(MapContext& ctx, double unitdist,
     }
     list_cp = sorted_unique(list_cp);
 
+    const std::vector<GradientProjectionSample> gradient_projection =
+        build_gradient_projection_samples(ctx.own_track, list_cp);
+    const std::vector<double> event_projected_distances =
+        build_event_projected_distances(ctx.own_track, list_cp, gradient_projection);
+
     TrackPointer radius_p(ctx.own_track, "radius");
-    TrackPointer gradient_p(ctx.own_track, "gradient");
     TrackPointer turn_p(ctx.own_track, "turn");
     TrackPointer interpolate_p(ctx.own_track, "interpolate_func");
     TrackPointer cant_p(ctx.own_track, "cant");
@@ -593,7 +715,11 @@ void generate_owntrack(MapContext& ctx, double unitdist,
     ctx.owntrack_buffer.clear(11);
     ctx.owntrack_buffer.reserve_rows(list_cp.size());
 
-    for (double dist : list_cp) {
+    for (size_t controlpoint_index = 0; controlpoint_index < list_cp.size();
+         ++controlpoint_index) {
+        const double dist = list_cp[controlpoint_index];
+        const GradientProjectionSample& projection =
+            gradient_projection[controlpoint_index];
         while (interpolate_p.on_nextpoint(dist)) {
             lp.interpolate_func = as_text(interpolate_p.event(interpolate_p.next()).value);
             interpolate_p.seeknext();
@@ -624,7 +750,7 @@ void generate_owntrack(MapContext& ctx, double unitdist,
         }
 
         double c_theta = lp.theta;
-        double c_ds = dist - lp.distance;
+        double c_ds = projection.projected_distance - lp.projected_distance;
         double x = 0.0, y = 0.0, tau = 0.0, radius = lp.radius;
 
         if (radius_p.last() < 0) {
@@ -658,17 +784,27 @@ void generate_owntrack(MapContext& ctx, double unitdist,
             } else if (next.flag == "i" || radius_p.event(radius_p.last()).flag == "bt") {
                 double next_radius = as_number(next.value);
                 if (rlp.radius != next_radius) {
-                    double total = next.distance - radius_p.event(radius_p.last()).distance;
-                    double last_l = lp.distance - radius_p.event(radius_p.last()).distance;
-                    double cur_l = dist - radius_p.event(radius_p.last()).distance;
-                    CurveResult pos_last = transition_curve(total, rlp.radius, next_radius,
-                                                            rlp.theta, lp.interpolate_func, last_l);
-                    CurveResult pos_cur = transition_curve(total, rlp.radius, next_radius,
-                                                           rlp.theta, lp.interpolate_func, cur_l);
-                    x = pos_cur.x - pos_last.x;
-                    y = pos_cur.y - pos_last.y;
-                    tau = pos_cur.tau - pos_last.tau;
-                    radius = pos_cur.radius;
+                    const double transition_start =
+                        event_projected_distances[static_cast<size_t>(radius_p.last())];
+                    const double transition_end =
+                        event_projected_distances[static_cast<size_t>(radius_p.next())];
+                    const double total = transition_end - transition_start;
+                    const double last_l = lp.projected_distance - transition_start;
+                    const double cur_l = projection.projected_distance - transition_start;
+                    if (total == 0.0) {
+                        radius = dist >= next.distance ? next_radius : rlp.radius;
+                    } else {
+                        CurveResult pos_last = transition_curve(
+                            total, rlp.radius, next_radius, rlp.theta,
+                            lp.interpolate_func, last_l);
+                        CurveResult pos_cur = transition_curve(
+                            total, rlp.radius, next_radius, rlp.theta,
+                            lp.interpolate_func, cur_l);
+                        x = pos_cur.x - pos_last.x;
+                        y = pos_cur.y - pos_last.y;
+                        tau = pos_cur.tau - pos_last.tau;
+                        radius = pos_cur.radius;
+                    }
                 } else if (next_radius != 0.0) {
                     auto res = circular_curve(lp.radius, c_theta, c_ds);
                     x = res.x; y = res.y; tau = res.tau; radius = lp.radius;
@@ -694,41 +830,15 @@ void generate_owntrack(MapContext& ctx, double unitdist,
             turn_p.seeknext();
         }
 
-        while (gradient_p.over_nextpoint(dist)) {
-            int origin = gradient_p.seekoriginofcontinuous(gradient_p.next());
-            if (origin >= 0) {
-                lp.gradient = as_number(gradient_p.event(origin).value);
-            }
-            gradient_p.seeknext();
-        }
-
-        double g_ds = dist - lp.distance;
-        double gradient = lp.gradient;
-        double z = 0.0;
-        if (gradient_p.last() >= 0 && gradient_p.next() >= 0) {
-            const auto& next = gradient_p.event(gradient_p.next());
-            if (!next.value.is_continue() &&
-                (next.flag == "i" || gradient_p.event(gradient_p.last()).flag == "bt") &&
-                lp.gradient != as_number(next.value)) {
-                auto gz = gradient_transition(next.distance - lp.distance,
-                                              lp.gradient, as_number(next.value), g_ds);
-                z = gz.first;
-                gradient = gz.second;
-            } else {
-                z = g_ds * std::sin(std::atan(lp.gradient / 1000.0));
-            }
-        } else {
-            z = g_ds * std::sin(std::atan(lp.gradient / 1000.0));
-        }
-
         double cant_tmp = cant_gen.process(dist, lp.interpolate_func);
 
         lp.x += x;
         lp.y += y;
-        lp.z += z;
+        lp.z = projection.elevation;
+        lp.projected_distance = projection.projected_distance;
         lp.theta += tau;
         lp.radius = radius;
-        lp.gradient = gradient;
+        lp.gradient = projection.gradient;
         lp.distance = dist;
         lp.cant = cant_tmp;
         lp.center = center_tmp;

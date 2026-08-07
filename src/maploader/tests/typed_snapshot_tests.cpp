@@ -58,6 +58,20 @@ bool buffer_valid(KvDoubleBuffer buffer) {
         buffer.rows <= std::numeric_limits<std::uint64_t>::max() / buffer.cols;
 }
 
+const double* buffer_row_at_distance(KvDoubleBuffer buffer, double distance) {
+    if (!buffer.data || buffer.cols == 0) return nullptr;
+    for (std::uint64_t row = 0; row < buffer.rows; ++row) {
+        const double* values = buffer.data + row * buffer.cols;
+        if (values[0] == distance) return values;
+    }
+    return nullptr;
+}
+
+bool nearly_equal(double left, double right, double tolerance = 1e-9) {
+    return std::fabs(left - right) <=
+        tolerance * std::max({1.0, std::fabs(left), std::fabs(right)});
+}
+
 std::string_view arena_view(const char* data, std::uint64_t size, KvStringRef ref) {
     if (!ref_valid(data, size, ref)) return {};
     return std::string_view(data ? data + ref.offset : "", static_cast<size_t>(ref.length));
@@ -714,6 +728,181 @@ const KvSignalAspectRow* find_signal_aspect_key(const KvMapSnapshot& snapshot,
         }
     }
     return nullptr;
+}
+
+int geometry_projection_contract() {
+    auto write_map = [](TempFixture& fixture, std::string_view body) {
+        std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n" << body;
+    };
+    auto load_snapshot = [](MapHandle& handle, KvMapSnapshot& snapshot) {
+        return handle.value && kv_get_map_snapshot(
+            handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot));
+    };
+
+    TempFixture level_fixture;
+    write_map(level_fixture, "0;\n100;\n");
+    MapHandle level_handle(kv_load_map_ex(
+        level_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    KvMapSnapshot level{};
+    check(load_snapshot(level_handle, level), "level projection map loads");
+    const double* level_end = buffer_row_at_distance(level.own_track_geometry, 100.0);
+    check(level_end != nullptr, "level projection endpoint exists");
+    if (level_end) {
+        check(level.own_track_geometry.cols == 11, "level geometry column contract");
+        check(level_end[1] == 100.0 && level_end[2] == 0.0 &&
+                  level_end[3] == 0.0 && level_end[4] == 0.0,
+              "zero gradient preserves exact plan geometry");
+    }
+
+    TempFixture signed_fixture;
+    write_map(signed_fixture,
+              "0;\n"
+              "Gradient.Begin(1000);\n"
+              "100;\n"
+              "Gradient.Begin(-1000);\n"
+              "200;\n");
+    MapHandle signed_handle(kv_load_map_ex(
+        signed_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    KvMapSnapshot signed_snapshot{};
+    check(load_snapshot(signed_handle, signed_snapshot),
+          "signed gradient projection map loads");
+    const double* positive_end = buffer_row_at_distance(
+        signed_snapshot.own_track_geometry, 100.0);
+    const double* negative_end = buffer_row_at_distance(
+        signed_snapshot.own_track_geometry, 200.0);
+    check(positive_end && negative_end, "signed gradient endpoints exist");
+    const double diagonal = 100.0 / std::sqrt(2.0);
+    if (positive_end && negative_end) {
+        check(nearly_equal(positive_end[1], diagonal),
+              "positive gradient shortens plan projection");
+        check(nearly_equal(positive_end[3], diagonal),
+              "positive gradient raises elevation");
+        check(nearly_equal(negative_end[1] - positive_end[1], diagonal),
+              "negative gradient has the same plan shortening");
+        check(nearly_equal(negative_end[3], 0.0),
+              "negative gradient reverses the elevation component");
+    }
+
+    TempFixture curve_fixture;
+    write_map(curve_fixture,
+              "0;\n"
+              "Gradient.Begin(1000);\n"
+              "Curve.Begin(100);\n"
+              "Track['offset'].Position(4,0);\n"
+              "100;\n");
+    MapHandle curve_handle(kv_load_map_ex(
+        curve_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    KvMapSnapshot curve{};
+    check(load_snapshot(curve_handle, curve), "sloped curve projection map loads");
+    const double* curve_end = buffer_row_at_distance(curve.own_track_geometry, 100.0);
+    check(curve_end != nullptr, "sloped curve endpoint exists");
+    const double curve_angle = diagonal / 100.0;
+    if (curve_end) {
+        check(nearly_equal(curve_end[1], 100.0 * std::sin(curve_angle)),
+              "sloped circular curve uses projected arc length for x");
+        check(nearly_equal(curve_end[2], 100.0 * (1.0 - std::cos(curve_angle))),
+              "sloped circular curve uses projected arc length for y");
+        check(nearly_equal(curve_end[3], diagonal),
+              "sloped circular curve preserves elevation");
+        check(nearly_equal(curve_end[4], curve_angle),
+              "sloped circular curve direction follows projected arc length");
+        check(nearly_equal(curve_end[5], 100.0),
+              "sloped circular curve preserves radius");
+    }
+    check(curve.other_track_count == 1, "sloped curve other track exists");
+    const double* other_end = curve.other_track_count == 1
+        ? buffer_row_at_distance(curve.other_tracks[0].points, 100.0)
+        : nullptr;
+    check(other_end != nullptr, "sloped curve other-track endpoint exists");
+    if (curve_end && other_end) {
+        check(nearly_equal(other_end[1], curve_end[1] - 4.0 * std::sin(curve_angle)) &&
+                  nearly_equal(other_end[2], curve_end[2] + 4.0 * std::cos(curve_angle)),
+              "other track derives its plan position from projected own track");
+        check(nearly_equal(other_end[3], curve_end[3]),
+              "other track derives its elevation from projected own track");
+    }
+
+    check(curve_handle.value && kv_generate_scene_geometry(
+              curve_handle.value, 25.0, 1.0, 7.0, 1.0, 0.01),
+          "sloped curve scene geometry generates");
+    KvSceneGeometrySnapshot curve_scene{};
+    check(curve_handle.value && kv_get_scene_geometry_snapshot(
+              curve_handle.value, KV_SCENE_GEOMETRY_SNAPSHOT_VERSION,
+              &curve_scene, sizeof(curve_scene)),
+          "sloped curve scene snapshot is available");
+    const double* scene_curve_end = buffer_row_at_distance(curve_scene.own_track, 100.0);
+    check(scene_curve_end != nullptr, "scene sloped-curve endpoint exists");
+    if (curve_end && scene_curve_end) {
+        check(nearly_equal(scene_curve_end[1], curve_end[1]) &&
+                  nearly_equal(scene_curve_end[2], curve_end[2]) &&
+                  nearly_equal(scene_curve_end[3], curve_end[3]) &&
+                  nearly_equal(scene_curve_end[4], curve_end[4]),
+              "regular and scene own-track projections agree");
+    }
+    check(curve_scene.other_track_count == 1,
+          "scene sloped-curve other track exists");
+    const double* scene_other_end = curve_scene.other_track_count == 1
+        ? buffer_row_at_distance(curve_scene.other_tracks[0].points, 100.0)
+        : nullptr;
+    if (other_end && scene_other_end) {
+        check(nearly_equal(scene_other_end[1], other_end[1]) &&
+                  nearly_equal(scene_other_end[2], other_end[2]) &&
+                  nearly_equal(scene_other_end[3], other_end[3]),
+              "regular and scene other-track projections agree");
+    } else {
+        check(false, "scene sloped-curve other-track endpoint exists");
+    }
+
+    TempFixture transition_fixture;
+    write_map(transition_fixture,
+              "0;\n"
+              "Gradient.BeginTransition();\n"
+              "Curve.BeginTransition();\n"
+              "100;\n"
+              "Gradient.Begin(1000);\n"
+              "Curve.Begin(100);\n");
+    MapHandle transition_25_handle(kv_load_map_ex(
+        transition_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    MapHandle transition_7_handle(kv_load_map_ex(
+        transition_fixture.path_utf8().c_str(), 7.0, KV_LOAD_PREVIEW));
+    KvMapSnapshot transition_25{};
+    KvMapSnapshot transition_7{};
+    check(load_snapshot(transition_25_handle, transition_25) &&
+              load_snapshot(transition_7_handle, transition_7),
+          "combined transition maps load at both control-point intervals");
+    const double* transition_25_end = buffer_row_at_distance(
+        transition_25.own_track_geometry, 100.0);
+    const double* transition_7_end = buffer_row_at_distance(
+        transition_7.own_track_geometry, 100.0);
+    check(transition_25_end && transition_7_end,
+          "combined transition endpoints exist");
+    const double half_angle = std::atan(1.0) * 0.5;
+    const double transition_scale = std::sin(half_angle) / half_angle;
+    const double transition_horizontal =
+        100.0 * std::cos(half_angle) * transition_scale;
+    const double transition_vertical =
+        100.0 * std::sin(half_angle) * transition_scale;
+    if (transition_25_end && transition_7_end) {
+        check(nearly_equal(transition_25_end[3], transition_vertical),
+              "vertical transition elevation matches analytic integral");
+        check(nearly_equal(transition_25_end[4], transition_horizontal / 200.0),
+              "lateral transition direction uses projected transition length");
+        check(nearly_equal(transition_25_end[5], 100.0) &&
+                  nearly_equal(transition_25_end[6], 1000.0),
+              "combined transition reaches requested radius and gradient");
+        bool interval_independent = true;
+        for (size_t column = 1; column <= 6; ++column) {
+            interval_independent = interval_independent && nearly_equal(
+                transition_25_end[column], transition_7_end[column], 1e-8);
+        }
+        check(interval_independent,
+              "combined projection endpoint is independent of control-point interval");
+    }
+
+    std::cout << "gradient projection contract "
+              << (failures ? "FAIL" : "PASS") << '\n';
+    return failures;
 }
 
 int edit_contract() {
@@ -1533,12 +1722,14 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "usage: typed_snapshot_tests <snapshot|edit|diagnostics|signal-glare> "
+        std::cerr << "usage: typed_snapshot_tests "
+                     "<snapshot|geometry|edit|diagnostics|signal-glare> "
                      "[fixture-root|map-path] [--commit]\n";
         return 2;
     }
     const std::string mode = argv[1];
     if (mode == "snapshot") return snapshot_contract() == 0 ? 0 : 1;
+    if (mode == "geometry") return geometry_projection_contract() == 0 ? 0 : 1;
     if (mode == "edit") return edit_contract() == 0 ? 0 : 1;
     if (mode == "diagnostics" && argc == 3) {
         return diagnostics_contract(std::filesystem::path(argv[2])) == 0 ? 0 : 1;
