@@ -2800,7 +2800,7 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 18> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 21> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
@@ -2819,6 +2819,9 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
         "fog.change",
         "drawDistance.change",
         "speedlimit",
+        "curve",
+        "gradient",
+        "otherTrack.change",
     };
     return std::any_of(k_distance_row_kinds.begin(), k_distance_row_kinds.end(),
                        [&](const char* value) { return row_kind == value; });
@@ -3226,7 +3229,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                 }
                 next.owned_edit_ids.push_back(transition_edit_id);
                 add_related_field(
-                    "transitionStart", "distance", tr("field.transition_start"),
+                    "transitionStart", "distance", "Transition start",
                     inspector_row_field_value(transition_row, request.row_kind, "distance"),
                     inspector_row_field_value(*original_transition_row,
                                               request.row_kind, "distance"),
@@ -3234,33 +3237,33 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                     transition_hash,
                     transition_info ? transition_info->source_distance_string : std::string{});
             } else {
-                add_field("transitionStart", tr("field.transition_start"),
+                add_field("transitionStart", "Transition start",
                           tr("value.none"), tr("value.none"),
                           MapElementNumericConstraint::None, false);
                 next.fields.back().read_only = true;
             }
         }
-        add_row_field("distance", tr("field.distance"),
+        add_row_field("distance", "Distance",
                       MapElementNumericConstraint::Finite, true);
         if (curve && argument_count > 0) {
-            add_row_field("radius", tr("field.radius"),
+            add_row_field("radius", "Radius",
                           MapElementNumericConstraint::Finite, true);
             if (argument_count == 2) {
-                add_row_field("cant", tr("field.cant"),
+                add_row_field("cant", "Cant",
                               MapElementNumericConstraint::Finite, true);
             }
         } else if (!curve && argument_count > 0) {
-            add_row_field("gradient", tr("field.gradient"),
+            add_row_field("gradient", "Gradient",
                           MapElementNumericConstraint::Finite, true);
         }
     } else if (request.row_kind == "otherTrack.change") {
-        add_row_field("trackKey", tr("field.track_key"),
+        add_row_field("trackKey", "Track key",
                       MapElementNumericConstraint::None, true);
         next.fields.back().read_only = true;
-        add_row_field("method", tr("field.method"),
+        add_row_field("method", "Method",
                       MapElementNumericConstraint::None, true);
         next.fields.back().read_only = true;
-        add_row_field("distance", tr("field.distance"),
+        add_row_field("distance", "Distance",
                       MapElementNumericConstraint::Finite, true);
 
         const std::string method = ascii_lower(table_cell(*row, "method"));
@@ -3268,30 +3271,29 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             0.0, table_cell_number(*row, "parameterCount")));
         auto parameter_label = [&](size_t index) -> std::string {
             if (method == "track.position") {
-                static const char* keys[] = {
-                    "field.other_track_lateral_position",
-                    "field.other_track_vertical_position",
-                    "field.other_track_lateral_radius",
-                    "field.other_track_vertical_radius",
+                static const char* labels[] = {
+                    "Lateral position",
+                    "Vertical position",
+                    "Lateral radius",
+                    "Vertical radius",
                 };
-                if (index < std::size(keys)) return tr(keys[index]);
+                if (index < std::size(labels)) return labels[index];
             } else if (method == "track.x.interpolate" ||
                        method == "track.y.interpolate") {
-                return tr(index == 0 ? "field.other_track_position"
-                                     : "field.other_track_radius");
+                return index == 0 ? "Position" : "Radius";
             } else if (method == "track.gauge" ||
                        method == "track.cant.setgauge") {
-                return tr("field.other_track_gauge");
+                return "Gauge";
             } else if (method == "track.cant.setcenter") {
-                return tr("field.other_track_center");
+                return "Center";
             } else if (method == "track.cant.setfunction") {
-                return tr("field.other_track_function");
+                return "Function";
             } else if (method == "track.cant" ||
                        method == "track.cant.begin" ||
                        method == "track.cant.interpolate") {
-                return tr("field.cant");
+                return "Cant";
             }
-            return tr("field.parameter") + " " + std::to_string(index + 1);
+            return "Parameter " + std::to_string(index + 1);
         };
         for (size_t index = 0; index < parameter_count; ++index) {
             const std::string key = "parameter" + std::to_string(index);
