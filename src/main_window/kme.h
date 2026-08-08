@@ -633,6 +633,44 @@ struct MapModel {
     bool has_cp_arb = false;
 };
 
+template <typename Model>
+auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
+    -> decltype(&model.structure_models) {
+    if (row_kind == "structure.model") return &model.structure_models;
+    if (row_kind == "structure.put") return &model.structures;
+    if (row_kind == "structure.between") return &model.structures_between;
+    if (row_kind == "station.put") return &model.station_list_rows;
+    if (row_kind == "station.list") return &model.station_definition_rows;
+    if (row_kind == "sound.list") return &model.sound_list;
+    if (row_kind == "sound3D.list") return &model.sound_3d_list;
+    if (row_kind == "repeater") return &model.repeaters;
+    if (row_kind == "signal.put") return &model.signals;
+    if (row_kind == "signal.aspect") return &model.signal_aspects;
+    if (row_kind == "irregularity.change") return &model.irregularities;
+    if (row_kind == "beacon.put") return &model.beacons;
+    if (row_kind == "mapSound.play") return &model.map_sounds;
+    if (row_kind == "mapSound3D.put") return &model.map_sound_3d;
+    if (row_kind == "rollingNoise.change") return &model.rolling_noises;
+    if (row_kind == "flangeNoise.change") return &model.flange_noises;
+    if (row_kind == "jointNoise.play") return &model.joint_noises;
+    if (row_kind == "background.change") return &model.backgrounds;
+    if (row_kind == "adhesion.change") return &model.adhesions;
+    if (row_kind == "cabIlluminance.change") return &model.cab_illuminance;
+    if (row_kind == "fog.change") return &model.fogs;
+    if (row_kind == "drawDistance.change") return &model.draw_distances;
+    if (row_kind == "speedlimit") return &model.speed_limit_rows;
+    if (row_kind == "section.begin") return &model.section_begins;
+    if (row_kind == "section.speedLimit") return &model.section_speed_limits;
+    if (row_kind == "curve") return &model.curve_rows;
+    if (row_kind == "gradient") return &model.gradient_rows;
+    if (row_kind == "otherTrack.change") return &model.other_track_changes;
+    return nullptr;
+}
+
+bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
+                               const std::string& edit_id,
+                               size_t& row_index);
+
 struct View2D {
     double cx = 0.0;
     double cy = 0.0;
@@ -800,6 +838,19 @@ struct PlanMarkerSelection {
         kind = PlanMarkerKind::None;
         row_index = 0;
     }
+};
+
+struct PlanContextMenuEntry {
+    PlanMarkerKind kind = PlanMarkerKind::None;
+    size_t row_index = 0;
+    std::string edit_id;
+    std::string row_kind;
+    std::optional<OwnTrackEditMarker> own_track_marker;
+};
+
+struct PlanContextSourceInfo {
+    std::string file_position;
+    std::string statement;
 };
 
 struct PlanRepeaterSegment {
@@ -1844,28 +1895,8 @@ private:
     int draw_distance_list_highlight_row_ = -1;
     int speed_limit_list_scroll_row_ = -1;
     int speed_limit_list_highlight_row_ = -1;
-    int plan_structure_popup_row_ = -1;
-    int plan_repeater_popup_row_ = -1;
-    int plan_station_popup_row_ = -1;
-    int plan_signal_popup_row_ = -1;
-    int plan_section_popup_row_ = -1;
-    int plan_beacon_popup_row_ = -1;
-    int plan_other_train_stop_popup_row_ = -1;
-    int plan_irregularity_popup_row_ = -1;
-    int plan_map_sound_popup_row_ = -1;
-    int plan_map_sound_3d_popup_row_ = -1;
-    int plan_rolling_noise_popup_row_ = -1;
-    int plan_flange_noise_popup_row_ = -1;
-    int plan_joint_noise_popup_row_ = -1;
-    int plan_background_popup_row_ = -1;
-    int plan_adhesion_popup_row_ = -1;
-    int plan_cab_illuminance_popup_row_ = -1;
-    int plan_fog_popup_row_ = -1;
-    int plan_draw_distance_popup_row_ = -1;
-    int plan_speed_limit_popup_row_ = -1;
-    int plan_other_track_change_popup_row_ = -1;
-    std::optional<OwnTrackEditMarker> plan_own_track_popup_marker_;
-    std::optional<OwnTrackEditMarker> profile_own_track_popup_marker_;
+    std::vector<PlanContextMenuEntry> plan_context_menu_entries_;
+    std::vector<PlanContextMenuEntry> profile_context_menu_entries_;
     PlanMarkerSelection plan_marker_selection_;
     std::optional<ImVec2> plan_focus_arrow_;
     double plan_focus_arrow_until_ = 0.0;
@@ -2026,6 +2057,11 @@ private:
     void render_plan_canvas(ImVec2 size);
     void render_profile_plot(const ProfileData& data, ImVec2 size);
     void render_radius_plot(const ProfileData& data, ImVec2 size);
+    void render_plan_marker_context_menu(
+        const char* popup_id,
+        const std::vector<PlanContextMenuEntry>& entries);
+    PlanContextSourceInfo plan_context_source_for(
+        const PlanContextMenuEntry& entry) const;
     void render_othertracks_window();
     void render_station_list_window();
     void render_editable_list_table(const char* table_id,

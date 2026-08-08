@@ -53,25 +53,8 @@ void App::invalidate_table_cache() {
     draw_distance_list_highlight_row_ = -1;
     speed_limit_list_scroll_row_ = -1;
     speed_limit_list_highlight_row_ = -1;
-    plan_structure_popup_row_ = -1;
-    plan_repeater_popup_row_ = -1;
-    plan_station_popup_row_ = -1;
-    plan_signal_popup_row_ = -1;
-    plan_section_popup_row_ = -1;
-    plan_beacon_popup_row_ = -1;
-    plan_other_train_stop_popup_row_ = -1;
-    plan_irregularity_popup_row_ = -1;
-    plan_map_sound_popup_row_ = -1;
-    plan_map_sound_3d_popup_row_ = -1;
-    plan_rolling_noise_popup_row_ = -1;
-    plan_flange_noise_popup_row_ = -1;
-    plan_joint_noise_popup_row_ = -1;
-    plan_background_popup_row_ = -1;
-    plan_adhesion_popup_row_ = -1;
-    plan_cab_illuminance_popup_row_ = -1;
-    plan_fog_popup_row_ = -1;
-    plan_draw_distance_popup_row_ = -1;
-    plan_speed_limit_popup_row_ = -1;
+    plan_context_menu_entries_.clear();
+    profile_context_menu_entries_.clear();
     plan_marker_selection_.clear();
 }
 

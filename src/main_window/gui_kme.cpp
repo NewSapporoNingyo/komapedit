@@ -2149,40 +2149,6 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
 
 }
 
-template <typename Model>
-auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
-    -> decltype(&model.structure_models) {
-    if (row_kind == "structure.model") return &model.structure_models;
-    if (row_kind == "structure.put") return &model.structures;
-    if (row_kind == "structure.between") return &model.structures_between;
-    if (row_kind == "station.put") return &model.station_list_rows;
-    if (row_kind == "station.list") return &model.station_definition_rows;
-    if (row_kind == "sound.list") return &model.sound_list;
-    if (row_kind == "sound3D.list") return &model.sound_3d_list;
-    if (row_kind == "repeater") return &model.repeaters;
-    if (row_kind == "signal.put") return &model.signals;
-    if (row_kind == "signal.aspect") return &model.signal_aspects;
-    if (row_kind == "irregularity.change") return &model.irregularities;
-    if (row_kind == "beacon.put") return &model.beacons;
-    if (row_kind == "mapSound.play") return &model.map_sounds;
-    if (row_kind == "mapSound3D.put") return &model.map_sound_3d;
-    if (row_kind == "rollingNoise.change") return &model.rolling_noises;
-    if (row_kind == "flangeNoise.change") return &model.flange_noises;
-    if (row_kind == "jointNoise.play") return &model.joint_noises;
-    if (row_kind == "background.change") return &model.backgrounds;
-    if (row_kind == "adhesion.change") return &model.adhesions;
-    if (row_kind == "cabIlluminance.change") return &model.cab_illuminance;
-    if (row_kind == "fog.change") return &model.fogs;
-    if (row_kind == "drawDistance.change") return &model.draw_distances;
-    if (row_kind == "speedlimit") return &model.speed_limit_rows;
-    if (row_kind == "section.begin") return &model.section_begins;
-    if (row_kind == "section.speedLimit") return &model.section_speed_limits;
-    if (row_kind == "curve") return &model.curve_rows;
-    if (row_kind == "gradient") return &model.gradient_rows;
-    if (row_kind == "otherTrack.change") return &model.other_track_changes;
-    return nullptr;
-}
-
 bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
                                const std::string& edit_id,
                                size_t& row_index);

@@ -381,8 +381,31 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
                 }
                 draw->PopClipRect();
                 if (hovered_marker && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-                    profile_own_track_popup_marker_ = *hovered_marker;
-                    open_profile_marker_popup = true;
+                    constexpr double k_profile_marker_overlap_eps = 1e-6;
+                    profile_context_menu_entries_.clear();
+                    for (const OwnTrackEditMarker& marker : data.gradient_edit_markers) {
+                        if (std::abs(marker.x - hovered_marker->x) >
+                                k_profile_marker_overlap_eps ||
+                            std::abs(marker.y - hovered_marker->y) >
+                                k_profile_marker_overlap_eps) {
+                            continue;
+                        }
+                        PlanContextMenuEntry entry;
+                        entry.kind = PlanMarkerKind::Gradient;
+                        entry.row_index = marker.row_index;
+                        entry.edit_id = marker.edit_id;
+                        entry.row_kind = marker.row_kind;
+                        entry.own_track_marker = marker;
+                        profile_context_menu_entries_.push_back(std::move(entry));
+                    }
+                    std::stable_sort(profile_context_menu_entries_.begin(),
+                                     profile_context_menu_entries_.end(),
+                        [](const PlanContextMenuEntry& lhs, const PlanContextMenuEntry& rhs) {
+                            return lhs.row_index < rhs.row_index;
+                        });
+                    if (!profile_context_menu_entries_.empty()) {
+                        open_profile_marker_popup = true;
+                    }
                 }
             }
             if (show_gradient_values_) {
@@ -459,25 +482,8 @@ void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     if (open_profile_marker_popup) {
         ImGui::OpenPopup("profile_own_track_edit_marker_context");
     }
-    if (ImGui::BeginPopup("profile_own_track_edit_marker_context")) {
-        const OwnTrackEditMarker* marker = profile_own_track_popup_marker_
-            ? &*profile_own_track_popup_marker_ : nullptr;
-        const bool can_edit = edit_actions_available() && marker && marker->paired &&
-            !marker->target_edit_id.empty();
-        ImGui::BeginDisabled(!can_edit);
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
-            request_element_inspector(marker->target_edit_id, marker->row_kind);
-        }
-        if (ImGui::MenuItem(tr("button.delete").c_str())) {
-            request_element_delete(marker->target_edit_id, marker->row_kind);
-        }
-        ImGui::EndDisabled();
-        if (marker && marker->transition && !marker->paired) {
-            ImGui::Separator();
-            ImGui::TextWrapped("%s", tr("status.transition_unpaired").c_str());
-        }
-        ImGui::EndPopup();
-    }
+    render_plan_marker_context_menu("profile_own_track_edit_marker_context",
+                                    profile_context_menu_entries_);
 }
 
 void App::render_radius_plot(const ProfileData& data, ImVec2 size) {

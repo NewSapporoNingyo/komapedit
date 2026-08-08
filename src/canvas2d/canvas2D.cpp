@@ -253,6 +253,40 @@ void debug_plan_stage(const char* stage) {
 void debug_plan_stage(const char*) {}
 #endif
 
+const char* plan_marker_type_label_key(PlanMarkerKind kind) {
+    switch (kind) {
+        case PlanMarkerKind::Station: return "chk.station_pos";
+        case PlanMarkerKind::Structure: return "context.plan_marker.structure";
+        case PlanMarkerKind::Repeater: return "context.plan_marker.repeater";
+        case PlanMarkerKind::Signal: return "context.plan_marker.signal";
+        case PlanMarkerKind::Section: return "chk.section_markers";
+        case PlanMarkerKind::Beacon: return "chk.beacon_markers";
+        case PlanMarkerKind::PreTrain: return "chk.pretrain_markers";
+        case PlanMarkerKind::OtherTrainStop:
+            return "context.plan_marker.other_train_stop";
+        case PlanMarkerKind::Irregularity: return "chk.irregularity_markers";
+        case PlanMarkerKind::MapSound: return "chk.map_sound_markers";
+        case PlanMarkerKind::MapSound3D: return "chk.map_sound_3d_markers";
+        case PlanMarkerKind::RollingNoise: return "chk.rolling_noise_markers";
+        case PlanMarkerKind::FlangeNoise: return "chk.flange_noise_markers";
+        case PlanMarkerKind::JointNoise: return "chk.joint_noise_markers";
+        case PlanMarkerKind::Background: return "chk.background_markers";
+        case PlanMarkerKind::Adhesion: return "chk.adhesion_markers";
+        case PlanMarkerKind::CabIlluminance:
+            return "chk.cab_illuminance_markers";
+        case PlanMarkerKind::Fog: return "chk.fog_markers";
+        case PlanMarkerKind::DrawDistance: return "chk.draw_distance_markers";
+        case PlanMarkerKind::SpeedLimit: return "chk.speedlimit";
+        case PlanMarkerKind::Curve: return "chk.curve_val";
+        case PlanMarkerKind::Gradient: return "chk.gradient_pos";
+        case PlanMarkerKind::OtherTrackChange:
+            return "context.plan_marker.other_track_change";
+        case PlanMarkerKind::None:
+        default:
+            return nullptr;
+    }
+}
+
 void populate_speed_limit_marker_cache(
     const MapModel& model,
     std::vector<std::optional<PlanMarker>>& cache) {
@@ -2493,30 +2527,6 @@ void App::render_plan_canvas(ImVec2 size) {
         ? std::optional<size_t>(hovered_speed_limit_hit->row_index)
         : std::nullopt;
 
-    auto closer_or_equal = [](const std::optional<MarkerHit>& hit, const std::optional<MarkerHit>& other) {
-        return hit && (!other || hit->dist_sq <= other->dist_sq);
-    };
-    auto closer_than_all_marker_context_hits = [&](const std::optional<MarkerHit>& hit) {
-        if (!hit) return false;
-        auto closer_than = [&](const std::optional<MarkerHit>& other) {
-            return !other || hit->dist_sq < other->dist_sq;
-        };
-        return closer_than(hovered_signal_hit) &&
-               closer_than(hovered_section_hit) &&
-               closer_than(hovered_beacon_hit) &&
-               closer_than(hovered_adhesion_hit) &&
-               closer_than(hovered_irregularity_hit) &&
-               closer_than(hovered_background_hit) &&
-               closer_than(hovered_repeater_hit) &&
-               closer_than(hovered_structure_hit) &&
-               closer_than(hovered_cab_illuminance_hit) &&
-               closer_than(hovered_rolling_noise_hit) &&
-               closer_than(hovered_map_sound_hit) &&
-               closer_than(hovered_map_sound_3d_hit) &&
-               closer_than(hovered_flange_noise_hit) &&
-               closer_than(hovered_joint_noise_hit) &&
-               closer_than(hovered_fog_hit);
-    };
     auto select_nearest_touch_marker = [&]() {
         std::optional<PlanMarkerSelection> best;
         double best_dist_sq = std::numeric_limits<double>::max();
@@ -2550,58 +2560,6 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_other_track_change_hit, PlanMarkerKind::OtherTrackChange);
         if (best) plan_marker_selection_ = *best;
     };
-    auto section_is_nearest_context_hit = [&]() {
-        if (!hovered_section_hit) return false;
-        auto no_farther_than = [&](const std::optional<MarkerHit>& other) {
-            return !other || hovered_section_hit->dist_sq <= other->dist_sq;
-        };
-        return no_farther_than(hovered_station_hit) &&
-               no_farther_than(hovered_structure_hit) &&
-               no_farther_than(hovered_repeater_hit) &&
-               no_farther_than(hovered_signal_hit) &&
-               no_farther_than(hovered_beacon_hit) &&
-               no_farther_than(hovered_other_train_stop_hit) &&
-               no_farther_than(hovered_irregularity_hit) &&
-               no_farther_than(hovered_rolling_noise_hit) &&
-               no_farther_than(hovered_map_sound_hit) &&
-               no_farther_than(hovered_map_sound_3d_hit) &&
-               no_farther_than(hovered_flange_noise_hit) &&
-               no_farther_than(hovered_joint_noise_hit) &&
-               no_farther_than(hovered_background_hit) &&
-               no_farther_than(hovered_adhesion_hit) &&
-               no_farther_than(hovered_cab_illuminance_hit) &&
-               no_farther_than(hovered_fog_hit) &&
-               no_farther_than(hovered_draw_distance_hit) &&
-               no_farther_than(hovered_speed_limit_hit);
-    };
-    auto other_track_change_is_nearest_context_hit = [&]() {
-        if (!hovered_other_track_change_hit) return false;
-        auto no_farther_than = [&](const std::optional<MarkerHit>& other) {
-            return !other || hovered_other_track_change_hit->dist_sq <= other->dist_sq;
-        };
-        return no_farther_than(hovered_station_hit) &&
-               no_farther_than(hovered_signal_hit) &&
-               no_farther_than(hovered_section_hit) &&
-               no_farther_than(hovered_beacon_hit) &&
-               no_farther_than(hovered_pretrain_hit) &&
-               no_farther_than(hovered_other_train_stop_hit) &&
-               no_farther_than(hovered_adhesion_hit) &&
-               no_farther_than(hovered_irregularity_hit) &&
-               no_farther_than(hovered_background_hit) &&
-               no_farther_than(hovered_repeater_hit) &&
-               no_farther_than(hovered_structure_hit) &&
-               no_farther_than(hovered_cab_illuminance_hit) &&
-               no_farther_than(hovered_rolling_noise_hit) &&
-               no_farther_than(hovered_map_sound_hit) &&
-               no_farther_than(hovered_map_sound_3d_hit) &&
-               no_farther_than(hovered_flange_noise_hit) &&
-               no_farther_than(hovered_joint_noise_hit) &&
-               no_farther_than(hovered_fog_hit) &&
-               no_farther_than(hovered_draw_distance_hit) &&
-               no_farther_than(hovered_speed_limit_hit) &&
-               no_farther_than(hovered_curve_edit_hit) &&
-               no_farther_than(hovered_gradient_edit_hit);
-    };
     ImVec2 touch_tap_pos;
     if (touch_input::consume_tap_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), &touch_tap_pos)) {
         (void)touch_tap_pos;
@@ -2612,242 +2570,181 @@ void App::render_plan_canvas(ImVec2 size) {
     bool touch_marker_context_requested =
         touch_input::consume_long_press_in_rect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y),
                                                 &touch_long_press_pos);
+    constexpr double k_plan_marker_overlap_eps = 1e-6;
+    constexpr size_t k_plan_context_max_entries = 64;
+    auto plan_context_kind_priority = [](PlanMarkerKind kind) -> int {
+        switch (kind) {
+            case PlanMarkerKind::OtherTrackChange: return 0;
+            case PlanMarkerKind::Curve:
+            case PlanMarkerKind::Gradient: return 1;
+            case PlanMarkerKind::Station: return 2;
+            case PlanMarkerKind::DrawDistance: return 3;
+            case PlanMarkerKind::SpeedLimit: return 4;
+            case PlanMarkerKind::OtherTrainStop: return 5;
+            case PlanMarkerKind::Section: return 6;
+            case PlanMarkerKind::Signal: return 7;
+            case PlanMarkerKind::Beacon: return 8;
+            case PlanMarkerKind::Adhesion: return 9;
+            case PlanMarkerKind::Irregularity: return 10;
+            case PlanMarkerKind::RollingNoise: return 11;
+            case PlanMarkerKind::MapSound: return 12;
+            case PlanMarkerKind::MapSound3D: return 13;
+            case PlanMarkerKind::FlangeNoise: return 14;
+            case PlanMarkerKind::JointNoise: return 15;
+            case PlanMarkerKind::Background: return 16;
+            case PlanMarkerKind::Repeater: return 17;
+            case PlanMarkerKind::CabIlluminance: return 18;
+            case PlanMarkerKind::Fog: return 19;
+            case PlanMarkerKind::Structure: return 20;
+            default: return 100;
+        }
+    };
+    auto table_marker_row_kind = [&](PlanMarkerKind kind, size_t row_index) {
+        switch (kind) {
+            case PlanMarkerKind::Structure:
+                return row_index < model_.structures.size()
+                    ? std::string("structure.put") : std::string("structure.between");
+            case PlanMarkerKind::Repeater: return std::string("repeater");
+            case PlanMarkerKind::Signal: return std::string("signal.put");
+            case PlanMarkerKind::Section: return std::string("section.begin");
+            case PlanMarkerKind::Beacon: return std::string("beacon.put");
+            case PlanMarkerKind::Irregularity: return std::string("irregularity.change");
+            case PlanMarkerKind::MapSound: return std::string("mapSound.play");
+            case PlanMarkerKind::MapSound3D: return std::string("mapSound3D.put");
+            case PlanMarkerKind::RollingNoise: return std::string("rollingNoise.change");
+            case PlanMarkerKind::FlangeNoise: return std::string("flangeNoise.change");
+            case PlanMarkerKind::JointNoise: return std::string("jointNoise.play");
+            case PlanMarkerKind::Background: return std::string("background.change");
+            case PlanMarkerKind::Adhesion: return std::string("adhesion.change");
+            case PlanMarkerKind::CabIlluminance: return std::string("cabIlluminance.change");
+            case PlanMarkerKind::Fog: return std::string("fog.change");
+            case PlanMarkerKind::DrawDistance: return std::string("drawDistance.change");
+            case PlanMarkerKind::SpeedLimit: return std::string("speedlimit");
+            case PlanMarkerKind::Station: return std::string("station.put");
+            case PlanMarkerKind::OtherTrackChange: return std::string("otherTrack.change");
+            default: return std::string{};
+        }
+    };
+    auto collect_plan_context_entries = [&]() -> std::vector<PlanContextMenuEntry> {
+        std::vector<PlanContextMenuEntry> entries;
+        if (!hovered || mode_ != Mode::Pan || picking_background_station) return entries;
+        struct ContextCandidate {
+            PlanMarkerKind kind = PlanMarkerKind::None;
+            size_t row_index = 0;
+            double x = 0.0;
+            double y = 0.0;
+            double dist_sq = 0.0;
+            std::string edit_id;
+            std::string row_kind;
+            std::optional<OwnTrackEditMarker> own_track_marker;
+        };
+        std::vector<ContextCandidate> candidates;
+        candidates.reserve(k_plan_context_max_entries);
+        auto add_candidate = [&](PlanMarkerKind kind, size_t row_index, double x, double y,
+                                 std::string edit_id, std::string row_kind,
+                                 std::optional<OwnTrackEditMarker> own_track_marker = std::nullopt) {
+            if (candidates.size() >= k_plan_context_max_entries) return;
+            const ImVec2 point = hit_transform.plan_to_screen(x, y);
+            if (!point_near_canvas(point, origin, avail, marker_canvas_margin)) return;
+            const double dx = static_cast<double>(point.x - mouse.x);
+            const double dy = static_cast<double>(point.y - mouse.y);
+            const double dist_sq = dx * dx + dy * dy;
+            if (dist_sq > marker_hover_radius_sq) return;
+            candidates.push_back(ContextCandidate{kind, row_index, x, y, dist_sq,
+                                                  std::move(edit_id), std::move(row_kind),
+                                                  std::move(own_track_marker)});
+        };
+        auto add_plan_markers = [&](const auto& markers, PlanMarkerKind kind) {
+            for (const auto& marker : markers) {
+                add_candidate(kind, marker.row_index, marker.x, marker.y, marker.edit_id,
+                              table_marker_row_kind(kind, marker.row_index));
+            }
+        };
+        if (edit_actions_available()) {
+            for (const OtherTrackChangeMarker& marker : other_track_change_marker_cache_) {
+                if (marker.track_index >= model_.other_tracks.size()) continue;
+                const OtherTrack& track = model_.other_tracks[marker.track_index];
+                if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
+                    marker.d > std::min(dmax_, track.range_max)) {
+                    continue;
+                }
+                add_candidate(PlanMarkerKind::OtherTrackChange, marker.row_index,
+                              marker.x, marker.y, marker.edit_id, "otherTrack.change");
+            }
+        }
+        for (const OwnTrackEditMarker& marker : data.curve_edit_markers) {
+            add_candidate(PlanMarkerKind::Curve, marker.row_index, marker.x, marker.y,
+                          marker.edit_id, marker.row_kind, marker);
+        }
+        for (const OwnTrackEditMarker& marker : data.gradient_edit_markers) {
+            add_candidate(PlanMarkerKind::Gradient, marker.row_index, marker.x, marker.y,
+                          marker.edit_id, marker.row_kind, marker);
+        }
+        if (show_stations_) {
+            for (const PlanStation& station : data.stations) {
+                add_candidate(PlanMarkerKind::Station, station.row_index, station.x, station.y,
+                              station.station.edit_id, "station.put");
+            }
+        }
+        if (show_speedlimits_) {
+            for (const PlanSpeed& marker : data.speedlimits) {
+                add_candidate(PlanMarkerKind::SpeedLimit, marker.row_index, marker.x, marker.y,
+                              marker.edit_id, "speedlimit");
+            }
+        }
+        add_plan_markers(data.draw_distance_markers, PlanMarkerKind::DrawDistance);
+        for (const PlanOtherTrainStopMarker& marker : data.other_train_stop_markers) {
+            add_candidate(PlanMarkerKind::OtherTrainStop, marker.row_index, marker.x, marker.y,
+                          marker.edit_id, std::string{});
+        }
+        add_plan_markers(data.section_markers, PlanMarkerKind::Section);
+        add_plan_markers(data.signal_markers, PlanMarkerKind::Signal);
+        add_plan_markers(data.beacon_markers, PlanMarkerKind::Beacon);
+        add_plan_markers(data.adhesion_markers, PlanMarkerKind::Adhesion);
+        add_plan_markers(data.irregularity_markers, PlanMarkerKind::Irregularity);
+        add_plan_markers(data.rolling_noise_markers, PlanMarkerKind::RollingNoise);
+        add_plan_markers(data.map_sound_markers, PlanMarkerKind::MapSound);
+        add_plan_markers(data.map_sound_3d_markers, PlanMarkerKind::MapSound3D);
+        add_plan_markers(data.flange_noise_markers, PlanMarkerKind::FlangeNoise);
+        add_plan_markers(data.joint_noise_markers, PlanMarkerKind::JointNoise);
+        add_plan_markers(data.background_markers, PlanMarkerKind::Background);
+        add_plan_markers(data.repeater_markers, PlanMarkerKind::Repeater);
+        add_plan_markers(data.cab_illuminance_markers, PlanMarkerKind::CabIlluminance);
+        add_plan_markers(data.fog_markers, PlanMarkerKind::Fog);
+        add_plan_markers(data.structure_markers, PlanMarkerKind::Structure);
+        if (candidates.empty()) return entries;
+        const ContextCandidate* anchor = &candidates.front();
+        for (const ContextCandidate& candidate : candidates) {
+            if (candidate.dist_sq < anchor->dist_sq) anchor = &candidate;
+        }
+        entries.reserve(candidates.size());
+        for (const ContextCandidate& candidate : candidates) {
+            if (std::abs(candidate.x - anchor->x) > k_plan_marker_overlap_eps ||
+                std::abs(candidate.y - anchor->y) > k_plan_marker_overlap_eps) {
+                continue;
+            }
+            PlanContextMenuEntry entry;
+            entry.kind = candidate.kind;
+            entry.row_index = candidate.row_index;
+            entry.edit_id = candidate.edit_id;
+            entry.row_kind = candidate.row_kind;
+            entry.own_track_marker = candidate.own_track_marker;
+            entries.push_back(std::move(entry));
+        }
+        std::stable_sort(entries.begin(), entries.end(),
+            [&](const PlanContextMenuEntry& lhs, const PlanContextMenuEntry& rhs) {
+                const int lhs_priority = plan_context_kind_priority(lhs.kind);
+                const int rhs_priority = plan_context_kind_priority(rhs.kind);
+                if (lhs_priority != rhs_priority) return lhs_priority < rhs_priority;
+                return lhs.row_index < rhs.row_index;
+            });
+        return entries;
+    };
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || touch_marker_context_requested) {
         if (touch_marker_context_requested) plan_marker_selection_.clear();
-        if (other_track_change_is_nearest_context_hit()) {
-            plan_other_track_change_popup_row_ = static_cast<int>(
-                hovered_other_track_change_hit->row_index);
-            ImGui::OpenPopup("plan_other_track_change_marker_context");
-        } else if (hovered_curve_edit_hit || hovered_gradient_edit_hit) {
-            const bool gradient = hovered_gradient_edit_hit &&
-                (!hovered_curve_edit_hit ||
-                 hovered_gradient_edit_hit->dist_sq <= hovered_curve_edit_hit->dist_sq);
-            const auto& markers = gradient
-                ? data.gradient_edit_markers : data.curve_edit_markers;
-            const size_t row_index = gradient
-                ? hovered_gradient_edit_hit->row_index : hovered_curve_edit_hit->row_index;
-            const auto marker = std::find_if(
-                markers.begin(), markers.end(), [&](const OwnTrackEditMarker& candidate) {
-                    return candidate.row_index == row_index;
-                });
-            if (marker != markers.end()) {
-                plan_own_track_popup_marker_ = *marker;
-                ImGui::OpenPopup("plan_own_track_edit_marker_context");
-            }
-        } else if (hovered_station_hit &&
-            closer_than_all_marker_context_hits(hovered_station_hit) &&
-            closer_or_equal(hovered_station_hit, hovered_draw_distance_hit) &&
-            closer_or_equal(hovered_station_hit, hovered_speed_limit_hit) &&
-            closer_or_equal(hovered_station_hit, hovered_other_train_stop_hit)) {
-            plan_station_popup_row_ = static_cast<int>(hovered_station_hit->row_index);
-            ImGui::OpenPopup("plan_station_marker_context");
-        } else if (hovered_draw_distance_hit &&
-            closer_than_all_marker_context_hits(hovered_draw_distance_hit) &&
-            closer_or_equal(hovered_draw_distance_hit, hovered_speed_limit_hit) &&
-            closer_or_equal(hovered_draw_distance_hit, hovered_other_train_stop_hit)) {
-            plan_draw_distance_popup_row_ =
-                static_cast<int>(hovered_draw_distance_hit->row_index);
-            ImGui::OpenPopup("plan_draw_distance_marker_context");
-        } else if (hovered_speed_limit_hit &&
-            closer_than_all_marker_context_hits(hovered_speed_limit_hit) &&
-            closer_or_equal(hovered_speed_limit_hit, hovered_draw_distance_hit) &&
-            closer_or_equal(hovered_speed_limit_hit, hovered_other_train_stop_hit)) {
-            plan_speed_limit_popup_row_ =
-                static_cast<int>(hovered_speed_limit_hit->row_index);
-            ImGui::OpenPopup("plan_speed_limit_marker_context");
-        } else if (hovered_other_train_stop_hit &&
-            closer_than_all_marker_context_hits(hovered_other_train_stop_hit) &&
-            closer_or_equal(hovered_other_train_stop_hit, hovered_speed_limit_hit)) {
-            plan_other_train_stop_popup_row_ = static_cast<int>(hovered_other_train_stop_hit->row_index);
-            ImGui::OpenPopup("plan_other_train_stop_marker_context");
-        } else if (section_is_nearest_context_hit()) {
-            plan_section_popup_row_ = static_cast<int>(hovered_section_hit->row_index);
-            ImGui::OpenPopup("plan_section_marker_context");
-        } else if (hovered_signal_hit &&
-            closer_or_equal(hovered_signal_hit, hovered_beacon_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_adhesion_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_irregularity_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_background_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_repeater_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_structure_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_cab_illuminance_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_rolling_noise_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_map_sound_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_map_sound_3d_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_flange_noise_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_joint_noise_hit) &&
-            closer_or_equal(hovered_signal_hit, hovered_fog_hit)) {
-            plan_signal_popup_row_ = static_cast<int>(hovered_signal_hit->row_index);
-            ImGui::OpenPopup("plan_signal_marker_context");
-        } else if (hovered_beacon_hit &&
-            closer_or_equal(hovered_beacon_hit, hovered_signal_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_adhesion_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_irregularity_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_background_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_repeater_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_structure_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_cab_illuminance_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_rolling_noise_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_map_sound_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_map_sound_3d_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_flange_noise_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_joint_noise_hit) &&
-            closer_or_equal(hovered_beacon_hit, hovered_fog_hit)) {
-            plan_beacon_popup_row_ = static_cast<int>(hovered_beacon_hit->row_index);
-            ImGui::OpenPopup("plan_beacon_marker_context");
-        } else if (hovered_adhesion_hit &&
-            closer_or_equal(hovered_adhesion_hit, hovered_irregularity_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_background_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_repeater_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_structure_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_cab_illuminance_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_rolling_noise_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_map_sound_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_map_sound_3d_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_flange_noise_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_joint_noise_hit) &&
-            closer_or_equal(hovered_adhesion_hit, hovered_fog_hit)) {
-            plan_adhesion_popup_row_ = static_cast<int>(hovered_adhesion_hit->row_index);
-            ImGui::OpenPopup("plan_adhesion_marker_context");
-        } else if (hovered_irregularity_hit &&
-            closer_or_equal(hovered_irregularity_hit, hovered_adhesion_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_background_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_cab_illuminance_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_fog_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_rolling_noise_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_map_sound_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_map_sound_3d_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_flange_noise_hit) &&
-            closer_or_equal(hovered_irregularity_hit, hovered_joint_noise_hit) &&
-            (!hovered_repeater_hit || hovered_irregularity_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
-            (!hovered_structure_hit || hovered_irregularity_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_irregularity_popup_row_ = static_cast<int>(hovered_irregularity_hit->row_index);
-            ImGui::OpenPopup("plan_irregularity_marker_context");
-        } else if (hovered_rolling_noise_hit &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_adhesion_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_irregularity_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_cab_illuminance_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_flange_noise_hit) &&
-                   closer_or_equal(hovered_rolling_noise_hit, hovered_joint_noise_hit) &&
-                   (!hovered_repeater_hit || hovered_rolling_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
-                   (!hovered_structure_hit || hovered_rolling_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_rolling_noise_popup_row_ = static_cast<int>(hovered_rolling_noise_hit->row_index);
-            ImGui::OpenPopup("plan_rolling_noise_marker_context");
-        } else if (hovered_map_sound_hit &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_signal_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_beacon_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_adhesion_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_irregularity_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_cab_illuminance_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_flange_noise_hit) &&
-                   closer_or_equal(hovered_map_sound_hit, hovered_joint_noise_hit) &&
-                   (!hovered_repeater_hit || hovered_map_sound_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
-                   (!hovered_structure_hit || hovered_map_sound_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_map_sound_popup_row_ = static_cast<int>(hovered_map_sound_hit->row_index);
-            ImGui::OpenPopup("plan_map_sound_marker_context");
-        } else if (hovered_map_sound_3d_hit &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_signal_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_beacon_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_adhesion_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_irregularity_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_cab_illuminance_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_flange_noise_hit) &&
-                   closer_or_equal(hovered_map_sound_3d_hit, hovered_joint_noise_hit) &&
-                   (!hovered_repeater_hit || hovered_map_sound_3d_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
-                   (!hovered_structure_hit || hovered_map_sound_3d_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_map_sound_3d_popup_row_ = static_cast<int>(hovered_map_sound_3d_hit->row_index);
-            ImGui::OpenPopup("plan_map_sound_3d_marker_context");
-        } else if (hovered_flange_noise_hit &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_adhesion_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_irregularity_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_cab_illuminance_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_flange_noise_hit, hovered_joint_noise_hit) &&
-                   (!hovered_repeater_hit || hovered_flange_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
-                   (!hovered_structure_hit || hovered_flange_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_flange_noise_popup_row_ = static_cast<int>(hovered_flange_noise_hit->row_index);
-            ImGui::OpenPopup("plan_flange_noise_marker_context");
-        } else if (hovered_joint_noise_hit &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_adhesion_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_irregularity_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_cab_illuminance_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_joint_noise_hit, hovered_flange_noise_hit) &&
-                   (!hovered_repeater_hit || hovered_joint_noise_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
-                   (!hovered_structure_hit || hovered_joint_noise_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_joint_noise_popup_row_ = static_cast<int>(hovered_joint_noise_hit->row_index);
-            ImGui::OpenPopup("plan_joint_noise_marker_context");
-        } else if (hovered_background_hit &&
-                   closer_or_equal(hovered_background_hit, hovered_adhesion_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_irregularity_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_cab_illuminance_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_flange_noise_hit) &&
-                   closer_or_equal(hovered_background_hit, hovered_joint_noise_hit) &&
-                   (!hovered_repeater_hit || hovered_background_hit->dist_sq <= hovered_repeater_hit->dist_sq) &&
-                   (!hovered_structure_hit || hovered_background_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_background_popup_row_ = static_cast<int>(hovered_background_hit->row_index);
-            ImGui::OpenPopup("plan_background_marker_context");
-        } else if (hovered_repeater_hit &&
-                   closer_or_equal(hovered_repeater_hit, hovered_adhesion_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_cab_illuminance_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_flange_noise_hit) &&
-                   closer_or_equal(hovered_repeater_hit, hovered_joint_noise_hit) &&
-                   (!hovered_structure_hit || hovered_repeater_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_repeater_popup_row_ = static_cast<int>(hovered_repeater_hit->row_index);
-            ImGui::OpenPopup("plan_repeater_marker_context");
-        } else if (hovered_cab_illuminance_hit &&
-                   closer_or_equal(hovered_cab_illuminance_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_cab_illuminance_hit, hovered_fog_hit) &&
-                   closer_or_equal(hovered_cab_illuminance_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_cab_illuminance_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_cab_illuminance_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_cab_illuminance_hit, hovered_flange_noise_hit) &&
-                   closer_or_equal(hovered_cab_illuminance_hit, hovered_joint_noise_hit) &&
-                   (!hovered_structure_hit || hovered_cab_illuminance_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_cab_illuminance_popup_row_ = static_cast<int>(hovered_cab_illuminance_hit->row_index);
-            ImGui::OpenPopup("plan_cab_illuminance_marker_context");
-        } else if (hovered_fog_hit &&
-                   closer_or_equal(hovered_fog_hit, hovered_background_hit) &&
-                   closer_or_equal(hovered_fog_hit, hovered_rolling_noise_hit) &&
-                   closer_or_equal(hovered_fog_hit, hovered_map_sound_hit) &&
-                   closer_or_equal(hovered_fog_hit, hovered_map_sound_3d_hit) &&
-                   closer_or_equal(hovered_fog_hit, hovered_flange_noise_hit) &&
-                   closer_or_equal(hovered_fog_hit, hovered_joint_noise_hit) &&
-                   (!hovered_structure_hit || hovered_fog_hit->dist_sq <= hovered_structure_hit->dist_sq)) {
-            plan_fog_popup_row_ = static_cast<int>(hovered_fog_hit->row_index);
-            ImGui::OpenPopup("plan_fog_marker_context");
-        } else if (hovered_structure_hit) {
-            plan_structure_popup_row_ = static_cast<int>(hovered_structure_hit->row_index);
-            ImGui::OpenPopup("plan_structure_marker_context");
+        plan_context_menu_entries_ = collect_plan_context_entries();
+        if (!plan_context_menu_entries_.empty()) {
+            ImGui::OpenPopup("plan_marker_context");
         }
     }
 
@@ -3382,245 +3279,287 @@ void App::render_plan_canvas(ImVec2 size) {
     draw_scalebar(draw, plan_view_, origin, avail);
     draw->PopClipRect();
     debug_plan_stage("overlays_done");
-    if (ImGui::BeginPopup("plan_station_marker_context")) {
-        const Station* station = nullptr;
-        if (plan_station_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_station_popup_row_) <
-                model_.station_positions.size()) {
-            station = &model_.station_positions[
-                static_cast<size_t>(plan_station_popup_row_)];
+    render_plan_marker_context_menu("plan_marker_context", plan_context_menu_entries_);
+    ImGui::EndChild();
+    debug_plan_stage("end");
+}
+
+void App::render_plan_marker_context_menu(
+    const char* popup_id,
+    const std::vector<PlanContextMenuEntry>& entries) {
+    if (!ImGui::BeginPopup(popup_id)) return;
+    const bool edit_available = edit_actions_available();
+    for (size_t entry_index = 0; entry_index < entries.size(); ++entry_index) {
+        const PlanContextMenuEntry& entry = entries[entry_index];
+        if (entry_index > 0) ImGui::Separator();
+        const bool id_depth_two = entry.edit_id.empty();
+        if (id_depth_two) {
+            ImGui::PushID(static_cast<int>(entry.kind));
+            ImGui::PushID(static_cast<int>(entry.row_index));
+        } else {
+            ImGui::PushID(entry.edit_id.c_str());
         }
-        ImGui::BeginDisabled(
-            !edit_actions_available() || !station || station->edit_id.empty());
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && station) {
-            request_element_inspector(station->edit_id, "station.put");
+        bool has_source_title = false;
+        if (edit_available) {
+            const PlanContextSourceInfo source = plan_context_source_for(entry);
+            if (!source.file_position.empty()) {
+                ImGui::TextDisabled("%s", source.file_position.c_str());
+                has_source_title = true;
+            }
+            if (!source.statement.empty()) {
+                ImGui::TextDisabled("%s", source.statement.c_str());
+                has_source_title = true;
+            }
         }
-        if (ImGui::MenuItem(tr("button.delete").c_str()) && station) {
-            request_element_delete(station->edit_id, "station.put");
+        if (!has_source_title) {
+            if (const char* label_key = plan_marker_type_label_key(entry.kind)) {
+                ImGui::TextDisabled("[%s]", tr(label_key).c_str());
+            }
         }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_structure_marker_context")) {
-        bool can_locate = plan_structure_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_structure_popup_row_) < structure_marker_cache_.size();
-        const bool put_between = can_locate &&
-            static_cast<size_t>(plan_structure_popup_row_) >= model_.structures.size();
-        const char* locate_label_key =
-            put_between ? "menu.locate_in_structure_put_between_list" : "menu.locate_in_structure_list";
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr(locate_label_key).c_str()) && can_locate) {
-            locate_structure_row_in_list(static_cast<size_t>(plan_structure_popup_row_));
+        const bool can_edit = edit_available && !entry.edit_id.empty();
+        auto render_standard_menu_items = [&](const char* locate_label_key,
+                                              size_t locate_limit,
+                                              const std::string& edit_row_kind,
+                                              auto&& locate_action) {
+            ImGui::BeginDisabled(entry.row_index >= locate_limit);
+            if (ImGui::MenuItem(tr(locate_label_key).c_str())) {
+                locate_action(entry.row_index);
+            }
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!can_edit);
+            if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                request_element_inspector(entry.edit_id, edit_row_kind);
+            }
+            if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                request_element_delete(entry.edit_id, edit_row_kind);
+            }
+            ImGui::EndDisabled();
+        };
+        switch (entry.kind) {
+            case PlanMarkerKind::Station:
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                    request_element_inspector(entry.edit_id, "station.put");
+                }
+                if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                    request_element_delete(entry.edit_id, "station.put");
+                }
+                ImGui::EndDisabled();
+                break;
+            case PlanMarkerKind::Structure: {
+                const bool put_between = entry.row_index >= model_.structures.size();
+                const char* locate_label_key = put_between
+                    ? "menu.locate_in_structure_put_between_list"
+                    : "menu.locate_in_structure_list";
+                ImGui::BeginDisabled(entry.row_index >= structure_marker_cache_.size());
+                if (ImGui::MenuItem(tr(locate_label_key).c_str())) {
+                    locate_structure_row_in_list(entry.row_index);
+                }
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                    request_element_inspector(entry.edit_id, entry.row_kind);
+                }
+                ImGui::EndDisabled();
+                break;
+            }
+            case PlanMarkerKind::Repeater:
+                ImGui::BeginDisabled(entry.row_index >= repeater_marker_cache_.size());
+                if (ImGui::MenuItem(tr("menu.locate_in_repeater_list").c_str())) {
+                    locate_repeater_row_in_list(entry.row_index);
+                }
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                    request_element_inspector(entry.edit_id, "repeater");
+                }
+                ImGui::EndDisabled();
+                break;
+            case PlanMarkerKind::Signal:
+                render_standard_menu_items("menu.locate_in_signal_list",
+                                           signal_marker_cache_.size(), "signal.put",
+                                           [&](size_t row) { locate_signal_row_in_list(row); });
+                break;
+            case PlanMarkerKind::Section:
+                render_standard_menu_items("menu.locate_in_section_list",
+                                           section_marker_cache_.size(), "section.begin",
+                                           [&](size_t row) { locate_section_row_in_list(row); });
+                break;
+            case PlanMarkerKind::Beacon:
+                render_standard_menu_items("menu.locate_in_beacon_list",
+                                           beacon_marker_cache_.size(), "beacon.put",
+                                           [&](size_t row) { locate_beacon_row_in_list(row); });
+                break;
+            case PlanMarkerKind::OtherTrainStop: {
+                const bool can_locate = entry.row_index < other_train_stop_marker_cache_.size() &&
+                    other_train_stop_marker_cache_[entry.row_index].has_value();
+                ImGui::BeginDisabled(!can_locate);
+                if (ImGui::MenuItem(tr("menu.locate_in_other_train_stop_list").c_str())) {
+                    locate_other_train_stop_row_in_list(entry.row_index);
+                }
+                ImGui::EndDisabled();
+                break;
+            }
+            case PlanMarkerKind::Irregularity:
+                render_standard_menu_items("menu.locate_in_irregularity_list",
+                                           irregularity_marker_cache_.size(),
+                                           "irregularity.change",
+                                           [&](size_t row) { locate_irregularity_row_in_list(row); });
+                break;
+            case PlanMarkerKind::MapSound:
+                render_standard_menu_items("menu.locate_in_map_sound_list",
+                                           map_sound_marker_cache_.size(), "mapSound.play",
+                                           [&](size_t row) { locate_map_sound_row_in_list(row); });
+                break;
+            case PlanMarkerKind::MapSound3D:
+                render_standard_menu_items("menu.locate_in_map_sound_3d_list",
+                                           map_sound_3d_marker_cache_.size(), "mapSound3D.put",
+                                           [&](size_t row) { locate_map_sound_3d_row_in_list(row); });
+                break;
+            case PlanMarkerKind::RollingNoise:
+                render_standard_menu_items("menu.locate_in_rolling_noise_list",
+                                           rolling_noise_marker_cache_.size(),
+                                           "rollingNoise.change",
+                                           [&](size_t row) { locate_rolling_noise_row_in_list(row); });
+                break;
+            case PlanMarkerKind::FlangeNoise:
+                render_standard_menu_items("menu.locate_in_flange_noise_list",
+                                           flange_noise_marker_cache_.size(),
+                                           "flangeNoise.change",
+                                           [&](size_t row) { locate_flange_noise_row_in_list(row); });
+                break;
+            case PlanMarkerKind::JointNoise:
+                render_standard_menu_items("menu.locate_in_joint_noise_list",
+                                           joint_noise_marker_cache_.size(), "jointNoise.play",
+                                           [&](size_t row) { locate_joint_noise_row_in_list(row); });
+                break;
+            case PlanMarkerKind::Background:
+                render_standard_menu_items("menu.locate_in_background_list",
+                                           background_marker_cache_.size(), "background.change",
+                                           [&](size_t row) { locate_background_row_in_list(row); });
+                break;
+            case PlanMarkerKind::Adhesion:
+                render_standard_menu_items("menu.locate_in_adhesion_list",
+                                           adhesion_marker_cache_.size(), "adhesion.change",
+                                           [&](size_t row) { locate_adhesion_row_in_list(row); });
+                break;
+            case PlanMarkerKind::CabIlluminance:
+                render_standard_menu_items("menu.locate_in_cab_illuminance_list",
+                                           cab_illuminance_marker_cache_.size(),
+                                           "cabIlluminance.change",
+                                           [&](size_t row) { locate_cab_illuminance_row_in_list(row); });
+                break;
+            case PlanMarkerKind::Fog:
+                render_standard_menu_items("menu.locate_in_fog_list",
+                                           fog_marker_cache_.size(), "fog.change",
+                                           [&](size_t row) { locate_fog_row_in_list(row); });
+                break;
+            case PlanMarkerKind::DrawDistance:
+                render_standard_menu_items("menu.locate_in_draw_distance_list",
+                                           draw_distance_marker_cache_.size(),
+                                           "drawDistance.change",
+                                           [&](size_t row) { locate_draw_distance_row_in_list(row); });
+                break;
+            case PlanMarkerKind::SpeedLimit:
+                render_standard_menu_items("menu.locate_in_speed_limit_list",
+                                           speed_limit_marker_cache_.size(), "speedlimit",
+                                           [&](size_t row) { locate_speed_limit_row_in_list(row); });
+                break;
+            case PlanMarkerKind::Curve:
+            case PlanMarkerKind::Gradient: {
+                const OwnTrackEditMarker* marker =
+                    entry.own_track_marker ? &*entry.own_track_marker : nullptr;
+                const bool can_edit_own_track = edit_available && marker &&
+                    marker->paired && !marker->target_edit_id.empty();
+                ImGui::BeginDisabled(!can_edit_own_track);
+                if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                    request_element_inspector(marker->target_edit_id, marker->row_kind);
+                }
+                if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                    request_element_delete(marker->target_edit_id, marker->row_kind);
+                }
+                ImGui::EndDisabled();
+                break;
+            }
+            case PlanMarkerKind::OtherTrackChange:
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                    request_element_inspector(entry.edit_id, "otherTrack.change");
+                }
+                if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                    request_element_delete(entry.edit_id, "otherTrack.change");
+                }
+                ImGui::EndDisabled();
+                break;
+            default:
+                break;
         }
-        ImGui::EndDisabled();
-        const PlanStructureMarker* marker = can_locate &&
-            structure_marker_cache_[static_cast<size_t>(plan_structure_popup_row_)].has_value()
-                ? &*structure_marker_cache_[static_cast<size_t>(plan_structure_popup_row_)]
-                : nullptr;
-        const char* row_kind = put_between ? "structure.between" : "structure.put";
-        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
-            request_element_inspector(marker->edit_id, row_kind);
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_repeater_marker_context")) {
-        bool can_locate = plan_repeater_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_repeater_popup_row_) < repeater_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_repeater_list").c_str()) && can_locate) {
-            locate_repeater_row_in_list(static_cast<size_t>(plan_repeater_popup_row_));
-        }
-        ImGui::EndDisabled();
-        const PlanRepeaterMarker* marker = nullptr;
-        if (can_locate) {
-            marker = repeater_marker_cache_[static_cast<size_t>(plan_repeater_popup_row_)].begin_marker
-                ? &*repeater_marker_cache_[static_cast<size_t>(plan_repeater_popup_row_)].begin_marker
-                : nullptr;
-        }
-        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
-            request_element_inspector(marker->edit_id, "repeater");
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_signal_marker_context")) {
-        bool can_locate = plan_signal_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_signal_popup_row_) < signal_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_signal_list").c_str()) && can_locate) {
-            locate_signal_row_in_list(static_cast<size_t>(plan_signal_popup_row_));
-        }
-        ImGui::EndDisabled();
-        const PlanSignalMarker* marker = can_locate &&
-            signal_marker_cache_[static_cast<size_t>(plan_signal_popup_row_)].has_value()
-                ? &*signal_marker_cache_[static_cast<size_t>(plan_signal_popup_row_)]
-                : nullptr;
-        ImGui::BeginDisabled(!edit_actions_available() || !marker || marker->edit_id.empty());
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
-            request_element_inspector(marker->edit_id, "signal.put");
-        }
-        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
-            request_element_delete(marker->edit_id, "signal.put");
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("plan_section_marker_context")) {
-        const bool can_locate = plan_section_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_section_popup_row_) < section_marker_cache_.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_section_list").c_str()) && can_locate) {
-            locate_section_row_in_list(
-                static_cast<size_t>(plan_section_popup_row_));
-        }
-        ImGui::EndDisabled();
-        const PlanMarker* marker = can_locate &&
-            section_marker_cache_[static_cast<size_t>(plan_section_popup_row_)].has_value()
-                ? &*section_marker_cache_[static_cast<size_t>(plan_section_popup_row_)]
-                : nullptr;
-        const bool can_edit = edit_actions_available() && marker && !marker->edit_id.empty();
-        ImGui::BeginDisabled(!can_edit);
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
-            request_element_inspector(marker->edit_id, "section.begin");
-        }
-        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
-            request_element_delete(marker->edit_id, "section.begin");
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    auto render_table_marker_context = [&](const char* popup_id, int popup_row,
-                                           const auto& marker_cache,
-                                           const char* locate_label_key,
-                                           const char* row_kind,
-                                           auto locate_row) {
-        if (!ImGui::BeginPopup(popup_id)) return;
-        const bool can_locate = popup_row >= 0 &&
-            static_cast<size_t>(popup_row) < marker_cache.size();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr(locate_label_key).c_str()) && can_locate) {
-            locate_row(static_cast<size_t>(popup_row));
-        }
-        ImGui::EndDisabled();
-        const PlanMarker* marker = can_locate &&
-            marker_cache[static_cast<size_t>(popup_row)].has_value()
-                ? &*marker_cache[static_cast<size_t>(popup_row)]
-                : nullptr;
-        const bool can_edit = edit_actions_available() && marker && !marker->edit_id.empty();
-        ImGui::BeginDisabled(!can_edit);
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
-            request_element_inspector(marker->edit_id, row_kind);
-        }
-        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
-            request_element_delete(marker->edit_id, row_kind);
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    };
-    render_table_marker_context(
-        "plan_beacon_marker_context", plan_beacon_popup_row_, beacon_marker_cache_,
-        "menu.locate_in_beacon_list", "beacon.put",
-        [&](size_t row) { locate_beacon_row_in_list(row); });
-    if (ImGui::BeginPopup("plan_other_train_stop_marker_context")) {
-        bool can_locate = plan_other_train_stop_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_other_train_stop_popup_row_) < other_train_stop_marker_cache_.size() &&
-            other_train_stop_marker_cache_[static_cast<size_t>(plan_other_train_stop_popup_row_)].has_value();
-        ImGui::BeginDisabled(!can_locate);
-        if (ImGui::MenuItem(tr("menu.locate_in_other_train_stop_list").c_str()) && can_locate) {
-            locate_other_train_stop_row_in_list(static_cast<size_t>(plan_other_train_stop_popup_row_));
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
-    }
-    render_table_marker_context(
-        "plan_irregularity_marker_context", plan_irregularity_popup_row_,
-        irregularity_marker_cache_, "menu.locate_in_irregularity_list",
-        "irregularity.change", [&](size_t row) { locate_irregularity_row_in_list(row); });
-    render_table_marker_context(
-        "plan_rolling_noise_marker_context", plan_rolling_noise_popup_row_,
-        rolling_noise_marker_cache_, "menu.locate_in_rolling_noise_list",
-        "rollingNoise.change", [&](size_t row) { locate_rolling_noise_row_in_list(row); });
-    render_table_marker_context(
-        "plan_map_sound_marker_context", plan_map_sound_popup_row_, map_sound_marker_cache_,
-        "menu.locate_in_map_sound_list", "mapSound.play",
-        [&](size_t row) { locate_map_sound_row_in_list(row); });
-    render_table_marker_context(
-        "plan_map_sound_3d_marker_context", plan_map_sound_3d_popup_row_,
-        map_sound_3d_marker_cache_, "menu.locate_in_map_sound_3d_list", "mapSound3D.put",
-        [&](size_t row) { locate_map_sound_3d_row_in_list(row); });
-    render_table_marker_context(
-        "plan_flange_noise_marker_context", plan_flange_noise_popup_row_,
-        flange_noise_marker_cache_, "menu.locate_in_flange_noise_list", "flangeNoise.change",
-        [&](size_t row) { locate_flange_noise_row_in_list(row); });
-    render_table_marker_context(
-        "plan_joint_noise_marker_context", plan_joint_noise_popup_row_, joint_noise_marker_cache_,
-        "menu.locate_in_joint_noise_list", "jointNoise.play",
-        [&](size_t row) { locate_joint_noise_row_in_list(row); });
-    render_table_marker_context(
-        "plan_background_marker_context", plan_background_popup_row_, background_marker_cache_,
-        "menu.locate_in_background_list", "background.change",
-        [&](size_t row) { locate_background_row_in_list(row); });
-    render_table_marker_context(
-        "plan_adhesion_marker_context", plan_adhesion_popup_row_, adhesion_marker_cache_,
-        "menu.locate_in_adhesion_list", "adhesion.change",
-        [&](size_t row) { locate_adhesion_row_in_list(row); });
-    render_table_marker_context(
-        "plan_cab_illuminance_marker_context", plan_cab_illuminance_popup_row_,
-        cab_illuminance_marker_cache_, "menu.locate_in_cab_illuminance_list",
-        "cabIlluminance.change", [&](size_t row) { locate_cab_illuminance_row_in_list(row); });
-    render_table_marker_context(
-        "plan_fog_marker_context", plan_fog_popup_row_, fog_marker_cache_,
-        "menu.locate_in_fog_list", "fog.change",
-        [&](size_t row) { locate_fog_row_in_list(row); });
-    render_table_marker_context(
-        "plan_draw_distance_marker_context", plan_draw_distance_popup_row_,
-        draw_distance_marker_cache_, "menu.locate_in_draw_distance_list",
-        "drawDistance.change", [&](size_t row) { locate_draw_distance_row_in_list(row); });
-    render_table_marker_context(
-        "plan_speed_limit_marker_context", plan_speed_limit_popup_row_,
-        speed_limit_marker_cache_, "menu.locate_in_speed_limit_list",
-        "speedlimit", [&](size_t row) { locate_speed_limit_row_in_list(row); });
-    if (ImGui::BeginPopup("plan_own_track_edit_marker_context")) {
-        const OwnTrackEditMarker* marker = plan_own_track_popup_marker_
-            ? &*plan_own_track_popup_marker_ : nullptr;
-        const bool can_edit = edit_actions_available() && marker && marker->paired &&
-            !marker->target_edit_id.empty();
-        ImGui::BeginDisabled(!can_edit);
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
-            request_element_inspector(marker->target_edit_id, marker->row_kind);
-        }
-        if (ImGui::MenuItem(tr("button.delete").c_str())) {
-            request_element_delete(marker->target_edit_id, marker->row_kind);
-        }
-        ImGui::EndDisabled();
-        if (marker && marker->transition && !marker->paired) {
+        if (entry.own_track_marker && entry.own_track_marker->transition &&
+            !entry.own_track_marker->paired) {
             ImGui::Separator();
             ImGui::TextWrapped("%s", tr("status.transition_unpaired").c_str());
         }
-        ImGui::EndPopup();
+        if (id_depth_two) ImGui::PopID();
+        ImGui::PopID();
     }
-    if (ImGui::BeginPopup("plan_other_track_change_marker_context")) {
-        const TableRow* row = plan_other_track_change_popup_row_ >= 0 &&
-            static_cast<size_t>(plan_other_track_change_popup_row_) <
-                model_.other_track_changes.size()
-            ? &model_.other_track_changes[
-                static_cast<size_t>(plan_other_track_change_popup_row_)]
-            : nullptr;
-        const bool can_edit = edit_actions_available() && row &&
-            !row->edit_id.empty();
-        ImGui::BeginDisabled(!can_edit);
-        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && row) {
-            request_element_inspector(row->edit_id, "otherTrack.change");
-        }
-        if (ImGui::MenuItem(tr("button.delete").c_str()) && row) {
-            request_element_delete(row->edit_id, "otherTrack.change");
-        }
-        ImGui::EndDisabled();
-        ImGui::EndPopup();
+    ImGui::EndPopup();
+}
+
+PlanContextSourceInfo App::plan_context_source_for(
+    const PlanContextMenuEntry& entry) const {
+    PlanContextSourceInfo info;
+    const TableRow* row = nullptr;
+    std::string edit_id = entry.edit_id;
+    if (entry.own_track_marker && !entry.own_track_marker->target_edit_id.empty()) {
+        edit_id = entry.own_track_marker->target_edit_id;
     }
-    ImGui::EndChild();
-    debug_plan_stage("end");
+    const std::vector<TableRow>* rows = nullptr;
+    if (entry.own_track_marker) {
+        rows = entry.own_track_marker->gradient
+            ? &model_.gradient_rows : &model_.curve_rows;
+    } else if (entry.kind == PlanMarkerKind::Station) {
+        rows = &model_.station_list_rows;
+    } else if (entry.kind == PlanMarkerKind::Structure) {
+        rows = entry.row_index < model_.structures.size()
+            ? &model_.structures : &model_.structures_between;
+    } else if (entry.kind == PlanMarkerKind::OtherTrainStop) {
+        rows = &model_.other_train_stops;
+    } else if (!entry.row_kind.empty()) {
+        rows = inspector_rows_for_kind(model_, entry.row_kind);
+    }
+    if (rows) {
+        size_t row_index = 0;
+        if (!edit_id.empty() && find_row_index_by_edit_id(*rows, edit_id, row_index)) {
+            row = &(*rows)[row_index];
+        } else if (entry.row_index < rows->size()) {
+            row = &(*rows)[entry.row_index];
+        }
+    }
+    if (!row) return info;
+    const EditSourceInfo& source = row->source;
+    if (!source.file_path.empty()) {
+        std::string file_position = display_name_from_path(source.file_path);
+        if (source.line > 0) {
+            file_position += "  ";
+            file_position += std::to_string(source.line);
+            if (source.column > 0) {
+                file_position += ":";
+                file_position += std::to_string(source.column);
+            }
+        }
+        info.file_position = std::move(file_position);
+    }
+    if (!edit_id.empty()) {
+        const auto statement = std::find_if(
+            model_.edit_statements.begin(), model_.edit_statements.end(),
+            [&](const EditStatementInfo& candidate) {
+                return candidate.edit_id == edit_id;
+            });
+        if (statement != model_.edit_statements.end() && !statement->raw_text.empty()) {
+            info.statement = statement->raw_text;
+            return info;
+        }
+    }
+    info.statement = source.raw_text_preview;
+    return info;
 }

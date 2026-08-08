@@ -2206,7 +2206,7 @@ void App::refresh_speed_limit_table_cache() {
                              table_cache_.speed_limit_file_path_width);
     speed_limit_list_scroll_row_ = -1;
     speed_limit_list_highlight_row_ = -1;
-    plan_speed_limit_popup_row_ = -1;
+    plan_context_menu_entries_.clear();
 }
 
 void App::reset_structure_model_find_results() {
