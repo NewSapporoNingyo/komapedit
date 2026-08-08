@@ -89,6 +89,7 @@ constexpr float k_scene_marker_face_offset = 0.003f;
 constexpr float k_scene_marker_icon_half_extent = 0.18f;
 constexpr float k_scene_marker_label_height = 0.18f;
 constexpr float k_scene_marker_label_center_y = 0.22f;
+constexpr float k_scene_marker_other_track_label_center_y = 0.50f;
 constexpr float k_scene_marker_label_max_width = 0.88f;
 constexpr float k_scene_marker_outline_width = 0.012f;
 constexpr float k_scene_marker_irregularity_content_offset = 0.16f;
@@ -1604,8 +1605,29 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         Canvas3DSceneMarker marker;
         marker.kind = MapMarkerVisualKind::OtherTrackChange;
         marker.track_point = *point;
-        marker.label = track_key + " " + table_cell(row, "method") +
-            "(" + table_cell(row, "parameters") + ")";
+        const std::string& method = table_cell(row, "method");
+        const std::string& parameters = table_cell(row, "parameters");
+        const size_t method_offset = method.compare(0, 6, "Track.") == 0 ? 6 : 0;
+        std::string label;
+        label.reserve(track_key.size() + method.size() + parameters.size() + 2);
+        label.append(track_key);
+        label.push_back('\n');
+        label.append(method, method_offset, std::string::npos);
+        label.push_back('\n');
+        bool comma_pending = false;
+        for (const char character : parameters) {
+            if (character == ',') {
+                comma_pending = true;
+                continue;
+            }
+            if (comma_pending) {
+                if (std::isspace(static_cast<unsigned char>(character))) continue;
+                label.push_back(' ');
+                comma_pending = false;
+            }
+            label.push_back(character);
+        }
+        marker.label = std::move(label);
         marker.row_kind = "otherTrack.change";
         marker.row_index = row_index;
         marker.edit_id = row.edit_id;
@@ -6785,6 +6807,8 @@ fail:
                     : 0.0f;
                 const DVec3 content_center =
                     center + up * static_cast<double>(content_vertical_offset);
+                const bool is_other_track_change =
+                    marker.kind == MapMarkerVisualKind::OtherTrackChange;
 
                 const size_t marker_vertex_first = vertices.size();
                 const std::uint32_t marker_first =
@@ -6801,14 +6825,19 @@ fail:
                     k_scene_marker_board_width * -0.5f, 1.0f,
                     k_scene_marker_board_width * 0.5f, 0.0f,
                     face_sign, board_color_u32);
-                append_scene_marker_icon(
-                    vertices, indices, gpu_chunk.origin, content_center,
-                    right, up, forward, *baked, marker.kind,
-                    marker.icon_variant, face_sign,
-                    marker.has_theme_color ? &marker.theme_color : nullptr);
+                if (!is_other_track_change) {
+                    append_scene_marker_icon(
+                        vertices, indices, gpu_chunk.origin, content_center,
+                        right, up, forward, *baked, marker.kind,
+                        marker.icon_variant, face_sign,
+                        marker.has_theme_color ? &marker.theme_color : nullptr);
+                }
                 const bool label_in_icon =
                     marker.icon_variant ==
                     MapMarkerIconVariant::SpeedLimitBegin;
+                const float label_center_y = is_other_track_change
+                    ? k_scene_marker_other_track_label_center_y
+                    : k_scene_marker_label_center_y;
                 if (label_in_icon && !marker.label.empty()) {
                     const ImU32 text_color =
                         ImGui::ColorConvertFloat4ToU32(
@@ -6862,7 +6891,7 @@ fail:
                             *font, *baked, font_size, marker.label,
                             face_sign, outline_color,
                             k_scene_marker_label_height,
-                            k_scene_marker_label_center_y,
+                            label_center_y,
                             k_scene_marker_label_max_width);
                     }
                     append_scene_marker_text(
@@ -6870,7 +6899,7 @@ fail:
                         right, up, forward, *font, *baked, font_size,
                         marker.label, face_sign, text_color,
                         k_scene_marker_label_height,
-                        k_scene_marker_label_center_y,
+                        label_center_y,
                         k_scene_marker_label_max_width);
                     gpu_chunk.ranges.push_back({
                         marker.kind,
