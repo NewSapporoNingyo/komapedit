@@ -1,144 +1,35 @@
+<p align="center">
+    <img src="../icons/titleimage.png" alt="komapedit" width="600">
+</p>
+
 # komapedit
 
-[English README](README.md)
+[English](../README.md)
 
-## 项目概述
+komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编辑工具。它可读取线路地图及其 Include 文件，计算自轨道和他轨道几何，在二维图表与三维场景中显示线路，通过可搜索表格查看地图数据，预览 Structure 模型，并将计算后的轨道几何导出为 CSV。
 
-komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑工具，基于 `kobushi-trackviewer` 的轨道几何计算思路改写为 C++/Win32 桌面程序。当前版本主要提供地图读取、轨道几何生成、2D 平面图、坡度/曲线半径图、信息表格查看、源码/Include 文件检查、有限的源文件关联元素编辑、布景模型与地图场景 3D 预览和轨道几何 CSV 导出能力。
+基于源码的编辑功能仍处于实验阶段。启用编辑模式前，请备份线路文件或使用版本控制管理。komapedit 尚不是完整的地图编辑器：部分 BVE 语法仅支持预览或尚未支持，部分已支持语句可以编辑但不能新建或图形化操纵。当前边界见[支持的 BVE 地图语法](#支持的-bve-地图语法)，开发进度见 [TODO.md](../TODO.md)。
 
-程序由三个运行时核心部分组成：
+## 文档导航
 
-- `maploader.dll`：读取 `BveTs Map` 文件、解析部分 BVE Map 语法、生成自轨道/他轨道几何数据，并通过固定宽度 C ABI 输出带版本的强类型快照。
-- `model_loader.dll`：通过 Assimp 读取布景模型文件，并向 3D 预览提供网格/材质数据。
-- `komapedit.exe`：基于 Dear ImGui、ImPlot、Win32、DirectX 11 和 WIC 的桌面 GUI。
+- [English user guide](../README.md)
+- [开发进度与路线图](../TODO.md)
+- [开发者指南](dev_zhcn.md)（[English](dev.md)）
+- [AI 辅助开发指南](ai-dev_zhcn.md)（[English](ai-dev.md)）
+- [供 AI 编程工具使用的仓库规范](../AGENTS.md)
+- [许可证](../LICENSE)、[项目声明](../NOTICE)与[第三方声明](../THIRD_PARTY_NOTICES.md)
 
-随程序提供的 EXE 与 `maploader.dll` 统一使用 maploader API v6。请求编辑 metadata 时，`KvMapSnapshot` v6 传递地图数据、常规几何、source/edit metadata，并为每条受支持的他轨道变化语句提供一个 typed 逻辑行；独立失效的 `KvSceneGeometrySnapshot` v1 传递稠密 3D 自轨道/他轨道几何。编辑目标、dry-run、内存 Apply、direct Apply 和 Save/commit 均使用 typed batch 与由 map handle 持有的 typed report。所有快照只存在于进程内存中；Open/Reload 始终重新读取当前线路源文件，不向磁盘写入线路快照或几何缓存。
+## 主要功能
 
-当前项目已经支持由 `Station.Load`、`Structure.Load`、`Signal.Load`、`Sound.Load` 和 `Sound3D.Load` 引用的既有列表行、已支持的自轨道曲线/坡度变化点、布景/信号机/车站放置、相互关联的 `Repeater.Begin`/`Begin0`/`End` 段，以及下表所列限速点、轨道变位、应答器、音效/噪声、背景、粘着、驾驶台亮度、雾和绘制距离语句的源文件关联编辑，并可在 3D 场景中实时拖动布景、信号机和 Repeater Begin 的 X/Y/Z 位置。现在还可通过“新建地图元素”向导新增下表所列受支持的地图放置和事件/效果语句，并沿用属性/编辑窗口的距离表达式与源码写回流程；但尚不是完整的地图编辑器，先行列车/他列车编辑、曲线/坡度语句的新建或方法转换，以及根据曲线半径自动计算限速等编辑仍在开发计划中。资源/定义列表仍只能通过行内表格编辑。`Structure.Put0`、`Repeater.Begin0` 和短式 `Signal.Put` 支持在用户确认后进行有限的显式转换。
+- 打开 BVE Trainsim 2.0+ 地图，支持 UTF-8、UTF-16、CP932/Shift_JIS 相关编码及嵌套 `Include` 文件。
+- 显示平面图、纵断面图、曲线半径、车站、限速、他轨道、辅助标记和测量信息。
+- 通过可搜索表格查看车站、轨道、布景、连续布景、信号、应答器、音效、列车及环境效果。
+- 在三维窗口中预览 Structure 模型和线路场景。
+- 对下表所列语句提供基于源码的应用、保存、撤销和重新加载流程，并支持部分三维 X/Y/Z 放置编辑。
+- 将计算后的自轨道和他轨道几何导出为 CSV。
+- 提供简体中文、英语和日语界面。
 
-## 开发状况（TODO List）
-
-### 地图读取与解析
-
-- [x] 读取 `BveTs Map 2.0+` 地图文件
-- [x] 支持 UTF-8、UTF-8 BOM、UTF-16LE、UTF-16BE、CP932/Shift_JIS 等文本编码处理
-- [x] 支持 `Include` 引用其他地图文件
-- [x] 支持 `$变量 = 表达式;`、`distance` 预定义变量和基础数学函数
-- [x] 支持 `#`、`//` 注释
-- [x] 支持异步加载地图，并在控制台窗口显示加载日志、警告和错误
-- [x] 通过带版本的 typed map snapshot 为可编辑 map/list 语句提供源锚点和稳定编辑 metadata
-- [x] 将已支持的修改/删除先应用到内存工作副本，再保存到源 map/include/list 文件，并尽量保留 include 结构、距离语义、原始编码和换行
-- [x] 当修改后的值无法用源文件原编码表示时阻止回写；当前没有另存为 UTF-8 的替代路径
-- [x] 拒绝含有多个同种无 key 资源列表 `Load` 语句，或多个名称仅大小写不同的 `Train[].Enable` 声明的歧义地图
-- [x] 通过“新建地图元素”向导新增受支持的地图放置和事件/效果语句；资源/定义列表仍只能通过行内表格编辑
-
-### 自轨道与他轨道几何
-
-- [x] 解析并计算自轨道曲线
-- [x] 解析并计算自轨道坡度，并在平面几何中考虑纵坡产生的水平投影缩短
-- [x] 支持旧式语法
-- [x] 解析受支持的旧式自轨道语句 `Legacy.Turn`、`Legacy.Curve` 和 `Legacy.Pitch`
-- [x] 解析并计算他轨道位置、横向/纵向插值、轨距、中心、超高等部分信息
-- [x] 解析他轨道 `Track.Position`、`Track.X/Y.Interpolate`、`Track.Gauge` 和 `Track.Cant.*` 语句
-- [x] 支持控制点范围和间隔设置，并可重新生成几何
-- [x] 支持限速区间读取与显示
-- [x] 编辑或删除已有自轨道曲线变化点，并在适用时联动成对的 `Curve.BeginTransition`；暂不支持新建和方法转换
-- [x] 编辑或删除已有自轨道坡度变化点，并在适用时联动成对的 `Gradient.BeginTransition`；暂不支持新建和方法转换
-- [x] 从编辑模式下的 2D/3D 标记编辑或删除受支持的既有他轨道变化语句；track key、方法和参数个数只读，暂不支持新建、拖动、gizmo 或方法转换
-
-### 2D 平面图与图表显示
-
-- [x] 显示自轨道平面图
-- [x] 显示已启用的他轨道，并可设置显示范围和颜色
-- [x] 显示站点位置、站名、站点里程
-- [x] 显示限速标记
-- [x] 显示曲线半径区间和缓和曲线区间
-- [x] 显示纵断面/标高图
-- [x] 显示曲线半径图
-- [x] 支持平面图拖动、滚轮缩放、旋转、双击自适应范围
-- [x] 支持固定网格、可动网格和关闭网格
-- [x] 支持测量模式，显示里程、标高、坡度、曲线半径和限速
-- [x] 支持车站跳转和数字里程跳转
-- [x] 支持导入背景图，并调整位置、尺寸、旋转角和亮度
-- [x] 支持使用两个车站位置对齐背景图
-- [x] 平面图上的布景与连续布景位置标记
-- [x] 平面图上显示信号位置标记
-- [x] 平面图上显示 `Section.Begin`/`Section.BeginNew` 标记及其信号索引参数标签
-- [x] 平面图上显示应答器位置标记
-- [x] 平面图上显示先行列车通过点标记
-- [x] 平面图上显示他列车路径和停止位置标记
-- [x] 平面图上显示轨道变位和粘着特性变化点标记
-- [x] 平面图上显示音效播放、固定音源、走行音、轮缘摩擦音效和道岔音效标记
-- [x] 平面图上显示背景变化点标记
-- [x] 平面图上显示驾驶台亮度变化点标记
-- [x] 平面图上显示雾效果变化点标记
-- [x] 平面图上显示绘制距离变化点标记
-- [x] 从平面图、纵断面图、曲线半径图和 3D 场景标记打开曲线/坡度变化点的“属性/编辑”，或删除成对语句
-- [ ] 拆分 2D 画布内部的视图状态、marker cache、hit-test/context menu、背景图和绘制 primitive，拆分阶段不改变现有行为
-
-### 地图信息表示
-
-- [x] 读取 `Station.Load` 指定的车站列表 CSV
-- [x] 分别显示 `Station.Put` 位置行和 `Station.Load` 定义行
-- [x] 显示他轨道列表，可切换显示、设置范围和颜色
-- [x] 显示他列车定义和停止位置列表，包括各分组唯一的只读 `Train.Enable` 时间，并可切换路径显示、定位停止位置
-- [x] 显示 `Structure.Put`、`Structure.Put0`、`Structure.PutBetween` 的地图布景放置表
-- [x] 读取并显示 `Structure.Load` 指定的布景模型列表（`.txt` 或 `.csv`）
-- [x] 显示 `Repeater.Begin`、`Repeater.Begin0`、`Repeater.End` 的关联连续布景段，并合并 Begin/End/变化边界
-- [x] 以动态列分别显示 `Section.Begin`/`BeginNew` 和 `Section.SetSpeedLimit`/`Signal.SpeedLimit`，包括显式 `null` 参数和源文件；编辑模式下可通过基于源文件的属性检查器编辑或删除既有行，且参数个数可增加或删除
-- [x] 以不区分大小写的名称分组显示只读变量赋值列表，并保留解析顺序、原表达式和源文件
-- [x] 在对应列表顶部显示 `Station.Load`、`Structure.Load`、`Signal.Load`、`Sound.Load` 和 `Sound3D.Load` 求值后的参数、原表达式和解析路径
-- [x] 为布景模型、信号现示和音效列表提供共享查找和未使用条目搜索面板
-- [x] 通过源文件关联行内表格编辑器编辑、清空、调整顺序或删除已有的布景模型列表 key 和文件路径；选择文件时会尽可能写入相对路径
-- [x] 编辑或删除已有 `Station.Put` 行，包括 distance、`stationKey`、车门侧和停车余量
-- [x] 编辑、清空、调整顺序或删除由 `Station.Load` 载入的已有车站定义行；暂不支持新增车站行
-- [x] 显示 `信号现示列表`、`地图信号列表` 和 `应答器列表`
-- [x] 显示 `限速点列表`、`轨道变位列表`、`粘着特性变化点列表`、走行音、轮缘摩擦音效和道岔音效相关表格
-- [x] 显示 `背景变化点列表`、`驾驶台亮度变化点列表`、`雾效果变化点列表` 和 `绘制距离变化点列表`
-- [x] 通过源码回写的行内表格编辑器编辑、清空、调整顺序或删除已有的 `Signal.Load` 信号现示定义及可选 glare 行；暂不支持新增行或现示结构 key 列
-- [x] 通过基于源锚点的属性检查器编辑或删除已有 `Beacon.Put` 行
-- [x] 为已支持的布景/信号机/车站/Repeater 放置，以及限速点、轨道变位、应答器、音效/噪声、背景、粘着、驾驶台亮度、雾和绘制距离行提供“属性/编辑”检查器；可从适用的表格和 2D/3D 标记进入，并为可编辑的布景、信号机和 Repeater Begin 放置提供实时 X/Y/Z 操纵器
-- [x] 从 2D 平面图的布景/信号机放置标记打开“属性/编辑”
-- [ ] 为布景/信号机放置增加直接 2D 操纵，并将属性检查器扩展到其余尚不支持的地图信息行
-
-### 3D画布
-
-- [x] 布景模型 3D 预览
-- [x] 通过 `model_loader.dll`/Assimp 读取模型和贴图
-- [x] 支持旋转和缩放布景模型预览
-- [x] 3D 画布场景预览，可显示轨道路径、布景/连续布景实例、信号、地图元素标记、背景变化和插值后的 BVE 雾效果
-- [x] 可通过车站跳转和数字里程跳转移动 3D 场景相机，并在平面图上显示当前 3D 位置
-- [x] 可从布景、连续布景、信号和支持的地图元素标记表格行定位到 3D 场景，也可从场景对象或标记定位回对应表格
-- [ ] 3D 场景画质设置：render scale、MSAA、纹理过滤和轮廓质量
-- [x] 在 3D 场景线路信息叠加层显示当前曲线半径/超高、坡度、生效限速、闭塞选择出的信号限速和距下一站距离
-- [ ] 为 3D 线路信息叠加层补充上一站信息和当前不支持的插值情况
-- [x] 通过实时 3D 操纵器编辑 `Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 的 X/Y/Z 位置，并支持显式 `Put0`/`Begin0` 转换和操纵器尺寸设置
-- [ ] 支持通过 3D 操纵器编辑布景旋转和其他放置字段
-- [x] 在属性检查器中编辑关联的连续布景段，支持 Begin 导航、End/变化边界和关联删除选项
-
-### 环境效果
-
-- [x] 显示 `音效文件列表`、`3D音效文件列表`、`地图音效列表` 和 `地图3D音效列表`
-- [x] 通过源文件关联行内表格编辑器编辑、清空、调整顺序或删除已有的 `Sound.Load` 和 `Sound3D.Load` 文件列表行；选择文件时会尽可能写入相对路径
-- [x] 编辑或删除已有 `Sound.Play`/`Sound3D.Put` 放置和走行音/轮缘摩擦音/道岔音事件；车站定义中的报站音 key 可编辑，但仍不支持新增 Sound/Sound3D 文件列表行，程序也不播放音频
-- [x] 编辑或删除已有驾驶台亮度设定位置
-- [x] 编辑或删除已有雾效果
-
-### 用户界面与辅助功能
-
-- [x] Dear ImGui Docking 多窗口布局
-- [x] 简体中文、英文、日文界面语言切换
-- [x] 字体大小、组件大小、车站标记大小、2D 线宽、主题色、3D 场景绘制距离/雾效果/地图绘制距离、相机速度、操纵器尺寸和场景实例性能警告设置
-- [x] 最近打开地图历史记录
-- [x] 背景图参数随最近地图保存到 `settings/history.ini`
-- [x] 设置保存到程序目录下的 `settings/settings.ini`
-- [x] Include 文件结构图，以及读取当前内存工作副本的只读源码文本预览
-- [x] 编辑模式中分离“应用到预览”“保存到磁盘”“撤销全部待保存改动”和“从磁盘重新加载”，并在存在未保存更改时确认
-- [x] 将自轨道和他轨道几何导出为 CSV
-- [ ] 通过 `element_presets.json` 保存元素预设组，应用后生成普通 BVE map/list 语句
-- [ ] 线路 release 导出：展开 Include、可选常量化距离/变量表达式、只复制实际使用资源、输出报告，并保护开发线路目录不被覆盖
-
-### 当前的BVE地图语法支持状况
+## 支持的 BVE 地图语法
 
 - 预览：实际进入轨道几何、表格、标记或 3D 场景。
 - 基本编辑：已有语句可通过属性检查器修改并写回；不代表支持新建该语句。
@@ -194,7 +85,7 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 
 ## 安装与启动
 
-当前仓库未提供独立安装程序或预构建发行包，推荐从源代码构建后运行。
+当前仓库未提供独立安装程序或预构建发行包。请按照[开发者指南](dev_zhcn.md)构建应用，然后运行生成的可执行文件。
 
 构建完成后，运行 `build_release\komapedit.exe`。可执行文件保留在第 1 层，
 `maploader.dll`、`model_loader.dll` 及构建复制的 Assimp/运行时依赖 DLL
@@ -245,141 +136,6 @@ komapedit 是一个面向 BVE Trainsim 地图文件的轻量级查看与编辑�
 11. 在 `3D 视图 -> 3D场景预览` 中显示场景预览窗口，然后点击 `启动3D场景预览`。场景预览可在窗口中重新加载或关闭；加载场景后，车站跳转和里程跳转也会移动场景相机。叠加层会显示当前曲线/超高、坡度、生效中的 `SpeedLimit.Begin`/`End` 状态、当前 `Section.Begin` 索引从生效中的 `Section.SetSpeedLimit`/`Signal.SpeedLimit` 定义所选择的信号限速，以及下一站信息。`选项 -> 3D画布设置 -> 雾效果` 可即时切换场景预览中的线路雾效果，且默认开启；同一设置还可控制地图语句驱动的绘制距离、相机速度和场景实例性能警告。选择模式下可从场景对象和支持的地图元素标记定位回对应表格；打开编辑模式后，受支持的他轨道变化点会在 2D 平面图中显示为轨道颜色圆点，并在已启动的 3D 场景中显示为轨道颜色标牌，右键可打开“属性/编辑”或删除。其他受支持的场景标记沿用相同菜单路径，`Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 坐标还可使用 X/Y/Z 操纵器拖动。
 12. 在 `文件 -> 导出 CSV...` 中选择输出目录，导出自轨道和他轨道几何 CSV
 13. 按 `F5` 或菜单 `文件 -> 重新加载` 可重新读取当前地图
-
-## 项目文件结构
-
-```text
-komapedit/
-├─ CMakeLists.txt                  # CMake 构建配置
-├─ README.md                       # 项目说明
-├─ README_zhcn.md                  # 简体中文项目说明
-├─ LICENSE                         # Apache License 2.0
-├─ NOTICE                          # 项目版权与 Apache 归属声明
-├─ THIRD_PARTY_NOTICES.md          # 第三方库和参考项目声明
-├─ build_dev.bat                   # Debug 构建脚本
-├─ build_release.bat               # Release 构建脚本
-├─ clear_build_release_dist.bat    # 清理 Release 目录，保留 bin、settings 和声明文件
-├─ get_3rd_party_packages.bat      # 拉取 ImGui 和 ImPlot
-├─ install_Assimp.bat              # 使用 vcpkg 安装 Assimp 的辅助脚本
-├─ komapedit.rc                    # Windows 应用程序资源脚本
-├─ icons/                           # 应用图标和 README 标题图
-├─ include/
-│  ├─ canvas3D.h                   # 3D 预览画布接口
-│  ├─ map_marker_visuals.h          # 2D/3D 共用的地图标记视觉配方
-│  ├─ maploader.h                  # maploader C ABI
-│  ├─ maploader_snapshot.h         # 固定宽度 typed snapshot/edit ABI 结构
-│  ├─ model_loader.h               # model_loader C ABI
-│  ├─ multilanguage.h              # 界面多语言文本
-│  ├─ own_track_transition_linkage.h # 共用的 Curve/Gradient BeginTransition 配对规则
-│  ├─ repeater_linkage.h            # 共用的 Repeater Begin/End 段配对
-│  └─ resource.h                   # Windows 资源 ID 声明
-├─ src/
-│  ├─ main_window/
-│  │  ├─ gui_kme.cpp               # 主窗口、Win32/DirectX 11 初始化和主循环
-│  │  ├─ app_settings.cpp/.h       # 运行时设置、历史记录和 UI 样式辅助代码
-│  │  ├─ runtime_paths.cpp/.h       # 可执行文件、DLL 和设置目录路径
-│  │  ├─ maploader_runtime.cpp      # bin/maploader.dll 的缓存运行时分发
-│  │  ├─ map_marker_visuals.cpp     # 2D/3D 共用的地图标记视觉
-│  │  ├─ file_structure_diagram.cpp # Include 文件结构图和源码文件操作
-│  │  ├─ text_preview.cpp            # 只读源码预览和 distance 边界选择
-│  │  ├─ debug_headless.cpp/.h     # 仅 Debug 构建使用的 headless 验证入口
-│  │  ├─ touch_input.cpp/.h         # Win32 触摸手势转换
-│  │  └─ kme.h                     # App 声明与 GUI 共享状态
-│  ├─ table/
-│  │  ├─ datatable.cpp             # 数据表格列定义、缓存与表格窗口
-│  │  └─ table_navigation.cpp      # 表格到平面图/3D 标记的定位与可见状态
-│  ├─ canvas2d/
-│  │  ├─ canvas2D.cpp              # 2D 平面画布、标记、测量和背景图
-│  │  └─ profile_plots.cpp         # 纵断面和曲线半径图渲染
-│  ├─ canvas3d/
-│  │  └─ canvas3D.cpp              # DirectX 11 模型/场景预览和场景标记渲染
-│  ├─ maploader/
-│  │  ├─ maploader.cpp             # Public C ABI 入口和 map handle 生命周期管理
-│  │  ├─ maploader_internal.h      # maploader 共享状态、行记录、源锚点和辅助声明
-│  │  ├─ maploader_core.cpp        # 通用解析/value/source-span 工具和 MapContext 辅助逻辑
-│  │  ├─ maploader_parser.cpp      # BVE Map/list 解析、Include、变量表达式和源锚点收集
-│  │  ├─ maploader_geometry.cpp    # 自轨道/他轨道几何、relocate、曲线和场景控制点
-│  │  ├─ maploader_identity.cpp    # 稳定 edit identity 与确定性哈希
-│  │  ├─ maploader_snapshot.cpp    # map/scene 快照构建和 revision 失效
-│  │  ├─ maploader_semantic.cpp    # typed 编辑语义验证与 fingerprint
-│  │  ├─ maploader_edits.cpp       # edit dry-run、内存应用、源文件 patch 和 commit/writeback
-│  │  ├─ tests/                     # typed snapshot/edit C ABI contract 测试
-│  │  ├─ text_decoder.cpp/.h       # 文件读取、UTF-8 路径和文本解码
-│  │  ├─ diagnostics.cpp/.h        # 加载器日志与最后错误状态
-│  │  └─ c_api.cpp/.h              # C ABI 分配辅助代码
-│  └─ model_loader/
-│     └─ model_loader.cpp          # 基于 Assimp 的布景模型加载
-├─ tests/                           # maploader 诊断测试夹具
-├─ third_party/
-│  ├─ imgui/                       # Dear ImGui，docking 分支
-│  └─ implot/                      # ImPlot
-├─ build/                          # Debug：komapedit.exe、bin/ DLL、settings/ INI
-└─ build_release/                  # Release：komapedit.exe、bin/ DLL、settings/ INI
-```
-
-## 从源代码构建
-
-### 环境要求
-
-- Windows操作系统
-- [CMake](https://cmake.org/) 3.20 或更新版本
-- [Ninja](https://github.com/ninja-build/ninja)
-- 支持 C++17 的编译器，例如 MSVC 或 [MinGW](https://www.mingw-w64.org/)
-- Windows SDK / DirectX 11 / WIC 开发库
-- Git，用于拉取第三方依赖
-- Assimp，需能被 CMake 作为 `assimp::assimp` 找到
-
-如果 Assimp 不是通过 vcpkg 或显式 prefix 提供，建议使用 CMake 3.21 或更高
-版本，因为通用运行时 DLL 复制回退路径需要该版本。
-
-### 获取第三方依赖：get_3rd_party_packages.bat
-
-该脚本会克隆以下2个项目（请确保Git已安装）：
-
-- `third_party/imgui`→`ocornut/imgui` 的 `docking` 分支。
-- `third_party/implot`→`epezent/implot`。
-
-克隆得到的第三方源码目录会被 Git 忽略。其上游许可证文件保留在`third_party/` 目录中，随项目分发所需的声明汇总在`THIRD_PARTY_NOTICES.md`。
-
-### 安装Assimp：install_Assimp.bat
-Assimp 不放在 `third_party/` 目录中，需要在配置项目前单独安装。当前构建脚本在设置了 `VCPKG_ROOT` 时会自动使用 vcpkg；如果未设置 `VCPKG_DEFAULT_TRIPLET`，默认使用 `x64-mingw-dynamic`。
-`install_Assimp.bat` 是用于通过 vcpkg 安装 `assimp:x64-mingw-dynamic` 的辅助脚本，脚本固定使用该 MinGW triplet；MSVC 用户应另行安装相应 triplet，例如 `assimp:x64-windows`。使用前需要手动编辑脚本，在其中填入本地的 vcpkg 所在目录。
-
-### Debug 构建：build_dev.bat
-
-输出目录为 `build`，目录层级与下述 Release 相同：可执行文件位于第 1 层，
-DLL 位于 `bin`，INI 位于 `settings`。
-
-### Release 构建：build_release.bat
-
-输出目录为 `build_release`。主要产物：
-
-- `komapedit.exe`
-- `bin/maploader.dll`
-- `bin/model_loader.dll`
-- `bin` 下的 Assimp/运行时 DLL，具体取决于所选工具链/包管理器
-- `settings/`，设置写入前为空
-- `LICENSE`
-- `NOTICE`
-- `THIRD_PARTY_NOTICES.md`
-
-如需整理发布目录，可执行 `clear_build_release_dist.bat`。该脚本会保留
-`komapedit.exe`、`bin` 目录及其中的 `.dll` 文件、`settings` 目录及其现有内容，
-以及 `LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md`。
-
-构建脚本会创建 `settings` 目录，但 `settings.ini`、`history.ini` 和 `imgui.ini`
-由程序运行和退出时创建或更新。
-
-### Debug 测试
-
-完成 Debug 构建后，可运行已注册的 CTest 检查：
-
-```bat
-ctest --test-dir build --output-on-failure
-```
-
-诊断测试需要存在 `tests/` 下的地图测试夹具。该目录当前被仓库忽略规则排除，
-因此干净检出需要另外提供这些夹具后才能通过该测试。
 
 ## 附录：CSV 数据格式
 
@@ -480,3 +236,4 @@ GUI 和模型预览使用的第三方库：
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=NewSapporoNingyo/komapedit&type=date&legend=top-left" />
  </picture>
 </a>
+

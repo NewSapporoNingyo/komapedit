@@ -1,148 +1,36 @@
 <p align="center">
-    <img src="icons/titleimage.png" alt="titleimage" width="600";>
+    <img src="icons/titleimage.png" alt="komapedit" width="600">
 </p>
-
 
 # komapedit
 
-[简体中文Readme](README_zhcn.md)
-## Project Overview
+[简体中文](docs/README_zhcn.md)
 
-komapedit is a lightweight viewer and editor for BVE Trainsim map files. It reworks the track-geometry approach from `kobushi-trackviewer` as a C++/Win32 desktop application. The current version focuses on loading maps, generating track geometry, showing 2D plan/profile/radius views, displaying map data tables, inspecting source/include files, editing a limited set of source-backed map elements, previewing Structure models and map scenes in 3D, and exporting track geometry to CSV.
+komapedit is a lightweight Windows viewer and editor for BVE Trainsim map files. It loads route maps and their Include files, calculates own-track and other-track geometry, presents the route in 2D charts and a 3D scene, exposes map data in searchable tables, previews Structure models, and exports calculated track geometry to CSV.
 
-The application has three main runtime components:
+Editing is source-backed but still experimental. Back up route files or keep them under version control before enabling Edit mode. komapedit is not yet a complete map editor: some BVE syntax is preview-only or unsupported, and some supported statements can be edited but not created or manipulated graphically. See [Current BVE Map Syntax Support](#current-bve-map-syntax-support) for the current boundaries and [TODO.md](TODO.md) for implementation progress.
 
-- `maploader.dll`: loads `BveTs Map` files, parses part of the BVE Map syntax, generates own-track and other-track geometry, and exposes versioned typed snapshots through a fixed-width C ABI.
-- `model_loader.dll`: loads Structure model files through Assimp and exposes mesh/material data for the 3D previews.
-- `komapedit.exe`: the desktop GUI, built with Dear ImGui, ImPlot, Win32, DirectX 11, and WIC.
+## Documentation
 
-The bundled executable and `maploader.dll` use maploader API v6. When edit metadata is requested, `KvMapSnapshot` v6 carries map, regular-geometry, source, and edit metadata, including one typed logical row for each supported other-track change statement; the independently invalidated `KvSceneGeometrySnapshot` v1 carries dense 3D own/other-track geometry. Typed edit batches and handle-owned typed reports cover dry-run, in-memory Apply, direct Apply, Save/commit, and target lookup. These views are process-memory only: Open and Reload always read the current route sources, and no route snapshot or geometry cache is written to disk.
+- [Simplified Chinese user guide](docs/README_zhcn.md)
+- [Development status and roadmap](TODO.md)
+- [Developer guide](docs/dev.md) ([简体中文](docs/dev_zhcn.md))
+- [AI-assisted development guide](docs/ai-dev.md) ([简体中文](docs/ai-dev_zhcn.md))
+- [Repository instructions for AI coding tools](AGENTS.md)
+- [License](LICENSE), [project notice](NOTICE), and [third-party notices](THIRD_PARTY_NOTICES.md)
 
-At this stage, komapedit provides source-backed editing for existing list rows referenced by `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load`; supported own-track curve/gradient change points; supported Structure, Signal, and Station placements; linked `Repeater.Begin`/`Begin0`/`End` segments; and the Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance statements listed below. The New Map Element wizard can insert the supported map/event/effect statements listed below, while preserving the shared distance-expression and source-writeback workflow. It supports live X/Y/Z Structure, Signal, and Repeater-Begin placement edits in the 3D scene. It is not yet a full map editor: PreTrain/other-train editing, Curve/Gradient method conversion or insertion, and automatic radius-based speed-limit calculation are still planned. Resource/list definition rows remain inline-table-only. Limited explicit conversion is available for `Structure.Put0`, `Repeater.Begin0`, and short-form `Signal.Put` when confirmed by the user.
+## Features
 
-## Development Status (TODO List)
+- Opens BVE Trainsim 2.0+ map files in UTF-8, UTF-16, CP932/Shift_JIS-related encodings, including nested `Include` files.
+- Displays plan, elevation/profile, curve-radius, station, speed-limit, other-track, marker, and measurement information.
+- Provides searchable tables for stations, tracks, Structures, repeaters, signals, beacons, sounds, trains, and environmental effects.
+- Previews Structure models and a route scene in 3D.
+- Supports source-backed Apply, Save, Revert, and Reload for the statement families listed below, plus selected live X/Y/Z placement edits in the 3D scene.
+- Exports calculated own-track and other-track geometry to CSV.
+- Offers Simplified Chinese, English, and Japanese UI languages.
 
-### Map Loading and Parsing
 
-- [x] Load `BveTs Map 2.0+` map files.
-- [x] Handle UTF-8, UTF-8 with BOM, UTF-16LE, UTF-16BE, CP932/Shift_JIS, and related text encodings.
-- [x] Support `Include` references to other map files.
-- [x] Support `$variable = expression;`, the predefined `distance` variable, and basic math functions.
-- [x] Support `#` and `//` comments.
-- [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
-- [x] Expose source anchors and stable edit metadata for editable map/list statements through the versioned typed map snapshot.
-- [x] Apply supported updates/deletions to an in-memory working copy and save them to source map/include/list files, preserving include structure, distance semantics, original encodings, and line endings where possible.
-- [x] Block writeback when an edited value cannot be represented in the source encoding; there is currently no Save-as-UTF-8 fallback.
-- [x] Reject ambiguous maps with multiple same-kind unkeyed resource-list `Load` statements or multiple case-insensitively matching `Train[].Enable` declarations.
-- [x] Insert supported map placement and event/effect statements through the New Map Element wizard; resource/list definition rows remain inline-table-only.
-
-### Own-Track and Other-Track Geometry
-
-- [x] Parse and calculate own-track curves.
-- [x] Parse and calculate own-track gradients, including their horizontal projection in plan geometry.
-- [x] Support legacy syntax.
-- [x] Parse the supported legacy own-track statements `Legacy.Turn`, `Legacy.Curve`, and `Legacy.Pitch`.
-- [x] Parse and calculate parts of other-track position data, lateral/vertical interpolation, gauge, center offset, and cant.
-- [x] Parse other-track `Track.Position`, `Track.X/Y.Interpolate`, `Track.Gauge`, and `Track.Cant.*` statements.
-- [x] Support control-point range and interval settings, with geometry regeneration.
-- [x] Load and display speed-limit sections.
-- [x] Edit or delete existing own-track curve change points, including paired `Curve.BeginTransition` statements where applicable; insertion and method conversion are not supported.
-- [x] Edit or delete existing own-track gradient change points, including paired `Gradient.BeginTransition` statements where applicable; insertion and method conversion are not supported.
-- [x] Edit or delete supported existing other-track change statements from their edit-mode 2D/3D markers. Track key, method, and argument count remain read-only; insertion, dragging, gizmos, and method conversion are not supported.
-
-### 2D Plan View and Charts
-
-- [x] Display the own-track plan view.
-- [x] Display enabled other tracks, with configurable visible range and color.
-- [x] Display station positions, names, and mileage.
-- [x] Display speed-limit markers.
-- [x] Display curve-radius sections and transition-curve sections.
-- [x] Display the profile/elevation chart.
-- [x] Display the curve-radius chart.
-- [x] Support panning, mouse-wheel zooming, rotation, and double-click fit-to-view in the plan view.
-- [x] Support fixed grid, movable grid, and no-grid modes.
-- [x] Support measurement mode, showing mileage, elevation, gradient, curve radius, and speed limit.
-- [x] Support jumping to stations and numeric map distances.
-- [x] Import a background image and adjust its position, size, rotation, and brightness.
-- [x] Align a background image using two station positions.
-- [x] Structure and repeater placement markers on the plan view.
-- [x] Display signal position markers on the plan view.
-- [x] Display `Section.Begin`/`Section.BeginNew` markers with their signal-index parameter labels on the plan view.
-- [x] Display beacon position markers on the plan view.
-- [x] Display PreTrain pass-point markers on the plan view.
-- [x] Display other-train paths and stop-point markers on the plan view.
-- [x] Display track-irregularity and adhesion change-point markers on the plan view.
-- [x] Display map sound, fixed sound source, rolling-noise, flange-noise, and joint-noise markers on the plan view.
-- [x] Display background change-point markers on the plan view.
-- [x] Display cab-illuminance change-point markers on the plan view.
-- [x] Display fog-effect change-point markers on the plan view.
-- [x] Display draw-distance change-point markers on the plan view.
-- [x] Open Properties/Edit or delete paired curve/gradient change points from the plan, profile, curve-radius, and 3D scene markers.
-- [ ] Split 2D canvas internals into view state, marker cache, hit testing/context menus, background image handling, and drawing primitives without changing current behavior.
-
-### Map Data Tables
-
-- [x] Load the station list specified by `Station.Load`.
-- [x] Display `Station.Put` position rows separately from `Station.Load` definition rows.
-- [x] Display the other-track list, with controls for visibility, range, and color.
-- [x] Display other-train definitions and stop-point lists, including each group's unique read-only `Train.Enable` time, with plan-path visibility and stop-point location.
-- [x] Display map Structure placement tables for `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween`.
-- [x] Load and display Structure model lists referenced by `Structure.Load` (`.txt` or `.csv`).
-- [x] Display linked `Repeater.Begin`, `Repeater.Begin0`, and `Repeater.End` segments, with Begin/End/change boundaries merged for readability.
-- [x] Display dynamic-column `Section.Begin`/`BeginNew` and `Section.SetSpeedLimit`/`Signal.SpeedLimit` tables with explicit `null` arguments and source files; edit or delete existing rows through the source-backed inspector, including add/remove of the variable-length parameters.
-- [x] Display a read-only variable-assignment list grouped by case-insensitive name, preserving parse order, original expressions, and source files.
-- [x] Show evaluated `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load` arguments with their raw expressions and resolved paths above the corresponding list tables.
-- [x] Provide shared find and unused-entry search panels for Structure models, signal aspects, and sound lists.
-- [x] Edit, clear, reorder, or delete existing Structure model-list keys and file paths through the source-backed inline table editor; selecting a file writes a relative path where possible.
-- [x] Edit or delete existing `Station.Put` rows, including distance, `stationKey`, door side, and stop margins.
-- [x] Edit, clear, reorder, or delete existing station-definition rows loaded through `Station.Load`; adding station rows is not supported.
-- [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
-- [x] Display `Speed Limit Point List`, `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
-- [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`.
-- [x] Edit, clear, reorder, or delete existing `Signal.Load` aspect definitions and their optional glare rows through the source-backed inline table editor; adding rows or structure-key columns is not supported.
-- [x] Edit or delete existing `Beacon.Put` rows through the source-backed property inspector.
-- [x] Provide a source-backed `Properties/Edit` inspector for supported Structure/Signal/Station/Repeater placements and Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows; expose it from applicable tables and 2D/3D markers, with live X/Y/Z gizmos for editable Structure, Signal, and Repeater Begin placements.
-- [x] Open Properties/Edit for Structure and Signal placements from their 2D plan markers.
-- [ ] Add direct 2D manipulation for Structure/Signal placements and extend the property inspector to remaining unsupported Map Info rows.
-
-### 3D Canvas
-
-- [x] 3D preview for Structure models.
-- [x] Load model geometry, materials, and diffuse textures through `model_loader.dll`/Assimp.
-- [x] Rotate and zoom the Structure model preview.
-- [x] 3D scene preview canvas for track paths, Structure/Repeater instances, signals, map-element markers, background changes, and interpolated BVE fog effects.
-- [x] Jump the 3D scene camera from station selections and numeric distance jumps, and show the current 3D position on the plan view.
-- [x] Locate Structure, Repeater, signal, and supported map-marker table rows in the 3D scene preview, and locate picked scene objects or markers back in their tables.
-- [ ] 3D scene quality settings for render scale, MSAA, texture filtering, and outline quality.
-- [x] Display the current curve radius/cant, gradient, active speed limit, section-selected signal speeds, and distance to the next station in the 3D scene route overlay.
-- [ ] Extend the 3D route overlay with previous-station information and unsupported interpolation cases.
-- [x] Edit `Structure.Put`, `Signal.Put`, and `Repeater.Begin` positions along X/Y/Z with live 3D gizmos, including explicit `Put0`/`Begin0` conversion and configurable gizmo size.
-- [ ] Add 3D gizmo editing for Structure rotation and other placement fields.
-- [x] Edit linked Repeater segments in the inspector, including Begin navigation, End/change boundaries, and linked deletion choices.
-
-### Environmental Effects
-
-- [x] Display `Sound File List`, `3D Sound File List`, `Map Sound List`, and `Map 3D Sound List`.
-- [x] Edit, clear, reorder, or delete existing `Sound.Load` and `Sound3D.Load` file-list rows through source-backed inline tables; selecting a file writes a relative path where possible.
-- [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; station definition announcement sound keys are editable, but Sound/Sound3D file-list row insertion and audio playback remain unsupported.
-- [x] Edit or delete existing cab-illuminance setting positions.
-- [x] Edit or delete existing fog effects.
-
-### User Interface and Utilities
-
-- [x] Dear ImGui docking-based multi-window layout.
-- [x] UI language switching between Simplified Chinese, English, and Japanese.
-- [x] Settings for font size, UI component size, station marker size, 2D line widths, theme color, 3D scene draw distance/fog/map-draw-distance, camera speed, gizmo size, and scene-instance performance warnings.
-- [x] Recent-map history.
-- [x] Save background-image parameters with recent-map entries in `settings/history.ini`.
-- [x] Save settings to `settings/settings.ini` under the executable directory.
-- [x] Include-file structure diagram and read-only source text preview using the active in-memory working copy.
-- [x] Edit mode with separate Apply-to-preview, Save-to-disk, global Revert of all pending changes, and Reload-from-disk behavior plus unsaved-change prompts.
-- [x] Export own-track and other-track geometry to CSV.
-- [ ] Element preset groups stored as ordinary BVE map/list statements through `element_presets.json`.
-- [ ] Route release export that expands includes, optionally constantizes distance/variable expressions, copies only used resources, writes a report, and protects development route directories from overwrite.
-
-### Current BVE Map Syntax Support
+## Current BVE Map Syntax Support
 
 - Preview: the syntax actually feeds track geometry, tables, markers, or the 3D scene.
 - Basic editing: existing statements can be changed and written back through the property inspector; this does not imply support for creating new statements.
@@ -198,7 +86,7 @@ The New Map Element wizard inserts the supported map placement and event/effect 
 
 ## Installation and Startup
 
-This repository does not currently provide a standalone installer or prebuilt release package. The recommended workflow is to build from source and run the generated executable.
+This repository does not currently provide a standalone installer or prebuilt release package. Follow the [developer guide](docs/dev.md) to build the application, then run the generated executable.
 
 After building, run `build_release\komapedit.exe`. The executable stays at the
 top level, while `maploader.dll`, `model_loader.dll`, and copied Assimp/runtime
@@ -252,153 +140,6 @@ of overwriting either file.
 12. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
 13. Press `F5` or use `File -> Reload` to reload the current map.
 
-## Project Layout
-
-```text
-komapedit/
-├─ CMakeLists.txt                  # CMake build configuration
-├─ README.md                       # Project documentation
-├─ README_zhcn.md                  # Simplified Chinese project documentation
-├─ LICENSE                         # Apache License 2.0
-├─ NOTICE                          # Project copyright and Apache attribution notices
-├─ THIRD_PARTY_NOTICES.md          # Third-party library and reference-project notices
-├─ build_dev.bat                   # Debug build script
-├─ build_release.bat               # Release build script
-├─ clear_build_release_dist.bat    # Cleans Release output while preserving bin, settings, and notices
-├─ get_3rd_party_packages.bat      # Fetches ImGui and ImPlot
-├─ install_Assimp.bat              # Helper for installing Assimp with vcpkg
-├─ komapedit.rc                    # Windows application resource script
-├─ icons/                           # Application icons and README title image
-├─ include/
-│  ├─ canvas3D.h                   # 3D preview canvas interface
-│  ├─ map_marker_visuals.h          # Shared 2D/3D map-marker visual recipes
-│  ├─ maploader.h                  # maploader C ABI
-│  ├─ maploader_snapshot.h         # Fixed-width typed snapshot/edit ABI structures
-│  ├─ model_loader.h               # model_loader C ABI
-│  ├─ multilanguage.h              # UI localization strings
-│  ├─ own_track_transition_linkage.h # Shared Curve/Gradient BeginTransition pairing rules
-│  ├─ repeater_linkage.h            # Shared Repeater Begin/End segment pairing
-│  └─ resource.h                   # Windows resource ID declarations
-├─ src/
-│  ├─ main_window/
-│  │  ├─ gui_kme.cpp               # Main window, Win32/DirectX 11 setup, app loop
-│  │  ├─ app_settings.cpp/.h       # Runtime settings, history, and UI style helpers
-│  │  ├─ runtime_paths.cpp/.h       # Executable, DLL, and settings directory paths
-│  │  ├─ maploader_runtime.cpp      # Cached runtime dispatch for bin/maploader.dll
-│  │  ├─ map_marker_visuals.cpp     # Shared 2D/3D map-marker visuals
-│  │  ├─ file_structure_diagram.cpp # Include-file structure diagram and source-file actions
-│  │  ├─ text_preview.cpp            # Read-only source preview and distance-boundary selection
-│  │  ├─ debug_headless.cpp/.h     # Debug-only headless validation entry points
-│  │  ├─ touch_input.cpp/.h         # Win32 touch gesture translation
-│  │  └─ kme.h                     # App declaration and shared GUI state
-│  ├─ table/
-│  │  ├─ datatable.cpp             # Data table columns, cache, and table windows
-│  │  └─ table_navigation.cpp      # Table-to-plan/3D marker navigation and visibility state
-│  ├─ canvas2d/
-│  │  ├─ canvas2D.cpp              # 2D plan canvas, markers, measurement, and background image
-│  │  └─ profile_plots.cpp         # Profile and curve-radius chart rendering
-│  ├─ canvas3d/
-│  │  └─ canvas3D.cpp              # DirectX 11 model/scene preview and scene-marker rendering
-│  ├─ maploader/
-│  │  ├─ maploader.cpp             # Public C ABI entry points and map handle lifecycle
-│  │  ├─ maploader_internal.h      # Shared maploader state, row records, source anchors, and helpers
-│  │  ├─ maploader_core.cpp        # Common parsing/value/source-span utilities and MapContext helpers
-│  │  ├─ maploader_parser.cpp      # BVE Map/list parsing, Include handling, variables, and source anchors
-│  │  ├─ maploader_geometry.cpp    # Own/other-track geometry, relocation, curves, and scene control points
-│  │  ├─ maploader_identity.cpp    # Stable edit identities and deterministic hashing
-│  │  ├─ maploader_snapshot.cpp    # Map/scene snapshot construction and revision invalidation
-│  │  ├─ maploader_semantic.cpp    # Typed semantic edit validation and fingerprints
-│  │  ├─ maploader_edits.cpp       # Edit dry-run, in-memory apply, source patching, and commit/writeback
-│  │  ├─ tests/                     # Typed snapshot/edit C ABI contract tests
-│  │  ├─ text_decoder.cpp/.h       # File reading, UTF-8 paths, and text decoding
-│  │  ├─ diagnostics.cpp/.h        # Loader logs and last-error state
-│  │  └─ c_api.cpp/.h              # C ABI allocation helpers
-│  └─ model_loader/
-│     └─ model_loader.cpp          # Assimp-based Structure model loading
-├─ tests/                           # Maploader diagnostic-test fixtures
-├─ third_party/
-│  ├─ imgui/                       # Dear ImGui, docking branch
-│  └─ implot/                      # ImPlot
-├─ build/                          # Debug: komapedit.exe, bin/ DLLs, settings/ INIs
-└─ build_release/                  # Release: komapedit.exe, bin/ DLLs, settings/ INIs
-```
-
-## Building From Source
-
-### Requirements
-
-- Windows
-- [CMake](https://cmake.org/) 3.20 or newer
-- [Ninja](https://github.com/ninja-build/ninja)
-- A C++17-capable compiler, such as MSVC or [MinGW](https://www.mingw-w64.org/)
-- Windows SDK / DirectX 11 / WIC development libraries
-- Git, used to fetch third-party dependencies
-- Assimp, discoverable by CMake as `assimp::assimp`
-
-CMake 3.21 or newer is recommended when Assimp is not supplied through vcpkg or
-an explicit prefix, because the generic runtime-DLL copy fallback requires it.
-
-### Fetch Third-Party Dependencies: `get_3rd_party_packages.bat`
-
-This script clones the following two projects. Make sure Git is installed first.
-
-- `third_party/imgui` -> the `docking` branch of `ocornut/imgui`
-- `third_party/implot` -> `epezent/implot`
-
-The cloned third-party source trees will be ignored by Git. Their upstream license
-files remain under `third_party/`; distribution notices are summarized in
-`THIRD_PARTY_NOTICES.md`.
-
-### Install Assimp: `install_Assimp.bat`
-
-Assimp is not vendored under `third_party/`. Install it separately before
-configuring the project. The provided build scripts automatically use vcpkg when
-`VCPKG_ROOT` is set; if `VCPKG_DEFAULT_TRIPLET` is not set, they default to
-`x64-mingw-dynamic`.
-
-`install_Assimp.bat` is a helper for installing `assimp:x64-mingw-dynamic` with
-vcpkg. It is hard-coded for that MinGW triplet; MSVC users should install the
-appropriate triplet, such as `assimp:x64-windows`, separately. Edit the script
-before using it and fill in the path to your local vcpkg directory.
-
-### Debug Build: `build_dev.bat`
-
-The output directory is `build`, using the same top-level executable, `bin` DLL,
-and `settings` INI layout described below for Release.
-
-### Release Build: `build_release.bat`
-
-The output directory is `build_release`. The main build products are:
-
-- `komapedit.exe`
-- `bin/maploader.dll`
-- `bin/model_loader.dll`
-- Assimp/runtime DLLs under `bin`, depending on the selected toolchain/package manager
-- `settings/`, initially empty until settings are written
-- `LICENSE`
-- `NOTICE`
-- `THIRD_PARTY_NOTICES.md`
-
-To clean the Release output for distribution, run
-`clear_build_release_dist.bat`. It keeps `komapedit.exe`, `bin` and its `.dll`
-files, the `settings` directory and its existing contents, plus `LICENSE`,
-`NOTICE`, and `THIRD_PARTY_NOTICES.md`.
-
-The build scripts create the `settings` directory, but `settings.ini`,
-`history.ini`, and `imgui.ini` are created or updated by the application while it
-runs and exits.
-
-### Debug Tests
-
-After a Debug build, run the registered CTest checks:
-
-```bat
-ctest --test-dir build --output-on-failure
-```
-
-The diagnostics contract requires the map fixtures under `tests/` to be present.
-That directory is currently excluded by the repository's ignore rules, so a clean
-checkout must provide the fixtures separately before this test can pass.
 
 ## Appendix: CSV Data Formats
 
