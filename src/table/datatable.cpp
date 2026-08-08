@@ -4064,7 +4064,9 @@ void App::render_sections_window() {
                                     const std::vector<CachedTableRow>& rows,
                                     size_t value_columns,
                                     const char* value_prefix,
-                                    bool has_markers) {
+                                    bool has_markers,
+                                    const std::vector<TableRow>* source_rows,
+                                    const char* row_kind) {
         ImGui::TextUnformatted(heading.c_str());
         const int column_count = static_cast<int>(3 + value_columns);
         if (!ImGui::BeginTable(
@@ -4101,11 +4103,16 @@ void App::render_sections_window() {
                 ImGui::TableSetColumnIndex(column);
                 const std::string& value = row.cells[static_cast<size_t>(column)];
                 if (column == 1) {
+                    const bool can_edit = edit_actions_available() &&
+                        source_rows && row_index < source_rows->size() &&
+                        !(*source_rows)[row_index].edit_id.empty();
                     const TextCellContextAction action =
                         render_marker_text_cell_with_context(
                             value, tr("menu.locate_on_plan"), true,
                             tr("menu.locate_in_scene_preview"),
-                            has_markers && can_locate_scene);
+                            has_markers && can_locate_scene,
+                            tr("dialog.element_properties"), can_edit,
+                            tr("button.delete"), can_edit);
                     if (action == TextCellContextAction::Primary) {
                         if (has_markers) {
                             locate_section_row_on_plan(row_index);
@@ -4116,6 +4123,12 @@ void App::render_sections_window() {
                     } else if (action == TextCellContextAction::Secondary) {
                         locate_scene_marker_row_in_scene_preview(
                             Canvas3DSceneMarkerListKind::Section, row_index);
+                    } else if (action == TextCellContextAction::Tertiary) {
+                        request_element_inspector(
+                            (*source_rows)[row_index].edit_id, row_kind);
+                    } else if (action == TextCellContextAction::Quaternary) {
+                        request_element_delete(
+                            (*source_rows)[row_index].edit_id, row_kind);
                     }
                 } else if (column == column_count - 1) {
                     render_file_path_cell_with_context(
@@ -4133,12 +4146,14 @@ void App::render_sections_window() {
     render_section_table(
         "section_begins", tr("frame.section_begins"),
         table_cache_.section_begin_rows,
-        table_cache_.section_begin_value_columns, "signal", true);
+        table_cache_.section_begin_value_columns, "signal", true,
+        &model_.section_begins, "section.begin");
     ImGui::Separator();
     render_section_table(
         "section_speed_limits", tr("frame.section_speed_limits"),
         table_cache_.section_speed_limit_rows,
-        table_cache_.section_speed_limit_value_columns, "v", false);
+        table_cache_.section_speed_limit_value_columns, "v", false,
+        &model_.section_speed_limits, "section.speedLimit");
     focus_sections_next_ = false;
     ImGui::End();
 }

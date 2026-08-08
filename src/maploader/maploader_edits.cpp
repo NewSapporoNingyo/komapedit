@@ -1186,6 +1186,50 @@ std::string build_speed_limit_statement(const MapEditChange& change,
         change, "speed", row.speed, raw_arg_at(args, 0)) + ");";
 }
 
+std::string build_section_statement(const MapEditChange& change,
+                                    const ParsedStatement& statement,
+                                    const std::string& method) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    validate_section_edit_fields(change);
+    const SectionValuesEdit values = parse_section_values_edit(change);
+    if (!values.changed) {
+        throw std::runtime_error(
+            "Section statement change requires at least one parameter field");
+    }
+    std::string arguments;
+    if (values.has_count) {
+        for (size_t index = 0; index < values.values.size(); ++index) {
+            if (index) arguments += ",";
+            arguments += normalized_number_arg(values.values[index]);
+        }
+    } else {
+        const std::vector<std::string> raw_args =
+            parse_bve_argument_fields(statement.raw_arguments);
+        for (size_t index = 0; index < raw_args.size(); ++index) {
+            if (index) arguments += ",";
+            const auto edited = values.index_values.find(index);
+            if (edited != values.index_values.end()) {
+                arguments += normalized_number_arg(edited->second);
+            } else {
+                arguments += trim_field_copy(raw_args[index]);
+            }
+        }
+    }
+    return method + "(" + arguments + ");";
+}
+
+std::string build_section_begin_statement(const MapEditChange& change,
+                                          const ParsedStatement& statement,
+                                          const SectionBegin& row) {
+    return build_section_statement(change, statement, row.method);
+}
+
+std::string build_section_speed_limit_statement(const MapEditChange& change,
+                                                const ParsedStatement& statement,
+                                                const SectionSpeedLimit& row) {
+    return build_section_statement(change, statement, row.method);
+}
+
 std::string build_curve_statement(const MapEditChange& change,
                                   const ParsedStatement& statement,
                                   const CurveEditRow& row) {
@@ -1660,6 +1704,11 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
     }
     if (find_simple_target<decltype(ctx.beacons), build_beacon_statement>(
             ctx, ctx.beacons, "beacon.put", edit_id, target) ||
+        find_simple_target<decltype(ctx.section_begins), build_section_begin_statement>(
+            ctx, ctx.section_begins, "section.begin", edit_id, target) ||
+        find_simple_target<decltype(ctx.section_speed_limits),
+                           build_section_speed_limit_statement>(
+            ctx, ctx.section_speed_limits, "section.speedLimit", edit_id, target) ||
         find_simple_target<decltype(ctx.map_sounds), build_map_sound_statement>(
             ctx, ctx.map_sounds, "mapSound.play", edit_id, target) ||
         find_simple_target<decltype(ctx.map_sound_3d), build_map_sound_3d_statement>(
@@ -3141,6 +3190,8 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->repeaters, "repeater");
         collect_candidate_rows(candidate->irregularities, "irregularity.change");
         collect_candidate_rows(candidate->beacons, "beacon.put");
+        collect_candidate_rows(candidate->section_begins, "section.begin");
+        collect_candidate_rows(candidate->section_speed_limits, "section.speedLimit");
         collect_candidate_rows(candidate->map_sounds, "mapSound.play");
         collect_candidate_rows(candidate->map_sound_3d, "mapSound3D.put");
         collect_candidate_rows(candidate->rolling_noises, "rollingNoise.change");
@@ -4626,6 +4677,8 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "repeater", ctx.repeaters);
     append_committed_rows(ctx, report, "irregularity.change", ctx.irregularities);
     append_committed_rows(ctx, report, "beacon.put", ctx.beacons);
+    append_committed_rows(ctx, report, "section.begin", ctx.section_begins);
+    append_committed_rows(ctx, report, "section.speedLimit", ctx.section_speed_limits);
     append_committed_rows(ctx, report, "mapSound.play", ctx.map_sounds);
     append_committed_rows(ctx, report, "mapSound3D.put", ctx.map_sound_3d);
     append_committed_rows(ctx, report, "rollingNoise.change", ctx.rolling_noises);

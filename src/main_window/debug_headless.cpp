@@ -656,6 +656,38 @@ HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
     return options;
 }
 
+HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
+    const std::vector<std::string>& args) {
+    static constexpr const char* k_default_map_path =
+        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
+        "Config_Map121M-ATSP+Ps_Ask.txt";
+    HeadlessSectionEditBatchOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-section-edit-batch") {
+            options.requested = true;
+            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
+                options.path = args[++i];
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (options.requested && options.path.empty()) options.path = k_default_map_path;
+    return options;
+}
+
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args) {
     HeadlessTableFindOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
@@ -5100,6 +5132,502 @@ int run_debug_headless_repeater_edit_batch(const HeadlessRepeaterEditBatchOption
                 throw std::runtime_error(commit_report.blocking_errors.empty()
                     ? "Repeater commit validation failed"
                     : commit_report.blocking_errors.front());
+            }
+        }
+    } catch (const std::exception& e) {
+        facts.error = e.what();
+    }
+
+    write_batch_result(*out, facts);
+    out->flush();
+    return facts.passed() ? 0 : 20;
+}
+
+namespace section_edit_batch_headless {
+
+using EditChange = typed_edit_headless::Change;
+using EditField = typed_edit_headless::Field;
+using EditReport = typed_edit_headless::Report;
+using MapHandle = distance_batch_headless::MapHandle;
+
+struct SectionRowEdit {
+    std::string edit_id;
+    std::string row_kind;
+    std::string source_file;
+    std::string expected_source_hash;
+    int source_line = 0;
+    std::vector<std::string> raw_args;
+    std::vector<double> values;
+    double distance = 0.0;
+};
+
+struct BatchRunFacts {
+    std::string path;
+    bool commit_requested = false;
+    size_t section_row_count = 0;
+    size_t selected_value_count = 0;
+    bool single_value_edit_ok = false;
+    bool raw_argument_preserved = false;
+    bool count_reduction_ok = false;
+    bool count_increase_ok = false;
+    bool delete_ok = false;
+    bool reset_ok = false;
+    bool snapshot_restored = false;
+    bool commit_attempted = false;
+    bool commit_ok = false;
+    size_t commit_changed_file_count = 0;
+    bool committed_value_written = false;
+    bool committed_raw_preserved = false;
+    std::string selected_edit_id;
+    std::string selected_row_kind;
+    std::string selected_source_file;
+    int selected_source_line = 0;
+    std::string error;
+
+    bool passed() const {
+        return error.empty() && section_row_count >= 1 && selected_value_count >= 2 &&
+            single_value_edit_ok && raw_argument_preserved && count_reduction_ok &&
+            count_increase_ok && delete_ok && reset_ok && snapshot_restored &&
+            (!commit_requested || (commit_attempted && commit_ok &&
+                                   committed_value_written && committed_raw_preserved));
+    }
+};
+
+std::vector<std::string> split_arguments(const std::string& raw) {
+    std::vector<std::string> args;
+    size_t begin = 0;
+    for (size_t index = 0; index <= raw.size(); ++index) {
+        if (index != raw.size() && raw[index] != ',') continue;
+        std::string field = raw.substr(begin, index - begin);
+        const size_t start = field.find_first_not_of(" \t");
+        const size_t end = field.find_last_not_of(" \t");
+        args.push_back(start == std::string::npos
+                           ? std::string{}
+                           : field.substr(start, end - start + 1));
+        begin = index + 1;
+    }
+    return args;
+}
+
+bool is_numeric_argument(const std::string& text) {
+    if (text.empty()) return false;
+    char* end = nullptr;
+    std::strtod(text.c_str(), &end);
+    return end && *end == '\0';
+}
+
+std::vector<SectionRowEdit> collect_section_rows(void* handle) {
+    const KvMapSnapshot snapshot = distance_batch_headless::current_map_snapshot(handle);
+    std::vector<SectionRowEdit> result;
+    auto collect = [&](const KvSectionRow* rows, std::uint64_t count,
+                       const char* row_kind) {
+        if (count != 0 && !rows) {
+            throw std::runtime_error(std::string("typed map snapshot has null ") +
+                                     row_kind + " array");
+        }
+        for (std::uint64_t index = 0; index < count; ++index) {
+            const KvSectionRow& row = rows[index];
+            SectionRowEdit edit;
+            edit.edit_id = distance_batch_headless::snapshot_text(
+                snapshot, row.metadata.edit_id);
+            edit.row_kind = row_kind;
+            edit.source_line = row.metadata.line;
+            edit.distance = row.distance;
+            if (edit.edit_id.empty()) continue;
+            if (row.values.offset > snapshot.value_count ||
+                row.values.count > snapshot.value_count - row.values.offset ||
+                (row.values.count != 0 && !snapshot.values)) {
+                throw std::runtime_error("typed map snapshot Section value span is out of range");
+            }
+            for (std::uint64_t value_index = 0; value_index < row.values.count;
+                 ++value_index) {
+                const KvValue& value = snapshot.values[row.values.offset + value_index];
+                edit.values.push_back(value.kind == KV_VALUE_NUMBER
+                    ? value.number_value
+                    : std::numeric_limits<double>::quiet_NaN());
+            }
+            std::string metadata_error;
+            const std::optional<InspectorTargetMetadata> info =
+                resolve_inspector_target_metadata(handle, edit.edit_id, row_kind,
+                                                  &metadata_error);
+            if (!info || info->expected_source_hash.empty()) continue;
+            edit.expected_source_hash = info->expected_source_hash;
+            edit.source_file = info->source.file_path;
+            edit.raw_args = split_arguments(info->raw_arguments);
+            result.push_back(std::move(edit));
+        }
+    };
+    collect(snapshot.section_begins, snapshot.section_begin_count, "section.begin");
+    collect(snapshot.section_speed_limits, snapshot.section_speed_limit_count,
+            "section.speedLimit");
+    std::stable_sort(result.begin(), result.end(), [](const SectionRowEdit& left,
+                                                      const SectionRowEdit& right) {
+        if (left.distance != right.distance) return left.distance < right.distance;
+        if (left.row_kind != right.row_kind) return left.row_kind < right.row_kind;
+        if (left.source_file != right.source_file) {
+            return left.source_file < right.source_file;
+        }
+        return left.source_line < right.source_line;
+    });
+    return result;
+}
+
+EditChange single_value_change(const SectionRowEdit& edit, size_t index,
+                               double new_value, const std::string& change_id) {
+    return typed_edit_headless::update(
+        change_id, edit.edit_id, edit.expected_source_hash,
+        {{"values." + std::to_string(index),
+          distance_batch_headless::edit_number(new_value)}});
+}
+
+EditChange count_change(const SectionRowEdit& edit,
+                        const std::vector<double>& values,
+                        const std::string& change_id) {
+    std::vector<EditField> fields;
+    fields.reserve(values.size() + 1);
+    fields.push_back({"values.count", std::to_string(values.size())});
+    for (size_t index = 0; index < values.size(); ++index) {
+        fields.push_back({"values." + std::to_string(index),
+                          distance_batch_headless::edit_number(values[index])});
+    }
+    return typed_edit_headless::update(change_id, edit.edit_id,
+                                       edit.expected_source_hash,
+                                       std::move(fields));
+}
+
+EditChange delete_change(const SectionRowEdit& edit, const std::string& change_id) {
+    EditChange change;
+    change.change_id = change_id;
+    change.edit_id = edit.edit_id;
+    change.operation = KV_EDIT_DELETE;
+    change.expected_source_hash = edit.expected_source_hash;
+    return change;
+}
+
+bool update_report_ok(const EditReport& report, int expected_updates) {
+    return report.ok && report.full_reparse_ok && report.resolution_requests.empty() &&
+        report.update_count == expected_updates && report.delete_count == 0 &&
+        report.non_target_changed_count == 0 && report.target_distance_match_count == 0;
+}
+
+bool delete_report_ok(const EditReport& report) {
+    return report.ok && report.full_reparse_ok && report.resolution_requests.empty() &&
+        report.update_count == 0 && report.delete_count == 1 &&
+        report.non_target_changed_count == 0 && report.target_distance_match_count == 0;
+}
+
+struct SnapshotSectionValues {
+    bool found = false;
+    size_t value_count = 0;
+    std::vector<double> values;
+};
+
+SnapshotSectionValues snapshot_section_row(void* handle, const std::string& edit_id) {
+    const KvMapSnapshot snapshot = distance_batch_headless::current_map_snapshot(handle);
+    SnapshotSectionValues out;
+    auto scan = [&](const KvSectionRow* rows, std::uint64_t count) {
+        if (out.found) return;
+        if (count != 0 && !rows) {
+            throw std::runtime_error("typed map snapshot has null Section array");
+        }
+        for (std::uint64_t index = 0; index < count; ++index) {
+            if (distance_batch_headless::snapshot_text(
+                    snapshot, rows[index].metadata.edit_id) != edit_id) {
+                continue;
+            }
+            if (rows[index].values.offset > snapshot.value_count ||
+                rows[index].values.count > snapshot.value_count - rows[index].values.offset ||
+                (rows[index].values.count != 0 && !snapshot.values)) {
+                throw std::runtime_error(
+                    "typed map snapshot Section value span is out of range");
+            }
+            out.found = true;
+            out.value_count = static_cast<size_t>(rows[index].values.count);
+            out.values.reserve(out.value_count);
+            for (std::uint64_t value_index = 0; value_index < rows[index].values.count;
+                 ++value_index) {
+                const KvValue& value =
+                    snapshot.values[rows[index].values.offset + value_index];
+                out.values.push_back(value.kind == KV_VALUE_NUMBER
+                    ? value.number_value
+                    : std::numeric_limits<double>::quiet_NaN());
+            }
+            return;
+        }
+    };
+    scan(snapshot.section_begins, snapshot.section_begin_count);
+    scan(snapshot.section_speed_limits, snapshot.section_speed_limit_count);
+    return out;
+}
+
+bool values_match(const std::vector<double>& expected,
+                  const std::vector<double>& actual) {
+    if (expected.size() != actual.size()) return false;
+    for (size_t index = 0; index < expected.size(); ++index) {
+        if (std::isnan(expected[index]) || std::isnan(actual[index])) {
+            if (!std::isnan(expected[index]) || !std::isnan(actual[index])) return false;
+            continue;
+        }
+        if (std::fabs(expected[index] - actual[index]) > 1e-9) return false;
+    }
+    return true;
+}
+
+void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
+    auto boolean = [](bool value) { return value ? 1 : 0; };
+    out << "command=debug-headless-section-edit-batch\n"
+        << "path=" << facts.path << "\n"
+        << "commit_requested=" << boolean(facts.commit_requested) << "\n"
+        << "section_row_count=" << facts.section_row_count << "\n"
+        << "selected_edit_id=" << facts.selected_edit_id << "\n"
+        << "selected_row_kind=" << facts.selected_row_kind << "\n"
+        << "selected_source_file=" << facts.selected_source_file << "\n"
+        << "selected_source_line=" << facts.selected_source_line << "\n"
+        << "selected_value_count=" << facts.selected_value_count << "\n"
+        << "single_value_edit_ok=" << boolean(facts.single_value_edit_ok) << "\n"
+        << "raw_argument_preserved=" << boolean(facts.raw_argument_preserved) << "\n"
+        << "count_reduction_ok=" << boolean(facts.count_reduction_ok) << "\n"
+        << "count_increase_ok=" << boolean(facts.count_increase_ok) << "\n"
+        << "delete_ok=" << boolean(facts.delete_ok) << "\n"
+        << "reset_ok=" << boolean(facts.reset_ok) << "\n"
+        << "snapshot_restored=" << boolean(facts.snapshot_restored) << "\n"
+        << "commit_attempted=" << boolean(facts.commit_attempted) << "\n"
+        << "commit_ok=" << boolean(facts.commit_ok) << "\n"
+        << "commit_changed_file_count=" << facts.commit_changed_file_count << "\n"
+        << "committed_value_written=" << boolean(facts.committed_value_written) << "\n"
+        << "committed_raw_preserved=" << boolean(facts.committed_raw_preserved) << "\n"
+        << "error=" << facts.error << "\n"
+        << "result=" << (facts.passed() ? "PASS" : "FAIL") << "\n";
+}
+
+} // namespace section_edit_batch_headless
+
+int run_debug_headless_section_edit_batch(const HeadlessSectionEditBatchOptions& options) {
+    using namespace section_edit_batch_headless;
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: "
+                      << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    BatchRunFacts facts;
+    facts.path = options.path;
+    facts.commit_requested = options.commit;
+    try {
+        MapHandle handle;
+        handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "real map load failed");
+        }
+
+        const std::vector<SectionRowEdit> rows = collect_section_rows(handle.value);
+        if (rows.empty()) {
+            throw std::runtime_error(
+                "real map has no editable Section statements");
+        }
+        facts.section_row_count = rows.size();
+        const std::string original_fingerprint =
+            distance_batch_headless::source_snapshot_fingerprint(handle.value);
+        const SectionRowEdit& edit = rows.front();
+        facts.selected_edit_id = edit.edit_id;
+        facts.selected_row_kind = edit.row_kind;
+        facts.selected_source_file = edit.source_file;
+        facts.selected_source_line = edit.source_line;
+        facts.selected_value_count = edit.values.size();
+        if (edit.values.size() < 2 || edit.source_file.empty()) {
+            throw std::runtime_error(
+                "selected Section row must have at least two parameters in a known source file");
+        }
+        const std::string baseline_bytes = distance_batch_headless::read_fixture_file(
+            utf8_to_wide(edit.source_file));
+        const std::string expression_argument = [&]() {
+            for (const std::string& arg : edit.raw_args) {
+                if (!is_numeric_argument(arg)) return arg;
+            }
+            return std::string{};
+        }();
+
+        const double original_first = std::isfinite(edit.values[0])
+            ? edit.values[0] : 1.0;
+        const double edited_first = original_first + 1.0;
+        const std::vector<EditChange> single_change = {
+            single_value_change(edit, 0, edited_first,
+                                "headless-section-single-value")};
+        const EditReport single_dry = typed_edit_headless::dry_run(handle.value, single_change);
+        facts.single_value_edit_ok = update_report_ok(single_dry, 1);
+        if (!facts.single_value_edit_ok) {
+            throw std::runtime_error(single_dry.blocking_errors.empty()
+                ? "Section single-value dry-run assertions failed"
+                : single_dry.blocking_errors.front());
+        }
+        facts.raw_argument_preserved = expression_argument.empty() ||
+            std::any_of(single_dry.previews.begin(), single_dry.previews.end(),
+                        [&](const std::string& preview) {
+                            return preview.find(expression_argument) != std::string::npos;
+                        });
+        const EditReport single_applied =
+            typed_edit_headless::apply_to_memory(handle.value, single_change);
+        if (!update_report_ok(single_applied, 1)) {
+            throw std::runtime_error(single_applied.blocking_errors.empty()
+                ? "Section single-value apply-to-memory assertions failed"
+                : single_applied.blocking_errors.front());
+        }
+        {
+            const SnapshotSectionValues current =
+                snapshot_section_row(handle.value, edit.edit_id);
+            std::vector<double> expected = edit.values;
+            expected[0] = edited_first;
+            if (!current.found || current.value_count != edit.values.size() ||
+                !values_match(expected, current.values)) {
+                throw std::runtime_error(
+                    "Section single-value snapshot assertion failed");
+            }
+        }
+        if (!kv_edit_reset_memory(handle.value)) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "kv_edit_reset_memory failed");
+        }
+
+        const std::vector<double> reduced(edit.values.begin(),
+                                          edit.values.end() - 1);
+        const std::vector<EditChange> reduce_change = {
+            count_change(edit, reduced, "headless-section-count-reduce")};
+        const EditReport reduce_dry = typed_edit_headless::dry_run(handle.value, reduce_change);
+        facts.count_reduction_ok = update_report_ok(reduce_dry, 1);
+        if (!facts.count_reduction_ok) {
+            throw std::runtime_error(reduce_dry.blocking_errors.empty()
+                ? "Section count-reduction dry-run assertions failed"
+                : reduce_dry.blocking_errors.front());
+        }
+        const EditReport reduce_applied =
+            typed_edit_headless::apply_to_memory(handle.value, reduce_change);
+        if (!update_report_ok(reduce_applied, 1)) {
+            throw std::runtime_error(reduce_applied.blocking_errors.empty()
+                ? "Section count-reduction apply-to-memory assertions failed"
+                : reduce_applied.blocking_errors.front());
+        }
+        {
+            const SnapshotSectionValues current =
+                snapshot_section_row(handle.value, edit.edit_id);
+            if (!current.found || current.value_count != reduced.size() ||
+                !values_match(reduced, current.values)) {
+                throw std::runtime_error(
+                    "Section count-reduction snapshot assertion failed");
+            }
+        }
+        if (!kv_edit_reset_memory(handle.value)) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "kv_edit_reset_memory failed");
+        }
+
+        std::vector<double> increased = edit.values;
+        increased.push_back(30.0);
+        const std::vector<EditChange> increase_change = {
+            count_change(edit, increased, "headless-section-count-increase")};
+        const EditReport increase_dry = typed_edit_headless::dry_run(handle.value, increase_change);
+        facts.count_increase_ok = update_report_ok(increase_dry, 1);
+        if (!facts.count_increase_ok) {
+            throw std::runtime_error(increase_dry.blocking_errors.empty()
+                ? "Section count-increase dry-run assertions failed"
+                : increase_dry.blocking_errors.front());
+        }
+        const EditReport increase_applied =
+            typed_edit_headless::apply_to_memory(handle.value, increase_change);
+        if (!update_report_ok(increase_applied, 1)) {
+            throw std::runtime_error(increase_applied.blocking_errors.empty()
+                ? "Section count-increase apply-to-memory assertions failed"
+                : increase_applied.blocking_errors.front());
+        }
+        {
+            const SnapshotSectionValues current =
+                snapshot_section_row(handle.value, edit.edit_id);
+            if (!current.found || current.value_count != increased.size() ||
+                !values_match(increased, current.values)) {
+                throw std::runtime_error(
+                    "Section count-increase snapshot assertion failed");
+            }
+        }
+        if (!kv_edit_reset_memory(handle.value)) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "kv_edit_reset_memory failed");
+        }
+
+        const std::vector<EditChange> delete_changes = {
+            delete_change(edit, "headless-section-delete")};
+        const EditReport delete_dry = typed_edit_headless::dry_run(handle.value, delete_changes);
+        facts.delete_ok = delete_report_ok(delete_dry);
+        if (!facts.delete_ok) {
+            throw std::runtime_error(delete_dry.blocking_errors.empty()
+                ? "Section delete dry-run assertions failed"
+                : delete_dry.blocking_errors.front());
+        }
+        const EditReport delete_applied =
+            typed_edit_headless::apply_to_memory(handle.value, delete_changes);
+        if (!delete_report_ok(delete_applied)) {
+            throw std::runtime_error(delete_applied.blocking_errors.empty()
+                ? "Section delete apply-to-memory assertions failed"
+                : delete_applied.blocking_errors.front());
+        }
+        if (snapshot_section_row(handle.value, edit.edit_id).found) {
+            throw std::runtime_error(
+                "Section delete snapshot still contains the deleted row");
+        }
+
+        const std::string initial_fingerprint =
+            distance_batch_headless::source_snapshot_fingerprint(handle.value);
+        facts.reset_ok = kv_edit_reset_memory(handle.value) != 0;
+        if (!facts.reset_ok) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "kv_edit_reset_memory failed");
+        }
+        facts.snapshot_restored =
+            distance_batch_headless::source_snapshot_fingerprint(handle.value) ==
+            original_fingerprint && initial_fingerprint != original_fingerprint;
+        if (!facts.snapshot_restored) {
+            throw std::runtime_error(
+                "Section reset did not restore the baseline working copy");
+        }
+
+        if (options.commit) {
+            facts.commit_attempted = true;
+            const EditReport commit_apply =
+                typed_edit_headless::apply_to_memory(handle.value, single_change);
+            if (!update_report_ok(commit_apply, 1)) {
+                throw std::runtime_error(commit_apply.blocking_errors.empty()
+                    ? "Section pre-commit apply-to-memory assertions failed"
+                    : commit_apply.blocking_errors.front());
+            }
+            const EditReport commit_report = typed_edit_headless::commit(handle.value);
+            facts.commit_ok = commit_report.ok && commit_report.full_reparse_ok;
+            facts.commit_changed_file_count = commit_report.changed_files.size();
+            if (!facts.commit_ok) {
+                throw std::runtime_error(commit_report.blocking_errors.empty()
+                    ? "Section commit validation failed"
+                    : commit_report.blocking_errors.front());
+            }
+            const SnapshotSectionValues committed =
+                snapshot_section_row(handle.value, edit.edit_id);
+            std::vector<double> expected = edit.values;
+            expected[0] = edited_first;
+            const std::string committed_bytes = distance_batch_headless::read_fixture_file(
+                utf8_to_wide(edit.source_file));
+            facts.committed_value_written =
+                committed.found && values_match(expected, committed.values) &&
+                committed_bytes != baseline_bytes;
+            facts.committed_raw_preserved = expression_argument.empty() ||
+                committed_bytes.find(expression_argument) != std::string::npos;
+            if (!facts.committed_value_written || !facts.committed_raw_preserved) {
+                throw std::runtime_error(
+                    "Section commit did not write the expected source change");
             }
         }
     } catch (const std::exception& e) {

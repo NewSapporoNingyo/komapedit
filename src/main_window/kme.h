@@ -1225,6 +1225,7 @@ struct MapElementInspectorState {
     std::vector<MapElementEditFieldState> fields;
     std::vector<std::string> owned_edit_ids;
     std::vector<std::string> repeater_structure_keys_original;
+    std::vector<std::string> section_values_original;
     MapElementInspectorSessionState session;
 };
 

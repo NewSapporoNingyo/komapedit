@@ -461,6 +461,42 @@ void write_speed_limit(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_section_row(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                       const KvSectionRow& row, const char* values_name,
+                       const MapEditChange* change = nullptr) {
+    field(out, "distance", changed_number(change, "distance", row.distance));
+    const SectionValuesEdit values = change
+        ? parse_section_values_edit(*change)
+        : SectionValuesEdit{};
+    if (!values.changed) {
+        value_span(out, snapshot, values_name, row.values);
+    } else if (values.has_count) {
+        out.label(values_name);
+        out.signed_integer(static_cast<std::int64_t>(values.values.size()));
+        for (const std::string& value : values.values) {
+            out.value(Value::num(parse_changed_number(value, values_name)));
+        }
+    } else {
+        if (!span_valid(row.values, snapshot.value_count) ||
+            (row.values.count != 0 && !snapshot.values)) {
+            throw std::runtime_error(
+                "typed snapshot Section value span is out of bounds");
+        }
+        out.label(values_name);
+        out.signed_integer(static_cast<std::int64_t>(row.values.count));
+        for (std::uint64_t index = 0; index < row.values.count; ++index) {
+            const auto edited = values.index_values.find(static_cast<size_t>(index));
+            if (edited != values.index_values.end()) {
+                out.value(Value::num(
+                    parse_changed_number(edited->second, values_name)));
+            } else {
+                out.value(snapshot, snapshot.values[row.values.offset + index]);
+            }
+        }
+    }
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_curve(SemanticWriter& out, const KvMapSnapshot& snapshot,
                  const KvCurveRow& row,
                  const MapEditChange* change = nullptr) {
@@ -688,6 +724,10 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "value"};
     } else if (target.row_kind == "speedlimit") {
         allowed = {"distance", "speed"};
+    } else if (target.row_kind == "section.begin" ||
+               target.row_kind == "section.speedLimit") {
+        validate_section_edit_fields(change);
+        return;
     } else if (target.row_kind == "curve") {
         allowed = {"distance", "radius", "cant"};
     } else if (target.row_kind == "gradient") {
@@ -1295,6 +1335,18 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("speedlimit target row is out of bounds");
         }
         write_speed_limit(out, snapshot, snapshot.speed_limits[target.row_index], &change);
+    } else if (target.row_kind == "section.begin" ||
+               target.row_kind == "section.speedLimit") {
+        const bool begins = target.row_kind == "section.begin";
+        const KvSectionRow* rows = begins
+            ? snapshot.section_begins : snapshot.section_speed_limits;
+        const std::uint64_t count = begins
+            ? snapshot.section_begin_count : snapshot.section_speed_limit_count;
+        if (target.row_index >= count || !rows) {
+            throw std::runtime_error(target.row_kind + " target row is out of bounds");
+        }
+        write_section_row(out, snapshot, rows[target.row_index],
+                          begins ? "signalIndices" : "speeds", &change);
     } else if (target.row_kind == "station.list") {
         if (target.row_index >= snapshot.station_list_count || !snapshot.station_list) {
             throw std::runtime_error("station.list target row is out of bounds");

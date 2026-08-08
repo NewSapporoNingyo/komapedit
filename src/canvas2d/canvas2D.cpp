@@ -3477,6 +3477,19 @@ void App::render_plan_canvas(ImVec2 size) {
                 static_cast<size_t>(plan_section_popup_row_));
         }
         ImGui::EndDisabled();
+        const PlanMarker* marker = can_locate &&
+            section_marker_cache_[static_cast<size_t>(plan_section_popup_row_)].has_value()
+                ? &*section_marker_cache_[static_cast<size_t>(plan_section_popup_row_)]
+                : nullptr;
+        const bool can_edit = edit_actions_available() && marker && !marker->edit_id.empty();
+        ImGui::BeginDisabled(!can_edit);
+        if (ImGui::MenuItem(tr("dialog.element_properties").c_str()) && marker) {
+            request_element_inspector(marker->edit_id, "section.begin");
+        }
+        if (ImGui::MenuItem(tr("button.delete").c_str()) && marker) {
+            request_element_delete(marker->edit_id, "section.begin");
+        }
+        ImGui::EndDisabled();
         ImGui::EndPopup();
     }
     auto render_table_marker_context = [&](const char* popup_id, int popup_row,

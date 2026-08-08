@@ -1816,7 +1816,7 @@ private:
             row.signal_indices = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_noneditable_ref(ctx_, row);
+            attach_active_edit_ref(ctx_, row);
             ctx_.section_begins.push_back(std::move(row));
         } else if (fn == "setspeedlimit") {
             note_distance_use(ctx_);
@@ -1826,7 +1826,7 @@ private:
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_noneditable_ref(ctx_, row);
+            attach_active_edit_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
         }
     }
@@ -1850,7 +1850,7 @@ private:
             row.speeds = a;
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
-            attach_active_noneditable_ref(ctx_, row);
+            attach_active_edit_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
         } else if (fn == "put" && has_signal_key && a.size() >= 4) {
             note_distance_use(ctx_);

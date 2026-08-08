@@ -1290,6 +1290,133 @@ inline void validate_repeater_edit_fields(const MapEditChange& change) {
     (void)parse_repeater_structure_key_edit(change);
 }
 
+// Section.Begin / Section.BeginNew / Section.SetSpeedLimit / Signal.SpeedLimit
+// parameters are a variable-length list in the snapshot but individual typed
+// fields in the edit ABI. Keeping the validation and decoding here prevents the
+// source writer and semantic validator from drifting apart, mirroring the
+// Repeater structure-key pattern. At least one numeric parameter is required
+// because the parser rejects zero-argument Section statements.
+//
+// A values.count edit replaces the whole list (add/remove/reorder); a change
+// without values.count edits individual indices only and keeps the remaining
+// source argument text untouched (expressions such as $Variable survive).
+struct SectionValuesEdit {
+    bool changed = false;
+    bool has_count = false;
+    std::vector<std::string> values;
+    std::map<size_t, std::string> index_values;
+};
+
+inline bool is_section_values_edit_field(const std::string& field) {
+    return field == "values.count" ||
+           (field.size() > 7 && field.compare(0, 7, "values.") == 0);
+}
+
+inline bool is_section_edit_field(const std::string& field) {
+    return field == "distance" || is_section_values_edit_field(field);
+}
+
+inline size_t section_values_index(const std::string& field) {
+    constexpr size_t k_prefix_size = 7;
+    if (field.size() <= k_prefix_size ||
+        field.compare(0, k_prefix_size, "values.") != 0) {
+        throw std::runtime_error("invalid Section values field: " + field);
+    }
+    size_t result = 0;
+    for (size_t pos = k_prefix_size; pos < field.size(); ++pos) {
+        const unsigned char ch = static_cast<unsigned char>(field[pos]);
+        if (!std::isdigit(ch) ||
+            result > (std::numeric_limits<size_t>::max() - 9) / 10) {
+            throw std::runtime_error("invalid Section values field: " + field);
+        }
+        result = result * 10 + static_cast<size_t>(ch - '0');
+    }
+    return result;
+}
+
+inline std::string validated_section_value(const std::string& field,
+                                           const std::string& raw) {
+    const std::string value = trim_field_copy(raw);
+    if (value.empty()) {
+        throw std::runtime_error("Section parameter is empty: " + field);
+    }
+    double number = 0.0;
+    if (!parse_finite_number(value, number)) {
+        throw std::runtime_error("invalid Section parameter: " + field);
+    }
+    return value;
+}
+
+inline SectionValuesEdit parse_section_values_edit(const MapEditChange& change) {
+    SectionValuesEdit result;
+    const auto count_it = change.field_changes.find("values.count");
+    bool has_indexed_field = false;
+    for (const auto& entry : change.field_changes) {
+        if (entry.first == "values.count") continue;
+        if (!is_section_values_edit_field(entry.first)) continue;
+        has_indexed_field = true;
+        (void)section_values_index(entry.first);
+    }
+    if (count_it == change.field_changes.end() && !has_indexed_field) return result;
+    result.changed = true;
+    if (count_it == change.field_changes.end()) {
+        for (const auto& entry : change.field_changes) {
+            if (entry.first == "values.count") continue;
+            if (!is_section_values_edit_field(entry.first)) continue;
+            result.index_values.emplace(
+                section_values_index(entry.first),
+                validated_section_value(entry.first, entry.second));
+        }
+        return result;
+    }
+
+    const std::string count_text = trim_field_copy(count_it->second);
+    if (count_text.empty()) {
+        throw std::runtime_error("Section values.count is empty");
+    }
+    size_t count = 0;
+    for (char raw : count_text) {
+        const unsigned char ch = static_cast<unsigned char>(raw);
+        if (!std::isdigit(ch) ||
+            count > (std::numeric_limits<size_t>::max() - 9) / 10) {
+            throw std::runtime_error("invalid Section values.count: " + count_text);
+        }
+        count = count * 10 + static_cast<size_t>(ch - '0');
+    }
+    if (count == 0) {
+        throw std::runtime_error("Section requires at least one parameter");
+    }
+
+    result.has_count = true;
+    result.values.reserve(count);
+    for (size_t index = 0; index < count; ++index) {
+        const std::string field = "values." + std::to_string(index);
+        const auto value_it = change.field_changes.find(field);
+        if (value_it == change.field_changes.end()) {
+            throw std::runtime_error("missing Section values field: " + field);
+        }
+        result.values.push_back(validated_section_value(field, value_it->second));
+    }
+    for (const auto& entry : change.field_changes) {
+        if (entry.first == "values.count") continue;
+        if (!is_section_values_edit_field(entry.first)) continue;
+        if (section_values_index(entry.first) >= count) {
+            throw std::runtime_error("Section values index is out of range: " +
+                                     entry.first);
+        }
+    }
+    return result;
+}
+
+inline void validate_section_edit_fields(const MapEditChange& change) {
+    for (const auto& entry : change.field_changes) {
+        if (!is_section_edit_field(entry.first)) {
+            throw std::runtime_error("unsupported Section edit field: " + entry.first);
+        }
+    }
+    (void)parse_section_values_edit(change);
+}
+
 struct SemanticElementSnapshot {
     std::string edit_id;
     std::string row_kind;

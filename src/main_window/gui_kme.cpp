@@ -1892,7 +1892,11 @@ bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edi
         table_row_count_matches("drawDistance.change", current.draw_distances,
                                 edit_model.draw_distances, error) &&
         table_row_count_matches("speedlimit", current.speed_limit_rows,
-                                edit_model.speed_limit_rows, error);
+                                edit_model.speed_limit_rows, error) &&
+        table_row_count_matches("section.begin", current.section_begins,
+                                edit_model.section_begins, error) &&
+        table_row_count_matches("section.speedLimit", current.section_speed_limits,
+                                edit_model.section_speed_limits, error);
 }
 
 void merge_table_row_edit_metadata(std::vector<TableRow>& current,
@@ -1942,6 +1946,9 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     merge_table_row_edit_metadata(current.draw_distances, edit_model.draw_distances);
     merge_table_row_edit_metadata(current.speed_limit_rows,
                                   edit_model.speed_limit_rows);
+    merge_table_row_edit_metadata(current.section_begins, edit_model.section_begins);
+    merge_table_row_edit_metadata(current.section_speed_limits,
+                                  edit_model.section_speed_limits);
     bind_station_position_edit_ids(current);
 }
 
@@ -2168,6 +2175,8 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "fog.change") return &model.fogs;
     if (row_kind == "drawDistance.change") return &model.draw_distances;
     if (row_kind == "speedlimit") return &model.speed_limit_rows;
+    if (row_kind == "section.begin") return &model.section_begins;
+    if (row_kind == "section.speedLimit") return &model.section_speed_limits;
     if (row_kind == "curve") return &model.curve_rows;
     if (row_kind == "gradient") return &model.gradient_rows;
     if (row_kind == "otherTrack.change") return &model.other_track_changes;
@@ -2424,12 +2433,13 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     }
     Canvas3DSceneMapRefreshOptions map_refresh;
     map_refresh.route_stations = row_kind == "station.put" || row_kind == "station.list";
-    static constexpr std::array<const char*, 18> k_marker_row_kinds = {
+    static constexpr std::array<const char*, 20> k_marker_row_kinds = {
         "station.put", "station.list", "irregularity.change", "beacon.put",
         "mapSound.play", "mapSound3D.put", "rollingNoise.change",
         "flangeNoise.change", "jointNoise.play", "background.change",
         "adhesion.change", "cabIlluminance.change", "fog.change",
-        "drawDistance.change", "speedlimit", "curve", "gradient",
+        "drawDistance.change", "speedlimit", "section.begin",
+        "section.speedLimit", "curve", "gradient",
         "otherTrack.change",
     };
     map_refresh.markers = std::any_of(
@@ -2438,8 +2448,11 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     map_refresh.fog = row_kind == "fog.change";
     map_refresh.draw_distances = row_kind == "drawDistance.change";
     map_refresh.speed_limits = row_kind == "speedlimit";
+    map_refresh.section_signals = row_kind == "section.begin" ||
+        row_kind == "section.speedLimit";
     if ((map_refresh.route_stations || map_refresh.markers || map_refresh.fog ||
-         map_refresh.draw_distances || map_refresh.speed_limits) &&
+         map_refresh.draw_distances || map_refresh.speed_limits ||
+         map_refresh.section_signals) &&
         scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_map_content(model_, map_refresh, error)) {
@@ -2525,6 +2538,7 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "background.change" || row_kind == "adhesion.change" ||
         row_kind == "cabIlluminance.change" || row_kind == "fog.change" ||
         row_kind == "drawDistance.change" || row_kind == "speedlimit" ||
+        row_kind == "section.begin" || row_kind == "section.speedLimit" ||
         row_kind == "curve" || row_kind == "gradient" ||
         row_kind == "otherTrack.change";
 }
@@ -2624,6 +2638,14 @@ std::string inspector_row_field_value(const TableRow& row,
         if (field_key == "distance") return table_cell(row, "_distance");
         if (field_key == "stationKey") return table_cell(row, "posKey");
     }
+    if (row_kind == "section.begin" || row_kind == "section.speedLimit") {
+        constexpr std::string_view k_values_prefix = "values.";
+        if (field_key.rfind(k_values_prefix.data(), 0) == 0) {
+            const size_t index = static_cast<size_t>(std::strtoul(
+                field_key.c_str() + k_values_prefix.size(), nullptr, 10));
+            return table_cell(row, "value" + std::to_string(index));
+        }
+    }
     return table_cell(row, field_key);
 }
 
@@ -2664,6 +2686,35 @@ void set_inspector_row_field_value(TableRow& row,
                     joined += item->second;
                 }
                 row.cells["structureKeys"] = std::move(joined);
+            } else {
+                row.cells["_" + field_key] = value;
+            }
+            return;
+        }
+    }
+    if (row_kind == "section.begin" || row_kind == "section.speedLimit") {
+        constexpr std::string_view k_values_prefix = "values.";
+        if (field_key.rfind(k_values_prefix.data(), 0) == 0) {
+            if (field_key == "values.count") {
+                double parsed_count = 0.0;
+                if (!parse_gui_edit_number(value, &parsed_count) || parsed_count < 1.0 ||
+                    std::trunc(parsed_count) != parsed_count) {
+                    return;
+                }
+                const size_t count = static_cast<size_t>(parsed_count);
+                for (size_t index = 0; index < count; ++index) {
+                    const std::string key = "_values." + std::to_string(index);
+                    const auto item = row.cells.find(key);
+                    if (item == row.cells.end() || item->second.empty()) return;
+                    row.cells["value" + std::to_string(index)] = item->second;
+                }
+                for (size_t stale_index = count;; ++stale_index) {
+                    const auto stale = row.cells.find(
+                        "value" + std::to_string(stale_index));
+                    if (stale == row.cells.end()) break;
+                    row.cells.erase(stale);
+                }
+                row.cells["valueCount"] = std::to_string(count);
             } else {
                 row.cells["_" + field_key] = value;
             }
@@ -2800,7 +2851,7 @@ const TableRow* find_model_row_for_inspector_request(const MapModel& model,
 }
 
 bool row_kind_has_source_distance_string(const std::string& row_kind) {
-    static constexpr std::array<const char*, 21> k_distance_row_kinds = {
+    static constexpr std::array<const char*, 23> k_distance_row_kinds = {
         "station.put",
         "structure.put",
         "structure.between",
@@ -2819,6 +2870,8 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
         "fog.change",
         "drawDistance.change",
         "speedlimit",
+        "section.begin",
+        "section.speedLimit",
         "curve",
         "gradient",
         "otherTrack.change",
@@ -2829,6 +2882,10 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
 
 bool is_repeater_structure_key_field(const MapElementEditFieldState& field) {
     return field.key.rfind("structureKeys.", 0) == 0;
+}
+
+bool is_section_values_field(const MapElementEditFieldState& field) {
+    return field.key.rfind("values.", 0) == 0;
 }
 
 std::vector<std::string> split_repeater_structure_keys(const std::string& text) {
@@ -2867,6 +2924,40 @@ MapElementEditFieldState make_repeater_structure_key_field(
     field.original_value = index < inspector.repeater_structure_keys_original.size()
         ? inspector.repeater_structure_keys_original[index]
         : std::string{};
+    field.required = true;
+    set_edit_field_buffer(field, value);
+    return field;
+}
+
+const char* section_values_label_prefix(const std::string& row_kind) {
+    return row_kind == "section.begin" ? "signal" : "v";
+}
+
+void reindex_section_values_fields(MapElementInspectorState& inspector) {
+    size_t index = 0;
+    for (MapElementEditFieldState& field : inspector.fields) {
+        if (!is_section_values_field(field)) continue;
+        field.key = "values." + std::to_string(index);
+        field.backend_key = field.key;
+        field.label = std::string(section_values_label_prefix(inspector.row_kind)) +
+            std::to_string(index);
+        ++index;
+    }
+}
+
+MapElementEditFieldState make_section_values_field(
+    const MapElementInspectorState& inspector, size_t index, const std::string& value) {
+    MapElementEditFieldState field;
+    field.key = "values." + std::to_string(index);
+    field.backend_key = field.key;
+    field.target_edit_id = inspector.edit_id;
+    field.expected_source_hash = inspector.expected_source_hash;
+    field.label = std::string(section_values_label_prefix(inspector.row_kind)) +
+        std::to_string(index);
+    field.original_value = index < inspector.section_values_original.size()
+        ? inspector.section_values_original[index]
+        : std::string{};
+    field.numeric_constraint = MapElementNumericConstraint::Finite;
     field.required = true;
     set_edit_field_buffer(field, value);
     return field;
@@ -3179,6 +3270,23 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         if (ascii_lower(table_cell(*row, "method")) == "begin") {
             add_row_field("speed", "speed", MapElementNumericConstraint::Finite, true);
+        }
+    } else if (request.row_kind == "section.begin" ||
+               request.row_kind == "section.speedLimit") {
+        const bool begins = request.row_kind == "section.begin";
+        const std::vector<std::string> current_values =
+            section_row_values(*row);
+        const std::vector<std::string> original_values =
+            section_row_values(*original_row);
+        next.section_values_original = original_values;
+        add_row_field("method", "method", MapElementNumericConstraint::None, true);
+        next.fields.back().read_only = true;
+        add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
+        const char* value_prefix = begins ? "signal" : "v";
+        for (size_t value_index = 0; value_index < current_values.size(); ++value_index) {
+            const std::string label = std::string(value_prefix) + std::to_string(value_index);
+            add_row_field("values." + std::to_string(value_index), label,
+                          MapElementNumericConstraint::Finite, true);
         }
     } else if (request.row_kind == "curve" || request.row_kind == "gradient") {
         const bool curve = request.row_kind == "curve";
@@ -3647,6 +3755,11 @@ void App::apply_inspector_changes() {
             repeater_structure_keys.push_back(value);
             continue;
         }
+        if ((inspector_.row_kind == "section.begin" ||
+             inspector_.row_kind == "section.speedLimit") &&
+            is_section_values_field(field)) {
+            continue;
+        }
         if (value != field.original_value) {
             MapElementPendingChange& change = change_for(field);
             const std::string& backend_key = field.backend_key.empty() ? field.key : field.backend_key;
@@ -3692,6 +3805,58 @@ void App::apply_inspector_changes() {
         for (size_t index = 0; index < repeater_structure_keys.size(); ++index) {
             change.field_changes["structureKeys." + std::to_string(index)] =
                 repeater_structure_keys[index];
+        }
+    }
+
+    if (inspector_.row_kind == "section.begin" ||
+        inspector_.row_kind == "section.speedLimit") {
+        std::vector<std::string> section_values;
+        section_values.reserve(inspector_.fields.size());
+        for (const MapElementEditFieldState& field : inspector_.fields) {
+            if (!is_section_values_field(field)) continue;
+            section_values.push_back(trim_gui_ascii_copy(edit_field_buffer_text(field)));
+        }
+        const bool count_changed =
+            section_values.size() != inspector_.section_values_original.size();
+        const bool any_value_changed = [&]() {
+            for (const MapElementEditFieldState& field : inspector_.fields) {
+                if (!is_section_values_field(field)) continue;
+                if (trim_gui_ascii_copy(edit_field_buffer_text(field)) !=
+                    field.original_value) {
+                    return true;
+                }
+            }
+            return false;
+        }();
+        if (count_changed || any_value_changed) {
+            if (section_values.empty()) {
+                set_program_status("status.edit.required_field");
+                return;
+            }
+            MapElementEditFieldState primary_field;
+            primary_field.target_edit_id = inspector_.edit_id;
+            primary_field.expected_source_hash = inspector_.expected_source_hash;
+            MapElementPendingChange& change = change_for(primary_field);
+            if (count_changed) {
+                change.field_changes["values.count"] =
+                    std::to_string(section_values.size());
+                for (size_t index = 0; index < section_values.size(); ++index) {
+                    change.field_changes["values." + std::to_string(index)] =
+                        section_values[index];
+                }
+            } else {
+                size_t value_index = 0;
+                for (const MapElementEditFieldState& field : inspector_.fields) {
+                    if (!is_section_values_field(field)) continue;
+                    const std::string value =
+                        trim_gui_ascii_copy(edit_field_buffer_text(field));
+                    if (value != field.original_value) {
+                        change.field_changes["values." + std::to_string(value_index)] =
+                            value;
+                    }
+                    ++value_index;
+                }
+            }
         }
     }
 
@@ -4661,7 +4826,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 25> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 27> k_committed_row_kinds = {
         "curve", "gradient", "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
         "signal.aspect", "irregularity.change",
@@ -4669,6 +4834,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         "rollingNoise.change", "flangeNoise.change", "jointNoise.play",
         "background.change", "adhesion.change", "cabIlluminance.change",
         "fog.change", "drawDistance.change", "speedlimit",
+        "section.begin", "section.speedLimit",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -5498,9 +5664,14 @@ void App::render_element_inspector() {
     };
 
     ImGui::Separator();
+    const bool section_inspector = inspector_.row_kind == "section.begin" ||
+        inspector_.row_kind == "section.speedLimit";
     for (size_t field_index = 0; field_index < inspector_.fields.size(); ++field_index) {
         MapElementEditFieldState& field = inspector_.fields[field_index];
         if (repeater_inspector && is_repeater_structure_key_field(field)) {
+            continue;
+        }
+        if (section_inspector && is_section_values_field(field)) {
             continue;
         }
         if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
@@ -5600,6 +5771,70 @@ void App::render_element_inspector() {
         }
         if (remove_key_index || move_key_from) {
             reindex_repeater_structure_key_fields(inspector_);
+        }
+    }
+    if (section_inspector) {
+        ImGui::Separator();
+        ImGui::TextUnformatted(tr("label.section_parameters").c_str());
+        std::vector<size_t> value_field_indices;
+        for (size_t index = 0; index < inspector_.fields.size(); ++index) {
+            if (is_section_values_field(inspector_.fields[index])) {
+                value_field_indices.push_back(index);
+            }
+        }
+        std::optional<size_t> remove_value_index;
+        std::optional<size_t> move_value_from;
+        std::optional<size_t> move_value_to;
+        const float section_value_input_x = ImGui::GetCursorPosX();
+        const float section_value_input_width =
+            std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f);
+        const float add_section_value_button_width =
+            std::max(80.0f, section_value_input_width * 0.5f);
+        for (size_t list_index = 0; list_index < value_field_indices.size(); ++list_index) {
+            MapElementEditFieldState& field = inspector_.fields[value_field_indices[list_index]];
+            const bool changed = edit_field_buffer_text(field) != field.original_value;
+            if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
+            ImGui::SetNextItemWidth(section_value_input_width);
+            ImGui::InputText(field.label.c_str(), &field.value);
+            if (changed) ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(list_index == 0);
+            if (ImGui::SmallButton((u8"\u2191##SectionValue" + std::to_string(list_index)).c_str())) {
+                move_value_from = list_index;
+                move_value_to = list_index - 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(list_index + 1 >= value_field_indices.size());
+            if (ImGui::SmallButton((u8"\u2193##SectionValue" + std::to_string(list_index)).c_str())) {
+                move_value_from = list_index;
+                move_value_to = list_index + 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(value_field_indices.size() <= 1);
+            if (ImGui::SmallButton(("-##SectionValue" + std::to_string(list_index)).c_str())) {
+                remove_value_index = list_index;
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::SetCursorPosX(section_value_input_x +
+                             (section_value_input_width - add_section_value_button_width) * 0.5f);
+        if (ImGui::Button("+##SectionValue", ImVec2(add_section_value_button_width, 0.0f))) {
+            inspector_.fields.push_back(make_section_values_field(
+                inspector_, value_field_indices.size(), {}));
+        }
+        if (remove_value_index && *remove_value_index < value_field_indices.size()) {
+            inspector_.fields.erase(inspector_.fields.begin() + static_cast<std::ptrdiff_t>(
+                value_field_indices[*remove_value_index]));
+        } else if (move_value_from && move_value_to &&
+                   *move_value_from < value_field_indices.size() &&
+                   *move_value_to < value_field_indices.size()) {
+            std::swap(inspector_.fields[value_field_indices[*move_value_from]],
+                      inspector_.fields[value_field_indices[*move_value_to]]);
+        }
+        if (remove_value_index || move_value_from) {
+            reindex_section_values_fields(inspector_);
         }
     }
     if (ImGui::Button(tr("button.apply").c_str())) apply_inspector_changes();
@@ -8414,6 +8649,18 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_repeater_edit_batch(repeater_edit_batch);
+    }
+
+    HeadlessSectionEditBatchOptions section_edit_batch =
+        parse_headless_section_edit_batch_options(args);
+    if (section_edit_batch.requested) {
+        if (!section_edit_batch.error.empty()) {
+            std::cerr << section_edit_batch.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-section-edit-batch [map-path] "
+                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_section_edit_batch(section_edit_batch);
     }
 
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);

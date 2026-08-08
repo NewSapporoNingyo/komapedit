@@ -316,6 +316,7 @@ struct Canvas3DSceneMapRefreshOptions {
     bool fog = false;
     bool draw_distances = false;
     bool speed_limits = false;
+    bool section_signals = false;
 };
 
 struct Canvas3DSceneUiText {

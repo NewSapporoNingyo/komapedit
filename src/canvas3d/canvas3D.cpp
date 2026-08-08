@@ -1354,10 +1354,8 @@ void populate_canvas3d_scene_speed_limits(Canvas3DSceneRouteInfo& route_info,
         });
 }
 
-void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& model) {
-    Canvas3DSceneRouteInfo route_info;
-    populate_canvas3d_scene_route_values(route_info, model);
-    populate_canvas3d_scene_speed_limits(route_info, model);
+void populate_canvas3d_scene_section_signals(Canvas3DSceneRouteInfo& route_info,
+                                             const MapModel& model) {
     enum class SectionSignalStateKind { SpeedLimits, SectionBegin };
     struct SectionSignalStateSource {
         double distance = 0.0;
@@ -1391,6 +1389,7 @@ void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& mo
             }
             return left.order < right.order;
         });
+    route_info.section_signal_events.clear();
     route_info.section_signal_events.reserve(section_signal_sources.size());
     std::vector<std::string> speed_limits;
     std::vector<std::string> signal_indices;
@@ -1409,6 +1408,13 @@ void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& mo
         route_info.section_signal_events.push_back(
             {source.distance, source.order, std::move(selected)});
     }
+}
+
+void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& model) {
+    Canvas3DSceneRouteInfo route_info;
+    populate_canvas3d_scene_route_values(route_info, model);
+    populate_canvas3d_scene_speed_limits(route_info, model);
+    populate_canvas3d_scene_section_signals(route_info, model);
     populate_canvas3d_scene_route_stations(route_info, model);
     scene.route_info = std::move(route_info);
 }
@@ -3043,6 +3049,9 @@ struct Canvas3D::Impl {
         }
         if (options.speed_limits) {
             populate_canvas3d_scene_speed_limits(scene_data.route_info, model);
+        }
+        if (options.section_signals) {
+            populate_canvas3d_scene_section_signals(scene_data.route_info, model);
         }
         if (options.markers) {
             populate_canvas3d_scene_markers(scene_data, model);
