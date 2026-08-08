@@ -4696,6 +4696,10 @@ struct TypedEditBatchStorage {
 
 TypedEditBatchStorage typed_edit_batch(
     const std::map<std::string, MapElementPendingChange>& inputs) {
+    // KvUtf8View is non-owning. Keep the reserved field name in static
+    // storage instead of creating a temporary std::string from a literal.
+    static constexpr KvUtf8View k_insert_row_kind_field_name{
+        "rowKind", sizeof("rowKind") - 1};
     TypedEditBatchStorage storage;
     storage.changes.reserve(inputs.size());
     size_t field_count = 0;
@@ -4722,7 +4726,7 @@ TypedEditBatchStorage typed_edit_batch(
         if (source.operation == "insert") {
             // The maploader derives insert row kinds from this reserved field
             // and pops it before any typed edit processing runs.
-            storage.fields.push_back({edit_utf8_view("rowKind"),
+            storage.fields.push_back({k_insert_row_kind_field_name,
                                       edit_utf8_view(source.row_kind)});
         }
         for (const auto& field : source.field_changes) {
@@ -5932,12 +5936,12 @@ const std::vector<NewElementTemplate>& new_element_templates() {
     static const std::vector<NewElementTemplate> templates = {
         {
             "structure.put", "structure.put", "Put",
-            "Structure.Put(Key, X, Y, Z, RX, RY, RZ, Tilt, Span)",
+            "Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span);",
             "new_element.usage.structure.put", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, false, ""},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, "0"},
                 {"x", "x", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"y", "y", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"z", "z", MapElementNumericConstraint::Truncate3, true, "0"},
@@ -5950,49 +5954,49 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "structure.put0", "structure.put", "Put0",
-            "Structure.Put0(Key, Tilt, Span)",
+            "Structure[structureKey].Put0(trackKey, tilt, span);",
             "new_element.usage.structure.put0", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, false, ""},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, "0"},
                 {"tilt", "tilt", MapElementNumericConstraint::Integer, true, "0"},
                 {"span", "span", MapElementNumericConstraint::Truncate3, true, "0"},
             },
         },
         {
             "structure.put_between", "structure.between", "PutBetween",
-            "Structure.PutBetween(Key, Track1, Track2, Flag)",
+            "Structure[structureKey].PutBetween(trackKey1, trackKey2, flag);",
             "new_element.usage.structure.put_between", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
-                {"trackKey1", "trackKey1", MapElementNumericConstraint::None, true, ""},
-                {"trackKey2", "trackKey2", MapElementNumericConstraint::None, true, ""},
+                {"trackKey1", "trackKey1", MapElementNumericConstraint::None, true, "0"},
+                {"trackKey2", "trackKey2", MapElementNumericConstraint::None, true, "0"},
                 {"flag", "flag", MapElementNumericConstraint::Finite, true, "0"},
             },
         },
         {
             "station.put", "station.put", "Station.Put",
-            "Station[Key].Put(Door, Margin1, Margin2)",
+            "Station[stationKey].Put(door, margin1, margin2);",
             "new_element.usage.station.put", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"stationKey", "stationKey", MapElementNumericConstraint::None, true, ""},
-                {"door", "door", MapElementNumericConstraint::Finite, false, ""},
-                {"margin1", "back", MapElementNumericConstraint::Finite, false, ""},
-                {"margin2", "front", MapElementNumericConstraint::Finite, false, ""},
+                {"door", "door", MapElementNumericConstraint::Finite, true, "0"},
+                {"margin1", "back", MapElementNumericConstraint::Finite, true, "0"},
+                {"margin2", "front", MapElementNumericConstraint::Finite, true, "0"},
             },
         },
         {
             "signal.put", "signal.put", "Signal.Put",
-            "Signal[Key].Put(Section, Track, X, Y, Z, RX, RY, RZ, Tilt, Span)",
+            "Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span);",
             "new_element.usage.signal.put", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"signalAspectKey", "signalAspectKey", MapElementNumericConstraint::None, true, ""},
                 {"section", "section", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, false, ""},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, "0"},
                 {"x", "x", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"y", "y", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"z", "z", MapElementNumericConstraint::Truncate3, true, "0"},
@@ -6005,7 +6009,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "speedlimit.begin", "speedlimit", "Begin",
-            "SpeedLimit.Begin(Speed)",
+            "SpeedLimit.Begin(speed);",
             "new_element.usage.speedlimit.begin", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6014,7 +6018,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "speedlimit.end", "speedlimit", "End",
-            "SpeedLimit.End()",
+            "SpeedLimit.End();",
             "new_element.usage.speedlimit.end", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6022,7 +6026,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "section.begin", "section.begin", "Begin",
-            "Section.Begin(Index, ...)",
+            "Section.Begin(signal0, ..., signalN);",
             "new_element.usage.section.begin", true,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6030,7 +6034,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "section.beginnew", "section.begin", "BeginNew",
-            "Section.BeginNew(Index, ...)",
+            "Section.BeginNew(signal0, ..., signalN);",
             "new_element.usage.section.beginnew", true,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6038,7 +6042,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "section.setspeedlimit", "section.speedLimit", "SetSpeedLimit",
-            "Section.SetSpeedLimit(Speed, ...)",
+            "Section.SetSpeedLimit(v0, ..., vn);",
             "new_element.usage.section.setspeedlimit", true,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6046,7 +6050,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "section.signal_speedlimit", "section.speedLimit", "Signal.SpeedLimit",
-            "Signal.SpeedLimit(Speed, ...)",
+            "Signal.SpeedLimit(v0, ..., vn);",
             "new_element.usage.section.signal_speedlimit", true,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6054,7 +6058,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "irregularity.change", "irregularity.change", "Irregularity.Change",
-            "Irregularity.Change(X, Y, R, LX, LY, LR)",
+            "Irregularity.Change(x, y, r, lx, ly, lr);",
             "new_element.usage.irregularity.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6068,7 +6072,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "beacon.put", "beacon.put", "Beacon.Put",
-            "Beacon.Put(Type, Section, SendData)",
+            "Beacon.Put(type, section, sendData);",
             "new_element.usage.beacon.put", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6079,7 +6083,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "map_sound.play", "mapSound.play", "Sound.Play",
-            "Sound[Key].Play()",
+            "Sound[soundKey].Play();",
             "new_element.usage.map_sound.play", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6088,7 +6092,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "map_sound3d.put", "mapSound3D.put", "Sound3D.Put",
-            "Sound3D[Key].Put(X, Y)",
+            "Sound3D[soundKey].Put(x, y);",
             "new_element.usage.map_sound3d.put", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6099,7 +6103,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "rolling_noise.change", "rollingNoise.change", "RollingNoise.Change",
-            "RollingNoise.Change(Index)",
+            "RollingNoise.Change(index);",
             "new_element.usage.rolling_noise.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6108,7 +6112,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "flange_noise.change", "flangeNoise.change", "FlangeNoise.Change",
-            "FlangeNoise.Change(Index)",
+            "FlangeNoise.Change(index);",
             "new_element.usage.flange_noise.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6117,7 +6121,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "joint_noise.play", "jointNoise.play", "JointNoise.Play",
-            "JointNoise.Play(Index)",
+            "JointNoise.Play(index);",
             "new_element.usage.joint_noise.play", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6126,7 +6130,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "background.change", "background.change", "Background.Change",
-            "Background.Change(Key)",
+            "Background.Change(structureKey);",
             "new_element.usage.background.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6135,7 +6139,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "adhesion.change", "adhesion.change", "Adhesion.Change",
-            "Adhesion.Change(A[, B, C])",
+            "Adhesion.Change(a); / Adhesion.Change(a, b, c);",
             "new_element.usage.adhesion.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6146,7 +6150,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "cab_illuminance.set", "cabIlluminance.change", "Set",
-            "CabIlluminance.Set(Value)",
+            "CabIlluminance.Set(value);",
             "new_element.usage.cab_illuminance.set", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6155,7 +6159,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "cab_illuminance.interpolate", "cabIlluminance.change", "Interpolate",
-            "CabIlluminance.Interpolate(Value)",
+            "CabIlluminance.Interpolate(value);",
             "new_element.usage.cab_illuminance.interpolate", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6164,7 +6168,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "fog.set", "fog.change", "Set",
-            "Fog.Set(Density, Red, Green, Blue)",
+            "Fog.Set(density, red, green, blue);",
             "new_element.usage.fog.set", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6176,7 +6180,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "fog.interpolate", "fog.change", "Interpolate",
-            "Fog.Interpolate(Density[, Red, Green, Blue])",
+            "Fog.Interpolate(); / Fog.Interpolate(density); / Fog.Interpolate(density, red, green, blue);",
             "new_element.usage.fog.interpolate", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6188,7 +6192,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
         {
             "draw_distance.change", "drawDistance.change", "DrawDistance.Change",
-            "DrawDistance.Change(Value)",
+            "DrawDistance.Change(value);",
             "new_element.usage.draw_distance.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
@@ -6269,9 +6273,6 @@ void App::rebuild_new_element_wizard_form() {
     form.title = tr("dialog.new_element_wizard");
     form.source_file = wizard.target_file_path;
     form.source_file_name = display_name_from_path(form.source_file);
-    const EditSourceFileInfo* source_file =
-        find_model_source_file(model_, wizard.target_file_path);
-    if (source_file) form.expected_source_hash = source_file->source_hash;
     for (const NewElementFieldSpec& spec : tpl.fields) {
         MapElementEditFieldState field;
         field.key = spec.key;
@@ -6381,7 +6382,11 @@ bool App::apply_new_element_insert() {
                 change.target_file_path);
         return false;
     }
-    change.expected_source_hash = source_file->source_hash;
+    // An insert has no existing source row whose optimistic-concurrency hash
+    // must be preserved. Leave expectedSourceHash empty so maploader compares
+    // the physical file against the current handle's authoritative disk
+    // baseline. The GUI model may represent a dirty working-copy hash and can
+    // otherwise become stale across an Apply -> Save -> Apply cycle.
     for (const MapElementEditFieldState& field : form.fields) {
         if (field.read_only) continue;
         if (is_section_values_field(field)) continue;

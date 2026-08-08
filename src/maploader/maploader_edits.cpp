@@ -506,6 +506,27 @@ std::string adjust_distance_expression_by_delta(const std::string& expression, d
     return append_delta_to_distance_expression(trimmed, delta);
 }
 
+std::string suggested_distance_expression_for_target(
+    const ParsedStatement& origin,
+    double target_distance,
+    const MapEditChange& change) {
+    const std::string manual_expression = trim_field_copy(change.distance_expression);
+    if (!manual_expression.empty()) return manual_expression;
+
+    std::string source_expression = trim_field_copy(origin.distance_expression);
+    if (source_expression.empty()) {
+        source_expression = fallback_edit_number(origin.distance_value);
+    }
+    try {
+        return adjust_distance_expression_by_delta(
+            source_expression, target_distance - origin.distance_value);
+    } catch (const std::exception&) {
+        // Keep the existing manual distance-expression workflow responsible
+        // for expressions that cannot be transformed safely.
+        return {};
+    }
+}
+
 std::vector<std::string> parse_bve_argument_fields(
     const std::string& line,
     std::vector<std::pair<size_t, size_t>>* value_spans = nullptr) {
@@ -1999,23 +2020,9 @@ void validate_insert_change(const MapEditChange& change) {
         validate_insert_method(change, "Begin", {"Begin", "End"});
     } else if (row_kind == "section.begin") {
         validate_insert_field_names(change, {"distance", "method"}, true);
-        for (const auto& field : change.field_changes) {
-            if (field.first != "distance" && field.first != "method" &&
-                field.first.rfind("values.", 0) != 0) {
-                throw std::runtime_error(
-                    "unsupported insert field " + field.first + " for " + row_kind);
-            }
-        }
         validate_insert_method(change, "Begin", {"Begin", "BeginNew"});
     } else if (row_kind == "section.speedLimit") {
         validate_insert_field_names(change, {"distance", "method"}, true);
-        for (const auto& field : change.field_changes) {
-            if (field.first != "distance" && field.first != "method" &&
-                field.first.rfind("values.", 0) != 0) {
-                throw std::runtime_error(
-                    "unsupported insert field " + field.first + " for " + row_kind);
-            }
-        }
         validate_insert_method(change, "SetSpeedLimit", {"SetSpeedLimit", "Signal.SpeedLimit"});
     } else {
         throw std::runtime_error("unsupported insert row kind: " + row_kind);
@@ -2030,6 +2037,14 @@ std::string insert_required_key(const MapEditChange& change, const char* key) {
     return quoted_bve_string(required_string_field(change, key, ""));
 }
 
+std::string insert_required_track_key(const MapEditChange& change, const char* key) {
+    const std::string value = track_key_field_as_bve_arg(change, key, Value::null());
+    if (value.empty()) {
+        throw std::runtime_error(std::string("required edit field is empty: ") + key);
+    }
+    return value;
+}
+
 // Builds the complete single-statement text for a KV_EDIT_INSERT change from
 // its field values alone. There is no existing source row or raw argument
 // text to preserve, so every emitted argument comes from the change fields
@@ -2040,7 +2055,7 @@ std::string build_insert_statement(const MapEditChange& change) {
     if (row_kind == "structure.put") {
         const std::string method = insert_method_or_default(change, "Put");
         const std::string key = insert_required_key(change, "structureKey");
-        const std::string track_key = track_key_field_as_bve_arg(change, "trackKey", Value::null());
+        const std::string track_key = insert_required_track_key(change, "trackKey");
         if (method == "Put0") {
             return "Structure[" + key + "].Put0(" + track_key + ","
                 + insert_required_number(change, "tilt") + ","
@@ -2062,28 +2077,21 @@ std::string build_insert_statement(const MapEditChange& change) {
     if (row_kind == "structure.between") {
         const std::string key = insert_required_key(change, "structureKey");
         return "Structure[" + key + "].PutBetween("
-            + track_key_field_as_bve_arg(change, "trackKey1", Value::null()) + ","
-            + track_key_field_as_bve_arg(change, "trackKey2", Value::null()) + ","
+            + insert_required_track_key(change, "trackKey1") + ","
+            + insert_required_track_key(change, "trackKey2") + ","
             + insert_required_number(change, "flag") + ");";
     }
     if (row_kind == "station.put") {
-        std::vector<std::string> args;
-        for (const char* key : {"door", "margin1", "margin2"}) {
-            args.push_back(optional_numeric_value_field(change, key, Value::null()));
-        }
-        while (!args.empty() && args.back().empty()) args.pop_back();
-        std::string arguments;
-        for (size_t index = 0; index < args.size(); ++index) {
-            if (index) arguments += ",";
-            arguments += args[index];
-        }
-        return "Station[" + insert_required_key(change, "stationKey") + "].Put(" + arguments + ");";
+        return "Station[" + insert_required_key(change, "stationKey") + "].Put("
+            + insert_required_number(change, "door") + ","
+            + insert_required_number(change, "margin1") + ","
+            + insert_required_number(change, "margin2") + ");";
     }
     if (row_kind == "signal.put") {
         const std::string aspect_key = insert_required_key(change, "signalAspectKey");
         return "Signal[" + aspect_key + "].Put("
             + insert_required_number(change, "section") + ","
-            + track_key_field_as_bve_arg(change, "trackKey", Value::null()) + ","
+            + insert_required_track_key(change, "trackKey") + ","
             + insert_required_number(change, "x") + ","
             + insert_required_number(change, "y") + ","
             + insert_required_number(change, "z") + ","
@@ -2109,14 +2117,10 @@ std::string build_insert_statement(const MapEditChange& change) {
             + insert_required_number(change, "sendData") + ");";
     }
     if (row_kind == "mapSound.play") {
-        ParsedStatement empty_statement;
-        return "Sound[" + object_key_field_as_bve_arg(
-            change, "soundKey", Value::null(), empty_statement) + "].Play();";
+        return "Sound[" + insert_required_key(change, "soundKey") + "].Play();";
     }
     if (row_kind == "mapSound3D.put") {
-        ParsedStatement empty_statement;
-        return "Sound3D[" + object_key_field_as_bve_arg(
-            change, "soundKey", Value::null(), empty_statement) + "].Put("
+        return "Sound3D[" + insert_required_key(change, "soundKey") + "].Put("
             + insert_required_number(change, "x") + ","
             + insert_required_number(change, "y") + ");";
     }
@@ -2130,8 +2134,7 @@ std::string build_insert_statement(const MapEditChange& change) {
         return "JointNoise.Play(" + insert_required_number(change, "index") + ");";
     }
     if (row_kind == "background.change") {
-        return "Background.Change(" + string_value_field_as_bve_arg(
-            change, "structureKey", Value::null()) + ");";
+        return "Background.Change(" + insert_required_key(change, "structureKey") + ");";
     }
     if (row_kind == "adhesion.change") {
         const std::string a = insert_required_number(change, "a");
@@ -4583,7 +4586,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                     }
                     edit.target_distance = target_distance;
                     edit.moves_distance = true;
-                    edit.suggested_distance_expression = fallback_edit_number(edit.target_distance);
+                    edit.suggested_distance_expression =
+                        suggested_distance_expression_for_target(origin, target_distance, change);
                     edit.section = std::move(selected_section);
                     ++report.insert_count;
                     prepared.push_back(std::move(edit));
@@ -4636,20 +4640,9 @@ MapEditReport build_edit_report(MapContext& ctx,
                     edit.moves_distance =
                         !exact_distance_value(edit.target_distance, statement->distance_value);
                     if (edit.moves_distance) {
-                        std::string old_expression = trim_field_copy(statement->distance_expression);
-                        if (old_expression.empty()) {
-                            old_expression = fallback_edit_number(statement->distance_value);
-                        }
-                        try {
-                            edit.suggested_distance_expression = adjust_distance_expression_by_delta(
-                                old_expression, edit.target_distance - statement->distance_value);
-                        } catch (const std::exception&) {
-                            edit.suggested_distance_expression.clear();
-                        }
-                        if (!change.distance_expression.empty()) {
-                            edit.suggested_distance_expression =
-                                trim_field_copy(change.distance_expression);
-                        }
+                        edit.suggested_distance_expression =
+                            suggested_distance_expression_for_target(
+                                *statement, edit.target_distance, change);
                         edit.section = analyze_distance_section(
                             ctx, target.statement_index, distance_index);
                     }

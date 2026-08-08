@@ -5733,6 +5733,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
         // whose same-distance blocks are ambiguous.
         const KvMapSnapshot baseline_snap = snapshot();
         std::map<std::string, std::uint64_t> distance_statement_counts;
+        std::map<std::string, std::vector<const KvStatementRow*>> distance_statements_by_file;
         for (std::uint64_t i = 0; i < baseline_snap.statement_count; ++i) {
             const KvStatementRow& statement = baseline_snap.statements[i];
             if (snapshot_text(baseline_snap, statement.statement_kind) != "Distance.Set") {
@@ -5740,67 +5741,119 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             }
             const std::string path = source_file_path(
                 baseline_snap, statement.source.source_file_index);
-            if (!path.empty()) ++distance_statement_counts[path];
+            if (!path.empty()) {
+                ++distance_statement_counts[path];
+                distance_statements_by_file[path].push_back(&statement);
+            }
         }
         if (distance_statement_counts.empty()) {
             throw std::runtime_error("real map has no numeric distance statements");
         }
+
+        const auto statement_order = [](const KvStatementRow* lhs,
+                                        const KvStatementRow* rhs) {
+            if (lhs->global_order != rhs->global_order) {
+                return lhs->global_order < rhs->global_order;
+            }
+            if (lhs->source.byte_start != rhs->source.byte_start) {
+                return lhs->source.byte_start < rhs->source.byte_start;
+            }
+            return lhs->source.include_invocation_key.offset <
+                rhs->source.include_invocation_key.offset;
+        };
+        for (auto& entry : distance_statements_by_file) {
+            std::stable_sort(entry.second.begin(), entry.second.end(), statement_order);
+        }
+
+        auto safe_variable_distance_expression = [](const std::string& expression) {
+            return expression.find('$') != std::string::npos &&
+                ascii_lower(expression).find("distance") == std::string::npos;
+        };
+        auto find_variable_gap = [&](const std::vector<const KvStatementRow*>& rows,
+                                     double& gap_distance,
+                                     std::string& expression) {
+            for (size_t i = 1; i < rows.size(); ++i) {
+                const KvStatementRow& before = *rows[i - 1];
+                const KvStatementRow& after = *rows[i];
+                const std::string before_context = snapshot_text(
+                    baseline_snap, before.source.include_invocation_key);
+                const std::string after_context = snapshot_text(
+                    baseline_snap, after.source.include_invocation_key);
+                if (before_context != after_context) continue;
+                const double delta = after.distance_value - before.distance_value;
+                if (std::fabs(delta) < 2.0) continue;
+                const std::string before_expression = snapshot_text(
+                    baseline_snap, before.distance_expression);
+                if (!safe_variable_distance_expression(before_expression)) continue;
+                gap_distance = before.distance_value + (delta > 0.0 ? 1.0 : -1.0);
+                expression = before_expression;
+                return true;
+            }
+            return false;
+        };
+
         std::string target_file;
         std::uint64_t target_count = 0;
-        for (std::uint64_t i = 0; i < baseline_snap.source_file_count; ++i) {
-            const std::string path = source_file_path(baseline_snap, i);
-            auto count = distance_statement_counts.find(path);
-            if (count != distance_statement_counts.end() && count->second > target_count) {
-                target_file = path;
-                target_count = count->second;
+        std::string variable_target_file;
+        std::uint64_t variable_target_count = 0;
+        double variable_gap_distance = 0.0;
+        std::string variable_anchor_expression;
+        for (const auto& entry : distance_statements_by_file) {
+            double candidate_distance = 0.0;
+            std::string candidate_expression;
+            if (!find_variable_gap(entry.second, candidate_distance, candidate_expression)) {
+                continue;
+            }
+            if (variable_target_file.empty() ||
+                entry.second.size() > variable_target_count) {
+                variable_target_file = entry.first;
+                variable_target_count = static_cast<std::uint64_t>(entry.second.size());
+                variable_gap_distance = candidate_distance;
+                variable_anchor_expression = std::move(candidate_expression);
+            }
+        }
+        if (!variable_target_file.empty()) {
+            target_file = variable_target_file;
+            target_count = variable_target_count;
+        } else {
+            for (const auto& entry : distance_statement_counts) {
+                if (target_file.empty() || entry.second > target_count) {
+                    target_file = entry.first;
+                    target_count = entry.second;
+                }
             }
         }
         if (target_file.empty()) {
             throw std::runtime_error("unable to select a numeric-distance source file");
         }
         *out << "target_file=" << target_file << "\n";
-        std::vector<const KvStatementRow*> target_distance_statements;
-        for (std::uint64_t i = 0; i < baseline_snap.statement_count; ++i) {
-            const KvStatementRow& statement = baseline_snap.statements[i];
-            if (snapshot_text(baseline_snap, statement.statement_kind) != "Distance.Set") {
-                continue;
-            }
-            if (source_file_path(baseline_snap, statement.source.source_file_index) ==
-                target_file) {
-                target_distance_statements.push_back(&statement);
-            }
-        }
+        std::vector<const KvStatementRow*> target_distance_statements =
+            distance_statements_by_file[target_file];
         if (target_distance_statements.empty()) {
             throw std::runtime_error(
                 "selected source file has no numeric distance statements");
         }
-        std::stable_sort(target_distance_statements.begin(), target_distance_statements.end(),
-                         [](const KvStatementRow* lhs, const KvStatementRow* rhs) {
-                             if (lhs->global_order != rhs->global_order) {
-                                 return lhs->global_order < rhs->global_order;
-                             }
-                             if (lhs->source.byte_start != rhs->source.byte_start) {
-                                 return lhs->source.byte_start < rhs->source.byte_start;
-                             }
-                             return lhs->source.include_invocation_key.offset <
-                                 rhs->source.include_invocation_key.offset;
-                         });
 
         double insert_distance = target_distance_statements.front()->distance_value;
         bool selected_gap = false;
-        for (size_t i = 1; i < target_distance_statements.size(); ++i) {
-            const KvStatementRow& before = *target_distance_statements[i - 1];
-            const KvStatementRow& after = *target_distance_statements[i];
-            const std::string before_context = snapshot_text(
-                baseline_snap, before.source.include_invocation_key);
-            const std::string after_context = snapshot_text(
-                baseline_snap, after.source.include_invocation_key);
-            if (before_context != after_context) continue;
-            const double delta = after.distance_value - before.distance_value;
-            if (std::fabs(delta) < 2.0) continue;
-            insert_distance = before.distance_value + (delta > 0.0 ? 1.0 : -1.0);
+        if (target_file == variable_target_file) {
+            insert_distance = variable_gap_distance;
             selected_gap = true;
-            break;
+        } else {
+            for (size_t i = 1; i < target_distance_statements.size(); ++i) {
+                const KvStatementRow& before = *target_distance_statements[i - 1];
+                const KvStatementRow& after = *target_distance_statements[i];
+                const std::string before_context = snapshot_text(
+                    baseline_snap, before.source.include_invocation_key);
+                const std::string after_context = snapshot_text(
+                    baseline_snap, after.source.include_invocation_key);
+                if (before_context != after_context) continue;
+                const double delta = after.distance_value - before.distance_value;
+                if (std::fabs(delta) < 2.0) continue;
+                insert_distance = before.distance_value + (delta > 0.0 ? 1.0 : -1.0);
+                selected_gap = true;
+                break;
+            }
         }
 
         auto make_insert_change = [&](const std::string& change_id,
@@ -5821,8 +5874,13 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
 
         const std::string distance_text = format_double(insert_distance, 6);
         *out << "insert_distance=" << distance_text << "\n"
-             << "distance_selection=" << (selected_gap ? "adjacent-gap" : "existing-block")
-             << "\n";
+             << "distance_selection=" << (selected_gap
+                 ? (target_file == variable_target_file
+                     ? "adjacent-gap-variable"
+                     : "adjacent-gap")
+                 : "existing-block")
+             << "\n"
+             << "variable_distance_expression=" << variable_anchor_expression << "\n";
 
         auto snapshot_value_or = [&](const KvValue& value, const char* fallback) {
             const std::string text = distance_batch_headless::snapshot_value_text(
@@ -6034,6 +6092,35 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                 dry = typed_edit_headless::dry_run(handle, batch);
             }
         }
+        auto previews_contain = [&](const std::string& text) {
+            return std::any_of(dry.previews.begin(), dry.previews.end(),
+                               [&](const std::string& preview) {
+                                   return preview.find(text) != std::string::npos;
+                               });
+        };
+        const std::vector<std::string> expected_statements = {
+            "Structure[", "].Put(", "].Put0(", "].PutBetween(",
+            "Station[", "Signal[", "SpeedLimit.Begin(60);", "SpeedLimit.End();",
+            "Section.Begin(1,2);", "Section.BeginNew(1,2);",
+            "Section.SetSpeedLimit(60,80);", "Signal.SpeedLimit(60,80);",
+            "Irregularity.Change(1,2,3,4,5,6);", "Beacon.Put(1,2,3);",
+            "DrawDistance.Change(500);", "CabIlluminance.Set(10);",
+            "CabIlluminance.Interpolate(20);", "Fog.Set(50,100,100,100);",
+            "Fog.Interpolate(50);", "Adhesion.Change(1.5,2.5,3.5);",
+            "Sound[", "Sound3D[", "RollingNoise.Change(1);",
+            "FlangeNoise.Change(2);", "JointNoise.Play(3);", "Background.Change(",
+        };
+        const bool syntax_preview_ok = std::all_of(
+            expected_statements.begin(), expected_statements.end(), previews_contain);
+        const bool variable_distance_preview_ok = variable_anchor_expression.empty() ||
+            std::any_of(dry.previews.begin(), dry.previews.end(),
+                        [](const std::string& preview) {
+                            return preview.find('$') != std::string::npos;
+                        });
+        *out << "syntax_preview_ok=" << (syntax_preview_ok ? 1 : 0) << "\n"
+             << "variable_distance_preview_ok="
+             << (variable_distance_preview_ok ? 1 : 0) << "\n";
+        if (!syntax_preview_ok || !variable_distance_preview_ok) ++failed_cases;
         *out << "manual_boundary_retry=" << (manual_boundary_retry ? 1 : 0) << "\n";
         const bool dry_ok = dry.ok && dry.insert_count == static_cast<int>(expected_inserts) &&
             dry.full_reparse_ok;
@@ -6144,8 +6231,63 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                     if (count_rows(committed_snap, kind.c_str()) != expected) commit_ok = false;
                 }
             }
+            bool post_commit_apply_ok = false;
+            bool post_commit_reset_ok = false;
+            if (commit_ok) {
+                auto committed_file = std::find_if(
+                    committed.committed_files.begin(), committed.committed_files.end(),
+                    [&](const typed_edit_headless::CommittedFile& file) {
+                        return file.file_path == target_file;
+                    });
+                if (committed_file != committed.committed_files.end() &&
+                    !committed_file->source_hash.empty() &&
+                    kv_edit_reset_memory(handle)) {
+                    std::vector<Change> post_commit_batch = batch;
+                    for (Change& change : post_commit_batch) {
+                        change.change_id += "-post-commit";
+                        change.edit_id = change.change_id;
+                        // Mirror the GUI insert path: maploader owns the
+                        // authoritative baseline for a row that does not exist
+                        // yet, including immediately after a commit.
+                        change.expected_source_hash.clear();
+                    }
+                    const Report post_commit =
+                        typed_edit_headless::apply_to_memory(handle, post_commit_batch);
+                    post_commit_apply_ok = post_commit.ok &&
+                        post_commit.insert_count == static_cast<int>(expected_inserts) &&
+                        post_commit.full_reparse_ok && post_commit.blocking_errors.empty();
+                    for (const std::string& error : post_commit.blocking_errors) {
+                        *out << "post_commit_apply_error=" << error << "\n";
+                    }
+                    if (post_commit_apply_ok) {
+                        const KvMapSnapshot post_commit_snap = snapshot();
+                        for (const std::string& kind : batch_kinds) {
+                            const std::uint64_t expected = baseline_counts[kind] +
+                                2 * expected_row_increments.at(kind);
+                            if (count_rows(post_commit_snap, kind.c_str()) != expected) {
+                                post_commit_apply_ok = false;
+                            }
+                        }
+                    }
+                    if (kv_edit_reset_memory(handle)) {
+                        const KvMapSnapshot reset_snap = snapshot();
+                        post_commit_reset_ok = true;
+                        for (const std::string& kind : batch_kinds) {
+                            const std::uint64_t expected = baseline_counts[kind] +
+                                expected_row_increments.at(kind);
+                            if (count_rows(reset_snap, kind.c_str()) != expected) {
+                                post_commit_reset_ok = false;
+                            }
+                        }
+                    }
+                }
+            }
+            *out << "post_commit_apply_ok=" << (post_commit_apply_ok ? 1 : 0) << "\n"
+                 << "post_commit_reset_ok=" << (post_commit_reset_ok ? 1 : 0) << "\n";
+            if (!post_commit_apply_ok || !post_commit_reset_ok) commit_ok = false;
             *out << "commit_verified=" << (commit_ok ? 1 : 0) << "\n";
             if (!commit_ok) ++failed_cases;
+
         }
     } catch (const std::exception& e) {
         *out << "exception=" << e.what() << "\n";
