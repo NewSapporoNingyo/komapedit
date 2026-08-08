@@ -3279,8 +3279,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         const std::vector<std::string> original_values =
             section_row_values(*original_row);
         next.section_values_original = original_values;
-        add_row_field("method", "method", MapElementNumericConstraint::None, true);
-        next.fields.back().read_only = true;
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         const char* value_prefix = begins ? "signal" : "v";
         for (size_t value_index = 0; value_index < current_values.size(); ++value_index) {
@@ -3366,9 +3364,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         }
     } else if (request.row_kind == "otherTrack.change") {
         add_row_field("trackKey", "Track key",
-                      MapElementNumericConstraint::None, true);
-        next.fields.back().read_only = true;
-        add_row_field("method", "Method",
                       MapElementNumericConstraint::None, true);
         next.fields.back().read_only = true;
         add_row_field("distance", "Distance",
