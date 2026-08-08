@@ -5856,7 +5856,7 @@ std::string App::open_map_dialog() {
     ofn.hwndOwner = nullptr;
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = L"BVE map files\0*.map;*.txt\0All files\0*.*\0";
+    ofn.lpstrFilter = L"BVE map files\0*.txt;*.csv\0All files\0*.*\0";
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
     return {};

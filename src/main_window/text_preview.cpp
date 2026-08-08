@@ -190,8 +190,7 @@ size_t utf8_byte_for_source_column(const std::string& text,
 
 bool App::is_supported_text_preview_file(const std::string& file_path) {
     return ascii_suffix_equal(file_path, ".txt") ||
-        ascii_suffix_equal(file_path, ".csv") ||
-        ascii_suffix_equal(file_path, ".map");
+        ascii_suffix_equal(file_path, ".csv");
 }
 
 bool App::load_text_preview_content(TextPreviewState& preview) {

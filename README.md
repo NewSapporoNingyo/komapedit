@@ -215,7 +215,7 @@ of overwriting either file.
 
 ## Usage
 
-1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.map` or `.txt` map file.
+1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.txt` or `.csv` map file.
 2. After the map loads, the main window shows the plan view, profile chart, and curve-radius chart.
 3. In the plan view:
    - Drag with the left mouse button to pan.
