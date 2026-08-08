@@ -688,6 +688,37 @@ HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
     return options;
 }
 
+HeadlessInsertEditOptions parse_headless_insert_edit_options(const std::vector<std::string>& args) {
+    static constexpr const char* k_default_map_path =
+        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
+        "Config_Map121M-ATSP+Ps_Ask.txt";
+    HeadlessInsertEditOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-insert-edit") {
+            options.requested = true;
+            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
+                options.path = args[++i];
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (options.requested && options.path.empty()) options.path = k_default_map_path;
+    return options;
+}
+
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args) {
     HeadlessTableFindOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
@@ -5637,6 +5668,493 @@ int run_debug_headless_section_edit_batch(const HeadlessSectionEditBatchOptions&
     write_batch_result(*out, facts);
     out->flush();
     return facts.passed() ? 0 : 20;
+}
+
+int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
+    using typed_edit_headless::Change;
+    using typed_edit_headless::Field;
+    using typed_edit_headless::Report;
+    using typed_edit_headless::Resolution;
+    using typed_edit_headless::Boundary;
+
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-insert-edit\n"
+         << "path=" << options.path << "\n"
+         << "commit=" << (options.commit ? 1 : 0) << "\n";
+
+    int failed_cases = 0;
+    void* handle = nullptr;
+    try {
+        handle = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                KV_LOAD_EDIT_METADATA);
+        if (!handle) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "real map load failed");
+        }
+        auto snapshot = [&]() {
+            KvMapSnapshot snapshot{};
+            if (!kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION,
+                                     &snapshot, sizeof(snapshot)) ||
+                snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
+                snapshot.structure_size < sizeof(KvMapSnapshot)) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(std::string("map snapshot failed") +
+                    (error ? ": " + std::string(error) : std::string{}));
+            }
+            return snapshot;
+        };
+        auto snapshot_text = [](const KvMapSnapshot& snap, KvStringRef ref) {
+            if (ref.length == 0) return std::string{};
+            if (!snap.string_data || ref.offset > snap.string_size ||
+                ref.length > snap.string_size - ref.offset) {
+                throw std::runtime_error("map snapshot string reference is out of range");
+            }
+            return std::string(snap.string_data + static_cast<size_t>(ref.offset),
+                               static_cast<size_t>(ref.length));
+        };
+        auto source_file_path = [&](const KvMapSnapshot& snap, std::uint64_t file_index) {
+            if (file_index >= snap.source_file_count || !snap.source_files) return std::string{};
+            return snapshot_text(snap, snap.source_files[file_index].file_path);
+        };
+
+        // The insert target is the source file that owns the most distance
+        // statements: it is the map body with resolvable distance sections,
+        // unlike the entry file (usually include-only) or small list files
+        // whose same-distance blocks are ambiguous.
+        const KvMapSnapshot baseline_snap = snapshot();
+        std::map<std::string, std::uint64_t> distance_statement_counts;
+        for (std::uint64_t i = 0; i < baseline_snap.statement_count; ++i) {
+            const KvStatementRow& statement = baseline_snap.statements[i];
+            if (snapshot_text(baseline_snap, statement.statement_kind) != "Distance.Set") {
+                continue;
+            }
+            const std::string path = source_file_path(
+                baseline_snap, statement.source.source_file_index);
+            if (!path.empty()) ++distance_statement_counts[path];
+        }
+        if (distance_statement_counts.empty()) {
+            throw std::runtime_error("real map has no numeric distance statements");
+        }
+        std::string target_file;
+        std::uint64_t target_count = 0;
+        for (std::uint64_t i = 0; i < baseline_snap.source_file_count; ++i) {
+            const std::string path = source_file_path(baseline_snap, i);
+            auto count = distance_statement_counts.find(path);
+            if (count != distance_statement_counts.end() && count->second > target_count) {
+                target_file = path;
+                target_count = count->second;
+            }
+        }
+        if (target_file.empty()) {
+            throw std::runtime_error("unable to select a numeric-distance source file");
+        }
+        *out << "target_file=" << target_file << "\n";
+        std::vector<const KvStatementRow*> target_distance_statements;
+        for (std::uint64_t i = 0; i < baseline_snap.statement_count; ++i) {
+            const KvStatementRow& statement = baseline_snap.statements[i];
+            if (snapshot_text(baseline_snap, statement.statement_kind) != "Distance.Set") {
+                continue;
+            }
+            if (source_file_path(baseline_snap, statement.source.source_file_index) ==
+                target_file) {
+                target_distance_statements.push_back(&statement);
+            }
+        }
+        if (target_distance_statements.empty()) {
+            throw std::runtime_error(
+                "selected source file has no numeric distance statements");
+        }
+        std::stable_sort(target_distance_statements.begin(), target_distance_statements.end(),
+                         [](const KvStatementRow* lhs, const KvStatementRow* rhs) {
+                             if (lhs->global_order != rhs->global_order) {
+                                 return lhs->global_order < rhs->global_order;
+                             }
+                             if (lhs->source.byte_start != rhs->source.byte_start) {
+                                 return lhs->source.byte_start < rhs->source.byte_start;
+                             }
+                             return lhs->source.include_invocation_key.offset <
+                                 rhs->source.include_invocation_key.offset;
+                         });
+
+        double insert_distance = target_distance_statements.front()->distance_value;
+        bool selected_gap = false;
+        for (size_t i = 1; i < target_distance_statements.size(); ++i) {
+            const KvStatementRow& before = *target_distance_statements[i - 1];
+            const KvStatementRow& after = *target_distance_statements[i];
+            const std::string before_context = snapshot_text(
+                baseline_snap, before.source.include_invocation_key);
+            const std::string after_context = snapshot_text(
+                baseline_snap, after.source.include_invocation_key);
+            if (before_context != after_context) continue;
+            const double delta = after.distance_value - before.distance_value;
+            if (std::fabs(delta) < 2.0) continue;
+            insert_distance = before.distance_value + (delta > 0.0 ? 1.0 : -1.0);
+            selected_gap = true;
+            break;
+        }
+
+        auto make_insert_change = [&](const std::string& change_id,
+                                      const std::string& row_kind,
+                                      const std::vector<Field>& fields) {
+            Change change;
+            change.change_id = change_id;
+            change.edit_id = change_id;
+            change.operation = KV_EDIT_INSERT;
+            change.target_file_path = target_file;
+            change.fields.push_back({"rowKind", row_kind});
+            for (const Field& field : fields) change.fields.push_back(field);
+            return change;
+        };
+        auto distance_field = [](const std::string& value) {
+            return Field{"distance", value};
+        };
+
+        const std::string distance_text = format_double(insert_distance, 6);
+        *out << "insert_distance=" << distance_text << "\n"
+             << "distance_selection=" << (selected_gap ? "adjacent-gap" : "existing-block")
+             << "\n";
+
+        auto snapshot_value_or = [&](const KvValue& value, const char* fallback) {
+            const std::string text = distance_batch_headless::snapshot_value_text(
+                baseline_snap, value);
+            return text.empty() ? std::string(fallback) : text;
+        };
+        const std::string structure_key = baseline_snap.structure_put_count != 0 &&
+                baseline_snap.structure_puts
+            ? snapshot_value_or(baseline_snap.structure_puts[0].structure_key, "0")
+            : "0";
+        const std::string track_key = baseline_snap.structure_put_count != 0 &&
+                baseline_snap.structure_puts
+            ? snapshot_value_or(baseline_snap.structure_puts[0].track_key, "0")
+            : "0";
+        const std::string track_key1 = baseline_snap.structure_between_count != 0 &&
+                baseline_snap.structure_betweens
+            ? snapshot_value_or(baseline_snap.structure_betweens[0].track_key1, track_key.c_str())
+            : track_key;
+        const std::string track_key2 = baseline_snap.structure_between_count != 0 &&
+                baseline_snap.structure_betweens
+            ? snapshot_value_or(baseline_snap.structure_betweens[0].track_key2, track_key.c_str())
+            : track_key;
+        const std::string station_key = baseline_snap.station_put_count != 0 &&
+                baseline_snap.station_puts
+            ? snapshot_value_or(baseline_snap.station_puts[0].station_key, "0")
+            : "0";
+        const std::string signal_aspect_key = baseline_snap.signal_put_count != 0 &&
+                baseline_snap.signal_puts
+            ? snapshot_value_or(baseline_snap.signal_puts[0].signal_aspect_key, "0")
+            : "0";
+        const std::string sound_key = baseline_snap.map_sound_count != 0 &&
+                baseline_snap.map_sounds
+            ? snapshot_value_or(baseline_snap.map_sounds[0].sound_key, "0")
+            : "0";
+        const std::string sound3d_key = baseline_snap.map_sound_3d_count != 0 &&
+                baseline_snap.map_sounds_3d
+            ? snapshot_value_or(baseline_snap.map_sounds_3d[0].sound_key, sound_key.c_str())
+            : sound_key;
+
+        auto count_rows = [&](const KvMapSnapshot& snap, const char* kind) {
+            if (std::strcmp(kind, "structure.put") == 0) return snap.structure_put_count;
+            if (std::strcmp(kind, "structure.between") == 0) {
+                return snap.structure_between_count;
+            }
+            if (std::strcmp(kind, "station.put") == 0) return snap.station_put_count;
+            if (std::strcmp(kind, "signal.put") == 0) return snap.signal_put_count;
+            if (std::strcmp(kind, "speedlimit") == 0) return snap.speed_limit_count;
+            if (std::strcmp(kind, "beacon.put") == 0) return snap.beacon_count;
+            if (std::strcmp(kind, "section.begin") == 0) return snap.section_begin_count;
+            if (std::strcmp(kind, "section.speedLimit") == 0) {
+                return snap.section_speed_limit_count;
+            }
+            if (std::strcmp(kind, "irregularity.change") == 0) return snap.irregularity_count;
+            if (std::strcmp(kind, "drawDistance.change") == 0) return snap.draw_distance_count;
+            if (std::strcmp(kind, "cabIlluminance.change") == 0) return snap.cab_illuminance_count;
+            if (std::strcmp(kind, "fog.change") == 0) return snap.fog_count;
+            if (std::strcmp(kind, "adhesion.change") == 0) return snap.adhesion_count;
+            if (std::strcmp(kind, "mapSound.play") == 0) return snap.map_sound_count;
+            if (std::strcmp(kind, "mapSound3D.put") == 0) return snap.map_sound_3d_count;
+            if (std::strcmp(kind, "rollingNoise.change") == 0) return snap.rolling_noise_count;
+            if (std::strcmp(kind, "flangeNoise.change") == 0) return snap.flange_noise_count;
+            if (std::strcmp(kind, "jointNoise.play") == 0) return snap.joint_noise_count;
+            if (std::strcmp(kind, "background.change") == 0) return snap.background_count;
+            return std::uint64_t{0};
+        };
+
+        std::vector<Change> batch = {
+            make_insert_change("headless-insert-structure-put", "structure.put",
+                               {distance_field(distance_text), {"method", "Put"},
+                                {"structureKey", structure_key}, {"trackKey", track_key},
+                                {"x", "1"}, {"y", "2"}, {"z", "3"},
+                                {"rx", "4"}, {"ry", "5"}, {"rz", "6"},
+                                {"tilt", "0"}, {"span", "10"}}),
+            make_insert_change("headless-insert-structure-put0", "structure.put",
+                               {distance_field(distance_text), {"method", "Put0"},
+                                {"structureKey", structure_key}, {"trackKey", track_key},
+                                {"tilt", "0"}, {"span", "10"}}),
+            make_insert_change("headless-insert-structure-between", "structure.between",
+                               {distance_field(distance_text), {"structureKey", structure_key},
+                                {"trackKey1", track_key1}, {"trackKey2", track_key2},
+                                {"flag", "0"}}),
+            make_insert_change("headless-insert-station", "station.put",
+                               {distance_field(distance_text), {"stationKey", station_key},
+                                {"door", "0"}, {"margin1", "0"}, {"margin2", "0"}}),
+            make_insert_change("headless-insert-signal", "signal.put",
+                               {distance_field(distance_text),
+                                {"signalAspectKey", signal_aspect_key}, {"section", "1"},
+                                {"trackKey", track_key}, {"x", "1"}, {"y", "2"},
+                                {"z", "3"}, {"rx", "4"}, {"ry", "5"}, {"rz", "6"},
+                                {"tilt", "0"}, {"span", "10"}}),
+            make_insert_change("headless-insert-speed-begin", "speedlimit",
+                               {distance_field(distance_text), {"method", "Begin"},
+                                {"speed", "60"}}),
+            make_insert_change("headless-insert-speed-end", "speedlimit",
+                               {distance_field(distance_text), {"method", "End"}}),
+            make_insert_change("headless-insert-beacon", "beacon.put",
+                               {distance_field(distance_text),
+                                {"type", "1"}, {"section", "2"}, {"sendData", "3"}}),
+            make_insert_change("headless-insert-section", "section.begin",
+                               {distance_field(distance_text),
+                                {"method", "Begin"},
+                                {"values.count", "2"},
+                                {"values.0", "1"}, {"values.1", "2"}}),
+            make_insert_change("headless-insert-section-beginnew", "section.begin",
+                               {distance_field(distance_text),
+                                {"method", "BeginNew"},
+                                {"values.count", "2"},
+                                {"values.0", "1"}, {"values.1", "2"}}),
+            make_insert_change("headless-insert-section-speed", "section.speedLimit",
+                               {distance_field(distance_text),
+                                {"method", "SetSpeedLimit"},
+                                {"values.count", "2"},
+                                {"values.0", "60"}, {"values.1", "80"}}),
+            make_insert_change("headless-insert-section-signal-speed", "section.speedLimit",
+                               {distance_field(distance_text),
+                                {"method", "Signal.SpeedLimit"},
+                                {"values.count", "2"},
+                                {"values.0", "60"}, {"values.1", "80"}}),
+            make_insert_change("headless-insert-irregularity", "irregularity.change",
+                               {distance_field(distance_text),
+                                {"x", "1"}, {"y", "2"}, {"r", "3"},
+                                {"lx", "4"}, {"ly", "5"}, {"lr", "6"}}),
+            make_insert_change("headless-insert-draw", "drawDistance.change",
+                               {distance_field(distance_text), {"value", "500"}}),
+            make_insert_change("headless-insert-cab", "cabIlluminance.change",
+                               {distance_field(distance_text), {"method", "Set"},
+                                {"value", "10"}}),
+            make_insert_change("headless-insert-cab-interpolate", "cabIlluminance.change",
+                               {distance_field(distance_text), {"method", "Interpolate"},
+                                {"value", "20"}}),
+            make_insert_change("headless-insert-fog", "fog.change",
+                               {distance_field(distance_text), {"method", "Set"},
+                                {"density", "50"}, {"red", "100"},
+                                {"green", "100"}, {"blue", "100"}}),
+            make_insert_change("headless-insert-fog-interpolate", "fog.change",
+                               {distance_field(distance_text), {"method", "Interpolate"},
+                                {"density", "50"}}),
+            make_insert_change("headless-insert-adhesion", "adhesion.change",
+                               {distance_field(distance_text),
+                                 {"a", "1.5"}, {"b", "2.5"}, {"c", "3.5"}}),
+            make_insert_change("headless-insert-map-sound", "mapSound.play",
+                               {distance_field(distance_text), {"soundKey", sound_key}}),
+            make_insert_change("headless-insert-map-sound3d", "mapSound3D.put",
+                               {distance_field(distance_text), {"soundKey", sound3d_key},
+                                {"x", "1"}, {"y", "2"}}),
+            make_insert_change("headless-insert-rolling-noise", "rollingNoise.change",
+                               {distance_field(distance_text), {"index", "1"}}),
+            make_insert_change("headless-insert-flange-noise", "flangeNoise.change",
+                               {distance_field(distance_text), {"index", "2"}}),
+            make_insert_change("headless-insert-joint-noise", "jointNoise.play",
+                               {distance_field(distance_text), {"index", "3"}}),
+            make_insert_change("headless-insert-background", "background.change",
+                               {distance_field(distance_text), {"structureKey", structure_key}}),
+        };
+        const std::vector<std::string> batch_kinds = {
+            "structure.put", "structure.between", "station.put", "signal.put",
+            "speedlimit", "beacon.put", "section.begin", "section.speedLimit",
+            "irregularity.change", "drawDistance.change", "cabIlluminance.change",
+            "fog.change", "adhesion.change", "mapSound.play", "mapSound3D.put",
+            "rollingNoise.change", "flangeNoise.change", "jointNoise.play",
+            "background.change",
+        };
+        const size_t expected_inserts = batch.size();
+        const std::map<std::string, std::uint64_t> expected_row_increments = {
+            {"structure.put", 2},
+            {"structure.between", 1},
+            {"station.put", 1},
+            {"signal.put", 1},
+            {"speedlimit", 2},
+            {"section.begin", 2},
+            {"section.speedLimit", 2},
+            {"cabIlluminance.change", 2},
+            {"fog.change", 2},
+            {"beacon.put", 1},
+            {"irregularity.change", 1},
+            {"drawDistance.change", 1},
+            {"adhesion.change", 1},
+            {"mapSound.play", 1},
+            {"mapSound3D.put", 1},
+            {"rollingNoise.change", 1},
+            {"flangeNoise.change", 1},
+            {"jointNoise.play", 1},
+            {"background.change", 1},
+        };
+        std::map<std::string, std::uint64_t> baseline_counts;
+        for (const std::string& kind : batch_kinds) {
+            baseline_counts[kind] = count_rows(baseline_snap, kind.c_str());
+        }
+
+        Report dry = typed_edit_headless::dry_run(handle, batch);
+        bool manual_boundary_retry = false;
+        if ((!dry.ok || !dry.full_reparse_ok) && !dry.resolution_requests.empty()) {
+            const Resolution& resolution = dry.resolution_requests.front();
+            if (!resolution.allowed_boundaries.empty()) {
+                const Boundary& boundary = resolution.allowed_boundaries.front();
+                for (Change& change : batch) {
+                    if (std::find(resolution.affected_edit_ids.begin(),
+                                  resolution.affected_edit_ids.end(),
+                                  change.edit_id) == resolution.affected_edit_ids.end()) {
+                        continue;
+                    }
+                    change.distance_resolution_key = resolution.resolution_key;
+                    change.distance_boundary_token = boundary.token;
+                    if (!resolution.suggested_expression.empty()) {
+                        change.distance_expression = resolution.suggested_expression;
+                    }
+                }
+                manual_boundary_retry = true;
+                dry = typed_edit_headless::dry_run(handle, batch);
+            }
+        }
+        *out << "manual_boundary_retry=" << (manual_boundary_retry ? 1 : 0) << "\n";
+        const bool dry_ok = dry.ok && dry.insert_count == static_cast<int>(expected_inserts) &&
+            dry.full_reparse_ok;
+        *out << "dry_run_ok=" << (dry_ok ? 1 : 0) << "\n"
+             << "dry_report_ok=" << (dry.ok ? 1 : 0) << "\n"
+             << "dry_full_reparse_ok=" << (dry.full_reparse_ok ? 1 : 0) << "\n"
+             << "dry_target_distance_matches=" << dry.target_distance_match_count << "\n"
+             << "dry_non_target_changed=" << dry.non_target_changed_count << "\n"
+             << "dry_resolution_count=" << dry.resolution_requests.size() << "\n"
+             << "dry_error_count=" << dry.blocking_errors.size() << "\n"
+             << "dry_run_insert_count=" << dry.insert_count << "\n"
+             << "dry_run_created_distance_blocks=" << dry.created_distance_block_count << "\n";
+        for (const std::string& error : dry.blocking_errors) {
+            *out << "dry_run_error=" << error << "\n";
+        }
+        for (const Resolution& resolution : dry.resolution_requests) {
+            *out << "dry_resolution_reason=" << resolution.reason
+                 << " boundaries=" << resolution.allowed_boundaries.size()
+                 << " distance=" << format_double(resolution.target_distance, 6) << "\n";
+        }
+        if (!dry_ok) ++failed_cases;
+
+        const Report applied = typed_edit_headless::apply_to_memory(handle, batch);
+        const bool apply_ok = applied.ok &&
+            applied.insert_count == static_cast<int>(expected_inserts) &&
+            applied.full_reparse_ok;
+        *out << "apply_ok=" << (apply_ok ? 1 : 0) << "\n";
+        for (const std::string& error : applied.blocking_errors) {
+            *out << "apply_error=" << error << "\n";
+        }
+        if (!apply_ok) ++failed_cases;
+
+        bool counts_match = false;
+        if (apply_ok) {
+            const KvMapSnapshot applied_snap = snapshot();
+            counts_match = true;
+            for (const std::string& kind : batch_kinds) {
+                const std::uint64_t expected = baseline_counts[kind] +
+                    expected_row_increments.at(kind);
+                const std::uint64_t actual = count_rows(applied_snap, kind.c_str());
+                *out << "row_count_" << kind << "=" << actual << " expected=" << expected << "\n";
+                if (actual != expected) counts_match = false;
+            }
+            if (!counts_match) ++failed_cases;
+        }
+
+        bool reset_ok = false;
+        if (kv_edit_reset_memory(handle)) {
+            const KvMapSnapshot reset_snap = snapshot();
+            reset_ok = true;
+            for (const std::string& kind : batch_kinds) {
+                if (count_rows(reset_snap, kind.c_str()) != baseline_counts[kind]) {
+                    reset_ok = false;
+                }
+            }
+        }
+        *out << "reset_ok=" << (reset_ok ? 1 : 0) << "\n";
+        if (!reset_ok) ++failed_cases;
+
+        if (options.commit) {
+            const Report reapplied = typed_edit_headless::apply_to_memory(handle, batch);
+            if (!reapplied.ok || reapplied.insert_count != static_cast<int>(expected_inserts)) {
+                throw std::runtime_error("insert re-apply before commit failed");
+            }
+            const Report committed = typed_edit_headless::commit(handle);
+            bool commit_ok = committed.ok && !committed.changed_files.empty();
+            *out << "commit_ok=" << (commit_ok ? 1 : 0) << "\n";
+            for (const std::string& error : committed.blocking_errors) {
+                *out << "commit_error=" << error << "\n";
+            }
+            if (commit_ok) {
+                std::ifstream disk_file(std::filesystem::path(utf8_to_wide(target_file)),
+                                        std::ios::in | std::ios::binary);
+                if (disk_file) {
+                    std::string text((std::istreambuf_iterator<char>(disk_file)),
+                                     std::istreambuf_iterator<char>());
+                    const bool has_speed_limit = text.find("SpeedLimit.Begin(60);") !=
+                        std::string::npos;
+                    const bool has_beacon = text.find("Beacon.Put(1,2,3);") !=
+                        std::string::npos;
+                    *out << "disk_has_speed_limit=" << (has_speed_limit ? 1 : 0) << "\n"
+                         << "disk_has_beacon=" << (has_beacon ? 1 : 0) << "\n";
+                    if (!has_speed_limit || !has_beacon) {
+                        commit_ok = false;
+                    }
+                } else {
+                    commit_ok = false;
+                }
+                const KvMapSnapshot committed_snap = snapshot();
+                std::uint64_t committed_target_distance_matches = 0;
+                for (std::uint64_t i = 0; i < committed_snap.statement_count; ++i) {
+                    const KvStatementRow& statement = committed_snap.statements[i];
+                    if (snapshot_text(committed_snap, statement.statement_kind) !=
+                            "Distance.Set" ||
+                        source_file_path(committed_snap, statement.source.source_file_index) !=
+                            target_file ||
+                        std::fabs(statement.distance_value - insert_distance) > 1e-9) {
+                        continue;
+                    }
+                    ++committed_target_distance_matches;
+                }
+                *out << "committed_target_distance_matches="
+                     << committed_target_distance_matches << "\n";
+                if (committed_target_distance_matches == 0) commit_ok = false;
+                for (const std::string& kind : batch_kinds) {
+                    const std::uint64_t expected = baseline_counts[kind] +
+                        expected_row_increments.at(kind);
+                    if (count_rows(committed_snap, kind.c_str()) != expected) commit_ok = false;
+                }
+            }
+            *out << "commit_verified=" << (commit_ok ? 1 : 0) << "\n";
+            if (!commit_ok) ++failed_cases;
+        }
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    if (handle) kv_free(handle);
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 21;
 }
 
 namespace {

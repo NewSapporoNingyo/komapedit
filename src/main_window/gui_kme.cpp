@@ -2170,6 +2170,7 @@ void App::clear_pending_edit_state() {
     inspector_ = MapElementInspectorState{};
     pending_inspector_request_.reset();
     pending_delete_request_.reset();
+    new_element_wizard_ = NewElementWizardState{};
     discard_all_editable_list_drafts();
 }
 
@@ -3848,6 +3849,47 @@ void App::apply_inspector_changes() {
         }
     }
 
+    // Editing a row that was created by an unfinished insert must merge into
+    // the pending insert change: the insert edit id does not exist on disk, so
+    // a plain update could never be replayed after a working-copy reset. The
+    // merged change carries every form value so the maploader rebuilds the
+    // statement from the current fields, and keeps the resolution/placement
+    // state already attached to the pending insert.
+    for (auto& item : replacements) {
+        auto existing = pending_edit_changes_.find(item.first);
+        if (existing == pending_edit_changes_.end() ||
+            existing->second.operation != "insert") {
+            continue;
+        }
+        MapElementPendingChange& change = item.second;
+        std::map<std::string, std::string> merged_fields = std::move(change.field_changes);
+        change.operation = "insert";
+        change.row_kind = existing->second.row_kind;
+        change.target_file_path = existing->second.target_file_path;
+        change.expected_source_hash = existing->second.expected_source_hash;
+        change.distance_resolution_key = existing->second.distance_resolution_key;
+        change.distance_boundary_token = existing->second.distance_boundary_token;
+        change.distance_expression = existing->second.distance_expression;
+        change.confirm_environment_mismatch =
+            existing->second.confirm_environment_mismatch;
+        change.field_changes.clear();
+        for (const MapElementEditFieldState& field : inspector_.fields) {
+            if (field.read_only) continue;
+            const std::string& backend_key =
+                field.backend_key.empty() ? field.key : field.backend_key;
+            merged_fields[backend_key] =
+                trim_gui_ascii_copy(edit_field_buffer_text(field));
+        }
+        size_t section_value_count = 0;
+        for (const MapElementEditFieldState& field : inspector_.fields) {
+            if (is_section_values_field(field)) ++section_value_count;
+        }
+        if (section_value_count > 0) {
+            merged_fields["values.count"] = std::to_string(section_value_count);
+        }
+        change.field_changes = std::move(merged_fields);
+    }
+
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
         candidate.erase(owned_edit_id);
@@ -4657,7 +4699,10 @@ TypedEditBatchStorage typed_edit_batch(
     TypedEditBatchStorage storage;
     storage.changes.reserve(inputs.size());
     size_t field_count = 0;
-    for (const auto& input : inputs) field_count += input.second.field_changes.size();
+    for (const auto& input : inputs) {
+        field_count += input.second.field_changes.size();
+        if (input.second.operation == "insert") ++field_count;
+    }
     storage.fields.reserve(field_count);
     for (const auto& input : inputs) {
         const MapElementPendingChange& source = input.second;
@@ -4673,10 +4718,18 @@ TypedEditBatchStorage typed_edit_batch(
         }
         change.fields.offset = static_cast<std::uint64_t>(storage.fields.size());
         change.fields.count = static_cast<std::uint64_t>(source.field_changes.size());
+        if (source.operation == "insert") ++change.fields.count;
+        if (source.operation == "insert") {
+            // The maploader derives insert row kinds from this reserved field
+            // and pops it before any typed edit processing runs.
+            storage.fields.push_back({edit_utf8_view("rowKind"),
+                                      edit_utf8_view(source.row_kind)});
+        }
         for (const auto& field : source.field_changes) {
             storage.fields.push_back({edit_utf8_view(field.first), edit_utf8_view(field.second)});
         }
         change.replacement_statement = edit_utf8_view(source.replacement_statement);
+        change.target_file_path = edit_utf8_view(source.target_file_path);
         change.expected_source_hash = edit_utf8_view(source.expected_source_hash);
         change.distance_resolution_key = edit_utf8_view(source.distance_resolution_key);
         change.distance_boundary_token = edit_utf8_view(source.distance_boundary_token);
@@ -5055,6 +5108,9 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         affected_row_kinds.find("curve") != affected_row_kinds.end() ||
         affected_row_kinds.find("gradient") != affected_row_kinds.end() ||
         affected_row_kinds.find("otherTrack.change") != affected_row_kinds.end();
+    const bool full_insert_hydration = std::any_of(
+        changes.begin(), changes.end(),
+        [](const auto& entry) { return entry.second.operation == "insert"; });
     if (signal_aspects_hydrated || alignment_hydrated) {
         KvMapSnapshot snapshot{};
         if (!kv_get_map_snapshot(
@@ -5121,6 +5177,43 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         }
     }
 
+    if (full_insert_hydration) {
+        // An insert creates rows with brand-new edit ids, so the local
+        // row-patching loops below cannot target them. Re-hydrate the whole
+        // model from the validated working-copy snapshot; every pending
+        // change of the batch is already reflected in it.
+        KvMapSnapshot snapshot{};
+        if (!kv_get_map_snapshot(
+                handle_, KV_MAP_SNAPSHOT_VERSION,
+                &snapshot, sizeof(snapshot)) ||
+            snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
+            snapshot.structure_size < sizeof(KvMapSnapshot)) {
+            const char* error = kv_get_last_error();
+            add_log(
+                "[error]gui_kme.cpp: failed to refresh the model after element "
+                "insertion" +
+                std::string(error && *error
+                    ? ": " + std::string(error)
+                    : std::string{}));
+            return rollback_local_preview();
+        }
+        std::map<std::string, std::pair<bool, ImVec4>> other_track_state;
+        for (const OtherTrack& track : model_.other_tracks) {
+            other_track_state[track.key] = {track.visible, track.color};
+        }
+        MapModel refreshed = hydrate_map_snapshot(snapshot, model_.path, 0.0);
+        for (OtherTrack& track : refreshed.other_tracks) {
+            auto state = other_track_state.find(track.key);
+            if (state != other_track_state.end()) {
+                track.visible = state->second.first;
+                track.color = state->second.second;
+            }
+        }
+        model_ = std::move(refreshed);
+        normalize_station_preview_rows(model_);
+        original_edit_rows_.clear();
+    }
+
     std::map<std::string, std::vector<std::string>> refresh_targets;
     auto note_refresh_target = [&](const std::string& row_kind, const std::string& edit_id,
                                    bool force_full_refresh) {
@@ -5140,13 +5233,19 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         note_refresh_target("gradient", std::string{}, true);
         note_refresh_target("otherTrack.change", std::string{}, true);
     }
+    if (full_insert_hydration) {
+        for (const std::string& row_kind : affected_row_kinds) {
+            note_refresh_target(row_kind, std::string{}, true);
+        }
+    }
 
     for (const auto& kv : pending_edit_changes_) {
         if (changes.find(kv.first) != changes.end()) continue;
         if ((signal_aspects_hydrated && kv.second.row_kind == "signal.aspect") ||
             (alignment_hydrated &&
              (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient" ||
-              kv.second.row_kind == "otherTrack.change"))) {
+              kv.second.row_kind == "otherTrack.change")) ||
+            full_insert_hydration) {
             continue;
         }
         if (!restore_local_preview_change(kv.first, kv.second.row_kind, false)) {
@@ -5166,7 +5265,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         if ((signal_aspects_hydrated && kv.second.row_kind == "signal.aspect") ||
             (alignment_hydrated &&
              (kv.second.row_kind == "curve" || kv.second.row_kind == "gradient" ||
-              kv.second.row_kind == "otherTrack.change"))) {
+              kv.second.row_kind == "otherTrack.change")) ||
+            full_insert_hydration) {
             continue;
         }
         if (!apply_local_preview_change(kv.second, false)) {
@@ -5559,6 +5659,112 @@ bool App::resolve_pending_close_action(bool save_changes) {
     return true;
 }
 
+void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
+    const bool repeater_inspector = inspector.row_kind == "repeater";
+    const bool section_inspector = inspector.row_kind == "section.begin" ||
+        inspector.row_kind == "section.speedLimit";
+    for (size_t field_index = 0; field_index < inspector.fields.size(); ++field_index) {
+        MapElementEditFieldState& field = inspector.fields[field_index];
+        if (repeater_inspector && is_repeater_structure_key_field(field)) {
+            continue;
+        }
+        if (section_inspector && is_section_values_field(field)) {
+            continue;
+        }
+        if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
+        if (repeater_inspector && field.key == "repeaterKey") ImGui::Separator();
+        const bool changed = edit_field_buffer_text(field) != field.original_value;
+        if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
+        ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
+        ImGui::BeginDisabled(field.read_only);
+        const std::string previous_value = edit_field_buffer_text(field);
+        const bool input_changed = ImGui::InputText(field.label.c_str(), &field.value);
+        ImGui::EndDisabled();
+        if (input_changed && field.requires_signal_full_form &&
+            inspector.source_signal_short_form &&
+            !inspector.signal_full_form_conversion_draft) {
+            inspector.pending_signal_full_form_field = field.key;
+            inspector.pending_signal_full_form_value = edit_field_buffer_text(field);
+            set_edit_field_buffer(field, previous_value);
+            inspector.signal_full_form_prompt_requested = true;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit() &&
+            !validate_and_canonicalize_edit_field(field, true)) {
+            set_program_status("status.edit.invalid_number");
+        }
+        if (changed) ImGui::PopStyleColor();
+        if (!field.source_distance_string.empty()) {
+            render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
+                                       field.source_distance_string);
+        }
+    }
+}
+
+void App::render_section_values_edit_ui(MapElementInspectorState& inspector) {
+    ImGui::Separator();
+    ImGui::TextUnformatted(tr("label.section_parameters").c_str());
+    std::vector<size_t> value_field_indices;
+    for (size_t index = 0; index < inspector.fields.size(); ++index) {
+        if (is_section_values_field(inspector.fields[index])) {
+            value_field_indices.push_back(index);
+        }
+    }
+    std::optional<size_t> remove_value_index;
+    std::optional<size_t> move_value_from;
+    std::optional<size_t> move_value_to;
+    const float section_value_input_x = ImGui::GetCursorPosX();
+    const float section_value_input_width =
+        std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f);
+    const float add_section_value_button_width =
+        std::max(80.0f, section_value_input_width * 0.5f);
+    for (size_t list_index = 0; list_index < value_field_indices.size(); ++list_index) {
+        MapElementEditFieldState& field = inspector.fields[value_field_indices[list_index]];
+        const bool changed = edit_field_buffer_text(field) != field.original_value;
+        if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
+        ImGui::SetNextItemWidth(section_value_input_width);
+        ImGui::InputText(field.label.c_str(), &field.value);
+        if (changed) ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(list_index == 0);
+        if (ImGui::SmallButton((u8"\u2191##SectionValue" + std::to_string(list_index)).c_str())) {
+            move_value_from = list_index;
+            move_value_to = list_index - 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(list_index + 1 >= value_field_indices.size());
+        if (ImGui::SmallButton((u8"\u2193##SectionValue" + std::to_string(list_index)).c_str())) {
+            move_value_from = list_index;
+            move_value_to = list_index + 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(value_field_indices.size() <= 1);
+        if (ImGui::SmallButton(("-##SectionValue" + std::to_string(list_index)).c_str())) {
+            remove_value_index = list_index;
+        }
+        ImGui::EndDisabled();
+    }
+    ImGui::SetCursorPosX(section_value_input_x +
+                         (section_value_input_width - add_section_value_button_width) * 0.5f);
+    if (ImGui::Button("+##SectionValue", ImVec2(add_section_value_button_width, 0.0f))) {
+        inspector.fields.push_back(make_section_values_field(
+            inspector, value_field_indices.size(), {}));
+    }
+    if (remove_value_index && *remove_value_index < value_field_indices.size()) {
+        inspector.fields.erase(inspector.fields.begin() + static_cast<std::ptrdiff_t>(
+            value_field_indices[*remove_value_index]));
+    } else if (move_value_from && move_value_to &&
+               *move_value_from < value_field_indices.size() &&
+               *move_value_to < value_field_indices.size()) {
+        std::swap(inspector.fields[value_field_indices[*move_value_from]],
+                  inspector.fields[value_field_indices[*move_value_to]]);
+    }
+    if (remove_value_index || move_value_from) {
+        reindex_section_values_fields(inspector);
+    }
+}
+
 void App::render_element_inspector() {
     if (!edit_mode_enabled_) {
         clear_scene_placement_edit_target();
@@ -5627,47 +5833,13 @@ void App::render_element_inspector() {
     ImGui::Separator();
     const bool section_inspector = inspector_.row_kind == "section.begin" ||
         inspector_.row_kind == "section.speedLimit";
-    for (size_t field_index = 0; field_index < inspector_.fields.size(); ++field_index) {
-        MapElementEditFieldState& field = inspector_.fields[field_index];
-        if (repeater_inspector && is_repeater_structure_key_field(field)) {
-            continue;
-        }
-        if (section_inspector && is_section_values_field(field)) {
-            continue;
-        }
-        if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
-        if (repeater_inspector && field.key == "repeaterKey") ImGui::Separator();
-        const bool changed = edit_field_buffer_text(field) != field.original_value;
-        if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
-        ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
-        ImGui::BeginDisabled(field.read_only);
-        const std::string previous_value = edit_field_buffer_text(field);
-        const bool input_changed = ImGui::InputText(field.label.c_str(), &field.value);
-        ImGui::EndDisabled();
-        if (input_changed && field.requires_signal_full_form &&
-            inspector_.source_signal_short_form &&
-            !inspector_.signal_full_form_conversion_draft) {
-            inspector_.pending_signal_full_form_field = field.key;
-            inspector_.pending_signal_full_form_value = edit_field_buffer_text(field);
-            set_edit_field_buffer(field, previous_value);
-            inspector_.signal_full_form_prompt_requested = true;
-        }
-        if (ImGui::IsItemDeactivatedAfterEdit() &&
-            !validate_and_canonicalize_edit_field(field, true)) {
-            set_program_status("status.edit.invalid_number");
-        }
-        if (changed) ImGui::PopStyleColor();
-        if (!field.source_distance_string.empty()) {
-            render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
-                                       field.source_distance_string);
-        }
-        if (repeater_inspector && field.key == "interval") {
-            ImGui::Separator();
-            render_repeater_end_source();
-            if (repeater_navigation_changed) {
-                ImGui::End();
-                return;
-            }
+    render_map_element_field_inputs(inspector_);
+    if (repeater_inspector) {
+        ImGui::Separator();
+        render_repeater_end_source();
+        if (repeater_navigation_changed) {
+            ImGui::End();
+            return;
         }
     }
     if (repeater_inspector) {
@@ -5735,68 +5907,7 @@ void App::render_element_inspector() {
         }
     }
     if (section_inspector) {
-        ImGui::Separator();
-        ImGui::TextUnformatted(tr("label.section_parameters").c_str());
-        std::vector<size_t> value_field_indices;
-        for (size_t index = 0; index < inspector_.fields.size(); ++index) {
-            if (is_section_values_field(inspector_.fields[index])) {
-                value_field_indices.push_back(index);
-            }
-        }
-        std::optional<size_t> remove_value_index;
-        std::optional<size_t> move_value_from;
-        std::optional<size_t> move_value_to;
-        const float section_value_input_x = ImGui::GetCursorPosX();
-        const float section_value_input_width =
-            std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.42f);
-        const float add_section_value_button_width =
-            std::max(80.0f, section_value_input_width * 0.5f);
-        for (size_t list_index = 0; list_index < value_field_indices.size(); ++list_index) {
-            MapElementEditFieldState& field = inspector_.fields[value_field_indices[list_index]];
-            const bool changed = edit_field_buffer_text(field) != field.original_value;
-            if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
-            ImGui::SetNextItemWidth(section_value_input_width);
-            ImGui::InputText(field.label.c_str(), &field.value);
-            if (changed) ImGui::PopStyleColor();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(list_index == 0);
-            if (ImGui::SmallButton((u8"\u2191##SectionValue" + std::to_string(list_index)).c_str())) {
-                move_value_from = list_index;
-                move_value_to = list_index - 1;
-            }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(list_index + 1 >= value_field_indices.size());
-            if (ImGui::SmallButton((u8"\u2193##SectionValue" + std::to_string(list_index)).c_str())) {
-                move_value_from = list_index;
-                move_value_to = list_index + 1;
-            }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(value_field_indices.size() <= 1);
-            if (ImGui::SmallButton(("-##SectionValue" + std::to_string(list_index)).c_str())) {
-                remove_value_index = list_index;
-            }
-            ImGui::EndDisabled();
-        }
-        ImGui::SetCursorPosX(section_value_input_x +
-                             (section_value_input_width - add_section_value_button_width) * 0.5f);
-        if (ImGui::Button("+##SectionValue", ImVec2(add_section_value_button_width, 0.0f))) {
-            inspector_.fields.push_back(make_section_values_field(
-                inspector_, value_field_indices.size(), {}));
-        }
-        if (remove_value_index && *remove_value_index < value_field_indices.size()) {
-            inspector_.fields.erase(inspector_.fields.begin() + static_cast<std::ptrdiff_t>(
-                value_field_indices[*remove_value_index]));
-        } else if (move_value_from && move_value_to &&
-                   *move_value_from < value_field_indices.size() &&
-                   *move_value_to < value_field_indices.size()) {
-            std::swap(inspector_.fields[value_field_indices[*move_value_from]],
-                      inspector_.fields[value_field_indices[*move_value_to]]);
-        }
-        if (remove_value_index || move_value_from) {
-            reindex_section_values_fields(inspector_);
-        }
+        render_section_values_edit_ui(inspector_);
     }
     if (ImGui::Button(tr("button.apply").c_str())) apply_inspector_changes();
     ImGui::SameLine();
@@ -5813,6 +5924,593 @@ void App::render_element_inspector() {
         cancel_distance_resolution_workflow();
     }
     if (!inspector_.open) clear_scene_placement_edit_target();
+}
+
+namespace {
+
+const std::vector<NewElementTemplate>& new_element_templates() {
+    static const std::vector<NewElementTemplate> templates = {
+        {
+            "structure.put", "structure.put", "Put",
+            "Structure.Put(Key, X, Y, Z, RX, RY, RZ, Tilt, Span)",
+            "new_element.usage.structure.put", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, false, ""},
+                {"x", "x", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"y", "y", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"z", "z", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"rx", "rx", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"ry", "ry", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"rz", "rz", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"tilt", "tilt", MapElementNumericConstraint::Integer, true, "0"},
+                {"span", "span", MapElementNumericConstraint::Truncate3, true, "0"},
+            },
+        },
+        {
+            "structure.put0", "structure.put", "Put0",
+            "Structure.Put0(Key, Tilt, Span)",
+            "new_element.usage.structure.put0", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, false, ""},
+                {"tilt", "tilt", MapElementNumericConstraint::Integer, true, "0"},
+                {"span", "span", MapElementNumericConstraint::Truncate3, true, "0"},
+            },
+        },
+        {
+            "structure.put_between", "structure.between", "PutBetween",
+            "Structure.PutBetween(Key, Track1, Track2, Flag)",
+            "new_element.usage.structure.put_between", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
+                {"trackKey1", "trackKey1", MapElementNumericConstraint::None, true, ""},
+                {"trackKey2", "trackKey2", MapElementNumericConstraint::None, true, ""},
+                {"flag", "flag", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "station.put", "station.put", "Station.Put",
+            "Station[Key].Put(Door, Margin1, Margin2)",
+            "new_element.usage.station.put", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"stationKey", "stationKey", MapElementNumericConstraint::None, true, ""},
+                {"door", "door", MapElementNumericConstraint::Finite, false, ""},
+                {"margin1", "back", MapElementNumericConstraint::Finite, false, ""},
+                {"margin2", "front", MapElementNumericConstraint::Finite, false, ""},
+            },
+        },
+        {
+            "signal.put", "signal.put", "Signal.Put",
+            "Signal[Key].Put(Section, Track, X, Y, Z, RX, RY, RZ, Tilt, Span)",
+            "new_element.usage.signal.put", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"signalAspectKey", "signalAspectKey", MapElementNumericConstraint::None, true, ""},
+                {"section", "section", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, false, ""},
+                {"x", "x", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"y", "y", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"z", "z", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"rx", "rx", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"ry", "ry", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"rz", "rz", MapElementNumericConstraint::Truncate3, true, "0"},
+                {"tilt", "tilt", MapElementNumericConstraint::Integer, true, "0"},
+                {"span", "span", MapElementNumericConstraint::Truncate3, true, "0"},
+            },
+        },
+        {
+            "speedlimit.begin", "speedlimit", "Begin",
+            "SpeedLimit.Begin(Speed)",
+            "new_element.usage.speedlimit.begin", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"speed", "speed", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "speedlimit.end", "speedlimit", "End",
+            "SpeedLimit.End()",
+            "new_element.usage.speedlimit.end", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "section.begin", "section.begin", "Begin",
+            "Section.Begin(Index, ...)",
+            "new_element.usage.section.begin", true,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "section.beginnew", "section.begin", "BeginNew",
+            "Section.BeginNew(Index, ...)",
+            "new_element.usage.section.beginnew", true,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "section.setspeedlimit", "section.speedLimit", "SetSpeedLimit",
+            "Section.SetSpeedLimit(Speed, ...)",
+            "new_element.usage.section.setspeedlimit", true,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "section.signal_speedlimit", "section.speedLimit", "Signal.SpeedLimit",
+            "Signal.SpeedLimit(Speed, ...)",
+            "new_element.usage.section.signal_speedlimit", true,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "irregularity.change", "irregularity.change", "Irregularity.Change",
+            "Irregularity.Change(X, Y, R, LX, LY, LR)",
+            "new_element.usage.irregularity.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"x", "x", MapElementNumericConstraint::Finite, true, "0"},
+                {"y", "y", MapElementNumericConstraint::Finite, true, "0"},
+                {"r", "r", MapElementNumericConstraint::Finite, true, "0"},
+                {"lx", "lx", MapElementNumericConstraint::Finite, true, "0"},
+                {"ly", "ly", MapElementNumericConstraint::Finite, true, "0"},
+                {"lr", "lr", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "beacon.put", "beacon.put", "Beacon.Put",
+            "Beacon.Put(Type, Section, SendData)",
+            "new_element.usage.beacon.put", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"type", "type", MapElementNumericConstraint::Finite, true, "0"},
+                {"section", "section", MapElementNumericConstraint::Finite, true, "0"},
+                {"sendData", "sendData", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "map_sound.play", "mapSound.play", "Sound.Play",
+            "Sound[Key].Play()",
+            "new_element.usage.map_sound.play", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"soundKey", "soundKey", MapElementNumericConstraint::None, true, ""},
+            },
+        },
+        {
+            "map_sound3d.put", "mapSound3D.put", "Sound3D.Put",
+            "Sound3D[Key].Put(X, Y)",
+            "new_element.usage.map_sound3d.put", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"soundKey", "soundKey", MapElementNumericConstraint::None, true, ""},
+                {"x", "x", MapElementNumericConstraint::Finite, true, "0"},
+                {"y", "y", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "rolling_noise.change", "rollingNoise.change", "RollingNoise.Change",
+            "RollingNoise.Change(Index)",
+            "new_element.usage.rolling_noise.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"index", "index", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "flange_noise.change", "flangeNoise.change", "FlangeNoise.Change",
+            "FlangeNoise.Change(Index)",
+            "new_element.usage.flange_noise.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"index", "index", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "joint_noise.play", "jointNoise.play", "JointNoise.Play",
+            "JointNoise.Play(Index)",
+            "new_element.usage.joint_noise.play", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"index", "index", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "background.change", "background.change", "Background.Change",
+            "Background.Change(Key)",
+            "new_element.usage.background.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
+            },
+        },
+        {
+            "adhesion.change", "adhesion.change", "Adhesion.Change",
+            "Adhesion.Change(A[, B, C])",
+            "new_element.usage.adhesion.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"a", "a", MapElementNumericConstraint::Finite, true, "0"},
+                {"b", "b", MapElementNumericConstraint::Finite, false, ""},
+                {"c", "c", MapElementNumericConstraint::Finite, false, ""},
+            },
+        },
+        {
+            "cab_illuminance.set", "cabIlluminance.change", "Set",
+            "CabIlluminance.Set(Value)",
+            "new_element.usage.cab_illuminance.set", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"value", "value", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "cab_illuminance.interpolate", "cabIlluminance.change", "Interpolate",
+            "CabIlluminance.Interpolate(Value)",
+            "new_element.usage.cab_illuminance.interpolate", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"value", "value", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "fog.set", "fog.change", "Set",
+            "Fog.Set(Density, Red, Green, Blue)",
+            "new_element.usage.fog.set", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"density", "density", MapElementNumericConstraint::Finite, true, "0"},
+                {"red", "red", MapElementNumericConstraint::Finite, true, "0"},
+                {"green", "green", MapElementNumericConstraint::Finite, true, "0"},
+                {"blue", "blue", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "fog.interpolate", "fog.change", "Interpolate",
+            "Fog.Interpolate(Density[, Red, Green, Blue])",
+            "new_element.usage.fog.interpolate", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"density", "density", MapElementNumericConstraint::Finite, false, ""},
+                {"red", "red", MapElementNumericConstraint::Finite, false, ""},
+                {"green", "green", MapElementNumericConstraint::Finite, false, ""},
+                {"blue", "blue", MapElementNumericConstraint::Finite, false, ""},
+            },
+        },
+        {
+            "draw_distance.change", "drawDistance.change", "DrawDistance.Change",
+            "DrawDistance.Change(Value)",
+            "new_element.usage.draw_distance.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"value", "value", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+    };
+    return templates;
+}
+
+bool new_element_target_is_resource_list(
+    const MapModel& model, const std::string& file_path) {
+    for (const ResourceListSource& source : model.resource_list_sources) {
+        if (source.present && !source.resolved_path.empty() &&
+            source.resolved_path == file_path) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> new_element_target_candidates(const MapModel& model) {
+    std::map<std::string, size_t> distance_counts;
+    for (const EditStatementInfo& statement : model.edit_statements) {
+        // Distance.Set is the parser's internal classification for a source
+        // line whose expression sets the current BVE distance. It is not a
+        // BVE source function and must never be emitted as source text.
+        if (statement.statement_kind != "Distance.Set" ||
+            statement.source.file_path.empty() ||
+            new_element_target_is_resource_list(model, statement.source.file_path)) {
+            continue;
+        }
+        ++distance_counts[statement.source.file_path];
+    }
+
+    std::vector<std::pair<std::string, size_t>> ranked;
+    ranked.reserve(distance_counts.size());
+    for (const EditSourceFileInfo& file : model.edit_files) {
+        auto count = distance_counts.find(file.file_path);
+        if (count != distance_counts.end()) {
+            ranked.emplace_back(file.file_path, count->second);
+        }
+    }
+    std::stable_sort(ranked.begin(), ranked.end(),
+                     [](const auto& lhs, const auto& rhs) {
+                         if (lhs.second != rhs.second) return lhs.second > rhs.second;
+                         return lhs.first < rhs.first;
+                     });
+
+    std::vector<std::string> result;
+    result.reserve(ranked.size());
+    for (const auto& entry : ranked) result.push_back(entry.first);
+    return result;
+}
+
+bool new_element_template_uses_method(const NewElementTemplate& tpl) {
+    return tpl.row_kind == "structure.put" ||
+           tpl.row_kind == "speedlimit" ||
+           tpl.row_kind == "section.begin" ||
+           tpl.row_kind == "section.speedLimit" ||
+           tpl.row_kind == "cabIlluminance.change" ||
+           tpl.row_kind == "fog.change";
+}
+
+} // namespace
+
+void App::rebuild_new_element_wizard_form() {
+    const std::vector<NewElementTemplate>& templates = new_element_templates();
+    NewElementWizardState& wizard = new_element_wizard_;
+    if (wizard.selected_template < 0 ||
+        wizard.selected_template >= static_cast<int>(templates.size())) {
+        wizard.selected_template = 0;
+    }
+    const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
+    MapElementInspectorState form;
+    form.open = true;
+    form.row_kind = tpl.row_kind;
+    form.title = tr("dialog.new_element_wizard");
+    form.source_file = wizard.target_file_path;
+    form.source_file_name = display_name_from_path(form.source_file);
+    const EditSourceFileInfo* source_file =
+        find_model_source_file(model_, wizard.target_file_path);
+    if (source_file) form.expected_source_hash = source_file->source_hash;
+    for (const NewElementFieldSpec& spec : tpl.fields) {
+        MapElementEditFieldState field;
+        field.key = spec.key;
+        field.backend_key = spec.key;
+        field.label = spec.label;
+        field.numeric_constraint = spec.constraint;
+        field.required = spec.required;
+        field.original_value = spec.default_value;
+        set_edit_field_buffer(field, spec.default_value);
+        form.fields.push_back(std::move(field));
+    }
+    if (tpl.section_values) {
+        if (wizard.section_value_count == 0) wizard.section_value_count = 1;
+        for (size_t index = 0; index < wizard.section_value_count; ++index) {
+            form.fields.push_back(make_section_values_field(form, index, "0"));
+        }
+    }
+    wizard.form = std::move(form);
+    wizard.built_template = wizard.selected_template;
+    wizard.built_target_file = wizard.target_file_path;
+}
+
+bool App::apply_new_element_insert() {
+    if (!edit_actions_available()) return false;
+    const std::vector<NewElementTemplate>& templates = new_element_templates();
+    NewElementWizardState& wizard = new_element_wizard_;
+    if (wizard.selected_template < 0 ||
+        wizard.selected_template >= static_cast<int>(templates.size())) {
+        return false;
+    }
+    const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
+    MapElementInspectorState& form = wizard.form;
+    if (wizard.built_template != wizard.selected_template ||
+        wizard.built_target_file != wizard.target_file_path ||
+        form.row_kind != tpl.row_kind) {
+        rebuild_new_element_wizard_form();
+    }
+
+    size_t section_value_count = 0;
+    for (MapElementEditFieldState& field : form.fields) {
+        if (is_section_values_field(field)) {
+            const std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+            if (value.empty()) {
+                set_program_status("status.edit.required_field");
+                return false;
+            }
+            double parsed_value = 0.0;
+            if (!parse_gui_edit_number(value, &parsed_value)) {
+                set_program_status("status.edit.invalid_number");
+                return false;
+            }
+            ++section_value_count;
+            continue;
+        }
+        const std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+        if (field.required && value.empty()) {
+            set_program_status("status.edit.required_field");
+            return false;
+        }
+        if (!validate_and_canonicalize_edit_field(field, true)) {
+            set_program_status("status.edit.invalid_number");
+            return false;
+        }
+    }
+    if (tpl.section_values && section_value_count == 0) {
+        set_program_status("status.edit.required_field");
+        return false;
+    }
+    auto field_blank = [&](const char* key) {
+        const MapElementEditFieldState* field = find_inspector_field(form, key);
+        return !field || trim_gui_ascii_copy(edit_field_buffer_text(*field)).empty();
+    };
+    if (tpl.row_kind == "adhesion.change" &&
+        field_blank("b") != field_blank("c")) {
+        set_program_status("status.edit.required_field");
+        return false;
+    }
+    if (tpl.row_kind == "fog.change") {
+        const bool density = !field_blank("density");
+        const bool red = !field_blank("red");
+        const bool green = !field_blank("green");
+        const bool blue = !field_blank("blue");
+        const bool all_colors = red && green && blue;
+        const bool any_color = red || green || blue;
+        const std::string method = tpl.method ? tpl.method : "Set";
+        if (method == "Set") {
+            if (!density || !all_colors) {
+                set_program_status("status.edit.required_field");
+                return false;
+            }
+        } else if (any_color != all_colors || (all_colors && !density)) {
+            set_program_status("status.edit.required_field");
+            return false;
+        }
+    }
+
+    MapElementPendingChange change;
+    change.change_id = "insert-" + std::to_string(++wizard.insert_sequence);
+    change.edit_id = change.change_id;
+    change.row_kind = tpl.row_kind;
+    change.operation = "insert";
+    change.target_file_path = wizard.target_file_path;
+    const EditSourceFileInfo* source_file =
+        find_model_source_file(model_, change.target_file_path);
+    if (!source_file) {
+        add_log("[warn]gui_kme.cpp: insert target file is not part of the loaded map: " +
+                change.target_file_path);
+        return false;
+    }
+    change.expected_source_hash = source_file->source_hash;
+    for (const MapElementEditFieldState& field : form.fields) {
+        if (field.read_only) continue;
+        if (is_section_values_field(field)) continue;
+        const std::string& backend_key =
+            field.backend_key.empty() ? field.key : field.backend_key;
+        change.field_changes[backend_key] =
+                trim_gui_ascii_copy(edit_field_buffer_text(field));
+    }
+    if (new_element_template_uses_method(tpl)) {
+        change.field_changes["method"] = tpl.method ? tpl.method : "";
+    }
+    if (tpl.section_values) {
+        change.field_changes["values.count"] = std::to_string(section_value_count);
+        size_t value_index = 0;
+        for (const MapElementEditFieldState& field : form.fields) {
+            if (!is_section_values_field(field)) continue;
+            change.field_changes["values." + std::to_string(value_index++)] =
+                trim_gui_ascii_copy(edit_field_buffer_text(field));
+        }
+    }
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    candidate[change.edit_id] = std::move(change);
+    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+        if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
+            !distance_resolution_workflow_.retry_requested) {
+            set_program_status("status.edit.pending");
+        }
+        return false;
+    }
+    set_program_status("status.edit.applied_to_preview");
+    return true;
+}
+
+void App::render_new_element_wizard() {
+    if (!new_element_wizard_.open) return;
+    if (!edit_actions_available()) {
+        new_element_wizard_.open = false;
+        return;
+    }
+    NewElementWizardState& wizard = new_element_wizard_;
+    if (!wizard.target_candidates_built) {
+        wizard.target_file_candidates = new_element_target_candidates(model_);
+        wizard.target_candidates_built = true;
+        if (wizard.target_file_path.empty() ||
+            std::find(wizard.target_file_candidates.begin(),
+                      wizard.target_file_candidates.end(),
+                      wizard.target_file_path) == wizard.target_file_candidates.end()) {
+            wizard.target_file_path = wizard.target_file_candidates.empty()
+                ? std::string{}
+                : wizard.target_file_candidates.front();
+        }
+    }
+    const std::vector<NewElementTemplate>& templates = new_element_templates();
+
+    const std::string title = tr("dialog.new_element_wizard") + "###NewElementWizard";
+    ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_Always);
+    if (!ImGui::Begin(title.c_str(), &wizard.open, ImGuiWindowFlags_NoResize)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::BeginChild("##NewElementTemplateList", ImVec2(360.0f, -ImGui::GetFrameHeightWithSpacing()),
+                      true);
+    const ImVec4 dim_text = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    for (int index = 0; index < static_cast<int>(templates.size()); ++index) {
+        const NewElementTemplate& tpl = templates[static_cast<size_t>(index)];
+        const std::string template_label = std::string(tpl.syntax) +
+            "###NewElementTemplate_" + tpl.id;
+        if (ImGui::Selectable(template_label.c_str(), wizard.selected_template == index)) {
+            wizard.selected_template = index;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", tr(tpl.usage_key).c_str());
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
+        ImGui::TextWrapped("%s", tr(tpl.usage_key).c_str());
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginChild("##NewElementForm", ImVec2(-1.0f, -ImGui::GetFrameHeightWithSpacing()), true);
+    ImGui::TextUnformatted(tr("label.new_element_target_file").c_str());
+    ImGui::SetNextItemWidth(-1.0f);
+    const std::string target_preview = wizard.target_file_path.empty()
+        ? tr("status.edit.no_distance_source")
+        : display_name_from_path(wizard.target_file_path);
+    ImGui::BeginDisabled(wizard.target_file_candidates.empty());
+    if (ImGui::BeginCombo("##NewElementTargetFile", target_preview.c_str())) {
+        for (const std::string& file_path : wizard.target_file_candidates) {
+            const bool selected = file_path == wizard.target_file_path;
+            if (ImGui::Selectable(display_name_from_path(file_path).c_str(), selected)) {
+                wizard.target_file_path = file_path;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+
+    const bool has_target = !wizard.target_file_candidates.empty() &&
+        !wizard.target_file_path.empty();
+    if (!has_target) {
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", tr("status.edit.no_distance_source").c_str());
+    } else {
+        if (wizard.built_template != wizard.selected_template ||
+            wizard.built_target_file != wizard.target_file_path) {
+            rebuild_new_element_wizard_form();
+        }
+        ImGui::Separator();
+        const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
+        if (tpl.section_values) {
+            render_map_element_field_inputs(wizard.form);
+            render_section_values_edit_ui(wizard.form);
+        } else {
+            render_map_element_field_inputs(wizard.form);
+        }
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.apply").c_str())) apply_new_element_insert();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(tr("button.close").c_str())) {
+        cancel_distance_resolution_workflow();
+        wizard.open = false;
+    }
+    ImGui::EndChild();
+    ImGui::End();
 }
 
 std::string App::open_map_dialog() {
@@ -6793,6 +7491,18 @@ void App::render_toolbar() {
         if (ImGui::Checkbox(tr("chk.edit_mode").c_str(), &requested_edit_mode)) {
             set_edit_mode_enabled(requested_edit_mode);
         }
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!edit_actions_available());
+        if (ImGui::Button(tr("button.add_map_element").c_str())) {
+            new_element_wizard_.open = true;
+            new_element_wizard_.target_file_path.clear();
+            new_element_wizard_.target_file_candidates.clear();
+            new_element_wizard_.target_candidates_built = false;
+            new_element_wizard_.built_template = -1;
+            new_element_wizard_.built_target_file.clear();
+        }
+        ImGui::EndDisabled();
 
         ImGui::SameLine();
         ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits() ||
@@ -8413,6 +9123,7 @@ void App::render() {
     process_pending_element_delete();
     process_pending_element_inspector();
     render_element_inspector();
+    render_new_element_wizard();
     render_popups();
     process_distance_resolution_retry();
     touch_input::apply_touch_scroll_to_hovered_window();
@@ -8622,6 +9333,17 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_section_edit_batch(section_edit_batch);
+    }
+
+    HeadlessInsertEditOptions insert_edit = parse_headless_insert_edit_options(args);
+    if (insert_edit.requested) {
+        if (!insert_edit.error.empty()) {
+            std::cerr << insert_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-insert-edit [map-path] "
+                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_insert_edit(insert_edit);
     }
 
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);

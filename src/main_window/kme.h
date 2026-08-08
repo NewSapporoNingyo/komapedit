@@ -1209,6 +1209,7 @@ struct MapElementPendingChange {
     std::string operation = "update";
     std::map<std::string, std::string> field_changes;
     std::string replacement_statement;
+    std::string target_file_path;
     std::string expected_source_hash;
     std::string distance_resolution_key;
     std::string distance_boundary_token;
@@ -1292,6 +1293,40 @@ struct MapElementInspectorRequest {
     MapElementInspectorRequest() = default;
     MapElementInspectorRequest(std::string requested_edit_id, std::string requested_row_kind)
         : edit_id(std::move(requested_edit_id)), row_kind(std::move(requested_row_kind)) {}
+};
+
+// One wizard entry describes one writeable map statement the user can add.
+// The syntax line is BVE syntax itself (language-neutral); the usage text is
+// localized through multilanguage keys.
+struct NewElementFieldSpec {
+    const char* key;
+    const char* label;
+    MapElementNumericConstraint constraint = MapElementNumericConstraint::None;
+    bool required = true;
+    const char* default_value = "";
+};
+
+struct NewElementTemplate {
+    const char* id;
+    const char* row_kind;
+    const char* method;
+    const char* syntax;
+    const char* usage_key;
+    bool section_values = false;
+    const std::vector<NewElementFieldSpec> fields;
+};
+
+struct NewElementWizardState {
+    bool open = false;
+    int selected_template = 0;
+    std::string target_file_path;
+    bool target_candidates_built = false;
+    std::vector<std::string> target_file_candidates;
+    int built_template = -1;
+    std::string built_target_file;
+    size_t section_value_count = 1;
+    uint64_t insert_sequence = 0;
+    MapElementInspectorState form;
 };
 
 enum class RepeaterDeleteMode {
@@ -1588,6 +1623,7 @@ private:
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
+    NewElementWizardState new_element_wizard_;
     EditableListEditState station_definition_edit_;
     EditableListEditState structure_model_edit_;
     EditableListEditState signal_aspect_edit_;
@@ -2044,6 +2080,11 @@ private:
     void clear_scene_placement_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
     void render_element_inspector();
+    void render_map_element_field_inputs(MapElementInspectorState& inspector);
+    void render_section_values_edit_ui(MapElementInspectorState& inspector);
+    void render_new_element_wizard();
+    void rebuild_new_element_wizard_form();
+    bool apply_new_element_insert();
 
     void handle_shortcuts();
     void render_menu();

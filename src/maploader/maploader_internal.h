@@ -1172,6 +1172,10 @@ struct MapEditChange {
     std::string change_id;
     std::string edit_id;
     std::string operation;
+    // Insert operations carry the target row kind here instead of deriving it
+    // from an existing edit target. The GUI transports it as a "rowKind" field
+    // that copy_edit_batch() pops before any typed edit processing runs.
+    std::string row_kind;
     std::map<std::string, std::string> field_changes;
     std::string replacement_statement;
     std::string target_file_path;
@@ -1432,8 +1436,16 @@ struct SemanticMapSnapshot {
 };
 
 SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx);
+void validate_insert_change(const MapEditChange& change);
+std::string insert_method_or_default(const MapEditChange& change,
+                                     const char* fallback);
 std::string expected_target_semantic(MapContext& ctx,
                                      const SemanticElementSnapshot& target,
+                                     const MapEditChange& change);
+// Computes the expected canonical semantic of a newly inserted element purely
+// from the insert change fields and its target file. Used by insert validation
+// because there is no baseline row to transform.
+std::string expected_insert_semantic(MapContext& ctx,
                                      const MapEditChange& change);
 
 struct DistanceResolutionBoundary {

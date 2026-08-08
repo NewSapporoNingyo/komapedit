@@ -1388,4 +1388,166 @@ std::string expected_target_semantic(MapContext& ctx,
     return out.take();
 }
 
+struct FakeInsertSnapshotState {
+    std::string arena;
+    KvStringRef path_ref{};
+    KvSourceFileRow source_file_row{};
+    KvMapSnapshot snapshot{};
+};
+
+// Mirrors the container names emitted by build_semantic_map_snapshot() for the
+// row kinds the new-element wizard can insert. Container identity is part of
+// the element canonical, so it must match the reparser output exactly.
+std::string insert_semantic_container(const std::string& row_kind) {
+    if (row_kind == "structure.put") return "structure.data";
+    if (row_kind == "structure.between") return "structure.between_data";
+    if (row_kind == "station.put") return "station.put";
+    if (row_kind == "signal.put") return "signal.data";
+    if (row_kind == "irregularity.change") return "irregularity";
+    if (row_kind == "beacon.put") return "beacon";
+    if (row_kind == "mapSound.play") return "mapSound";
+    if (row_kind == "mapSound3D.put") return "mapSound3D";
+    if (row_kind == "rollingNoise.change") return "rollingNoise";
+    if (row_kind == "flangeNoise.change") return "flangeNoise";
+    if (row_kind == "jointNoise.play") return "jointNoise";
+    if (row_kind == "background.change") return "background";
+    if (row_kind == "adhesion.change") return "adhesion";
+    if (row_kind == "cabIlluminance.change") return "cabIlluminance";
+    if (row_kind == "fog.change") return "fog";
+    if (row_kind == "drawDistance.change") return "drawDistance";
+    if (row_kind == "speedlimit") return "speedlimit";
+    if (row_kind == "section.begin") return "section.begin";
+    if (row_kind == "section.speedLimit") return "section.speedLimit";
+    throw std::runtime_error("unsupported semantic insert container: " + row_kind);
+}
+
+std::string expected_insert_semantic(MapContext& ctx,
+                                     const MapEditChange& change) {
+    validate_insert_change(change);
+    const SourceFileRecord* target = nullptr;
+    for (const SourceFileRecord& file : ctx.source_files) {
+        if (normalized_source_key(file.file_path) ==
+            normalized_source_key(change.target_file_path)) {
+            target = &file;
+            break;
+        }
+    }
+    if (!target) {
+        throw std::runtime_error(
+            "insert target file is not part of the map: " + change.target_file_path);
+    }
+
+    // The write_* helpers only consult the snapshot for fallback values and the
+    // row file path. The wizard supplies every editable field, so a minimal
+    // snapshot whose string arena holds the target path is sufficient to
+    // reproduce the canonical the reparser will produce for the new element.
+    FakeInsertSnapshotState fake;
+    fake.arena = target->file_path;
+    fake.path_ref = {0, static_cast<std::uint64_t>(fake.arena.size())};
+    fake.source_file_row.file_path = fake.path_ref;
+    fake.snapshot.string_data = fake.arena.data();
+    fake.snapshot.string_size = fake.arena.size();
+    fake.snapshot.source_files = &fake.source_file_row;
+    fake.snapshot.source_file_count = 1;
+    auto path_row = [&](auto& row) {
+        row.file_path = fake.path_ref;
+    };
+
+    MapEditChange semantic_change = change;
+    const std::string& row_kind = semantic_change.row_kind;
+    if (row_kind == "structure.put" &&
+        semantic_change.field_changes.find("method") == semantic_change.field_changes.end()) {
+        semantic_change.field_changes.emplace("method",
+                                              insert_method_or_default(change, "Put"));
+    } else if (row_kind == "structure.between" &&
+               semantic_change.field_changes.find("method") == semantic_change.field_changes.end()) {
+        semantic_change.field_changes.emplace("method", "PutBetween");
+    }
+    SemanticWriter out;
+    begin_element(out, target->file_path, insert_semantic_container(row_kind));
+    if (row_kind == "structure.put") {
+        KvStructurePutRow row{};
+        path_row(row);
+        write_structure_put(out, fake.snapshot, row, &semantic_change);
+    } else if (row_kind == "structure.between") {
+        KvStructureBetweenRow row{};
+        path_row(row);
+        write_structure_between(out, fake.snapshot, row, &semantic_change);
+    } else if (row_kind == "station.put") {
+        KvStationPutRow row{};
+        path_row(row);
+        write_station_put(out, fake.snapshot, row, &change);
+    } else if (row_kind == "signal.put") {
+        KvSignalPutRow row{};
+        path_row(row);
+        write_signal_put(out, fake.snapshot, row, &change);
+    } else if (row_kind == "irregularity.change") {
+        KvIrregularityRow row{};
+        path_row(row);
+        write_irregularity(out, fake.snapshot, row, &change);
+    } else if (row_kind == "beacon.put") {
+        KvBeaconRow row{};
+        path_row(row);
+        write_beacon(out, fake.snapshot, row, &change);
+    } else if (row_kind == "mapSound.play") {
+        KvMapSoundRow row{};
+        path_row(row);
+        write_map_sound(out, fake.snapshot, row, &change);
+    } else if (row_kind == "mapSound3D.put") {
+        KvMapSound3DRow row{};
+        path_row(row);
+        write_map_sound_3d(out, fake.snapshot, row, &change);
+    } else if (row_kind == "rollingNoise.change" ||
+               row_kind == "flangeNoise.change" ||
+               row_kind == "jointNoise.play") {
+        KvNoiseRow row{};
+        path_row(row);
+        write_noise(out, fake.snapshot, row, &change);
+    } else if (row_kind == "background.change") {
+        KvBackgroundRow row{};
+        path_row(row);
+        write_background(out, fake.snapshot, row, &change);
+    } else if (row_kind == "adhesion.change") {
+        KvAdhesionRow row{};
+        path_row(row);
+        write_adhesion(out, fake.snapshot, row, &change);
+    } else if (row_kind == "cabIlluminance.change") {
+        KvCabIlluminanceRow row{};
+        path_row(row);
+        write_cab_illuminance(out, fake.snapshot, row, &change);
+    } else if (row_kind == "fog.change") {
+        KvFogRow row{};
+        path_row(row);
+        write_fog(out, fake.snapshot, row, &change);
+    } else if (row_kind == "drawDistance.change") {
+        KvDrawDistanceRow row{};
+        path_row(row);
+        write_draw_distance(out, fake.snapshot, row, &change);
+    } else if (row_kind == "speedlimit") {
+        KvSpeedLimitRow row{};
+        path_row(row);
+        const std::string method = [&]() {
+            auto it = change.field_changes.find("method");
+            return it == change.field_changes.end()
+                ? std::string("Begin")
+                : trim_field_copy(it->second);
+        }();
+        if (method != "End") {
+            row.speed.kind = KV_VALUE_NUMBER;
+            row.speed.number_value = 0.0;
+        }
+        write_speed_limit(out, fake.snapshot, row, &change);
+    } else if (row_kind == "section.begin" ||
+               row_kind == "section.speedLimit") {
+        KvSectionRow row{};
+        path_row(row);
+        write_section_row(out, fake.snapshot, row,
+                          row_kind == "section.begin" ? "signalIndices" : "speeds",
+                          &change);
+    } else {
+        throw std::runtime_error("unsupported semantic insert target: " + row_kind);
+    }
+    return out.take();
+}
+
 } // namespace kme::maploader::detail
