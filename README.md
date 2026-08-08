@@ -16,9 +16,9 @@ The application has three main runtime components:
 - `model_loader.dll`: loads Structure model files through Assimp and exposes mesh/material data for the 3D previews.
 - `komapedit.exe`: the desktop GUI, built with Dear ImGui, ImPlot, Win32, DirectX 11, and WIC.
 
-The bundled executable and `maploader.dll` use maploader API v6. `KvMapSnapshot` v6 carries all map, regular-geometry, source, and edit metadata, including one typed logical row for each supported other-track change statement; the independently invalidated `KvSceneGeometrySnapshot` v1 carries dense 3D own/other-track geometry. Typed edit batches and handle-owned typed reports cover dry-run, in-memory Apply, direct Apply, Save/commit, and target lookup. These views are process-memory only: Open and Reload always read the current route sources, and no route snapshot or geometry cache is written to disk.
+The bundled executable and `maploader.dll` use maploader API v6. When edit metadata is requested, `KvMapSnapshot` v6 carries map, regular-geometry, source, and edit metadata, including one typed logical row for each supported other-track change statement; the independently invalidated `KvSceneGeometrySnapshot` v1 carries dense 3D own/other-track geometry. Typed edit batches and handle-owned typed reports cover dry-run, in-memory Apply, direct Apply, Save/commit, and target lookup. These views are process-memory only: Open and Reload always read the current route sources, and no route snapshot or geometry cache is written to disk.
 
-At this stage, komapedit provides source-backed editing for existing list rows referenced by `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load`; supported own-track curve/gradient change points; supported Structure, Signal, and Station placements; linked `Repeater.Begin`/`Begin0`/`End` segments; and the Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance statements listed below. It supports live X/Y/Z Structure, Signal, and Repeater-Begin placement edits in the 3D scene. It is not yet a full map editor: PreTrain/other-train, new-element editing, curve/gradient method conversion or insertion, and automatic radius-based speed-limit calculation are still planned.
+At this stage, komapedit provides source-backed editing for existing list rows referenced by `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load`; supported own-track curve/gradient change points; supported Structure, Signal, and Station placements; linked `Repeater.Begin`/`Begin0`/`End` segments; and the Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance statements listed below. It supports live X/Y/Z Structure, Signal, and Repeater-Begin placement edits in the 3D scene. It is not yet a full map editor: PreTrain/other-train editing, new-element editing, Curve/Gradient method conversion or insertion, and automatic radius-based speed-limit calculation are still planned. Limited explicit conversion is available for `Structure.Put0`, `Repeater.Begin0`, and short-form `Signal.Put` when confirmed by the user.
 
 ## Development Status (TODO List)
 
@@ -32,6 +32,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
 - [x] Expose source anchors and stable edit metadata for editable map/list statements through the versioned typed map snapshot.
 - [x] Apply supported updates/deletions to an in-memory working copy and save them to source map/include/list files, preserving include structure, distance semantics, original encodings, and line endings where possible.
+- [x] Block writeback when an edited value cannot be represented in the source encoding; there is currently no Save-as-UTF-8 fallback.
 - [x] Reject ambiguous maps with multiple same-kind unkeyed resource-list `Load` statements or multiple case-insensitively matching `Train[].Enable` declarations.
 - [ ] Add new-element insertion and extend source-backed editing beyond the currently supported existing list rows, placement/Repeater statements, and map event/effect rows.
 
@@ -40,7 +41,9 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Parse and calculate own-track curves.
 - [x] Parse and calculate own-track gradients, including their horizontal projection in plan geometry.
 - [x] Support legacy syntax.
+- [x] Parse the supported legacy own-track statements `Legacy.Turn`, `Legacy.Curve`, and `Legacy.Pitch`.
 - [x] Parse and calculate parts of other-track position data, lateral/vertical interpolation, gauge, center offset, and cant.
+- [x] Parse other-track `Track.Position`, `Track.X/Y.Interpolate`, `Track.Gauge`, and `Track.Cant.*` statements.
 - [x] Support control-point range and interval settings, with geometry regeneration.
 - [x] Load and display speed-limit sections.
 - [x] Edit or delete existing own-track curve change points, including paired `Curve.BeginTransition` statements where applicable; insertion and method conversion are not supported.
@@ -96,7 +99,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Speed Limit Point List`, `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`.
-- [x] Edit, clear, reorder, or delete existing `Signal.Load` aspect definitions through the source-backed inline table editor; adding rows or structure-key columns is not supported.
+- [x] Edit, clear, reorder, or delete existing `Signal.Load` aspect definitions and their optional glare rows through the source-backed inline table editor; adding rows or structure-key columns is not supported.
 - [x] Edit or delete existing `Beacon.Put` rows through the source-backed property inspector.
 - [x] Provide a source-backed `Properties/Edit` inspector for supported Structure/Signal/Station/Repeater placements and Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows; expose it from applicable tables and 2D/3D markers, with live X/Y/Z gizmos for editable Structure, Signal, and Repeater Begin placements.
 - [x] Open Properties/Edit for Structure and Signal placements from their 2D plan markers.
@@ -121,7 +124,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 
 - [x] Display `Sound File List`, `3D Sound File List`, `Map Sound List`, and `Map 3D Sound List`.
 - [x] Edit, clear, reorder, or delete existing `Sound.Load` and `Sound3D.Load` file-list rows through source-backed inline tables; selecting a file writes a relative path where possible.
-- [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; Sound/Sound3D file-list row insertion and station announcement sound-field editing remain unsupported.
+- [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; station definition announcement sound keys are editable, but Sound/Sound3D file-list row insertion and audio playback remain unsupported.
 - [x] Edit or delete existing cab-illuminance setting positions.
 - [x] Edit or delete existing fog effects.
 
@@ -129,7 +132,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 
 - [x] Dear ImGui docking-based multi-window layout.
 - [x] UI language switching between Simplified Chinese, English, and Japanese.
-- [x] Settings for font size, UI component size, station marker size, theme color, 3D scene camera speed, and scene-instance performance warnings.
+- [x] Settings for font size, UI component size, station marker size, 2D line widths, theme color, 3D scene draw distance/fog/map-draw-distance, camera speed, gizmo size, and scene-instance performance warnings.
 - [x] Recent-map history.
 - [x] Save background-image parameters with recent-map entries in `settings/history.ini`.
 - [x] Save settings to `settings/settings.ini` under the executable directory.
@@ -151,25 +154,27 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 | File header, version, and encoding            |    △    |       ✕       |         -         | Supported encodings can be loaded, but encoding coverage is not complete                                                |
 | Comments, assignments, calls, arrays, and keys |    √    |       ✕       |         -         | Used as parsing foundations; there is no general-purpose source editor                                                   |
 | Variables and argument variables              |    √    |       ✕       |         -         | Participate in expression evaluation and appear in a read-only assignment/source list grouped case-insensitively       |
-| Arithmetic, comparison, and logical operators |    △    |       ✕       |         -         | Most expressions can be evaluated, but edge cases such as mixed strings and numbers are incomplete                      |
-| Mathematical functions                        |    √    |       ✕       |         -         | Used to evaluate map expressions                                                                                        |
+| Arithmetic operators (`+`, `-`, `*`, `/`, `%`) |    √    |       ✕       |         -         | Numeric arithmetic and `+` string concatenation are supported; comparison and logical operators are not supported          |
+| Mathematical functions                        |    √    |       ✕       |         -         | Supported functions are `rand`, `abs`, `sin`, `cos`, `atan2`, `sqrt`, `exp`, `log`, `floor`, `ceil`, and `pow`           |
 | Distance declarations and expressions         |    √    |       △       |         ✕         | Distance can be changed for the supported curve/gradient, placement, Repeater, speed-limit, Section, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance targets listed below |
 | `include` and distance-offset `include`        |    √    |       △       |         ✕         | Include files can be loaded and supported elements in them can be written back, but Include paths are not editable       |
 | `Curve.*`                                     |    √    |       △       |         ✕         | Existing change points support method-preserving distance/radius/cant edits and deletion; a paired `BeginTransition` is edited from the same inspector and deleted with its consuming Begin/End; no insertion or method conversion |
 | `Gradient.*`                                  |    √    |       △       |         ✕         | Existing change points support method-preserving distance/gradient edits and deletion; a paired `BeginTransition` is edited from the same inspector and deleted with its consuming Begin/End; no insertion or method conversion |
-| `Track['key'].X/Y/Position`                   |    √    |       ✕       |         ✕         | Generates other-track geometry                                                                                          |
-| `Track['key'].Cant.*`                         |    √    |       ✕       |         ✕         | Feeds track geometry and cant data                                                                                      |
+| `Legacy.Turn` / `Legacy.Pitch`                |    √    |       ✕       |         ✕         | Feed legacy own-track direction/gradient state; source-backed editing is not available                                  |
+| `Legacy.Curve`                                |    √    |       △       |         ✕         | Feeds own-track curve state and is exposed as an existing curve row; no insertion or method conversion                 |
+| `Track['key'].Position`, `X/Y.Interpolate`    |    √    |       △       |         ✕         | Generates other-track geometry; existing distance and method-appropriate numeric parameters can be edited, but track key, method, and parameter count are read-only |
+| `Track['key'].Gauge` / `Cant.*`               |    √    |       △       |         ✕         | Feeds track geometry and cant data; existing distance and method-appropriate numeric parameters can be edited, but track key, method, and parameter count are read-only |
 | `Structure.Load`                              |    √    |       △       |         -         | Existing loaded-list keys/paths support inline edits, clearing, reordering, and deletion; the Load path and new rows are not editable |
 | `Structure.Put`                               |    √    |       √       |         △         | Property fields can be written back; 3D supports only X/Y/Z translation, not direct rotation, distance, track, tilt, or span manipulation |
 | `Structure.Put0`                              |    √    |       √       |         △         | Basic fields are editable; the X/Y/Z gizmo appears only after confirming conversion to `Structure.Put`                  |
 | `Structure.PutBetween`                        |    √    |       √       |         ✕         | Editable in the property inspector, but has no 2D/3D gizmo                                                              |
-| `Repeater.Begin` / `Begin0` / `End`           |    √    |       △       |         △         | Linked Begin fields, End distance, and linked deletion are supported; a Begin supports X/Y/Z motion in 3D after explicit `Begin0` conversion |
+| `Repeater.Begin` / `Begin0` / `End`           |    √    |       △       |         △         | Linked Begin fields, End distance, and linked deletion/trim actions are supported; `Begin0` can be explicitly converted to `Begin` for coordinate editing, and a trim action can convert a Begin to End |
 | `Background.Change`                           |    √    |       √       |         ✕         | Distance and Structure key can be edited and the entry can be deleted; it feeds background data and the scene preview   |
 | `Station.Load`                                |    √    |       △       |         -         | Existing referenced station-definition rows can be edited, cleared, reordered, or deleted; the Load path and new rows are not editable |
 | `Station.Put`                                 |    √    |       √       |         ✕         | Distance, `stationKey`, door side, and stop margins can be edited, and the entry can be deleted                           |
 | `Section.Begin` / `Section.BeginNew`          |    √    |       √       |         ✕         | Distance and the variable-length signal-index parameters can be edited (parameters can be added or removed), and the statement can be deleted; green `S` markers labeled with their signal-index arguments appear in the 2D plan and 3D scene |
 | `Section.SetSpeedLimit` / `Signal.SpeedLimit` |    √    |       √       |         ✕         | Distance and the variable-length speed parameters can be edited (parameters can be added or removed), and the statement can be deleted; the latest row at the current position feeds the 3D `Signal:` summary |
-| `Signal.Load`                                 |    √    |       √       |         -         | Existing signal-aspect rows support inline edits, clearing, reordering, and deletion; adding rows or structure-key columns is not supported |
+| `Signal.Load`                                 |    √    |       √       |         -         | Existing signal-aspect rows and optional glare rows support inline edits, clearing, reordering, and deletion; adding rows or structure-key columns is not supported, and the GUI exposes at most 509 structure-key columns |
 | `Signal.Put`                                  |    √    |       √       |         △         | All placement fields are editable and the statement can be deleted; 3D supports X/Y/Z translation. Editing extended fields on the short form requires confirmation before conversion to the full form |
 | `Beacon.Put`                                  |    √    |       √       |         ✕         | Distance, type, section, and send data can be edited, and the entry can be deleted                                       |
 | `SpeedLimit.Begin` / `SpeedLimit.End`         |    √    |       √       |         ✕         | Begin distance/speed and End distance can be edited; each point can exist or be deleted independently; no insertion or type conversion |
@@ -191,7 +196,7 @@ At this stage, komapedit provides source-backed editing for existing list rows r
 
 ## Installation and Startup
 
-This repository does not currently provide a standalone installer. The recommended workflow is to build from source and run the generated executable.
+This repository does not currently provide a standalone installer or prebuilt release package. The recommended workflow is to build from source and run the generated executable.
 
 After building, run `build_release\komapedit.exe`. The executable stays at the
 top level, while `maploader.dll`, `model_loader.dll`, and copied Assimp/runtime
@@ -201,7 +206,7 @@ On startup, the application creates the `settings` directory when necessary and
 creates or reads the following files there:
 
 - `settings/imgui.ini`: stores UI window positions and related ImGui layout data.
-- `settings/settings.ini`: stores settings such as UI language, font size, component size, station marker size, theme color, and 3D canvas options.
+- `settings/settings.ini`: stores UI language, font/component/station-marker sizes, 2D line widths, theme color, edit-mode warning state, and 3D canvas options such as fog, draw distance, gizmo size, camera speed, and performance warnings.
 - `settings/history.ini`: stores recent maps and background-image alignment parameters.
 
 The build and distribution-cleanup scripts migrate legacy root-level INI files
@@ -210,7 +215,7 @@ of overwriting either file.
 
 ## Usage
 
-1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.txt` map file.
+1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.map` or `.txt` map file.
 2. After the map loads, the main window shows the plan view, profile chart, and curve-radius chart.
 3. In the plan view:
    - Drag with the left mouse button to pan.
@@ -219,7 +224,7 @@ of overwriting either file.
    - Double-click the plan view to fit the map to the current viewport.
 4. Use `Station Jump` or `Jump to distance(m)` on the toolbar to jump to a station or numeric map distance.
 5. Use the `2D View` menu to show or hide the 2D view window, profile chart, curve-radius chart, gradient overlays, profile other-track display, and background-image controls. With Edit enabled, right-click paired curve/gradient change-point markers in the plan, profile, or curve-radius chart to open `Properties/Edit` or delete the source statements.
-6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, other-train paths, signals, sounds, effects, and 3D scene helpers. `Section Markers` is off by default and controls the green `S` markers and their signal-index parameter labels in both 2D and 3D. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files; right-click a source-file node to open its read-only text preview. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
+6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, signals, sounds, effects, and 3D scene helpers. Other-train paths are controlled from the `Other Train List` in `Map Info`. `Section Markers` is off by default and controls the green `S` markers and their signal-index parameter labels in both 2D and 3D. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files; right-click a source-file node to open its read-only text preview. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
 7. Switch `Mode` to `Measure`, then move near the track or double-click to view mileage, elevation, gradient, curve radius, and speed limit.
 8. Use the `Map Info` menu to open the data tables for stations, tracks, other trains, Structures, repeaters, signals, beacons, sounds, speed-limit points, irregularity/adhesion data, backgrounds, cab-illuminance, fog, and draw distance. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
    - `Signal Aspect List`: view and find signal aspect definitions; with Edit enabled, edit, reorder, clear, or delete existing aspect rows.
@@ -237,7 +242,7 @@ of overwriting either file.
    - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map, and locate rendered objects in the 3D scene preview when it is loaded.
    - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. The Station, Structure Model, Signal Aspect, Sound File, and 3D Sound File lists show their original evaluated Load path at the top, with the raw expression/resolved path on hover and an Explorer context menu. Right-click a structure key and choose `Preview Model` to open the 3D model preview; with Edit enabled, existing keys and paths can be edited, reordered, cleared, or deleted.
     - `Repeater List`: inspect linked `Repeater.Begin`/`Begin0`/`End` segments, edit them through `Properties/Edit`, and locate generated repeaters in the 3D scene preview when it is loaded.
-         - Turn on `Enable Edit` to use `Properties/Edit` on supported placement, Repeater, Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows from their tables or applicable 2D/3D markers. Existing definition/resource rows from `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load` are edited in their respective inline tables; no currently supported list editor creates a new row. `Apply` updates the in-memory preview; the toolbar `Save` writes pending changes to source files, `Revert` discards all pending in-memory changes, and `Reload` reads the map from disk again.
+          - Turn on `Enable Edit` to use `Properties/Edit` on supported placement, Repeater, Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows from their tables or applicable 2D/3D markers. Existing definition/resource rows from `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load` are edited in their respective inline tables; no currently supported list editor creates a new row. Apply each inline-table draft before saving; otherwise `Save` is blocked. `Apply` updates the in-memory preview; the toolbar `Save` or `Ctrl+S` writes pending changes to source files, `Revert` discards all pending in-memory changes, and `Reload` reads the map from disk again.
      The first enablement asks for confirmation because editing is an unstable, experimental feature that may make destructive changes. Back up map files or manage them with version control such as Git; selecting `Don't show again` and confirming suppresses later warnings.
 9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
 10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
@@ -260,14 +265,18 @@ komapedit/
 ├─ clear_build_release_dist.bat    # Cleans Release output while preserving bin, settings, and notices
 ├─ get_3rd_party_packages.bat      # Fetches ImGui and ImPlot
 ├─ install_Assimp.bat              # Helper for installing Assimp with vcpkg
+├─ komapedit.rc                    # Windows application resource script
+├─ icons/                           # Application icons and README title image
 ├─ include/
 │  ├─ canvas3D.h                   # 3D preview canvas interface
 │  ├─ map_marker_visuals.h          # Shared 2D/3D map-marker visual recipes
 │  ├─ maploader.h                  # maploader C ABI
 │  ├─ maploader_snapshot.h         # Fixed-width typed snapshot/edit ABI structures
 │  ├─ model_loader.h               # model_loader C ABI
+│  ├─ multilanguage.h              # UI localization strings
+│  ├─ own_track_transition_linkage.h # Shared Curve/Gradient BeginTransition pairing rules
 │  ├─ repeater_linkage.h            # Shared Repeater Begin/End segment pairing
-│  └─ multilanguage.h              # UI localization strings
+│  └─ resource.h                   # Windows resource ID declarations
 ├─ src/
 │  ├─ main_window/
 │  │  ├─ gui_kme.cpp               # Main window, Win32/DirectX 11 setup, app loop
@@ -304,6 +313,7 @@ komapedit/
 │  │  └─ c_api.cpp/.h              # C ABI allocation helpers
 │  └─ model_loader/
 │     └─ model_loader.cpp          # Assimp-based Structure model loading
+├─ tests/                           # Maploader diagnostic-test fixtures
 ├─ third_party/
 │  ├─ imgui/                       # Dear ImGui, docking branch
 │  └─ implot/                      # ImPlot
@@ -322,6 +332,9 @@ komapedit/
 - Windows SDK / DirectX 11 / WIC development libraries
 - Git, used to fetch third-party dependencies
 - Assimp, discoverable by CMake as `assimp::assimp`
+
+CMake 3.21 or newer is recommended when Assimp is not supplied through vcpkg or
+an explicit prefix, because the generic runtime-DLL copy fallback requires it.
 
 ### Fetch Third-Party Dependencies: `get_3rd_party_packages.bat`
 
@@ -342,8 +355,9 @@ configuring the project. The provided build scripts automatically use vcpkg when
 `x64-mingw-dynamic`.
 
 `install_Assimp.bat` is a helper for installing `assimp:x64-mingw-dynamic` with
-vcpkg. Edit the script before using it and fill in the path to your local vcpkg
-directory.
+vcpkg. It is hard-coded for that MinGW triplet; MSVC users should install the
+appropriate triplet, such as `assimp:x64-windows`, separately. Edit the script
+before using it and fill in the path to your local vcpkg directory.
 
 ### Debug Build: `build_dev.bat`
 
@@ -367,6 +381,22 @@ To clean the Release output for distribution, run
 `clear_build_release_dist.bat`. It keeps `komapedit.exe`, `bin` and its `.dll`
 files, the `settings` directory and its existing contents, plus `LICENSE`,
 `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
+
+The build scripts create the `settings` directory, but `settings.ini`,
+`history.ini`, and `imgui.ini` are created or updated by the application while it
+runs and exits.
+
+### Debug Tests
+
+After a Debug build, run the registered CTest checks:
+
+```bat
+ctest --test-dir build --output-on-failure
+```
+
+The diagnostics contract requires the map fixtures under `tests/` to be present.
+That directory is currently excluded by the repository's ignore rules, so a clean
+checkout must provide the fixtures separately before this test can pass.
 
 ## Appendix: CSV Data Formats
 
@@ -427,7 +457,7 @@ Field reference:
 | center | Track center offset |
 | gauge | Track gauge |
 
-Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, Structures, repeaters, signals, beacons, sounds, background change points, cab-illuminance change points, fog, or 3D scene data.
+Exported numeric values use fixed six-decimal formatting. CSV export currently includes track geometry only; it does not export stations, Structures, repeaters, signals, beacons, sound/noise events, track-irregularity or adhesion changes, background change points, cab-illuminance change points, fog, draw-distance changes, or 3D scene data.
 
 ## License and Third-Party Notices
 
@@ -448,7 +478,7 @@ Third-party libraries used by the GUI and model preview:
 | Library | Use | Copyright | License |
 | --- | --- | --- | --- |
 | [Dear ImGui](https://github.com/ocornut/imgui) | Docking GUI, Win32 backend, DirectX 11 backend, C++ std::string helper | Copyright (c) 2014-2026 Omar Cornut | MIT License |
-| [ImPlot](https://github.com/epezent/implot) | 2D plotting widgets | Copyright (c) 2020 Evan Pezent | MIT License |
+| [ImPlot](https://github.com/epezent/implot) | 2D plotting widgets | Copyright (c) 2020-2024 Evan Pezent; Copyright (c) 2025-2026 Breno Cunha Queiroz | MIT License |
 | [Assimp / Open Asset Import Library](https://github.com/assimp/assimp) | Structure model import | Copyright (c) 2006-2026, assimp team | Modified BSD 3-Clause License |
 | stb single-file libraries bundled with Dear ImGui | Font/text/rectangle-packing support used by Dear ImGui | Copyright (c) 2017 Sean Barrett | MIT License or Public Domain |
 
