@@ -31,55 +31,77 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 
 - 预览：实际进入轨道几何、表格、标记或 3D 场景。
 - 基本编辑：已有语句可通过属性检查器修改并写回；不代表支持新建该语句。
+- 新建元素：“新建地图元素”向导可插入对应的源码语句。
 - 图形化编辑：可在 2D/3D 画布直接拖动或操纵；右键打开属性窗口不算。
 - √ = 完整支持；△ = 部分或间接支持；✕ = 暂不支持；- = 没有计划支持或无必要性。
 
-“新建地图元素”向导可新增本表中已有对应向导项的地图放置和事件/效果语句，不新增 `Load` 或资源/定义列表行。向导输入数值目标 distance 后，使用与属性/编辑窗口相同的源码表达式、距离边界和环境检查流程；安全的 `$` 变量表达式会被保留或调整。
+下列语句名称及“[旧式]”别名以 [BVE 官方地图文件格式说明](https://bvets.net/jp/edit/formats/route/map.html)为准，并保留项目额外兼容的 `Legacy.*` 语句以完整描述当前支持范围。向导不新增 `Load` 或资源/定义列表行；数值目标 distance 使用现有源码表达式和距离边界流程，并尽可能保留或安全调整已有 `$` 表达式。
 
-| 地图语法                                      | 预览  | 基本编辑 | 图形化编辑 | 当前实际情况                                                                         |
-| --------------------------------------------- | :---: | :------: | :--------: | ------------------------------------------------------------------------------------ |
-| 文件头、版本及编码                            |   △   |    ✕     |     -      | 可加载受支持编码，编码覆盖并不完整                                                   |
-| 注释、赋值、函数调用、数组、键                |   √   |    ✕     |     -      | 作为解析基础使用，没有通用源码编辑器                                                 |
-| 变量及参数变量                                |   √   |    ✕     |     -      | 可参与表达式求值，并在只读变量列表中按大小写不敏感名称分组显示赋值与来源             |
-| 算术运算符（`+`、`-`、`*`、`/`、`%`）          |   √   |    ✕     |     -      | 支持数值算术和使用 `+` 的字符串拼接；不支持比较及逻辑运算符                         |
-| 数学函数                                      |   √   |    ✕     |     -      | 支持 `rand`、`abs`、`sin`、`cos`、`atan2`、`sqrt`、`exp`、`log`、`floor`、`ceil` 和 `pow` |
-| 距离声明及距离表达式                          |   √   |    △     |     ✕      | 下表所列已支持的曲线/坡度、放置、Repeater、闭塞、限速点、轨道变位、应答器、音效/噪声、背景、粘着、驾驶台亮度、雾和绘制距离目标可修改距离 |
-| `include`、带距离偏移的 `include`             |   √   |    △     |     ✕      | 可加载包含文件；其中受支持元素可以写回，但 include 路径本身不可编辑                  |
-| `Curve.*`                                     |   √   |    △     |     ✕      | 已有变化点可保持原方法编辑距离/半径/超高或删除；成对的 `BeginTransition` 在同一检查器中编辑，并与其对应 Begin/End 一起删除；不支持新建和方法转换 |
-| `Gradient.*`                                  |   √   |    △     |     ✕      | 已有变化点可保持原方法编辑距离/坡度或删除；成对的 `BeginTransition` 在同一检查器中编辑，并与其对应 Begin/End 一起删除；不支持新建和方法转换 |
-| `Legacy.Turn` / `Legacy.Pitch`                |   √   |    ✕     |     ✕      | 进入旧式自轨道方向/坡度状态；不支持源文件关联编辑                                   |
-| `Legacy.Curve`                                |   √   |    △     |     ✕      | 进入自轨道曲线状态并作为已有曲线行显示；不支持新建和方法转换                         |
-| `Track['key'].Position`、`X/Y.Interpolate`    |   √   |    △     |     ✕      | 生成其他轨道几何；已有距离和与方法对应的数值参数可编辑，但 track key、方法和参数个数只读 |
-| `Track['key'].Gauge` / `Cant.*`               |   √   |    △     |     ✕      | 进入轨道几何和超高数据；已有距离和与方法对应的数值参数可编辑，但 track key、方法和参数个数只读 |
-| `Structure.Load`                              |   √   |    △     |     -      | 已加载列表中的已有 key/path 可行内编辑、清空、调整顺序或删除；不能编辑 Load 路径或新增行 |
-| `Structure.Put`                               |   √   |    √     |     △      | 属性字段可写回；3D 中仅支持 X/Y/Z 平移，不支持旋转、里程、轨道、倾斜和跨度的直接操纵 |
-| `Structure.Put0`                              |   √   |    √     |     △      | 基本字段可编辑；确认转换成 `Structure.Put` 后才显示 X/Y/Z 操纵器                     |
-| `Structure.PutBetween`                        |   √   |    √     |     ✕      | 属性检查器内可编辑，但没有 2D/3D 操纵器                                              |
-| `Repeater.Begin` / `Begin0` / `End`           |   √   |    △     |     △      | 支持关联 Begin 字段、End 距离和关联删除/修剪；可显式将 `Begin0` 转换为 `Begin` 后编辑坐标，修剪操作也可将 Begin 转为 End |
-| `Background.Change`                           |   √   |    √     |     ✕      | 可编辑距离和 Structure key 并删除对应行；数据进入背景及场景预览                     |
-| `Station.Load`                                |   √   |    △     |     -      | 可编辑、清空、调整顺序或删除其引用的已有车站定义行；不能编辑 Load 路径或新增行       |
-| `Station.Put`                                 |   √   |    √     |     ✕      | 可编辑距离、`stationKey`、车门侧和停车余量，并可删除对应行；“新建地图元素”向导可新增该语句 |
-| `Section.Begin` / `Section.BeginNew`          |   √   |    √     |     ✕      | 可编辑距离和可变数量的信号索引参数（可增加/删除参数），并可删除对应语句；2D/3D 中显示带信号索引参数标签的绿色 `S` 闭塞标记 |
-| `Section.SetSpeedLimit` / `Signal.SpeedLimit` |   √   |    √     |     ✕      | 可编辑距离和可变数量的限速参数（可增加/删除参数），并可删除对应语句；当前位置之前的最后一行进入 3D `Signal:` 摘要 |
-| `Signal.Load`                                 |   √   |    √     |     -      | 已有信号现示行及可选 glare 行支持基于源码的行内编辑、清空、调整顺序和删除；暂不支持新增行或现示结构 key 列，GUI 最多显示 509 个结构 key 列 |
-| `Signal.Put`                                  |   √   |    √     |     △      | 全部放置字段均可编辑，也可删除该语句；3D 支持 X/Y/Z 平移。短式编辑扩展字段前需确认转换为完整式 |
-| `Beacon.Put`                                  |   √   |    √     |     ✕      | 可编辑距离、类型、区间和发送数据，并可删除对应行                                     |
-| `SpeedLimit.Begin` / `SpeedLimit.End`         |   √   |    √     |     ✕      | Begin 可编辑距离/限速值，End 仅可编辑距离；两者可独立存在或删除，也可由“新建地图元素”向导新增，不进行类型转换 |
-| `PreTrain.Pass`                               |   √   |    ✕     |     ✕      | 可进入列表及地图标记                                                                 |
-| `Light.Ambient/Diffuse/Direction`             |   -   |    -     |     -      | 未支持光照相关语法                                                                   |
-| `Fog.Interpolate` / `Fog.Set`                 |   √   |    √     |     ✕      | 可编辑距离及与原方法相符的密度/颜色字段并删除对应行；3D 预览显示插值后的指数雾       |
-| `DrawDistance.Change`                         |   √   |    √     |     ✕      | 可编辑距离/数值并删除对应行；可选地控制场景绘制距离                                  |
-| `CabIlluminance.Interpolate` / `Set`          |   √   |    √     |     ✕      | 可编辑距离/数值并删除对应行；不模拟驾驶台亮度效果                                    |
-| `Irregularity.Change`                         |   √   |    √     |     ✕      | 距离与 6 个参数可在属性检查器中编辑并可删除对应行；不模拟车辆振动                                    |
-| `Adhesion.Change`                             |   √   |    √     |     ✕      | 可编辑距离及 1 个或 3 个粘着参数并删除对应行；不模拟车辆粘着效果                    |
-| `Sound.Load` / `Sound.Play`                   |   √   |    △     |     ✕      | 已有 Sound.Load 行支持行内列表编辑；Sound.Play 的距离/key 支持“属性/编辑”和删除，但不实际播放 |
-| `Sound3D.Load` / `Sound3D.Put`                |   √   |    △     |     ✕      | 已有 Sound3D.Load 行支持行内列表编辑；Sound3D.Put 的距离/key/X/Y 支持“属性/编辑”和删除，但不实际播放 |
-| `RollingNoise.Change`                         |   √   |    √     |     ✕      | 可编辑距离/index 并删除对应行                                                        |
-| `FlangeNoise.Change`                          |   √   |    √     |     ✕      | 可编辑距离/index 并删除对应行                                                        |
-| `JointNoise.Play`                             |   √   |    √     |     ✕      | 可编辑距离/index 并删除对应行                                                        |
-| `Train.Add` / `Train.Load`                    |   △   |    ✕     |     ✕      | 其他列车定义可展示，但外部列车文件只被部分建模                                       |
-| `Train.Enable`                                |   √   |    ✕     |     ✕      | 唯一 Enable 时间以只读输入框显示在对应他列车停止位置表上方                           |
-| `Train.Stop`                                  |   √   |    ✕     |     ✕      | 可生成其他列车停车位置表格、路径和地图标记                                                 |
+| 地图语法 | 预览 | 基本编辑 | 新建元素 | 图形化编辑 | 当前实际情况 |
+| --- | :---: | :---: | :---: | :---: | --- |
+| 文件头、版本及编码 | △ | ✕ | - | - | 可加载 BVE Map 2.0+ 及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关编码；不支持任意声明编码 |
+| 注释及基本语句结构 | √ | ✕ | - | - | 支持 `#`/`//` 注释、分号分隔调用、带 key/嵌套元素、空白、多行语句及名称大小写不敏感；没有通用源码编辑器 |
+| 赋值、参数及 key 中的变量 | √ | ✕ | - | - | 解析时求值，并在只读变量列表中按大小写不敏感名称分组显示赋值与来源 |
+| 算术运算符（`+`、`-`、`*`、`/`、`%`） | √ | ✕ | - | - | 支持数值算术、单目正负号、括号和使用 `+` 的字符串拼接；不支持比较/逻辑及复合赋值运算符 |
+| 距离声明及 `distance` 表达式 | √ | △ | - | ✕ | 可编辑已有受支持元素的距离；新建元素时可生成或复用距离块，但没有独立距离编辑器 |
+| 数学函数 | √ | ✕ | - | - | 支持 `rand`、`abs`、`sin`、`cos`、`atan2`、`sqrt`、`exp`、`log`、`floor`、`ceil` 和 `pow` |
+| `include 'file';` | √ | △ | ✕ | - | 支持嵌套 Include，且可写回其中受支持元素；Include 语句及路径只读 |
+| `Curve.SetGauge(value)` / `[旧式] Curve.Gauge(value)` | √ | ✕ | ✕ | ✕ | 更新用于超高几何的自轨道轨距，不生成可编辑元素行 |
+| `Curve.SetCenter(x)` | √ | ✕ | ✕ | ✕ | 更新自轨道超高旋转中心，不生成可编辑元素行 |
+| `Curve.SetFunction(id)` | √ | ✕ | ✕ | ✕ | 选择正弦或线性曲线/超高插值，不生成可编辑元素行 |
+| `Curve.BeginTransition()` | √ | △ | ✕ | ✕ | 已配对过渡语句通过对应 Begin/End 检查器处理并随之删除；未配对语句只读 |
+| `Curve.Begin(radius, cant)` / `[旧式] Curve.BeginCircular(radius, cant)` | √ | √ | ✕ | ✕ | 可保持原方法编辑或删除已有距离/半径/超高字段 |
+| `Curve.Begin(radius)` / `Curve.Change(radius)` | √ | √ | ✕ | ✕ | 可保持原方法编辑或删除已有距离/半径字段 |
+| `Curve.End()` | √ | √ | ✕ | ✕ | 可编辑已有结束距离或删除语句；已配对过渡语句随之处理 |
+| `Curve.Interpolate([radius[, cant]])` | √ | ✕ | ✕ | ✕ | 官方 0/1/2 参数形式均进入几何，但不生成可编辑曲线行 |
+| `Gradient.BeginTransition()` | √ | △ | ✕ | ✕ | 已配对过渡语句通过对应 Begin/End 检查器处理并随之删除；未配对语句只读 |
+| `Gradient.Begin(gradient)` / `[旧式] Gradient.BeginConst(gradient)` | √ | √ | ✕ | ✕ | 可保持原方法编辑或删除已有距离/坡度字段 |
+| `Gradient.End()` | √ | √ | ✕ | ✕ | 可编辑已有结束距离或删除语句；已配对过渡语句随之处理 |
+| `Gradient.Interpolate([gradient])` | √ | ✕ | ✕ | ✕ | 官方 0/1 参数形式均进入几何，但不生成可编辑坡度行 |
+| `Legacy.Turn`、`Legacy.Curve`、`Legacy.Pitch` | √ | △ | ✕ | ✕ | 项目兼容语法：均进入自轨道几何；只有已有 `Legacy.Curve` 行支持基于源码的值/距离编辑 |
+| `Track[trackKey].X.Interpolate([x[, radius]])` | √ | △ | ✕ | ✕ | 官方各形式均进入他轨道几何；可编辑已有距离/数值字段或删除，但 track key、方法和参数个数只读 |
+| `Track[trackKey].Y.Interpolate([y[, radius]])` | √ | △ | ✕ | ✕ | 与 X 插值的编辑边界相同；官方各形式均进入他轨道几何 |
+| `Track[trackKey].Position(x, y[, radiusH[, radiusV]])` | √ | △ | ✕ | ✕ | 官方各形式均进入他轨道几何；可编辑已有数值/距离或删除，但语句形状及 track key 只读 |
+| `Track[trackKey].Cant.SetGauge(gauge)` / `[旧式] Track[trackKey].Gauge(gauge)` | √ | △ | ✕ | ✕ | 进入他轨道轨距；可编辑已有数值/距离或删除，但方法/key 只读 |
+| `Track[trackKey].Cant.SetCenter(x)` | √ | △ | ✕ | ✕ | 进入他轨道超高中心；可编辑已有数值/距离或删除，但方法/key 只读 |
+| `Track[trackKey].Cant.SetFunction(id)` | √ | △ | ✕ | ✕ | 进入他轨道超高插值；可编辑已有数值/距离或删除，但方法/key 只读 |
+| `Track[trackKey].Cant.BeginTransition()` | √ | △ | ✕ | ✕ | 进入超高过渡状态；可编辑已有距离或删除，但方法/key 只读 |
+| `Track[trackKey].Cant.Begin(cant)` | √ | △ | ✕ | ✕ | 进入超高几何；可编辑已有数值/距离或删除，但方法/key 只读 |
+| `Track[trackKey].Cant.End()` | √ | △ | ✕ | ✕ | 结束他轨道超高；可编辑已有距离或删除，但方法/key 只读 |
+| `Track[trackKey].Cant.Interpolate([cant])` / `[旧式] Track[trackKey].Cant(cant)` | √ | △ | ✕ | ✕ | 官方/旧式各形式均进入超高几何；可编辑已有数值/距离或删除，但形状/key 只读 |
+| `Structure.Load(filePath)` | √ | △ | ✕ | - | 已加载列表中的已有 key/path 可行内编辑、清空、调整顺序或删除；不能编辑 Load 路径或新增行 |
+| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)` | √ | √ | √ | △ | 所有字段均可写回或新建；3D 仅直接操纵 X/Y/Z |
+| `Structure[structureKey].Put0(trackKey, tilt, span)` | √ | √ | √ | △ | 可编辑或新建基本字段；需确认转换为 `Put` 后才能使用 X/Y/Z 操纵器 |
+| `Structure[structureKey].PutBetween(trackKey1, trackKey2[, flag])` | √ | √ | √ | ✕ | 官方两种形式均可预览/编辑；向导生成显式 `flag` 形式；没有画布操纵器 |
+| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` | √ | △ | ✕ | △ | 支持关联字段及删除/修剪；`Begin0` 需确认转换后才能编辑坐标，且只有 Begin 坐标具有 3D 操纵器 |
+| `Repeater[repeaterKey].End()` | √ | △ | ✕ | ✕ | 支持 End 距离和关联删除/修剪；不能独立图形化操纵或通过向导新建 |
+| `Background.Change(structureKey)` | √ | √ | √ | ✕ | 可编辑、新建或删除距离/key；数据进入背景及场景预览 |
+| `Station.Load(filePath)` | √ | △ | ✕ | - | 已有车站定义行可行内编辑、清空、调整顺序或删除；不能编辑 Load 路径或新增行 |
+| `Station[stationKey].Put(door, margin1, margin2)` | √ | √ | √ | ✕ | 可编辑、新建或删除距离、key、车门侧和停车余量 |
+| `Section.Begin(...)` / `[旧式] Section.BeginNew(...)` | √ | √ | √ | ✕ | 距离及可变数量信号索引参数支持编辑、新建和删除；2D/3D 显示标记 |
+| `Section.SetSpeedLimit(...)` / `[旧式] Signal.SpeedLimit(...)` | √ | √ | √ | ✕ | 距离及可变数量限速参数支持编辑、新建和删除；生效值进入 3D 信号摘要 |
+| `Signal.Load(filePath)` | √ | △ | ✕ | - | 已有现示/glare 行可行内编辑、清空、调整顺序或删除；不支持 Load 路径、新行/列及显示超过 509 个 structure-key 列 |
+| `Signal[signalAspectKey].Put(section, trackKey, x, y[, z, rx, ry, rz, tilt, span])` | √ | √ | √ | △ | 官方两种形式均可编辑；向导生成完整式。短式扩展编辑需确认转换；3D 可直接操纵 X/Y/Z |
+| `Beacon.Put(type, section, sendData)` | √ | √ | √ | ✕ | 可编辑、新建或删除距离及全部参数 |
+| `SpeedLimit.Begin(v)` / `SpeedLimit.End()` | √ | √ | √ | ✕ | Begin/End 独立支持编辑、新建和删除，不做配对或类型转换 |
+| `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | ✕ | ✕ | ✕ | 进入只读列表及地图标记；不支持基于源码的编辑或新建 |
+| `Light.Ambient(...)`、`Light.Diffuse(...)`、`Light.Direction(...)` | ✕ | ✕ | ✕ | - | 会校验参数形状，但语句不进入地图模型或 3D 渲染器 |
+| `Fog.Interpolate([density[, red, green, blue]])` / `[旧式] Fog.Set(...)` | √ | √ | √ | ✕ | 官方 0/1/4 参数 Interpolate 及旧式 Set 均支持编辑、新建和删除；3D 显示插值指数雾 |
+| `DrawDistance.Change(value)` | √ | √ | √ | ✕ | 距离/数值支持编辑、新建和删除；可选地控制场景绘制距离 |
+| `CabIlluminance.Interpolate(value)` / `[旧式] CabIlluminance.Set(value)` | √ | √ | √ | ✕ | 距离/数值支持编辑、新建和删除；不模拟驾驶台亮度效果 |
+| `CabIlluminance.Interpolate()` | ✕ | ✕ | ✕ | ✕ | 官方无参数形式可通过语法校验，但目前不生成预览/编辑行 |
+| `Irregularity.Change(x, y, r, lx, ly, lr)` | √ | √ | √ | ✕ | 距离及全部 6 个数值支持编辑、新建和删除；不模拟车辆振动 |
+| `Adhesion.Change(a)` / `Adhesion.Change(a, b, c)` | √ | √ | √ | ✕ | 官方两种形状均支持编辑、新建和删除；不模拟粘着效果 |
+| `Sound.Load(filePath)` | √ | △ | ✕ | - | 已有音效列表行可行内编辑、清空、调整顺序或删除；不支持 Load 路径或新增行 |
+| `Sound[soundKey].Play()` | √ | √ | √ | ✕ | 距离/key 支持编辑、新建和删除；不实际播放音频 |
+| `Sound3D.Load(filePath)` | √ | △ | ✕ | - | 已有 3D 音效列表行可行内编辑、清空、调整顺序或删除；不支持 Load 路径或新增行 |
+| `Sound3D[soundKey].Put(x, y)` | √ | √ | √ | ✕ | 距离/key/X/Y 支持编辑、新建和删除；不实际播放音频 |
+| `RollingNoise.Change(index)` | √ | √ | √ | ✕ | 距离/index 支持编辑、新建和删除；不实际播放音频 |
+| `FlangeNoise.Change(index)` | √ | √ | √ | ✕ | 距离/index 支持编辑、新建和删除；不实际播放音频 |
+| `JointNoise.Play(index)` | √ | √ | √ | ✕ | 距离/index 支持编辑、新建和删除；不实际播放音频 |
+| `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)` | △ | ✕ | ✕ | ✕ | 可显示定义，但外部他列车文件仅被部分建模 |
+| `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)` | √ | ✕ | ✕ | ✕ | 唯一 Enable 时间以只读形式显示在对应他列车停止位置表上方 |
+| `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)` | √ | ✕ | ✕ | ✕ | 生成只读他列车停止位置表、路径和地图标记 |
 
 ## 安装与启动
 

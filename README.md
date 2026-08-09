@@ -32,55 +32,77 @@ Editing is source-backed but still experimental. Back up route files or keep the
 
 - Preview: the syntax actually feeds track geometry, tables, markers, or the 3D scene.
 - Basic editing: existing statements can be changed and written back through the property inspector; this does not imply support for creating new statements.
+- New element: the New Map Element wizard can insert a corresponding source statement.
 - Graphical editing: elements can be dragged or manipulated directly on the 2D/3D canvas; opening the property window from a context menu does not count.
 - √ = fully supported; △ = partially or indirectly supported; ✕ = currently unsupported; - = support is not planned or not applicable.
 
-The New Map Element wizard inserts the supported map placement and event/effect forms represented in this table. It does not insert `Load`/resource-definition rows, and its numeric target distance uses the existing source-expression and distance-boundary workflow; existing `$` variable expressions are preserved or adjusted when safe.
+The statement names and `[legacy]` aliases below follow the [official BVE map file-format reference](https://bvets.net/jp/edit/formats/route/map.html). The project-specific `Legacy.*` compatibility statements are retained for completeness. The wizard does not insert `Load`/resource-definition rows; numeric target distances use the existing source-expression and distance-boundary workflow, preserving or safely adjusting existing `$` expressions where possible.
 
-| Map syntax                                    | Preview | Basic editing | Graphical editing | Current behavior                                                                                                         |
-| --------------------------------------------- | :-----: | :-----------: | :---------------: | ------------------------------------------------------------------------------------------------------------------------ |
-| File header, version, and encoding            |    △    |       ✕       |         -         | Supported encodings can be loaded, but encoding coverage is not complete                                                |
-| Comments, assignments, calls, arrays, and keys |    √    |       ✕       |         -         | Used as parsing foundations; there is no general-purpose source editor                                                   |
-| Variables and argument variables              |    √    |       ✕       |         -         | Participate in expression evaluation and appear in a read-only assignment/source list grouped case-insensitively       |
-| Arithmetic operators (`+`, `-`, `*`, `/`, `%`) |    √    |       ✕       |         -         | Numeric arithmetic and `+` string concatenation are supported; comparison and logical operators are not supported          |
-| Mathematical functions                        |    √    |       ✕       |         -         | Supported functions are `rand`, `abs`, `sin`, `cos`, `atan2`, `sqrt`, `exp`, `log`, `floor`, `ceil`, and `pow`           |
-| Distance declarations and expressions         |    √    |       △       |         ✕         | Distance can be changed for the supported curve/gradient, placement, Repeater, speed-limit, Section, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance targets listed below |
-| `include` and distance-offset `include`        |    √    |       △       |         ✕         | Include files can be loaded and supported elements in them can be written back, but Include paths are not editable       |
-| `Curve.*`                                     |    √    |       △       |         ✕         | Existing change points support method-preserving distance/radius/cant edits and deletion; a paired `BeginTransition` is edited from the same inspector and deleted with its consuming Begin/End; no insertion or method conversion |
-| `Gradient.*`                                  |    √    |       △       |         ✕         | Existing change points support method-preserving distance/gradient edits and deletion; a paired `BeginTransition` is edited from the same inspector and deleted with its consuming Begin/End; no insertion or method conversion |
-| `Legacy.Turn` / `Legacy.Pitch`                |    √    |       ✕       |         ✕         | Feed legacy own-track direction/gradient state; source-backed editing is not available                                  |
-| `Legacy.Curve`                                |    √    |       △       |         ✕         | Feeds own-track curve state and is exposed as an existing curve row; no insertion or method conversion                 |
-| `Track['key'].Position`, `X/Y.Interpolate`    |    √    |       △       |         ✕         | Generates other-track geometry; existing distance and method-appropriate numeric parameters can be edited, but track key, method, and parameter count are read-only |
-| `Track['key'].Gauge` / `Cant.*`               |    √    |       △       |         ✕         | Feeds track geometry and cant data; existing distance and method-appropriate numeric parameters can be edited, but track key, method, and parameter count are read-only |
-| `Structure.Load`                              |    √    |       △       |         -         | Existing loaded-list keys/paths support inline edits, clearing, reordering, and deletion; the Load path and new rows are not editable |
-| `Structure.Put`                               |    √    |       √       |         △         | Property fields can be written back; 3D supports only X/Y/Z translation, not direct rotation, distance, track, tilt, or span manipulation |
-| `Structure.Put0`                              |    √    |       √       |         △         | Basic fields are editable; the X/Y/Z gizmo appears only after confirming conversion to `Structure.Put`                  |
-| `Structure.PutBetween`                        |    √    |       √       |         ✕         | Editable in the property inspector, but has no 2D/3D gizmo                                                              |
-| `Repeater.Begin` / `Begin0` / `End`           |    √    |       △       |         △         | Linked Begin fields, End distance, and linked deletion/trim actions are supported; `Begin0` can be explicitly converted to `Begin` for coordinate editing, and a trim action can convert a Begin to End |
-| `Background.Change`                           |    √    |       √       |         ✕         | Distance and Structure key can be edited and the entry can be deleted; it feeds background data and the scene preview   |
-| `Station.Load`                                |    √    |       △       |         -         | Existing referenced station-definition rows can be edited, cleared, reordered, or deleted; the Load path and new rows are not editable |
-| `Station.Put`                                 |    √    |       √       |         ✕         | Distance, `stationKey`, door side, and stop margins can be edited, and the entry can be deleted                           |
-| `Section.Begin` / `Section.BeginNew`          |    √    |       √       |         ✕         | Distance and the variable-length signal-index parameters can be edited (parameters can be added or removed), and the statement can be deleted; green `S` markers labeled with their signal-index arguments appear in the 2D plan and 3D scene |
-| `Section.SetSpeedLimit` / `Signal.SpeedLimit` |    √    |       √       |         ✕         | Distance and the variable-length speed parameters can be edited (parameters can be added or removed), and the statement can be deleted; the latest row at the current position feeds the 3D `Signal:` summary |
-| `Signal.Load`                                 |    √    |       √       |         -         | Existing signal-aspect rows and optional glare rows support inline edits, clearing, reordering, and deletion; adding rows or structure-key columns is not supported, and the GUI exposes at most 509 structure-key columns |
-| `Signal.Put`                                  |    √    |       √       |         △         | All placement fields are editable and the statement can be deleted; 3D supports X/Y/Z translation. Editing extended fields on the short form requires confirmation before conversion to the full form |
-| `Beacon.Put`                                  |    √    |       √       |         ✕         | Distance, type, section, and send data can be edited, and the entry can be deleted                                       |
-| `SpeedLimit.Begin` / `SpeedLimit.End`         |    √    |       √       |         ✕         | Begin distance/speed and End distance can be edited; the New Map Element wizard can add either independent point; no type conversion |
-| `PreTrain.Pass`                               |    √    |       ✕       |         ✕         | Feeds the list and map markers                                                                                           |
-| `Light.Ambient/Diffuse/Direction`             |    -    |       -       |         -         | Lighting syntax is not supported                                                                                        |
-| `Fog.Interpolate` / `Fog.Set`                 |    √    |       √       |         ✕         | Distance and method-appropriate density/color fields can be edited and the entry deleted; 3D preview applies interpolated exponential fog |
-| `DrawDistance.Change`                         |    √    |       √       |         ✕         | Distance/value can be edited and the entry deleted; it can optionally control scene draw distance                       |
-| `CabIlluminance.Interpolate` / `Set`          |    √    |       √       |         ✕         | Distance/value can be edited and the entry deleted; cab brightness is not simulated                                     |
-| `Irregularity.Change`                         |    √    |       √       |         ✕         | Distance and 6 parameters can be edited in the Properties inspector and the entry can be deleted; vehicle vibration is not simulated |
-| `Adhesion.Change`                             |    √    |       √       |         ✕         | Distance and the 1- or 3-parameter adhesion values can be edited and the entry deleted; effects are not simulated       |
-| `Sound.Load` / `Sound.Play`                   |    √    |       △       |         ✕         | Existing Sound.Load rows support inline list editing; Sound.Play distance/key support Properties/Edit and deletion, but audio is not played |
-| `Sound3D.Load` / `Sound3D.Put`                |    √    |       △       |         ✕         | Existing Sound3D.Load rows support inline list editing; Sound3D.Put distance/key/X/Y support Properties/Edit and deletion, but audio is not played |
-| `RollingNoise.Change`                         |    √    |       √       |         ✕         | Distance/index can be edited and the entry deleted                                                                       |
-| `FlangeNoise.Change`                          |    √    |       √       |         ✕         | Distance/index can be edited and the entry deleted                                                                       |
-| `JointNoise.Play`                             |    √    |       √       |         ✕         | Distance/index can be edited and the entry deleted                                                                       |
-| `Train.Add` / `Train.Load`                    |    △    |       ✕       |         ✕         | Other-train definitions can be displayed, but external train files are only partially modeled                           |
-| `Train.Enable`                                |    √    |       ✕       |         ✕         | Its unique enable time is shown read-only above the matching other-train stop table                                      |
-| `Train.Stop`                                  |    √    |       ✕       |         ✕         | Generates other-train stop tables, paths, and map markers                                                               |
+| Map syntax | Preview | Basic editing | New element | Graphical editing | Current behavior |
+| --- | :---: | :---: | :---: | :---: | --- |
+| File header, version, and encoding | △ | ✕ | - | - | Loads BVE Map 2.0+ files in UTF-8/BOM, UTF-16LE/BE, and CP932/Shift_JIS-related encodings; arbitrary declared encodings are not supported |
+| Comments and basic statement syntax | √ | ✕ | - | - | Supports `#`/`//` comments, semicolon-separated calls, keyed/nested elements, whitespace, multiline statements, and case-insensitive names; there is no general source editor |
+| Variables in assignments, arguments, and keys | √ | ✕ | - | - | Evaluated during parsing and shown in a read-only, case-insensitively grouped assignment/source list |
+| Arithmetic operators (`+`, `-`, `*`, `/`, `%`) | √ | ✕ | - | - | Supports numeric arithmetic, unary signs, parentheses, and `+` string concatenation; comparison/logical and compound assignment operators are unsupported |
+| Distance declarations and `distance` expressions | √ | △ | - | ✕ | Existing supported element distances are editable; insertion may create/reuse a distance block, but there is no standalone distance editor |
+| Mathematical functions | √ | ✕ | - | - | Supports `rand`, `abs`, `sin`, `cos`, `atan2`, `sqrt`, `exp`, `log`, `floor`, `ceil`, and `pow` |
+| `include 'file';` | √ | △ | ✕ | - | Nested Include files participate in parsing and supported contained elements can be written back; the Include statement/path is read-only |
+| `Curve.SetGauge(value)` / `[legacy] Curve.Gauge(value)` | √ | ✕ | ✕ | ✕ | Updates the own-track gauge used for cant geometry; no editable element row is created |
+| `Curve.SetCenter(x)` | √ | ✕ | ✕ | ✕ | Updates the own-track cant rotation center; no editable element row is created |
+| `Curve.SetFunction(id)` | √ | ✕ | ✕ | ✕ | Selects sinusoidal or linear curve/cant interpolation; no editable element row is created |
+| `Curve.BeginTransition()` | √ | △ | ✕ | ✕ | A paired transition is handled through its consuming Begin/End inspector and deleted with it; an orphan transition is read-only |
+| `Curve.Begin(radius, cant)` / `[legacy] Curve.BeginCircular(radius, cant)` | √ | √ | ✕ | ✕ | Existing distance/radius/cant fields are editable and deletable without method conversion |
+| `Curve.Begin(radius)` / `Curve.Change(radius)` | √ | √ | ✕ | ✕ | Existing distance/radius fields are editable and deletable without method conversion |
+| `Curve.End()` | √ | √ | ✕ | ✕ | Existing end distance is editable and the statement can be deleted; a paired transition is handled with it |
+| `Curve.Interpolate([radius[, cant]])` | √ | ✕ | ✕ | ✕ | All official 0/1/2-argument forms feed geometry, but are not exposed as editable curve rows |
+| `Gradient.BeginTransition()` | √ | △ | ✕ | ✕ | A paired transition is handled through its consuming Begin/End inspector and deleted with it; an orphan transition is read-only |
+| `Gradient.Begin(gradient)` / `[legacy] Gradient.BeginConst(gradient)` | √ | √ | ✕ | ✕ | Existing distance/gradient fields are editable and deletable without method conversion |
+| `Gradient.End()` | √ | √ | ✕ | ✕ | Existing end distance is editable and the statement can be deleted; a paired transition is handled with it |
+| `Gradient.Interpolate([gradient])` | √ | ✕ | ✕ | ✕ | Both official 0/1-argument forms feed geometry, but are not exposed as editable gradient rows |
+| `Legacy.Turn`, `Legacy.Curve`, `Legacy.Pitch` | √ | △ | ✕ | ✕ | Project compatibility syntax: all feed own-track geometry; only existing `Legacy.Curve` rows have source-backed value/distance editing |
+| `Track[trackKey].X.Interpolate([x[, radius]])` | √ | △ | ✕ | ✕ | All official forms feed other-track geometry; existing distance/numeric fields and deletion are supported, while track key, method, and argument count stay read-only |
+| `Track[trackKey].Y.Interpolate([y[, radius]])` | √ | △ | ✕ | ✕ | Same editing boundary as X interpolation; all official forms feed other-track geometry |
+| `Track[trackKey].Position(x, y[, radiusH[, radiusV]])` | √ | △ | ✕ | ✕ | All official forms feed other-track geometry; existing numeric fields/distance and deletion are supported, but statement shape and track key are read-only |
+| `Track[trackKey].Cant.SetGauge(gauge)` / `[legacy] Track[trackKey].Gauge(gauge)` | √ | △ | ✕ | ✕ | Feeds other-track gauge; existing numeric value/distance and deletion are supported, with method/key read-only |
+| `Track[trackKey].Cant.SetCenter(x)` | √ | △ | ✕ | ✕ | Feeds the other-track cant center; existing value/distance and deletion are supported, with method/key read-only |
+| `Track[trackKey].Cant.SetFunction(id)` | √ | △ | ✕ | ✕ | Feeds other-track cant interpolation; existing value/distance and deletion are supported, with method/key read-only |
+| `Track[trackKey].Cant.BeginTransition()` | √ | △ | ✕ | ✕ | Feeds cant transition state; existing distance and deletion are supported, with method/key read-only |
+| `Track[trackKey].Cant.Begin(cant)` | √ | △ | ✕ | ✕ | Feeds cant geometry; existing value/distance and deletion are supported, with method/key read-only |
+| `Track[trackKey].Cant.End()` | √ | △ | ✕ | ✕ | Ends other-track cant; existing distance and deletion are supported, with method/key read-only |
+| `Track[trackKey].Cant.Interpolate([cant])` / `[legacy] Track[trackKey].Cant(cant)` | √ | △ | ✕ | ✕ | All official/legacy forms feed cant geometry; existing numeric fields/distance and deletion are supported, with shape/key read-only |
+| `Structure.Load(filePath)` | √ | △ | ✕ | - | Existing loaded-list key/path rows support inline edit, clear, reorder, and delete; the Load path and new rows are not editable |
+| `Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span)` | √ | √ | √ | △ | All fields can be written back or created; 3D directly manipulates X/Y/Z only |
+| `Structure[structureKey].Put0(trackKey, tilt, span)` | √ | √ | √ | △ | Basic fields can be edited or created; the X/Y/Z gizmo requires confirmed conversion to `Put` |
+| `Structure[structureKey].PutBetween(trackKey1, trackKey2[, flag])` | √ | √ | √ | ✕ | Both official forms preview/edit; the wizard emits the explicit `flag` form; there is no canvas gizmo |
+| `Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...)` / `Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...)` | √ | △ | ✕ | △ | Linked fields and deletion/trim are supported; `Begin0` needs confirmed conversion for coordinate editing, and only Begin coordinates have a 3D gizmo |
+| `Repeater[repeaterKey].End()` | √ | △ | ✕ | ✕ | End distance and linked deletion/trim are supported; no independent graphical manipulation or wizard insertion |
+| `Background.Change(structureKey)` | √ | √ | √ | ✕ | Distance/key can be edited, created, or deleted; it feeds background data and the scene preview |
+| `Station.Load(filePath)` | √ | △ | ✕ | - | Existing station-definition rows support inline edit, clear, reorder, and delete; the Load path and new rows are not editable |
+| `Station[stationKey].Put(door, margin1, margin2)` | √ | √ | √ | ✕ | Distance, key, door side, and margins can be edited, created, or deleted |
+| `Section.Begin(...)` / `[legacy] Section.BeginNew(...)` | √ | √ | √ | ✕ | Distance and variable-length signal-index parameters support edit, creation, and deletion; markers appear in 2D/3D |
+| `Section.SetSpeedLimit(...)` / `[legacy] Signal.SpeedLimit(...)` | √ | √ | √ | ✕ | Distance and variable-length speeds support edit, creation, and deletion; active values feed the 3D signal summary |
+| `Signal.Load(filePath)` | √ | △ | ✕ | - | Existing aspect/glare rows support inline edit, clear, reorder, and delete; the Load path, new rows/columns, and more than 509 visible structure-key columns are unsupported |
+| `Signal[signalAspectKey].Put(section, trackKey, x, y[, z, rx, ry, rz, tilt, span])` | √ | √ | √ | △ | Both official forms edit; the wizard emits the full form. Short-form extended edits require confirmed conversion; 3D directly manipulates X/Y/Z |
+| `Beacon.Put(type, section, sendData)` | √ | √ | √ | ✕ | Distance and all arguments can be edited, created, or deleted |
+| `SpeedLimit.Begin(v)` / `SpeedLimit.End()` | √ | √ | √ | ✕ | Independent Begin/End points support edit, creation, and deletion without pairing or type conversion |
+| `PreTrain.Pass(time)` / `PreTrain.Pass(second)` | √ | ✕ | ✕ | ✕ | Feeds the read-only list and map markers; no source-backed edit or insertion |
+| `Light.Ambient(...)`, `Light.Diffuse(...)`, `Light.Direction(...)` | ✕ | ✕ | ✕ | - | Argument shapes are validated, but the statements do not feed the map model or 3D renderer |
+| `Fog.Interpolate([density[, red, green, blue]])` / `[legacy] Fog.Set(...)` | √ | √ | √ | ✕ | All official 0/1/4-argument Interpolate forms and the legacy Set form support edit, creation, and deletion; 3D applies interpolated exponential fog |
+| `DrawDistance.Change(value)` | √ | √ | √ | ✕ | Distance/value support edit, creation, and deletion; the statement can optionally control scene draw distance |
+| `CabIlluminance.Interpolate(value)` / `[legacy] CabIlluminance.Set(value)` | √ | √ | √ | ✕ | Distance/value support edit, creation, and deletion; cab brightness is not simulated |
+| `CabIlluminance.Interpolate()` | ✕ | ✕ | ✕ | ✕ | The no-argument official form is accepted by syntax validation but currently creates no preview/edit row |
+| `Irregularity.Change(x, y, r, lx, ly, lr)` | √ | √ | √ | ✕ | Distance and all six values support edit, creation, and deletion; vehicle vibration is not simulated |
+| `Adhesion.Change(a)` / `Adhesion.Change(a, b, c)` | √ | √ | √ | ✕ | Both official shapes support edit, creation, and deletion; adhesion effects are not simulated |
+| `Sound.Load(filePath)` | √ | △ | ✕ | - | Existing sound-list rows support inline edit, clear, reorder, and delete; the Load path/new rows are unsupported |
+| `Sound[soundKey].Play()` | √ | √ | √ | ✕ | Distance/key support edit, creation, and deletion; audio is not played |
+| `Sound3D.Load(filePath)` | √ | △ | ✕ | - | Existing 3D-sound-list rows support inline edit, clear, reorder, and delete; the Load path/new rows are unsupported |
+| `Sound3D[soundKey].Put(x, y)` | √ | √ | √ | ✕ | Distance/key/X/Y support edit, creation, and deletion; audio is not played |
+| `RollingNoise.Change(index)` | √ | √ | √ | ✕ | Distance/index support edit, creation, and deletion; audio is not played |
+| `FlangeNoise.Change(index)` | √ | √ | √ | ✕ | Distance/index support edit, creation, and deletion; audio is not played |
+| `JointNoise.Play(index)` | √ | √ | √ | ✕ | Distance/index support edit, creation, and deletion; audio is not played |
+| `Train.Add(trainKey, filePath, trackKey, direction)` / `Train[trainKey].Load(filePath, trackKey, direction)` | △ | ✕ | ✕ | ✕ | Definitions are shown, but external other-train files are only partially modeled |
+| `Train[trainKey].Enable(time)` / `Train[trainKey].Enable(second)` | √ | ✕ | ✕ | ✕ | The unique enable time is shown read-only above the matching other-train stop table |
+| `Train[trainKey].Stop(decelerate, stopTime, accelerate, speed)` | √ | ✕ | ✕ | ✕ | Generates read-only other-train stop tables, paths, and map markers |
 
 ## Installation and Startup
 
