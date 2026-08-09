@@ -919,18 +919,6 @@ std::optional<SceneTrackBufferView> scene_track_buffer_view(KvDoubleBuffer point
     return SceneTrackBufferView{points.data, rows, cols};
 }
 
-double scene_track_tangent(const SceneTrackBufferView& points, size_t row) {
-    if (points.rows < 2 || points.cols < 3) return 0.0;
-    size_t first = row == 0 ? 0 : row - 1;
-    size_t last = row + 1 < points.rows ? row + 1 : row;
-    if (first == last && last + 1 < points.rows) ++last;
-    if (first == last) return 0.0;
-    const double dx = points.at(last, 1) - points.at(first, 1);
-    const double dy = points.at(last, 2) - points.at(first, 2);
-    if (std::abs(dx) < 1e-9 && std::abs(dy) < 1e-9) return 0.0;
-    return std::atan2(dy, dx);
-}
-
 Canvas3DTrackPoint scene_track_row_point(const SceneTrackBufferView& points, size_t row,
                                          bool has_theta_column) {
     constexpr double default_gauge = 1067.0;
@@ -945,7 +933,9 @@ Canvas3DTrackPoint scene_track_row_point(const SceneTrackBufferView& points, siz
     p.x = points.at(row, 2);
     p.z = -points.at(row, 1);
     p.y = points.cols > 3 ? points.at(row, 3) : 0.0;
-    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : scene_track_tangent(points, row);
+    p.theta = has_theta_column && points.cols > 4
+        ? points.at(row, 4)
+        : track_buffer_tangent(points, row);
     p.gradient = has_theta_column && points.cols > 6 ? points.at(row, 6) : 0.0;
     if (has_theta_column) {
         double cant = points.cols > 8 ? points.at(row, 8) : 0.0;

@@ -4420,14 +4420,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                         "insert edit is missing its target file path: " + change.edit_id);
                     continue;
                 }
-                size_t target_file_index = k_no_source_ref;
-                for (size_t i = 0; i < ctx.source_files.size(); ++i) {
-                    if (normalized_source_key(ctx.source_files[i].file_path) ==
-                        normalized_source_key(change.target_file_path)) {
-                        target_file_index = i;
-                        break;
-                    }
-                }
+                const size_t target_file_index =
+                    find_source_file_index(ctx, change.target_file_path);
                 if (target_file_index == k_no_source_ref) {
                     report.blocking_errors.push_back(
                         "insert target file is not part of the loaded map: " +
@@ -4435,10 +4429,10 @@ MapEditReport build_edit_report(MapContext& ctx,
                     continue;
                 }
                 const SourceFileRecord& file = ctx.source_files[target_file_index];
-                SourcePatch& patch = patches[target_file_index];
-                if (!patch.record) {
+                SourcePatch& target_patch = patches[target_file_index];
+                if (!target_patch.record) {
                     try {
-                        patch = load_source_patch(ctx, file);
+                        target_patch = load_source_patch(ctx, file);
                     } catch (const std::exception& e) {
                         report.blocking_errors.push_back(e.what());
                         continue;
@@ -4447,8 +4441,9 @@ MapEditReport build_edit_report(MapContext& ctx,
                 const std::string& expected_hash = change.expected_source_hash.empty()
                     ? file.source_hash
                     : change.expected_source_hash;
-                if (!expected_hash.empty() && patch.current_hash != expected_hash &&
-                    patch.base_hash != expected_hash) {
+                if (!expected_hash.empty() &&
+                    target_patch.current_hash != expected_hash &&
+                    target_patch.base_hash != expected_hash) {
                     report.blocking_errors.push_back(
                         "source file changed externally: " + file.file_path);
                     continue;
@@ -4554,7 +4549,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                      * ambiguity without scanning the whole source file.
                      */
                     const ParsedStatement& origin = ctx.parsed_statements[origin_index];
-                    auto range = source_range_in_text(patch, origin.source);
+                    auto range = source_range_in_text(target_patch, origin.source);
                     PreparedEdit edit;
                     edit.change = &change;
                     edit.input_ordinal = input_ordinal;
@@ -4567,10 +4562,10 @@ MapEditReport build_edit_report(MapContext& ctx,
                     edit.source_range = range;
                     edit.removal_range = {};
                     const size_t source_line_start = offset_from_line_column(
-                        patch.text, origin.source.line, 1);
+                        target_patch.text, origin.source.line, 1);
                     if (source_line_start != std::string::npos &&
                         source_line_start <= range.first) {
-                        std::string indent = patch.text.substr(
+                        std::string indent = target_patch.text.substr(
                             source_line_start, range.first - source_line_start);
                         if (std::all_of(indent.begin(), indent.end(), [](char ch) {
                                 return ch == ' ' || ch == '\t';

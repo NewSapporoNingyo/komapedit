@@ -460,6 +460,14 @@ std::string normalized_source_key(std::string path) {
     return ascii_lower(std::move(path));
 }
 
+size_t find_source_file_index(const MapContext& ctx, const std::string& file_path) {
+    const auto source = ctx.source_file_indices.find(normalized_source_key(file_path));
+    if (source == ctx.source_file_indices.end() || source->second >= ctx.source_files.size()) {
+        return k_no_source_ref;
+    }
+    return source->second;
+}
+
 std::string current_source_text(const MapContext& ctx, const std::string& file_path) {
     if (file_path.empty()) throw std::runtime_error("source file path is empty");
 

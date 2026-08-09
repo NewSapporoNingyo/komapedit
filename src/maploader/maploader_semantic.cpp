@@ -1424,25 +1424,19 @@ std::string insert_semantic_container(const std::string& row_kind) {
 std::string expected_insert_semantic(MapContext& ctx,
                                      const MapEditChange& change) {
     validate_insert_change(change);
-    const SourceFileRecord* target = nullptr;
-    for (const SourceFileRecord& file : ctx.source_files) {
-        if (normalized_source_key(file.file_path) ==
-            normalized_source_key(change.target_file_path)) {
-            target = &file;
-            break;
-        }
-    }
-    if (!target) {
+    const size_t target_index = find_source_file_index(ctx, change.target_file_path);
+    if (target_index == k_no_source_ref) {
         throw std::runtime_error(
             "insert target file is not part of the map: " + change.target_file_path);
     }
+    const SourceFileRecord& target = ctx.source_files[target_index];
 
     // The write_* helpers only consult the snapshot for fallback values and the
     // row file path. The wizard supplies every editable field, so a minimal
     // snapshot whose string arena holds the target path is sufficient to
     // reproduce the canonical the reparser will produce for the new element.
     FakeInsertSnapshotState fake;
-    fake.arena = target->file_path;
+    fake.arena = target.file_path;
     fake.path_ref = {0, static_cast<std::uint64_t>(fake.arena.size())};
     fake.source_file_row.file_path = fake.path_ref;
     fake.snapshot.string_data = fake.arena.data();
@@ -1464,7 +1458,7 @@ std::string expected_insert_semantic(MapContext& ctx,
         semantic_change.field_changes.emplace("method", "PutBetween");
     }
     SemanticWriter out;
-    begin_element(out, target->file_path, insert_semantic_container(row_kind));
+    begin_element(out, target.file_path, insert_semantic_container(row_kind));
     if (row_kind == "structure.put") {
         KvStructurePutRow row{};
         path_row(row);

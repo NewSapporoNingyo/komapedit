@@ -2149,9 +2149,6 @@ MapModel App::build_model_from_handle(void* handle, const std::string& path,
 
 }
 
-bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
-                               const std::string& edit_id,
-                               size_t& row_index);
 void set_inspector_row_field_value(TableRow& row,
                                    const std::string& row_kind,
                                    const std::string& field_key,
@@ -2847,6 +2844,84 @@ bool row_kind_has_source_distance_string(const std::string& row_kind) {
                        [&](const char* value) { return row_kind == value; });
 }
 
+MapElementKeySource map_element_key_source_for_field(
+    std::string_view row_kind, std::string_view field_key) noexcept {
+    if (field_key == "structureKey" &&
+        (row_kind == "structure.put" || row_kind == "structure.between" ||
+         row_kind == "background.change")) {
+        return MapElementKeySource::Structure;
+    }
+    if (row_kind == "repeater" && field_key.rfind("structureKeys.", 0) == 0) {
+        return MapElementKeySource::Structure;
+    }
+    if (row_kind == "mapSound.play" && field_key == "soundKey") {
+        return MapElementKeySource::Sound;
+    }
+    if (row_kind == "mapSound3D.put" && field_key == "soundKey") {
+        return MapElementKeySource::Sound3D;
+    }
+    if (row_kind == "signal.put" && field_key == "signalAspectKey") {
+        return MapElementKeySource::SignalAspect;
+    }
+    if ((field_key == "trackKey" &&
+         (row_kind == "structure.put" || row_kind == "signal.put" ||
+          row_kind == "repeater")) ||
+        (row_kind == "structure.between" &&
+         (field_key == "trackKey1" || field_key == "trackKey2"))) {
+        return MapElementKeySource::Track;
+    }
+    return MapElementKeySource::None;
+}
+
+std::string_view trim_ascii_view(std::string_view value) noexcept {
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+        value.remove_prefix(1);
+    }
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+        value.remove_suffix(1);
+    }
+    return value;
+}
+
+bool resource_key_values_equal(std::string_view left, std::string_view right) noexcept {
+    left = trim_ascii_view(left);
+    right = trim_ascii_view(right);
+    if (left.size() != right.size()) return false;
+    for (size_t index = 0; index < left.size(); ++index) {
+        if (ascii_lower(static_cast<unsigned char>(left[index])) !=
+            ascii_lower(static_cast<unsigned char>(right[index]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool track_key_values_equal(std::string_view left, std::string_view right) noexcept {
+    size_t left_index = 0;
+    size_t right_index = 0;
+    const auto skip_spaces = [](std::string_view value, size_t& index) {
+        while (index < value.size() &&
+               std::isspace(static_cast<unsigned char>(value[index])) != 0) {
+            ++index;
+        }
+    };
+    for (;;) {
+        skip_spaces(left, left_index);
+        skip_spaces(right, right_index);
+        const bool left_end = left_index == left.size();
+        const bool right_end = right_index == right.size();
+        if (left_end || right_end) return left_end && right_end;
+        if (ascii_lower(static_cast<unsigned char>(left[left_index])) !=
+            ascii_lower(static_cast<unsigned char>(right[right_index]))) {
+            return false;
+        }
+        ++left_index;
+        ++right_index;
+    }
+}
+
 bool is_repeater_structure_key_field(const MapElementEditFieldState& field) {
     return field.key.rfind("structureKeys.", 0) == 0;
 }
@@ -2891,6 +2966,7 @@ MapElementEditFieldState make_repeater_structure_key_field(
     field.original_value = index < inspector.repeater_structure_keys_original.size()
         ? inspector.repeater_structure_keys_original[index]
         : std::string{};
+    field.key_source = MapElementKeySource::Structure;
     field.required = true;
     set_edit_field_buffer(field, value);
     return field;
@@ -3132,6 +3208,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         field.original_value = original_value;
         if (key == "distance") field.source_distance_string = next.source_distance_string;
         field.numeric_constraint = numeric_constraint;
+        field.key_source = map_element_key_source_for_field(request.row_kind, key);
         field.required = required;
         set_edit_field_buffer(field, value);
         next.fields.push_back(field);
@@ -5663,6 +5740,81 @@ bool App::resolve_pending_close_action(bool save_changes) {
     return true;
 }
 
+bool App::render_map_element_field_control(MapElementEditFieldState& field,
+                                           float width) {
+    ImGui::SetNextItemWidth(width);
+    if (field.key_source == MapElementKeySource::None) {
+        return ImGui::InputText(field.label.c_str(), &field.value);
+    }
+
+    const std::string current_value = edit_field_buffer_text(field);
+    bool input_changed = false;
+    if (!ImGui::BeginCombo(field.label.c_str(), current_value.c_str())) {
+        return false;
+    }
+
+    int option_id = 0;
+    auto select_option = [&](const std::string& candidate,
+                             const std::string& display_text) {
+        const bool selected = field.key_source == MapElementKeySource::Track
+            ? track_key_values_equal(current_value, candidate)
+            : resource_key_values_equal(current_value, candidate);
+        ImGui::PushID(option_id++);
+        if (ImGui::Selectable(display_text.c_str(), selected) &&
+            candidate != current_value) {
+            set_edit_field_buffer(field, candidate);
+            input_changed = true;
+        }
+        if (selected) ImGui::SetItemDefaultFocus();
+        ImGui::PopID();
+    };
+    auto render_table_options = [&](const std::vector<TableRow>& rows,
+                                    const std::string& cell_key) {
+        for (const TableRow& row : rows) {
+            const std::string& candidate = table_cell(row, cell_key);
+            if (candidate.empty()) continue;
+            select_option(candidate, candidate);
+        }
+    };
+
+    switch (field.key_source) {
+    case MapElementKeySource::Structure:
+        render_table_options(model_.structure_models, "structureKey");
+        break;
+    case MapElementKeySource::Sound:
+        render_table_options(model_.sound_list, "soundKey");
+        break;
+    case MapElementKeySource::Sound3D:
+        render_table_options(model_.sound_3d_list, "soundKey");
+        break;
+    case MapElementKeySource::SignalAspect:
+        render_table_options(model_.signal_aspects, "signalAspectKey");
+        break;
+    case MapElementKeySource::Track: {
+        static const std::array<std::string, 3> k_own_track_keys = {
+            "0", "''", "'0'"
+        };
+        for (const std::string& candidate : k_own_track_keys) {
+            select_option(candidate, candidate + " " + tr("value.own_track"));
+        }
+        for (const OtherTrack& track : model_.other_tracks) {
+            if (track.key.empty()) continue;
+            const bool own_track_key = std::any_of(
+                k_own_track_keys.begin(), k_own_track_keys.end(),
+                [&](const std::string& candidate) {
+                    return track_key_values_equal(track.key, candidate);
+                });
+            if (!own_track_key) select_option(track.key, track.key);
+        }
+        break;
+    }
+    case MapElementKeySource::None:
+        break;
+    }
+    ImGui::EndCombo();
+    return input_changed;
+}
+
 void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
     const bool repeater_inspector = inspector.row_kind == "repeater";
     const bool section_inspector = inspector.row_kind == "section.begin" ||
@@ -5679,10 +5831,11 @@ void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
         if (repeater_inspector && field.key == "repeaterKey") ImGui::Separator();
         const bool changed = edit_field_buffer_text(field) != field.original_value;
         if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
-        ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f));
+        const float input_width =
+            std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f);
         ImGui::BeginDisabled(field.read_only);
         const std::string previous_value = edit_field_buffer_text(field);
-        const bool input_changed = ImGui::InputText(field.label.c_str(), &field.value);
+        const bool input_changed = render_map_element_field_control(field, input_width);
         ImGui::EndDisabled();
         if (input_changed && field.requires_signal_full_form &&
             inspector.source_signal_short_form &&
@@ -5867,8 +6020,7 @@ void App::render_element_inspector() {
             MapElementEditFieldState& field = inspector_.fields[key_field_indices[list_index]];
             const bool changed = edit_field_buffer_text(field) != field.original_value;
             if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
-            ImGui::SetNextItemWidth(structure_key_input_width);
-            ImGui::InputText(field.label.c_str(), &field.value);
+            render_map_element_field_control(field, structure_key_input_width);
             if (changed) ImGui::PopStyleColor();
             ImGui::SameLine();
             ImGui::BeginDisabled(list_index == 0);
@@ -5932,6 +6084,28 @@ void App::render_element_inspector() {
 
 namespace {
 
+// One wizard entry describes one writeable map statement the user can add.
+// The syntax line is BVE syntax itself (language-neutral); the usage text is
+// localized through multilanguage keys. These types are local to the wizard
+// implementation so shared GUI state does not expose its static metadata.
+struct NewElementFieldSpec {
+    const char* key;
+    const char* label;
+    MapElementNumericConstraint constraint = MapElementNumericConstraint::None;
+    bool required = true;
+    const char* default_value = "";
+};
+
+struct NewElementTemplate {
+    const char* id;
+    std::string_view row_kind;
+    std::string_view method;
+    const char* syntax;
+    const char* usage_key;
+    bool section_values = false;
+    std::vector<NewElementFieldSpec> fields;
+};
+
 const std::vector<NewElementTemplate>& new_element_templates() {
     static const std::vector<NewElementTemplate> templates = {
         {
@@ -5965,7 +6139,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "structure.put_between", "structure.between", "PutBetween",
+            "structure.put_between", "structure.between", "",
             "Structure[structureKey].PutBetween(trackKey1, trackKey2, flag);",
             "new_element.usage.structure.put_between", false,
             {
@@ -5977,7 +6151,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "station.put", "station.put", "Station.Put",
+            "station.put", "station.put", "",
             "Station[stationKey].Put(door, margin1, margin2);",
             "new_element.usage.station.put", false,
             {
@@ -5989,7 +6163,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "signal.put", "signal.put", "Signal.Put",
+            "signal.put", "signal.put", "",
             "Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span);",
             "new_element.usage.signal.put", false,
             {
@@ -6057,7 +6231,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "irregularity.change", "irregularity.change", "Irregularity.Change",
+            "irregularity.change", "irregularity.change", "",
             "Irregularity.Change(x, y, r, lx, ly, lr);",
             "new_element.usage.irregularity.change", false,
             {
@@ -6071,7 +6245,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "beacon.put", "beacon.put", "Beacon.Put",
+            "beacon.put", "beacon.put", "",
             "Beacon.Put(type, section, sendData);",
             "new_element.usage.beacon.put", false,
             {
@@ -6082,7 +6256,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "map_sound.play", "mapSound.play", "Sound.Play",
+            "map_sound.play", "mapSound.play", "",
             "Sound[soundKey].Play();",
             "new_element.usage.map_sound.play", false,
             {
@@ -6091,7 +6265,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "map_sound3d.put", "mapSound3D.put", "Sound3D.Put",
+            "map_sound3d.put", "mapSound3D.put", "",
             "Sound3D[soundKey].Put(x, y);",
             "new_element.usage.map_sound3d.put", false,
             {
@@ -6102,7 +6276,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "rolling_noise.change", "rollingNoise.change", "RollingNoise.Change",
+            "rolling_noise.change", "rollingNoise.change", "",
             "RollingNoise.Change(index);",
             "new_element.usage.rolling_noise.change", false,
             {
@@ -6111,7 +6285,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "flange_noise.change", "flangeNoise.change", "FlangeNoise.Change",
+            "flange_noise.change", "flangeNoise.change", "",
             "FlangeNoise.Change(index);",
             "new_element.usage.flange_noise.change", false,
             {
@@ -6120,7 +6294,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "joint_noise.play", "jointNoise.play", "JointNoise.Play",
+            "joint_noise.play", "jointNoise.play", "",
             "JointNoise.Play(index);",
             "new_element.usage.joint_noise.play", false,
             {
@@ -6129,7 +6303,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "background.change", "background.change", "Background.Change",
+            "background.change", "background.change", "",
             "Background.Change(structureKey);",
             "new_element.usage.background.change", false,
             {
@@ -6138,7 +6312,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "adhesion.change", "adhesion.change", "Adhesion.Change",
+            "adhesion.change", "adhesion.change", "",
             "Adhesion.Change(a); / Adhesion.Change(a, b, c);",
             "new_element.usage.adhesion.change", false,
             {
@@ -6191,7 +6365,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "draw_distance.change", "drawDistance.change", "DrawDistance.Change",
+            "draw_distance.change", "drawDistance.change", "",
             "DrawDistance.Change(value);",
             "new_element.usage.draw_distance.change", false,
             {
@@ -6248,15 +6422,6 @@ std::vector<std::string> new_element_target_candidates(const MapModel& model) {
     return result;
 }
 
-bool new_element_template_uses_method(const NewElementTemplate& tpl) {
-    return tpl.row_kind == "structure.put" ||
-           tpl.row_kind == "speedlimit" ||
-           tpl.row_kind == "section.begin" ||
-           tpl.row_kind == "section.speedLimit" ||
-           tpl.row_kind == "cabIlluminance.change" ||
-           tpl.row_kind == "fog.change";
-}
-
 } // namespace
 
 void App::rebuild_new_element_wizard_form() {
@@ -6269,7 +6434,7 @@ void App::rebuild_new_element_wizard_form() {
     const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
     MapElementInspectorState form;
     form.open = true;
-    form.row_kind = tpl.row_kind;
+    form.row_kind = std::string(tpl.row_kind);
     form.title = tr("dialog.new_element_wizard");
     form.source_file = wizard.target_file_path;
     form.source_file_name = display_name_from_path(form.source_file);
@@ -6279,16 +6444,14 @@ void App::rebuild_new_element_wizard_form() {
         field.backend_key = spec.key;
         field.label = spec.label;
         field.numeric_constraint = spec.constraint;
+        field.key_source = map_element_key_source_for_field(form.row_kind, spec.key);
         field.required = spec.required;
         field.original_value = spec.default_value;
         set_edit_field_buffer(field, spec.default_value);
         form.fields.push_back(std::move(field));
     }
     if (tpl.section_values) {
-        if (wizard.section_value_count == 0) wizard.section_value_count = 1;
-        for (size_t index = 0; index < wizard.section_value_count; ++index) {
-            form.fields.push_back(make_section_values_field(form, index, "0"));
-        }
+        form.fields.push_back(make_section_values_field(form, 0, "0"));
     }
     wizard.form = std::move(form);
     wizard.built_template = wizard.selected_template;
@@ -6307,7 +6470,7 @@ bool App::apply_new_element_insert() {
     MapElementInspectorState& form = wizard.form;
     if (wizard.built_template != wizard.selected_template ||
         wizard.built_target_file != wizard.target_file_path ||
-        form.row_kind != tpl.row_kind) {
+        std::string_view(form.row_kind) != tpl.row_kind) {
         rebuild_new_element_wizard_form();
     }
 
@@ -6357,7 +6520,7 @@ bool App::apply_new_element_insert() {
         const bool blue = !field_blank("blue");
         const bool all_colors = red && green && blue;
         const bool any_color = red || green || blue;
-        const std::string method = tpl.method ? tpl.method : "Set";
+        const std::string method(tpl.method);
         if (method == "Set") {
             if (!density || !all_colors) {
                 set_program_status("status.edit.required_field");
@@ -6372,7 +6535,7 @@ bool App::apply_new_element_insert() {
     MapElementPendingChange change;
     change.change_id = "insert-" + std::to_string(++wizard.insert_sequence);
     change.edit_id = change.change_id;
-    change.row_kind = tpl.row_kind;
+    change.row_kind = std::string(tpl.row_kind);
     change.operation = "insert";
     change.target_file_path = wizard.target_file_path;
     const EditSourceFileInfo* source_file =
@@ -6395,8 +6558,8 @@ bool App::apply_new_element_insert() {
         change.field_changes[backend_key] =
                 trim_gui_ascii_copy(edit_field_buffer_text(field));
     }
-    if (new_element_template_uses_method(tpl)) {
-        change.field_changes["method"] = tpl.method ? tpl.method : "";
+    if (!tpl.method.empty()) {
+        change.field_changes["method"] = std::string(tpl.method);
     }
     if (tpl.section_values) {
         change.field_changes["values.count"] = std::to_string(section_value_count);

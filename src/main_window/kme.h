@@ -218,7 +218,8 @@ struct Matrix {
     }
 };
 
-inline double matrix_track_tangent(const Matrix& points, size_t row) {
+template <typename TrackBuffer>
+inline double track_buffer_tangent(const TrackBuffer& points, size_t row) {
     if (points.rows < 2 || points.cols < 3) return 0.0;
     size_t first = row == 0 ? 0 : row - 1;
     size_t last = row + 1 < points.rows ? row + 1 : row;
@@ -1187,6 +1188,15 @@ enum class MapElementNumericConstraint {
     Truncate3,
 };
 
+enum class MapElementKeySource {
+    None,
+    Structure,
+    Track,
+    Sound,
+    Sound3D,
+    SignalAspect,
+};
+
 struct MapElementEditFieldState {
     std::string key;
     std::string backend_key;
@@ -1197,6 +1207,7 @@ struct MapElementEditFieldState {
     std::string source_distance_string;
     std::string value;
     MapElementNumericConstraint numeric_constraint = MapElementNumericConstraint::None;
+    MapElementKeySource key_source = MapElementKeySource::None;
     bool required = true;
     bool read_only = false;
     bool requires_signal_full_form = false;
@@ -1295,27 +1306,6 @@ struct MapElementInspectorRequest {
         : edit_id(std::move(requested_edit_id)), row_kind(std::move(requested_row_kind)) {}
 };
 
-// One wizard entry describes one writeable map statement the user can add.
-// The syntax line is BVE syntax itself (language-neutral); the usage text is
-// localized through multilanguage keys.
-struct NewElementFieldSpec {
-    const char* key;
-    const char* label;
-    MapElementNumericConstraint constraint = MapElementNumericConstraint::None;
-    bool required = true;
-    const char* default_value = "";
-};
-
-struct NewElementTemplate {
-    const char* id;
-    const char* row_kind;
-    const char* method;
-    const char* syntax;
-    const char* usage_key;
-    bool section_values = false;
-    const std::vector<NewElementFieldSpec> fields;
-};
-
 struct NewElementWizardState {
     bool open = false;
     int selected_template = 0;
@@ -1324,7 +1314,6 @@ struct NewElementWizardState {
     std::vector<std::string> target_file_candidates;
     int built_template = -1;
     std::string built_target_file;
-    size_t section_value_count = 1;
     uint64_t insert_sequence = 0;
     MapElementInspectorState form;
 };
@@ -2080,6 +2069,8 @@ private:
     void clear_scene_placement_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
     void render_element_inspector();
+    bool render_map_element_field_control(MapElementEditFieldState& field,
+                                          float width);
     void render_map_element_field_inputs(MapElementInspectorState& inspector);
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();

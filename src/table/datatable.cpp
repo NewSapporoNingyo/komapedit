@@ -1269,6 +1269,7 @@ void annotate_scene_track_key_warnings(MapModel& model) {
     clear_invalid_track_key_flags(model.structures);
     clear_invalid_track_key_flags(model.structures_between);
     clear_invalid_track_key_flags(model.repeaters);
+    clear_invalid_track_key_flags(model.signals);
 
     std::unordered_set<std::string> other_track_keys;
     other_track_keys.reserve(model.other_tracks.size() * 2 + 1);
@@ -1286,6 +1287,13 @@ void annotate_scene_track_key_warnings(MapModel& model) {
         check_scene_track_key(model, row, other_track_keys, "Structure", structure_display_row, "trackKey1");
         check_scene_track_key(model, row, other_track_keys, "Structure", structure_display_row, "trackKey2");
         ++structure_display_row;
+    }
+
+    size_t signal_display_row = 1;
+    for (TableRow& row : model.signals) {
+        check_scene_track_key(model, row, other_track_keys, "Signal",
+                              signal_display_row, "trackKey");
+        ++signal_display_row;
     }
 
     size_t repeater_display_row = 1;

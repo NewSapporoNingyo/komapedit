@@ -43,7 +43,9 @@ TrackPoint matrix_row_track_point(const Matrix& points, size_t row, bool has_the
     p.x = points.at(row, 1);
     p.y = points.at(row, 2);
     p.z = points.cols > 3 ? points.at(row, 3) : 0.0;
-    p.theta = has_theta_column && points.cols > 4 ? points.at(row, 4) : matrix_track_tangent(points, row);
+    p.theta = has_theta_column && points.cols > 4
+        ? points.at(row, 4)
+        : track_buffer_tangent(points, row);
     if (points.cols > 5) p.radius = points.at(row, 5);
     if (points.cols > 6) p.gradient = points.at(row, 6);
     return p;

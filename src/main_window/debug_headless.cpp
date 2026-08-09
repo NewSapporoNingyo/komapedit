@@ -212,6 +212,44 @@ bool plan_data_summary_matches(const PlanData& left, const PlanData& right) {
         left.xmax == right.xmax && left.ymax == right.ymax;
 }
 
+constexpr const char* k_default_edit_map_path =
+    "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
+    "Config_Map121M-ATSP+Ps_Ask.txt";
+
+template <typename Options, typename CommitHandler>
+Options parse_headless_optional_map_edit_options(
+    const std::vector<std::string>& args, std::string_view command,
+    CommitHandler&& handle_commit) {
+    Options options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (std::string_view(arg) == command) {
+            options.requested = true;
+            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
+                options.path = args[++i];
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            handle_commit(options);
+        }
+    }
+    if (options.requested && options.path.empty()) options.path = k_default_edit_map_path;
+    return options;
+}
+
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
@@ -491,102 +529,23 @@ HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::ve
 
 HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
     const std::vector<std::string>& args) {
-    static constexpr const char* k_default_map_path =
-        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
-        "Config_Map121M-ATSP+Ps_Ask.txt";
-    HeadlessOwnTrackEditOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-own-track-edit") {
-            options.requested = true;
-            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
-                options.path = args[++i];
-            }
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) {
-                                         return value > 0.0 && std::isfinite(value);
-                                     })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        }
-    }
-    if (options.requested && options.path.empty()) options.path = k_default_map_path;
-    return options;
+    return parse_headless_optional_map_edit_options<HeadlessOwnTrackEditOptions>(
+        args, "--debug-headless-own-track-edit",
+        [](HeadlessOwnTrackEditOptions&) {});
 }
 
 HeadlessOtherTrackEditOptions parse_headless_other_track_edit_options(
     const std::vector<std::string>& args) {
-    static constexpr const char* k_default_map_path =
-        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
-        "Config_Map121M-ATSP+Ps_Ask.txt";
-    HeadlessOtherTrackEditOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-other-track-edit") {
-            options.requested = true;
-            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
-                options.path = args[++i];
-            }
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) {
-                                         return value > 0.0 && std::isfinite(value);
-                                     })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty()) options.path = k_default_map_path;
-    return options;
+    return parse_headless_optional_map_edit_options<HeadlessOtherTrackEditOptions>(
+        args, "--debug-headless-other-track-edit",
+        [](HeadlessOtherTrackEditOptions& options) { options.commit = true; });
 }
 
 HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
     const std::vector<std::string>& args) {
-    static constexpr const char* k_default_map_path =
-        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
-        "Config_Map121M-ATSP+Ps_Ask.txt";
-    HeadlessDistanceEditBatchOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-distance-edit-batch") {
-            options.requested = true;
-            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
-                options.path = args[++i];
-            }
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty()) options.path = k_default_map_path;
-    return options;
+    return parse_headless_optional_map_edit_options<HeadlessDistanceEditBatchOptions>(
+        args, "--debug-headless-distance-edit-batch",
+        [](HeadlessDistanceEditBatchOptions& options) { options.commit = true; });
 }
 
 HeadlessStationListEditOptions parse_headless_station_list_edit_options(
@@ -626,97 +585,22 @@ HeadlessStationListEditOptions parse_headless_station_list_edit_options(
 
 HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
     const std::vector<std::string>& args) {
-    static constexpr const char* k_default_map_path =
-        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
-        "Config_Map121M-ATSP+Ps_Ask.txt";
-    HeadlessRepeaterEditBatchOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-repeater-edit-batch") {
-            options.requested = true;
-            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
-                options.path = args[++i];
-            }
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty()) options.path = k_default_map_path;
-    return options;
+    return parse_headless_optional_map_edit_options<HeadlessRepeaterEditBatchOptions>(
+        args, "--debug-headless-repeater-edit-batch",
+        [](HeadlessRepeaterEditBatchOptions& options) { options.commit = true; });
 }
 
 HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
     const std::vector<std::string>& args) {
-    static constexpr const char* k_default_map_path =
-        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
-        "Config_Map121M-ATSP+Ps_Ask.txt";
-    HeadlessSectionEditBatchOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-section-edit-batch") {
-            options.requested = true;
-            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
-                options.path = args[++i];
-            }
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty()) options.path = k_default_map_path;
-    return options;
+    return parse_headless_optional_map_edit_options<HeadlessSectionEditBatchOptions>(
+        args, "--debug-headless-section-edit-batch",
+        [](HeadlessSectionEditBatchOptions& options) { options.commit = true; });
 }
 
 HeadlessInsertEditOptions parse_headless_insert_edit_options(const std::vector<std::string>& args) {
-    static constexpr const char* k_default_map_path =
-        "E:\\Railway\\BveTsWorkspace\\BVE-Gensokyo-Railway\\GSR\\Scenarios_GSR\\map\\"
-        "Config_Map121M-ATSP+Ps_Ask.txt";
-    HeadlessInsertEditOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-insert-edit") {
-            options.requested = true;
-            if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) {
-                options.path = args[++i];
-            }
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty()) options.path = k_default_map_path;
-    return options;
+    return parse_headless_optional_map_edit_options<HeadlessInsertEditOptions>(
+        args, "--debug-headless-insert-edit",
+        [](HeadlessInsertEditOptions& options) { options.commit = true; });
 }
 
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args) {
@@ -5701,17 +5585,17 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             const char* error = kv_get_last_error();
             throw std::runtime_error(error ? error : "real map load failed");
         }
-        auto snapshot = [&]() {
-            KvMapSnapshot snapshot{};
+        auto get_snapshot = [&]() {
+            KvMapSnapshot result{};
             if (!kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION,
-                                     &snapshot, sizeof(snapshot)) ||
-                snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
-                snapshot.structure_size < sizeof(KvMapSnapshot)) {
+                                     &result, sizeof(result)) ||
+                result.version != KV_MAP_SNAPSHOT_VERSION ||
+                result.structure_size < sizeof(KvMapSnapshot)) {
                 const char* error = kv_get_last_error();
                 throw std::runtime_error(std::string("map snapshot failed") +
                     (error ? ": " + std::string(error) : std::string{}));
             }
-            return snapshot;
+            return result;
         };
         auto snapshot_text = [](const KvMapSnapshot& snap, KvStringRef ref) {
             if (ref.length == 0) return std::string{};
@@ -5731,7 +5615,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
         // statements: it is the map body with resolvable distance sections,
         // unlike the entry file (usually include-only) or small list files
         // whose same-distance blocks are ambiguous.
-        const KvMapSnapshot baseline_snap = snapshot();
+        const KvMapSnapshot baseline_snap = get_snapshot();
         std::map<std::string, std::uint64_t> distance_statement_counts;
         std::map<std::string, std::vector<const KvStatementRow*>> distance_statements_by_file;
         for (std::uint64_t i = 0; i < baseline_snap.statement_count; ++i) {
@@ -6155,7 +6039,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
 
         bool counts_match = false;
         if (apply_ok) {
-            const KvMapSnapshot applied_snap = snapshot();
+            const KvMapSnapshot applied_snap = get_snapshot();
             counts_match = true;
             for (const std::string& kind : batch_kinds) {
                 const std::uint64_t expected = baseline_counts[kind] +
@@ -6169,7 +6053,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
 
         bool reset_ok = false;
         if (kv_edit_reset_memory(handle)) {
-            const KvMapSnapshot reset_snap = snapshot();
+            const KvMapSnapshot reset_snap = get_snapshot();
             reset_ok = true;
             for (const std::string& kind : batch_kinds) {
                 if (count_rows(reset_snap, kind.c_str()) != baseline_counts[kind]) {
@@ -6209,7 +6093,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                 } else {
                     commit_ok = false;
                 }
-                const KvMapSnapshot committed_snap = snapshot();
+                const KvMapSnapshot committed_snap = get_snapshot();
                 std::uint64_t committed_target_distance_matches = 0;
                 for (std::uint64_t i = 0; i < committed_snap.statement_count; ++i) {
                     const KvStatementRow& statement = committed_snap.statements[i];
@@ -6260,7 +6144,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                         *out << "post_commit_apply_error=" << error << "\n";
                     }
                     if (post_commit_apply_ok) {
-                        const KvMapSnapshot post_commit_snap = snapshot();
+                        const KvMapSnapshot post_commit_snap = get_snapshot();
                         for (const std::string& kind : batch_kinds) {
                             const std::uint64_t expected = baseline_counts[kind] +
                                 2 * expected_row_increments.at(kind);
@@ -6270,7 +6154,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                         }
                     }
                     if (kv_edit_reset_memory(handle)) {
-                        const KvMapSnapshot reset_snap = snapshot();
+                        const KvMapSnapshot reset_snap = get_snapshot();
                         post_commit_reset_ok = true;
                         for (const std::string& kind : batch_kinds) {
                             const std::uint64_t expected = baseline_counts[kind] +
