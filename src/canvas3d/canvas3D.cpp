@@ -64,6 +64,10 @@ constexpr float k_scene_depth_clear = 0.0f;
 constexpr float k_material_opaque_alpha_threshold = 0.98f;
 constexpr float k_scene_track_marker_width = 0.5f;
 constexpr float k_scene_track_marker_alpha = 0.8f;
+constexpr double k_scene_mileage_pick_half_width = 100.0;
+constexpr float k_scene_mileage_highlight_top = 1.0f;
+constexpr float k_scene_mileage_highlight_bottom = -2.0f;
+constexpr float k_scene_mileage_highlight_alpha = 0.5f;
 constexpr float k_scene_highlight_outline_width_px = 5.0f;
 constexpr float k_model_preview_fov_y = 0.78539816339f;
 constexpr double k_scene_object_jump_back_m = 25.0;
@@ -623,6 +627,12 @@ struct SceneTrackChunkGpu {
     UINT index_count = 0;
     std::vector<MeshPart> parts;
     std::vector<GpuMaterial> materials;
+};
+
+struct SceneMileagePickPoint {
+    double distance = 0.0;
+    DVec3 left;
+    DVec3 right;
 };
 
 struct SceneInstance {
@@ -2605,6 +2615,7 @@ struct Canvas3D::Impl {
     ~Impl() {
         stop_scene_loader();
         release_scene_resources();
+        release_scene_mileage_highlight_resources();
         release_resources();
         release_render_target();
         release_com(scene_input_layout);
@@ -2840,6 +2851,7 @@ struct Canvas3D::Impl {
             reset_scene_camera_tracking();
         }
         scene_active = true;
+        rebuild_scene_mileage_pick_cache();
 
         const auto track_gpu_setup_started_at = std::chrono::steady_clock::now();
         if (!build_scene_chunks(error)) {
@@ -3073,6 +3085,7 @@ struct Canvas3D::Impl {
         scene_rotating = false;
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
+        scene_hovered_mileage.reset();
         scene_context_object_index = -1;
         scene_context_marker_index = -1;
         scene_hover_highlight_batch.clear();
@@ -3158,6 +3171,7 @@ struct Canvas3D::Impl {
         scene_rotating = false;
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
+        scene_hovered_mileage.reset();
         scene_context_object_index = -1;
         scene_context_marker_index = -1;
         scene_hover_highlight_batch.clear();
@@ -4253,6 +4267,8 @@ fail:
         release_scene_track_chunks();
         release_scene_marker_chunks();
         scene_chunks.clear();
+        scene_mileage_pick_points.clear();
+        scene_hovered_mileage.reset();
         scene_placement_locations.clear();
         scene_repeater_locations.clear();
         scene_structure_edit = SceneStructureEditState{};
@@ -5157,6 +5173,75 @@ fail:
         return true;
     }
 
+    void release_scene_mileage_highlight_resources() {
+        release_com(scene_mileage_highlight_instance_buffer);
+        release_com(scene_mileage_highlight_index_buffer);
+        release_com(scene_mileage_highlight_vertex_buffer);
+        scene_mileage_highlight_instance_capacity = 0;
+        scene_mileage_highlight_instances.clear();
+        scene_mileage_highlight_parts.clear();
+        scene_mileage_highlight_materials.clear();
+    }
+
+    bool ensure_scene_mileage_highlight_resources(std::string& error) {
+        if (scene_mileage_highlight_vertex_buffer && scene_mileage_highlight_index_buffer &&
+            !scene_mileage_highlight_parts.empty() &&
+            !scene_mileage_highlight_materials.empty()) {
+            return true;
+        }
+        release_scene_mileage_highlight_resources();
+
+        const std::array<GpuVertex, 4> vertices = {{
+            {-static_cast<float>(k_scene_mileage_pick_half_width),
+             k_scene_mileage_highlight_bottom, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 1.0f},
+            { static_cast<float>(k_scene_mileage_pick_half_width),
+             k_scene_mileage_highlight_bottom, 0.0f, 0.0f, 0.0f, -1.0f, 1.0f, 1.0f},
+            { static_cast<float>(k_scene_mileage_pick_half_width),
+             k_scene_mileage_highlight_top, 0.0f, 0.0f, 0.0f, -1.0f, 1.0f, 0.0f},
+            {-static_cast<float>(k_scene_mileage_pick_half_width),
+             k_scene_mileage_highlight_top, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f},
+        }};
+        const std::array<unsigned int, 6> indices = {{0, 1, 2, 0, 2, 3}};
+
+        D3D11_BUFFER_DESC vertex_desc = {};
+        vertex_desc.ByteWidth = static_cast<UINT>(vertices.size() * sizeof(GpuVertex));
+        vertex_desc.Usage = D3D11_USAGE_IMMUTABLE;
+        vertex_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vertex_data = {};
+        vertex_data.pSysMem = vertices.data();
+        HRESULT hr = device->CreateBuffer(
+            &vertex_desc, &vertex_data, &scene_mileage_highlight_vertex_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene mileage highlight vertex)", hr);
+            release_scene_mileage_highlight_resources();
+            return false;
+        }
+
+        D3D11_BUFFER_DESC index_desc = {};
+        index_desc.ByteWidth = static_cast<UINT>(indices.size() * sizeof(unsigned int));
+        index_desc.Usage = D3D11_USAGE_IMMUTABLE;
+        index_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA index_data = {};
+        index_data.pSysMem = indices.data();
+        hr = device->CreateBuffer(
+            &index_desc, &index_data, &scene_mileage_highlight_index_buffer);
+        if (FAILED(hr)) {
+            error = hresult_text("CreateBuffer(scene mileage highlight index)", hr);
+            release_scene_mileage_highlight_resources();
+            return false;
+        }
+
+        scene_mileage_highlight_parts.push_back(MeshPart{0, 6, 0});
+        scene_mileage_highlight_materials.resize(1);
+        GpuMaterial& material = scene_mileage_highlight_materials.front();
+        material.diffuse[0] = 83.0f / 255.0f;
+        material.diffuse[1] = 175.0f / 255.0f;
+        material.diffuse[2] = 1.0f;
+        material.diffuse[3] = k_scene_mileage_highlight_alpha;
+        scene_mileage_highlight_instances.resize(1);
+        return true;
+    }
+
     void bind_scene_instanced_mesh(ID3D11Buffer* vb, ID3D11Buffer* ib, ID3D11Buffer* instance_buffer) {
         UINT strides[2] = {sizeof(GpuVertex), sizeof(SceneInstanceData)};
         UINT offsets[2] = {0, 0};
@@ -5239,6 +5324,38 @@ fail:
         draw_scene_mesh(model.vertex_buffer, model.index_buffer, model.instance_buffer,
                         model.parts, model.materials, static_cast<UINT>(instances.size()),
                         view_proj, rasterizer_state, false, fog);
+    }
+
+    void draw_scene_mileage_highlight(DVec3 render_origin,
+                                      const Mat4& view_proj,
+                                      std::string& error) {
+        if (!scene_hovered_mileage) return;
+        Canvas3DTrackPoint point;
+        if (!sample_own_track(*scene_hovered_mileage, point) ||
+            !ensure_scene_mileage_highlight_resources(error)) {
+            return;
+        }
+
+        DVec3 right;
+        DVec3 up;
+        DVec3 forward;
+        scene_track_surface_frame(point, right, up, forward);
+        double world[16] = {};
+        store_world(world, right, up, forward, DVec3{point.x, point.y, point.z});
+        scene_mileage_highlight_instances.front() =
+            make_instance_data_relative(world, render_origin);
+        if (!ensure_instance_buffer(scene_mileage_highlight_instance_buffer,
+                                    scene_mileage_highlight_instance_capacity,
+                                    scene_mileage_highlight_instances, error)) {
+            return;
+        }
+
+        draw_scene_mesh(scene_mileage_highlight_vertex_buffer,
+                        scene_mileage_highlight_index_buffer,
+                        scene_mileage_highlight_instance_buffer,
+                        scene_mileage_highlight_parts,
+                        scene_mileage_highlight_materials,
+                        1, view_proj, track_rasterizer_state, false, nullptr);
     }
 
     bool draw_scene_pick_model(SceneModelGpu& model,
@@ -6614,10 +6731,10 @@ fail:
         }
     }
 
-    static void scene_marker_frame(const Canvas3DTrackPoint& point,
-                                   DVec3& right,
-                                   DVec3& up,
-                                   DVec3& forward) {
+    static void scene_track_surface_frame(const Canvas3DTrackPoint& point,
+                                          DVec3& right,
+                                          DVec3& up,
+                                          DVec3& forward) {
         const double gradient =
             std::isfinite(point.gradient) ? point.gradient / 1000.0 : 0.0;
         forward = normalize(DVec3{
@@ -6625,6 +6742,39 @@ fail:
         right = normalize(cross(forward, DVec3{0.0, 1.0, 0.0}));
         up = normalize(cross(right, forward));
         apply_track_cant(right, up, forward, point.cant_angle);
+    }
+
+    static void scene_marker_frame(const Canvas3DTrackPoint& point,
+                                   DVec3& right,
+                                   DVec3& up,
+                                   DVec3& forward) {
+        scene_track_surface_frame(point, right, up, forward);
+    }
+
+    void rebuild_scene_mileage_pick_cache() {
+        scene_mileage_pick_points.clear();
+        const Canvas3DTrackPath* path = own_track_path();
+        if (!path || path->points.size() < 2) return;
+
+        scene_mileage_pick_points.reserve(path->points.size());
+        for (const Canvas3DTrackPoint& point : path->points) {
+            if (!std::isfinite(point.distance) || !std::isfinite(point.x) ||
+                !std::isfinite(point.y) || !std::isfinite(point.z) ||
+                !std::isfinite(point.theta)) {
+                scene_mileage_pick_points.clear();
+                return;
+            }
+            DVec3 right;
+            DVec3 up;
+            DVec3 forward;
+            scene_track_surface_frame(point, right, up, forward);
+            const DVec3 center{point.x, point.y, point.z};
+            scene_mileage_pick_points.push_back(SceneMileagePickPoint{
+                point.distance,
+                center - right * k_scene_mileage_pick_half_width,
+                center + right * k_scene_mileage_pick_half_width
+            });
+        }
     }
 
     bool rebuild_scene_marker_visible_indices(std::string& error) {
@@ -7469,6 +7619,120 @@ fail:
         return result == 0.0 ? 0.0 : result;
     }
 
+    static bool scene_ray_triangle_intersection(DVec3 ray_origin,
+                                                DVec3 ray_direction,
+                                                DVec3 a,
+                                                DVec3 b,
+                                                DVec3 c,
+                                                double& ray_parameter,
+                                                double& barycentric_b,
+                                                double& barycentric_c) {
+        constexpr double parallel_epsilon = 1e-10;
+        constexpr double forward_epsilon = 1e-6;
+        const DVec3 edge_ab = b - a;
+        const DVec3 edge_ac = c - a;
+        const DVec3 p = cross(ray_direction, edge_ac);
+        const double determinant = dot(edge_ab, p);
+        if (!std::isfinite(determinant) || std::abs(determinant) <= parallel_epsilon) {
+            return false;
+        }
+
+        const double inverse_determinant = 1.0 / determinant;
+        const DVec3 origin_to_a = ray_origin - a;
+        const double u = dot(origin_to_a, p) * inverse_determinant;
+        if (!std::isfinite(u) || u < 0.0 || u > 1.0) return false;
+
+        const DVec3 q = cross(origin_to_a, edge_ab);
+        const double v = dot(ray_direction, q) * inverse_determinant;
+        if (!std::isfinite(v) || v < 0.0 || u + v > 1.0) return false;
+
+        const double t = dot(edge_ac, q) * inverse_determinant;
+        if (!std::isfinite(t) || t <= forward_epsilon) return false;
+        ray_parameter = t;
+        barycentric_b = u;
+        barycentric_c = v;
+        return true;
+    }
+
+    std::optional<double> pick_scene_mileage(ImVec2 mouse_local,
+                                             int width,
+                                             int height,
+                                             double visible_min,
+                                             double visible_max) const {
+        if (scene_mileage_pick_points.size() < 2) return std::nullopt;
+        visible_min = std::max(visible_min, scene_data.min_distance);
+        visible_max = std::min(visible_max, scene_data.max_distance);
+        if (!std::isfinite(visible_min) || !std::isfinite(visible_max) ||
+            visible_min > visible_max) {
+            return std::nullopt;
+        }
+
+        DVec3 ray_origin;
+        DVec3 ray_direction;
+        if (!scene_camera_ray(mouse_local, width, height, ray_origin, ray_direction)) {
+            return std::nullopt;
+        }
+
+        const auto begin_it = std::lower_bound(
+            scene_mileage_pick_points.begin(), scene_mileage_pick_points.end(), visible_min,
+            [](const SceneMileagePickPoint& point, double distance) {
+                return point.distance < distance;
+            });
+        size_t first_segment = static_cast<size_t>(
+            std::distance(scene_mileage_pick_points.begin(), begin_it));
+        if (first_segment > 0) --first_segment;
+        const auto end_it = std::upper_bound(
+            scene_mileage_pick_points.begin(), scene_mileage_pick_points.end(), visible_max,
+            [](double distance, const SceneMileagePickPoint& point) {
+                return distance < point.distance;
+            });
+        const size_t segment_end = static_cast<size_t>(
+            std::distance(scene_mileage_pick_points.begin(), end_it));
+
+        double nearest_ray_parameter = std::numeric_limits<double>::infinity();
+        double nearest_distance = 0.0;
+        auto consider_triangle = [&](DVec3 a, DVec3 b, DVec3 c,
+                                     double distance_a,
+                                     double distance_b,
+                                     double distance_c) {
+            double ray_parameter = 0.0;
+            double barycentric_b = 0.0;
+            double barycentric_c = 0.0;
+            if (!scene_ray_triangle_intersection(
+                    ray_origin, ray_direction, a, b, c,
+                    ray_parameter, barycentric_b, barycentric_c) ||
+                ray_parameter >= nearest_ray_parameter) {
+                return;
+            }
+            const double barycentric_a = 1.0 - barycentric_b - barycentric_c;
+            const double distance = distance_a * barycentric_a +
+                distance_b * barycentric_b + distance_c * barycentric_c;
+            if (!std::isfinite(distance) || distance < visible_min || distance > visible_max) {
+                return;
+            }
+            nearest_ray_parameter = ray_parameter;
+            nearest_distance = distance;
+        };
+
+        for (size_t i = first_segment;
+             i + 1 < scene_mileage_pick_points.size() && i < segment_end; ++i) {
+            const SceneMileagePickPoint& a = scene_mileage_pick_points[i];
+            const SceneMileagePickPoint& b = scene_mileage_pick_points[i + 1];
+            if (b.distance < visible_min || a.distance > visible_max) continue;
+            consider_triangle(a.left, a.right, b.right,
+                              a.distance, a.distance, b.distance);
+            consider_triangle(a.left, b.right, b.left,
+                              a.distance, b.distance, b.distance);
+        }
+        if (!std::isfinite(nearest_ray_parameter)) return std::nullopt;
+
+        const double first_integer_distance = std::ceil(scene_data.min_distance);
+        const double last_integer_distance = std::floor(scene_data.max_distance);
+        if (first_integer_distance > last_integer_distance) return std::nullopt;
+        return std::clamp(std::round(nearest_distance),
+                          first_integer_distance, last_integer_distance);
+    }
+
     bool scene_camera_ray(ImVec2 mouse_local, int width, int height,
                           DVec3& ray_origin, DVec3& ray_direction) const {
         if (width <= 0 || height <= 0) return false;
@@ -7879,10 +8143,13 @@ fail:
         return static_cast<float>(std::clamp(far_z, 256.0, static_cast<double>(k_scene_background_far_z)));
     }
 
-    void render_scene_preview_target(int width, int height, ImVec2 mouse_local, bool pick_enabled) {
+    void render_scene_preview_target(int width, int height, ImVec2 mouse_local,
+                                     bool pick_enabled,
+                                     bool mileage_pick_enabled) {
         std::string error;
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
+        scene_hovered_mileage.reset();
         scene_hover_highlight_batch.clear();
         if (!ensure_render_target(width, height, error)) {
             if (scene_last_error != error) scene_last_error = error;
@@ -7945,6 +8212,11 @@ fail:
 
         double visible_min = scene_camera_distance - scene_window_back_m;
         double visible_max = scene_camera_distance + effective_window_forward_m;
+        if (mileage_pick_enabled &&
+            scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect) {
+            scene_hovered_mileage = pick_scene_mileage(
+                mouse_local, width, height, visible_min, visible_max);
+        }
         std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
         std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;
         std::vector<SceneInstanceData> track_instance(1);
@@ -8002,6 +8274,8 @@ fail:
             draw_scene_track_chunk(scene_track_chunks[i], render_origin, view_proj,
                                    track_instance, error, fog_ptr);
         }
+        draw_scene_mileage_highlight(render_origin, view_proj, error);
+        if (!error.empty() && scene_last_error != error) scene_last_error = error;
         ScenePickTarget picked_target;
         if (scene_pick_active) {
             ID3D11RenderTargetView* pick_target = scene_pick_rtv;
@@ -8561,7 +8835,8 @@ fail:
         if (scene_active) {
             render_scene_preview_target(
                 width, height, mouse_local,
-                (hovered || context_popup_open) && !scene_structure_gizmo_consumes_left_input());
+                (hovered || context_popup_open) && !scene_structure_gizmo_consumes_left_input(),
+                hovered && !loading_before_render);
         } else {
             std::string error;
             ensure_render_target(width, height, error);
@@ -8594,6 +8869,9 @@ fail:
         }
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
+        if (scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect) {
+            result.hovered_mileage = scene_hovered_mileage;
+        }
         if (select_mode && scene_hovered_marker_index >= 0 &&
             static_cast<size_t>(scene_hovered_marker_index) <
                 scene_data.markers.size()) {
@@ -8883,6 +9161,14 @@ fail:
     SceneStructureEditState scene_structure_edit;
     float scene_edit_component_scale = 1.0f;
     std::vector<SceneTrackChunkGpu> scene_track_chunks;
+    std::vector<SceneMileagePickPoint> scene_mileage_pick_points;
+    ID3D11Buffer* scene_mileage_highlight_vertex_buffer = nullptr;
+    ID3D11Buffer* scene_mileage_highlight_index_buffer = nullptr;
+    ID3D11Buffer* scene_mileage_highlight_instance_buffer = nullptr;
+    UINT scene_mileage_highlight_instance_capacity = 0;
+    std::vector<MeshPart> scene_mileage_highlight_parts;
+    std::vector<GpuMaterial> scene_mileage_highlight_materials;
+    std::vector<SceneInstanceData> scene_mileage_highlight_instances;
     // Static marker vertices/UVs are keyed by scene_data.markers, the 100 m
     // scene chunk layout, and the active ImGui font/atlas identity below.
     // Visibility is view-only state and rewrites only each chunk's dynamic IBs.
@@ -8925,6 +9211,7 @@ fail:
     Canvas3DSceneInteractionMode scene_interaction_mode = Canvas3DSceneInteractionMode::Move;
     int scene_hovered_object_index = -1;
     int scene_hovered_marker_index = -1;
+    std::optional<double> scene_hovered_mileage;
     int scene_context_object_index = -1;
     int scene_context_marker_index = -1;
     SceneHighlightBatch scene_hover_highlight_batch;

@@ -8991,6 +8991,12 @@ void App::render_scene_preview_window() {
             scene_mode = Canvas3DSceneInteractionMode::Select;
             if (scene_preview_canvas_) scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
         }
+        ImGui::SameLine();
+        if (ImGui::RadioButton((tr("mode.mileage_select") + "##scene_preview_mileage_select").c_str(),
+                               scene_mode == Canvas3DSceneInteractionMode::MileageSelect)) {
+            scene_mode = Canvas3DSceneInteractionMode::MileageSelect;
+            if (scene_preview_canvas_) scene_preview_canvas_->set_scene_interaction_mode(scene_mode);
+        }
         ImGui::PopStyleVar();
         if (scene_preview_started_ && scene_preview_dirty_ && has_model_ && !load_state_.running) {
             const bool preserve_loaded_models = scene_preview_preserve_models_on_rebuild_;

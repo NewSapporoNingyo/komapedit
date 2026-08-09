@@ -46,6 +46,7 @@ struct Canvas3DTrackVisibility {
 enum class Canvas3DSceneInteractionMode {
     Move,
     Select,
+    MileageSelect,
 };
 
 enum class Canvas3DSceneObjectKind {
@@ -427,6 +428,7 @@ struct Canvas3DSceneFrameResult {
     Canvas3DSceneContextAction context_action;
     std::optional<Canvas3DPlacementDragUpdate> placement_drag;
     std::optional<Canvas3DSceneMarkerTarget> hovered_marker;
+    std::optional<double> hovered_mileage;
 };
 
 using Canvas3DWakeCallback = void (*)();
