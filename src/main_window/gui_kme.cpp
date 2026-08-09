@@ -2926,8 +2926,12 @@ bool is_repeater_structure_key_field(const MapElementEditFieldState& field) {
     return field.key.rfind("structureKeys.", 0) == 0;
 }
 
+bool is_section_values_field(std::string_view field) {
+    return field.rfind("values.", 0) == 0;
+}
+
 bool is_section_values_field(const MapElementEditFieldState& field) {
-    return field.key.rfind("values.", 0) == 0;
+    return is_section_values_field(field.key);
 }
 
 std::vector<std::string> split_repeater_structure_keys(const std::string& text) {
@@ -3929,9 +3933,9 @@ void App::apply_inspector_changes() {
     // Editing a row that was created by an unfinished insert must merge into
     // the pending insert change: the insert edit id does not exist on disk, so
     // a plain update could never be replayed after a working-copy reset. The
-    // merged change carries every form value so the maploader rebuilds the
-    // statement from the current fields, and keeps the resolution/placement
-    // state already attached to the pending insert.
+    // merged change starts from the original insert so fields not shown in the
+    // inspector (such as the selected method) and its resolution/placement
+    // state survive, then the current implicit changes and form values win.
     for (auto& item : replacements) {
         auto existing = pending_edit_changes_.find(item.first);
         if (existing == pending_edit_changes_.end() ||
@@ -3939,22 +3943,28 @@ void App::apply_inspector_changes() {
             continue;
         }
         MapElementPendingChange& change = item.second;
-        std::map<std::string, std::string> merged_fields = std::move(change.field_changes);
-        change.operation = "insert";
-        change.row_kind = existing->second.row_kind;
-        change.target_file_path = existing->second.target_file_path;
-        change.expected_source_hash = existing->second.expected_source_hash;
-        change.distance_resolution_key = existing->second.distance_resolution_key;
-        change.distance_boundary_token = existing->second.distance_boundary_token;
-        change.distance_expression = existing->second.distance_expression;
-        change.confirm_environment_mismatch =
-            existing->second.confirm_environment_mismatch;
-        change.field_changes.clear();
+        MapElementPendingChange merged = existing->second;
+        // Variable-length Section fields are rebuilt from the current form;
+        // retaining removed indices would make a reduced count invalid.
+        if (inspector_.row_kind == "section.begin" ||
+            inspector_.row_kind == "section.speedLimit") {
+            for (auto field = merged.field_changes.begin();
+                 field != merged.field_changes.end();) {
+                if (is_section_values_field(field->first)) {
+                    field = merged.field_changes.erase(field);
+                } else {
+                    ++field;
+                }
+            }
+        }
+        for (auto& field : change.field_changes) {
+            merged.field_changes.insert_or_assign(field.first, std::move(field.second));
+        }
         for (const MapElementEditFieldState& field : inspector_.fields) {
             if (field.read_only) continue;
             const std::string& backend_key =
                 field.backend_key.empty() ? field.key : field.backend_key;
-            merged_fields[backend_key] =
+            merged.field_changes[backend_key] =
                 trim_gui_ascii_copy(edit_field_buffer_text(field));
         }
         size_t section_value_count = 0;
@@ -3962,9 +3972,9 @@ void App::apply_inspector_changes() {
             if (is_section_values_field(field)) ++section_value_count;
         }
         if (section_value_count > 0) {
-            merged_fields["values.count"] = std::to_string(section_value_count);
+            merged.field_changes["values.count"] = std::to_string(section_value_count);
         }
-        change.field_changes = std::move(merged_fields);
+        change = std::move(merged);
     }
 
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
