@@ -176,6 +176,17 @@ bool parse_gui_edit_number(const std::string& text, double* parsed_value = nullp
     return valid;
 }
 
+bool is_gui_tilt_value(double value) {
+    return std::isfinite(value) && std::trunc(value) == value &&
+        value >= 0.0 && value <= 3.0;
+}
+
+int gui_tilt_option_index(const std::string& text) {
+    double value = 0.0;
+    if (!parse_gui_edit_number(text, &value) || !is_gui_tilt_value(value)) return -1;
+    return static_cast<int>(value);
+}
+
 void render_inline_wrapped_text(const char* label, const std::string& value) {
     ImGui::TextUnformatted(label);
     ImGui::SameLine();
@@ -273,21 +284,21 @@ bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,
     }
     double value = 0.0;
     if (!parse_gui_edit_number(edit_field_buffer_text(field), &value)) return false;
-    if (field.numeric_constraint == MapElementNumericConstraint::Integer &&
-        std::trunc(value) != value) {
+    if (field.numeric_constraint == MapElementNumericConstraint::Tilt &&
+        !is_gui_tilt_value(value)) {
         return false;
     }
     if (!canonicalize) return true;
     if (field.numeric_constraint == MapElementNumericConstraint::Truncate3) {
         set_edit_field_buffer(field, format_gui_transform_number(value));
-    } else if (field.numeric_constraint == MapElementNumericConstraint::Integer) {
+    } else if (field.numeric_constraint == MapElementNumericConstraint::Tilt) {
         set_edit_field_buffer(field, format_double(value, 0));
     }
     return true;
 }
 
 MapElementNumericConstraint structure_edit_numeric_constraint(const std::string& key) {
-    if (key == "tilt") return MapElementNumericConstraint::Integer;
+    if (key == "tilt") return MapElementNumericConstraint::Tilt;
     static constexpr std::array<const char*, 7> k_truncated_fields = {
         "x", "y", "z", "rx", "ry", "rz", "span"
     };
@@ -3754,8 +3765,8 @@ void App::sync_scene_placement_edit_from_inspector() {
         if (!field) continue;
         double value = 0.0;
         if (!parse_gui_edit_number(edit_field_buffer_text(*field), &value)) return;
-        if (field->numeric_constraint == MapElementNumericConstraint::Integer &&
-            std::trunc(value) != value) {
+        if (field->numeric_constraint == MapElementNumericConstraint::Tilt &&
+            !is_gui_tilt_value(value)) {
             return;
         }
         if (field->numeric_constraint == MapElementNumericConstraint::Truncate3 &&
@@ -5836,6 +5847,41 @@ void App::finish_pending_close_action() {
 bool App::render_map_element_field_control(MapElementEditFieldState& field,
                                            float width) {
     ImGui::SetNextItemWidth(width);
+    if (field.numeric_constraint == MapElementNumericConstraint::Tilt) {
+        const std::string current_value = edit_field_buffer_text(field);
+        static constexpr std::array<const char*, 4> k_tilt_description_keys = {
+            "value.tilt.always_level",
+            "value.tilt.follow_gradient",
+            "value.tilt.follow_cant",
+            "value.tilt.follow_gradient_and_cant",
+        };
+        const int selected_option = gui_tilt_option_index(current_value);
+        const auto option_text = [&](int option) {
+            return std::to_string(option) + ": " +
+                tr(k_tilt_description_keys[static_cast<size_t>(option)]);
+        };
+        const std::string preview = selected_option >= 0
+            ? option_text(selected_option)
+            : current_value;
+        if (!ImGui::BeginCombo(field.label.c_str(), preview.c_str())) return false;
+
+        bool input_changed = false;
+        for (int option = 0; option < static_cast<int>(k_tilt_description_keys.size());
+             ++option) {
+            const bool selected = option == selected_option;
+            const std::string display_text = option_text(option);
+            if (ImGui::Selectable(display_text.c_str(), selected)) {
+                const std::string candidate = std::to_string(option);
+                if (candidate != current_value) {
+                    set_edit_field_buffer(field, candidate);
+                    input_changed = true;
+                }
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+        return input_changed;
+    }
     if (field.key_source == MapElementKeySource::None) {
         return ImGui::InputText(field.label.c_str(), &field.value);
     }
@@ -6222,7 +6268,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
                 {"rx", "rx", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"ry", "ry", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"rz", "rz", MapElementNumericConstraint::Truncate3, true, "0"},
-                {"tilt", "tilt", MapElementNumericConstraint::Integer, true, "0"},
+                {"tilt", "tilt", MapElementNumericConstraint::Tilt, true, "0"},
                 {"span", "span", MapElementNumericConstraint::Truncate3, true, "0"},
             },
         },
@@ -6234,7 +6280,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"structureKey", "structureKey", MapElementNumericConstraint::None, true, ""},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, "0"},
-                {"tilt", "tilt", MapElementNumericConstraint::Integer, true, "0"},
+                {"tilt", "tilt", MapElementNumericConstraint::Tilt, true, "0"},
                 {"span", "span", MapElementNumericConstraint::Truncate3, true, "0"},
             },
         },
@@ -6277,7 +6323,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
                 {"rx", "rx", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"ry", "ry", MapElementNumericConstraint::Truncate3, true, "0"},
                 {"rz", "rz", MapElementNumericConstraint::Truncate3, true, "0"},
-                {"tilt", "tilt", MapElementNumericConstraint::Integer, true, "0"},
+                {"tilt", "tilt", MapElementNumericConstraint::Tilt, true, "0"},
                 {"span", "span", MapElementNumericConstraint::Truncate3, true, "0"},
             },
         },

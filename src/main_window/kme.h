@@ -1184,7 +1184,7 @@ struct TableFindState {
 enum class MapElementNumericConstraint {
     None,
     Finite,
-    Integer,
+    Tilt,
     Truncate3,
 };
 
