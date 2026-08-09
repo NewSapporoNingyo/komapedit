@@ -557,18 +557,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 - EXE 与声明文件位于输出根目录，DLL 位于 `bin`，INI 位于 `settings`。
 - 分发清理保留 `bin`、`settings`、`LICENSE`、`NOTICE` 与 `THIRD_PARTY_NOTICES.md`。
 - 旧版根目录 INI 仅在目标不存在时迁入 `settings`；冲突时中止且不覆盖。
-- 不得内置 Assimp；ImGui 使用 docking 分支，ImPlot 使用上游版本。
+- ImGui 使用 docking 分支，ImPlot 使用上游版本。
 - 不得删除或绕过许可证/声明文件。新增依赖时同步更新 CMake、开发者文档和第三方声明。
 - 线路发布导出与 `build_release.bat` 相互独立；实现时必须展开 Include、可选常量化表达式、仅复制已用资源、写报告，并通过临时输出保护开发目录。
-
-## 变更流程
-
-1. 复现或定义行为，检查所有相关所有者和调用方。
-2. 确定组件边界和兼容义务。
-3. 完成聚焦变更，不混入无关格式化或架构调整。
-4. 同步更新所有受影响的界面语言、ABI 调用方、测试与文档。
-5. 优先构建 Debug，并运行覆盖完整的最小静态、自动、无界面与手工验证集。
-6. 仅在打包、分发、线路导出或 Release 特有行为变化时增加 Release 验证。
-7. 检查差异中的生成文件、本机路径、源码保真、所有权、失效和声明变化。
-8. 记录实际测试、跳过项、限制和剩余风险。
 

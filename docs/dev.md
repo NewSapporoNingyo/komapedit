@@ -196,18 +196,7 @@ Because `komapedit.exe` is a GUI-subsystem executable, PowerShell validation tha
 - Keep the EXE and notice files at the output root, DLLs in `bin`, and INIs in `settings`.
 - Distribution cleanup preserves `bin`, `settings`, `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 - Legacy root INIs move into `settings` only when the destination is absent; conflicts abort without overwriting.
-- Do not vendor Assimp. Fetch ImGui from its docking branch and ImPlot from upstream.
+- Fetch ImGui from its docking branch and ImPlot from upstream.
 - Never remove or bypass license/notice files. A new dependency requires CMake, developer documentation, and third-party notice updates.
 - Route release export is separate from `build_release.bat`; when implemented it must expand includes, optionally constantize expressions, copy only used resources, report results, and protect development directories through temporary output.
-
-## Change workflow
-
-1. Reproduce or define the behavior and inspect all relevant owners and callers.
-2. Identify the component boundary and compatibility obligations.
-3. Make a focused change without unrelated formatting or architecture churn.
-4. Update all UI languages, ABI callers, tests, and documentation affected by the behavior.
-5. Build Debug first and run the smallest complete static, automated, headless, and manual validation set.
-6. Use Release validation when packaging, distribution, route export, or Release-only behavior changes.
-7. Review the diff for generated files, local paths, source fidelity, ownership, invalidation, and notice changes.
-8. Record exact tests, skipped checks, limitations, and remaining risks.
 
