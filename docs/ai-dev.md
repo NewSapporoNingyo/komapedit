@@ -21,7 +21,7 @@ Using AI does not mean that you can complete the desired software changes withou
 1. Understand the basics of software development and related tools. You do not need to install a complete integrated development environment (IDE), but you should at least install the build tools required by this project and one text editor for manually viewing and editing code.
 2. Have at least some knowledge of C/C++. You do not need practical project-development experience, but you should know basic C/C++ syntax, the purposes of various files such as `.h` and `.cpp`, and the purposes of the related tools.
 
-## Avoid Vague Requirements and “Wishful Coding”
+## Avoid “Wishful Coding”
 
 - Do not give the AI tool unconstrained, vague requests such as “make the code better,” “rewrite the entire project using xx framework,” “fix all bugs,” “improve performance,” or “add a feature.” If the agent is allowed to implement such a request directly, it can only guess the product requirements, architecture, scope, and acceptance criteria. This is “Wishful Coding.”
 
