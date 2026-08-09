@@ -4,18 +4,16 @@
 
 # komapedit
 
-[简体中文](docs/README_zhcn.md)
-
 komapedit is a lightweight Windows viewer and editor for BVE Trainsim map files. It loads route maps and their Include files, calculates own-track and other-track geometry, presents the route in 2D charts and a 3D scene, exposes map data in searchable tables, previews Structure models, and exports calculated track geometry to CSV.
 
 Editing is source-backed but still experimental. Back up route files or keep them under version control before enabling Edit mode. komapedit is not yet a complete map editor: some BVE syntax is preview-only or unsupported, and some supported statements can be edited but not created or manipulated graphically. See [Current BVE Map Syntax Support](#current-bve-map-syntax-support) for the current boundaries and [TODO.md](TODO.md) for implementation progress.
 
 ## Documentation
 
-- [Simplified Chinese user guide](docs/README_zhcn.md)
-- [Development status and roadmap](TODO.md)
-- [Developer guide](docs/dev.md) ([简体中文](docs/dev_zhcn.md))
-- [AI-assisted development guide](docs/ai-dev.md) ([简体中文](docs/ai-dev_zhcn.md))
+- [简体中文README](docs/README_zhcn.md)
+- [Development status (Todo List)](TODO.md)
+- [Developer guide](docs/dev.md) ([简体中文版](docs/dev_zhcn.md))
+- [AI-assisted development guide](docs/ai-dev.md) ([简体中文版](docs/ai-dev_zhcn.md))
 - [Repository instructions for AI coding tools](AGENTS.md)
 - [License](LICENSE), [project notice](NOTICE), and [third-party notices](THIRD_PARTY_NOTICES.md)
 

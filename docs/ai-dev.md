@@ -1,159 +1,121 @@
-# Using AI Coding Tools for komapedit
+# Developing komapedit with AI Coding Tools
 
-[简体中文](ai-dev_zhcn.md) · [Human developer guide](dev.md) · [Repository rules for AI tools](../AGENTS.md) · [Todo List](../TODO.md)
+[Chinese version](ai-dev_zhcn.md) · [Human Developer Guide](dev.md) · [Repository Rules for AI Tools](../AGENTS.md) · [Development Progress TODO](../TODO.md)
 
-This guide is for people who use an AI coding tool to develop komapedit. It explains how to prepare work, supervise the tool, review its changes, and decide whether the result is safe to accept. It is not a prompt library and is not intended to be pasted into an AI tool.
+This document is for people who use AI coding tools to develop komapedit. It explains how to prepare tasks, supervise tools, review changes, and determine whether the result is safe to accept. It is not a prompt collection, and it should not be copied in its entirety into an AI coding tool.
 
-The tool itself should read [`AGENTS.md`](../AGENTS.md), which contains the detailed repository rules. The person operating the tool remains responsible for the goal, scope, technical decisions, validation, and final acceptance.
+The AI tool itself should read [`AGENTS.md`](../AGENTS.md), which contains the detailed repository rules. The person operating the tool remains responsible for the objective, scope, technical decisions, validation, and final acceptance.
 
-## Divide responsibilities clearly
+## AI Agents Are Not Gods; They Have Many Limitations
 
-The operator should decide:
+The field of artificial intelligence is currently full of hype and exaggerated claims. This leads many people to believe that “an AI tool can do anything from a short one-sentence instruction.” In reality, AI has many shortcomings, some of which can cause serious trouble. If you know little about the relevant facts but plan to use an AI coding tool to develop this project, you must understand the following before changing any code:
 
-- what problem is worth solving and what outcome is expected;
-- which files, components, users, and data are in scope;
-- which existing behavior must remain unchanged;
-- what evidence will count as completion;
-- whether an architectural, ABI, dependency, or product-policy change is acceptable.
+1. **Hallucinations:** Large language models (LLMs) based on the Transformer architecture commonly suffer from a serious problem called “hallucination.” Hallucinations can occur in any model, even the most advanced models available today. This means a model may generate content that “looks fine but deviates significantly from the facts or instructions,” without judging for itself whether the content is factual or meets the user's needs.
+2. **Information loss in long contexts:** Today's leading models commonly claim to have context windows of about one million tokens, but as the amount of information in the input context grows, some information is lost. It is impossible to predict what will be lost, which means the model may gradually drift away from the user's requirements and project rules as the context grows. In general, use only about 25% of the context window in a single conversation. For especially large tasks, split the work into multiple steps and have a separate conversation with the AI agent for each step. Some AI agents provide context compression; generally, once compression has been triggered once in a conversation, it is not recommended to continue using that conversation for another round of changes.
+3. **The importance of prompts:** Prompts determine what the AI tool does according to your instructions. Make your instructions as clear as possible, state all requirements, and avoid making the AI agent guess what you need.
 
-The AI tool can help inspect the repository, trace behavior, suggest a plan, edit files, and run checks. Treat its conclusions as proposals supported by evidence, not as decisions that automatically become correct because they sound confident.
+## Basic Knowledge You Should Have
 
-Use the project documents for different purposes:
+Using AI does not mean that you can complete the desired software changes without understanding software development. The following are some points you should know:
 
-- [`README.md`](../README.md): current user behavior and limitations;
-- [`TODO.md`](../TODO.md): implementation status and planned work;
-- [`dev.md`](dev.md): build, architecture, coding, and testing information for developers;
-- [`AGENTS.md`](../AGENTS.md): detailed rules the AI tool must follow.
+1. Understand the basics of software development and related tools. You do not need to install a complete integrated development environment (IDE), but you should at least install the build tools required by this project and one text editor for manually viewing and editing code.
+2. Have at least some knowledge of C/C++. You do not need practical project-development experience, but you should know basic C/C++ syntax, the purposes of various files such as `.h` and `.cpp`, and the purposes of the related tools.
 
-## Prepare the work before asking for code
+## Avoid Vague Requirements and “Wishful Coding”
 
-Start by checking the working tree and noting any existing changes that must not be overwritten. For a bug, reproduce it if possible. For a performance concern, record a baseline. For editing or save behavior, use backed-up route files or version-controlled fixtures.
+- Do not give the AI tool unconstrained, vague requests such as “make the code better,” “rewrite the entire project using xx framework,” “fix all bugs,” “improve performance,” or “add a feature.” If the agent is allowed to implement such a request directly, it can only guess the product requirements, architecture, scope, and acceptance criteria. This is “Wishful Coding.”
 
-Write down a short work brief for yourself. It should answer:
+- If the program has a problem or the UI is unattractive, do not only say “the program does not work,” “there is an error,” “the program suddenly crashed,” “a menu looks ugly,” or “a marker is not symmetrical.” This only makes the model guess at the problem and may cause the problem to become worse during attempted fixes.
 
-1. What is wrong or missing?
-2. What should the user or developer observe after the change?
-3. Which component appears to own the behavior?
-4. What must not change?
-5. Which tests, comparisons, or manual checks will be used?
-6. What is explicitly outside the task?
+- If the requirements contain elements that cannot be determined independently, first ask the agent to perform read-only checks instead of immediately modifying code. You can use an agent's “plan” mode for this. The operator should review the evidence, fill in the missing decisions, and then approve an implementation with a clearly defined scope.
 
-This is a decision checklist for the operator, not a required prompt format. The wording sent to the tool can be conversational, but the underlying decisions should be clear.
+- If an AI agent's static code inspection cannot answer an important choice, such as the file-format strategy, compatibility level, breaking migration, or addition of a dependency, pause and have a person make the decision. Do not let the tool choose silently.
 
-Do not send secrets, private route data, credentials, or unrelated personal files to a tool unless its data-handling rules and the task genuinely allow it.
+## Prompt Templates for Three Scenarios
 
-## Avoid vague requests and “wishful programming”
+Fill in the prompt templates according to the actual situation, or select only part of a template for the actual input. Do not copy an unmodified prompt template into an AI agent.
 
-Requests such as “make the code better,” “modernize the project,” “fix all bugs,” “improve performance,” or “add a smart editor” do not define a finish line. If the tool is allowed to implement immediately, it must guess the product requirements, architecture, scope, and acceptance criteria. That is wishful programming.
+### Everyday Development
 
-When the goal is still vague, use the tool for investigation first. Ask it to show the relevant owners, call paths, tests, measurements, and possible options without changing code. Review that evidence, make the missing decisions yourself, and only then authorize a bounded implementation.
+This prompt is for adding features and similar development tasks.
 
-If an important choice cannot be resolved from the repository—such as file-format policy, compatibility level, destructive migration, or a new dependency—pause the work and decide it explicitly. Do not let the tool silently choose.
+```
+According to the following specification documents and task requirements, execute the development task. Plan before execution:
+Project development rules: AGENTS.md
 
-## A practical working cycle
+Request: [Fill in your detailed request]
+When implementing the request above, make the code as performant as possible, keep the structure clear and readable, and avoid scattering large amounts of duplicated logic throughout the codebase.
+If the request description is inconsistent with the actual code or unclear, ask about it promptly instead of making an arbitrary decision.
 
-### 1. Ask for inspection
+Build: use build_dev.bat to generate a debug build; do not perform a release build.
+Tests:
+[1 - No testing] UI-related functionality requires manual testing later. Do not perform automated tests for this task.
+[2 - Standard testing] Use the real map “[BVE map file path]” for headless testing. If problems occur during compilation or testing, other debugging or testing tools may also be used.
+Goal: The program should work as required, perform well, and keep existing functionality working normally.
+Completion report: After completing the task, explain the detailed logic and approach of this round of changes so that it can be checked manually. In the completion report, include an English Git commit title in the format (commit category: what was done).
+```
 
-Have the tool read `AGENTS.md` and inspect the relevant implementation, tests, build files, and documentation. It should identify the current behavior, canonical owner, affected consumers, and evidence for the proposed change.
+### Bug Fixing
 
-### 2. Review the proposed approach
+This prompt is for fixing problems.
 
-Before allowing a non-trivial edit, check that the approach:
+```
+According to the following specification documents and task requirements, execute the bug-fixing task. Review the code first, then make a detailed plan based on the problems you find before making changes:
+Project development rules: AGENTS.md
 
-- stays within the requested component;
-- reuses an existing owner or shared helper;
-- does not add speculative abstractions or duplicate implementations;
-- identifies compatibility, ownership, invalidation, localization, and source-writeback effects;
-- includes a realistic validation plan.
+Problem description and fix requirements: [Fill in the observed symptoms, console logs, and the effect that should be achieved after the fix]
 
-If the explanation is unclear, ask for evidence or a smaller plan. A polished plan is not a substitute for correct repository analysis.
+When implementing the request above, make the code as performant as possible and keep the structure clear and readable. Do not add an equivalent implementation where one already exists. Avoid scattering large amounts of duplicated logic throughout the codebase, and avoid unnecessary repeated loading, reading, or computation. If the problem cannot be determined, explicitly report that it cannot be determined; do not perform a large-scale rewrite while the problem remains uncertain.
+If the request description is inconsistent with the actual code or unclear, ask about it promptly instead of making an arbitrary decision.
+Build: use build_dev.bat to generate a debug build; do not perform a release build.
+Tests: [1 - No testing] UI-related functionality requires manual testing later. Do not perform automated tests for this task.
+[2 - Standard testing] Use the real map “[BVE map file path]” for headless testing. If problems occur during compilation or testing, other debugging or testing tools may also be used.
+Goal: The program should work as required, perform well, and keep existing functionality working normally.
+Completion report: After completing the task, explain the detailed logic and approach of this round of changes so that it can be checked manually. In the completion report, include an English Git commit title in the format (commit category: what was done).
+```
 
-### 3. Let the tool implement a bounded change
+### slop-fix
 
-Keep unrelated cleanup out of the same task. Watch for unexpected rewrites, broad formatting changes, generated files, vendored changes, local paths, and new dependencies. Stop and reassess if the diff grows beyond the agreed scope.
+Even when an AI coding tool is required to follow strict project rules and precise instructions, it may leave flaws in the code. One or more slop-fix passes may then be needed to keep the project sustainable for continued development.
 
-### 4. Inspect the diff yourself
+```
+The current project development rules are in: AGENTS.md
+To prevent the project code from drifting away from the requirements and rules, perform a development-sustainability (slop-fix) inspection and repair of the current project. First perform a read-only inspection and create a plan; list the problems you find in the plan before making changes. If a described problem does not exist, skip that item:
+1. Check whether large amounts of identical implementation logic are scattered across different locations.
+2. Check for fields, functions, or variables that are no longer used.
+3. Check whether any locations can use less code without changing functionality at all. (Absolutely do not reduce the line count by deleting comments or combining existing multi-line code into a single line.)
+4. Check for defects that manual testing cannot reveal but that are visible at the code level.
+5. Check for inefficient logic that can be optimized, such as frequent reloading, reading, computation, or generation.
+6. Check for hidden risks that could cause the program to crash or become completely stuck while performing an operation.
+7. Check for confusing or unclear logic in the code.
 
-Read the changed code and documentation. Check the behavior at the boundaries, not only the most obvious function. Search for missed callers, stale fields, duplicated logic, incomplete localization, and invalid cache assumptions.
+Use the real map “[BVE map file path]” during the testing phase. If no code was modified because no problems were found, testing is not required.
 
-### 5. Verify the result
+After checking and correcting the problems above, the following should be true:
+1. The codebase is smaller and easier to maintain. However, do not force a reduction in code size when there is no suitable place to reduce it.
+2. None of the existing functionality or user-operation logic changes.
+3. Program performance does not decline.
+4. If a corresponding problem exists, fix it. If it does not exist, make no change. Do not invent defects and rewrite or fix code merely to satisfy the goal of “fixing problems.”
+```
 
-Run or independently confirm the relevant build, tests, headless checks, manual checks, save-and-reload comparisons, or benchmarks. The commands and component checklists are in [`dev.md`](dev.md) and [`AGENTS.md`](../AGENTS.md).
+## Key Technical Review Areas
 
-Do not accept “tests passed” without the command, input, result, and any skipped checks. If a check could not run, decide whether the remaining risk is acceptable.
+Even when a change appears small, check the project-specific risks that apply:
 
-### 6. Record the outcome
+- **Public ABI:** Exact versions and structure sizes, explicit ownership, matching free functions, and no exceptions or STL types crossing the C boundary.
+- **Route-source fidelity:** Strict adherence to official BVE syntax, Include context, original parameter text, parse order, encoding, BOM, line endings, and Apply/Revert/Save/Reload behavior.
+- **User interface:** Simplified Chinese, English, and Japanese text; table/plan/scene navigation; marker visibility and hit-test priority; and settings persistence.
+- **Performance:** No unconditional per-frame I/O or rebuilding, no repeated decoding or hashing of unchanged input, and complete cache keys with clearly owned invalidation.
+- **Dependencies:** Maintenance status, Windows compatibility, build and binary costs, licenses, ABI impact, and packaging and migration risks.
+- **Distribution:** Unless the task actually requires an update, `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` should remain present and unchanged.
 
-The final record should say what changed, why it changed, what was tested, what was not tested, and what risks remain. Update the correct project document when user behavior, development practice, AI workflow, or implementation status changes.
+Runtime map data and editing commands must continue to use the versioned, strongly typed ABI. Alternative parsers, text-serialized route transports, fallback data models, or disk snapshot caches require explicit human approval, and the task itself must genuinely require an architectural change.
 
-## Supervising feature development
+## When to Stop the Agent Immediately
 
-For a new feature, first confirm that it was actually requested. An item in `TODO.md` describes status; it does not by itself authorize implementation.
+Immediately stop the AI agent's work in any of the following situations:
 
-Before accepting the design, make sure the tool has:
-
-- checked the official BVE syntax instead of inventing private route syntax;
-- found the existing canonical owner and all consumers that need synchronization;
-- considered the typed ABI, ownership, lifetime, revisions, caches, source anchors, encoding, and writeback;
-- covered the applicable parser/model, GUI cache, table, 2D/3D marker, navigation, editor, diagnostic, and localization paths;
-- proposed focused tests and an update to the appropriate documentation.
-
-Be cautious when the proposal starts with UI work but cannot explain how the underlying typed data and source ownership work. In this project, the data and writeback contract should be clear before a new editing UI is accepted.
-
-Feature work is ready to accept only when the supported and unsupported cases are explicit, invalid input fails clearly, synchronized views agree, and the validation covers the complete affected path.
-
-## Supervising problem and bug fixes
-
-For a bug fix, require a concrete reproduction or strong code evidence. Record the expected and actual behavior before the implementation begins.
-
-Ask the tool to trace the first incorrect value or state, not merely patch the last visible symptom. Check whether sibling paths share the same cause. A regression test or repeatable check should fail before the fix and pass afterward whenever practical.
-
-If the suspected defect cannot be reproduced and the code does not establish it, accept an evidence-backed “not reproduced” result instead of demanding a rewrite.
-
-For edit and save defects, review Include-owned statements or referenced lists when relevant, original encodings and line endings, stable edit identity, and the typed snapshot after save and reload. For performance defects, compare repeatable before-and-after runs using the same route, parameters, build type, and load profile.
-
-## Supervising slop-fix work
-
-A slop-fix removes low-quality generated or accumulated code, such as duplicate implementations, speculative abstractions, dead fields, unused compatibility shims, needless wrappers, or hidden repeated work. It is not a general invitation to restyle the repository.
-
-Before authorizing a slop-fix, require an inventory:
-
-- concrete evidence of duplication, dead state, needless indirection, or measured cost;
-- every declaration, caller, test, build reference, localization entry, and ABI or serialized consumer in scope;
-- the canonical implementation that will remain;
-- the before count of self-owned production code and equivalent implementations;
-- a compatibility and validation checklist.
-
-During review, reject changes that merely shorten names, delete useful comments, join lines, move complexity into generated code, or introduce a new generic framework without at least two real current callers. Replaced implementations and newly unused fields or functions should be removed in the same change.
-
-A slop-fix should reduce self-owned production code. If it grows, the tool must show measured correctness or performance value that justifies the increase. Tests and documentation do not count as production code for this comparison.
-
-The completion report should include the production-code count before and after, the number of equivalent implementations removed, exact test and benchmark inputs and results, skipped checks, and remaining risks.
-
-## Technical review points
-
-Even when a change looks small, check the project-specific risks that apply:
-
-- Public ABI: exact versions and structure sizes, explicit ownership, matching free functions, and no exceptions or STL types crossing the C boundary.
-- Route source fidelity: official syntax, Include context, raw argument text, parse order, encoding, BOM, line endings, and Apply/Revert/Save/Reload behavior.
-- UI: Simplified Chinese, English, and Japanese strings; table/plan/scene navigation; marker visibility and hit priority; settings persistence.
-- Performance: no unconditional per-frame I/O or rebuilds, no repeated decoding or hashing of unchanged input, and complete cache keys with clear invalidation owners.
-- Dependencies: maintenance, Windows fit, build and binary cost, license, ABI impact, packaging, and migration risk.
-- Distribution: `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` remain present and unchanged unless the task legitimately requires an update.
-
-Runtime map data and edit commands must continue to use the versioned typed ABI. A proposal for an alternative parser, text-serialized route transport, fallback data model, or disk snapshot cache needs explicit human approval and a task that genuinely changes the architecture.
-
-## When to pause or reject the work
-
-Pause and reassess when:
-
-- the tool cannot explain the current owner or reproduce the problem;
-- the implementation requires a product decision that was never made;
-- the diff touches unrelated components or user changes;
-- a destructive write, migration, dependency, ABI change, or broad architecture change appears unexpectedly;
-- required tests fail or are silently skipped;
-- performance results are inconsistent or only favorable runs are reported;
-- the proposed cleanup adds more abstraction without current callers;
-- the final explanation does not match the actual diff.
-
-AI assistance can accelerate investigation and implementation, but acceptance remains a human engineering decision. Prefer a smaller, well-understood change with honest validation over a larger result that is difficult to review.
+1. The changes clearly deviate from the requirements, modify unrelated code, or perform a large-scale rewrite of a module.
+2. The model enters an infinite loop, repeatedly outputting the same passage or performing the same operation.
+3. The changes introduce code files in languages other than C++, such as `.py` files.
+4. A large amount or all of the code is deleted, leaving the project obviously damaged to the point that it cannot be restored to its original state.

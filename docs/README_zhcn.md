@@ -4,18 +4,16 @@
 
 # komapedit
 
-[English](../README.md)
-
 komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编辑工具。它可读取线路地图及其 Include 文件，计算自轨道和他轨道几何，在二维图表与三维场景中显示线路，通过可搜索表格查看地图数据，预览 Structure 模型，并将计算后的轨道几何导出为 CSV。
 
 基于源码的编辑功能仍处于实验阶段。启用编辑模式前，请备份线路文件或使用版本控制管理。komapedit 尚不是完整的地图编辑器：部分 BVE 语法仅支持预览或尚未支持，部分已支持语句可以编辑但不能新建或图形化操纵。当前边界见[支持的 BVE 地图语法](#支持的-bve-地图语法)，开发进度见 [TODO.md](../TODO.md)。
 
 ## 文档导航
 
-- [English user guide](../README.md)
-- [开发进度与路线图](../TODO.md)
-- [开发者指南](dev_zhcn.md)（[English](dev.md)）
-- [AI 辅助开发指南](ai-dev_zhcn.md)（[English](ai-dev.md)）
+- [English Readme](../README.md)
+- [开发进度（待办事项列表）](../TODO.md)
+- [开发者指南](dev_zhcn.md)（[English ver](dev.md)）
+- [AI 辅助开发指南](ai-dev_zhcn.md)（[English ver](ai-dev.md)）
 - [供 AI 编程工具使用的仓库规范](../AGENTS.md)
 - [许可证](../LICENSE)、[项目声明](../NOTICE)与[第三方声明](../THIRD_PARTY_NOTICES.md)
 
@@ -81,7 +79,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `JointNoise.Play`                             |   √   |    √     |     ✕      | 可编辑距离/index 并删除对应行                                                        |
 | `Train.Add` / `Train.Load`                    |   △   |    ✕     |     ✕      | 其他列车定义可展示，但外部列车文件只被部分建模                                       |
 | `Train.Enable`                                |   √   |    ✕     |     ✕      | 唯一 Enable 时间以只读输入框显示在对应他列车停止位置表上方                           |
-| `Train.Stop`                                  |   √   |    ✕     |     ✕      | 可生成其他列车停车表、路径和地图标记                                                 |
+| `Train.Stop`                                  |   √   |    ✕     |     ✕      | 可生成其他列车停车位置表格、路径和地图标记                                                 |
 
 ## 安装与启动
 
