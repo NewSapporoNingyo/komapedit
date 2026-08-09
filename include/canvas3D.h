@@ -321,6 +321,9 @@ struct Canvas3DSceneMapRefreshOptions {
 };
 
 struct Canvas3DSceneUiText {
+    const char* mileage = "Mileage";
+    const char* unit_m = "m";
+    const char* add_map_element_at_mileage = "Add Map Element at Current Mileage";
     const char* switch_signal_aspect = "Switch Signal Aspect";
     const char* element_properties = "Properties/Edit";
     const char* delete_element = "Delete";
@@ -363,6 +366,7 @@ struct Canvas3DSceneFogDebugState {
 
 struct Canvas3DSceneContextMenuOptions {
     bool element_properties_enabled = false;
+    bool new_element_enabled = false;
 };
 
 enum class Canvas3DSceneContextActionKind {
@@ -429,6 +433,7 @@ struct Canvas3DSceneFrameResult {
     std::optional<Canvas3DPlacementDragUpdate> placement_drag;
     std::optional<Canvas3DSceneMarkerTarget> hovered_marker;
     std::optional<double> hovered_mileage;
+    std::optional<double> new_element_mileage;
 };
 
 using Canvas3DWakeCallback = void (*)();

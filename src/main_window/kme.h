@@ -1314,6 +1314,7 @@ struct NewElementWizardState {
     std::vector<std::string> target_file_candidates;
     int built_template = -1;
     std::string built_target_file;
+    std::optional<double> distance_prefill;
     uint64_t insert_sequence = 0;
     MapElementInspectorState form;
 };
@@ -2074,6 +2075,8 @@ private:
     void render_map_element_field_inputs(MapElementInspectorState& inspector);
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
+    void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);
+    void apply_new_element_wizard_distance_prefill();
     void rebuild_new_element_wizard_form();
     bool apply_new_element_insert();
 

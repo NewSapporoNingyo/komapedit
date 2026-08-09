@@ -3086,6 +3086,7 @@ struct Canvas3D::Impl {
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
         scene_hovered_mileage.reset();
+        scene_context_mileage.reset();
         scene_context_object_index = -1;
         scene_context_marker_index = -1;
         scene_hover_highlight_batch.clear();
@@ -3172,6 +3173,7 @@ struct Canvas3D::Impl {
         scene_hovered_object_index = -1;
         scene_hovered_marker_index = -1;
         scene_hovered_mileage.reset();
+        scene_context_mileage.reset();
         scene_context_object_index = -1;
         scene_context_marker_index = -1;
         scene_hover_highlight_batch.clear();
@@ -4269,6 +4271,7 @@ fail:
         scene_chunks.clear();
         scene_mileage_pick_points.clear();
         scene_hovered_mileage.reset();
+        scene_context_mileage.reset();
         scene_placement_locations.clear();
         scene_repeater_locations.clear();
         scene_structure_edit = SceneStructureEditState{};
@@ -8212,10 +8215,13 @@ fail:
 
         double visible_min = scene_camera_distance - scene_window_back_m;
         double visible_max = scene_camera_distance + effective_window_forward_m;
-        if (mileage_pick_enabled &&
-            scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect) {
-            scene_hovered_mileage = pick_scene_mileage(
-                mouse_local, width, height, visible_min, visible_max);
+        if (scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect) {
+            if (mileage_pick_enabled) {
+                scene_hovered_mileage = pick_scene_mileage(
+                    mouse_local, width, height, visible_min, visible_max);
+            } else if (scene_context_mileage) {
+                scene_hovered_mileage = scene_context_mileage;
+            }
         }
         std::map<std::string, std::vector<SceneInstanceData>> visible_instances;
         std::map<int, std::vector<SceneVisibleInstanceRef>> visible_object_instances;
@@ -8800,6 +8806,62 @@ fail:
         return action;
     }
 
+    std::optional<double> render_scene_mileage_context_popup(
+        const Canvas3DSceneUiText& ui_text,
+        const Canvas3DSceneContextMenuOptions& context_menu_options) {
+        std::optional<double> requested_mileage;
+        if (ImGui::BeginPopup("ScenePreviewMileageContext")) {
+            if (scene_interaction_mode != Canvas3DSceneInteractionMode::MileageSelect ||
+                !scene_context_mileage) {
+                ImGui::CloseCurrentPopup();
+            } else if (ImGui::MenuItem(ui_text.add_map_element_at_mileage, nullptr, false,
+                                      context_menu_options.new_element_enabled)) {
+                requested_mileage = scene_context_mileage;
+            }
+            ImGui::EndPopup();
+        }
+        if (!ImGui::IsPopupOpen("ScenePreviewMileageContext")) {
+            scene_context_mileage.reset();
+        }
+        return requested_mileage;
+    }
+
+    static void draw_scene_mileage_label(ImVec2 origin,
+                                         ImVec2 end,
+                                         ImVec2 pointer_pos,
+                                         double mileage,
+                                         const Canvas3DSceneUiText& ui_text) {
+        std::array<char, 128> label{};
+        std::snprintf(label.data(), label.size(), "%s: %.0f %s",
+                      ui_text.mileage, mileage, ui_text.unit_m);
+
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const ImVec2 text_size = ImGui::CalcTextSize(label.data());
+        const ImVec2 label_size(text_size.x + style.WindowPadding.x * 2.0f,
+                                text_size.y + style.WindowPadding.y * 2.0f);
+        const float pointer_gap = style.ItemSpacing.x;
+        float label_x = pointer_pos.x + pointer_gap;
+        if (label_x + label_size.x > end.x) {
+            label_x = pointer_pos.x - pointer_gap - label_size.x;
+        }
+        label_x = std::clamp(label_x, origin.x,
+                             std::max(origin.x, end.x - label_size.x));
+        const float label_y = std::clamp(pointer_pos.y - label_size.y * 0.5f,
+                                         origin.y,
+                                         std::max(origin.y, end.y - label_size.y));
+
+        ImGui::SetNextWindowPos(ImVec2(label_x, label_y), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.9f);
+        constexpr ImGuiWindowFlags label_flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove;
+        if (ImGui::Begin("##ScenePreviewMileageLabel", nullptr, label_flags)) {
+            ImGui::TextUnformatted(label.data());
+        }
+        ImGui::End();
+    }
+
     Canvas3DSceneFrameResult render_scene_preview(
         ImVec2 requested_size,
         const Canvas3DSceneUiText& ui_text,
@@ -8816,7 +8878,8 @@ fail:
         bool hovered = ImGui::IsItemHovered();
         const bool context_popup_open =
             ImGui::IsPopupOpen("ScenePreviewObjectContext") ||
-            ImGui::IsPopupOpen("ScenePreviewMarkerContext");
+            ImGui::IsPopupOpen("ScenePreviewMarkerContext") ||
+            ImGui::IsPopupOpen("ScenePreviewMileageContext");
         const bool loading_before_render = scene_stats().loading;
         ImGuiIO& io = ImGui::GetIO();
         ImVec2 pointer_pos = io.MousePos;
@@ -8869,8 +8932,14 @@ fail:
         }
 
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
-        if (scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect) {
+        const bool mileage_select_mode =
+            scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect;
+        if (mileage_select_mode) {
             result.hovered_mileage = scene_hovered_mileage;
+            if (!stats.loading && hovered && scene_hovered_mileage) {
+                draw_scene_mileage_label(origin, end, pointer_pos,
+                                         *scene_hovered_mileage, ui_text);
+            }
         }
         if (select_mode && scene_hovered_marker_index >= 0 &&
             static_cast<size_t>(scene_hovered_marker_index) <
@@ -8916,11 +8985,18 @@ fail:
                 ImGui::OpenPopup("ScenePreviewMarkerContext");
             }
         }
+        if (!stats.loading && mileage_select_mode && hovered && scene_hovered_mileage &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            scene_context_mileage = scene_hovered_mileage;
+            ImGui::OpenPopup("ScenePreviewMileageContext");
+        }
         result.context_action = render_scene_context_popup(ui_text, context_menu_options);
         if (result.context_action.kind == Canvas3DSceneContextActionKind::None) {
             result.context_action = render_scene_marker_context_popup(
                 ui_text, context_menu_options);
         }
+        result.new_element_mileage =
+            render_scene_mileage_context_popup(ui_text, context_menu_options);
         return result;
     }
 
@@ -9212,6 +9288,7 @@ fail:
     int scene_hovered_object_index = -1;
     int scene_hovered_marker_index = -1;
     std::optional<double> scene_hovered_mileage;
+    std::optional<double> scene_context_mileage;
     int scene_context_object_index = -1;
     int scene_context_marker_index = -1;
     SceneHighlightBatch scene_hover_highlight_batch;

@@ -6434,6 +6434,38 @@ std::vector<std::string> new_element_target_candidates(const MapModel& model) {
 
 } // namespace
 
+void App::open_new_element_wizard(std::optional<double> distance_prefill) {
+    if (distance_prefill && !std::isfinite(*distance_prefill)) {
+        distance_prefill.reset();
+    }
+
+    NewElementWizardState& wizard = new_element_wizard_;
+    const bool initialize = !distance_prefill || !wizard.open;
+    if (initialize) {
+        wizard.target_file_path.clear();
+        wizard.target_file_candidates.clear();
+        wizard.target_candidates_built = false;
+        wizard.built_template = -1;
+        wizard.built_target_file.clear();
+    }
+    wizard.open = true;
+    wizard.distance_prefill = distance_prefill;
+    if (!initialize && distance_prefill) {
+        apply_new_element_wizard_distance_prefill();
+    }
+}
+
+void App::apply_new_element_wizard_distance_prefill() {
+    NewElementWizardState& wizard = new_element_wizard_;
+    if (!wizard.distance_prefill) return;
+    MapElementEditFieldState* distance = find_inspector_field(wizard.form, "distance");
+    if (!distance) return;
+
+    const std::string value = format_double(*wizard.distance_prefill, 0);
+    distance->original_value = value;
+    set_edit_field_buffer(*distance, value);
+}
+
 void App::rebuild_new_element_wizard_form() {
     const std::vector<NewElementTemplate>& templates = new_element_templates();
     NewElementWizardState& wizard = new_element_wizard_;
@@ -6456,8 +6488,10 @@ void App::rebuild_new_element_wizard_form() {
         field.numeric_constraint = spec.constraint;
         field.key_source = map_element_key_source_for_field(form.row_kind, spec.key);
         field.required = spec.required;
-        field.original_value = spec.default_value;
-        set_edit_field_buffer(field, spec.default_value);
+        field.original_value = spec.key == std::string_view("distance") && wizard.distance_prefill
+            ? format_double(*wizard.distance_prefill, 0)
+            : std::string(spec.default_value);
+        set_edit_field_buffer(field, field.original_value);
         form.fields.push_back(std::move(field));
     }
     if (tpl.section_values) {
@@ -7673,12 +7707,7 @@ void App::render_toolbar() {
         ImGui::SameLine();
         ImGui::BeginDisabled(!edit_actions_available());
         if (ImGui::Button(tr("button.add_map_element").c_str())) {
-            new_element_wizard_.open = true;
-            new_element_wizard_.target_file_path.clear();
-            new_element_wizard_.target_file_candidates.clear();
-            new_element_wizard_.target_candidates_built = false;
-            new_element_wizard_.built_template = -1;
-            new_element_wizard_.built_target_file.clear();
+            open_new_element_wizard();
         }
         ImGui::EndDisabled();
 
@@ -9006,6 +9035,10 @@ void App::render_scene_preview_window() {
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + toolbar_padding_y);
         ImVec2 avail = ImGui::GetContentRegionAvail();
         Canvas3DSceneUiText scene_ui_text;
+        scene_ui_text.mileage = tr("info.mileage").c_str();
+        scene_ui_text.unit_m = tr("unit.m").c_str();
+        scene_ui_text.add_map_element_at_mileage =
+            tr("menu.add_map_element_at_current_mileage").c_str();
         scene_ui_text.switch_signal_aspect = tr("menu.switch_signal_aspect").c_str();
         scene_ui_text.element_properties = tr("dialog.element_properties").c_str();
         scene_ui_text.delete_element = tr("button.delete").c_str();
@@ -9065,12 +9098,16 @@ void App::render_scene_preview_window() {
         scene_ui_text.no_station_ahead = tr("scene.route_info.no_station_ahead").c_str();
         Canvas3DSceneContextMenuOptions context_menu_options;
         context_menu_options.element_properties_enabled = edit_actions_available();
+        context_menu_options.new_element_enabled = edit_actions_available();
         sync_scene_placement_edit_from_inspector();
         sync_scene_preview_marker_visibility();
         Canvas3DSceneFrameResult scene_result =
             scene_preview_canvas_->render_scene_preview(avail, scene_ui_text, context_menu_options);
         if (scene_result.placement_drag) {
             apply_scene_placement_drag_update(*scene_result.placement_drag);
+        }
+        if (scene_result.new_element_mileage) {
+            open_new_element_wizard(scene_result.new_element_mileage);
         }
         const Canvas3DSceneContextAction& scene_action = scene_result.context_action;
         if (scene_action.kind == Canvas3DSceneContextActionKind::LocateStructure) {
