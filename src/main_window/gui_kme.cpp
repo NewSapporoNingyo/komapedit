@@ -1635,11 +1635,87 @@ void App::set_program_status(const char* key, std::string_view elapsed_seconds) 
     program_status_elapsed_suffix_ += "s)";
 }
 
+bool App::edit_ui_operation_pending() const {
+    return pending_edit_ui_operation_.operation != PendingEditUiOperation::None;
+}
+
+void App::request_edit_ui_operation(PendingEditUiOperation operation) {
+    if (operation == PendingEditUiOperation::None || edit_ui_operation_pending()) return;
+
+    const bool apply_operation = operation == PendingEditUiOperation::ApplyInspector ||
+        operation == PendingEditUiOperation::ApplyNewElement;
+    if (apply_operation && !edit_actions_available()) return;
+    if (operation == PendingEditUiOperation::ApplyInspector &&
+        (!inspector_.open || inspector_.edit_id.empty())) {
+        return;
+    }
+    if (operation == PendingEditUiOperation::ApplyNewElement && !new_element_wizard_.open) {
+        return;
+    }
+    if (!apply_operation &&
+        (!edit_actions_available() || load_state_.running || !has_unsaved_edit_state())) {
+        return;
+    }
+
+    PendingEditUiOperationState pending;
+    pending.operation = operation;
+    pending.progress_status_key = apply_operation
+        ? "status.edit.applying"
+        : "status.edit.saving";
+    pending.previous_status_key = program_status_key_;
+    pending.previous_status_elapsed_suffix = program_status_elapsed_suffix_;
+    pending_edit_ui_operation_ = std::move(pending);
+    set_program_status(pending_edit_ui_operation_.progress_status_key);
+    wake_main_window();
+}
+
+void App::process_pending_edit_ui_operation() {
+    if (!edit_ui_operation_pending() ||
+        !pending_edit_ui_operation_.progress_presented) {
+        return;
+    }
+
+    PendingEditUiOperationState pending = std::move(pending_edit_ui_operation_);
+    pending_edit_ui_operation_ = PendingEditUiOperationState{};
+
+    switch (pending.operation) {
+    case PendingEditUiOperation::ApplyInspector:
+        apply_inspector_changes();
+        break;
+    case PendingEditUiOperation::ApplyNewElement:
+        apply_new_element_insert();
+        break;
+    case PendingEditUiOperation::Save:
+        save_pending_edits();
+        break;
+    case PendingEditUiOperation::SaveAndResolveClose:
+        if (save_pending_edits(false)) finish_pending_close_action();
+        break;
+    case PendingEditUiOperation::None:
+        break;
+    }
+
+    if (std::string_view(program_status_key_) == pending.progress_status_key) {
+        program_status_key_ = pending.previous_status_key;
+        program_status_elapsed_suffix_ =
+            std::move(pending.previous_status_elapsed_suffix);
+    }
+}
+
+bool App::on_frame_presented() {
+    if (!edit_ui_operation_pending()) return false;
+    if (pending_edit_ui_operation_.progress_rendered) {
+        pending_edit_ui_operation_.progress_presented = true;
+        pending_edit_ui_operation_.progress_rendered = false;
+    }
+    return true;
+}
+
 void App::begin_load(std::string path, bool preserve_settings, bool record_history,
                      std::optional<BackgroundHistory> background_to_restore,
                      bool preserve_scene_preview_models,
                      bool preserve_scene_preview_camera) {
-    if (path.empty() || load_state_.running) return;
+    if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
     std::map<std::string, OtherTrack> old_other;
@@ -2158,6 +2234,7 @@ void normalize_station_preview_rows(MapModel& model);
 
 void App::clear_pending_edit_state() {
     clear_scene_placement_edit_target();
+    pending_edit_ui_operation_ = PendingEditUiOperationState{};
     pending_edit_changes_.clear();
     edit_memory_matches_pending_ledger_ = true;
     original_edit_rows_.clear();
@@ -2235,7 +2312,7 @@ void App::apply_edit_mode_enabled(bool enabled) {
 }
 
 void App::request_close_action(PendingCloseAction action) {
-    if (action == PendingCloseAction::None) return;
+    if (action == PendingCloseAction::None || edit_ui_operation_pending()) return;
     if (has_unsaved_edit_state()) {
         pending_close_action_ = action;
         popups_.close_unsaved_confirm = true;
@@ -5736,18 +5813,24 @@ bool App::resolve_pending_close_action(bool save_changes) {
     if (action == PendingCloseAction::None) return true;
 
     if (save_changes) {
-        if (!save_pending_edits(false)) return false;
+        request_edit_ui_operation(PendingEditUiOperation::SaveAndResolveClose);
+        return false;
     } else if (action == PendingCloseAction::DisableEditMode && !discard_pending_edits()) {
         return false;
     }
 
+    finish_pending_close_action();
+    return true;
+}
+
+void App::finish_pending_close_action() {
+    const PendingCloseAction action = pending_close_action_;
     pending_close_action_ = PendingCloseAction::None;
     if (action == PendingCloseAction::DisableEditMode) {
         apply_edit_mode_enabled(false);
     } else if (action == PendingCloseAction::ExitApplication) {
         PostQuitMessage(0);
     }
-    return true;
 }
 
 bool App::render_map_element_field_control(MapElementEditFieldState& field,
@@ -5940,7 +6023,12 @@ void App::render_element_inspector() {
     }
     if (!inspector_.open) return;
     std::string title = tr("dialog.element_properties") + "###ElementInspector";
-    if (!ImGui::Begin(title.c_str(), &inspector_.open)) {
+    const bool operation_pending = edit_ui_operation_pending();
+    bool* inspector_open = operation_pending ? nullptr : &inspector_.open;
+    const ImGuiWindowFlags inspector_flags = operation_pending
+        ? ImGuiWindowFlags_NoInputs
+        : ImGuiWindowFlags_None;
+    if (!ImGui::Begin(title.c_str(), inspector_open, inspector_flags)) {
         const bool closed = !inspector_.open;
         ImGui::End();
         if (closed) {
@@ -6075,7 +6163,9 @@ void App::render_element_inspector() {
     if (section_inspector) {
         render_section_values_edit_ui(inspector_);
     }
-    if (ImGui::Button(tr("button.apply").c_str())) apply_inspector_changes();
+    if (ImGui::Button(tr("button.apply").c_str())) {
+        request_edit_ui_operation(PendingEditUiOperation::ApplyInspector);
+    }
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) {
         cancel_distance_resolution_workflow();
@@ -6651,7 +6741,11 @@ void App::render_new_element_wizard() {
 
     const std::string title = tr("dialog.new_element_wizard") + "###NewElementWizard";
     ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_Always);
-    if (!ImGui::Begin(title.c_str(), &wizard.open, ImGuiWindowFlags_NoResize)) {
+    const bool operation_pending = edit_ui_operation_pending();
+    bool* wizard_open = operation_pending ? nullptr : &wizard.open;
+    ImGuiWindowFlags wizard_flags = ImGuiWindowFlags_NoResize;
+    if (operation_pending) wizard_flags |= ImGuiWindowFlags_NoInputs;
+    if (!ImGui::Begin(title.c_str(), wizard_open, wizard_flags)) {
         ImGui::End();
         return;
     }
@@ -6714,7 +6808,9 @@ void App::render_new_element_wizard() {
             render_map_element_field_inputs(wizard.form);
         }
         ImGui::Separator();
-        if (ImGui::Button(tr("button.apply").c_str())) apply_new_element_insert();
+        if (ImGui::Button(tr("button.apply").c_str())) {
+            request_edit_ui_operation(PendingEditUiOperation::ApplyNewElement);
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) {
@@ -7389,8 +7485,10 @@ void App::save_runtime_settings_if_changed() {
 
 void App::render_menu() {
     if (!ImGui::BeginMainMenuBar()) return;
+    const bool operation_pending = edit_ui_operation_pending();
     if (ImGui::BeginMenu(tr("menu.file").c_str())) {
-        if (ImGui::MenuItem(tr("menu.open").c_str(), "Ctrl+O")) {
+        if (ImGui::MenuItem(tr("menu.open").c_str(), "Ctrl+O", false,
+                            !operation_pending)) {
             std::string p = open_map_dialog();
             if (!p.empty()) begin_load(p, false, true);
         }
@@ -7401,7 +7499,8 @@ void App::render_menu() {
                 for (size_t i = 0; i < recent_maps_.size(); ++i) {
                     const RecentMapEntry& entry = recent_maps_[i];
                     std::string label = display_name_from_path(entry.path) + "###recent_map_" + std::to_string(i);
-                    if (ImGui::MenuItem(label.c_str(), nullptr, false, !load_state_.running)) {
+                    if (ImGui::MenuItem(label.c_str(), nullptr, false,
+                                        !operation_pending && !load_state_.running)) {
                         begin_load(entry.path, false, true, entry.background);
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.path.c_str());
@@ -7415,12 +7514,16 @@ void App::render_menu() {
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem(tr("menu.reload").c_str(), "F5", false,
-                            !load_state_.running && ((has_model_ && !file_path_.empty()) ||
+                            !operation_pending && !load_state_.running &&
+                            ((has_model_ && !file_path_.empty()) ||
                                           (model_preview_canvas_ && model_preview_canvas_->has_model())))) {
             reload_current_map_and_model_preview();
         }
         if (ImGui::MenuItem(tr("menu.export_csv").c_str(), nullptr, false, has_model_)) export_csv();
-        if (ImGui::MenuItem(tr("menu.exit").c_str())) request_exit();
+        if (ImGui::MenuItem(tr("menu.exit").c_str(), nullptr, false,
+                            !operation_pending)) {
+            request_exit();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("menu.options").c_str())) {
@@ -7665,6 +7768,7 @@ void App::render_menu() {
 void App::render_toolbar() {
     ImGuiStyle& style = ImGui::GetStyle();
     const ImVec4 toolbar_bg = main_bar_background_color();
+    const bool operation_pending = edit_ui_operation_pending();
 
     const float button_height = ImGui::GetFrameHeight();
     const float toolbar_padding_y = button_height * 0.25f;
@@ -7680,45 +7784,54 @@ void App::render_toolbar() {
             ImGui::SameLine(0.0f, style.ItemSpacing.x);
         };
 
+        ImGui::BeginDisabled(operation_pending);
         if (ImGui::Button(tr("button.open").c_str())) {
             std::string p = open_map_dialog();
             if (!p.empty()) begin_load(p, false, true);
         }
+        ImGui::EndDisabled();
         ImGui::SameLine();
 
-        const bool can_reload = !load_state_.running && ((has_model_ && !file_path_.empty()) ||
+        const bool can_reload = !operation_pending && !load_state_.running &&
+                                             ((has_model_ && !file_path_.empty()) ||
                                              (model_preview_canvas_ && model_preview_canvas_->has_model()));
         ImGui::BeginDisabled(!can_reload);
         if (ImGui::Button(tr("button.reload").c_str())) reload_current_map_and_model_preview();
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        const bool can_reload_geometry = !load_state_.running && has_model_ && !file_path_.empty();
+        const bool can_reload_geometry = !operation_pending && !load_state_.running &&
+            has_model_ && !file_path_.empty();
         ImGui::BeginDisabled(!can_reload_geometry);
         if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
         ImGui::EndDisabled();
 
         render_section_separator();
         bool requested_edit_mode = edit_mode_enabled_;
+        ImGui::BeginDisabled(operation_pending);
         if (ImGui::Checkbox(tr("chk.edit_mode").c_str(), &requested_edit_mode)) {
             set_edit_mode_enabled(requested_edit_mode);
         }
+        ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available());
+        ImGui::BeginDisabled(operation_pending || !edit_actions_available());
         if (ImGui::Button(tr("button.add_map_element").c_str())) {
             open_new_element_wizard();
         }
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available() || !has_pending_edits() ||
+        ImGui::BeginDisabled(operation_pending || !edit_actions_available() || !has_pending_edits() ||
                              has_unapplied_editable_list_drafts());
-        if (ImGui::Button(tr("button.save").c_str())) save_pending_edits();
+        if (ImGui::Button(tr("button.save").c_str())) {
+            request_edit_ui_operation(PendingEditUiOperation::Save);
+        }
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!edit_actions_available() || !has_unsaved_edit_state());
+        ImGui::BeginDisabled(operation_pending || !edit_actions_available() ||
+                             !has_unsaved_edit_state());
         if (ImGui::Button(tr("button.revert").c_str())) {
             popups_.revert_all_edits_confirm = true;
         }
@@ -7796,6 +7909,11 @@ void App::render_status_bar() {
         if (!program_status_elapsed_suffix_.empty()) {
             ImGui::SameLine(0.0f, 0.0f);
             ImGui::TextUnformatted(program_status_elapsed_suffix_.c_str());
+        }
+        if (edit_ui_operation_pending() &&
+            std::string_view(program_status_key_) ==
+                pending_edit_ui_operation_.progress_status_key) {
+            pending_edit_ui_operation_.progress_rendered = true;
         }
 
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -8093,7 +8211,7 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
     if (apply_z_rebase_after_popup) {
-        apply_inspector_changes();
+        request_edit_ui_operation(PendingEditUiOperation::ApplyInspector);
         return;
     }
 
@@ -8710,38 +8828,47 @@ void App::render_popups() {
         ImGui::OpenPopup(tr("dialog.unsaved_changes_title").c_str());
         popups_.close_unsaved_confirm = false;
     }
+    ImGuiWindowFlags close_unsaved_flags = ImGuiWindowFlags_AlwaysAutoResize;
+    if (pending_edit_ui_operation_.operation ==
+        PendingEditUiOperation::SaveAndResolveClose) {
+        close_unsaved_flags |= ImGuiWindowFlags_NoInputs;
+    }
     if (ImGui::BeginPopupModal(tr("dialog.unsaved_changes_title").c_str(), nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        const bool exiting = pending_close_action_ == PendingCloseAction::ExitApplication;
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
-        ImGui::TextUnformatted(tr(exiting
-            ? "dialog.unsaved_exit_message"
-            : "dialog.unsaved_close_edit_message").c_str());
-        const bool list_drafts_pending = has_unapplied_editable_list_drafts();
-        if (list_drafts_pending) {
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s",
-                               tr("dialog.apply_list_before_save").c_str());
-        }
-        ImGui::PopTextWrapPos();
-        ImGui::Separator();
-        if (ImGui::Button(tr("button.cancel").c_str())) {
-            pending_close_action_ = PendingCloseAction::None;
+                               close_unsaved_flags)) {
+        if (pending_close_action_ == PendingCloseAction::None) {
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(list_drafts_pending);
-        if (ImGui::Button(tr(exiting
-                ? "button.save_changes_and_exit"
-                : "button.save_changes_and_close_edit").c_str())) {
-            if (resolve_pending_close_action(true)) ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button(tr(exiting
-                ? "button.discard_changes_and_exit"
-                : "button.discard_changes_and_close_edit").c_str())) {
-            if (resolve_pending_close_action(false)) ImGui::CloseCurrentPopup();
+        } else {
+            const bool exiting = pending_close_action_ == PendingCloseAction::ExitApplication;
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+            ImGui::TextUnformatted(tr(exiting
+                ? "dialog.unsaved_exit_message"
+                : "dialog.unsaved_close_edit_message").c_str());
+            const bool list_drafts_pending = has_unapplied_editable_list_drafts();
+            if (list_drafts_pending) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s",
+                                   tr("dialog.apply_list_before_save").c_str());
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::Separator();
+            if (ImGui::Button(tr("button.cancel").c_str())) {
+                pending_close_action_ = PendingCloseAction::None;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(list_drafts_pending);
+            if (ImGui::Button(tr(exiting
+                    ? "button.save_changes_and_exit"
+                    : "button.save_changes_and_close_edit").c_str())) {
+                resolve_pending_close_action(true);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button(tr(exiting
+                    ? "button.discard_changes_and_exit"
+                    : "button.discard_changes_and_close_edit").c_str())) {
+                if (resolve_pending_close_action(false)) ImGui::CloseCurrentPopup();
+            }
         }
         ImGui::EndPopup();
     }
@@ -9216,12 +9343,12 @@ void App::reload_current_map_geometry() {
 }
 
 void App::handle_shortcuts() {
-    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+    if (!edit_ui_operation_pending() && ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
         reload_current_map_and_model_preview();
     }
     const ImGuiIO& io = ImGui::GetIO();
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        save_pending_edits();
+        request_edit_ui_operation(PendingEditUiOperation::Save);
     }
 }
 
@@ -9301,6 +9428,7 @@ void App::render_model_preview_window() {
 }
 
 void App::render() {
+    process_pending_edit_ui_operation();
     touch_input::new_frame();
     poll_loader();
     handle_shortcuts();
@@ -9774,6 +9902,7 @@ int main(int, char**) {
 
         HRESULT hr = g_pSwapChain->Present(1, 0);
         g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
+        if (!g_SwapChainOccluded && app.on_frame_presented()) needs_render = true;
         if (warmup_frames > 0) {
             --warmup_frames;
             needs_render = true;

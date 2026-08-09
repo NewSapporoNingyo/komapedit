@@ -1515,6 +1515,7 @@ public:
     void add_log(std::string text);
     void add_log(LogSeverity severity, std::string text);
     void request_exit();
+    bool on_frame_presented();
 #ifndef NDEBUG
     static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                                  double unit_distance, double pan_pixels,
@@ -1626,6 +1627,22 @@ private:
     std::atomic<int> warn_count_{0};
     const char* program_status_key_ = "status.ready";
     std::string program_status_elapsed_suffix_;
+    enum class PendingEditUiOperation {
+        None,
+        ApplyInspector,
+        ApplyNewElement,
+        Save,
+        SaveAndResolveClose,
+    };
+    struct PendingEditUiOperationState {
+        PendingEditUiOperation operation = PendingEditUiOperation::None;
+        const char* progress_status_key = nullptr;
+        const char* previous_status_key = "status.ready";
+        std::string previous_status_elapsed_suffix;
+        bool progress_rendered = false;
+        bool progress_presented = false;
+    };
+    PendingEditUiOperationState pending_edit_ui_operation_;
 
     struct LoadResult {
         bool ok = false;
@@ -1965,6 +1982,9 @@ private:
     void handle_loader_start_failure(const std::string& error);
     void poll_loader();
     void set_program_status(const char* key, std::string_view elapsed_seconds = {});
+    bool edit_ui_operation_pending() const;
+    void request_edit_ui_operation(PendingEditUiOperation operation);
+    void process_pending_edit_ui_operation();
     void finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at);
     void finish_pending_load_timing_after_plan_data_ready();
     void begin_load(std::string path, bool preserve_settings, bool record_history = false,
@@ -2028,6 +2048,7 @@ private:
     void apply_edit_mode_enabled(bool enabled);
     void request_close_action(PendingCloseAction action);
     bool resolve_pending_close_action(bool save_changes);
+    void finish_pending_close_action();
     bool discard_pending_edits();
     bool revert_all_pending_edits();
     void apply_inspector_changes();
