@@ -32,6 +32,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -42,6 +43,7 @@
 #include <iterator>
 #include <mutex>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -574,6 +576,15 @@ struct CpuModelData {
     std::string error;
 };
 
+struct PutBetweenSourceTemplate {
+    std::vector<size_t> vertex_slice_indices;
+    std::vector<double> vertex_residual_x;
+    std::vector<std::uint8_t> vertex_track1_side;
+    std::vector<double> slice_source_z;
+    bool ok = false;
+    std::string error;
+};
+
 struct ScenePutBetweenDeformation {
     bool enabled = false;
     double distance = 0.0;
@@ -590,11 +601,34 @@ struct SceneModelLoadRequest {
     ScenePutBetweenDeformation put_between;
 };
 
+struct ScenePutBetweenPreviewJob {
+    std::uint64_t sequence = 0;
+    size_t geometry_generation = 0;
+    Canvas3DPlacementEditTarget target;
+    SceneModelLoadRequest request;
+};
+
+struct ScenePutBetweenPreviewResult {
+    std::uint64_t sequence = 0;
+    size_t geometry_generation = 0;
+    Canvas3DPlacementEditTarget target;
+    std::shared_ptr<const CpuModelData> source;
+    CpuModelData derived;
+};
+
+struct ScenePutBetweenPreparedSource {
+    std::shared_ptr<CpuModelData> source;
+    PutBetweenSourceTemplate source_template;
+};
+
 struct SceneModelGpu {
     enum class State { Pending, Ready, Failed };
 
     State state = State::Pending;
     ID3D11Buffer* vertex_buffer = nullptr;
+    UINT vertex_capacity = 0;
+    bool dynamic_vertices = false;
+    std::string shared_model_key;
     ID3D11Buffer* index_buffer = nullptr;
     ID3D11Buffer* instance_buffer = nullptr;
     UINT instance_capacity = 0;
@@ -680,6 +714,9 @@ struct SceneStructureEditState {
     Canvas3DModelInstance baseline_instance;
     Canvas3DRepeaterSegment baseline_repeater;
     Canvas3DPlacementEditTarget current;
+    Canvas3DPlacementEditTarget completed;
+    std::string preview_model_key;
+    std::uint64_t preview_sequence = 0;
     DVec3 origin;
     std::array<DVec3, 3> axes{};
     std::array<SceneGizmoAxisProjection, 3> projection{};
@@ -1078,6 +1115,16 @@ std::string scene_model_key_for_instance(const Canvas3DModelInstance& instance,
     return key;
 }
 
+std::string scene_put_between_preview_model_key(const std::string& edit_id,
+                                                size_t geometry_generation) {
+    std::string key(1, '\x1f');
+    key.append("putbetween-preview");
+    append_scene_model_key_field(key, edit_id);
+    key.append(reinterpret_cast<const char*>(&geometry_generation),
+               sizeof(geometry_generation));
+    return key;
+}
+
 bool update_cpu_model_bounds(CpuModelData& model) {
     if (model.vertices.empty()) return false;
 
@@ -1130,18 +1177,10 @@ bool update_cpu_model_bounds(CpuModelData& model) {
     return true;
 }
 
-CpuModelData derive_put_between_model(const CpuModelData& source,
-                                      const SceneModelLoadRequest& request) {
-    CpuModelData result;
-    result.path = request.source_path;
-    result.scene_key = request.key;
-    result.shared_model_key = request.source_path;
+PutBetweenSourceTemplate prepare_put_between_source(const CpuModelData& source) {
+    PutBetweenSourceTemplate result;
     if (!source.ok) {
         result.error = source.error;
-        return result;
-    }
-    if (!request.put_between.own_track || !request.put_between.track1 || !request.put_between.track2) {
-        result.error = "PutBetween references an unavailable track";
         return result;
     }
     if (source.vertices.empty()) {
@@ -1150,7 +1189,14 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
     }
 
     double average_x = 0.0;
-    for (const GpuVertex& vertex : source.vertices) average_x += static_cast<double>(vertex.px);
+    for (const GpuVertex& vertex : source.vertices) {
+        if (!std::isfinite(vertex.px) || !std::isfinite(vertex.py) ||
+            !std::isfinite(vertex.pz)) {
+            result.error = "PutBetween model contains invalid vertex coordinates";
+            return result;
+        }
+        average_x += static_cast<double>(vertex.px);
+    }
     average_x /= static_cast<double>(source.vertices.size());
     if (!std::isfinite(average_x)) {
         result.error = "PutBetween model contains invalid vertex coordinates";
@@ -1169,37 +1215,98 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
     }
     const double split_x = average_x * orientation;
     const double opposite_edge_offset = (min_oriented_x + max_oriented_x) * orientation;
-    const double max_float = static_cast<double>(std::numeric_limits<float>::max());
 
-    result.vertices = source.vertices;
-    for (GpuVertex& vertex : result.vertices) {
-        const double original_x = static_cast<double>(vertex.px);
-        const double vertex_distance = request.put_between.distance - static_cast<double>(vertex.pz);
-        const bool track1_side = original_x * orientation < split_x;
-        const Canvas3DTrackPath& selected_track =
-            track1_side ? *request.put_between.track1 : *request.put_between.track2;
-        auto own_point = scene_sample_track_path_points(*request.put_between.own_track, vertex_distance);
-        auto selected_point = scene_sample_track_path_points(selected_track, vertex_distance);
-        if (!own_point || !selected_point) {
-            result.vertices.clear();
+    result.vertex_slice_indices.resize(source.vertices.size());
+    result.vertex_residual_x.resize(source.vertices.size());
+    result.vertex_track1_side.resize(source.vertices.size());
+    std::map<float, size_t> slice_indices;
+    for (size_t index = 0; index < source.vertices.size(); ++index) {
+        const GpuVertex& vertex = source.vertices[index];
+        auto [slice, inserted] = slice_indices.emplace(vertex.pz, slice_indices.size());
+        if (inserted) result.slice_source_z.push_back(static_cast<double>(vertex.pz));
+        const bool track1_side =
+            static_cast<double>(vertex.px) * orientation < split_x;
+        result.vertex_slice_indices[index] = slice->second;
+        result.vertex_track1_side[index] = track1_side ? 1u : 0u;
+        result.vertex_residual_x[index] = track1_side
+            ? static_cast<double>(vertex.px)
+            : static_cast<double>(vertex.px) - opposite_edge_offset;
+    }
+    result.ok = true;
+    return result;
+}
+
+CpuModelData derive_put_between_model(const CpuModelData& source,
+                                      const PutBetweenSourceTemplate& source_template,
+                                      const SceneModelLoadRequest& request) {
+    CpuModelData result;
+    result.path = request.source_path;
+    result.scene_key = request.key;
+    result.shared_model_key = request.source_path;
+    if (!source.ok || !source_template.ok) {
+        result.error = source.ok ? source_template.error : source.error;
+        return result;
+    }
+    if (!request.put_between.own_track || !request.put_between.track1 ||
+        !request.put_between.track2) {
+        result.error = "PutBetween references an unavailable track";
+        return result;
+    }
+    if (source_template.vertex_slice_indices.size() != source.vertices.size() ||
+        source_template.vertex_residual_x.size() != source.vertices.size() ||
+        source_template.vertex_track1_side.size() != source.vertices.size()) {
+        result.error = "PutBetween source template does not match the model";
+        return result;
+    }
+
+    struct SliceFrame {
+        DVec3 track1_anchor;
+        DVec3 track2_anchor;
+        DVec3 right;
+        DVec3 up;
+        DVec3 forward;
+    };
+    std::vector<SliceFrame> frames(source_template.slice_source_z.size());
+    for (size_t index = 0; index < source_template.slice_source_z.size(); ++index) {
+        const double vertex_distance =
+            request.put_between.distance - source_template.slice_source_z[index];
+        auto own_point = scene_sample_track_path_points(
+            *request.put_between.own_track, vertex_distance);
+        auto track1_point = scene_sample_track_path_points(
+            *request.put_between.track1, vertex_distance);
+        auto track2_point = scene_sample_track_path_points(
+            *request.put_between.track2, vertex_distance);
+        if (!own_point || !track1_point || !track2_point) {
             result.error = "PutBetween could not sample track geometry";
             return result;
         }
 
-        const double residual_x = track1_side ? original_x : original_x - opposite_edge_offset;
-        DVec3 anchor{selected_point->x, selected_point->y, selected_point->z};
-        if ((request.put_between.flag & 1) != 0) anchor.y = own_point->y;
+        SliceFrame& frame = frames[index];
+        frame.track1_anchor = {track1_point->x, track1_point->y, track1_point->z};
+        frame.track2_anchor = {track2_point->x, track2_point->y, track2_point->z};
+        if ((request.put_between.flag & 1) != 0) {
+            frame.track1_anchor.y = own_point->y;
+            frame.track2_anchor.y = own_point->y;
+        }
+        const double gradient = std::isfinite(own_point->gradient)
+            ? own_point->gradient / 1000.0 : 0.0;
+        frame.right = right_from_theta_d(own_point->theta);
+        frame.forward = normalize(DVec3{
+            std::sin(own_point->theta), gradient, -std::cos(own_point->theta)});
+        frame.up = normalize(cross(frame.right, frame.forward));
+    }
 
-        const double gradient = std::isfinite(own_point->gradient) ? own_point->gradient / 1000.0 : 0.0;
-        const DVec3 right = right_from_theta_d(own_point->theta);
-        const DVec3 forward = normalize(DVec3{
-            std::sin(own_point->theta),
-            gradient,
-            -std::cos(own_point->theta)
-        });
-        const DVec3 up = normalize(cross(right, forward));
-        const DVec3 world_position =
-            anchor + right * residual_x + up * static_cast<double>(vertex.py);
+    const double max_float = static_cast<double>(std::numeric_limits<float>::max());
+    result.vertices = source.vertices;
+    for (size_t index = 0; index < result.vertices.size(); ++index) {
+        GpuVertex& vertex = result.vertices[index];
+        const GpuVertex& source_vertex = source.vertices[index];
+        const SliceFrame& frame = frames[source_template.vertex_slice_indices[index]];
+        const DVec3& anchor = source_template.vertex_track1_side[index]
+            ? frame.track1_anchor : frame.track2_anchor;
+        const DVec3 world_position = anchor +
+            frame.right * source_template.vertex_residual_x[index] +
+            frame.up * static_cast<double>(source_vertex.py);
         const DVec3 local_position = world_position - request.put_between.origin;
         if (!std::isfinite(local_position.x) || !std::isfinite(local_position.y) ||
             !std::isfinite(local_position.z) || std::abs(local_position.x) > max_float ||
@@ -1212,10 +1319,11 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
         vertex.py = static_cast<float>(local_position.y);
         vertex.pz = static_cast<float>(local_position.z);
 
-        const DVec3 source_normal{vertex.nx, vertex.ny, vertex.nz};
+        const DVec3 source_normal{source_vertex.nx, source_vertex.ny, source_vertex.nz};
         if (dot(source_normal, source_normal) > 1e-12) {
             const DVec3 world_normal = normalize(
-                right * source_normal.x + up * source_normal.y + forward * -source_normal.z);
+                frame.right * source_normal.x + frame.up * source_normal.y +
+                frame.forward * -source_normal.z);
             vertex.nx = static_cast<float>(world_normal.x);
             vertex.ny = static_cast<float>(world_normal.y);
             vertex.nz = static_cast<float>(world_normal.z);
@@ -1229,6 +1337,11 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
     }
     result.ok = true;
     return result;
+}
+
+CpuModelData derive_put_between_model(const CpuModelData& source,
+                                      const SceneModelLoadRequest& request) {
+    return derive_put_between_model(source, prepare_put_between_source(source), request);
 }
 
 void append_scene_route_value_event(
@@ -2613,6 +2726,7 @@ struct Canvas3D::Impl {
     }
 
     ~Impl() {
+        stop_scene_put_between_preview_worker();
         stop_scene_loader();
         release_scene_resources();
         release_scene_mileage_highlight_resources();
@@ -2809,6 +2923,7 @@ struct Canvas3D::Impl {
             camera_state.distance = scene_camera_distance;
         }
 
+        stop_scene_put_between_preview_worker();
         stop_scene_loader();
         if (preserve_loaded_models) {
             release_scene_track_chunks();
@@ -2921,6 +3036,7 @@ struct Canvas3D::Impl {
             return false;
         }
 
+        stop_scene_put_between_preview_worker();
         clear_scene_placement_edit_target();
 
         std::vector<Canvas3DSceneObject> old_objects = std::move(scene_data.objects);
@@ -3075,6 +3191,7 @@ struct Canvas3D::Impl {
     }
 
     void clear_scene() {
+        stop_scene_put_between_preview_worker();
         stop_scene_loader();
         release_scene_resources();
         scene_data = {};
@@ -3105,6 +3222,7 @@ struct Canvas3D::Impl {
             error = "3D scene preview is not started";
             return false;
         }
+        stop_scene_put_between_preview_worker();
         stop_scene_loader();
         clear_pending_scene_model_uploads();
         std::map<std::string, SceneModelLoadRequest> requests = collect_scene_model_load_requests();
@@ -3399,7 +3517,11 @@ struct Canvas3D::Impl {
 
     static bool same_placement_edit_target(const Canvas3DPlacementEditTarget& a,
                                            const Canvas3DPlacementEditTarget& b) {
-        return a.edit_id == b.edit_id && a.track_key == b.track_key &&
+        return a.kind == b.kind && a.edit_id == b.edit_id &&
+            a.model_path == b.model_path && a.track_key == b.track_key &&
+            a.put_between_track_key1 == b.put_between_track_key1 &&
+            a.put_between_track_key2 == b.put_between_track_key2 &&
+            a.put_between_flag == b.put_between_flag &&
             a.distance == b.distance && a.x == b.x && a.y == b.y && a.z == b.z &&
             a.rx == b.rx && a.ry == b.ry && a.rz == b.rz &&
             a.tilt == b.tilt && a.span == b.span;
@@ -3409,8 +3531,7 @@ struct Canvas3D::Impl {
         if (!scene_object_index_valid(object_index)) return nullptr;
         const Canvas3DSceneObject& object = scene_data.objects[static_cast<size_t>(object_index)];
         const bool editable_placement =
-            (object.kind == Canvas3DSceneObjectKind::Structure &&
-             !object.structure_put_between) ||
+            object.kind == Canvas3DSceneObjectKind::Structure ||
             object.kind == Canvas3DSceneObjectKind::Signal;
         if (!editable_placement || object.edit_id.empty()) {
             return nullptr;
@@ -3451,6 +3572,34 @@ struct Canvas3D::Impl {
         return desired;
     }
 
+    Canvas3DModelInstance put_between_instance_from_target(
+        const Canvas3DPlacementEditTarget& target,
+        const Canvas3DModelInstance& base) const {
+        Canvas3DModelInstance desired = base;
+        desired.model_path = target.model_path;
+        desired.distance = target.distance;
+        desired.follow_track = false;
+        desired.put_between = true;
+        desired.put_between_track_key1 = target.put_between_track_key1;
+        desired.put_between_track_key2 = target.put_between_track_key2;
+        desired.put_between_flag = target.put_between_flag & 1;
+        return desired;
+    }
+
+    Canvas3DPlacementEditTarget put_between_target_from_instance(
+        const std::string& edit_id,
+        const Canvas3DModelInstance& instance) const {
+        Canvas3DPlacementEditTarget target;
+        target.kind = Canvas3DSceneEditKind::StructurePutBetween;
+        target.edit_id = edit_id;
+        target.model_path = instance.model_path;
+        target.put_between_track_key1 = instance.put_between_track_key1;
+        target.put_between_track_key2 = instance.put_between_track_key2;
+        target.put_between_flag = instance.put_between_flag & 1;
+        target.distance = instance.distance;
+        return target;
+    }
+
     Canvas3DRepeaterSegment repeater_segment_from_target(
         const Canvas3DPlacementEditTarget& target,
         const Canvas3DRepeaterSegment& base) const {
@@ -3468,8 +3617,9 @@ struct Canvas3D::Impl {
         return desired;
     }
 
-    bool write_scene_placement_instance(const std::string& edit_id,
-                                        Canvas3DModelInstance desired) {
+    bool replace_scene_placement_instance(const std::string& edit_id,
+                                          Canvas3DModelInstance desired,
+                                          const std::string& render_model_path) {
         auto location_it = scene_placement_locations.find(edit_id);
         if (location_it == scene_placement_locations.end() || scene_chunks.empty()) return false;
         ScenePlacementInstanceLocation location = location_it->second;
@@ -3479,22 +3629,11 @@ struct Canvas3D::Impl {
             return false;
         }
 
-        StructurePlacementFrame frame;
-        if (!make_track_placement_frame(desired.track_key, desired.distance,
-                                        desired.x, desired.y, desired.z,
-                                        desired.rx, desired.ry, desired.rz,
-                                        desired.tilt, desired.span, frame)) {
-            return false;
-        }
-        store_world(desired.world, frame.model_right, frame.model_up,
-                    frame.model_forward, frame.origin);
-
         SceneInstance replacement;
-        replacement.model_path = scene_model_key_for_instance(desired, scene_geometry_generation);
+        replacement.model_path = render_model_path;
         replacement.distance = desired.distance;
         replacement.object_index = desired.object_index;
         std::copy(desired.world, desired.world + 16, replacement.world);
-        const std::string render_model_path = replacement.model_path;
 
         const size_t destination_chunk_index = scene_chunk_index_for_distance(desired.distance);
         if (destination_chunk_index == location.chunk_index) {
@@ -3530,9 +3669,67 @@ struct Canvas3D::Impl {
                 ? desired.model_path : render_model_path;
             std::copy(desired.world, desired.world + 16, scene_focus_highlight_world);
         }
+        return true;
+    }
+
+    bool write_scene_placement_instance(const std::string& edit_id,
+                                        Canvas3DModelInstance desired) {
+        StructurePlacementFrame frame;
+        if (!make_track_placement_frame(desired.track_key, desired.distance,
+                                        desired.x, desired.y, desired.z,
+                                        desired.rx, desired.ry, desired.rz,
+                                        desired.tilt, desired.span, frame)) {
+            return false;
+        }
+        store_world(desired.world, frame.model_right, frame.model_up,
+                    frame.model_forward, frame.origin);
+        const std::string render_model_path =
+            scene_model_key_for_instance(desired, scene_geometry_generation);
+        if (!replace_scene_placement_instance(
+                edit_id, std::move(desired), render_model_path)) {
+            return false;
+        }
         if (scene_structure_edit.active && scene_structure_edit.edit_id == edit_id) {
             scene_structure_edit.origin = frame.origin;
             scene_structure_edit.axes = frame.parameter_axes;
+        }
+        return true;
+    }
+
+    bool put_between_edit_frame(double distance, DVec3& origin,
+                                std::array<DVec3, 3>& axes) const {
+        Canvas3DTrackPoint point;
+        if (!sample_own_track(distance, point)) return false;
+        origin = {point.x, point.y, point.z};
+        const double gradient = std::isfinite(point.gradient)
+            ? point.gradient / 1000.0 : 0.0;
+        axes = {};
+        axes[2] = normalize(DVec3{
+            std::sin(point.theta), gradient, -std::cos(point.theta)});
+        return true;
+    }
+
+    bool write_scene_put_between_instance(const std::string& edit_id,
+                                          Canvas3DModelInstance desired,
+                                          const std::string& render_model_path) {
+        DVec3 origin;
+        std::array<DVec3, 3> axes{};
+        if (!put_between_edit_frame(desired.distance, origin, axes)) return false;
+        std::fill(std::begin(desired.world), std::end(desired.world), 0.0);
+        desired.world[0] = 1.0;
+        desired.world[5] = 1.0;
+        desired.world[10] = 1.0;
+        desired.world[15] = 1.0;
+        desired.world[12] = origin.x;
+        desired.world[13] = origin.y;
+        desired.world[14] = origin.z;
+        if (!replace_scene_placement_instance(
+                edit_id, std::move(desired), render_model_path)) {
+            return false;
+        }
+        if (scene_structure_edit.active && scene_structure_edit.edit_id == edit_id) {
+            scene_structure_edit.origin = origin;
+            scene_structure_edit.axes = axes;
         }
         return true;
     }
@@ -3562,15 +3759,87 @@ struct Canvas3D::Impl {
         return true;
     }
 
+    bool scene_source_model_path_in_use(const std::string& path) const {
+        if (path.empty()) return false;
+        for (const Canvas3DModelInstance& instance : scene_data.instances) {
+            if (instance.model_path == path) return true;
+        }
+        for (const Canvas3DSceneObject& object : scene_data.objects) {
+            for (const Canvas3DSceneModelOption& option : object.model_options) {
+                if (option.model_path == path) return true;
+            }
+        }
+        for (const Canvas3DBackgroundChange& background : scene_data.backgrounds) {
+            if (background.model_path == path) return true;
+        }
+        for (const Canvas3DRepeaterSegment& repeater : scene_data.repeaters) {
+            if (std::find(repeater.model_paths.begin(), repeater.model_paths.end(), path) !=
+                repeater.model_paths.end()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void release_unused_put_between_preview_base_models() {
+        for (auto it = scene_put_between_preview_base_model_keys.begin();
+             it != scene_put_between_preview_base_model_keys.end();) {
+            if (scene_source_model_path_in_use(*it)) {
+                ++it;
+                continue;
+            }
+            auto model = scene_models.find(*it);
+            if (model != scene_models.end()) {
+                release_scene_model(model->second);
+                scene_models.erase(model);
+            }
+            it = scene_put_between_preview_base_model_keys.erase(it);
+        }
+    }
+
     void clear_scene_placement_edit_target() {
         if (!scene_structure_edit.active) return;
         const std::string edit_id = scene_structure_edit.edit_id;
         Canvas3DModelInstance baseline = scene_structure_edit.baseline_instance;
         Canvas3DRepeaterSegment repeater_baseline = scene_structure_edit.baseline_repeater;
         const Canvas3DSceneEditKind kind = scene_structure_edit.kind;
+        const Canvas3DPlacementEditTarget completed = scene_structure_edit.completed;
+        const std::string preview_model_key = scene_structure_edit.preview_model_key;
+        if (kind == Canvas3DSceneEditKind::StructurePutBetween) {
+            stop_scene_put_between_preview_worker();
+        }
         scene_structure_edit = SceneStructureEditState{};
         if (kind == Canvas3DSceneEditKind::Repeater) {
             write_scene_repeater_segment(edit_id, std::move(repeater_baseline));
+        } else if (kind == Canvas3DSceneEditKind::StructurePutBetween) {
+            std::string render_model_key =
+                scene_model_key_for_instance(baseline, scene_geometry_generation);
+            const Canvas3DPlacementEditTarget baseline_target =
+                put_between_target_from_instance(edit_id, baseline);
+            if (!preview_model_key.empty() &&
+                same_placement_edit_target(completed, baseline_target)) {
+                auto preview = scene_models.find(preview_model_key);
+                if (preview != scene_models.end() && preview_model_key != render_model_key) {
+                    auto existing = scene_models.find(render_model_key);
+                    if (existing != scene_models.end()) {
+                        release_scene_model(existing->second);
+                        scene_models.erase(existing);
+                    }
+                    auto node = scene_models.extract(preview);
+                    node.key() = render_model_key;
+                    scene_models.insert(std::move(node));
+                }
+            }
+            write_scene_put_between_instance(
+                edit_id, std::move(baseline), render_model_key);
+            if (!preview_model_key.empty() && preview_model_key != render_model_key) {
+                auto preview = scene_models.find(preview_model_key);
+                if (preview != scene_models.end()) {
+                    release_scene_model(preview->second);
+                    scene_models.erase(preview);
+                }
+            }
+            release_unused_put_between_preview_base_models();
         } else {
             write_scene_placement_instance(edit_id, std::move(baseline));
         }
@@ -3580,6 +3849,7 @@ struct Canvas3D::Impl {
                                          bool show_gizmo) {
         if (!scene_active || target.edit_id.empty()) return false;
         if (target.kind != Canvas3DSceneEditKind::Structure &&
+            target.kind != Canvas3DSceneEditKind::StructurePutBetween &&
             target.kind != Canvas3DSceneEditKind::Signal) {
             return false;
         }
@@ -3601,8 +3871,52 @@ struct Canvas3D::Impl {
             scene_structure_edit.edit_id = target.edit_id;
             scene_structure_edit.baseline_instance =
                 scene_data.instances[location_it->second.source_index];
+            if (target.kind == Canvas3DSceneEditKind::StructurePutBetween) {
+                if (!scene_structure_edit.baseline_instance.put_between) {
+                    scene_structure_edit = SceneStructureEditState{};
+                    return false;
+                }
+                scene_structure_edit.current = put_between_target_from_instance(
+                    target.edit_id, scene_structure_edit.baseline_instance);
+                scene_structure_edit.completed = scene_structure_edit.current;
+                if (!put_between_edit_frame(
+                        scene_structure_edit.baseline_instance.distance,
+                        scene_structure_edit.origin,
+                        scene_structure_edit.axes)) {
+                    scene_structure_edit = SceneStructureEditState{};
+                    return false;
+                }
+            }
         } else if (same_placement_edit_target(scene_structure_edit.current, target) &&
                    scene_structure_edit.show_gizmo == show_gizmo) {
+            return true;
+        }
+
+        if (target.kind == Canvas3DSceneEditKind::StructurePutBetween) {
+            if (target.model_path.empty()) return false;
+            scene_structure_edit.show_gizmo = show_gizmo;
+            if (same_placement_edit_target(scene_structure_edit.current, target)) {
+                return true;
+            }
+            if (same_placement_edit_target(scene_structure_edit.completed, target)) {
+                std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+                const std::uint64_t sequence =
+                    ++scene_put_between_preview_next_sequence;
+                scene_put_between_preview_latest_sequence = sequence;
+                scene_put_between_preview_pending.reset();
+                scene_put_between_preview_completed.reset();
+                scene_structure_edit.current = target;
+                scene_structure_edit.preview_sequence = sequence;
+                return true;
+            }
+            const std::uint64_t sequence = queue_scene_put_between_preview(target);
+            if (sequence == 0) return false;
+            scene_structure_edit.current = target;
+            scene_structure_edit.preview_sequence = sequence;
+            if (!show_gizmo) {
+                scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
+                scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+            }
             return true;
         }
 
@@ -3677,6 +3991,7 @@ struct Canvas3D::Impl {
     bool update_scene_placement_instance(const Canvas3DPlacementEditTarget& target) {
         if (!scene_active) return true;
         if (target.kind != Canvas3DSceneEditKind::Structure &&
+            target.kind != Canvas3DSceneEditKind::StructurePutBetween &&
             target.kind != Canvas3DSceneEditKind::Signal) {
             return false;
         }
@@ -3684,6 +3999,18 @@ struct Canvas3D::Impl {
         if (location_it == scene_placement_locations.end() ||
             location_it->second.source_index >= scene_data.instances.size()) {
             return false;
+        }
+        if (target.kind == Canvas3DSceneEditKind::StructurePutBetween) {
+            if (!scene_structure_edit.active ||
+                scene_structure_edit.kind != Canvas3DSceneEditKind::StructurePutBetween ||
+                scene_structure_edit.edit_id != target.edit_id ||
+                !same_placement_edit_target(scene_structure_edit.completed, target)) {
+                return false;
+            }
+            scene_structure_edit.baseline_instance =
+                scene_data.instances[location_it->second.source_index];
+            scene_structure_edit.current = target;
+            return true;
         }
         const Canvas3DModelInstance& base = scene_structure_edit.active &&
             scene_structure_edit.edit_id == target.edit_id
@@ -4188,6 +4515,9 @@ fail:
         release_com(model.vertex_buffer);
         release_com(model.index_buffer);
         release_com(model.instance_buffer);
+        model.vertex_capacity = 0;
+        model.dynamic_vertices = false;
+        model.shared_model_key.clear();
         model.instance_capacity = 0;
         model.index_count = 0;
         model.center = {};
@@ -4265,6 +4595,7 @@ fail:
     void release_scene_resources() {
         for (auto& kv : scene_models) release_scene_model(kv.second);
         scene_models.clear();
+        scene_put_between_preview_base_model_keys.clear();
         release_scene_texture_cache();
         release_scene_track_chunks();
         release_scene_marker_chunks();
@@ -4332,6 +4663,134 @@ fail:
         }
         out.ok = true;
         return out;
+    }
+
+    void start_scene_put_between_preview_worker() {
+        if (scene_put_between_preview_worker.joinable()) return;
+        {
+            std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+            scene_put_between_preview_stop = false;
+        }
+        scene_put_between_preview_worker = std::thread([this]() {
+            ModelLoaderClient preview_loader;
+            std::unordered_map<std::string, ScenePutBetweenPreparedSource> source_cache;
+            for (;;) {
+                ScenePutBetweenPreviewJob job;
+                {
+                    std::unique_lock<std::mutex> lock(scene_put_between_preview_mutex);
+                    scene_put_between_preview_cv.wait(lock, [this]() {
+                        return scene_put_between_preview_stop ||
+                            scene_put_between_preview_pending.has_value();
+                    });
+                    if (scene_put_between_preview_stop) return;
+                    job = std::move(*scene_put_between_preview_pending);
+                    scene_put_between_preview_pending.reset();
+                }
+
+                auto source_it = source_cache.find(job.request.source_path);
+                if (source_it == source_cache.end()) {
+                    if (source_cache.size() >= 4) source_cache.clear();
+                    ScenePutBetweenPreparedSource prepared;
+                    prepared.source = std::make_shared<CpuModelData>();
+                    prepared.source->path = job.request.source_path;
+                    prepared.source->scene_key = job.request.source_path;
+                    MlMeshData data = {};
+                    std::string load_error;
+                    if (preview_loader.load(job.request.source_path, data, load_error)) {
+                        *prepared.source = copy_cpu_model(job.request.source_path, data);
+                        preview_loader.free_model(data);
+                    } else {
+                        prepared.source->error = load_error;
+                    }
+                    prepared.source_template =
+                        prepare_put_between_source(*prepared.source);
+                    source_it = source_cache.emplace(
+                        job.request.source_path, std::move(prepared)).first;
+                }
+
+                ScenePutBetweenPreviewResult result;
+                result.sequence = job.sequence;
+                result.geometry_generation = job.geometry_generation;
+                result.target = std::move(job.target);
+                result.source = source_it->second.source;
+                result.derived = derive_put_between_model(
+                    *source_it->second.source,
+                    source_it->second.source_template,
+                    job.request);
+                {
+                    std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+                    if (!scene_put_between_preview_stop &&
+                        result.sequence == scene_put_between_preview_latest_sequence) {
+                        scene_put_between_preview_completed = std::move(result);
+                    }
+                }
+                notify_scene_loading_progress();
+            }
+        });
+    }
+
+    void stop_scene_put_between_preview_worker() {
+        {
+            std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+            scene_put_between_preview_stop = true;
+            scene_put_between_preview_pending.reset();
+            scene_put_between_preview_completed.reset();
+        }
+        scene_put_between_preview_cv.notify_all();
+        if (scene_put_between_preview_worker.joinable()) {
+            scene_put_between_preview_worker.join();
+        }
+        std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+        scene_put_between_preview_stop = false;
+    }
+
+    std::uint64_t queue_scene_put_between_preview(
+        const Canvas3DPlacementEditTarget& target) {
+        DVec3 origin;
+        std::array<DVec3, 3> axes{};
+        if (target.model_path.empty() ||
+            !put_between_edit_frame(target.distance, origin, axes)) {
+            return 0;
+        }
+        const Canvas3DTrackPath* own = own_track_path();
+        const Canvas3DTrackPath* track1 =
+            placement_track_path_for_key(target.put_between_track_key1);
+        const Canvas3DTrackPath* track2 =
+            placement_track_path_for_key(target.put_between_track_key2);
+        if (!own || !track1 || !track2) return 0;
+
+        start_scene_put_between_preview_worker();
+        ScenePutBetweenPreviewJob job;
+        job.geometry_generation = scene_geometry_generation;
+        job.target = target;
+        job.request.key = scene_put_between_preview_model_key(
+            target.edit_id, scene_geometry_generation);
+        job.request.source_path = target.model_path;
+        job.request.put_between.enabled = true;
+        job.request.put_between.distance = target.distance;
+        job.request.put_between.flag = target.put_between_flag & 1;
+        job.request.put_between.origin = origin;
+        job.request.put_between.own_track = own;
+        job.request.put_between.track1 = track1;
+        job.request.put_between.track2 = track2;
+        {
+            std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+            job.sequence = ++scene_put_between_preview_next_sequence;
+            scene_put_between_preview_latest_sequence = job.sequence;
+            scene_put_between_preview_pending = std::move(job);
+            scene_put_between_preview_completed.reset();
+        }
+        scene_put_between_preview_cv.notify_one();
+        return scene_put_between_preview_latest_sequence;
+    }
+
+    std::optional<ScenePutBetweenPreviewResult>
+    take_scene_put_between_preview_result() {
+        std::lock_guard<std::mutex> lock(scene_put_between_preview_mutex);
+        std::optional<ScenePutBetweenPreviewResult> result =
+            std::move(scene_put_between_preview_completed);
+        scene_put_between_preview_completed.reset();
+        return result;
     }
 
     void push_scene_load_log(std::string message) {
@@ -4444,6 +4903,8 @@ fail:
                                 }
                             } else {
                                 const SceneModelLoadRequest* regular_request = nullptr;
+                                const PutBetweenSourceTemplate put_between_source =
+                                    prepare_put_between_source(source_cpu);
                                 std::vector<CpuModelData> derived_models;
                                 derived_models.reserve(source_requests.size());
                                 for (const SceneModelLoadRequest& request : source_requests) {
@@ -4451,7 +4912,8 @@ fail:
                                         regular_request = &request;
                                         continue;
                                     }
-                                    CpuModelData derived = derive_put_between_model(source_cpu, request);
+                                    CpuModelData derived = derive_put_between_model(
+                                        source_cpu, put_between_source, request);
                                     if (!derived.ok) {
                                         push_scene_load_log(
                                             "[warn]canvas3D.cpp: failed to deform PutBetween model: " + path +
@@ -4629,6 +5091,133 @@ fail:
         model.state = SceneModelGpu::State::Ready;
         model.error.clear();
         return true;
+    }
+
+    bool upload_scene_put_between_preview_model(
+        const CpuModelData& cpu,
+        const std::string& preview_key,
+        const SceneModelGpu& shared_model,
+        std::string& error) {
+        if (!cpu.ok || cpu.vertices.empty() || !shared_model.index_buffer ||
+            shared_model.state != SceneModelGpu::State::Ready) {
+            error = cpu.error.empty()
+                ? "PutBetween preview source model is not ready" : cpu.error;
+            return false;
+        }
+        if (cpu.vertices.size() >
+            static_cast<size_t>(std::numeric_limits<UINT>::max() /
+                                sizeof(GpuVertex))) {
+            error = "PutBetween preview model is too large for a Direct3D 11 buffer";
+            return false;
+        }
+
+        SceneModelGpu& model = scene_models[preview_key];
+        const UINT vertex_count = static_cast<UINT>(cpu.vertices.size());
+        const bool rebuild = !model.dynamic_vertices ||
+            model.shared_model_key != cpu.shared_model_key ||
+            !model.vertex_buffer || model.vertex_capacity < vertex_count;
+        if (rebuild) {
+            release_scene_model(model);
+            D3D11_BUFFER_DESC vb_desc = {};
+            vb_desc.ByteWidth = vertex_count * sizeof(GpuVertex);
+            vb_desc.Usage = D3D11_USAGE_DYNAMIC;
+            vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            vb_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            HRESULT hr = device->CreateBuffer(&vb_desc, nullptr, &model.vertex_buffer);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateBuffer(PutBetween preview vertex)", hr);
+                return false;
+            }
+            model.vertex_capacity = vertex_count;
+            model.dynamic_vertices = true;
+            model.shared_model_key = cpu.shared_model_key;
+            model.index_buffer = shared_model.index_buffer;
+            model.index_buffer->AddRef();
+            model.parts = shared_model.parts;
+            model.materials = shared_model.materials;
+            for (GpuMaterial& material : model.materials) {
+                if (material.texture) material.texture->AddRef();
+            }
+            model.index_count = shared_model.index_count;
+        }
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        HRESULT hr = context->Map(
+            model.vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        if (FAILED(hr)) {
+            error = hresult_text("Map(PutBetween preview vertex)", hr);
+            return false;
+        }
+        std::memcpy(mapped.pData, cpu.vertices.data(),
+                    cpu.vertices.size() * sizeof(GpuVertex));
+        context->Unmap(model.vertex_buffer, 0);
+        model.bounds_min = cpu.bounds_min;
+        model.bounds_max = cpu.bounds_max;
+        model.center = cpu.center;
+        model.radius = std::max(cpu.radius, 0.001f);
+        model.state = SceneModelGpu::State::Ready;
+        model.error.clear();
+        return true;
+    }
+
+    void apply_scene_put_between_preview_result() {
+        std::optional<ScenePutBetweenPreviewResult> pending =
+            take_scene_put_between_preview_result();
+        if (!pending) return;
+        ScenePutBetweenPreviewResult& result = *pending;
+        if (!scene_active || !scene_structure_edit.active ||
+            scene_structure_edit.kind != Canvas3DSceneEditKind::StructurePutBetween ||
+            result.geometry_generation != scene_geometry_generation ||
+            result.sequence != scene_structure_edit.preview_sequence ||
+            !same_placement_edit_target(result.target, scene_structure_edit.current)) {
+            return;
+        }
+        if (!result.source || !result.source->ok || !result.derived.ok) {
+            const std::string detail = !result.derived.error.empty()
+                ? result.derived.error
+                : result.source ? result.source->error : std::string("source model unavailable");
+            push_scene_load_log(
+                "[warn]canvas3D.cpp: PutBetween live preview failed: " + detail);
+            return;
+        }
+
+        auto [shared_it, inserted] = scene_models.try_emplace(result.source->path);
+        if (inserted || shared_it->second.state != SceneModelGpu::State::Ready) {
+            CpuModelData source = *result.source;
+            source.scene_key = source.path;
+            source.shared_model_key.clear();
+            std::string source_error;
+            if (!upload_scene_model(source, source_error) ||
+                shared_it->second.state != SceneModelGpu::State::Ready) {
+                push_scene_load_log(
+                    "[warn]canvas3D.cpp: PutBetween live preview base upload failed: " +
+                    (source_error.empty() ? shared_it->second.error : source_error));
+                return;
+            }
+            scene_put_between_preview_base_model_keys.insert(source.path);
+        }
+
+        const std::string preview_key = scene_put_between_preview_model_key(
+            result.target.edit_id, scene_geometry_generation);
+        std::string upload_error;
+        if (!upload_scene_put_between_preview_model(
+                result.derived, preview_key, shared_it->second, upload_error)) {
+            push_scene_load_log(
+                "[warn]canvas3D.cpp: PutBetween live preview upload failed: " +
+                upload_error);
+            return;
+        }
+        Canvas3DModelInstance desired = put_between_instance_from_target(
+            result.target, scene_structure_edit.baseline_instance);
+        if (!write_scene_put_between_instance(
+                result.target.edit_id, std::move(desired), preview_key)) {
+            push_scene_load_log(
+                "[warn]canvas3D.cpp: PutBetween live preview instance update failed");
+            return;
+        }
+        scene_structure_edit.completed = result.target;
+        scene_structure_edit.preview_model_key = preview_key;
+        release_unused_put_between_preview_base_models();
     }
 
     void upload_pending_scene_models() {
@@ -6123,8 +6712,7 @@ fail:
                 const Canvas3DSceneObject& object =
                     scene_data.objects[static_cast<size_t>(source.object_index)];
                 const bool editable_placement =
-                    (object.kind == Canvas3DSceneObjectKind::Structure &&
-                     !object.structure_put_between) ||
+                    object.kind == Canvas3DSceneObjectKind::Structure ||
                     object.kind == Canvas3DSceneObjectKind::Signal;
                 if (editable_placement && !object.edit_id.empty()) {
                     scene_placement_locations[object.edit_id] = ScenePlacementInstanceLocation{
@@ -7828,6 +8416,10 @@ fail:
         const float gizmo_scale = scene_edit_component_scale;
         bool any = false;
         for (size_t i = 0; i < scene_structure_edit.axes.size(); ++i) {
+            if (scene_structure_edit.kind ==
+                    Canvas3DSceneEditKind::StructurePutBetween && i != 2) {
+                continue;
+            }
             const DVec3 parameter_axis = normalize(scene_structure_edit.axes[i]);
             const double parameter_sign = dot(parameter_axis, to_camera) < 0.0 ? -1.0 : 1.0;
             const DVec3 visual_axis = parameter_axis * parameter_sign;
@@ -7902,10 +8494,16 @@ fail:
                 scene_structure_edit.drag_world_units_per_pixel =
                     projection.world_units_per_pixel;
                 scene_structure_edit.drag_parameter_sign = projection.parameter_sign;
-                scene_structure_edit.drag_start_value = axis_index == 0
-                    ? scene_structure_edit.current.x
-                    : axis_index == 1 ? scene_structure_edit.current.y
-                                      : scene_structure_edit.current.z;
+                if (scene_structure_edit.kind ==
+                    Canvas3DSceneEditKind::StructurePutBetween) {
+                    scene_structure_edit.drag_start_value =
+                        scene_structure_edit.current.distance;
+                } else {
+                    scene_structure_edit.drag_start_value = axis_index == 0
+                        ? scene_structure_edit.current.x
+                        : axis_index == 1 ? scene_structure_edit.current.y
+                                          : scene_structure_edit.current.z;
+                }
                 DVec3 ray_origin;
                 DVec3 ray_direction;
                 scene_structure_edit.drag_uses_ray =
@@ -7949,18 +8547,31 @@ fail:
         }
         delta *= scene_structure_edit.drag_parameter_sign;
 
-        const double candidate = truncate_scene_millimeter(
-            scene_structure_edit.drag_start_value + delta);
+        const bool put_between_distance_drag =
+            scene_structure_edit.kind ==
+            Canvas3DSceneEditKind::StructurePutBetween;
+        const double candidate = put_between_distance_drag
+            ? std::round(scene_structure_edit.drag_start_value + delta)
+            : truncate_scene_millimeter(scene_structure_edit.drag_start_value + delta);
         const int axis_index = structure_drag_axis_index(scene_structure_edit.dragging_axis);
-        double* current_value = axis_index == 0 ? &scene_structure_edit.current.x
+        double* current_value = put_between_distance_drag
+            ? &scene_structure_edit.current.distance
+            : axis_index == 0 ? &scene_structure_edit.current.x
             : axis_index == 1 ? &scene_structure_edit.current.y
                               : &scene_structure_edit.current.z;
-        if (std::abs(candidate - *current_value) < 0.000999999) return std::nullopt;
+        const double change_threshold = put_between_distance_drag
+            ? 0.5 : 0.000999999;
+        if (std::abs(candidate - *current_value) < change_threshold) return std::nullopt;
         const double previous_value = *current_value;
         *current_value = candidate;
         const Canvas3DSceneDragAxis changed_axis = scene_structure_edit.dragging_axis;
         bool wrote = false;
-        if (scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater) {
+        if (put_between_distance_drag) {
+            const std::uint64_t sequence = queue_scene_put_between_preview(
+                scene_structure_edit.current);
+            wrote = sequence != 0;
+            if (wrote) scene_structure_edit.preview_sequence = sequence;
+        } else if (scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater) {
             Canvas3DRepeaterSegment desired = repeater_segment_from_target(
                 scene_structure_edit.current, scene_structure_edit.baseline_repeater);
             wrote = write_scene_repeater_segment(scene_structure_edit.edit_id, std::move(desired));
@@ -7978,6 +8589,7 @@ fail:
         result.kind = scene_structure_edit.kind;
         result.edit_id = scene_structure_edit.edit_id;
         result.axis = changed_axis;
+        result.distance = scene_structure_edit.current.distance;
         result.x = scene_structure_edit.current.x;
         result.y = scene_structure_edit.current.y;
         result.z = scene_structure_edit.current.z;
@@ -8029,13 +8641,20 @@ fail:
                        arrow_base.y - perpendicular.y * arrow_half_width),
                 color);
         }
-        const SceneGizmoAxisProjection& first = scene_structure_edit.projection[0];
-        if (first.valid) {
+        const SceneGizmoAxisProjection* first = nullptr;
+        for (const SceneGizmoAxisProjection& projection :
+             scene_structure_edit.projection) {
+            if (projection.valid) {
+                first = &projection;
+                break;
+            }
+        }
+        if (first) {
             ImVec2 center(
-                canvas_origin.x + first.begin.x -
-                    first.direction.x * k_scene_gizmo_origin_gap_px * gizmo_scale,
-                canvas_origin.y + first.begin.y -
-                    first.direction.y * k_scene_gizmo_origin_gap_px * gizmo_scale);
+                canvas_origin.x + first->begin.x -
+                    first->direction.x * k_scene_gizmo_origin_gap_px * gizmo_scale,
+                canvas_origin.y + first->begin.y -
+                    first->direction.y * k_scene_gizmo_origin_gap_px * gizmo_scale);
             const float center_radius = k_scene_gizmo_center_radius_px * gizmo_scale;
             draw->AddCircleFilled(center, center_radius, IM_COL32(245, 245, 245, 235));
             draw->AddCircle(center, center_radius, IM_COL32(30, 30, 30, 220), 0,
@@ -8163,6 +8782,7 @@ fail:
             return;
         }
         upload_pending_scene_models();
+        apply_scene_put_between_preview_result();
         if (!scene_data.markers.empty() &&
             !scene_marker_font_cache_current() &&
             !build_scene_marker_chunks(error)) {
@@ -9259,6 +9879,7 @@ fail:
     int scene_marker_font_texture_width = 0;
     int scene_marker_font_texture_height = 0;
     std::map<std::string, SceneModelGpu> scene_models;
+    std::unordered_set<std::string> scene_put_between_preview_base_model_keys;
     std::unordered_map<std::string, SceneTextureCacheEntry> scene_texture_cache;
     std::unordered_set<std::string> scene_texture_warning_keys;
     size_t scene_model_worker_limit = 0;
@@ -9275,6 +9896,14 @@ fail:
     std::atomic<bool> scene_cancel{false};
     std::atomic<bool> scene_worker_running{false};
     std::atomic<size_t> scene_model_worker_count_value{0};
+    std::thread scene_put_between_preview_worker;
+    std::mutex scene_put_between_preview_mutex;
+    std::condition_variable scene_put_between_preview_cv;
+    bool scene_put_between_preview_stop = false;
+    std::optional<ScenePutBetweenPreviewJob> scene_put_between_preview_pending;
+    std::optional<ScenePutBetweenPreviewResult> scene_put_between_preview_completed;
+    std::uint64_t scene_put_between_preview_next_sequence = 0;
+    std::uint64_t scene_put_between_preview_latest_sequence = 0;
     DVec3 scene_camera_pos;
     float scene_camera_yaw = 0.0f;
     float scene_camera_pitch = 0.0f;

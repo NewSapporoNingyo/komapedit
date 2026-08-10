@@ -148,7 +148,7 @@ Editable rows must retain source path, include stack, source span, original stat
 - Preserve plan pan/zoom/rotation/fit, measurement, grids, station jumps, coordinate transforms, marker synchronization, context actions, and background-image alignment.
 - Keep table content cached, dynamic Section arguments and explicit `null` values intact, Variable List ordering stable, and row/plan/scene navigation side effects synchronized.
 - Keep Assimp isolated in `model_loader.dll`; handle missing textures, invalid files, and unsupported models without crashing.
-- Preserve scene camera transfers, picking/highlights, visibility synchronization, marker recipes, route overlay, and X/Y/Z gizmo synchronization.
+- Preserve scene camera transfers, picking/highlights, visibility synchronization, marker recipes, route overlay, X/Y/Z gizmo synchronization, and the exact coalesced vertex preview used by the Z-only `Structure.PutBetween` distance gizmo.
 
 ### Performance
 

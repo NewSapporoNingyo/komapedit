@@ -325,7 +325,7 @@ ctest --test-dir build --output-on-failure
 - **几何和加载计时**：`finish_pending_load_timing()`、`regenerate_geometry()` 调用 DLL 重建指定范围/步长数据；状态栏阶段函数只在相应数据真正可用后结束计时。
 - **编辑模式与本地预览**：pending/unsaved 查询函数区分 inspector 草稿、inline-list 草稿和工作副本；`set_edit_mode_enabled()`/`apply_edit_mode_enabled()` 管理元数据加载与退出确认；`snapshot_local_preview_row()` 和按 row kind 的更新块让 inspector/gizmo 在正式重解析前同步可视模型。
 - **检查器打开与 Repeater 导航**：request/process/open 函数从 `kv_get_edit_target_typed()` 构建字段 UI；row kind 支持表决定删除能力；Repeater chain、Section values、structure keys 重建函数维护可变字段；Put0/Begin0/短 Signal 显式转换只在用户确认后启用。
-- **三维操纵器联动**：`sync_scene_placement_edit_from_inspector()` 把当前字段投影到 Canvas3D target；`apply_scene_placement_drag_update()` 将 X/Y/Z 拖动写回 inspector buffer 和本地场景实例，不直接写盘。
+- **三维操纵器联动**：`sync_scene_placement_edit_from_inspector()` 把当前字段投影到 Canvas3D target；`apply_scene_placement_drag_update()` 将普通放置的 X/Y/Z 拖动或 `Structure.PutBetween` 的仅 Z 轴整米 `distance` 拖动写回 inspector buffer，不直接写盘。
 - **Apply 与删除**：`apply_inspector_changes()` 组装 typed edit batch、先 dry-run、处理距离消歧，再 memory Apply 并用新快照刷新模型；`delete_element_target()` 根据普通行、成对过渡或 Repeater 删除模式形成一个或多个物理 change。
 - **行内资源列表编辑**：draft 判断、spec、字段校验、重排/清空/删除、文件选择和 find-result 重置代码维护 Station/Structure/Signal/Sound/Sound3D 物理行草稿；批量 Apply 前保持原 source hash 和未显示列。
 - **typed 报告适配**：`TypedEditBatchStorage` 拥有调用期字符串与 view；报告字符串/span 函数复制 DLL 视图；committed file/row state 处理重解析后 identity 迁移。距离 resolution choice 函数驱动 Text Preview 选择并重试同一批次。
@@ -397,7 +397,7 @@ ctest --test-dir build --output-on-failure
 - **场景分块**：`build_scene_chunks()` 按里程组织 Structure/Signal/Repeater 实例；track chunk 函数生成轨道带状三角形；marker recipe 函数把共享 2D 原语转换为 3D billboard 顶点、glyph 和 index range；visibility 变化只调用 `rebuild_scene_marker_visible_indices()`。
 - **相机与放置坐标**：own/other track sampling、cant frame、`make_track_placement_frame()`、`make_track_world()`、Repeater instance world 函数把 BVE distance/x/y/z/yaw/pitch/roll 转为世界矩阵；camera reset/jump 保持线路朝向和目标中心。
 - **可见性、绘制和拾取**：visible range/chunk 筛选后批量绘制 track、model、marker；pick pass 写入 object/marker id 并回读单像素；highlight mask/batch 与 outline composite 绘制 hover、表格跳转和选择轮廓。
-- **placement/repeater 实时编辑**：设置 target 时查找源实例/段并建立 edit state；update 函数仅改对应 chunk 的 world 数据。gizmo projection、mouse ray、轴最近点和 drag handler 生成毫米截断的 `Canvas3DPlacementDragUpdate`，颜色和方向随相机侧调整。
+- **placement/repeater 实时编辑**：设置 target 时查找源实例/段并建立 edit state；update 函数仅改对应 chunk 的 world 数据。gizmo projection、mouse ray、轴最近点和 drag handler 为普通放置生成毫米截断的 `Canvas3DPlacementDragUpdate`；`Structure.PutBetween` 只启用沿自轨前向的 Z 轴，并把拖动吸附为整米 `distance`。其顶点预览在线程中按最新目标合并重算，按模型纵向 slice 复用轨道采样，完成后通过可复用动态顶点缓冲原子替换。
 - **雾、背景和线路信息**：按相机距离采样 BVE fog、Map DrawDistance、背景模型和有效场景窗口；route overlay 采样 radius/cant、gradient、活动限速、Section signal speed 与下一站，metrics/loading overlay 显示性能和加载状态。
 - **`render_scene_preview()`**：每帧处理异步上传、相机输入、gizmo、可见实例收集、主 pass、pick/highlight、marker/object context popup，并返回导航、编辑、删除或 drag action。文件末 `Canvas3D::*` 公共方法都是到 Impl 的薄委托。
 

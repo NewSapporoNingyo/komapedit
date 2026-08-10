@@ -393,6 +393,7 @@ struct Canvas3DSceneContextAction {
 
 enum class Canvas3DSceneEditKind {
     Structure,
+    StructurePutBetween,
     Signal,
     Repeater,
 };
@@ -400,7 +401,11 @@ enum class Canvas3DSceneEditKind {
 struct Canvas3DPlacementEditTarget {
     Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure;
     std::string edit_id;
+    std::string model_path;
     std::string track_key;
+    std::string put_between_track_key1;
+    std::string put_between_track_key2;
+    int put_between_flag = 0;
     double distance = 0.0;
     double x = 0.0;
     double y = 0.0;
@@ -423,6 +428,7 @@ struct Canvas3DPlacementDragUpdate {
     Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure;
     std::string edit_id;
     Canvas3DSceneDragAxis axis = Canvas3DSceneDragAxis::None;
+    double distance = 0.0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;

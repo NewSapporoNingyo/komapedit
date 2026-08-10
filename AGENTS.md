@@ -96,7 +96,7 @@ Current implementation status comes from source and `TODO.md`, not from an old m
 4. Inspect before editing. For bugs and slop-fix work, establish evidence and a plan before mutation.
 5. Implement the smallest coherent change in the owning layer; extend shared typed/state paths before consumers.
 6. Add or update focused coverage when the behavior has a deterministic contract.
-7. Build and validate in proportion to risk. Default to Debug; add Release only when justified.
+7. Build and validate in proportion to risk. Default to Debug; add Release only when justified.Under normal circumstances, you should use the build_dev.bat or build_release.bat scripts instead of running the cmake command directly.
 8. Synchronize the documents owned by the changed behavior/status/workflow.
 9. Review the final diff for scope, ABI/source fidelity, localization, cache/performance impact, generated files, encoding, and whitespace.
 10. Report the outcome, validation evidence, known failures, and remaining manual checks without overclaiming.
