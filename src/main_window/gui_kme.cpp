@@ -3840,6 +3840,17 @@ void App::sync_scene_placement_edit_from_inspector() {
             find_inspector_field(inspector_, "trackKey")) {
         target.track_key = trim_gui_ascii_copy(edit_field_buffer_text(*track_field));
     }
+    if (repeater_target) {
+        if (const MapElementEditFieldState* end_distance_field =
+                find_inspector_field(inspector_, "endDistance")) {
+            if (!parse_gui_edit_number(
+                    edit_field_buffer_text(*end_distance_field),
+                    &target.repeater_end_distance)) {
+                return;
+            }
+            target.has_repeater_end_distance = true;
+        }
+    }
     if (structure_between_target) {
         const MapElementEditFieldState* structure_key_field =
             find_inspector_field(inspector_, "structureKey");
@@ -3915,8 +3926,10 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
     }
     const char* field_key = nullptr;
     double value = 0.0;
-    if (update.kind == Canvas3DSceneEditKind::StructurePutBetween &&
-        update.axis == Canvas3DSceneDragAxis::Z) {
+    if (update.target == Canvas3DSceneDragTarget::RepeaterEndDistance) {
+        field_key = "endDistance";
+        value = update.repeater_end_distance;
+    } else if (update.target == Canvas3DSceneDragTarget::PutBetweenDistance) {
         field_key = "distance";
         value = update.distance;
     } else if (update.axis == Canvas3DSceneDragAxis::X) {
@@ -3940,7 +3953,11 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
                 inspector_.signal_full_form_prompt_requested = true;
                 return;
             }
-            set_edit_field_buffer(*field, format_gui_transform_number(value));
+            const std::string formatted =
+                update.target == Canvas3DSceneDragTarget::RepeaterEndDistance
+                    ? format_double(value, 0)
+                    : format_gui_transform_number(value);
+            set_edit_field_buffer(*field, formatted);
         }
     }
 }

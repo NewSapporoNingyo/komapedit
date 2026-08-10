@@ -407,6 +407,8 @@ struct Canvas3DPlacementEditTarget {
     std::string put_between_track_key2;
     int put_between_flag = 0;
     double distance = 0.0;
+    bool has_repeater_end_distance = false;
+    double repeater_end_distance = 0.0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
@@ -424,11 +426,19 @@ enum class Canvas3DSceneDragAxis {
     Z,
 };
 
+enum class Canvas3DSceneDragTarget {
+    Placement,
+    PutBetweenDistance,
+    RepeaterEndDistance,
+};
+
 struct Canvas3DPlacementDragUpdate {
     Canvas3DSceneEditKind kind = Canvas3DSceneEditKind::Structure;
     std::string edit_id;
+    Canvas3DSceneDragTarget target = Canvas3DSceneDragTarget::Placement;
     Canvas3DSceneDragAxis axis = Canvas3DSceneDragAxis::None;
     double distance = 0.0;
+    double repeater_end_distance = 0.0;
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;

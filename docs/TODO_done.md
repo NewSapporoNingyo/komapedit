@@ -99,6 +99,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Display the current curve radius/cant, gradient, active speed limit, section-selected signal speeds, and distance to the next station in the 3D scene route overlay.
 - [x] Edit `Structure.Put`, `Signal.Put`, and `Repeater.Begin` positions along X/Y/Z with live 3D gizmos, including explicit `Put0`/`Begin0` conversion and configurable gizmo size.
 - [x] Preview all `Structure.PutBetween` Inspector fields with exact live vertex deformation and edit `distance` through a Z-only, whole-metre 3D gizmo.
+- [x] Edit an explicit Repeater EndDistance through a Z-only whole-metre gizmo on its track centerline, with live instance-count updates and own-track-distance scaling on other tracks.
 - [x] Edit linked Repeater segments in the inspector, including Begin navigation, End/change boundaries, and linked deletion choices.
 
 ### Environmental Effects
@@ -216,6 +217,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在 3D 场景线路信息叠加层显示当前曲线半径/超高、坡度、生效限速、闭塞选择出的信号限速和距下一站距离
 - [x] 通过实时 3D 操纵器编辑 `Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 的 X/Y/Z 位置，并支持显式 `Put0`/`Begin0` 转换和操纵器尺寸设置
 - [x] 为 `Structure.PutBetween` 的全部检查器字段提供精确的实时顶点变形预览，并通过仅 Z 轴、整米步进的 3D 操纵器编辑 `distance`
+- [x] 通过位于对应轨道中心线上的仅 Z 轴整米操纵器编辑显式 Repeater EndDistance，实时更新实例数量，并在他轨道上按自轨道 distance 比例换算拖动
 - [x] 在属性检查器中编辑关联的连续布景段，支持 Begin 导航、End/变化边界和关联删除选项
 
 ### 环境效果

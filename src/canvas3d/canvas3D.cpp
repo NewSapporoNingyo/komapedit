@@ -703,7 +703,20 @@ struct SceneGizmoAxisProjection {
     ImVec2 direction;
     DVec3 world_direction;
     double parameter_sign = 1.0;
-    double world_units_per_pixel = 0.0;
+    double parameter_units_per_pixel = 0.0;
+};
+
+struct SceneGizmoHandle {
+    DVec3 origin;
+    std::array<DVec3, 3> axes{};
+    std::array<bool, 3> enabled{{true, true, true}};
+    std::array<SceneGizmoAxisProjection, 3> projection{};
+};
+
+enum class SceneGizmoTarget {
+    None,
+    Placement,
+    RepeaterEndDistance,
 };
 
 struct SceneStructureEditState {
@@ -717,9 +730,10 @@ struct SceneStructureEditState {
     Canvas3DPlacementEditTarget completed;
     std::string preview_model_key;
     std::uint64_t preview_sequence = 0;
-    DVec3 origin;
-    std::array<DVec3, 3> axes{};
-    std::array<SceneGizmoAxisProjection, 3> projection{};
+    SceneGizmoHandle placement_gizmo;
+    SceneGizmoHandle repeater_end_gizmo;
+    SceneGizmoTarget hovered_gizmo = SceneGizmoTarget::None;
+    SceneGizmoTarget dragging_gizmo = SceneGizmoTarget::None;
     Canvas3DSceneDragAxis hovered_axis = Canvas3DSceneDragAxis::None;
     Canvas3DSceneDragAxis dragging_axis = Canvas3DSceneDragAxis::None;
     DVec3 drag_axis_origin;
@@ -728,7 +742,7 @@ struct SceneStructureEditState {
     ImVec2 drag_screen_direction;
     double drag_start_value = 0.0;
     double drag_start_axis_parameter = 0.0;
-    double drag_world_units_per_pixel = 0.0;
+    double drag_parameter_units_per_pixel = 0.0;
     double drag_parameter_sign = 1.0;
     bool drag_uses_ray = false;
 };
@@ -3522,7 +3536,10 @@ struct Canvas3D::Impl {
             a.put_between_track_key1 == b.put_between_track_key1 &&
             a.put_between_track_key2 == b.put_between_track_key2 &&
             a.put_between_flag == b.put_between_flag &&
-            a.distance == b.distance && a.x == b.x && a.y == b.y && a.z == b.z &&
+            a.distance == b.distance &&
+            a.has_repeater_end_distance == b.has_repeater_end_distance &&
+            a.repeater_end_distance == b.repeater_end_distance &&
+            a.x == b.x && a.y == b.y && a.z == b.z &&
             a.rx == b.rx && a.ry == b.ry && a.rz == b.rz &&
             a.tilt == b.tilt && a.span == b.span;
     }
@@ -3606,6 +3623,10 @@ struct Canvas3D::Impl {
         Canvas3DRepeaterSegment desired = base;
         desired.track_key = target.track_key;
         desired.begin_distance = target.distance;
+        if (target.has_repeater_end_distance) {
+            desired.end_distance = target.repeater_end_distance;
+            desired.has_end_or_change_position = true;
+        }
         desired.x = target.x;
         desired.y = target.y;
         desired.z = target.z;
@@ -3690,8 +3711,8 @@ struct Canvas3D::Impl {
             return false;
         }
         if (scene_structure_edit.active && scene_structure_edit.edit_id == edit_id) {
-            scene_structure_edit.origin = frame.origin;
-            scene_structure_edit.axes = frame.parameter_axes;
+            scene_structure_edit.placement_gizmo.origin = frame.origin;
+            scene_structure_edit.placement_gizmo.axes = frame.parameter_axes;
         }
         return true;
     }
@@ -3728,10 +3749,123 @@ struct Canvas3D::Impl {
             return false;
         }
         if (scene_structure_edit.active && scene_structure_edit.edit_id == edit_id) {
-            scene_structure_edit.origin = origin;
-            scene_structure_edit.axes = axes;
+            scene_structure_edit.placement_gizmo.origin = origin;
+            scene_structure_edit.placement_gizmo.axes = axes;
         }
         return true;
+    }
+
+    bool repeater_end_distance_gizmo_frame(
+        const Canvas3DRepeaterSegment& repeater,
+        SceneGizmoHandle& gizmo) const {
+        gizmo.enabled = {{false, false, true}};
+        gizmo.axes = {};
+        const Canvas3DTrackPath* path = placement_track_path_for_key(repeater.track_key);
+        if (!path || path->points.empty()) return false;
+
+        const double path_begin = path->points.front().distance;
+        const double path_end = path->points.back().distance;
+        if (!std::isfinite(path_begin) || !std::isfinite(path_end)) return false;
+        const double range_min = std::min(path_begin, path_end);
+        const double range_max = std::max(path_begin, path_end);
+        const double sample_distance = std::clamp(
+            repeater.end_distance, range_min, range_max);
+        const std::optional<Canvas3DTrackPoint> center =
+            scene_sample_track_path_points(*path, sample_distance);
+        if (!center) return false;
+        gizmo.origin = {center->x, center->y, center->z};
+
+        double low_distance = std::max(range_min, sample_distance - 0.5);
+        double high_distance = std::min(range_max, sample_distance + 0.5);
+        if (high_distance - low_distance < k_scene_repeater_distance_epsilon) {
+            low_distance = std::max(range_min, sample_distance - 1.0);
+            high_distance = std::min(range_max, sample_distance + 1.0);
+        }
+        const double distance_span = high_distance - low_distance;
+        if (!std::isfinite(distance_span) ||
+            distance_span < k_scene_repeater_distance_epsilon) {
+            return false;
+        }
+        const std::optional<Canvas3DTrackPoint> low =
+            scene_sample_track_path_points(*path, low_distance);
+        const std::optional<Canvas3DTrackPoint> high =
+            scene_sample_track_path_points(*path, high_distance);
+        if (!low || !high) return false;
+        const DVec3 distance_axis = DVec3{
+            high->x - low->x,
+            high->y - low->y,
+            high->z - low->z,
+        } * (1.0 / distance_span);
+        if (!std::isfinite(distance_axis.x) ||
+            !std::isfinite(distance_axis.y) ||
+            !std::isfinite(distance_axis.z) ||
+            dot(distance_axis, distance_axis) <= 1e-12) {
+            return false;
+        }
+        gizmo.axes[2] = distance_axis;
+        return true;
+    }
+
+    std::optional<std::pair<size_t, size_t>> scene_repeater_chunk_range(
+        const Canvas3DRepeaterSegment& repeater) const {
+        if (scene_chunks.empty()) return std::nullopt;
+        double first_distance = 0.0;
+        double last_distance = 0.0;
+        if (!scene_repeater_render_distance_span(
+                repeater, first_distance, last_distance)) {
+            return std::nullopt;
+        }
+        const size_t first_index = scene_chunk_index_for_distance(first_distance);
+        const size_t last_index = scene_chunk_index_for_distance(last_distance);
+        return std::pair<size_t, size_t>{
+            std::min(first_index, last_index),
+            std::max(first_index, last_index),
+        };
+    }
+
+    void update_scene_repeater_chunk_membership(
+        size_t repeater_index,
+        const std::optional<std::pair<size_t, size_t>>& old_range,
+        const std::optional<std::pair<size_t, size_t>>& new_range) {
+        const auto contains = [](const std::optional<std::pair<size_t, size_t>>& range,
+                                 size_t index) {
+            return range && index >= range->first && index <= range->second;
+        };
+        const auto visit_range = [&](const std::pair<size_t, size_t>& range,
+                                     const auto& visitor) {
+            for (size_t index = range.first;; ++index) {
+                visitor(index);
+                if (index == range.second) break;
+            }
+        };
+        if (old_range) {
+            visit_range(*old_range, [&](size_t chunk_index) {
+                if (contains(new_range, chunk_index) ||
+                    chunk_index >= scene_chunks.size()) {
+                    return;
+                }
+                std::vector<size_t>& indices = scene_chunks[chunk_index].repeater_indices;
+                const auto found = std::lower_bound(
+                    indices.begin(), indices.end(), repeater_index);
+                if (found != indices.end() && *found == repeater_index) {
+                    indices.erase(found);
+                }
+            });
+        }
+        if (new_range) {
+            visit_range(*new_range, [&](size_t chunk_index) {
+                if (contains(old_range, chunk_index) ||
+                    chunk_index >= scene_chunks.size()) {
+                    return;
+                }
+                std::vector<size_t>& indices = scene_chunks[chunk_index].repeater_indices;
+                const auto insertion = std::lower_bound(
+                    indices.begin(), indices.end(), repeater_index);
+                if (insertion == indices.end() || *insertion != repeater_index) {
+                    indices.insert(insertion, repeater_index);
+                }
+            });
+        }
     }
 
     bool write_scene_repeater_segment(const std::string& edit_id,
@@ -3742,6 +3876,8 @@ struct Canvas3D::Impl {
             desired.model_paths.empty() || desired.model_paths.front().empty()) {
             return false;
         }
+        const size_t repeater_index = location_it->second;
+        const Canvas3DRepeaterSegment& current = scene_data.repeaters[repeater_index];
         StructurePlacementFrame frame;
         if (!make_track_placement_frame(desired.track_key, desired.begin_distance,
                                         desired.x, desired.y, desired.z,
@@ -3749,12 +3885,34 @@ struct Canvas3D::Impl {
                                         desired.tilt, desired.span, frame)) {
             return false;
         }
-        scene_data.repeaters[location_it->second] = std::move(desired);
+        const std::optional<std::pair<size_t, size_t>> old_range =
+            scene_repeater_chunk_range(current);
+        const std::optional<std::pair<size_t, size_t>> new_range =
+            scene_repeater_chunk_range(desired);
+        const size_t old_instance_count = scene_repeater_instance_count(current);
+        const size_t new_instance_count = scene_repeater_instance_count(desired);
+        update_scene_repeater_chunk_membership(repeater_index, old_range, new_range);
+        scene_data.repeaters[repeater_index] = std::move(desired);
+        if (scene_stats_value.instance_count >= old_instance_count) {
+            const size_t non_repeater_count =
+                scene_stats_value.instance_count - old_instance_count;
+            if (new_instance_count <=
+                std::numeric_limits<size_t>::max() - non_repeater_count) {
+                scene_stats_value.instance_count = non_repeater_count + new_instance_count;
+            } else {
+                scene_stats_value.instance_count = std::numeric_limits<size_t>::max();
+            }
+        } else {
+            scene_stats_value.instance_count = count_scene_instances();
+        }
         if (scene_structure_edit.active &&
             scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
             scene_structure_edit.edit_id == edit_id) {
-            scene_structure_edit.origin = frame.origin;
-            scene_structure_edit.axes = frame.parameter_axes;
+            scene_structure_edit.placement_gizmo.origin = frame.origin;
+            scene_structure_edit.placement_gizmo.axes = frame.parameter_axes;
+            repeater_end_distance_gizmo_frame(
+                scene_data.repeaters[repeater_index],
+                scene_structure_edit.repeater_end_gizmo);
         }
         return true;
     }
@@ -3845,6 +4003,17 @@ struct Canvas3D::Impl {
         }
     }
 
+    void cancel_scene_gizmo_interaction(SceneGizmoTarget target) {
+        if (scene_structure_edit.hovered_gizmo == target) {
+            scene_structure_edit.hovered_gizmo = SceneGizmoTarget::None;
+            scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
+        }
+        if (scene_structure_edit.dragging_gizmo == target) {
+            scene_structure_edit.dragging_gizmo = SceneGizmoTarget::None;
+            scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+        }
+    }
+
     bool set_scene_placement_edit_target(const Canvas3DPlacementEditTarget& target,
                                          bool show_gizmo) {
         if (!scene_active || target.edit_id.empty()) return false;
@@ -3858,6 +4027,10 @@ struct Canvas3D::Impl {
              scene_structure_edit.edit_id != target.edit_id)) {
             clear_scene_placement_edit_target();
         }
+        scene_structure_edit.placement_gizmo.enabled =
+            target.kind == Canvas3DSceneEditKind::StructurePutBetween
+                ? std::array<bool, 3>{{false, false, true}}
+                : std::array<bool, 3>{{true, true, true}};
 
         auto location_it = scene_placement_locations.find(target.edit_id);
         if (location_it == scene_placement_locations.end() ||
@@ -3881,8 +4054,8 @@ struct Canvas3D::Impl {
                 scene_structure_edit.completed = scene_structure_edit.current;
                 if (!put_between_edit_frame(
                         scene_structure_edit.baseline_instance.distance,
-                        scene_structure_edit.origin,
-                        scene_structure_edit.axes)) {
+                        scene_structure_edit.placement_gizmo.origin,
+                        scene_structure_edit.placement_gizmo.axes)) {
                     scene_structure_edit = SceneStructureEditState{};
                     return false;
                 }
@@ -3914,8 +4087,7 @@ struct Canvas3D::Impl {
             scene_structure_edit.current = target;
             scene_structure_edit.preview_sequence = sequence;
             if (!show_gizmo) {
-                scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
-                scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+                cancel_scene_gizmo_interaction(SceneGizmoTarget::Placement);
             }
             return true;
         }
@@ -3931,8 +4103,7 @@ struct Canvas3D::Impl {
         scene_structure_edit.current = target;
         scene_structure_edit.show_gizmo = show_gizmo;
         if (!show_gizmo) {
-            scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
-            scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+            cancel_scene_gizmo_interaction(SceneGizmoTarget::Placement);
         }
         return true;
     }
@@ -3947,6 +4118,8 @@ struct Canvas3D::Impl {
              scene_structure_edit.edit_id != target.edit_id)) {
             clear_scene_placement_edit_target();
         }
+        scene_structure_edit.placement_gizmo.enabled = {{true, true, true}};
+        scene_structure_edit.repeater_end_gizmo.enabled = {{false, false, true}};
 
         const auto location_it = scene_repeater_locations.find(target.edit_id);
         if (location_it == scene_repeater_locations.end() ||
@@ -3982,8 +4155,10 @@ struct Canvas3D::Impl {
         scene_structure_edit.current = target;
         scene_structure_edit.show_gizmo = show_gizmo;
         if (!show_gizmo) {
-            scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
-            scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
+            cancel_scene_gizmo_interaction(SceneGizmoTarget::Placement);
+        }
+        if (!target.has_repeater_end_distance) {
+            cancel_scene_gizmo_interaction(SceneGizmoTarget::RepeaterEndDistance);
         }
         return true;
     }
@@ -6728,15 +6903,9 @@ fail:
             if (!repeater.edit_id.empty()) {
                 scene_repeater_locations[repeater.edit_id] = repeater_index;
             }
-            double repeater_first = 0.0;
-            double repeater_last = 0.0;
-            if (!scene_repeater_render_distance_span(repeater, repeater_first, repeater_last)) continue;
-            const size_t begin_index = scene_chunk_index_for_distance(repeater_first);
-            const size_t end_index = scene_chunk_index_for_distance(repeater_last);
-            for (size_t index = std::min(begin_index, end_index);
-                 index <= std::max(begin_index, end_index); ++index) {
-                scene_chunks[index].repeater_indices.push_back(repeater_index);
-            }
+            update_scene_repeater_chunk_membership(
+                repeater_index, std::nullopt,
+                scene_repeater_chunk_range(repeater));
         }
         return true;
     }
@@ -8374,16 +8543,18 @@ fail:
         return dx * dx + dy * dy;
     }
 
-    bool update_scene_structure_gizmo_projection(int width, int height) {
-        for (SceneGizmoAxisProjection& projection : scene_structure_edit.projection) {
+    bool update_scene_gizmo_projection(SceneGizmoHandle& gizmo,
+                                       bool visible,
+                                       int width,
+                                       int height) {
+        for (SceneGizmoAxisProjection& projection : gizmo.projection) {
             projection = SceneGizmoAxisProjection{};
         }
-        if (!scene_structure_edit.active || !scene_structure_edit.show_gizmo ||
-            width <= 0 || height <= 0) {
+        if (!visible || width <= 0 || height <= 0) {
             return false;
         }
 
-        const DVec3 relative_origin = scene_structure_edit.origin - scene_camera_pos;
+        const DVec3 relative_origin = gizmo.origin - scene_camera_pos;
         const DVec3 camera_forward = dvec3_from_vec3(scene_forward());
         const double depth = dot(relative_origin, camera_forward);
         if (!std::isfinite(depth) || depth <= static_cast<double>(k_scene_near_z)) return false;
@@ -8412,29 +8583,34 @@ fail:
             ImVec2(0.0f, -1.0f),
             ImVec2(-0.8660254f, 0.5f)
         };
-        const DVec3 to_camera = scene_camera_pos - scene_structure_edit.origin;
+        const DVec3 to_camera = scene_camera_pos - gizmo.origin;
         const float gizmo_scale = scene_edit_component_scale;
         bool any = false;
-        for (size_t i = 0; i < scene_structure_edit.axes.size(); ++i) {
-            if (scene_structure_edit.kind ==
-                    Canvas3DSceneEditKind::StructurePutBetween && i != 2) {
+        for (size_t i = 0; i < gizmo.axes.size(); ++i) {
+            if (!gizmo.enabled[i]) continue;
+            const DVec3 parameter_axis = gizmo.axes[i];
+            const double axis_length_squared = dot(parameter_axis, parameter_axis);
+            if (!std::isfinite(axis_length_squared) || axis_length_squared <= 1e-12) {
                 continue;
             }
-            const DVec3 parameter_axis = normalize(scene_structure_edit.axes[i]);
-            const double parameter_sign = dot(parameter_axis, to_camera) < 0.0 ? -1.0 : 1.0;
+            const double axis_length = std::sqrt(axis_length_squared);
+            const DVec3 parameter_direction = parameter_axis * (1.0 / axis_length);
+            const double parameter_sign =
+                dot(parameter_direction, to_camera) < 0.0 ? -1.0 : 1.0;
             const DVec3 visual_axis = parameter_axis * parameter_sign;
-            ImVec2 one_meter_screen;
+            ImVec2 one_parameter_screen;
             const bool projected = project_scene_point(relative_origin + visual_axis, view_proj,
-                                                        width, height, one_meter_screen);
-            float dx = projected ? one_meter_screen.x - origin_screen.x : 0.0f;
-            float dy = projected ? one_meter_screen.y - origin_screen.y : 0.0f;
+                                                        width, height,
+                                                        one_parameter_screen);
+            float dx = projected ? one_parameter_screen.x - origin_screen.x : 0.0f;
+            float dy = projected ? one_parameter_screen.y - origin_screen.y : 0.0f;
             const float projected_length = std::sqrt(dx * dx + dy * dy);
             ImVec2 direction(fallback_directions[i].x * static_cast<float>(parameter_sign),
                              fallback_directions[i].y * static_cast<float>(parameter_sign));
             if (projected_length >= 1.0f) {
                 direction = ImVec2(dx / projected_length, dy / projected_length);
             }
-            SceneGizmoAxisProjection& axis_projection = scene_structure_edit.projection[i];
+            SceneGizmoAxisProjection& axis_projection = gizmo.projection[i];
             axis_projection.valid = true;
             axis_projection.ray_drag_reliable = projected_length >= 4.0f;
             axis_projection.direction = direction;
@@ -8446,56 +8622,106 @@ fail:
             axis_projection.end = ImVec2(
                 origin_screen.x + direction.x * k_scene_gizmo_length_px * gizmo_scale,
                 origin_screen.y + direction.y * k_scene_gizmo_length_px * gizmo_scale);
-            axis_projection.world_units_per_pixel = projected_length >= 1.0f
+            axis_projection.parameter_units_per_pixel = projected_length >= 1.0f
                 ? 1.0 / static_cast<double>(projected_length)
-                : generic_world_units_per_pixel;
+                : generic_world_units_per_pixel / axis_length;
             any = true;
         }
         return any;
     }
 
+    bool update_scene_structure_gizmo_projections(int width, int height) {
+        const bool placement_visible =
+            scene_structure_edit.active && scene_structure_edit.show_gizmo;
+        const bool repeater_end_visible =
+            scene_structure_edit.active &&
+            scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
+            scene_structure_edit.current.has_repeater_end_distance;
+        const bool placement = update_scene_gizmo_projection(
+            scene_structure_edit.placement_gizmo,
+            placement_visible, width, height);
+        const bool repeater_end = update_scene_gizmo_projection(
+            scene_structure_edit.repeater_end_gizmo,
+            repeater_end_visible, width, height);
+        return placement || repeater_end;
+    }
+
+    SceneGizmoHandle* scene_gizmo_handle(SceneGizmoTarget target) {
+        if (target == SceneGizmoTarget::Placement) {
+            return &scene_structure_edit.placement_gizmo;
+        }
+        if (target == SceneGizmoTarget::RepeaterEndDistance) {
+            return &scene_structure_edit.repeater_end_gizmo;
+        }
+        return nullptr;
+    }
+
     std::optional<Canvas3DPlacementDragUpdate> handle_scene_structure_gizmo_input(
         bool canvas_hovered, int width, int height, ImVec2 mouse_local) {
-        if (!update_scene_structure_gizmo_projection(width, height)) {
+        if (!update_scene_structure_gizmo_projections(width, height)) {
+            scene_structure_edit.hovered_gizmo = SceneGizmoTarget::None;
             scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                scene_structure_edit.dragging_gizmo = SceneGizmoTarget::None;
                 scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
             }
             return std::nullopt;
         }
 
-        if (scene_structure_edit.dragging_axis == Canvas3DSceneDragAxis::None) {
+        if (scene_structure_edit.dragging_gizmo == SceneGizmoTarget::None) {
+            scene_structure_edit.hovered_gizmo = SceneGizmoTarget::None;
             scene_structure_edit.hovered_axis = Canvas3DSceneDragAxis::None;
             if (canvas_hovered) {
                 const float hit_radius = k_scene_gizmo_hit_radius_px * scene_edit_component_scale;
                 float best_distance_sq = hit_radius * hit_radius;
-                for (size_t i = 0; i < scene_structure_edit.projection.size(); ++i) {
-                    const SceneGizmoAxisProjection& projection = scene_structure_edit.projection[i];
-                    if (!projection.valid) continue;
-                    const float distance_sq = point_segment_distance_sq(
-                        mouse_local, projection.begin, projection.end);
-                    if (distance_sq <= best_distance_sq) {
-                        best_distance_sq = distance_sq;
-                        scene_structure_edit.hovered_axis = structure_drag_axis_from_index(i);
+                const auto consider = [&](SceneGizmoTarget target,
+                                          const SceneGizmoHandle& gizmo) {
+                    for (size_t i = 0; i < gizmo.projection.size(); ++i) {
+                        const SceneGizmoAxisProjection& projection = gizmo.projection[i];
+                        if (!projection.valid) continue;
+                        const float distance_sq = point_segment_distance_sq(
+                            mouse_local, projection.begin, projection.end);
+                        if (distance_sq <= best_distance_sq) {
+                            best_distance_sq = distance_sq;
+                            scene_structure_edit.hovered_gizmo = target;
+                            scene_structure_edit.hovered_axis =
+                                structure_drag_axis_from_index(i);
+                        }
                     }
-                }
+                };
+                consider(SceneGizmoTarget::Placement,
+                         scene_structure_edit.placement_gizmo);
+                // Check the EndDistance handle last so an exact overlap selects
+                // the endpoint and a zero-length Repeater can still be extended.
+                consider(SceneGizmoTarget::RepeaterEndDistance,
+                         scene_structure_edit.repeater_end_gizmo);
             }
 
-            if (scene_structure_edit.hovered_axis != Canvas3DSceneDragAxis::None &&
+            if (scene_structure_edit.hovered_gizmo != SceneGizmoTarget::None &&
+                scene_structure_edit.hovered_axis != Canvas3DSceneDragAxis::None &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 const int axis_index = structure_drag_axis_index(scene_structure_edit.hovered_axis);
+                SceneGizmoHandle* gizmo =
+                    scene_gizmo_handle(scene_structure_edit.hovered_gizmo);
+                if (!gizmo || axis_index < 0) return std::nullopt;
                 const SceneGizmoAxisProjection& projection =
-                    scene_structure_edit.projection[static_cast<size_t>(axis_index)];
+                    gizmo->projection[static_cast<size_t>(axis_index)];
+                scene_structure_edit.dragging_gizmo =
+                    scene_structure_edit.hovered_gizmo;
                 scene_structure_edit.dragging_axis = scene_structure_edit.hovered_axis;
-                scene_structure_edit.drag_axis_origin = scene_structure_edit.origin;
+                scene_structure_edit.drag_axis_origin = gizmo->origin;
                 scene_structure_edit.drag_axis_direction = projection.world_direction;
                 scene_structure_edit.drag_start_mouse = mouse_local;
                 scene_structure_edit.drag_screen_direction = projection.direction;
-                scene_structure_edit.drag_world_units_per_pixel =
-                    projection.world_units_per_pixel;
+                scene_structure_edit.drag_parameter_units_per_pixel =
+                    projection.parameter_units_per_pixel;
                 scene_structure_edit.drag_parameter_sign = projection.parameter_sign;
-                if (scene_structure_edit.kind ==
-                    Canvas3DSceneEditKind::StructurePutBetween) {
+                if (scene_structure_edit.dragging_gizmo ==
+                    SceneGizmoTarget::RepeaterEndDistance) {
+                    scene_structure_edit.drag_start_value =
+                        scene_structure_edit.current.repeater_end_distance;
+                } else if (scene_structure_edit.kind ==
+                           Canvas3DSceneEditKind::StructurePutBetween) {
                     scene_structure_edit.drag_start_value =
                         scene_structure_edit.current.distance;
                 } else {
@@ -8516,8 +8742,12 @@ fail:
             }
         }
 
-        if (scene_structure_edit.dragging_axis == Canvas3DSceneDragAxis::None) return std::nullopt;
+        if (scene_structure_edit.dragging_gizmo == SceneGizmoTarget::None ||
+            scene_structure_edit.dragging_axis == Canvas3DSceneDragAxis::None) {
+            return std::nullopt;
+        }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            scene_structure_edit.dragging_gizmo = SceneGizmoTarget::None;
             scene_structure_edit.dragging_axis = Canvas3DSceneDragAxis::None;
             return std::nullopt;
         }
@@ -8543,23 +8773,31 @@ fail:
                 static_cast<double>(mouse_local.y - scene_structure_edit.drag_start_mouse.y);
             delta = (screen_delta_x * scene_structure_edit.drag_screen_direction.x +
                      screen_delta_y * scene_structure_edit.drag_screen_direction.y) *
-                scene_structure_edit.drag_world_units_per_pixel;
+                scene_structure_edit.drag_parameter_units_per_pixel;
         }
         delta *= scene_structure_edit.drag_parameter_sign;
 
         const bool put_between_distance_drag =
+            scene_structure_edit.dragging_gizmo == SceneGizmoTarget::Placement &&
             scene_structure_edit.kind ==
             Canvas3DSceneEditKind::StructurePutBetween;
-        const double candidate = put_between_distance_drag
+        const bool repeater_end_distance_drag =
+            scene_structure_edit.dragging_gizmo ==
+            SceneGizmoTarget::RepeaterEndDistance;
+        const bool distance_drag =
+            put_between_distance_drag || repeater_end_distance_drag;
+        const double candidate = distance_drag
             ? std::round(scene_structure_edit.drag_start_value + delta)
             : truncate_scene_millimeter(scene_structure_edit.drag_start_value + delta);
         const int axis_index = structure_drag_axis_index(scene_structure_edit.dragging_axis);
-        double* current_value = put_between_distance_drag
+        double* current_value = repeater_end_distance_drag
+            ? &scene_structure_edit.current.repeater_end_distance
+            : put_between_distance_drag
             ? &scene_structure_edit.current.distance
             : axis_index == 0 ? &scene_structure_edit.current.x
             : axis_index == 1 ? &scene_structure_edit.current.y
                               : &scene_structure_edit.current.z;
-        const double change_threshold = put_between_distance_drag
+        const double change_threshold = distance_drag
             ? 0.5 : 0.000999999;
         if (std::abs(candidate - *current_value) < change_threshold) return std::nullopt;
         const double previous_value = *current_value;
@@ -8588,8 +8826,15 @@ fail:
         Canvas3DPlacementDragUpdate result;
         result.kind = scene_structure_edit.kind;
         result.edit_id = scene_structure_edit.edit_id;
+        result.target = repeater_end_distance_drag
+            ? Canvas3DSceneDragTarget::RepeaterEndDistance
+            : put_between_distance_drag
+                ? Canvas3DSceneDragTarget::PutBetweenDistance
+                : Canvas3DSceneDragTarget::Placement;
         result.axis = changed_axis;
         result.distance = scene_structure_edit.current.distance;
+        result.repeater_end_distance =
+            scene_structure_edit.current.repeater_end_distance;
         result.x = scene_structure_edit.current.x;
         result.y = scene_structure_edit.current.y;
         result.z = scene_structure_edit.current.z;
@@ -8597,13 +8842,14 @@ fail:
     }
 
     bool scene_structure_gizmo_consumes_left_input() const {
-        return scene_structure_edit.dragging_axis != Canvas3DSceneDragAxis::None ||
-            scene_structure_edit.hovered_axis != Canvas3DSceneDragAxis::None;
+        return scene_structure_edit.dragging_gizmo != SceneGizmoTarget::None ||
+            scene_structure_edit.hovered_gizmo != SceneGizmoTarget::None;
     }
 
-    void draw_scene_structure_gizmo(ImDrawList* draw, ImVec2 canvas_origin,
-                                    int width, int height) {
-        if (!draw || !update_scene_structure_gizmo_projection(width, height)) return;
+    void draw_scene_gizmo_handle(ImDrawList* draw,
+                                 ImVec2 canvas_origin,
+                                 const SceneGizmoHandle& gizmo,
+                                 SceneGizmoTarget target) {
         static constexpr std::array<ImU32, 3> colors = {
             IM_COL32(235, 67, 67, 255),
             IM_COL32(73, 205, 91, 255),
@@ -8615,12 +8861,15 @@ fail:
             IM_COL32(151, 190, 255, 255)
         };
         const float gizmo_scale = scene_edit_component_scale;
-        for (size_t i = 0; i < scene_structure_edit.projection.size(); ++i) {
-            const SceneGizmoAxisProjection& projection = scene_structure_edit.projection[i];
+        for (size_t i = 0; i < gizmo.projection.size(); ++i) {
+            const SceneGizmoAxisProjection& projection = gizmo.projection[i];
             if (!projection.valid) continue;
             const Canvas3DSceneDragAxis axis = structure_drag_axis_from_index(i);
-            const bool active = scene_structure_edit.dragging_axis == axis ||
-                scene_structure_edit.hovered_axis == axis;
+            const bool active =
+                (scene_structure_edit.dragging_gizmo == target &&
+                 scene_structure_edit.dragging_axis == axis) ||
+                (scene_structure_edit.hovered_gizmo == target &&
+                 scene_structure_edit.hovered_axis == axis);
             const ImU32 color = active ? active_colors[i] : colors[i];
             ImVec2 begin(canvas_origin.x + projection.begin.x,
                          canvas_origin.y + projection.begin.y);
@@ -8642,8 +8891,7 @@ fail:
                 color);
         }
         const SceneGizmoAxisProjection* first = nullptr;
-        for (const SceneGizmoAxisProjection& projection :
-             scene_structure_edit.projection) {
+        for (const SceneGizmoAxisProjection& projection : gizmo.projection) {
             if (projection.valid) {
                 first = &projection;
                 break;
@@ -8659,6 +8907,31 @@ fail:
             draw->AddCircleFilled(center, center_radius, IM_COL32(245, 245, 245, 235));
             draw->AddCircle(center, center_radius, IM_COL32(30, 30, 30, 220), 0,
                             gizmo_scale);
+        }
+    }
+
+    void draw_scene_structure_gizmo(ImDrawList* draw, ImVec2 canvas_origin,
+                                    int width, int height) {
+        if (!draw) return;
+        const bool placement = update_scene_gizmo_projection(
+            scene_structure_edit.placement_gizmo,
+            scene_structure_edit.active && scene_structure_edit.show_gizmo,
+            width, height);
+        const bool repeater_end = update_scene_gizmo_projection(
+            scene_structure_edit.repeater_end_gizmo,
+            scene_structure_edit.active &&
+                scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
+                scene_structure_edit.current.has_repeater_end_distance,
+            width, height);
+        if (placement) {
+            draw_scene_gizmo_handle(draw, canvas_origin,
+                                    scene_structure_edit.placement_gizmo,
+                                    SceneGizmoTarget::Placement);
+        }
+        if (repeater_end) {
+            draw_scene_gizmo_handle(draw, canvas_origin,
+                                    scene_structure_edit.repeater_end_gizmo,
+                                    SceneGizmoTarget::RepeaterEndDistance);
         }
     }
 
