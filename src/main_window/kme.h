@@ -1236,7 +1236,7 @@ struct MapElementPreviewSnapshot {
 };
 
 struct RepeaterInspectorDraft {
-    bool begin0_conversion_draft = false;
+    bool coordinate_offsets_enabled = false;
     std::vector<std::pair<std::string, std::string>> fields;
 };
 
@@ -1277,9 +1277,9 @@ struct MapElementInspectorState {
     std::string repeater_next_begin_edit_id;
     size_t repeater_scene_row_index = 0;
     bool repeater_has_multiple_begins = false;
-    bool source_method_put0 = false;
-    bool put0_conversion_draft = false;
-    bool put0_prompt_requested = false;
+    bool source_zero_offset_method = false;
+    bool coordinate_offsets_enabled = false;
+    bool coordinate_offset_discard_prompt_requested = false;
     bool z_rebase_prompt_requested = false;
     bool source_signal_short_form = false;
     bool signal_full_form_conversion_draft = false;
@@ -2082,7 +2082,6 @@ private:
                                     const EditableListSpec& spec);
     void rebind_other_editable_list_drafts(const EditableListEditState* applied);
     void reset_editable_list_find_results(const EditableListSpec& spec);
-    void enable_inspector_put0_conversion();
     bool navigate_repeater_inspector(bool toward_next);
     void sync_scene_placement_edit_from_inspector();
     void apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& update);

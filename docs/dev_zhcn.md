@@ -252,7 +252,7 @@ ctest --test-dir build --output-on-failure
 - **补丁定位**：`load_source_patch()` 读取当前工作副本；UTF-8 偏移、`source_range_in_text()`、`safe_statement_removal_range()` 和 preview 函数把 `SourceSpan` 转为不会误删相邻注释/语句的文本范围。
 - **距离表达式调整**：表达式扫描函数识别 predefined `distance`、顶层加减号和安全数值加数；`find_safe_numeric_distance_addend()`、`apply_delta_to_distance_addend()`、`adjust_distance_expression_by_delta()` 优先保留变量表达式，只在安全时修改常量项，否则生成距离消歧建议。
 - **参数与 CSV 构造**：BVE 参数分割/引用、数值/optional/value/key 帮助函数保留未改 raw arg；CSV 解析、等价比较和 `build_editable_csv_list_statement()` 保持分隔、尾部字段与编码可写性。
-- **逐类语句生成器**：`build_structure_model/sound_list/station_list/signal_aspect_statement()` 负责列表行；`build_station_put/structure_put/signal_put/repeater_statement()` 处理显式短式转换；其余 `build_*` 覆盖曲线、坡度、他轨道、Section、限速、应答器、声音/噪声和环境效果，维持原方法与参数形状。
+- **逐类语句生成器**：`build_structure_model/sound_list/station_list/signal_aspect_statement()` 负责列表行；`build_station_put/structure_put/signal_put/repeater_statement()` 处理显式方法/参数形状转换，其中 Structure 与 Repeater 支持普通形式和零偏移形式双向转换；其余 `build_*` 覆盖曲线、坡度、他轨道、Section、限速、应答器、声音/噪声和环境效果，维持原方法与参数形状。
 - **目标发现与编辑目标快照**：模板化 `match_edit_ref()`、`find_simple_target()` 和 `find_editable_target()` 在 MapContext 强类型行中定位 edit id；`build_edit_target_snapshot()` 输出字段、原值、raw arg、约束、sourceHash 和 expectedSourceHash。
 - **插入验证**：`validate_insert_field_names()`、`validate_insert_method()`、`validate_insert_change()` 限定向导支持的 row kind、方法和字段；`build_insert_statement()` 只生成普通 BVE 语句，不接受任意 replacement 文本。
 - **距离块规划**：`DistanceSectionAnalysis/PlanningIndex` 建立同文件、Include invocation 和距离段索引；boundary 函数寻找可复用距离块、锚点后空隙或 EOF；变量引用与环境比较函数判断移动语句是否改变求值环境；`append_resolution_request()` 把无法自动决定的位置暴露给 GUI。
@@ -324,7 +324,7 @@ ctest --test-dir build --output-on-failure
 - **异步加载**：worker 结构和 `wake_main_window()` 协调后台线程；`stop_loader()`、`poll_loader()`、`begin_edit_metadata_load()`、`load_map_worker()` 分离 Preview 首屏和 Edit metadata 水合；`apply_load_result()`、`merge_edit_metadata()`、`apply_edit_metadata_result()` 在 UI 线程替换模型并使缓存失效。
 - **几何和加载计时**：`finish_pending_load_timing()`、`regenerate_geometry()` 调用 DLL 重建指定范围/步长数据；状态栏阶段函数只在相应数据真正可用后结束计时。
 - **编辑模式与本地预览**：pending/unsaved 查询函数区分 inspector 草稿、inline-list 草稿和工作副本；`set_edit_mode_enabled()`/`apply_edit_mode_enabled()` 管理元数据加载与退出确认；`snapshot_local_preview_row()` 和按 row kind 的更新块让 inspector/gizmo 在正式重解析前同步可视模型。
-- **检查器打开与 Repeater 导航**：request/process/open 函数从 `kv_get_edit_target_typed()` 构建字段 UI；row kind 支持表决定删除能力；Repeater chain、Section values、structure keys 重建函数维护可变字段；Put0/Begin0/短 Signal 显式转换只在用户确认后启用。
+- **检查器打开与 Repeater 导航**：request/process/open 函数从 `kv_get_edit_target_typed()` 构建字段 UI；row kind 支持表决定删除能力；Repeater chain、Section values、structure keys 重建函数维护可变字段；Structure/Repeater 坐标偏移按钮在普通形式与 Put0/Begin0 间双向切换，丢弃非零偏移前确认，短式 Signal 仍沿用原确认流程。
 - **三维操纵器联动**：`sync_scene_placement_edit_from_inspector()` 把当前字段投影到 Canvas3D target；`apply_scene_placement_drag_update()` 将普通放置的 X/Y/Z 拖动或 `Structure.PutBetween` 的仅 Z 轴整米 `distance` 拖动写回 inspector buffer，不直接写盘。
 - **Apply 与删除**：`apply_inspector_changes()` 组装 typed edit batch、先 dry-run、处理距离消歧，再 memory Apply 并用新快照刷新模型；`delete_element_target()` 根据普通行、成对过渡或 Repeater 删除模式形成一个或多个物理 change。
 - **行内资源列表编辑**：draft 判断、spec、字段校验、重排/清空/删除、文件选择和 find-result 重置代码维护 Station/Structure/Signal/Sound/Sound3D 物理行草稿；批量 Apply 前保持原 source hash 和未显示列。
@@ -496,7 +496,7 @@ App / MapModel
 - `sourceHash` 标识工作副本；多次内存编辑期间 `expectedSourceHash` 始终是磁盘并发基线。
 - 按源文件、Include 上下文/区段和目标距离规划批量移动；保持语句顺序及用户注释或空距离结构。
 - 应用或保存前完整重解析，证明目标语义值，并拒绝非目标元素或最终变量/距离环境的意外变化。
-- 除现有显式确认转换（`Structure.Put0`、`Repeater.Begin0`、短式 `Signal.Put` 或 Repeater 修剪转换）外，保持方法与参数形状。
+- 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
 - 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程，不能新增资源行。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
 

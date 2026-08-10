@@ -43,7 +43,7 @@ Map every requested operation through parse → source identity → typed snapsh
 - Plan distance moves as batches grouped by source file, Include context/section, and target distance. Reuse a compatible block or require the existing explicit boundary/expression workflow.
 - Preserve untouched raw argument expressions. Rewrite a whole variable-length list only when its count changes.
 - Use `repeater_linkage` and `own_track_transition_linkage` for linked rows; do not reconstruct chains independently in one UI path.
-- Keep orphan `BeginTransition` rows read-only. Apply documented explicit conversions only after confirmation (`Put0`, `Begin0`, short-form `Signal.Put`, or permitted Repeater trim conversion).
+- Keep orphan `BeginTransition` rows read-only. Use the explicit Inspector coordinate-offset controls for `Put`/`Put0` and `Begin`/`Begin0`, confirming before nonzero offsets are discarded; keep the documented confirmation paths for short-form `Signal.Put` and permitted Repeater trim conversion.
 - Treat inline Station/Structure/Signal/Sound/Sound3D list editing as a shared draft workflow. Preserve physical source file, source order, unknown trailing fields, and optional Signal glare-row shape.
 - For `KV_EDIT_INSERT`, use structured fields and the same distance/environment/full-reparse validation as updates. Do not accept arbitrary replacement statements.
 

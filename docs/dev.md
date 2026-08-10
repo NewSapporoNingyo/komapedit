@@ -135,7 +135,7 @@ Editable rows must retain source path, include stack, source span, original stat
 - `sourceHash` identifies the working copy; `expectedSourceHash` remains the disk concurrency baseline through repeated in-memory edits.
 - Batch distance moves by source file, Include context/section, and target distance. Preserve statement order and user-authored comments or empty distance structure.
 - Fully reparse before Apply or Save, prove target semantic values, and reject unexpected changes to non-target elements or the final variable/distance environment.
-- Preserve statement method and argument shapes unless an existing explicit conversion is confirmed (`Structure.Put0`, `Repeater.Begin0`, short `Signal.Put`, or Repeater trim conversion).
+- Preserve statement method and argument shapes except for explicit Inspector actions: the coordinate-offset buttons convert `Structure.Put`/`Put0` and `Repeater.Begin`/`Begin0` in either direction (confirming before nonzero offsets are discarded), while short `Signal.Put` and Repeater trim keep their existing confirmation flows.
 - Use shared inline-table drafts for loaded Station, Structure, Signal, Sound, and Sound3D rows. They do not insert new resource rows.
 - Use `repeater_linkage` and transition-linkage rules across maploader, tables, 2D, and 3D instead of recreating chains locally.
 

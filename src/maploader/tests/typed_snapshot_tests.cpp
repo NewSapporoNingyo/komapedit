@@ -707,6 +707,42 @@ struct UpdateBatch {
     }
 };
 
+struct MultiFieldUpdateBatch {
+    std::string change_id;
+    std::string edit_id;
+    std::string source_hash;
+    std::vector<std::string> field_names;
+    std::vector<std::string> field_values;
+    std::vector<KvEditField> fields;
+    KvEditChange change{};
+    KvEditBatch batch{};
+
+    MultiFieldUpdateBatch(
+        std::string id, std::string target_edit_id, std::string hash,
+        std::vector<std::pair<std::string, std::string>> updates)
+        : change_id(std::move(id)), edit_id(std::move(target_edit_id)),
+          source_hash(std::move(hash)) {
+        field_names.reserve(updates.size());
+        field_values.reserve(updates.size());
+        for (auto& update : updates) {
+            field_names.push_back(std::move(update.first));
+            field_values.push_back(std::move(update.second));
+        }
+        fields.reserve(updates.size());
+        for (size_t index = 0; index < updates.size(); ++index) {
+            fields.push_back(KvEditField{
+                utf8_view(field_names[index]), utf8_view(field_values[index])});
+        }
+        change.change_id = utf8_view(change_id);
+        change.edit_id = utf8_view(edit_id);
+        change.operation = KV_EDIT_UPDATE;
+        change.fields = KvSpan{0, static_cast<std::uint64_t>(fields.size())};
+        change.expected_source_hash = utf8_view(source_hash);
+        batch = KvEditBatch{&change, 1, fields.data(),
+                            static_cast<std::uint64_t>(fields.size())};
+    }
+};
+
 struct RepeaterTrimBatch {
     std::string change_update_id = "typed-contract-repeater-trim";
     std::string change_delete_id = "typed-contract-repeater-delete-end";
@@ -789,6 +825,165 @@ const KvRepeaterRow* find_repeater(const KvMapSnapshot& snapshot,
         }
     }
     return nullptr;
+}
+
+void check_coordinate_offset_method_conversions(const std::string& map_path) {
+    const std::vector<std::pair<std::string, std::string>> zero_coordinates = {
+        {"x", "0"}, {"y", "0"}, {"z", "0"},
+        {"rx", "0"}, {"ry", "0"}, {"rz", "0"}
+    };
+
+    {
+        MapHandle handle(kv_load_map_ex(
+            map_path.c_str(), 25.0, KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "Structure offset conversion load");
+        if (!handle.value) return;
+
+        KvMapSnapshot baseline{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &baseline, sizeof(baseline)) != 0 &&
+                  baseline.structure_put_count > 0,
+              "Structure offset conversion baseline");
+        if (baseline.structure_put_count == 0) return;
+        const KvStructurePutRow& source_row = baseline.structure_puts[0];
+        const std::string edit_id = map_string(baseline, source_row.metadata.edit_id);
+        const KvSourceFileRow& source =
+            baseline.source_files[source_row.metadata.source_file_index];
+        const std::string source_hash = map_string(baseline, source.source_hash);
+        const std::string source_path = map_string(baseline, source.file_path);
+
+        auto remove_fields = zero_coordinates;
+        remove_fields.insert(remove_fields.begin(), {"method", "Put0"});
+        MultiFieldUpdateBatch remove_offsets(
+            "typed-contract-structure-remove-offsets", edit_id, source_hash,
+            std::move(remove_fields));
+        KvEditReportSnapshot remove_report{};
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &remove_offsets.batch, &remove_report,
+                  sizeof(remove_report)) != 0 && remove_report.ok &&
+                  remove_report.full_reparse_ok,
+              "Structure Put to Put0 conversion");
+        KvMapSnapshot compact{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &compact, sizeof(compact)) != 0,
+              "Structure Put0 conversion snapshot");
+        const KvStructurePutRow* compact_row = find_structure(compact, edit_id);
+        check(compact_row && map_string(compact, compact_row->method) == "Put0" &&
+                  nearly_equal(compact_row->x, 0.0) &&
+                  nearly_equal(compact_row->y, 0.0) &&
+                  nearly_equal(compact_row->z, 0.0) &&
+                  nearly_equal(compact_row->tilt, 0.0) &&
+                  nearly_equal(compact_row->span, 25.0),
+              "Structure Put0 conversion semantics");
+
+        MultiFieldUpdateBatch add_offsets(
+            "typed-contract-structure-add-offsets", edit_id, source_hash,
+            {{"method", "Put"}});
+        KvEditReportSnapshot add_report{};
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &add_offsets.batch, &add_report,
+                  sizeof(add_report)) != 0 && add_report.ok &&
+                  add_report.full_reparse_ok,
+              "Structure Put0 to Put conversion");
+        KvMapSnapshot expanded{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &expanded, sizeof(expanded)) != 0,
+              "Structure Put conversion snapshot");
+        const KvStructurePutRow* expanded_row = find_structure(expanded, edit_id);
+        check(expanded_row && map_string(expanded, expanded_row->method) == "Put" &&
+                  nearly_equal(expanded_row->x, 0.0) &&
+                  nearly_equal(expanded_row->y, 0.0) &&
+                  nearly_equal(expanded_row->z, 0.0) &&
+                  nearly_equal(expanded_row->tilt, 0.0) &&
+                  nearly_equal(expanded_row->span, 25.0),
+              "Structure Put conversion semantics");
+        const char* source_text = kv_get_source_text(handle.value, source_path.c_str());
+        check(source_text && std::string_view(source_text).find(
+                  "Structure['pole'].Put('0',0,0,0,0,0,0,0,25);") !=
+                  std::string_view::npos,
+              "Structure conversion preserves compact-source arguments");
+        kv_free_string(source_text);
+    }
+
+    {
+        MapHandle handle(kv_load_map_ex(
+            map_path.c_str(), 25.0, KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "Repeater offset conversion load");
+        if (!handle.value) return;
+
+        KvMapSnapshot baseline{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &baseline, sizeof(baseline)) != 0 &&
+                  baseline.repeater_count > 0,
+              "Repeater offset conversion baseline");
+        if (baseline.repeater_count == 0) return;
+        const KvRepeaterRow& source_row = baseline.repeaters[0];
+        const std::string edit_id = map_string(baseline, source_row.metadata.edit_id);
+        const KvSourceFileRow& source =
+            baseline.source_files[source_row.metadata.source_file_index];
+        const std::string source_hash = map_string(baseline, source.source_hash);
+        const std::string source_path = map_string(baseline, source.file_path);
+
+        MultiFieldUpdateBatch add_offsets(
+            "typed-contract-repeater-add-offsets", edit_id, source_hash,
+            {{"method", "Begin"}, {"x", "4"}, {"y", "5"}, {"z", "6"},
+             {"rx", "1"}, {"ry", "2"}, {"rz", "3"}});
+        KvEditReportSnapshot add_report{};
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &add_offsets.batch, &add_report,
+                  sizeof(add_report)) != 0 && add_report.ok &&
+                  add_report.full_reparse_ok,
+              "Repeater Begin0 to Begin conversion");
+        KvMapSnapshot expanded{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &expanded, sizeof(expanded)) != 0,
+              "Repeater Begin conversion snapshot");
+        const KvRepeaterRow* expanded_row = find_repeater(expanded, edit_id);
+        check(expanded_row && map_string(expanded, expanded_row->method) == "Begin" &&
+                  nearly_equal(expanded_row->x, 4.0) &&
+                  nearly_equal(expanded_row->y, 5.0) &&
+                  nearly_equal(expanded_row->z, 6.0) &&
+                  nearly_equal(expanded_row->rx, 1.0) &&
+                  nearly_equal(expanded_row->ry, 2.0) &&
+                  nearly_equal(expanded_row->rz, 3.0) &&
+                  nearly_equal(expanded_row->tilt, 1.0) &&
+                  nearly_equal(expanded_row->span, 25.0) &&
+                  nearly_equal(expanded_row->interval, 5.0) &&
+                  expanded_row->structure_keys.count == 1,
+              "Repeater Begin conversion semantics");
+
+        auto remove_fields = zero_coordinates;
+        remove_fields.insert(remove_fields.begin(), {"method", "Begin0"});
+        MultiFieldUpdateBatch remove_offsets(
+            "typed-contract-repeater-remove-offsets", edit_id, source_hash,
+            std::move(remove_fields));
+        KvEditReportSnapshot remove_report{};
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &remove_offsets.batch, &remove_report,
+                  sizeof(remove_report)) != 0 && remove_report.ok &&
+                  remove_report.full_reparse_ok,
+              "Repeater Begin to Begin0 conversion");
+        KvMapSnapshot compact{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &compact, sizeof(compact)) != 0,
+              "Repeater Begin0 conversion snapshot");
+        const KvRepeaterRow* compact_row = find_repeater(compact, edit_id);
+        check(compact_row && map_string(compact, compact_row->method) == "Begin0" &&
+                  nearly_equal(compact_row->x, 0.0) &&
+                  nearly_equal(compact_row->y, 0.0) &&
+                  nearly_equal(compact_row->z, 0.0) &&
+                  nearly_equal(compact_row->tilt, 1.0) &&
+                  nearly_equal(compact_row->span, 25.0) &&
+                  nearly_equal(compact_row->interval, 5.0) &&
+                  compact_row->structure_keys.count == 1,
+              "Repeater Begin0 conversion semantics");
+        const char* source_text = kv_get_source_text(handle.value, source_path.c_str());
+        check(source_text && std::string_view(source_text).find(
+                  "Repeater['rail'].Begin0('1',1,25,5,'rail-a');") !=
+                  std::string_view::npos,
+              "Repeater conversion preserves compact-source arguments");
+        kv_free_string(source_text);
+    }
 }
 
 const KvStationListRow* find_station_list_row(const KvMapSnapshot& snapshot,
@@ -1004,6 +1199,7 @@ int geometry_projection_contract() {
 
 int edit_contract() {
     TempFixture fixture;
+    check_coordinate_offset_method_conversions(fixture.path_utf8());
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
                                     KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
     check(handle.value != nullptr, "edit load");

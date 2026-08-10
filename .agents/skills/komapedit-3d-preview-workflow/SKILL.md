@@ -26,7 +26,7 @@ Determine whether the defect is UI wiring, scene-cache data, geometry/placement 
 5. Use deferred Inspector/delete requests; never mutate GUI tables or Inspector state while an ImGui popup is rendering.
 6. Bind stable `edit_id`/row kind directly. Do not resolve identical-distance objects with an ambiguous lookup.
 7. Keep placement syntax exact: empty key or `0` is own track where the current placement contract defines it; `1` remains a real other-track key. Do not leak broad aliases into placement lookup.
-8. Require the documented explicit conversion before editing `Put0`, `Begin0`, or short-form `Signal.Put` extended coordinates.
+8. Require the explicit Inspector coordinate-offset control before editing `Put0`/`Begin0` coordinates, confirm before discarding nonzero offsets in the reverse conversion, and keep the documented confirmation before editing short-form `Signal.Put` extended coordinates.
 9. Preserve reversed-Z/camera-relative or chunk-local precision behavior, depth clear/compare pairing, fog, draw distance, transparent material ordering, and fallback warnings.
 10. Keep route-overlay fields mapped to their actual total/current statistics; verify labels before changing geometry.
 

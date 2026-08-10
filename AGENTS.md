@@ -69,7 +69,7 @@ Current implementation status comes from source and `TODO.md`, not from an old m
 - Store application preferences in `settings/settings.ini`, recent-map/per-map history in `settings/history.ini`, and Dear ImGui layout in `settings/imgui.ini`; do not invent overlapping sidecar files.
 - Cache table rows, marker layouts, and scene data outside per-frame loops. Attach stable edit/navigation metadata during hydration/cache construction rather than ambiguous per-frame lookups.
 - Keep 2D pan/zoom/rotation, grid/background alignment, measurement, station/distance jump, markers, and navigation behavior unless the task explicitly changes them.
-- Keep 3D camera jumps, picking/highlights, route overlays, track visibility, Structure/Signal/Repeater gizmos, model loading, and shared marker visuals consistent. Source-form conversions such as `Put0`, `Begin0`, or short `Signal.Put` require the existing explicit confirmation path.
+- Keep 3D camera jumps, picking/highlights, route overlays, track visibility, Structure/Signal/Repeater gizmos, model loading, and shared marker visuals consistent. `Put`/`Put0` and `Begin`/`Begin0` conversion must use the explicit Inspector coordinate-offset controls and confirm before discarding nonzero offsets; short `Signal.Put` keeps its existing explicit confirmation path.
 - Perform Inspector/delete state mutation through deferred requests, not while an ImGui table or popup is rendering.
 
 ### Performance, concurrency, and safety

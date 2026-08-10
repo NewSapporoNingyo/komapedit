@@ -1370,24 +1370,30 @@ std::string build_structure_put_statement(const MapEditChange& change,
     std::string output_method = row.method;
     auto method_change = change.field_changes.find("method");
     if (method_change != change.field_changes.end()) {
-        const std::string requested_method = trim_field_copy(method_change->second);
-        if (between || !source_put0 || ascii_lower(requested_method) != "put") {
+        const std::string requested_method = ascii_lower(
+            trim_field_copy(method_change->second));
+        const bool supported_conversion =
+            (source_put0 && requested_method == "put") ||
+            (!source_put0 && requested_method == "put0");
+        if (between || !supported_conversion) {
             throw std::runtime_error("unsupported Structure placement method conversion");
         }
-        output_method = "Put";
+        output_method = requested_method == "put0" ? "Put0" : "Put";
     }
-    const bool converted_put0 = source_put0 && ascii_lower(output_method) == "put";
+    const bool output_put0 = ascii_lower(output_method) == "put0";
     std::ostringstream out;
     out << "Structure[" << quoted_bve_string(structure_key) << "]." << output_method << "(";
     if (between) {
         out << track_key_field_as_bve_arg(change, "trackKey1", row.track_key1, raw_arg_at(raw_args, 0)) << ","
             << track_key_field_as_bve_arg(change, "trackKey2", row.track_key2, raw_arg_at(raw_args, 1)) << ","
             << numeric_field(change, "flag", row.flag, raw_arg_at(raw_args, 2));
-    } else if (source_put0 && !converted_put0) {
+    } else if (output_put0) {
+        const size_t tilt_index = source_put0 ? 1 : 7;
+        const size_t span_index = source_put0 ? 2 : 8;
         out << track_key_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
-            << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1)) << ","
-            << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2));
-    } else if (converted_put0) {
+            << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, tilt_index)) << ","
+            << numeric_field(change, "span", row.span, raw_arg_at(raw_args, span_index));
+    } else if (source_put0) {
         out << track_key_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0)) << ","
             << numeric_field(change, "x", 0.0) << ","
             << numeric_field(change, "y", 0.0) << ","
@@ -1518,7 +1524,7 @@ std::string build_repeater_statement(const MapEditChange& change,
     }
 
     const bool source_begin0 = source_method == "begin0";
-    bool converted_begin0 = false;
+    std::string output_method = row.method;
     if (has_field_change(change, "method")) {
         const std::string requested_method = ascii_lower(
             trim_field_copy(field_text_or(change, "method", row.method)));
@@ -1531,25 +1537,34 @@ std::string build_repeater_statement(const MapEditChange& change,
             }
             return "Repeater[" + key + "].End();";
         }
-        if (!source_begin0 || requested_method != "begin") {
+        const bool supported_conversion =
+            (source_begin0 && requested_method == "begin") ||
+            (!source_begin0 && requested_method == "begin0");
+        if (!supported_conversion) {
             throw std::runtime_error("unsupported Repeater method conversion");
         }
-        converted_begin0 = true;
+        output_method = requested_method == "begin0" ? "Begin0" : "Begin";
     }
-    if (source_begin0 && !converted_begin0) {
+    const bool output_begin0 = ascii_lower(output_method) == "begin0";
+    if (source_begin0 && output_begin0) {
         reject_repeater_position_fields(
             change, "Repeater.Begin0 requires conversion to Begin before editing position");
     }
 
     std::ostringstream out;
-    out << "Repeater[" << key << "]." << (converted_begin0 ? "Begin" : row.method) << "("
+    out << "Repeater[" << key << "]." << output_method << "("
         << track_key_field_as_bve_arg(change, "trackKey", row.track_key, raw_arg_at(raw_args, 0));
-    if (source_begin0 && !converted_begin0) {
-        out << "," << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, 1))
-            << "," << numeric_field(change, "span", row.span, raw_arg_at(raw_args, 2))
-            << "," << numeric_field(change, "interval", row.interval, raw_arg_at(raw_args, 3));
-        append_repeater_structure_keys(out, edited_keys, row.structure_keys, raw_args, 4);
-    } else if (converted_begin0) {
+    if (output_begin0) {
+        const size_t tilt_index = source_begin0 ? 1 : 7;
+        const size_t span_index = source_begin0 ? 2 : 8;
+        const size_t interval_index = source_begin0 ? 3 : 9;
+        const size_t structure_key_index = source_begin0 ? 4 : 10;
+        out << "," << numeric_field(change, "tilt", row.tilt, raw_arg_at(raw_args, tilt_index))
+            << "," << numeric_field(change, "span", row.span, raw_arg_at(raw_args, span_index))
+            << "," << numeric_field(change, "interval", row.interval, raw_arg_at(raw_args, interval_index));
+        append_repeater_structure_keys(
+            out, edited_keys, row.structure_keys, raw_args, structure_key_index);
+    } else if (source_begin0) {
         out << "," << numeric_field(change, "x", 0.0)
             << "," << numeric_field(change, "y", 0.0)
             << "," << numeric_field(change, "z", 0.0)

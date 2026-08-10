@@ -3089,6 +3089,14 @@ bool is_repeater_structure_key_field(const MapElementEditFieldState& field) {
     return field.key.rfind("structureKeys.", 0) == 0;
 }
 
+bool is_coordinate_offset_field(std::string_view field) {
+    static constexpr std::array<std::string_view, 6> k_coordinate_fields = {
+        "x", "y", "z", "rx", "ry", "rz"
+    };
+    return std::find(k_coordinate_fields.begin(), k_coordinate_fields.end(), field) !=
+        k_coordinate_fields.end();
+}
+
 bool is_section_values_field(std::string_view field) {
     return field.rfind("values.", 0) == 0;
 }
@@ -3173,48 +3181,38 @@ MapElementEditFieldState make_section_values_field(
     return field;
 }
 
-void enable_inspector_zero_method_conversion_draft(MapElementInspectorState& inspector) {
+void set_inspector_coordinate_offsets_enabled(MapElementInspectorState& inspector,
+                                              bool enabled) {
     const bool supported_row_kind = inspector.row_kind == "structure.put" ||
         inspector.row_kind == "repeater";
-    if (!inspector.open || !supported_row_kind ||
-        !inspector.source_method_put0 || inspector.put0_conversion_draft) {
-        inspector.put0_prompt_requested = false;
-        return;
+    if (!inspector.open || !supported_row_kind) return;
+    if (!enabled) {
+        for (MapElementEditFieldState& field : inspector.fields) {
+            if (is_coordinate_offset_field(field.key)) {
+                set_edit_field_buffer(field, "0");
+            }
+        }
     }
+    inspector.coordinate_offsets_enabled = enabled;
+    inspector.coordinate_offset_discard_prompt_requested = false;
+}
 
-    auto insert_at = std::find_if(inspector.fields.begin(), inspector.fields.end(),
-                                  [](const MapElementEditFieldState& field) {
-                                      return field.key == "tilt";
-                                  });
-    const size_t insertion_index = static_cast<size_t>(
-        std::distance(inspector.fields.begin(), insert_at));
-    std::vector<MapElementEditFieldState> coordinates;
-    coordinates.reserve(6);
+bool inspector_coordinate_offsets_are_zero(const MapElementInspectorState& inspector) {
     for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
-        MapElementEditFieldState field;
-        field.key = key;
-        field.backend_key = key;
-        field.target_edit_id = inspector.edit_id;
-        field.expected_source_hash = inspector.expected_source_hash;
-        field.label = key;
-        field.original_value = "0";
-        field.numeric_constraint = structure_edit_numeric_constraint(key);
-        field.required = true;
-        set_edit_field_buffer(field, "0");
-        coordinates.push_back(std::move(field));
+        const MapElementEditFieldState* field = find_inspector_field(inspector, key);
+        double value = 0.0;
+        if (!field || !parse_gui_edit_number(edit_field_buffer_text(*field), &value) ||
+            truncate_gui_thousandths(value) != 0.0) {
+            return false;
+        }
     }
-    inspector.fields.insert(
-        inspector.fields.begin() + static_cast<std::ptrdiff_t>(insertion_index),
-        std::make_move_iterator(coordinates.begin()),
-        std::make_move_iterator(coordinates.end()));
-    inspector.put0_conversion_draft = true;
-    inspector.put0_prompt_requested = false;
+    return true;
 }
 
 void capture_repeater_inspector_draft(MapElementInspectorState& inspector) {
     if (!inspector.open || inspector.row_kind != "repeater" || inspector.edit_id.empty()) return;
     RepeaterInspectorDraft draft;
-    draft.begin0_conversion_draft = inspector.put0_conversion_draft;
+    draft.coordinate_offsets_enabled = inspector.coordinate_offsets_enabled;
     draft.fields.reserve(inspector.fields.size());
     for (const MapElementEditFieldState& field : inspector.fields) {
         if (!field.read_only) draft.fields.emplace_back(field.key, edit_field_buffer_text(field));
@@ -3228,9 +3226,8 @@ void restore_repeater_inspector_draft(MapElementInspectorState& inspector) {
     if (draft_it == inspector.session.repeater_drafts.end()) return;
     const RepeaterInspectorDraft& draft = draft_it->second;
 
-    if (draft.begin0_conversion_draft) {
-        enable_inspector_zero_method_conversion_draft(inspector);
-    }
+    set_inspector_coordinate_offsets_enabled(
+        inspector, draft.coordinate_offsets_enabled);
 
     std::vector<std::string> structure_keys;
     for (const auto& entry : draft.fields) {
@@ -3408,16 +3405,13 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     } else if (request.row_kind == "structure.put") {
         const std::string method = table_cell(*row, "method");
         const std::string original_method = table_cell(*original_row, "method");
-        next.source_method_put0 = ascii_lower(original_method) == "put0";
-        next.put0_conversion_draft = next.source_method_put0 && ascii_lower(method) != "put0";
-        next.put0_prompt_requested = ascii_lower(method) == "put0";
+        next.source_zero_offset_method = ascii_lower(original_method) == "put0";
+        next.coordinate_offsets_enabled = ascii_lower(method) != "put0";
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("structureKey", "structureKey", MapElementNumericConstraint::None, true);
         add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, false);
-        if (ascii_lower(method) != "put0") {
-            for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
-                add_row_field(key, key, structure_edit_numeric_constraint(key), true);
-            }
+        for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
+            add_row_field(key, key, structure_edit_numeric_constraint(key), true);
         }
         add_row_field("tilt", "tilt", structure_edit_numeric_constraint("tilt"), true);
         add_row_field("span", "span", structure_edit_numeric_constraint("span"), true);
@@ -3644,9 +3638,8 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
 
         const std::string method = table_cell(*row, "method");
         const std::string original_method = table_cell(*original_row, "method");
-        next.source_method_put0 = ascii_lower(original_method) == "begin0";
-        next.put0_conversion_draft = next.source_method_put0 && ascii_lower(method) != "begin0";
-        next.put0_prompt_requested = ascii_lower(method) == "begin0";
+        next.source_zero_offset_method = ascii_lower(original_method) == "begin0";
+        next.coordinate_offsets_enabled = ascii_lower(method) != "begin0";
         next.repeater_boundary_kind =
             linked->boundary_kind == repeater_linkage::BoundaryKind::ExplicitEnd ? "end" :
             linked->boundary_kind == repeater_linkage::BoundaryKind::NextBegin ? "change" : "open";
@@ -3668,10 +3661,8 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("repeaterKey", "repeaterKey", MapElementNumericConstraint::None, true);
         next.fields.back().read_only = true;
         add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, false);
-        if (ascii_lower(method) != "begin0") {
-            for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
-                add_row_field(key, key, structure_edit_numeric_constraint(key), true);
-            }
+        for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
+            add_row_field(key, key, structure_edit_numeric_constraint(key), true);
         }
         add_row_field("tilt", "tilt", structure_edit_numeric_constraint("tilt"), true);
         add_row_field("span", "span", structure_edit_numeric_constraint("span"), true);
@@ -3784,10 +3775,6 @@ bool App::navigate_repeater_inspector(bool toward_next) {
         locate_repeater_row_in_scene_preview(inspector_.repeater_scene_row_index);
     }
     return true;
-}
-
-void App::enable_inspector_put0_conversion() {
-    enable_inspector_zero_method_conversion_draft(inspector_);
 }
 
 void App::clear_scene_placement_edit_target() {
@@ -3903,16 +3890,16 @@ void App::sync_scene_placement_edit_from_inspector() {
         clear_scene_placement_edit_target();
         return;
     }
+    const bool coordinate_offset_target = structure_target || repeater_target;
     target.placement_distance_gizmo =
-        inspector_.source_method_put0 && !inspector_.put0_conversion_draft;
+        coordinate_offset_target && !inspector_.coordinate_offsets_enabled;
     if (repeater_target && !target.placement_distance_gizmo &&
         std::fabs(target.distance - model_distance) > 1e-9) {
         clear_scene_placement_edit_target();
         return;
     }
-    const bool show_gizmo = structure_between_target ||
-        !inspector_.source_method_put0 || inspector_.put0_conversion_draft ||
-        target.placement_distance_gizmo;
+    const bool show_gizmo = !coordinate_offset_target ||
+        inspector_.coordinate_offsets_enabled || target.placement_distance_gizmo;
     if (repeater_target) {
         scene_preview_canvas_->set_scene_repeater_edit_target(target, show_gizmo);
     } else {
@@ -4128,12 +4115,21 @@ void App::apply_inspector_changes() {
         }
     }
 
-    if (inspector_.source_method_put0 && inspector_.put0_conversion_draft) {
+    const bool coordinate_offset_inspector =
+        inspector_.row_kind == "structure.put" || inspector_.row_kind == "repeater";
+    const bool draft_zero_offset_method =
+        coordinate_offset_inspector && !inspector_.coordinate_offsets_enabled;
+    if (coordinate_offset_inspector &&
+        inspector_.source_zero_offset_method != draft_zero_offset_method) {
         MapElementEditFieldState primary_field;
         primary_field.target_edit_id = inspector_.edit_id;
         primary_field.expected_source_hash = inspector_.expected_source_hash;
         MapElementPendingChange& change = change_for(primary_field);
-        change.field_changes["method"] = inspector_.row_kind == "repeater" ? "Begin" : "Put";
+        if (inspector_.row_kind == "repeater") {
+            change.field_changes["method"] = draft_zero_offset_method ? "Begin0" : "Begin";
+        } else {
+            change.field_changes["method"] = draft_zero_offset_method ? "Put0" : "Put";
+        }
     }
     if (inspector_.row_kind == "signal.put" &&
         inspector_.source_signal_short_form &&
@@ -4145,7 +4141,8 @@ void App::apply_inspector_changes() {
         change.field_changes["form"] = "full";
     }
 
-    if (inspector_.row_kind == "structure.put") {
+    if (inspector_.row_kind == "structure.put" &&
+        inspector_.coordinate_offsets_enabled) {
         const MapElementEditFieldState* z_field = find_inspector_field(inspector_, "z");
         double z_value = 0.0;
         if (z_field && parse_gui_edit_number(edit_field_buffer_text(*z_field), &z_value) &&
@@ -6089,6 +6086,8 @@ bool App::render_map_element_field_control(MapElementEditFieldState& field,
 
 void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
     const bool repeater_inspector = inspector.row_kind == "repeater";
+    const bool coordinate_offset_inspector =
+        inspector.row_kind == "structure.put" || repeater_inspector;
     const bool section_inspector = inspector.row_kind == "section.begin" ||
         inspector.row_kind == "section.speedLimit";
     for (size_t field_index = 0; field_index < inspector.fields.size(); ++field_index) {
@@ -6097,6 +6096,10 @@ void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
             continue;
         }
         if (section_inspector && is_section_values_field(field)) {
+            continue;
+        }
+        if (coordinate_offset_inspector && !inspector.coordinate_offsets_enabled &&
+            is_coordinate_offset_field(field.key)) {
             continue;
         }
         if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
@@ -6265,6 +6268,23 @@ void App::render_element_inspector() {
     };
 
     ImGui::Separator();
+    const bool coordinate_offset_inspector =
+        inspector_.row_kind == "structure.put" || repeater_inspector;
+    if (coordinate_offset_inspector) {
+        const char* button_key = inspector_.coordinate_offsets_enabled
+            ? "button.remove_coordinate_offsets"
+            : "button.add_coordinate_offsets";
+        if (ImGui::Button(tr(button_key).c_str())) {
+            if (!inspector_.coordinate_offsets_enabled) {
+                set_inspector_coordinate_offsets_enabled(inspector_, true);
+            } else if (inspector_coordinate_offsets_are_zero(inspector_)) {
+                set_inspector_coordinate_offsets_enabled(inspector_, false);
+            } else {
+                inspector_.coordinate_offset_discard_prompt_requested = true;
+            }
+        }
+        ImGui::Separator();
+    }
     const bool section_inspector = inspector_.row_kind == "section.begin" ||
         inspector_.row_kind == "section.speedLimit";
     render_map_element_field_inputs(inspector_);
@@ -8293,30 +8313,24 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
-    const bool repeater_begin0 = inspector_.open && inspector_.row_kind == "repeater";
-    const char* begin0_title_key = repeater_begin0
-        ? "dialog.repeater_begin0_convert_title"
-        : "dialog.structure_put0_convert_title";
-    const char* begin0_message_key = repeater_begin0
-        ? "dialog.repeater_begin0_convert_message"
-        : "dialog.structure_put0_convert_message";
-    if (inspector_.open && inspector_.put0_prompt_requested) {
-        ImGui::OpenPopup(tr(begin0_title_key).c_str());
-        inspector_.put0_prompt_requested = false;
+    if (inspector_.open &&
+        inspector_.coordinate_offset_discard_prompt_requested) {
+        ImGui::OpenPopup(tr("dialog.coordinate_offset_discard_title").c_str());
+        inspector_.coordinate_offset_discard_prompt_requested = false;
     }
-    if (ImGui::BeginPopupModal(tr(begin0_title_key).c_str(), nullptr,
+    if (ImGui::BeginPopupModal(
+            tr("dialog.coordinate_offset_discard_title").c_str(), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 480.0f);
-        ImGui::TextUnformatted(tr(begin0_message_key).c_str());
+        ImGui::TextUnformatted(tr("dialog.coordinate_offset_discard_message").c_str());
         ImGui::PopTextWrapPos();
         ImGui::Separator();
         if (ImGui::Button(tr("button.ok").c_str())) {
-            enable_inspector_put0_conversion();
+            set_inspector_coordinate_offsets_enabled(inspector_, false);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
-            inspector_.put0_conversion_draft = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
