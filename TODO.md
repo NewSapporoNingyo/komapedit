@@ -44,6 +44,7 @@ This file is the active project roadmap and contains unfinished items only. Comp
 ### 用户界面与辅助功能
 
 - [ ] 修复repeater的z轴偏移大于5m时，没有自动触发distance重新设置的问题。
+- [ ] 修复新建地图元素向导中，带坐标偏移的structure缺少参数输入框的问题。
 - [ ] 修复使用Begin0方法的Repeater的属性窗口中没有结束位置
 - [ ] Repeater结束位置的新建功能
 - [ ] 修复他轨道编辑窗口中各输入框标题没有使用BVE官方文档中Track语句参数示例的问题

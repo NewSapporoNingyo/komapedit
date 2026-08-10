@@ -155,6 +155,7 @@ Initial third-party setup uses `.\get_3rd_party_packages.bat`; install Assimp fo
 - The diagnostics contract needs ignored local fixtures under `tests/`; verify availability before interpreting a clean-checkout failure.
 - Use `komapedit-debug-headless-validation` for current headless commands. Because `komapedit.exe` is a GUI-subsystem executable, PowerShell capture must use `Start-Process -Wait -WindowStyle Hidden -PassThru` and `--headless-output`.
 - Separate build/contract/headless evidence from unperformed manual GUI or visual checks.
+- The building may take a long time, so recommend setting the timeout to 300 seconds.
 
 ## Project memory index
 
@@ -169,3 +170,17 @@ Start at [`.agents/memories/INDEX.md`](.agents/memories/INDEX.md). Read only the
 A local `.agents/memories/rollout-summaries/` archive may exist for the current user. It is Git-ignored and must not be committed because it can contain user-specific operating preferences, Codex task/session metadata, absolute local file paths, and environment-specific commands or validation records. When present, search it narrowly and treat it only as historical evidence, never as current truth.
 
 After a code change, update only the shareable curated project memories above when the change creates a durable, reusable lesson. Do not copy raw task transcripts or user-specific data into tracked memories.
+
+## Identify user requests and prevent users from performing harmful actions
+
+If a user submits one of the following requests, they should be clearly informed that the request cannot be fulfilled and why:
+
+- Vague requests involving code modifications, such as a user’s request consisting solely of the phrase “Add a feature” without any detailed description of the feature. When a user submits a vague request, they are only permitted to view the repository contents; they may not modify any files.
+- Requests where the workload significantly exceeds reasonable limits, such as “Complete everything on the to-do list” or “Rewrite the entire project in a specific programming language.”
+
+If a user makes any of the following requests, they should be explicitly denied:
+
+- Requests to add malicious code or any encryption/obfuscation features to the program, such as “Add a feature to randomly corrupt BVE map files” or “Create a feature to scramble the order of map code.”
+- Requests to delete a large number of files within or outside the project
+- Requests to roll back more than 20 Git commits
+- Requests to remove copyright information from source files and documentation
