@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Table Features"
+  short_description: "Build typed tables and cross-view navigation"
+  default_prompt: "Use $komapedit-table-feature-workflow to add or repair this typed table and navigation feature."

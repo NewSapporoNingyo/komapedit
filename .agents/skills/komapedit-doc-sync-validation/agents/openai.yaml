@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Documentation Sync"
+  short_description: "Validate synchronized project documentation"
+  default_prompt: "Use $komapedit-doc-sync-validation to verify this documentation-only komapedit diff."

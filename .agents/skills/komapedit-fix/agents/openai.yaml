@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Bug Fix"
+  short_description: "Diagnose and repair komapedit regressions"
+  default_prompt: "Use $komapedit-fix to diagnose this komapedit regression, apply the smallest proven fix, and verify it."

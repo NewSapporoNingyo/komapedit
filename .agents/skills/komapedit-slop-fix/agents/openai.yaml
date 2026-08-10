@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Slop Fix"
+  short_description: "Audit and reduce evidence-backed code slop"
+  default_prompt: "Use $komapedit-slop-fix to audit this komapedit area and repair only evidence-backed sustainability problems."

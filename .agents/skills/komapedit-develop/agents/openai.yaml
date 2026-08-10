@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Development"
+  short_description: "Implement scoped komapedit features safely"
+  default_prompt: "Use $komapedit-develop to implement this scoped komapedit feature and verify it with the appropriate Debug checks."

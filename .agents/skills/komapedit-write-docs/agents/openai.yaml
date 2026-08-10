@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Documentation"
+  short_description: "Synchronize komapedit project documentation"
+  default_prompt: "Use $komapedit-write-docs to update the relevant komapedit documentation from current source behavior."

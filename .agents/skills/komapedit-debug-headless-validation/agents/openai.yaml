@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Debug Validation"
+  short_description: "Run targeted komapedit Debug validation"
+  default_prompt: "Use $komapedit-debug-headless-validation to select and run the smallest convincing Debug or headless proof."

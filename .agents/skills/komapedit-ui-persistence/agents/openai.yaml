@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit UI Persistence"
+  short_description: "Persist komapedit GUI state in the right file"
+  default_prompt: "Use $komapedit-ui-persistence to add or repair this persisted GUI setting."

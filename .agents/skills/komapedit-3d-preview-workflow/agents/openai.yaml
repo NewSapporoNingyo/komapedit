@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit 3D Preview"
+  short_description: "Work safely on komapedit 3D previews"
+  default_prompt: "Use $komapedit-3d-preview-workflow to implement or diagnose this komapedit 3D preview change."

@@ -2,7 +2,7 @@
 
 [简体中文](dev_zhcn.md) · [User guide](../README.md) · [Roadmap](../TODO.md) · [AI-assisted development](ai-dev.md)
 
-This guide describes the setup, architecture, conventions, and validation needed for conventional human-led development of komapedit. If an AI coding tool contributes to a change, also follow [`ai-dev.md`](ai-dev.md) and [`AGENTS.md`](../AGENTS.md).
+This guide describes the setup, architecture, conventions, and validation needed for conventional human-led development of komapedit. If an AI coding tool contributes to a change, also follow [`ai-dev.md`](ai-dev.md), [`AGENTS.md`](../AGENTS.md), and the matching workflow under [`.agents/skills`](../.agents/skills).
 
 ## Scope and supported environment
 

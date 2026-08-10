@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Station Editing"
+  short_description: "Maintain station editing and source identity"
+  default_prompt: "Use $komapedit-station-edit-workflow to extend or repair this station editing behavior."

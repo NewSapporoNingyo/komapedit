@@ -10,3 +10,6 @@ pi-prompts.txt
 pi-agent-deepseek-here.bat
 pi-agent-kimik3-here.bat
 pi-agent-grok45-here.bat
+
+# Per-user Codex task history
+/.agents/memories/rollout-summaries/

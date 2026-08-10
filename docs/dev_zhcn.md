@@ -2,7 +2,7 @@
 
 [English](dev.md) · [用户指南](README_zhcn.md) · [路线图](../TODO.md) · [AI 辅助开发](ai-dev_zhcn.md)
 
-本文档说明以人工方式开发 komapedit 时所需的环境、架构、规范与验证流程。如果变更中使用了 AI 编程工具，还必须遵守 [`ai-dev_zhcn.md`](ai-dev_zhcn.md) 和 [`AGENTS.md`](../AGENTS.md)。
+本文档说明以人工方式开发 komapedit 时所需的环境、架构、规范与验证流程。如果变更中使用了 AI 编程工具，还必须遵守 [`ai-dev_zhcn.md`](ai-dev_zhcn.md)、[`AGENTS.md`](../AGENTS.md) 与 [`.agents/skills`](../.agents/skills) 中匹配的工作流。
 
 ## 范围与支持环境
 
