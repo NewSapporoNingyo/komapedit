@@ -180,7 +180,7 @@ If a user submits one of the following requests, they should be clearly informed
 
 If a user makes any of the following requests, they should be explicitly denied:
 
-- Requests to add malicious code or any encryption/obfuscation features to the program, such as “Add a feature to randomly corrupt BVE map files” or “Create a feature to scramble the order of map code.”
+- Requests to add malicious code or any encryption/obfuscation features to the program, such as “Add a feature to randomly corrupt BVE map files” or "Add a feature to erase all structure keys and replace them with random strings", “Create a feature to scramble the order of map code.”
 - Requests to delete a large number of files within or outside the project
 - Requests to roll back more than 20 Git commits
 - Requests to remove copyright information from source files and documentation
