@@ -176,15 +176,55 @@ bool parse_gui_edit_number(const std::string& text, double* parsed_value = nullp
     return valid;
 }
 
-bool is_gui_tilt_value(double value) {
-    return std::isfinite(value) && std::trunc(value) == value &&
-        value >= 0.0 && value <= 3.0;
+struct MapElementNumericChoice {
+    int value;
+    const char* description_key;
+};
+
+struct MapElementNumericChoiceSet {
+    const MapElementNumericChoice* choices = nullptr;
+    size_t count = 0;
+};
+
+MapElementNumericChoiceSet map_element_numeric_choices(
+    MapElementNumericConstraint constraint) {
+    static constexpr MapElementNumericChoice k_tilt_choices[] = {
+        {0, "value.tilt.always_level"},
+        {1, "value.tilt.follow_gradient"},
+        {2, "value.tilt.follow_cant"},
+        {3, "value.tilt.follow_gradient_and_cant"},
+    };
+    static constexpr MapElementNumericChoice k_door_choices[] = {
+        {-1, "value.door.open_left"},
+        {0, "value.door.do_not_open"},
+        {1, "value.door.open_right"},
+    };
+    if (constraint == MapElementNumericConstraint::Tilt) {
+        return {k_tilt_choices, std::size(k_tilt_choices)};
+    }
+    if (constraint == MapElementNumericConstraint::Door) {
+        return {k_door_choices, std::size(k_door_choices)};
+    }
+    return {};
 }
 
-int gui_tilt_option_index(const std::string& text) {
+int gui_numeric_choice_option_index(double value,
+                                    MapElementNumericConstraint constraint) {
+    if (!std::isfinite(value) || std::trunc(value) != value) return -1;
+    const MapElementNumericChoiceSet options = map_element_numeric_choices(constraint);
+    for (size_t index = 0; index < options.count; ++index) {
+        if (value == static_cast<double>(options.choices[index].value)) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+int gui_numeric_choice_option_index(const std::string& text,
+                                    MapElementNumericConstraint constraint) {
     double value = 0.0;
-    if (!parse_gui_edit_number(text, &value) || !is_gui_tilt_value(value)) return -1;
-    return static_cast<int>(value);
+    if (!parse_gui_edit_number(text, &value)) return -1;
+    return gui_numeric_choice_option_index(value, constraint);
 }
 
 void render_inline_wrapped_text(const char* label, const std::string& value) {
@@ -279,19 +319,22 @@ const MapElementEditFieldState* find_inspector_field(const MapElementInspectorSt
 bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,
                                           bool canonicalize) {
     if (field.numeric_constraint == MapElementNumericConstraint::None) return true;
-    if (!field.required && trim_gui_ascii_copy(edit_field_buffer_text(field)).empty()) {
+    if (!field.required && field.numeric_constraint != MapElementNumericConstraint::Door &&
+        trim_gui_ascii_copy(edit_field_buffer_text(field)).empty()) {
         return true;
     }
     double value = 0.0;
     if (!parse_gui_edit_number(edit_field_buffer_text(field), &value)) return false;
-    if (field.numeric_constraint == MapElementNumericConstraint::Tilt &&
-        !is_gui_tilt_value(value)) {
+    const MapElementNumericChoiceSet options =
+        map_element_numeric_choices(field.numeric_constraint);
+    if (options.count != 0 &&
+        gui_numeric_choice_option_index(value, field.numeric_constraint) < 0) {
         return false;
     }
     if (!canonicalize) return true;
     if (field.numeric_constraint == MapElementNumericConstraint::Truncate3) {
         set_edit_field_buffer(field, format_gui_transform_number(value));
-    } else if (field.numeric_constraint == MapElementNumericConstraint::Tilt) {
+    } else if (options.count != 0) {
         set_edit_field_buffer(field, format_double(value, 0));
     }
     return true;
@@ -3355,7 +3398,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     } else if (request.row_kind == "station.put") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("stationKey", "stationKey", MapElementNumericConstraint::None, true);
-        add_row_field("door", "door", MapElementNumericConstraint::Finite, false);
+        add_row_field("door", "door", MapElementNumericConstraint::Door, false);
         add_row_field("margin1", "back", MapElementNumericConstraint::Finite, false);
         add_row_field("margin2", "front", MapElementNumericConstraint::Finite, false);
     } else if (request.row_kind == "irregularity.change") {
@@ -3766,7 +3809,7 @@ void App::sync_scene_placement_edit_from_inspector() {
         double value = 0.0;
         if (!parse_gui_edit_number(edit_field_buffer_text(*field), &value)) return;
         if (field->numeric_constraint == MapElementNumericConstraint::Tilt &&
-            !is_gui_tilt_value(value)) {
+            gui_numeric_choice_option_index(value, field->numeric_constraint) < 0) {
             return;
         }
         if (field->numeric_constraint == MapElementNumericConstraint::Truncate3 &&
@@ -5847,31 +5890,27 @@ void App::finish_pending_close_action() {
 bool App::render_map_element_field_control(MapElementEditFieldState& field,
                                            float width) {
     ImGui::SetNextItemWidth(width);
-    if (field.numeric_constraint == MapElementNumericConstraint::Tilt) {
+    const MapElementNumericChoiceSet options =
+        map_element_numeric_choices(field.numeric_constraint);
+    if (options.count != 0) {
         const std::string current_value = edit_field_buffer_text(field);
-        static constexpr std::array<const char*, 4> k_tilt_description_keys = {
-            "value.tilt.always_level",
-            "value.tilt.follow_gradient",
-            "value.tilt.follow_cant",
-            "value.tilt.follow_gradient_and_cant",
-        };
-        const int selected_option = gui_tilt_option_index(current_value);
-        const auto option_text = [&](int option) {
-            return std::to_string(option) + ": " +
-                tr(k_tilt_description_keys[static_cast<size_t>(option)]);
+        const int selected_option = gui_numeric_choice_option_index(
+            current_value, field.numeric_constraint);
+        const auto option_text = [&](size_t option) {
+            const MapElementNumericChoice& choice = options.choices[option];
+            return std::to_string(choice.value) + ": " + tr(choice.description_key);
         };
         const std::string preview = selected_option >= 0
-            ? option_text(selected_option)
+            ? option_text(static_cast<size_t>(selected_option))
             : current_value;
         if (!ImGui::BeginCombo(field.label.c_str(), preview.c_str())) return false;
 
         bool input_changed = false;
-        for (int option = 0; option < static_cast<int>(k_tilt_description_keys.size());
-             ++option) {
-            const bool selected = option == selected_option;
+        for (size_t option = 0; option < options.count; ++option) {
+            const bool selected = static_cast<int>(option) == selected_option;
             const std::string display_text = option_text(option);
             if (ImGui::Selectable(display_text.c_str(), selected)) {
-                const std::string candidate = std::to_string(option);
+                const std::string candidate = std::to_string(options.choices[option].value);
                 if (candidate != current_value) {
                     set_edit_field_buffer(field, candidate);
                     input_changed = true;
@@ -6303,7 +6342,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"stationKey", "stationKey", MapElementNumericConstraint::None, true, ""},
-                {"door", "door", MapElementNumericConstraint::Finite, true, "0"},
+                {"door", "door", MapElementNumericConstraint::Door, true, "0"},
                 {"margin1", "back", MapElementNumericConstraint::Finite, true, "0"},
                 {"margin2", "front", MapElementNumericConstraint::Finite, true, "0"},
             },

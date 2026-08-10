@@ -1185,6 +1185,7 @@ enum class MapElementNumericConstraint {
     None,
     Finite,
     Tilt,
+    Door,
     Truncate3,
 };
 
