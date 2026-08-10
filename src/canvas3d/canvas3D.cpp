@@ -3537,6 +3537,7 @@ struct Canvas3D::Impl {
             a.put_between_track_key2 == b.put_between_track_key2 &&
             a.put_between_flag == b.put_between_flag &&
             a.distance == b.distance &&
+            a.placement_distance_gizmo == b.placement_distance_gizmo &&
             a.has_repeater_end_distance == b.has_repeater_end_distance &&
             a.repeater_end_distance == b.repeater_end_distance &&
             a.x == b.x && a.y == b.y && a.z == b.z &&
@@ -3695,6 +3696,8 @@ struct Canvas3D::Impl {
 
     bool write_scene_placement_instance(const std::string& edit_id,
                                         Canvas3DModelInstance desired) {
+        const std::string placement_track_key = desired.track_key;
+        const double placement_distance = desired.distance;
         StructurePlacementFrame frame;
         if (!make_track_placement_frame(desired.track_key, desired.distance,
                                         desired.x, desired.y, desired.z,
@@ -3711,8 +3714,14 @@ struct Canvas3D::Impl {
             return false;
         }
         if (scene_structure_edit.active && scene_structure_edit.edit_id == edit_id) {
-            scene_structure_edit.placement_gizmo.origin = frame.origin;
-            scene_structure_edit.placement_gizmo.axes = frame.parameter_axes;
+            if (scene_structure_edit.current.placement_distance_gizmo) {
+                track_distance_gizmo_frame(
+                    placement_track_key, placement_distance,
+                    scene_structure_edit.placement_gizmo);
+            } else {
+                scene_structure_edit.placement_gizmo.origin = frame.origin;
+                scene_structure_edit.placement_gizmo.axes = frame.parameter_axes;
+            }
         }
         return true;
     }
@@ -3755,12 +3764,12 @@ struct Canvas3D::Impl {
         return true;
     }
 
-    bool repeater_end_distance_gizmo_frame(
-        const Canvas3DRepeaterSegment& repeater,
-        SceneGizmoHandle& gizmo) const {
+    bool track_distance_gizmo_frame(const std::string& track_key,
+                                    double distance,
+                                    SceneGizmoHandle& gizmo) const {
         gizmo.enabled = {{false, false, true}};
         gizmo.axes = {};
-        const Canvas3DTrackPath* path = placement_track_path_for_key(repeater.track_key);
+        const Canvas3DTrackPath* path = placement_track_path_for_key(track_key);
         if (!path || path->points.empty()) return false;
 
         const double path_begin = path->points.front().distance;
@@ -3769,7 +3778,7 @@ struct Canvas3D::Impl {
         const double range_min = std::min(path_begin, path_end);
         const double range_max = std::max(path_begin, path_end);
         const double sample_distance = std::clamp(
-            repeater.end_distance, range_min, range_max);
+            distance, range_min, range_max);
         const std::optional<Canvas3DTrackPoint> center =
             scene_sample_track_path_points(*path, sample_distance);
         if (!center) return false;
@@ -3908,10 +3917,18 @@ struct Canvas3D::Impl {
         if (scene_structure_edit.active &&
             scene_structure_edit.kind == Canvas3DSceneEditKind::Repeater &&
             scene_structure_edit.edit_id == edit_id) {
-            scene_structure_edit.placement_gizmo.origin = frame.origin;
-            scene_structure_edit.placement_gizmo.axes = frame.parameter_axes;
-            repeater_end_distance_gizmo_frame(
-                scene_data.repeaters[repeater_index],
+            const Canvas3DRepeaterSegment& updated =
+                scene_data.repeaters[repeater_index];
+            if (scene_structure_edit.current.placement_distance_gizmo) {
+                track_distance_gizmo_frame(
+                    updated.track_key, updated.begin_distance,
+                    scene_structure_edit.placement_gizmo);
+            } else {
+                scene_structure_edit.placement_gizmo.origin = frame.origin;
+                scene_structure_edit.placement_gizmo.axes = frame.parameter_axes;
+            }
+            track_distance_gizmo_frame(
+                updated.track_key, updated.end_distance,
                 scene_structure_edit.repeater_end_gizmo);
         }
         return true;
@@ -4028,7 +4045,8 @@ struct Canvas3D::Impl {
             clear_scene_placement_edit_target();
         }
         scene_structure_edit.placement_gizmo.enabled =
-            target.kind == Canvas3DSceneEditKind::StructurePutBetween
+            target.kind == Canvas3DSceneEditKind::StructurePutBetween ||
+            target.placement_distance_gizmo
                 ? std::array<bool, 3>{{false, false, true}}
                 : std::array<bool, 3>{{true, true, true}};
 
@@ -4102,6 +4120,11 @@ struct Canvas3D::Impl {
         }
         scene_structure_edit.current = target;
         scene_structure_edit.show_gizmo = show_gizmo;
+        if (target.placement_distance_gizmo) {
+            track_distance_gizmo_frame(
+                target.track_key, target.distance,
+                scene_structure_edit.placement_gizmo);
+        }
         if (!show_gizmo) {
             cancel_scene_gizmo_interaction(SceneGizmoTarget::Placement);
         }
@@ -4118,7 +4141,9 @@ struct Canvas3D::Impl {
              scene_structure_edit.edit_id != target.edit_id)) {
             clear_scene_placement_edit_target();
         }
-        scene_structure_edit.placement_gizmo.enabled = {{true, true, true}};
+        scene_structure_edit.placement_gizmo.enabled = target.placement_distance_gizmo
+            ? std::array<bool, 3>{{false, false, true}}
+            : std::array<bool, 3>{{true, true, true}};
         scene_structure_edit.repeater_end_gizmo.enabled = {{false, false, true}};
 
         const auto location_it = scene_repeater_locations.find(target.edit_id);
@@ -4142,7 +4167,8 @@ struct Canvas3D::Impl {
         const Canvas3DRepeaterSegment desired = repeater_segment_from_target(
             target, scene_structure_edit.baseline_repeater);
         if (desired.track_key != scene_structure_edit.baseline_repeater.track_key ||
-            desired.begin_distance != scene_structure_edit.baseline_repeater.begin_distance) {
+            (!target.placement_distance_gizmo &&
+             desired.begin_distance != scene_structure_edit.baseline_repeater.begin_distance)) {
             clear_scene_placement_edit_target();
             return false;
         }
@@ -4154,6 +4180,11 @@ struct Canvas3D::Impl {
         }
         scene_structure_edit.current = target;
         scene_structure_edit.show_gizmo = show_gizmo;
+        if (target.placement_distance_gizmo) {
+            track_distance_gizmo_frame(
+                target.track_key, target.distance,
+                scene_structure_edit.placement_gizmo);
+        }
         if (!show_gizmo) {
             cancel_scene_gizmo_interaction(SceneGizmoTarget::Placement);
         }
@@ -8515,6 +8546,11 @@ fail:
     static bool closest_axis_parameter(DVec3 axis_origin, DVec3 axis_direction,
                                        DVec3 ray_origin, DVec3 ray_direction,
                                        double& parameter) {
+        const double axis_length_squared = dot(axis_direction, axis_direction);
+        if (!std::isfinite(axis_length_squared) || axis_length_squared <= 1e-12) {
+            return false;
+        }
+        const double axis_length = std::sqrt(axis_length_squared);
         axis_direction = normalize(axis_direction);
         ray_direction = normalize(ray_direction);
         DVec3 w = axis_origin - ray_origin;
@@ -8525,7 +8561,7 @@ fail:
         const double e = dot(ray_direction, w);
         const double denominator = a * c - b * b;
         if (!std::isfinite(denominator) || denominator < 1e-4) return false;
-        parameter = (b * e - c * d) / denominator;
+        parameter = (b * e - c * d) / denominator / axis_length;
         return std::isfinite(parameter);
     }
 
@@ -8724,6 +8760,9 @@ fail:
                            Canvas3DSceneEditKind::StructurePutBetween) {
                     scene_structure_edit.drag_start_value =
                         scene_structure_edit.current.distance;
+                } else if (scene_structure_edit.current.placement_distance_gizmo) {
+                    scene_structure_edit.drag_start_value =
+                        scene_structure_edit.current.distance;
                 } else {
                     scene_structure_edit.drag_start_value = axis_index == 0
                         ? scene_structure_edit.current.x
@@ -8784,15 +8823,19 @@ fail:
         const bool repeater_end_distance_drag =
             scene_structure_edit.dragging_gizmo ==
             SceneGizmoTarget::RepeaterEndDistance;
+        const bool placement_distance_drag =
+            scene_structure_edit.dragging_gizmo == SceneGizmoTarget::Placement &&
+            scene_structure_edit.current.placement_distance_gizmo;
         const bool distance_drag =
-            put_between_distance_drag || repeater_end_distance_drag;
+            put_between_distance_drag || repeater_end_distance_drag ||
+            placement_distance_drag;
         const double candidate = distance_drag
             ? std::round(scene_structure_edit.drag_start_value + delta)
             : truncate_scene_millimeter(scene_structure_edit.drag_start_value + delta);
         const int axis_index = structure_drag_axis_index(scene_structure_edit.dragging_axis);
         double* current_value = repeater_end_distance_drag
             ? &scene_structure_edit.current.repeater_end_distance
-            : put_between_distance_drag
+            : put_between_distance_drag || placement_distance_drag
             ? &scene_structure_edit.current.distance
             : axis_index == 0 ? &scene_structure_edit.current.x
             : axis_index == 1 ? &scene_structure_edit.current.y
@@ -8830,7 +8873,9 @@ fail:
             ? Canvas3DSceneDragTarget::RepeaterEndDistance
             : put_between_distance_drag
                 ? Canvas3DSceneDragTarget::PutBetweenDistance
-                : Canvas3DSceneDragTarget::Placement;
+                : placement_distance_drag
+                    ? Canvas3DSceneDragTarget::PlacementDistance
+                    : Canvas3DSceneDragTarget::Placement;
         result.axis = changed_axis;
         result.distance = scene_structure_edit.current.distance;
         result.repeater_end_distance =

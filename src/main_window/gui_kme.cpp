@@ -3899,13 +3899,20 @@ void App::sync_scene_placement_edit_from_inspector() {
         else if (std::strcmp(key, "span") == 0) target.span = value;
     }
     if (repeater_target &&
-        (std::fabs(target.distance - model_distance) > 1e-9 ||
-         target.track_key != model_track_key)) {
+        target.track_key != model_track_key) {
+        clear_scene_placement_edit_target();
+        return;
+    }
+    target.placement_distance_gizmo =
+        inspector_.source_method_put0 && !inspector_.put0_conversion_draft;
+    if (repeater_target && !target.placement_distance_gizmo &&
+        std::fabs(target.distance - model_distance) > 1e-9) {
         clear_scene_placement_edit_target();
         return;
     }
     const bool show_gizmo = structure_between_target ||
-        !inspector_.source_method_put0 || inspector_.put0_conversion_draft;
+        !inspector_.source_method_put0 || inspector_.put0_conversion_draft ||
+        target.placement_distance_gizmo;
     if (repeater_target) {
         scene_preview_canvas_->set_scene_repeater_edit_target(target, show_gizmo);
     } else {
@@ -3929,7 +3936,8 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
     if (update.target == Canvas3DSceneDragTarget::RepeaterEndDistance) {
         field_key = "endDistance";
         value = update.repeater_end_distance;
-    } else if (update.target == Canvas3DSceneDragTarget::PutBetweenDistance) {
+    } else if (update.target == Canvas3DSceneDragTarget::PutBetweenDistance ||
+               update.target == Canvas3DSceneDragTarget::PlacementDistance) {
         field_key = "distance";
         value = update.distance;
     } else if (update.axis == Canvas3DSceneDragAxis::X) {
@@ -3954,7 +3962,8 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
                 return;
             }
             const std::string formatted =
-                update.target == Canvas3DSceneDragTarget::RepeaterEndDistance
+                update.target == Canvas3DSceneDragTarget::RepeaterEndDistance ||
+                update.target == Canvas3DSceneDragTarget::PlacementDistance
                     ? format_double(value, 0)
                     : format_gui_transform_number(value);
             set_edit_field_buffer(*field, formatted);
