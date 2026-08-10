@@ -45,3 +45,7 @@ This file is the active project roadmap and contains unfinished items only. Comp
 
 - [ ] 通过 `element_presets.json` 保存元素预设组，应用后生成普通 BVE map/list 语句
 - [ ] 线路 release 导出：展开 Include、可选常量化距离/变量表达式、只复制实际使用资源、输出报告，并保护开发线路目录不被覆盖
+- [ ] 修复repeater的z轴偏移大于5m时，没有自动触发distance重新设置的问题。
+- [ ] Repeater结束位置的新建功能
+- [ ] 他轨道trackkey的新建功能
+- [ ] 他轨道与他轨道变化点的新建功能
