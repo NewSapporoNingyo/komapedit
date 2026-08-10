@@ -3568,7 +3568,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                           MapElementNumericConstraint::Finite, true);
         }
     } else if (request.row_kind == "otherTrack.change") {
-        add_row_field("trackKey", "Track key",
+        add_row_field("trackKey", "trackKey",
                       MapElementNumericConstraint::None, true);
         next.fields.back().read_only = true;
         add_row_field("distance", "Distance",
@@ -3580,26 +3580,27 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         auto parameter_label = [&](size_t index) -> std::string {
             if (method == "track.position") {
                 static const char* labels[] = {
-                    "Lateral position",
-                    "Vertical position",
-                    "Lateral radius",
-                    "Vertical radius",
+                    "x",
+                    "y",
+                    "radiusH",
+                    "radiusV",
                 };
                 if (index < std::size(labels)) return labels[index];
-            } else if (method == "track.x.interpolate" ||
-                       method == "track.y.interpolate") {
-                return index == 0 ? "Position" : "Radius";
+            } else if (method == "track.x.interpolate") {
+                return index == 0 ? "x" : "radius";
+            } else if (method == "track.y.interpolate") {
+                return index == 0 ? "y" : "radius";
             } else if (method == "track.gauge" ||
                        method == "track.cant.setgauge") {
-                return "Gauge";
+                return "gauge";
             } else if (method == "track.cant.setcenter") {
-                return "Center";
+                return "x";
             } else if (method == "track.cant.setfunction") {
-                return "Function";
+                return "id";
             } else if (method == "track.cant" ||
                        method == "track.cant.begin" ||
                        method == "track.cant.interpolate") {
-                return "Cant";
+                return "cant";
             }
             return "Parameter " + std::to_string(index + 1);
         };
