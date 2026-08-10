@@ -19,6 +19,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Block writeback when an edited value cannot be represented in the source encoding; there is currently no Save-as-UTF-8 fallback.
 - [x] Reject ambiguous maps with multiple same-kind unkeyed resource-list `Load` statements or multiple case-insensitively matching `Train[].Enable` declarations.
 - [x] Insert supported map placement and event/effect statements through the New Map Element wizard; resource/list definition rows remain inline-table-only.
+- [x] Insert official `Repeater.Begin` and `Repeater.Begin0` forms through the New Map Element wizard with a required variable structure-key list and canonical half-open same-name interval validation; `Repeater.End` remains unavailable in the wizard.
 
 ### Own-Track and Other-Track Geometry
 
@@ -138,6 +139,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 当修改后的值无法用源文件原编码表示时阻止回写；当前没有另存为 UTF-8 的替代路径
 - [x] 拒绝含有多个同种无 key 资源列表 `Load` 语句，或多个名称仅大小写不同的 `Train[].Enable` 声明的歧义地图
 - [x] 通过“新建地图元素”向导新增受支持的地图放置和事件/效果语句；资源/定义列表仍只能通过行内表格编辑
+- [x] 通过“新建地图元素”向导新增官方 `Repeater.Begin` 和 `Repeater.Begin0` 形式，必须填写可变结构 key 列表，并按规范化半开同名区间校验；向导仍不支持 `Repeater.End`
 
 ### 自轨道与他轨道几何
 

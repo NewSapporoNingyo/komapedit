@@ -633,9 +633,14 @@ HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
 }
 
 HeadlessInsertEditOptions parse_headless_insert_edit_options(const std::vector<std::string>& args) {
-    return parse_headless_optional_map_edit_options<HeadlessInsertEditOptions>(
+    HeadlessInsertEditOptions options = parse_headless_optional_map_edit_options<HeadlessInsertEditOptions>(
         args, "--debug-headless-insert-edit",
         [](HeadlessInsertEditOptions& options) { options.commit = true; });
+    if (!options.requested) return options;
+    for (const std::string& arg : args) {
+        if (arg == "--repeater-only") options.repeater_only = true;
+    }
+    return options;
 }
 
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args) {
@@ -5467,7 +5472,7 @@ int run_debug_headless_repeater_key_edit(const HeadlessRepeaterKeyEditOptions& o
                 handle.value, build_changes(facts.selection,
                                             facts.selection.overlapping_key));
             facts.overlap_guard_ok = !overlap.ok && has_error_prefix(
-                overlap, "Repeater key rename overlaps another Repeater interval");
+                overlap, "Repeater key overlaps another Repeater interval");
             if (!facts.overlap_guard_ok) {
                 throw std::runtime_error("Repeater key overlap guard assertion failed");
             }
@@ -6067,7 +6072,8 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
     }
     *out << "command=debug-headless-insert-edit\n"
          << "path=" << options.path << "\n"
-         << "commit=" << (options.commit ? 1 : 0) << "\n";
+         << "commit=" << (options.commit ? 1 : 0) << "\n"
+         << "scope=" << (options.repeater_only ? "repeater-only" : "all") << "\n";
 
     int failed_cases = 0;
     void* handle = nullptr;
@@ -6296,8 +6302,52 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                 baseline_snap.map_sounds_3d
             ? snapshot_value_or(baseline_snap.map_sounds_3d[0].sound_key, sound_key.c_str())
             : sound_key;
+        std::string repeater_track_key = track_key;
+        std::string repeater_structure_key = structure_key;
+        std::string repeater_begin_key;
+        std::string repeater_begin0_key;
+        if (options.repeater_only) {
+            const repeater_linkage::Linkage linkage =
+                repeater_key_edit_headless::linkage_from_snapshot(baseline_snap);
+            const KvRepeaterRow* source_repeater = nullptr;
+            for (std::uint64_t index = 0; index < baseline_snap.repeater_count; ++index) {
+                const KvRepeaterRow& candidate = baseline_snap.repeaters[index];
+                const std::string method = snapshot_text(baseline_snap, candidate.method);
+                if ((method == "Begin" || method == "Begin0") &&
+                    candidate.structure_keys.count != 0 && baseline_snap.values &&
+                    candidate.structure_keys.offset < baseline_snap.value_count &&
+                    candidate.structure_keys.count <= baseline_snap.value_count -
+                        candidate.structure_keys.offset) {
+                    source_repeater = &candidate;
+                    break;
+                }
+            }
+            if (!source_repeater) {
+                throw std::runtime_error(
+                    "--repeater-only requires a Repeater.Begin/Begin0 with a structure key");
+            }
+            repeater_track_key = snapshot_value_or(source_repeater->track_key, "0");
+            if (source_repeater->track_key.kind == KV_VALUE_STRING) {
+                repeater_track_key = "'" + repeater_track_key + "'";
+            }
+            repeater_structure_key = distance_batch_headless::snapshot_value_text(
+                baseline_snap,
+                baseline_snap.values[source_repeater->structure_keys.offset]);
+            if (repeater_structure_key.empty()) {
+                throw std::runtime_error(
+                    "--repeater-only found an empty Repeater structure key");
+            }
+            repeater_begin_key = repeater_key_edit_headless::unused_key(
+                linkage, "headless-repeater-begin");
+            repeater_begin0_key = repeater_key_edit_headless::unused_key(
+                linkage, "headless-repeater-begin0");
+            *out << "repeater_begin_key=" << repeater_begin_key << "\n"
+                 << "repeater_begin0_key=" << repeater_begin0_key << "\n"
+                 << "repeater_structure_key=" << repeater_structure_key << "\n";
+        }
 
         auto count_rows = [&](const KvMapSnapshot& snap, const char* kind) {
+            if (std::strcmp(kind, "repeater") == 0) return snap.repeater_count;
             if (std::strcmp(kind, "structure.put") == 0) return snap.structure_put_count;
             if (std::strcmp(kind, "structure.between") == 0) {
                 return snap.structure_between_count;
@@ -6324,7 +6374,29 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             return std::uint64_t{0};
         };
 
-        std::vector<Change> batch = {
+        std::vector<Change> batch;
+        if (options.repeater_only) {
+            batch = {
+                make_insert_change("headless-insert-repeater-begin", "repeater",
+                                   {distance_field(distance_text), {"method", "Begin"},
+                                    {"repeaterKey", repeater_begin_key},
+                                    {"trackKey", repeater_track_key},
+                                    {"x", "1"}, {"y", "2"}, {"z", "3"},
+                                    {"rx", "4"}, {"ry", "5"}, {"rz", "6"},
+                                    {"tilt", "0"}, {"span", "25"}, {"interval", "5"},
+                                    {"structureKeys.count", "2"},
+                                    {"structureKeys.0", repeater_structure_key},
+                                    {"structureKeys.1", repeater_structure_key}}),
+                make_insert_change("headless-insert-repeater-begin0", "repeater",
+                                   {distance_field(distance_text), {"method", "Begin0"},
+                                    {"repeaterKey", repeater_begin0_key},
+                                    {"trackKey", repeater_track_key},
+                                    {"tilt", "0"}, {"span", "25"}, {"interval", "5"},
+                                    {"structureKeys.count", "1"},
+                                    {"structureKeys.0", repeater_structure_key}}),
+            };
+        } else {
+        batch = {
             make_insert_change("headless-insert-structure-put", "structure.put",
                                {distance_field(distance_text), {"method", "Put"},
                                 {"structureKey", structure_key}, {"trackKey", track_key},
@@ -6412,7 +6484,8 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             make_insert_change("headless-insert-background", "background.change",
                                {distance_field(distance_text), {"structureKey", structure_key}}),
         };
-        const std::vector<std::string> batch_kinds = {
+        }
+        std::vector<std::string> batch_kinds = {
             "structure.put", "structure.between", "station.put", "signal.put",
             "speedlimit", "beacon.put", "section.begin", "section.speedLimit",
             "irregularity.change", "drawDistance.change", "cabIlluminance.change",
@@ -6421,7 +6494,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             "background.change",
         };
         const size_t expected_inserts = batch.size();
-        const std::map<std::string, std::uint64_t> expected_row_increments = {
+        std::map<std::string, std::uint64_t> expected_row_increments = {
             {"structure.put", 2},
             {"structure.between", 1},
             {"station.put", 1},
@@ -6442,6 +6515,10 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             {"jointNoise.play", 1},
             {"background.change", 1},
         };
+        if (options.repeater_only) {
+            batch_kinds = {"repeater"};
+            expected_row_increments = {{"repeater", 2}};
+        }
         std::map<std::string, std::uint64_t> baseline_counts;
         for (const std::string& kind : batch_kinds) {
             baseline_counts[kind] = count_rows(baseline_snap, kind.c_str());
@@ -6475,7 +6552,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                                    return preview.find(text) != std::string::npos;
                                });
         };
-        const std::vector<std::string> expected_statements = {
+        std::vector<std::string> expected_statements = {
             "Structure[", "].Put(", "].Put0(", "].PutBetween(",
             "Station[", "Signal[", "SpeedLimit.Begin(60);", "SpeedLimit.End();",
             "Section.Begin(1,2);", "Section.BeginNew(1,2);",
@@ -6487,6 +6564,12 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
             "Sound[", "Sound3D[", "RollingNoise.Change(1);",
             "FlangeNoise.Change(2);", "JointNoise.Play(3);", "Background.Change(",
         };
+        if (options.repeater_only) {
+            expected_statements = {
+                "Repeater[", repeater_begin_key, "].Begin(",
+                repeater_begin0_key, "].Begin0(",
+            };
+        }
         const bool syntax_preview_ok = std::all_of(
             expected_statements.begin(), expected_statements.end(), previews_contain);
         const bool variable_distance_preview_ok = variable_anchor_expression.empty() ||
@@ -6574,14 +6657,27 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                 if (disk_file) {
                     std::string text((std::istreambuf_iterator<char>(disk_file)),
                                      std::istreambuf_iterator<char>());
-                    const bool has_speed_limit = text.find("SpeedLimit.Begin(60);") !=
-                        std::string::npos;
-                    const bool has_beacon = text.find("Beacon.Put(1,2,3);") !=
-                        std::string::npos;
-                    *out << "disk_has_speed_limit=" << (has_speed_limit ? 1 : 0) << "\n"
-                         << "disk_has_beacon=" << (has_beacon ? 1 : 0) << "\n";
-                    if (!has_speed_limit || !has_beacon) {
-                        commit_ok = false;
+                    if (options.repeater_only) {
+                        const bool has_begin =
+                            text.find("Repeater[") != std::string::npos &&
+                            text.find(repeater_begin_key) != std::string::npos &&
+                            text.find(".Begin(") != std::string::npos;
+                        const bool has_begin0 =
+                            text.find(repeater_begin0_key) != std::string::npos &&
+                            text.find(".Begin0(") != std::string::npos;
+                        *out << "disk_has_repeater_begin=" << (has_begin ? 1 : 0) << "\n"
+                             << "disk_has_repeater_begin0=" << (has_begin0 ? 1 : 0) << "\n";
+                        if (!has_begin || !has_begin0) commit_ok = false;
+                    } else {
+                        const bool has_speed_limit = text.find("SpeedLimit.Begin(60);") !=
+                            std::string::npos;
+                        const bool has_beacon = text.find("Beacon.Put(1,2,3);") !=
+                            std::string::npos;
+                        *out << "disk_has_speed_limit=" << (has_speed_limit ? 1 : 0) << "\n"
+                             << "disk_has_beacon=" << (has_beacon ? 1 : 0) << "\n";
+                        if (!has_speed_limit || !has_beacon) {
+                            commit_ok = false;
+                        }
                     }
                 } else {
                     commit_ok = false;
@@ -6608,9 +6704,58 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                     if (count_rows(committed_snap, kind.c_str()) != expected) commit_ok = false;
                 }
             }
+            bool reload_ok = false;
+            if (commit_ok) {
+                void* reload_handle = kv_load_map_ex(
+                    options.path.c_str(), options.unit_distance, KV_LOAD_EDIT_METADATA);
+                if (reload_handle) {
+                    KvMapSnapshot reloaded{};
+                    reload_ok = kv_get_map_snapshot(
+                        reload_handle, KV_MAP_SNAPSHOT_VERSION,
+                        &reloaded, sizeof(reloaded)) != 0 &&
+                        reloaded.version == KV_MAP_SNAPSHOT_VERSION &&
+                        reloaded.structure_size >= sizeof(KvMapSnapshot);
+                    if (reload_ok) {
+                        for (const std::string& kind : batch_kinds) {
+                            const std::uint64_t expected = baseline_counts[kind] +
+                                expected_row_increments.at(kind);
+                            if (count_rows(reloaded, kind.c_str()) != expected) reload_ok = false;
+                        }
+                        if (options.repeater_only) {
+                            bool has_begin = false;
+                            bool has_begin0 = false;
+                            for (std::uint64_t index = 0;
+                                 index < reloaded.repeater_count; ++index) {
+                                const KvRepeaterRow& row = reloaded.repeaters[index];
+                                const std::string key = distance_batch_headless::snapshot_value_text(
+                                    reloaded, row.repeater_key);
+                                const std::string method = snapshot_text(reloaded, row.method);
+                                has_begin = has_begin ||
+                                    (key == repeater_begin_key && method == "Begin");
+                                has_begin0 = has_begin0 ||
+                                    (key == repeater_begin0_key && method == "Begin0");
+                            }
+                            *out << "reload_repeater_count=" << reloaded.repeater_count << "\n"
+                                 << "reload_has_repeater_begin=" << (has_begin ? 1 : 0) << "\n"
+                                 << "reload_has_repeater_begin0=" << (has_begin0 ? 1 : 0) << "\n";
+                            reload_ok = reload_ok && has_begin && has_begin0;
+                        }
+                    }
+                    kv_free(reload_handle);
+                }
+            }
+            *out << "reload_ok=" << (reload_ok ? 1 : 0) << "\n";
+            if (!reload_ok) commit_ok = false;
             bool post_commit_apply_ok = false;
             bool post_commit_reset_ok = false;
             if (commit_ok) {
+                if (options.repeater_only) {
+                    // Reapplying the same two keys after Commit is supposed to
+                    // hit the overlap guard, so reload is the durable proof for
+                    // this focused mode instead of a duplicate insert attempt.
+                    post_commit_apply_ok = true;
+                    post_commit_reset_ok = true;
+                } else {
                 auto committed_file = std::find_if(
                     committed.committed_files.begin(), committed.committed_files.end(),
                     [&](const typed_edit_headless::CommittedFile& file) {
@@ -6657,6 +6802,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                             }
                         }
                     }
+                }
                 }
             }
             *out << "post_commit_apply_ok=" << (post_commit_apply_ok ? 1 : 0) << "\n"

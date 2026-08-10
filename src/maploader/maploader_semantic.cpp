@@ -1401,6 +1401,7 @@ struct FakeInsertSnapshotState {
 std::string insert_semantic_container(const std::string& row_kind) {
     if (row_kind == "structure.put") return "structure.data";
     if (row_kind == "structure.between") return "structure.between_data";
+    if (row_kind == "repeater") return "repeater";
     if (row_kind == "station.put") return "station.put";
     if (row_kind == "signal.put") return "signal.data";
     if (row_kind == "irregularity.change") return "irregularity";
@@ -1467,6 +1468,10 @@ std::string expected_insert_semantic(MapContext& ctx,
         KvStructureBetweenRow row{};
         path_row(row);
         write_structure_between(out, fake.snapshot, row, &semantic_change);
+    } else if (row_kind == "repeater") {
+        KvRepeaterRow row{};
+        path_row(row);
+        write_repeater(out, fake.snapshot, row, &semantic_change);
     } else if (row_kind == "station.put") {
         KvStationPutRow row{};
         path_row(row);

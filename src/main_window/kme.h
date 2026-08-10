@@ -2095,6 +2095,7 @@ private:
     bool render_map_element_field_control(MapElementEditFieldState& field,
                                           float width);
     void render_map_element_field_inputs(MapElementInspectorState& inspector);
+    void render_repeater_structure_keys_edit_ui(MapElementInspectorState& inspector);
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
     void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);

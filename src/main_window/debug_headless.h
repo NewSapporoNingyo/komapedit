@@ -145,6 +145,7 @@ struct HeadlessSectionEditBatchOptions {
 
 struct HeadlessInsertEditOptions {
     bool requested = false;
+    bool repeater_only = false;
     std::string path;
     std::string output_path;
     double unit_distance = 25.0;

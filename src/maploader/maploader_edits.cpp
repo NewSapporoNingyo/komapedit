@@ -2041,6 +2041,18 @@ void validate_insert_change(const MapEditChange& change) {
                                     {"distance", "method", "structureKey", "trackKey",
                                      "x", "y", "z", "rx", "ry", "rz", "tilt", "span"});
         validate_insert_method(change, "Put", {"Put", "Put0"});
+    } else if (row_kind == "repeater") {
+        validate_repeater_edit_fields(change);
+        validate_insert_method(change, "Begin", {"Begin", "Begin0"});
+        const RepeaterStructureKeyEdit structure_keys =
+            parse_repeater_structure_key_edit(change);
+        if (!structure_keys.changed || structure_keys.values.empty()) {
+            throw std::runtime_error("Repeater insert requires at least one structure key");
+        }
+        if (insert_method_or_default(change, "Begin") == "Begin0") {
+            reject_repeater_position_fields(
+                change, "Repeater.Begin0 insert cannot include coordinate offsets");
+        }
     } else if (row_kind == "structure.between") {
         validate_insert_field_names(change,
                                     {"distance", "structureKey", "trackKey1", "trackKey2", "flag"});
@@ -2115,6 +2127,37 @@ std::string insert_required_track_key(const MapEditChange& change, const char* k
 std::string build_insert_statement(const MapEditChange& change) {
     validate_insert_change(change);
     const std::string& row_kind = change.row_kind;
+    if (row_kind == "repeater") {
+        const std::string method = insert_method_or_default(change, "Begin");
+        const std::string key = insert_required_key(change, "repeaterKey");
+        const std::string track_key = insert_required_track_key(change, "trackKey");
+        const RepeaterStructureKeyEdit structure_keys =
+            parse_repeater_structure_key_edit(change);
+        std::ostringstream out;
+        out << "Repeater[" << key << "]." << method << "(" << track_key;
+        if (method == "Begin0") {
+            out << "," << insert_required_number(change, "tilt")
+                << "," << insert_required_number(change, "span")
+                << "," << insert_required_number(change, "interval");
+        } else if (method == "Begin") {
+            out << "," << insert_required_number(change, "x")
+                << "," << insert_required_number(change, "y")
+                << "," << insert_required_number(change, "z")
+                << "," << insert_required_number(change, "rx")
+                << "," << insert_required_number(change, "ry")
+                << "," << insert_required_number(change, "rz")
+                << "," << insert_required_number(change, "tilt")
+                << "," << insert_required_number(change, "span")
+                << "," << insert_required_number(change, "interval");
+        } else {
+            throw std::runtime_error("unsupported Repeater method for insert: " + method);
+        }
+        for (const std::string& structure_key : structure_keys.values) {
+            out << "," << quoted_bve_string(structure_key);
+        }
+        out << ");";
+        return out.str();
+    }
     if (row_kind == "structure.put") {
         const std::string method = insert_method_or_default(change, "Put");
         const std::string key = insert_required_key(change, "structureKey");
@@ -3510,6 +3553,53 @@ repeater_linkage::Linkage repeater_linkage_state(
     return repeater_linkage::pair_linkage(std::move(events));
 }
 
+std::string repeater_interval_text(const repeater_linkage::Chain& chain) {
+    return "[" + canonical_number(chain.begin_distance) + "," +
+        (chain.end_distance ? canonical_number(*chain.end_distance)
+                            : std::string("+inf")) + ")";
+}
+
+void append_repeater_interval_overlap_error(MapEditReport& report,
+                                            const std::string& key,
+                                            const repeater_linkage::Chain& left,
+                                            const repeater_linkage::Chain& right) {
+    report.blocking_errors.push_back(
+        "Repeater key overlaps another Repeater interval: key=" + key +
+        ", intervals=" + repeater_interval_text(left) + " and " +
+        repeater_interval_text(right));
+}
+
+struct RepeaterNamedInterval {
+    repeater_linkage::Chain interval;
+    std::string key;
+    bool is_candidate = false;
+};
+
+bool validate_repeater_interval_conflicts(
+    const std::vector<RepeaterNamedInterval>& intervals,
+    MapEditReport& report) {
+    for (size_t candidate_index = 0; candidate_index < intervals.size(); ++candidate_index) {
+        const RepeaterNamedInterval& candidate = intervals[candidate_index];
+        if (!candidate.is_candidate) continue;
+        for (size_t other_index = 0; other_index < intervals.size(); ++other_index) {
+            if (other_index == candidate_index ||
+                (intervals[other_index].is_candidate && other_index < candidate_index)) {
+                continue;
+            }
+            const RepeaterNamedInterval& other = intervals[other_index];
+            if (candidate.key != other.key ||
+                !repeater_linkage::half_open_intervals_overlap(
+                    candidate.interval, other.interval)) {
+                continue;
+            }
+            append_repeater_interval_overlap_error(
+                report, candidate.key, candidate.interval, other.interval);
+            return false;
+        }
+    }
+    return true;
+}
+
 void validate_repeater_key_renames(
     MapContext& ctx, const std::vector<const MapEditChange*>& changes,
     MapEditReport& report) {
@@ -3627,24 +3717,61 @@ void validate_repeater_key_renames(
         renamed[chain_index] = true;
     }
 
-    const auto interval_text = [](const repeater_linkage::Chain& chain) {
-        return "[" + canonical_number(chain.begin_distance) + "," +
-            (chain.end_distance ? canonical_number(*chain.end_distance)
-                                : std::string("+inf")) + ")";
-    };
-    for (size_t left = 0; left < linkage.chains.size(); ++left) {
-        for (size_t right = left + 1; right < linkage.chains.size(); ++right) {
-            if ((!renamed[left] && !renamed[right]) ||
-                final_keys[left] != final_keys[right] ||
-                !repeater_linkage::half_open_intervals_overlap(
-                    linkage.chains[left], linkage.chains[right])) {
-                continue;
+    std::vector<RepeaterNamedInterval> intervals;
+    intervals.reserve(linkage.chains.size());
+    for (size_t index = 0; index < linkage.chains.size(); ++index) {
+        intervals.push_back({linkage.chains[index], final_keys[index], renamed[index]});
+    }
+    (void)validate_repeater_interval_conflicts(intervals, report);
+}
+
+void validate_repeater_insert_key_overlaps(
+    MapContext& ctx, const std::vector<const MapEditChange*>& changes,
+    MapEditReport& report) {
+    const repeater_linkage::Linkage linkage = repeater_linkage_state(ctx);
+    std::vector<RepeaterNamedInterval> intervals;
+    intervals.reserve(linkage.chains.size() + changes.size());
+    for (const repeater_linkage::Chain& chain : linkage.chains) {
+        intervals.push_back({chain, chain.key, false});
+    }
+
+    for (const MapEditChange* change : changes) {
+        const std::string operation =
+            ascii_lower(change->operation.empty() ? "update" : change->operation);
+        if (operation != "insert" || change->row_kind != "repeater") continue;
+        try {
+            validate_insert_change(*change);
+            const std::string key = repeater_linkage::canonical_key(
+                required_string_field(*change, "repeaterKey", ""));
+            const std::string distance_text = insert_required_number(*change, "distance");
+            double begin_distance = 0.0;
+            if (key.empty() || !parse_edit_number(distance_text, begin_distance)) {
+                throw std::runtime_error("Repeater insert has an invalid key or distance");
             }
+
+            // A later Begin or End of the same key bounds the newly created
+            // half-open interval. This mirrors the shared linkage rule and
+            // allows a new lifetime to touch an existing End exactly.
+            repeater_linkage::Chain requested;
+            requested.key = key;
+            requested.begin_distance = begin_distance;
+            for (const RepeaterEvent& row : ctx.repeaters) {
+                if (repeater_linkage::canonical_key(value_to_edit_text(row.repeater_key)) != key ||
+                    row.distance <= begin_distance) {
+                    continue;
+                }
+                const std::string method = ascii_lower(row.method);
+                if (method != "begin" && method != "begin0" && method != "end") continue;
+                if (!requested.end_distance || row.distance < *requested.end_distance) {
+                    requested.end_distance = row.distance;
+                }
+            }
+
+            intervals.push_back({std::move(requested), key, true});
+            if (!validate_repeater_interval_conflicts(intervals, report)) return;
+        } catch (const std::exception& e) {
             report.blocking_errors.push_back(
-                "Repeater key rename overlaps another Repeater interval: key=" +
-                final_keys[left] + ", intervals=" +
-                interval_text(linkage.chains[left]) + " and " +
-                interval_text(linkage.chains[right]));
+                std::string("Repeater insert validation failed: ") + e.what());
             return;
         }
     }
@@ -4592,6 +4719,8 @@ MapEditReport build_edit_report(MapContext& ctx,
     if (!report.blocking_errors.empty()) return report;
 
     validate_repeater_key_renames(ctx, effective_changes, report);
+    if (!report.blocking_errors.empty()) return report;
+    validate_repeater_insert_key_overlaps(ctx, effective_changes, report);
     if (!report.blocking_errors.empty()) return report;
 
     std::vector<PreparedEdit> prepared;

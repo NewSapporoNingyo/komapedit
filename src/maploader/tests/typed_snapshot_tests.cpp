@@ -824,6 +824,88 @@ struct RepeaterKeyBatch {
     }
 };
 
+struct RepeaterInsertSpec {
+    std::string change_id;
+    std::string method;
+    std::string repeater_key;
+    std::string distance;
+    std::string track_key;
+    bool full_coordinates = false;
+    std::vector<std::string> structure_keys;
+};
+
+struct RepeaterInsertBatch {
+    std::string target_file;
+    std::vector<std::string> change_ids;
+    std::vector<std::string> field_names;
+    std::vector<std::string> field_values;
+    std::vector<KvEditField> fields;
+    std::vector<KvEditChange> changes;
+    KvEditBatch batch{};
+
+    RepeaterInsertBatch(std::string target, const std::vector<RepeaterInsertSpec>& specs)
+        : target_file(std::move(target)) {
+        size_t field_count = 0;
+        for (const RepeaterInsertSpec& spec : specs) {
+            field_count += 9 + spec.structure_keys.size() +
+                (spec.full_coordinates ? 6 : 0);
+        }
+        change_ids.reserve(specs.size());
+        field_names.reserve(field_count);
+        field_values.reserve(field_count);
+        std::vector<KvSpan> field_ranges;
+        field_ranges.reserve(specs.size());
+        for (const RepeaterInsertSpec& spec : specs) {
+            const std::uint64_t offset = static_cast<std::uint64_t>(field_names.size());
+            auto append = [&](const char* name, const std::string& value) {
+                field_names.emplace_back(name);
+                field_values.push_back(value);
+            };
+            append("rowKind", "repeater");
+            append("distance", spec.distance);
+            append("method", spec.method);
+            append("repeaterKey", spec.repeater_key);
+            append("trackKey", spec.track_key);
+            if (spec.full_coordinates) {
+                append("x", "1"); append("y", "2"); append("z", "3");
+                append("rx", "4"); append("ry", "5"); append("rz", "6");
+            }
+            append("tilt", "0");
+            append("span", "25");
+            append("interval", "5");
+            append("structureKeys.count", std::to_string(spec.structure_keys.size()));
+            for (size_t index = 0; index < spec.structure_keys.size(); ++index) {
+                append(("structureKeys." + std::to_string(index)).c_str(),
+                       spec.structure_keys[index]);
+            }
+            field_ranges.push_back({
+                offset,
+                static_cast<std::uint64_t>(field_names.size()) - offset,
+            });
+            change_ids.push_back(spec.change_id);
+        }
+        fields.reserve(field_names.size());
+        for (size_t index = 0; index < field_names.size(); ++index) {
+            fields.push_back({utf8_view(field_names[index]), utf8_view(field_values[index])});
+        }
+        changes.resize(specs.size());
+        for (size_t index = 0; index < specs.size(); ++index) {
+            KvEditChange& change = changes[index];
+            change.change_id = utf8_view(change_ids[index]);
+            change.edit_id = utf8_view(change_ids[index]);
+            change.operation = KV_EDIT_INSERT;
+            change.fields = field_ranges[index];
+            change.target_file_path = utf8_view(target_file);
+        }
+        batch = {
+            changes.empty() ? nullptr : changes.data(),
+            static_cast<std::uint64_t>(changes.size()),
+            fields.empty() ? nullptr : fields.data(),
+            static_cast<std::uint64_t>(fields.size()),
+        };
+    }
+};
+
 struct RepeaterTrimBatch {
     std::string change_update_id = "typed-contract-repeater-trim";
     std::string change_delete_id = "typed-contract-repeater-delete-end";
@@ -1367,7 +1449,7 @@ void repeater_key_edit_contract() {
     validate_report(conflict_report);
     check(!conflict_report.ok && edit_report_has_error_prefix(
               conflict_report,
-              "Repeater key rename overlaps another Repeater interval"),
+              "Repeater key overlaps another Repeater interval"),
           "Repeater case-insensitive overlapping rename rejected");
 
     RepeaterKeyBatch disjoint(targets, "distant");
@@ -1474,9 +1556,184 @@ void repeater_key_edit_contract() {
           "Repeater key-only rename preserves non-key source text");
 }
 
+void repeater_insert_contract() {
+    TempFixture fixture;
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "Repeater insert fixture load");
+    if (!handle.value) return;
+
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0 &&
+              baseline.repeater_count >= 3,
+          "Repeater insert baseline snapshot");
+    if (baseline.repeater_count == 0 || !baseline.repeaters) return;
+    const KvRepeaterRow& source_row = baseline.repeaters[0];
+    check(source_row.metadata.source_file_index < baseline.source_file_count,
+          "Repeater insert source index");
+    if (source_row.metadata.source_file_index >= baseline.source_file_count) return;
+    const std::string source_path = map_string(
+        baseline, baseline.source_files[source_row.metadata.source_file_index].file_path);
+    const std::uint64_t baseline_repeater_count = baseline.repeater_count;
+
+    auto dry_run = [&](RepeaterInsertBatch& input, KvEditReportSnapshot& report,
+                       const char* label) {
+        check(kv_edit_dry_run_typed(handle.value, &input.batch, &report,
+                                    sizeof(report)) != 0, label);
+        validate_report(report);
+    };
+    RepeaterInsertBatch overlapping(source_path, {{
+        "typed-contract-repeater-overlap", "Begin0", "  RAIL  ", "175", "'1'", false,
+        {"pole"},
+    }});
+    KvEditReportSnapshot overlap_report{};
+    dry_run(overlapping, overlap_report, "Repeater overlapping insert dry-run call");
+    check(!overlap_report.ok && edit_report_has_error_prefix(
+              overlap_report, "Repeater key overlaps another Repeater interval"),
+          "Repeater case-insensitive overlapping insert rejected");
+
+    RepeaterInsertBatch touching(source_path, {{
+        "typed-contract-repeater-touching", "Begin0", "rail", "190", "'1'", false,
+        {"pole"},
+    }});
+    KvEditReportSnapshot touching_report{};
+    dry_run(touching, touching_report, "Repeater touching insert dry-run call");
+    check(touching_report.ok && touching_report.full_reparse_ok &&
+              touching_report.insert_count == 1 &&
+              touching_report.non_target_changed_count == 0,
+          "Repeater touching insert allowed");
+
+    RepeaterInsertBatch disjoint(source_path, {{
+        "typed-contract-repeater-disjoint", "Begin0", "rail", "200", "'1'", false,
+        {"pole"},
+    }});
+    KvEditReportSnapshot disjoint_report{};
+    dry_run(disjoint, disjoint_report, "Repeater disjoint insert dry-run call");
+    check(disjoint_report.ok && disjoint_report.full_reparse_ok &&
+              disjoint_report.insert_count == 1 &&
+              disjoint_report.non_target_changed_count == 0,
+          "Repeater disjoint insert allowed");
+
+    RepeaterInsertBatch valid(source_path, {
+        {"typed-contract-repeater-begin", "Begin", "insert-full", "175", "'1'", true,
+         {"pole", "main1"}},
+        {"typed-contract-repeater-begin0", "Begin0", "insert-zero", "200", "'1'", false,
+         {"pole"}},
+    });
+    KvEditReportSnapshot dry_report{};
+    dry_run(valid, dry_report, "Repeater insert dry-run call");
+    check(dry_report.ok && dry_report.full_reparse_ok && dry_report.insert_count == 2 &&
+              dry_report.non_target_changed_count == 0,
+          "Repeater Begin and Begin0 inserts validate");
+
+    KvEditReportSnapshot applied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &valid.batch, &applied_report,
+              sizeof(applied_report)) != 0 && applied_report.ok &&
+              applied_report.full_reparse_ok && applied_report.insert_count == 2,
+          "Repeater insert apply-to-memory");
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0,
+          "Repeater insert applied snapshot");
+    const KvRepeaterRow* inserted_full = find_repeater(
+        applied, "typed-contract-repeater-begin");
+    const KvRepeaterRow* inserted_zero = find_repeater(
+        applied, "typed-contract-repeater-begin0");
+    const auto structure_key_at = [](const KvMapSnapshot& snapshot,
+                                     const KvRepeaterRow& row, std::uint64_t index) {
+        if (!span_valid(row.structure_keys, snapshot.value_count) ||
+            index >= row.structure_keys.count || !snapshot.values) {
+            return std::string{};
+        }
+        const KvValue& value = snapshot.values[row.structure_keys.offset + index];
+        return value.kind == KV_VALUE_STRING
+            ? map_string(snapshot, value.string_value)
+            : std::string{};
+    };
+    check(applied.repeater_count == baseline_repeater_count + 2 && inserted_full && inserted_zero &&
+              map_string(applied, inserted_full->method) == "Begin" &&
+              map_string(applied, inserted_full->repeater_key.string_value) == "insert-full" &&
+              nearly_equal(inserted_full->x, 1.0) && nearly_equal(inserted_full->rz, 6.0) &&
+              inserted_full->structure_keys.count == 2 &&
+              structure_key_at(applied, *inserted_full, 0) == "pole" &&
+              structure_key_at(applied, *inserted_full, 1) == "main1" &&
+              map_string(applied, inserted_zero->method) == "Begin0" &&
+              map_string(applied, inserted_zero->repeater_key.string_value) == "insert-zero" &&
+              nearly_equal(inserted_zero->x, 0.0) && inserted_zero->structure_keys.count == 1 &&
+              structure_key_at(applied, *inserted_zero, 0) == "pole",
+          "Repeater inserts have stable ids, methods, fields, and structure-key lists");
+
+    check(kv_edit_reset_memory(handle.value) != 0, "Repeater insert reset call");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0 &&
+              reset.repeater_count == baseline_repeater_count &&
+              !find_repeater(reset, "typed-contract-repeater-begin") &&
+              !find_repeater(reset, "typed-contract-repeater-begin0"),
+          "Repeater insert reset restores disk snapshot");
+
+    KvEditReportSnapshot reapply_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &valid.batch, &reapply_report,
+              sizeof(reapply_report)) != 0 && reapply_report.ok,
+          "Repeater insert reapply before commit");
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report, sizeof(commit_report)) != 0,
+          "Repeater insert commit call");
+    validate_report(commit_report);
+    check(commit_report.ok && commit_report.full_reparse_ok,
+          "Repeater insert commit validation");
+    check(commit_report.changed_file_count == 1 && commit_report.changed_files &&
+              arena_view(commit_report.string_data, commit_report.string_size,
+                         commit_report.changed_files[0]) == source_path &&
+              commit_report.committed_file_count >= 1,
+          "Repeater insert commit writes only the target map source");
+
+    MapHandle reloaded(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(reloaded.value != nullptr, "Repeater insert reload");
+    if (!reloaded.value) return;
+    KvMapSnapshot reloaded_snapshot{};
+    check(kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0,
+          "Repeater insert reloaded snapshot");
+    bool reloaded_full = false;
+    bool reloaded_zero = false;
+    for (std::uint64_t index = 0; index < reloaded_snapshot.repeater_count; ++index) {
+        const KvRepeaterRow& row = reloaded_snapshot.repeaters[index];
+        const std::string key = map_string(reloaded_snapshot, row.repeater_key.string_value);
+        const std::string method = map_string(reloaded_snapshot, row.method);
+        reloaded_full = reloaded_full ||
+            (key == "insert-full" && method == "Begin" && nearly_equal(row.distance, 175.0) &&
+             row.structure_keys.count == 2);
+        reloaded_zero = reloaded_zero ||
+            (key == "insert-zero" && method == "Begin0" && nearly_equal(row.distance, 200.0) &&
+             row.structure_keys.count == 1);
+    }
+    check(reloaded_snapshot.repeater_count == baseline_repeater_count + 2 &&
+              reloaded_full && reloaded_zero,
+          "Repeater insert commit/reload retains both forms");
+    std::ifstream committed_source(fixture.map_path, std::ios::binary);
+    const std::string committed_text{
+        std::istreambuf_iterator<char>(committed_source),
+        std::istreambuf_iterator<char>()};
+    check(committed_text.find(
+              "Repeater['insert-full'].Begin('1',1,2,3,4,5,6,0,25,5,'pole','main1');") !=
+              std::string::npos &&
+          committed_text.find(
+              "Repeater['insert-zero'].Begin0('1',0,25,5,'pole');") !=
+              std::string::npos,
+          "Repeater insert source text uses official Begin and Begin0 syntax");
+}
+
 int edit_contract() {
     repeater_linkage_boundary_contract();
     repeater_key_edit_contract();
+    repeater_insert_contract();
     TempFixture fixture;
     check_coordinate_offset_method_conversions(fixture.path_utf8());
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
