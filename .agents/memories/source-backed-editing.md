@@ -20,6 +20,7 @@
 - Group distance moves by physical source file, Include context/source section, and target distance. Reuse a compatible distance block; otherwise use a parser-confirmed gap or the existing manual boundary/expression resolution.
 - Preserve safe variable expressions and untouched arguments. Do not globally sort a file or delete user-authored empty distance/comment structure.
 - Pair Curve/Gradient transitions and Repeater chains through shared linkage helpers. Orphan `BeginTransition` remains read-only. Repeater deletion/editing may touch several physical statements atomically.
+- Treat each Repeater lifetime as `[first Begin, End)`, ordering a same-distance End before Begin independently of source order. A key rename must update every Begin/Begin0 and explicit End in the chain with one exact value; compare trimmed, ASCII-case-folded names and reject only overlapping same-name intervals.
 - Conversion of compact source forms is exceptional and explicit: Inspector coordinate-offset controls convert `Put`/`Put0` and `Begin`/`Begin0` in either direction, confirming before nonzero offsets are discarded; short-form `Signal.Put` and the documented Repeater trim case remain confirmation-driven.
 
 ## GUI lifecycle lessons

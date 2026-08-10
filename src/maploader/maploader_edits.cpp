@@ -10,6 +10,7 @@
 
 #include "maploader_internal.h"
 #include "own_track_transition_linkage.h"
+#include "repeater_linkage.h"
 
 namespace kme::maploader::detail {
 
@@ -1035,6 +1036,42 @@ std::string object_key_field_as_bve_arg(const MapEditChange& change,
     return raw.empty() ? value_to_bve_arg(fallback) : raw;
 }
 
+std::string replace_raw_object_key_argument(const ParsedStatement& statement,
+                                            const std::string& replacement) {
+    const std::string& text = statement.raw_text;
+    const size_t open = text.find('[');
+    if (open == std::string::npos) {
+        throw std::runtime_error("source statement has no object key");
+    }
+    bool single_quoted = false;
+    bool double_quoted = false;
+    int nested = 0;
+    for (size_t index = open + 1; index < text.size(); ++index) {
+        const char ch = text[index];
+        if (ch == '\'' && !double_quoted) single_quoted = !single_quoted;
+        else if (ch == '"' && !single_quoted) double_quoted = !double_quoted;
+        else if (!single_quoted && !double_quoted) {
+            if (ch == '[') {
+                ++nested;
+            } else if (ch == ']' && nested-- == 0) {
+                size_t value_begin = open + 1;
+                while (value_begin < index &&
+                       (text[value_begin] == ' ' || text[value_begin] == '\t')) {
+                    ++value_begin;
+                }
+                size_t value_end = index;
+                while (value_end > value_begin &&
+                       (text[value_end - 1] == ' ' || text[value_end - 1] == '\t')) {
+                    --value_end;
+                }
+                return text.substr(0, value_begin) + replacement +
+                    text.substr(value_end);
+            }
+        }
+    }
+    throw std::runtime_error("source statement has an unterminated object key");
+}
+
 std::string string_value_field_as_bve_arg(const MapEditChange& change,
                                           const std::string& key,
                                           const Value& fallback,
@@ -1466,8 +1503,13 @@ std::string build_signal_put_statement(const MapEditChange& change,
     return out.str();
 }
 
-std::string repeater_key_bve_arg(const RepeaterEvent& row) {
-    const std::string key = value_to_bve_arg(row.repeater_key);
+std::string repeater_key_bve_arg(const MapEditChange& change,
+                                 const RepeaterEvent& row) {
+    const auto edited = change.field_changes.find("repeaterKey");
+    const std::string key = edited == change.field_changes.end()
+        ? value_to_bve_arg(row.repeater_key)
+        : quoted_bve_string(required_string_field(
+              change, "repeaterKey", value_to_edit_text(row.repeater_key)));
     if (key.empty()) throw std::runtime_error("Repeater key is empty");
     return key;
 }
@@ -1506,15 +1548,21 @@ std::string build_repeater_statement(const MapEditChange& change,
                                      const ParsedStatement& statement,
                                      const RepeaterEvent& row) {
     validate_repeater_edit_fields(change);
+    if (change.field_changes.size() == 1 &&
+        has_field_change(change, "repeaterKey")) {
+        return replace_raw_object_key_argument(
+            statement, repeater_key_bve_arg(change, row));
+    }
     const RepeaterStructureKeyEdit edited_keys = parse_repeater_structure_key_edit(change);
     const std::string source_method = ascii_lower(row.method);
     const std::vector<std::string> raw_args = parse_bve_argument_fields(statement.raw_arguments);
-    const std::string key = repeater_key_bve_arg(row);
+    const std::string key = repeater_key_bve_arg(change, row);
 
     if (source_method == "end") {
         for (const auto& field : change.field_changes) {
-            if (field.first != "distance") {
-                throw std::runtime_error("only distance can be edited on Repeater.End");
+            if (field.first != "distance" && field.first != "repeaterKey") {
+                throw std::runtime_error(
+                    "only distance and repeaterKey can be edited on Repeater.End");
             }
         }
         return "Repeater[" + key + "].End();";
@@ -3436,6 +3484,172 @@ OwnTrackTransitionState own_track_transition_state(MapContext& ctx) {
     return state;
 }
 
+repeater_linkage::Linkage repeater_linkage_state(
+    MapContext& ctx, std::vector<std::string>* edit_ids = nullptr) {
+    std::vector<repeater_linkage::Event> events;
+    events.reserve(ctx.repeaters.size());
+    if (edit_ids) edit_ids->assign(ctx.repeaters.size(), std::string{});
+    for (size_t index = 0; index < ctx.repeaters.size(); ++index) {
+        const RepeaterEvent& row = ctx.repeaters[index];
+        repeater_linkage::Event event;
+        event.source_index = index;
+        event.distance = row.distance;
+        event.order = static_cast<double>(row.order);
+        event.key = value_to_edit_text(row.repeater_key);
+        const std::string method = ascii_lower(row.method);
+        if (method == "begin" || method == "begin0") {
+            event.kind = repeater_linkage::EventKind::Begin;
+        } else if (method == "end") {
+            event.kind = repeater_linkage::EventKind::End;
+        }
+        events.push_back(std::move(event));
+        if (edit_ids) {
+            (*edit_ids)[index] = element_edit_id(ctx, row.edit_ref, "repeater");
+        }
+    }
+    return repeater_linkage::pair_linkage(std::move(events));
+}
+
+void validate_repeater_key_renames(
+    MapContext& ctx, const std::vector<const MapEditChange*>& changes,
+    MapEditReport& report) {
+    std::vector<std::string> edit_ids;
+    const repeater_linkage::Linkage linkage =
+        repeater_linkage_state(ctx, &edit_ids);
+    if (linkage.chains.empty()) return;
+
+    std::map<std::string, size_t> source_index_by_edit_id;
+    std::vector<std::optional<size_t>> chain_by_source_index(ctx.repeaters.size());
+    for (size_t source_index = 0; source_index < edit_ids.size(); ++source_index) {
+        if (!edit_ids[source_index].empty()) {
+            source_index_by_edit_id.emplace(edit_ids[source_index], source_index);
+        }
+    }
+    for (size_t chain_index = 0; chain_index < linkage.chains.size(); ++chain_index) {
+        const repeater_linkage::Chain& chain = linkage.chains[chain_index];
+        for (size_t source_index : chain.begin_source_indices) {
+            if (source_index < chain_by_source_index.size()) {
+                chain_by_source_index[source_index] = chain_index;
+            }
+        }
+        if (chain.end_source_index &&
+            *chain.end_source_index < chain_by_source_index.size()) {
+            chain_by_source_index[*chain.end_source_index] = chain_index;
+        }
+    }
+
+    struct RenameRequest {
+        std::map<std::string, std::string> values_by_edit_id;
+        bool changes_source_value = false;
+    };
+    std::map<size_t, RenameRequest> requests;
+    for (const MapEditChange* change : changes) {
+        const auto key_change = change->field_changes.find("repeaterKey");
+        if (key_change == change->field_changes.end()) continue;
+        auto source = source_index_by_edit_id.find(change->edit_id);
+        if (source == source_index_by_edit_id.end()) continue;
+        const size_t source_index = source->second;
+        const std::string value = trim_field_copy(key_change->second);
+        if (value.empty()) {
+            report.blocking_errors.push_back(
+                "Repeater key rename contains an empty repeaterKey");
+            return;
+        }
+        const std::string operation =
+            ascii_lower(change->operation.empty() ? "update" : change->operation);
+        if (operation != "update") {
+            report.blocking_errors.push_back(
+                "Repeater key rename only supports update operations: " +
+                change->edit_id);
+            return;
+        }
+        if (!chain_by_source_index[source_index]) {
+            report.blocking_errors.push_back(
+                "Repeater key rename target is not part of a Begin chain: " +
+                change->edit_id);
+            return;
+        }
+        RenameRequest& request = requests[*chain_by_source_index[source_index]];
+        request.values_by_edit_id.emplace(change->edit_id, value);
+        request.changes_source_value = request.changes_source_value ||
+            value != value_to_edit_text(ctx.repeaters[source_index].repeater_key);
+    }
+
+    std::vector<std::string> final_keys;
+    final_keys.reserve(linkage.chains.size());
+    for (const repeater_linkage::Chain& chain : linkage.chains) {
+        final_keys.push_back(chain.key);
+    }
+    std::vector<bool> renamed(linkage.chains.size(), false);
+    for (const auto& item : requests) {
+        const size_t chain_index = item.first;
+        const RenameRequest& request = item.second;
+        if (!request.changes_source_value) continue;
+        if (chain_index >= linkage.chains.size()) {
+            report.blocking_errors.push_back(
+                "Repeater key rename resolved an invalid chain");
+            return;
+        }
+        const repeater_linkage::Chain& chain = linkage.chains[chain_index];
+        std::vector<size_t> source_indices = chain.begin_source_indices;
+        if (chain.end_source_index) source_indices.push_back(*chain.end_source_index);
+        std::optional<std::string> proposed_key;
+        for (size_t source_index : source_indices) {
+            if (source_index >= edit_ids.size()) {
+                report.blocking_errors.push_back(
+                    "Repeater key rename chain contains invalid source metadata");
+                return;
+            }
+            const std::string& edit_id = edit_ids[source_index];
+            auto proposed = request.values_by_edit_id.find(edit_id);
+            if (proposed == request.values_by_edit_id.end()) {
+                report.blocking_errors.push_back(
+                    "Repeater key rename must update every statement in the chain: " +
+                    edit_id);
+                return;
+            }
+            if (!proposed_key) {
+                proposed_key = proposed->second;
+            } else if (*proposed_key != proposed->second) {
+                report.blocking_errors.push_back(
+                    "Repeater key rename must use the same repeaterKey for every "
+                    "statement in the chain");
+                return;
+            }
+        }
+        final_keys[chain_index] =
+            repeater_linkage::canonical_key(proposed_key.value_or(std::string{}));
+        if (final_keys[chain_index].empty()) {
+            report.blocking_errors.push_back(
+                "Repeater key rename contains an empty repeaterKey");
+            return;
+        }
+        renamed[chain_index] = true;
+    }
+
+    const auto interval_text = [](const repeater_linkage::Chain& chain) {
+        return "[" + canonical_number(chain.begin_distance) + "," +
+            (chain.end_distance ? canonical_number(*chain.end_distance)
+                                : std::string("+inf")) + ")";
+    };
+    for (size_t left = 0; left < linkage.chains.size(); ++left) {
+        for (size_t right = left + 1; right < linkage.chains.size(); ++right) {
+            if ((!renamed[left] && !renamed[right]) ||
+                final_keys[left] != final_keys[right] ||
+                !repeater_linkage::half_open_intervals_overlap(
+                    linkage.chains[left], linkage.chains[right])) {
+                continue;
+            }
+            report.blocking_errors.push_back(
+                "Repeater key rename overlaps another Repeater interval: key=" +
+                final_keys[left] + ", intervals=" +
+                interval_text(linkage.chains[left]) + " and " +
+                interval_text(linkage.chains[right]));
+            return;
+        }
+    }
+}
+
 void validate_edit_report(MapContext& baseline,
                           const std::vector<MapEditChange>& changes,
                           MapEditReport& report) {
@@ -4375,6 +4589,9 @@ MapEditReport build_edit_report(MapContext& ctx,
             }
         }
     }
+    if (!report.blocking_errors.empty()) return report;
+
+    validate_repeater_key_renames(ctx, effective_changes, report);
     if (!report.blocking_errors.empty()) return report;
 
     std::vector<PreparedEdit> prepared;

@@ -101,6 +101,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Preview all `Structure.PutBetween` Inspector fields with exact live vertex deformation and edit `distance` through a Z-only, whole-metre 3D gizmo.
 - [x] Edit an explicit Repeater EndDistance through a Z-only whole-metre gizmo on its track centerline, with live instance-count updates and own-track-distance scaling on other tracks.
 - [x] Edit linked Repeater segments in the inspector, including Begin navigation, End/change boundaries, and linked deletion choices.
+- [x] Rename `repeaterKey` across every Begin/Begin0/End in one linked chain, using half-open interval overlap validation to allow touching or disjoint same-name Repeaters and reject overlapping ones.
 
 ### Environmental Effects
 
@@ -219,6 +220,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 为 `Structure.PutBetween` 的全部检查器字段提供精确的实时顶点变形预览，并通过仅 Z 轴、整米步进的 3D 操纵器编辑 `distance`
 - [x] 通过位于对应轨道中心线上的仅 Z 轴整米操纵器编辑显式 Repeater EndDistance，实时更新实例数量，并在他轨道上按自轨道 distance 比例换算拖动
 - [x] 在属性检查器中编辑关联的连续布景段，支持 Begin 导航、End/变化边界和关联删除选项
+- [x] 在一条关联链的全部 Begin/Begin0/End 中统一修改 `repeaterKey`；以半开区间重叠校验允许端点相接或完全分离的同名 Repeater，并拒绝重叠区间
 
 ### 环境效果
 

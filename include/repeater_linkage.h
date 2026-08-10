@@ -7,7 +7,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <map>
 #include <optional>
@@ -61,6 +60,9 @@ struct Chain {
     std::vector<size_t> begin_source_indices;
     std::vector<size_t> segment_indices;
     std::optional<size_t> end_source_index;
+    std::string key;
+    double begin_distance = 0.0;
+    std::optional<double> end_distance;
 };
 
 struct Linkage {
@@ -69,12 +71,20 @@ struct Linkage {
 };
 
 inline std::string canonical_key(std::string text) {
+    const auto is_ascii_space = [](unsigned char ch) {
+        return ch == ' ' || ch == '\t' || ch == '\n' ||
+            ch == '\r' || ch == '\f' || ch == '\v';
+    };
     size_t first = 0;
-    while (first < text.size() && std::isspace(static_cast<unsigned char>(text[first]))) ++first;
+    while (first < text.size() &&
+           is_ascii_space(static_cast<unsigned char>(text[first]))) ++first;
     size_t last = text.size();
-    while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1]))) --last;
+    while (last > first &&
+           is_ascii_space(static_cast<unsigned char>(text[last - 1]))) --last;
     text = text.substr(first, last - first);
-    for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    for (char& ch : text) {
+        if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+    }
     return text;
 }
 
@@ -82,6 +92,18 @@ inline Linkage pair_linkage(std::vector<Event> events) {
     std::stable_sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
         if (a.distance < b.distance) return true;
         if (a.distance > b.distance) return false;
+        // Repeater lifetimes are half-open intervals.  At a shared distance an
+        // End therefore closes the earlier lifetime before any Begin starts a
+        // new one, regardless of source parse order.
+        const auto kind_rank = [](EventKind kind) {
+            if (kind == EventKind::End) return 0;
+            if (kind == EventKind::Begin) return 1;
+            return 2;
+        };
+        const int a_rank = kind_rank(a.kind);
+        const int b_rank = kind_rank(b.kind);
+        if (a_rank < b_rank) return true;
+        if (a_rank > b_rank) return false;
         if (a.order < b.order) return true;
         if (a.order > b.order) return false;
         return a.source_index < b.source_index;
@@ -113,7 +135,10 @@ inline Linkage pair_linkage(std::vector<Event> events) {
                 open_segments.erase(open);
             } else {
                 chain_index = result.chains.size();
-                result.chains.push_back(Chain{});
+                Chain chain;
+                chain.key = key;
+                chain.begin_distance = event.distance;
+                result.chains.push_back(std::move(chain));
             }
             Chain& chain = result.chains[chain_index];
             Segment segment;
@@ -136,6 +161,7 @@ inline Linkage pair_linkage(std::vector<Event> events) {
             segment.boundary_source_index = event.source_index;
             segment.end_distance = event.distance;
             result.chains[open->second.chain_index].end_source_index = event.source_index;
+            result.chains[open->second.chain_index].end_distance = event.distance;
             open_segments.erase(open);
         }
     }
@@ -149,6 +175,12 @@ inline Linkage pair_linkage(std::vector<Event> events) {
         }
     }
     return result;
+}
+
+inline bool half_open_intervals_overlap(const Chain& left, const Chain& right) {
+    if (left.end_distance && *left.end_distance <= right.begin_distance) return false;
+    if (right.end_distance && *right.end_distance <= left.begin_distance) return false;
+    return true;
 }
 
 inline std::vector<Segment> pair_segments(std::vector<Event> events) {

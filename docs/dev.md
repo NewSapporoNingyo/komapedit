@@ -138,6 +138,7 @@ Editable rows must retain source path, include stack, source span, original stat
 - Preserve statement method and argument shapes except for explicit Inspector actions: the coordinate-offset buttons convert `Structure.Put`/`Put0` and `Repeater.Begin`/`Begin0` in either direction (confirming before nonzero offsets are discarded), while short `Signal.Put` and Repeater trim keep their existing confirmation flows.
 - Use shared inline-table drafts for loaded Station, Structure, Signal, Sound, and Sound3D rows. They do not insert new resource rows.
 - Use `repeater_linkage` and transition-linkage rules across maploader, tables, 2D, and 3D instead of recreating chains locally.
+- Repeater lifetimes are half-open `[first Begin, End)` intervals; an End at the same distance is ordered before every Begin regardless of source order. A `repeaterKey` rename is one typed batch containing every Begin/Begin0 and explicit End in that chain, and maploader rejects incomplete batches or canonical same-name intervals that overlap.
 
 ### UI, tables, and rendering
 
@@ -177,13 +178,14 @@ build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output
 build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
 build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
+build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
-Pass explicit map paths for portable runs. The own-track, other-track, distance, Repeater, and Section tools otherwise fall back to a developer-machine route path.
+Pass explicit map paths for portable runs. The Repeater-key command always requires one; the own-track, other-track, distance, Repeater-batch, and Section tools otherwise fall back to a developer-machine route path. Repeater-key commit validation leaves the authorized route edit in place for physical diff inspection.
 
 At minimum, validate the affected combination of normal and Include map loading, reload, plan/profile/radius charts, station jump, measurement, CSV export, model preview/error handling, 3D tracks/objects/markers/camera/overlay, edit Apply/Revert/Save/Reload, source round trip, encodings/newlines, inline-list drafts, settings persistence, and release contents. Changes to disk writeback require save-then-reload comparison. Performance-sensitive changes require repeatable before/after runs on the same route, parameters, build type, and load profile.
 

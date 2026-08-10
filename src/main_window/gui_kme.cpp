@@ -3623,17 +3623,42 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             }
         }
     } else if (request.row_kind == "repeater") {
-        const std::vector<repeater_linkage::Segment> segments =
-            repeater_linkage::pair_segments(table_repeater_events(model_.repeaters));
+        const repeater_linkage::Linkage repeater_linkage =
+            repeater_linkage::pair_linkage(table_repeater_events(model_.repeaters));
         const auto linked = std::find_if(
-            segments.begin(), segments.end(), [&](const repeater_linkage::Segment& segment) {
+            repeater_linkage.segments.begin(), repeater_linkage.segments.end(),
+            [&](const repeater_linkage::Segment& segment) {
                 return segment.begin_source_index < model_.repeaters.size() &&
                     model_.repeaters[segment.begin_source_index].edit_id == edit_id;
             });
-        if (linked == segments.end()) {
+        if (linked == repeater_linkage.segments.end() ||
+            linked->chain_index >= repeater_linkage.chains.size()) {
             add_log("[warn]gui_kme.cpp: Repeater inspector target is not a Begin statement: " +
                     edit_id);
             return false;
+        }
+        const repeater_linkage::Chain& repeater_chain =
+            repeater_linkage.chains[linked->chain_index];
+        next.repeater_chain_edit_ids.reserve(
+            repeater_chain.begin_source_indices.size() +
+            (repeater_chain.end_source_index ? 1u : 0u));
+        for (size_t source_index : repeater_chain.begin_source_indices) {
+            if (source_index >= model_.repeaters.size() ||
+                model_.repeaters[source_index].edit_id.empty()) {
+                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable Begin metadata");
+                return false;
+            }
+            next.repeater_chain_edit_ids.push_back(
+                model_.repeaters[source_index].edit_id);
+        }
+        if (repeater_chain.end_source_index) {
+            if (*repeater_chain.end_source_index >= model_.repeaters.size() ||
+                model_.repeaters[*repeater_chain.end_source_index].edit_id.empty()) {
+                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable End metadata");
+                return false;
+            }
+            next.repeater_chain_edit_ids.push_back(
+                model_.repeaters[*repeater_chain.end_source_index].edit_id);
         }
 
         const std::string method = table_cell(*row, "method");
@@ -3659,7 +3684,6 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
 
         add_row_field("distance", "beginDistance", MapElementNumericConstraint::Finite, true);
         add_row_field("repeaterKey", "repeaterKey", MapElementNumericConstraint::None, true);
-        next.fields.back().read_only = true;
         add_row_field("trackKey", "trackKey", MapElementNumericConstraint::None, false);
         for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
             add_row_field(key, key, structure_edit_numeric_constraint(key), true);
@@ -3993,6 +4017,8 @@ void App::apply_inspector_changes() {
     };
 
     std::vector<std::string> repeater_structure_keys;
+    std::optional<std::string> repeater_key_value;
+    std::optional<std::string> repeater_key_original;
     for (MapElementEditFieldState& field : inspector_.fields) {
         if (field.read_only) continue;
         std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
@@ -4006,6 +4032,10 @@ void App::apply_inspector_changes() {
             return;
         }
         value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+        if (repeater_inspector && field.key == "repeaterKey") {
+            repeater_key_value = value;
+            repeater_key_original = trim_gui_ascii_copy(field.original_value);
+        }
         if (inspector_.row_kind == "repeater" && is_repeater_structure_key_field(field)) {
             repeater_structure_keys.push_back(value);
             continue;
@@ -4203,15 +4233,6 @@ void App::apply_inspector_changes() {
     for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
         candidate.erase(owned_edit_id);
     }
-    if (replacements.empty()) {
-        if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
-            if (repeater_inspector) {
-                inspector_.session.repeater_drafts.erase(repeater_draft_edit_id);
-            }
-            set_program_status("status.edit.no_changes");
-        }
-        return;
-    }
 
     for (auto& item : replacements) {
         MapElementPendingChange& change = item.second;
@@ -4233,6 +4254,79 @@ void App::apply_inspector_changes() {
     for (auto& item : replacements) {
         candidate[item.first] = std::move(item.second);
     }
+
+    const bool repeater_chain_has_pending_key = repeater_inspector &&
+        std::any_of(inspector_.repeater_chain_edit_ids.begin(),
+                    inspector_.repeater_chain_edit_ids.end(),
+                    [&](const std::string& edit_id) {
+                        auto pending = pending_edit_changes_.find(edit_id);
+                        return pending != pending_edit_changes_.end() &&
+                            pending->second.field_changes.find("repeaterKey") !=
+                                pending->second.field_changes.end();
+                    });
+    const bool repeater_key_sync_requested = repeater_inspector &&
+        repeater_key_value && repeater_key_original &&
+        (*repeater_key_value != *repeater_key_original ||
+         repeater_chain_has_pending_key);
+    if (repeater_key_sync_requested) {
+        if (inspector_.repeater_chain_edit_ids.empty()) {
+            add_log("[error]gui_kme.cpp: Repeater key edit has no linked chain metadata");
+            set_program_status("status.edit.pending");
+            return;
+        }
+        for (const std::string& chain_edit_id : inspector_.repeater_chain_edit_ids) {
+            if (*repeater_key_value == *repeater_key_original) {
+                auto existing = candidate.find(chain_edit_id);
+                if (existing == candidate.end() ||
+                    existing->second.operation != "update") {
+                    continue;
+                }
+                existing->second.field_changes.erase("repeaterKey");
+                if (existing->second.field_changes.empty()) candidate.erase(existing);
+                continue;
+            }
+
+            size_t row_index = 0;
+            if (!find_row_index_by_edit_id(
+                    model_.repeaters, chain_edit_id, row_index)) {
+                add_log("[error]gui_kme.cpp: Repeater key edit lost a linked chain row: " +
+                        chain_edit_id);
+                set_program_status("status.edit.pending");
+                return;
+            }
+            auto [entry, inserted] = candidate.try_emplace(chain_edit_id);
+            MapElementPendingChange& change = entry->second;
+            if (inserted) {
+                change.change_id = "change-" + chain_edit_id;
+                change.edit_id = chain_edit_id;
+                change.row_kind = "repeater";
+                change.operation = "update";
+            }
+            if (change.operation != "update") {
+                add_log("[error]gui_kme.cpp: Repeater key edit conflicts with a linked "
+                        "non-update operation: " + chain_edit_id);
+                set_program_status("status.edit.pending");
+                return;
+            }
+            if (change.expected_source_hash.empty()) {
+                const TableRow& chain_row = model_.repeaters[row_index];
+                change.expected_source_hash = expected_source_hash_for_edit_target(
+                    model_, pending_edit_changes_, chain_edit_id, std::string{},
+                    chain_row.source.file_path);
+            }
+            change.field_changes["repeaterKey"] = *repeater_key_value;
+        }
+    }
+
+    if (replacements.empty() && !repeater_key_sync_requested) {
+        if (apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+            if (repeater_inspector) {
+                inspector_.session.repeater_drafts.erase(repeater_draft_edit_id);
+            }
+            set_program_status("status.edit.no_changes");
+        }
+        return;
+    }
     std::optional<MapElementInspectorRequest> reload_request =
         make_inspector_reload_request(inspector_);
     if (repeater_inspector && reload_request->inspector_session) {
@@ -4241,7 +4335,9 @@ void App::apply_inspector_changes() {
     if (!apply_edit_ledger_to_preview(candidate, std::move(reload_request), false,
                                       inspector_.edit_id)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
-            !distance_resolution_workflow_.retry_requested) {
+            !distance_resolution_workflow_.retry_requested &&
+            std::string_view(program_status_key_) !=
+                "status.edit.repeater_key_conflict") {
             set_program_status("status.edit.pending");
         }
     }
@@ -5275,10 +5371,15 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
             add_log("[warn]gui_kme.cpp: " + edit_report_string(report, report.warnings[i]));
         }
     }
+    bool repeater_key_conflict = false;
     if (report.blocking_errors) {
         for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
-            add_log("[error]gui_kme.cpp: " +
-                    edit_report_string(report, report.blocking_errors[i]));
+            const std::string message =
+                edit_report_string(report, report.blocking_errors[i]);
+            repeater_key_conflict = repeater_key_conflict ||
+                message.rfind(
+                    "Repeater key rename overlaps another Repeater interval", 0) == 0;
+            add_log("[error]gui_kme.cpp: " + message);
         }
     }
     const int updates = report.update_count;
@@ -5289,6 +5390,9 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
     if (delete_count) *delete_count = deletes;
     if (changed_file_count) *changed_file_count = files;
     bool ok = report.ok != 0;
+    if (!ok && repeater_key_conflict) {
+        set_program_status("status.edit.repeater_key_conflict");
+    }
     if (ok) {
         std::string committed_state_error;
         if (!apply_committed_edit_state(model_, report, committed_state_error)) {
@@ -9863,6 +9967,18 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_repeater_edit_batch(repeater_edit_batch);
+    }
+
+    HeadlessRepeaterKeyEditOptions repeater_key_edit =
+        parse_headless_repeater_key_edit_options(args);
+    if (repeater_key_edit.requested) {
+        if (!repeater_key_edit.error.empty()) {
+            std::cerr << repeater_key_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-repeater-key-edit <map-path> "
+                      << "[--unit-distance M] [--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_repeater_key_edit(repeater_key_edit);
     }
 
     HeadlessSectionEditBatchOptions section_edit_batch =

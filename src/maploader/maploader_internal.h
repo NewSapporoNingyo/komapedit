@@ -1202,7 +1202,8 @@ inline bool is_repeater_structure_key_edit_field(const std::string& field) {
 }
 
 inline bool is_repeater_edit_field(const std::string& field) {
-    return field == "distance" || field == "method" || field == "trackKey" ||
+    return field == "distance" || field == "method" || field == "repeaterKey" ||
+           field == "trackKey" ||
            field == "x" || field == "y" || field == "z" ||
            field == "rx" || field == "ry" || field == "rz" ||
            field == "tilt" || field == "span" || field == "interval" ||

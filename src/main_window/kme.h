@@ -1288,6 +1288,7 @@ struct MapElementInspectorState {
     std::string pending_signal_full_form_value;
     std::vector<MapElementEditFieldState> fields;
     std::vector<std::string> owned_edit_ids;
+    std::vector<std::string> repeater_chain_edit_ids;
     std::vector<std::string> repeater_structure_keys_original;
     std::vector<std::string> section_values_original;
     MapElementInspectorSessionState session;

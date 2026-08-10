@@ -590,6 +590,41 @@ HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
         [](HeadlessRepeaterEditBatchOptions& options) { options.commit = true; });
 }
 
+HeadlessRepeaterKeyEditOptions parse_headless_repeater_key_edit_options(
+    const std::vector<std::string>& args) {
+    HeadlessRepeaterKeyEditOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-repeater-key-edit") {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-repeater-key-edit requires a map path";
+    }
+    return options;
+}
+
 HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
     const std::vector<std::string>& args) {
     return parse_headless_optional_map_edit_options<HeadlessSectionEditBatchOptions>(
@@ -5056,6 +5091,464 @@ int run_debug_headless_repeater_edit_batch(const HeadlessRepeaterEditBatchOption
     write_batch_result(*out, facts);
     out->flush();
     return facts.passed() ? 0 : 20;
+}
+
+namespace repeater_key_edit_headless {
+
+using EditChange = typed_edit_headless::Change;
+using EditReport = typed_edit_headless::Report;
+using MapHandle = distance_batch_headless::MapHandle;
+
+struct Target {
+    std::string edit_id;
+    std::string expected_source_hash;
+    std::string source_file;
+    std::string method;
+    std::string original_key;
+    int source_line = 0;
+    double distance = 0.0;
+};
+
+struct Selection {
+    std::vector<Target> targets;
+    std::string original_key;
+    std::string overlapping_key;
+    double begin_distance = 0.0;
+    std::optional<double> end_distance;
+};
+
+struct RunFacts {
+    std::string path;
+    bool commit_requested = false;
+    Selection selection;
+    std::string new_key;
+    bool globally_unused_key = false;
+    bool atomic_guard_ok = false;
+    bool overlap_candidate_found = false;
+    bool overlap_guard_ok = false;
+    bool dry_run_ok = false;
+    int dry_run_update_count = 0;
+    bool apply_ok = false;
+    bool apply_snapshot_ok = false;
+    int non_target_changed_count = 0;
+    bool reset_ok = false;
+    bool reset_snapshot_ok = false;
+    bool second_apply_ok = false;
+    bool commit_attempted = false;
+    bool commit_ok = false;
+    bool reload_ok = false;
+    std::vector<std::pair<std::string, std::string>> baseline_hashes;
+    std::vector<std::pair<std::string, std::string>> reload_hashes;
+    std::vector<std::string> changed_files;
+    std::string error;
+
+    bool passed() const {
+        const bool overlap_result = !overlap_candidate_found || overlap_guard_ok;
+        const bool commit_result = !commit_requested ||
+            (commit_attempted && commit_ok && !changed_files.empty());
+        return error.empty() && selection.targets.size() >= 3 && globally_unused_key &&
+            atomic_guard_ok && overlap_result && dry_run_ok &&
+            dry_run_update_count == static_cast<int>(selection.targets.size()) &&
+            apply_ok && apply_snapshot_ok && non_target_changed_count == 0 &&
+            reset_ok && reset_snapshot_ok && second_apply_ok && commit_result && reload_ok;
+    }
+};
+
+repeater_linkage::Linkage linkage_from_snapshot(const KvMapSnapshot& snapshot) {
+    std::vector<repeater_linkage::Event> events;
+    events.reserve(static_cast<size_t>(snapshot.repeater_count));
+    for (std::uint64_t index = 0; index < snapshot.repeater_count; ++index) {
+        const KvRepeaterRow& row = snapshot.repeaters[index];
+        repeater_linkage::Event event;
+        event.source_index = static_cast<size_t>(index);
+        event.distance = row.distance;
+        event.order = static_cast<double>(row.order);
+        event.key = distance_batch_headless::snapshot_value_text(snapshot, row.repeater_key);
+        const std::string method =
+            distance_batch_headless::snapshot_text(snapshot, row.method);
+        if (method == "Begin" || method == "Begin0") {
+            event.kind = repeater_linkage::EventKind::Begin;
+        } else if (method == "End") {
+            event.kind = repeater_linkage::EventKind::End;
+        }
+        events.push_back(std::move(event));
+    }
+    return repeater_linkage::pair_linkage(std::move(events));
+}
+
+Target target_from_row(const KvMapSnapshot& snapshot, size_t row_index) {
+    if (row_index >= snapshot.repeater_count) {
+        throw std::runtime_error("Repeater key target index is out of range");
+    }
+    const KvRepeaterRow& row = snapshot.repeaters[row_index];
+    if (row.metadata.source_file_index == KV_INDEX_NONE ||
+        row.metadata.source_file_index >= snapshot.source_file_count) {
+        throw std::runtime_error("Repeater key target has no source file metadata");
+    }
+    const KvSourceFileRow& source = snapshot.source_files[row.metadata.source_file_index];
+    Target target;
+    target.edit_id = distance_batch_headless::snapshot_text(snapshot, row.metadata.edit_id);
+    target.expected_source_hash =
+        distance_batch_headless::snapshot_text(snapshot, source.source_hash);
+    target.source_file = distance_batch_headless::snapshot_text(snapshot, source.file_path);
+    target.method = distance_batch_headless::snapshot_text(snapshot, row.method);
+    target.original_key =
+        distance_batch_headless::snapshot_value_text(snapshot, row.repeater_key);
+    target.source_line = row.metadata.line;
+    target.distance = row.distance;
+    if (target.edit_id.empty() || target.expected_source_hash.empty() ||
+        target.source_file.empty()) {
+        throw std::runtime_error("Repeater key target has incomplete edit metadata");
+    }
+    return target;
+}
+
+Selection select_chain(const KvMapSnapshot& snapshot,
+                       const repeater_linkage::Linkage& linkage) {
+    std::optional<size_t> fallback;
+    std::optional<size_t> selected;
+    std::string overlap_key;
+    for (size_t chain_index = 0; chain_index < linkage.chains.size(); ++chain_index) {
+        const repeater_linkage::Chain& chain = linkage.chains[chain_index];
+        if (chain.begin_source_indices.size() < 2 || !chain.end_source_index) continue;
+        bool valid = true;
+        for (size_t row_index : chain.begin_source_indices) {
+            if (row_index >= snapshot.repeater_count) {
+                valid = false;
+                break;
+            }
+            const std::string method = distance_batch_headless::snapshot_text(
+                snapshot, snapshot.repeaters[row_index].method);
+            valid = valid && (method == "Begin" || method == "Begin0");
+        }
+        if (!valid || *chain.end_source_index >= snapshot.repeater_count) continue;
+        if (!fallback) fallback = chain_index;
+        for (size_t other_index = 0; other_index < linkage.chains.size(); ++other_index) {
+            if (other_index == chain_index) continue;
+            const repeater_linkage::Chain& other = linkage.chains[other_index];
+            if (chain.key != other.key &&
+                repeater_linkage::half_open_intervals_overlap(chain, other)) {
+                selected = chain_index;
+                overlap_key = other.key;
+                break;
+            }
+        }
+        if (selected) break;
+    }
+    if (!selected) selected = fallback;
+    if (!selected) {
+        throw std::runtime_error(
+            "map has no complete Repeater chain with at least two Begin statements");
+    }
+
+    const repeater_linkage::Chain& chain = linkage.chains[*selected];
+    Selection result;
+    result.begin_distance = chain.begin_distance;
+    result.end_distance = chain.end_distance;
+    result.overlapping_key = std::move(overlap_key);
+    result.targets.reserve(chain.begin_source_indices.size() + 1);
+    for (size_t row_index : chain.begin_source_indices) {
+        result.targets.push_back(target_from_row(snapshot, row_index));
+    }
+    result.targets.push_back(target_from_row(snapshot, *chain.end_source_index));
+    result.original_key = result.targets.front().original_key;
+    return result;
+}
+
+std::string unused_key(const repeater_linkage::Linkage& linkage,
+                       const std::string& original_key) {
+    std::set<std::string> used;
+    for (const repeater_linkage::Chain& chain : linkage.chains) used.insert(chain.key);
+    const std::string base = original_key + "__komapedit_headless";
+    for (int suffix = 0; suffix < 10000; ++suffix) {
+        const std::string candidate = suffix == 0
+            ? base : base + "_" + std::to_string(suffix);
+        if (!used.count(repeater_linkage::canonical_key(candidate))) return candidate;
+    }
+    throw std::runtime_error("could not generate a globally unused Repeater key");
+}
+
+std::vector<EditChange> build_changes(const Selection& selection,
+                                      const std::string& key) {
+    std::vector<EditChange> changes;
+    changes.reserve(selection.targets.size());
+    for (size_t index = 0; index < selection.targets.size(); ++index) {
+        const Target& target = selection.targets[index];
+        changes.push_back(typed_edit_headless::update(
+            "headless-repeater-key-" + std::to_string(index), target.edit_id,
+            target.expected_source_hash, {{"repeaterKey", key}}));
+    }
+    return changes;
+}
+
+bool has_error_prefix(const EditReport& report, const std::string& prefix) {
+    return std::any_of(report.blocking_errors.begin(), report.blocking_errors.end(),
+                       [&](const std::string& error) {
+                           return error.rfind(prefix, 0) == 0;
+                       });
+}
+
+bool snapshot_matches(void* handle, const Selection& selection,
+                      const std::string& common_key, bool original_per_target) {
+    const KvMapSnapshot snapshot = distance_batch_headless::current_map_snapshot(handle);
+    for (const Target& target : selection.targets) {
+        bool matched = false;
+        for (std::uint64_t index = 0; index < snapshot.repeater_count; ++index) {
+            const KvRepeaterRow& row = snapshot.repeaters[index];
+            const std::string edit_id = distance_batch_headless::snapshot_text(
+                snapshot, row.metadata.edit_id);
+            if (edit_id != target.edit_id) continue;
+            const std::string expected = original_per_target
+                ? target.original_key : common_key;
+            matched = distance_batch_headless::snapshot_value_text(
+                snapshot, row.repeater_key) == expected;
+            break;
+        }
+        if (!matched) return false;
+    }
+    return true;
+}
+
+bool reloaded_anchors_match(void* handle, const Selection& selection,
+                            const std::string& common_key, bool original_per_target) {
+    const KvMapSnapshot snapshot = distance_batch_headless::current_map_snapshot(handle);
+    for (const Target& target : selection.targets) {
+        bool matched = false;
+        for (std::uint64_t index = 0; index < snapshot.repeater_count; ++index) {
+            const KvRepeaterRow& row = snapshot.repeaters[index];
+            if (row.metadata.line != target.source_line ||
+                std::fabs(row.distance - target.distance) > 1e-8 ||
+                distance_batch_headless::snapshot_text(snapshot, row.method) != target.method ||
+                distance_batch_headless::metadata_source_file(snapshot, row.metadata) !=
+                    target.source_file) {
+                continue;
+            }
+            const std::string expected = original_per_target
+                ? target.original_key : common_key;
+            matched = distance_batch_headless::snapshot_value_text(
+                snapshot, row.repeater_key) == expected;
+            break;
+        }
+        if (!matched) return false;
+    }
+    return true;
+}
+
+std::vector<std::pair<std::string, std::string>> source_hashes(
+    const KvMapSnapshot& snapshot, const Selection& selection) {
+    std::set<std::string> target_files;
+    for (const Target& target : selection.targets) target_files.insert(target.source_file);
+    std::vector<std::pair<std::string, std::string>> result;
+    for (std::uint64_t index = 0; index < snapshot.source_file_count; ++index) {
+        const KvSourceFileRow& source = snapshot.source_files[index];
+        const std::string path =
+            distance_batch_headless::snapshot_text(snapshot, source.file_path);
+        if (!target_files.count(path)) continue;
+        result.emplace_back(path, distance_batch_headless::snapshot_text(
+            snapshot, source.source_hash));
+    }
+    return result;
+}
+
+void write_result(std::ostream& out, const RunFacts& facts) {
+    const auto boolean = [](bool value) { return value ? 1 : 0; };
+    out << "command=debug-headless-repeater-key-edit\n"
+        << "path=" << facts.path << "\n"
+        << "commit_requested=" << boolean(facts.commit_requested) << "\n"
+        << "original_key=" << facts.selection.original_key << "\n"
+        << "new_key=" << facts.new_key << "\n"
+        << "chain_begin_distance="
+        << distance_batch_headless::edit_number(facts.selection.begin_distance) << "\n"
+        << "chain_end_distance="
+        << (facts.selection.end_distance
+                ? distance_batch_headless::edit_number(*facts.selection.end_distance)
+                : std::string("+inf")) << "\n"
+        << "target_count=" << facts.selection.targets.size() << "\n"
+        << "globally_unused_key=" << boolean(facts.globally_unused_key) << "\n"
+        << "atomic_guard_ok=" << boolean(facts.atomic_guard_ok) << "\n"
+        << "overlap_candidate_found=" << boolean(facts.overlap_candidate_found) << "\n"
+        << "overlap_candidate_key=" << facts.selection.overlapping_key << "\n"
+        << "overlap_guard_ok=" << boolean(facts.overlap_guard_ok) << "\n"
+        << "dry_run_ok=" << boolean(facts.dry_run_ok) << "\n"
+        << "dry_run_update_count=" << facts.dry_run_update_count << "\n"
+        << "apply_to_memory_ok=" << boolean(facts.apply_ok) << "\n"
+        << "apply_snapshot_ok=" << boolean(facts.apply_snapshot_ok) << "\n"
+        << "non_target_changed_count=" << facts.non_target_changed_count << "\n"
+        << "reset_ok=" << boolean(facts.reset_ok) << "\n"
+        << "reset_snapshot_ok=" << boolean(facts.reset_snapshot_ok) << "\n"
+        << "second_apply_ok=" << boolean(facts.second_apply_ok) << "\n"
+        << "commit_attempted=" << boolean(facts.commit_attempted) << "\n"
+        << "commit_ok=" << boolean(facts.commit_ok) << "\n"
+        << "reload_ok=" << boolean(facts.reload_ok) << "\n";
+    for (size_t index = 0; index < facts.selection.targets.size(); ++index) {
+        const Target& target = facts.selection.targets[index];
+        out << "target." << index << ".edit_id=" << target.edit_id << "\n"
+            << "target." << index << ".method=" << target.method << "\n"
+            << "target." << index << ".distance="
+            << distance_batch_headless::edit_number(target.distance) << "\n"
+            << "target." << index << ".source_file=" << target.source_file << "\n"
+            << "target." << index << ".source_line=" << target.source_line << "\n";
+    }
+    for (size_t index = 0; index < facts.baseline_hashes.size(); ++index) {
+        out << "baseline_source." << index << ".file="
+            << facts.baseline_hashes[index].first << "\n"
+            << "baseline_source." << index << ".hash="
+            << facts.baseline_hashes[index].second << "\n";
+    }
+    for (size_t index = 0; index < facts.reload_hashes.size(); ++index) {
+        out << "reload_source." << index << ".file="
+            << facts.reload_hashes[index].first << "\n"
+            << "reload_source." << index << ".hash="
+            << facts.reload_hashes[index].second << "\n";
+    }
+    for (size_t index = 0; index < facts.changed_files.size(); ++index) {
+        out << "changed_file." << index << '=' << facts.changed_files[index] << "\n";
+    }
+    out << "error=" << facts.error << "\n"
+        << "result=" << (facts.passed() ? "PASS" : "FAIL") << "\n";
+}
+
+} // namespace repeater_key_edit_headless
+
+int run_debug_headless_repeater_key_edit(const HeadlessRepeaterKeyEditOptions& options) {
+    using namespace repeater_key_edit_headless;
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    RunFacts facts;
+    facts.path = options.path;
+    facts.commit_requested = options.commit;
+    try {
+        MapHandle handle;
+        handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "map load failed");
+        }
+
+        const KvMapSnapshot baseline =
+            distance_batch_headless::current_map_snapshot(handle.value);
+        const repeater_linkage::Linkage linkage = linkage_from_snapshot(baseline);
+        facts.selection = select_chain(baseline, linkage);
+        facts.baseline_hashes = source_hashes(baseline, facts.selection);
+        facts.new_key = unused_key(linkage, facts.selection.original_key);
+        facts.globally_unused_key = std::none_of(
+            linkage.chains.begin(), linkage.chains.end(),
+            [&](const repeater_linkage::Chain& chain) {
+                return chain.key == repeater_linkage::canonical_key(facts.new_key);
+            });
+        if (!facts.globally_unused_key) {
+            throw std::runtime_error("generated Repeater key is not globally unused");
+        }
+
+        const std::vector<EditChange> changes =
+            build_changes(facts.selection, facts.new_key);
+        const EditReport incomplete = typed_edit_headless::dry_run(
+            handle.value, {changes.front()});
+        facts.atomic_guard_ok = !incomplete.ok && has_error_prefix(
+            incomplete, "Repeater key rename must update every statement in the chain");
+        if (!facts.atomic_guard_ok) {
+            throw std::runtime_error("Repeater key atomic-chain guard assertion failed");
+        }
+
+        facts.overlap_candidate_found = !facts.selection.overlapping_key.empty();
+        if (facts.overlap_candidate_found) {
+            const EditReport overlap = typed_edit_headless::dry_run(
+                handle.value, build_changes(facts.selection,
+                                            facts.selection.overlapping_key));
+            facts.overlap_guard_ok = !overlap.ok && has_error_prefix(
+                overlap, "Repeater key rename overlaps another Repeater interval");
+            if (!facts.overlap_guard_ok) {
+                throw std::runtime_error("Repeater key overlap guard assertion failed");
+            }
+        }
+
+        const EditReport dry = typed_edit_headless::dry_run(handle.value, changes);
+        facts.dry_run_ok = dry.ok && dry.full_reparse_ok &&
+            dry.non_target_changed_count == 0;
+        facts.dry_run_update_count = dry.update_count;
+        if (!facts.dry_run_ok) {
+            throw std::runtime_error(dry.blocking_errors.empty()
+                ? "Repeater key dry-run assertions did not match"
+                : dry.blocking_errors.front());
+        }
+
+        const EditReport apply = typed_edit_headless::apply_to_memory(handle.value, changes);
+        facts.apply_ok = apply.ok && apply.full_reparse_ok;
+        facts.non_target_changed_count = apply.non_target_changed_count;
+        facts.apply_snapshot_ok = snapshot_matches(
+            handle.value, facts.selection, facts.new_key, false);
+        if (!facts.apply_ok || !facts.apply_snapshot_ok ||
+            facts.non_target_changed_count != 0) {
+            throw std::runtime_error(apply.blocking_errors.empty()
+                ? "Repeater key memory Apply assertions did not match"
+                : apply.blocking_errors.front());
+        }
+
+        facts.reset_ok = kv_edit_reset_memory(handle.value) != 0;
+        facts.reset_snapshot_ok = facts.reset_ok && snapshot_matches(
+            handle.value, facts.selection, std::string{}, true);
+        if (!facts.reset_snapshot_ok) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "Repeater key Reset assertions failed");
+        }
+
+        const EditReport second_apply =
+            typed_edit_headless::apply_to_memory(handle.value, changes);
+        facts.second_apply_ok = second_apply.ok && second_apply.full_reparse_ok &&
+            second_apply.non_target_changed_count == 0 && snapshot_matches(
+                handle.value, facts.selection, facts.new_key, false);
+        if (!facts.second_apply_ok) {
+            throw std::runtime_error(second_apply.blocking_errors.empty()
+                ? "Repeater key second Apply assertions did not match"
+                : second_apply.blocking_errors.front());
+        }
+
+        if (options.commit) {
+            facts.commit_attempted = true;
+            const EditReport committed = typed_edit_headless::commit(handle.value);
+            facts.commit_ok = committed.ok && committed.full_reparse_ok &&
+                committed.non_target_changed_count == 0;
+            facts.changed_files = committed.changed_files;
+            if (!facts.commit_ok) {
+                throw std::runtime_error(committed.blocking_errors.empty()
+                    ? "Repeater key commit assertions did not match"
+                    : committed.blocking_errors.front());
+            }
+        }
+
+        MapHandle reload;
+        reload.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!reload.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "Repeater key reload failed");
+        }
+        facts.reload_ok = reloaded_anchors_match(
+            reload.value, facts.selection, facts.new_key, !options.commit);
+        const KvMapSnapshot reloaded =
+            distance_batch_headless::current_map_snapshot(reload.value);
+        facts.reload_hashes = source_hashes(reloaded, facts.selection);
+        if (!facts.reload_ok) {
+            throw std::runtime_error("Reloaded Repeater source anchors did not match");
+        }
+    } catch (const std::exception& e) {
+        facts.error = e.what();
+    }
+
+    write_result(*out, facts);
+    out->flush();
+    return facts.passed() ? 0 : 24;
 }
 
 namespace section_edit_batch_headless {

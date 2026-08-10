@@ -125,6 +125,15 @@ struct HeadlessRepeaterEditBatchOptions {
     std::string error;
 };
 
+struct HeadlessRepeaterKeyEditOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    bool commit = false;
+    std::string error;
+};
+
 struct HeadlessSectionEditBatchOptions {
     bool requested = false;
     std::string path;
@@ -173,6 +182,8 @@ HeadlessStationListEditOptions parse_headless_station_list_edit_options(
     const std::vector<std::string>& args);
 HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
     const std::vector<std::string>& args);
+HeadlessRepeaterKeyEditOptions parse_headless_repeater_key_edit_options(
+    const std::vector<std::string>& args);
 HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
     const std::vector<std::string>& args);
 HeadlessInsertEditOptions parse_headless_insert_edit_options(
@@ -183,6 +194,7 @@ int run_headless_load_map(const HeadlessLoadOptions& options);
 int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOptions& options);
 int run_debug_headless_station_list_edit(const HeadlessStationListEditOptions& options);
 int run_debug_headless_repeater_edit_batch(const HeadlessRepeaterEditBatchOptions& options);
+int run_debug_headless_repeater_key_edit(const HeadlessRepeaterKeyEditOptions& options);
 int run_debug_headless_section_edit_batch(const HeadlessSectionEditBatchOptions& options);
 int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options);
 int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options);

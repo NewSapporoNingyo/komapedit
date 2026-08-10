@@ -499,6 +499,7 @@ App / MapModel
 - 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
 - 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程，不能新增资源行。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
+- Repeater 生命周期使用半开区间 `[第一个 Begin, End)`；同里程 End 无论源码顺序如何都排在全部 Begin 之前。一次 `repeaterKey` 改名 typed batch 必须包含链内全部 Begin/Begin0 和显式 End；批次不完整或规范化同名区间重叠时由 maploader 拒绝。
 
 ### UI、表格与渲染
 
@@ -538,13 +539,14 @@ build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output
 build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
 build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
+build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
-为保证可移植性，应显式传入地图路径；自轨道、他轨道、距离、Repeater 和 Section 工具在省略时会回退到开发者机器上的线路路径。
+为保证可移植性，应显式传入地图路径；Repeater key 命令始终要求路径，自轨道、他轨道、距离、Repeater 批量和 Section 工具在省略时会回退到开发者机器上的线路路径。Repeater key 提交验证会保留经授权的线路修改，以便检查物理 diff。
 
 最低验证范围应按变更涵盖普通/Include 地图加载、重载、平面/纵断面/半径图、车站跳转、测量、CSV 导出、模型预览/错误、三维轨道/对象/标记/相机/叠加层、编辑的应用/撤销/保存/重载、源码往返、编码/行尾、行内草稿、设置持久化和 Release 内容。磁盘写回变更必须保存后重载比较；性能变更必须在相同线路、参数、构建类型与加载配置上做可重复前后对比。
 

@@ -651,7 +651,7 @@ void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
         }
         field(out, "distance", row.distance);
         field(out, "method", std::string_view{"End"});
-        field(out, snapshot, "repeaterKey", row.repeater_key);
+        changed_value(out, snapshot, change, "repeaterKey", row.repeater_key);
         out.label("trackKey");
         out.value(Value::str(""));
         for (const char* field_name : {"x", "y", "z", "rx", "ry", "rz", "tilt", "span", "interval"}) {
@@ -667,7 +667,7 @@ void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
         : RepeaterStructureKeyEdit{};
     field(out, "distance", changed_number(change, "distance", row.distance));
     field(out, "method", changed_string(snapshot, change, "method", row.method));
-    field(out, snapshot, "repeaterKey", row.repeater_key);
+    changed_value(out, snapshot, change, "repeaterKey", row.repeater_key);
     changed_track_key(out, snapshot, change, "trackKey", row.track_key);
     field(out, "x", changed_number(change, "x", row.x));
     field(out, "y", changed_number(change, "y", row.y));

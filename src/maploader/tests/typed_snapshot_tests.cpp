@@ -5,6 +5,7 @@
  */
 
 #include "maploader.h"
+#include "repeater_linkage.h"
 
 #include <array>
 #include <chrono>
@@ -146,6 +147,45 @@ struct TempFixture {
     }
 
     ~TempFixture() {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+    }
+
+    std::string path_utf8() const { return map_path.u8string(); }
+};
+
+struct RepeaterRenameFixture {
+    std::filesystem::path directory;
+    std::filesystem::path map_path;
+
+    RepeaterRenameFixture() {
+        directory = std::filesystem::temp_directory_path() /
+            ("komapedit-repeater-rename-contract-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(directory);
+        map_path = directory / "map.txt";
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Repeater['shared'].Begin0('0',0,0,25,'shared-a');\n"
+            << "100;\n"
+            << "Repeater['shared'].End();\n"
+            << "Repeater['target'].Begin0('0',0,0,25, 'target-a');\n"
+            << "110;\n"
+            << "Repeater['blocker'].Begin0('0',0,0,25,'blocker-a');\n"
+            << "150;\n"
+            << "Repeater['target'].Begin0('0',0,0,25, 'target-b');\n"
+            << "180;\n"
+            << "Repeater['blocker'].End();\n"
+            << "200;\n"
+            << "Repeater['target'].End();\n"
+            << "300;\n"
+            << "Repeater['distant'].Begin0('0',0,0,25,'distant-a');\n"
+            << "350;\n"
+            << "Repeater['distant'].End();\n";
+    }
+
+    ~RepeaterRenameFixture() {
         std::error_code error;
         std::filesystem::remove_all(directory, error);
     }
@@ -743,6 +783,47 @@ struct MultiFieldUpdateBatch {
     }
 };
 
+struct RepeaterKeyBatch {
+    std::string field_name = "repeaterKey";
+    std::string field_value;
+    std::vector<std::string> change_ids;
+    std::vector<std::string> edit_ids;
+    std::vector<std::string> source_hashes;
+    std::vector<KvEditField> fields;
+    std::vector<KvEditChange> changes;
+    KvEditBatch batch{};
+
+    RepeaterKeyBatch(
+        const std::vector<std::pair<std::string, std::string>>& targets,
+        std::string value)
+        : field_value(std::move(value)) {
+        change_ids.reserve(targets.size());
+        edit_ids.reserve(targets.size());
+        source_hashes.reserve(targets.size());
+        fields.reserve(targets.size());
+        changes.resize(targets.size());
+        for (size_t index = 0; index < targets.size(); ++index) {
+            change_ids.push_back(
+                "typed-contract-repeater-key-" + std::to_string(index));
+            edit_ids.push_back(targets[index].first);
+            source_hashes.push_back(targets[index].second);
+        }
+        for (size_t index = 0; index < targets.size(); ++index) {
+            fields.push_back(KvEditField{
+                utf8_view(field_name), utf8_view(field_value)});
+            KvEditChange& change = changes[index];
+            change.change_id = utf8_view(change_ids[index]);
+            change.edit_id = utf8_view(edit_ids[index]);
+            change.operation = KV_EDIT_UPDATE;
+            change.fields = KvSpan{static_cast<std::uint64_t>(index), 1};
+            change.expected_source_hash = utf8_view(source_hashes[index]);
+        }
+        batch = KvEditBatch{
+            changes.data(), static_cast<std::uint64_t>(changes.size()),
+            fields.data(), static_cast<std::uint64_t>(fields.size())};
+    }
+};
+
 struct RepeaterTrimBatch {
     std::string change_update_id = "typed-contract-repeater-trim";
     std::string change_delete_id = "typed-contract-repeater-delete-end";
@@ -986,6 +1067,21 @@ void check_coordinate_offset_method_conversions(const std::string& map_path) {
     }
 }
 
+bool edit_report_has_error_prefix(const KvEditReportSnapshot& report,
+                                  std::string_view prefix) {
+    if (!report.blocking_errors) return false;
+    for (std::uint64_t index = 0; index < report.blocking_error_count; ++index) {
+        const std::string_view error = arena_view(
+            report.string_data, report.string_size,
+            report.blocking_errors[index]);
+        if (error.size() >= prefix.size() &&
+            error.substr(0, prefix.size()) == prefix) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const KvStationListRow* find_station_list_row(const KvMapSnapshot& snapshot,
                                               std::string_view edit_id) {
     for (std::uint64_t i = 0; i < snapshot.station_list_count; ++i) {
@@ -1197,7 +1293,190 @@ int geometry_projection_contract() {
     return failures;
 }
 
+void repeater_linkage_boundary_contract() {
+    using repeater_linkage::Event;
+    using repeater_linkage::EventKind;
+    const repeater_linkage::Linkage linkage = repeater_linkage::pair_linkage({
+        Event{0, 0.0, 0.0, "rail", EventKind::Begin},
+        // Deliberately put Begin before End in source order at the shared
+        // distance. Half-open linkage must still close the earlier chain first.
+        Event{1, 100.0, 1.0, "rail", EventKind::Begin},
+        Event{2, 100.0, 2.0, "rail", EventKind::End},
+    });
+    check(linkage.chains.size() == 2 && linkage.segments.size() == 2,
+          "Repeater same-distance End/Begin split chains");
+    if (linkage.chains.size() == 2) {
+        check(linkage.chains[0].end_source_index &&
+                  *linkage.chains[0].end_source_index == 2 &&
+                  linkage.chains[1].begin_source_indices.size() == 1 &&
+                  linkage.chains[1].begin_source_indices[0] == 1,
+              "Repeater same-distance chain ownership");
+        check(!repeater_linkage::half_open_intervals_overlap(
+                  linkage.chains[0], linkage.chains[1]),
+              "Repeater touching half-open intervals do not overlap");
+    }
+}
+
+void repeater_key_edit_contract() {
+    RepeaterRenameFixture fixture;
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "Repeater key rename fixture load");
+    if (!handle.value) return;
+
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "Repeater key rename baseline snapshot");
+    std::vector<std::pair<std::string, std::string>> targets;
+    for (std::uint64_t index = 0; index < baseline.repeater_count; ++index) {
+        const KvRepeaterRow& row = baseline.repeaters[index];
+        if (map_string(baseline, row.repeater_key.string_value) != "target") continue;
+        check(row.metadata.source_file_index < baseline.source_file_count,
+              "Repeater key rename source index");
+        if (row.metadata.source_file_index >= baseline.source_file_count) continue;
+        targets.emplace_back(
+            map_string(baseline, row.metadata.edit_id),
+            map_string(
+                baseline,
+                baseline.source_files[row.metadata.source_file_index].source_hash));
+    }
+    check(targets.size() == 3,
+          "Repeater key rename fixture has first/middle/End targets");
+    if (targets.size() != 3) return;
+
+    RepeaterKeyBatch incomplete({targets.front()}, "renamed");
+    KvEditReportSnapshot incomplete_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &incomplete.batch, &incomplete_report,
+              sizeof(incomplete_report)) != 0,
+          "Repeater incomplete key rename dry-run call");
+    validate_report(incomplete_report);
+    check(!incomplete_report.ok && edit_report_has_error_prefix(
+              incomplete_report,
+              "Repeater key rename must update every statement in the chain"),
+          "Repeater incomplete key rename rejected");
+
+    RepeaterKeyBatch conflict(targets, "BLOCKER");
+    KvEditReportSnapshot conflict_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &conflict.batch, &conflict_report,
+              sizeof(conflict_report)) != 0,
+          "Repeater overlapping key rename dry-run call");
+    validate_report(conflict_report);
+    check(!conflict_report.ok && edit_report_has_error_prefix(
+              conflict_report,
+              "Repeater key rename overlaps another Repeater interval"),
+          "Repeater case-insensitive overlapping rename rejected");
+
+    RepeaterKeyBatch disjoint(targets, "distant");
+    KvEditReportSnapshot disjoint_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &disjoint.batch, &disjoint_report,
+              sizeof(disjoint_report)) != 0 && disjoint_report.ok &&
+              disjoint_report.full_reparse_ok &&
+              disjoint_report.non_target_changed_count == 0,
+          "Repeater disjoint same-name key rename allowed");
+
+    RepeaterKeyBatch touching(targets, "shared");
+    KvEditReportSnapshot dry_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &touching.batch, &dry_report,
+              sizeof(dry_report)) != 0 && dry_report.ok &&
+              dry_report.full_reparse_ok && dry_report.update_count == 3 &&
+              dry_report.non_target_changed_count == 0,
+          "Repeater touching-interval key rename dry run");
+
+    KvEditReportSnapshot applied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &touching.batch, &applied_report,
+              sizeof(applied_report)) != 0 && applied_report.ok &&
+              applied_report.full_reparse_ok &&
+              applied_report.non_target_changed_count == 0,
+          "Repeater chain key apply-to-memory");
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0,
+          "Repeater chain key applied snapshot");
+    for (const auto& target : targets) {
+        const KvRepeaterRow* row = find_repeater(applied, target.first);
+        check(row && map_string(applied, row->repeater_key.string_value) == "shared",
+              "Repeater chain member has renamed key");
+    }
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "Repeater chain key reset");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0,
+          "Repeater chain key reset snapshot");
+    for (const auto& target : targets) {
+        const KvRepeaterRow* row = find_repeater(reset, target.first);
+        check(row && map_string(reset, row->repeater_key.string_value) == "target",
+              "Repeater chain key reset restored original");
+    }
+
+    KvEditReportSnapshot commit_apply_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &touching.batch, &commit_apply_report,
+              sizeof(commit_apply_report)) != 0 && commit_apply_report.ok,
+          "Repeater chain key apply before commit");
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(
+              handle.value, &commit_report, sizeof(commit_report)) != 0 &&
+              commit_report.ok && commit_report.full_reparse_ok &&
+              commit_report.committed_file_count == 1,
+          "Repeater chain key commit");
+
+    MapHandle reloaded(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(reloaded.value != nullptr, "Repeater chain key reload");
+    if (!reloaded.value) return;
+    KvMapSnapshot reloaded_snapshot{};
+    check(kv_get_map_snapshot(
+              reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+              &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0,
+          "Repeater chain key reloaded snapshot");
+    int renamed_rows = 0;
+    bool blocker_preserved = false;
+    bool distant_preserved = false;
+    for (std::uint64_t index = 0;
+         index < reloaded_snapshot.repeater_count; ++index) {
+        const KvRepeaterRow& row = reloaded_snapshot.repeaters[index];
+        const std::string key = map_string(
+            reloaded_snapshot, row.repeater_key.string_value);
+        const std::string method = map_string(reloaded_snapshot, row.method);
+        if (key == "shared" &&
+            ((method == "Begin0" &&
+              (nearly_equal(row.distance, 100.0) ||
+               nearly_equal(row.distance, 150.0))) ||
+             (method == "End" && nearly_equal(row.distance, 200.0)))) {
+            ++renamed_rows;
+        }
+        blocker_preserved = blocker_preserved || key == "blocker";
+        distant_preserved = distant_preserved || key == "distant";
+    }
+    check(renamed_rows == 3 && blocker_preserved && distant_preserved,
+          "Repeater chain key save/reload and non-target preservation");
+    std::ifstream committed_source(fixture.map_path, std::ios::binary);
+    const std::string committed_text{
+        std::istreambuf_iterator<char>(committed_source),
+        std::istreambuf_iterator<char>()};
+    check(committed_text.find(
+              "Repeater['shared'].Begin0('0',0,0,25, 'target-a');") !=
+              std::string::npos &&
+          committed_text.find(
+              "Repeater['shared'].Begin0('0',0,0,25, 'target-b');") !=
+              std::string::npos &&
+          committed_text.find("Repeater['shared'].End();") != std::string::npos,
+          "Repeater key-only rename preserves non-key source text");
+}
+
 int edit_contract() {
+    repeater_linkage_boundary_contract();
+    repeater_key_edit_contract();
     TempFixture fixture;
     check_coordinate_offset_method_conversions(fixture.path_utf8());
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
