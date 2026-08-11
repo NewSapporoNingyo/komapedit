@@ -127,6 +127,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Edit mode with separate Apply-to-preview, Save-to-disk, global Revert of all pending changes, and Reload-from-disk behavior plus unsaved-change prompts.
 - [x] Prompt to rebase whole metres into the begin distance when applying a coordinate-enabled `Repeater.Begin` whose absolute Z-axis offset exceeds 5 m, matching `Structure.Put` behavior.
 - [x] Show the six coordinate-offset fields for `Structure.Put`, while keeping them hidden for `Structure.Put0`, in the New Map Element wizard.
+- [x] Group existing New Map Element wizard templates into expandable/collapsible Map Info-style categories, with Structures first.
 - [x] Export own-track and other-track geometry to CSV.
 
 ## 简体中文
@@ -252,4 +253,5 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 编辑模式中分离“应用到预览”“保存到磁盘”“撤销全部待保存改动”和“从磁盘重新加载”，并在存在未保存更改时确认
 - [x] 对启用坐标偏移且 Z 轴偏移绝对值大于 5 m 的 `Repeater.Begin`，在应用时像 `Structure.Put` 一样提示将整米部分重设到起始里程
 - [x] 在“新建地图元素向导”中为 `Structure.Put` 显示六个坐标偏移输入框，同时保持 `Structure.Put0` 隐藏这些字段
+- [x] 在“新建地图元素向导”中将现有模板按可展开/折叠的“地图信息列表”式分类显示，并将布景置于最前
 - [x] 将自轨道和他轨道几何导出为 CSV

@@ -6771,8 +6771,36 @@ struct NewElementFieldSpec {
     const char* default_value = "";
 };
 
+enum class NewElementTemplateCategory {
+    Scenery,
+    Station,
+    TrackGeometry,
+    Signal,
+    Sound,
+    Effects,
+};
+
+struct NewElementTemplateCategoryInfo {
+    const char* id;
+    NewElementTemplateCategory category;
+    const char* label_key;
+};
+
+constexpr std::array<NewElementTemplateCategoryInfo, 6>
+    k_new_element_template_categories = {{
+        {"scenery", NewElementTemplateCategory::Scenery, "aux.scenery"},
+        {"station", NewElementTemplateCategory::Station, "aux.station"},
+        {"track_geometry", NewElementTemplateCategory::TrackGeometry,
+         "aux.track_geometry"},
+        {"signal", NewElementTemplateCategory::Signal, "aux.signal"},
+        {"sound", NewElementTemplateCategory::Sound, "aux.sound"},
+        {"effects", NewElementTemplateCategory::Effects, "aux.effects"},
+    }};
+
 struct NewElementTemplate {
     const char* id;
+    NewElementTemplateCategory category;
+    int category_order = 0;
     std::string_view row_kind;
     std::string_view method;
     const char* syntax;
@@ -6784,7 +6812,8 @@ struct NewElementTemplate {
 const std::vector<NewElementTemplate>& new_element_templates() {
     static const std::vector<NewElementTemplate> templates = {
         {
-            "structure.put", "structure.put", "Put",
+            "structure.put", NewElementTemplateCategory::Scenery, 0,
+            "structure.put", "Put",
             "Structure[structureKey].Put(trackKey, x, y, z, rx, ry, rz, tilt, span);",
             "new_element.usage.structure.put", false,
             {
@@ -6802,7 +6831,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "structure.put0", "structure.put", "Put0",
+            "structure.put0", NewElementTemplateCategory::Scenery, 1,
+            "structure.put", "Put0",
             "Structure[structureKey].Put0(trackKey, tilt, span);",
             "new_element.usage.structure.put0", false,
             {
@@ -6814,7 +6844,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "repeater.begin", "repeater", "Begin",
+            "repeater.begin", NewElementTemplateCategory::Scenery, 3,
+            "repeater", "Begin",
             "Repeater[repeaterKey].Begin(trackKey, x, y, z, rx, ry, rz, tilt, span, interval, structureKey1, ...);",
             "new_element.usage.repeater.begin", false,
             {
@@ -6834,7 +6865,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "repeater.begin0", "repeater", "Begin0",
+            "repeater.begin0", NewElementTemplateCategory::Scenery, 4,
+            "repeater", "Begin0",
             "Repeater[repeaterKey].Begin0(trackKey, tilt, span, interval, structureKey1, ...);",
             "new_element.usage.repeater.begin0", false,
             {
@@ -6848,7 +6880,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "structure.put_between", "structure.between", "",
+            "structure.put_between", NewElementTemplateCategory::Scenery, 2,
+            "structure.between", "",
             "Structure[structureKey].PutBetween(trackKey1, trackKey2, flag);",
             "new_element.usage.structure.put_between", false,
             {
@@ -6860,7 +6893,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "station.put", "station.put", "",
+            "station.put", NewElementTemplateCategory::Station, 0,
+            "station.put", "",
             "Station[stationKey].Put(door, margin1, margin2);",
             "new_element.usage.station.put", false,
             {
@@ -6872,7 +6906,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "signal.put", "signal.put", "",
+            "signal.put", NewElementTemplateCategory::Signal, 0,
+            "signal.put", "",
             "Signal[signalAspectKey].Put(section, trackKey, x, y, z, rx, ry, rz, tilt, span);",
             "new_element.usage.signal.put", false,
             {
@@ -6891,7 +6926,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "speedlimit.begin", "speedlimit", "Begin",
+            "speedlimit.begin", NewElementTemplateCategory::Signal, 6,
+            "speedlimit", "Begin",
             "SpeedLimit.Begin(speed);",
             "new_element.usage.speedlimit.begin", false,
             {
@@ -6900,7 +6936,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "speedlimit.end", "speedlimit", "End",
+            "speedlimit.end", NewElementTemplateCategory::Signal, 7,
+            "speedlimit", "End",
             "SpeedLimit.End();",
             "new_element.usage.speedlimit.end", false,
             {
@@ -6908,7 +6945,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "section.begin", "section.begin", "Begin",
+            "section.begin", NewElementTemplateCategory::Signal, 1,
+            "section.begin", "Begin",
             "Section.Begin(signal0, ..., signalN);",
             "new_element.usage.section.begin", true,
             {
@@ -6916,7 +6954,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "section.beginnew", "section.begin", "BeginNew",
+            "section.beginnew", NewElementTemplateCategory::Signal, 2,
+            "section.begin", "BeginNew",
             "Section.BeginNew(signal0, ..., signalN);",
             "new_element.usage.section.beginnew", true,
             {
@@ -6924,7 +6963,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "section.setspeedlimit", "section.speedLimit", "SetSpeedLimit",
+            "section.setspeedlimit", NewElementTemplateCategory::Signal, 3,
+            "section.speedLimit", "SetSpeedLimit",
             "Section.SetSpeedLimit(v0, ..., vn);",
             "new_element.usage.section.setspeedlimit", true,
             {
@@ -6932,7 +6972,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "section.signal_speedlimit", "section.speedLimit", "Signal.SpeedLimit",
+            "section.signal_speedlimit", NewElementTemplateCategory::Signal, 4,
+            "section.speedLimit", "Signal.SpeedLimit",
             "Signal.SpeedLimit(v0, ..., vn);",
             "new_element.usage.section.signal_speedlimit", true,
             {
@@ -6940,7 +6981,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "irregularity.change", "irregularity.change", "",
+            "irregularity.change", NewElementTemplateCategory::TrackGeometry, 0,
+            "irregularity.change", "",
             "Irregularity.Change(x, y, r, lx, ly, lr);",
             "new_element.usage.irregularity.change", false,
             {
@@ -6954,7 +6996,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "beacon.put", "beacon.put", "",
+            "beacon.put", NewElementTemplateCategory::Signal, 5,
+            "beacon.put", "",
             "Beacon.Put(type, section, sendData);",
             "new_element.usage.beacon.put", false,
             {
@@ -6965,7 +7008,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "map_sound.play", "mapSound.play", "",
+            "map_sound.play", NewElementTemplateCategory::Sound, 0,
+            "mapSound.play", "",
             "Sound[soundKey].Play();",
             "new_element.usage.map_sound.play", false,
             {
@@ -6974,7 +7018,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "map_sound3d.put", "mapSound3D.put", "",
+            "map_sound3d.put", NewElementTemplateCategory::Sound, 1,
+            "mapSound3D.put", "",
             "Sound3D[soundKey].Put(x, y);",
             "new_element.usage.map_sound3d.put", false,
             {
@@ -6985,7 +7030,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "rolling_noise.change", "rollingNoise.change", "",
+            "rolling_noise.change", NewElementTemplateCategory::Sound, 2,
+            "rollingNoise.change", "",
             "RollingNoise.Change(index);",
             "new_element.usage.rolling_noise.change", false,
             {
@@ -6994,7 +7040,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "flange_noise.change", "flangeNoise.change", "",
+            "flange_noise.change", NewElementTemplateCategory::Sound, 3,
+            "flangeNoise.change", "",
             "FlangeNoise.Change(index);",
             "new_element.usage.flange_noise.change", false,
             {
@@ -7003,7 +7050,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "joint_noise.play", "jointNoise.play", "",
+            "joint_noise.play", NewElementTemplateCategory::Sound, 4,
+            "jointNoise.play", "",
             "JointNoise.Play(index);",
             "new_element.usage.joint_noise.play", false,
             {
@@ -7012,7 +7060,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "background.change", "background.change", "",
+            "background.change", NewElementTemplateCategory::Effects, 0,
+            "background.change", "",
             "Background.Change(structureKey);",
             "new_element.usage.background.change", false,
             {
@@ -7021,7 +7070,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "adhesion.change", "adhesion.change", "",
+            "adhesion.change", NewElementTemplateCategory::TrackGeometry, 1,
+            "adhesion.change", "",
             "Adhesion.Change(a); / Adhesion.Change(a, b, c);",
             "new_element.usage.adhesion.change", false,
             {
@@ -7032,7 +7082,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "cab_illuminance.set", "cabIlluminance.change", "Set",
+            "cab_illuminance.set", NewElementTemplateCategory::Effects, 1,
+            "cabIlluminance.change", "Set",
             "CabIlluminance.Set(value);",
             "new_element.usage.cab_illuminance.set", false,
             {
@@ -7041,7 +7092,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "cab_illuminance.interpolate", "cabIlluminance.change", "Interpolate",
+            "cab_illuminance.interpolate", NewElementTemplateCategory::Effects, 2,
+            "cabIlluminance.change", "Interpolate",
             "CabIlluminance.Interpolate(value);",
             "new_element.usage.cab_illuminance.interpolate", false,
             {
@@ -7050,7 +7102,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "fog.set", "fog.change", "Set",
+            "fog.set", NewElementTemplateCategory::Effects, 3,
+            "fog.change", "Set",
             "Fog.Set(density, red, green, blue);",
             "new_element.usage.fog.set", false,
             {
@@ -7062,7 +7115,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "fog.interpolate", "fog.change", "Interpolate",
+            "fog.interpolate", NewElementTemplateCategory::Effects, 4,
+            "fog.change", "Interpolate",
             "Fog.Interpolate(); / Fog.Interpolate(density); / Fog.Interpolate(density, red, green, blue);",
             "new_element.usage.fog.interpolate", false,
             {
@@ -7074,7 +7128,8 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "draw_distance.change", "drawDistance.change", "",
+            "draw_distance.change", NewElementTemplateCategory::Effects, 5,
+            "drawDistance.change", "",
             "DrawDistance.Change(value);",
             "new_element.usage.draw_distance.change", false,
             {
@@ -7084,6 +7139,28 @@ const std::vector<NewElementTemplate>& new_element_templates() {
         },
     };
     return templates;
+}
+
+const std::vector<size_t>& new_element_template_display_order() {
+    static const std::vector<size_t> display_order = [] {
+        const std::vector<NewElementTemplate>& templates = new_element_templates();
+        std::vector<size_t> indices;
+        indices.reserve(templates.size());
+        for (size_t index = 0; index < templates.size(); ++index) {
+            indices.push_back(index);
+        }
+        std::stable_sort(indices.begin(), indices.end(),
+                         [&](size_t lhs_index, size_t rhs_index) {
+            const NewElementTemplate& lhs = templates[lhs_index];
+            const NewElementTemplate& rhs = templates[rhs_index];
+            if (lhs.category != rhs.category) {
+                return static_cast<int>(lhs.category) < static_cast<int>(rhs.category);
+            }
+            return lhs.category_order < rhs.category_order;
+        });
+        return indices;
+    }();
+    return display_order;
 }
 
 bool new_element_target_is_resource_list(
@@ -7592,6 +7669,8 @@ void App::render_new_element_wizard() {
         }
     }
     const std::vector<NewElementTemplate>& templates = new_element_templates();
+    const std::vector<size_t>& template_display_order =
+        new_element_template_display_order();
 
     const std::string title = tr("dialog.new_element_wizard") + "###NewElementWizard";
     ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_Always);
@@ -7607,12 +7686,14 @@ void App::render_new_element_wizard() {
     ImGui::BeginChild("##NewElementTemplateList", ImVec2(360.0f, -ImGui::GetFrameHeightWithSpacing()),
                       true);
     const ImVec4 dim_text = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-    for (int index = 0; index < static_cast<int>(templates.size()); ++index) {
-        const NewElementTemplate& tpl = templates[static_cast<size_t>(index)];
+    const auto render_template = [&](size_t index) {
+        const NewElementTemplate& tpl = templates[index];
+        const int template_index = static_cast<int>(index);
         const std::string template_label = std::string(tpl.syntax) +
             "###NewElementTemplate_" + tpl.id;
-        if (ImGui::Selectable(template_label.c_str(), wizard.selected_template == index)) {
-            wizard.selected_template = index;
+        if (ImGui::Selectable(template_label.c_str(),
+                              wizard.selected_template == template_index)) {
+            wizard.selected_template = template_index;
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", tr(tpl.usage_key).c_str());
@@ -7621,6 +7702,21 @@ void App::render_new_element_wizard() {
         ImGui::TextWrapped("%s", tr(tpl.usage_key).c_str());
         ImGui::PopStyleColor();
         ImGui::Separator();
+    };
+    for (const NewElementTemplateCategoryInfo& category :
+         k_new_element_template_categories) {
+        const std::string category_label = tr(category.label_key) +
+            "###NewElementTemplateCategory_" + category.id;
+        if (!ImGui::CollapsingHeader(category_label.c_str(),
+                                    ImGuiTreeNodeFlags_DefaultOpen)) {
+            continue;
+        }
+        ImGui::Indent();
+        for (size_t index : template_display_order) {
+            if (templates[index].category != category.category) continue;
+            render_template(index);
+        }
+        ImGui::Unindent();
     }
     ImGui::EndChild();
 
