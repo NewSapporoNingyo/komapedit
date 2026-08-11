@@ -7163,6 +7163,85 @@ const std::vector<size_t>& new_element_template_display_order() {
     return display_order;
 }
 
+void render_new_element_usage_text(std::string_view text) {
+    // ImGui's normal word wrapping treats an uninterrupted CJK run as one
+    // word. Split non-ASCII code points into individually breakable tokens so
+    // localized descriptions can use the available list width naturally.
+    // The child window's built-in padding remains the narrow safe gap at both
+    // edges, so descriptions can otherwise use the full available width.
+    const float wrap_width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+    const char* const text_end = text.data() + text.size();
+    const auto flush_line = [](std::string& line) {
+        if (line.empty()) return;
+        ImGui::TextUnformatted(line.c_str());
+        line.clear();
+    };
+
+    std::string line;
+    const char* pending_space_begin = nullptr;
+    const char* pending_space_end = nullptr;
+    for (const char* cursor = text.data(); cursor < text_end;) {
+        const char* const token_begin = cursor;
+        unsigned int codepoint = 0;
+        const int codepoint_size = ImTextCharFromUtf8(&codepoint, cursor, text_end);
+        if (codepoint_size <= 0) break;
+        const char* token_end = cursor + codepoint_size;
+
+        if (codepoint == '\r') {
+            cursor = token_end;
+            continue;
+        }
+        if (codepoint == '\n') {
+            flush_line(line);
+            pending_space_begin = nullptr;
+            pending_space_end = nullptr;
+            cursor = token_end;
+            continue;
+        }
+        if (codepoint == ' ' || codepoint == '\t') {
+            if (!line.empty()) {
+                if (!pending_space_begin) pending_space_begin = token_begin;
+                pending_space_end = token_end;
+            }
+            cursor = token_end;
+            continue;
+        }
+
+        // Keep ASCII words intact, while allowing CJK code points to wrap at
+        // character boundaries. This preserves normal English word wrapping.
+        if (codepoint < 0x80) {
+            while (token_end < text_end) {
+                unsigned int next_codepoint = 0;
+                const int next_size =
+                    ImTextCharFromUtf8(&next_codepoint, token_end, text_end);
+                if (next_size <= 0 || next_codepoint >= 0x80 ||
+                    next_codepoint == ' ' || next_codepoint == '\t' ||
+                    next_codepoint == '\r' || next_codepoint == '\n') {
+                    break;
+                }
+                token_end += next_size;
+            }
+        }
+
+        const size_t previous_line_size = line.size();
+        if (!line.empty() && pending_space_begin) {
+            line.append(pending_space_begin,
+                        static_cast<size_t>(pending_space_end - pending_space_begin));
+        }
+        line.append(token_begin, static_cast<size_t>(token_end - token_begin));
+        if (previous_line_size > 0 &&
+            ImGui::CalcTextSize(line.c_str(), nullptr, false).x > wrap_width) {
+            line.resize(previous_line_size);
+            flush_line(line);
+            line.assign(token_begin, static_cast<size_t>(token_end - token_begin));
+        }
+        pending_space_begin = nullptr;
+        pending_space_end = nullptr;
+        cursor = token_end;
+    }
+    flush_line(line);
+}
+
 bool new_element_target_is_resource_list(
     const MapModel& model, const std::string& file_path) {
     for (const ResourceListSource& source : model.resource_list_sources) {
@@ -7689,6 +7768,7 @@ void App::render_new_element_wizard() {
     const auto render_template = [&](size_t index) {
         const NewElementTemplate& tpl = templates[index];
         const int template_index = static_cast<int>(index);
+        const std::string& usage = tr(tpl.usage_key);
         const std::string template_label = std::string(tpl.syntax) +
             "###NewElementTemplate_" + tpl.id;
         if (ImGui::Selectable(template_label.c_str(),
@@ -7696,10 +7776,10 @@ void App::render_new_element_wizard() {
             wizard.selected_template = template_index;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", tr(tpl.usage_key).c_str());
+            ImGui::SetTooltip("%s", usage.c_str());
         }
         ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
-        ImGui::TextWrapped("%s", tr(tpl.usage_key).c_str());
+        render_new_element_usage_text(usage);
         ImGui::PopStyleColor();
         ImGui::Separator();
     };
@@ -7711,12 +7791,12 @@ void App::render_new_element_wizard() {
                                     ImGuiTreeNodeFlags_DefaultOpen)) {
             continue;
         }
-        ImGui::Indent();
+        // CollapsingHeader does not indent its contents; the child padding is
+        // the intended small inset for template labels and descriptions.
         for (size_t index : template_display_order) {
             if (templates[index].category != category.category) continue;
             render_template(index);
         }
-        ImGui::Unindent();
     }
     ImGui::EndChild();
 
