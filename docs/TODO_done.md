@@ -19,7 +19,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Block writeback when an edited value cannot be represented in the source encoding; there is currently no Save-as-UTF-8 fallback.
 - [x] Reject ambiguous maps with multiple same-kind unkeyed resource-list `Load` statements or multiple case-insensitively matching `Train[].Enable` declarations.
 - [x] Insert supported map placement and event/effect statements through the New Map Element wizard; resource/list definition rows remain inline-table-only.
-- [x] Insert official `Repeater.Begin` and `Repeater.Begin0` forms through the New Map Element wizard with a required variable structure-key list and canonical half-open same-name interval validation; `Repeater.End` remains unavailable in the wizard.
+- [x] Insert `Repeater.Begin`/`Begin0`, `Repeater.End`, or an atomic Begin+End pair through the New Map Element wizard; preserve half-open same-name interval protection, confirmed Begin-only change points, and isolated End statements while blocking extra End statements inside explicitly closed intervals.
 
 ### Own-Track and Other-Track Geometry
 
@@ -122,6 +122,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Save settings to `settings/settings.ini` under the executable directory.
 - [x] Include-file structure diagram and read-only source text preview using the active in-memory working copy.
 - [x] Edit mode with separate Apply-to-preview, Save-to-disk, global Revert of all pending changes, and Reload-from-disk behavior plus unsaved-change prompts.
+- [x] Prompt to rebase whole metres into the begin distance when applying a coordinate-enabled `Repeater.Begin` whose absolute Z-axis offset exceeds 5 m, matching `Structure.Put` behavior.
+- [x] Show the six coordinate-offset fields for `Structure.Put`, while keeping them hidden for `Structure.Put0`, in the New Map Element wizard.
 - [x] Export own-track and other-track geometry to CSV.
 
 ## 简体中文
@@ -139,7 +141,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 当修改后的值无法用源文件原编码表示时阻止回写；当前没有另存为 UTF-8 的替代路径
 - [x] 拒绝含有多个同种无 key 资源列表 `Load` 语句，或多个名称仅大小写不同的 `Train[].Enable` 声明的歧义地图
 - [x] 通过“新建地图元素”向导新增受支持的地图放置和事件/效果语句；资源/定义列表仍只能通过行内表格编辑
-- [x] 通过“新建地图元素”向导新增官方 `Repeater.Begin` 和 `Repeater.Begin0` 形式，必须填写可变结构 key 列表，并按规范化半开同名区间校验；向导仍不支持 `Repeater.End`
+- [x] 通过“新建地图元素”向导单独新增 `Repeater.Begin`/`Begin0`、`Repeater.End`，或原子新增 Begin+End；保留半开同名区间保护和经确认的 Begin-only 变化点，允许孤立 End，并阻止在已有显式 End 的有效区间内增加 End
 
 ### 自轨道与他轨道几何
 
@@ -242,4 +244,6 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 设置保存到程序目录下的 `settings/settings.ini`
 - [x] Include 文件结构图，以及读取当前内存工作副本的只读源码文本预览
 - [x] 编辑模式中分离“应用到预览”“保存到磁盘”“撤销全部待保存改动”和“从磁盘重新加载”，并在存在未保存更改时确认
+- [x] 对启用坐标偏移且 Z 轴偏移绝对值大于 5 m 的 `Repeater.Begin`，在应用时像 `Structure.Put` 一样提示将整米部分重设到起始里程
+- [x] 在“新建地图元素向导”中为 `Structure.Put` 显示六个坐标偏移输入框，同时保持 `Structure.Put0` 隐藏这些字段
 - [x] 将自轨道和他轨道几何导出为 CSV

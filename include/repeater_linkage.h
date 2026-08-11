@@ -183,6 +183,28 @@ inline bool half_open_intervals_overlap(const Chain& left, const Chain& right) {
     return true;
 }
 
+inline bool chain_contains_distance(const Chain& chain, double distance) {
+    return distance >= chain.begin_distance &&
+        (!chain.end_distance || distance < *chain.end_distance);
+}
+
+inline const Chain* chain_at_distance(const Linkage& linkage,
+                                      const std::string& key,
+                                      double distance,
+                                      bool require_explicit_end = false) {
+    const std::string canonical = canonical_key(key);
+    if (canonical.empty()) return nullptr;
+    for (const Chain& chain : linkage.chains) {
+        if (chain.key != canonical ||
+            (require_explicit_end && !chain.end_source_index) ||
+            !chain_contains_distance(chain, distance)) {
+            continue;
+        }
+        return &chain;
+    }
+    return nullptr;
+}
+
 inline std::vector<Segment> pair_segments(std::vector<Event> events) {
     return pair_linkage(std::move(events)).segments;
 }

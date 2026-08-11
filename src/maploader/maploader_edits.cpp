@@ -129,6 +129,8 @@ std::vector<MapEditChange> copy_edit_batch(const KvEditBatch& batch) {
             input.distance_expression, "distanceExpression");
         change.confirm_environment_mismatch =
             (input.flags & KV_EDIT_CHANGE_CONFIRM_ENVIRONMENT_MISMATCH) != 0;
+        change.confirm_repeater_change_point =
+            (input.flags & KV_EDIT_CHANGE_CONFIRM_REPEATER_CHANGE_POINT) != 0;
         for (std::uint64_t j = 0; j < input.fields.count; ++j) {
             const KvEditField& field = batch.fields[input.fields.offset + j];
             std::string name = copy_utf8_view(field.name, "field name");
@@ -144,6 +146,18 @@ std::vector<MapEditChange> copy_edit_batch(const KvEditBatch& batch) {
                 change.row_kind = trim_field_copy(copy_utf8_view(field.value, "rowKind"));
                 if (change.row_kind.empty()) {
                     throw std::runtime_error("insert edit rowKind is empty");
+                }
+                continue;
+            }
+            if (change.operation == "insert" && name == "repeaterPairId") {
+                if (!change.repeater_pair_id.empty()) {
+                    throw std::runtime_error(
+                        "insert edit contains duplicate repeaterPairId fields");
+                }
+                change.repeater_pair_id = trim_field_copy(
+                    copy_utf8_view(field.value, "repeaterPairId"));
+                if (change.repeater_pair_id.empty()) {
+                    throw std::runtime_error("insert edit repeaterPairId is empty");
                 }
                 continue;
             }
@@ -2043,13 +2057,23 @@ void validate_insert_change(const MapEditChange& change) {
         validate_insert_method(change, "Put", {"Put", "Put0"});
     } else if (row_kind == "repeater") {
         validate_repeater_edit_fields(change);
-        validate_insert_method(change, "Begin", {"Begin", "Begin0"});
+        validate_insert_method(change, "Begin", {"Begin", "Begin0", "End"});
+        const std::string method = insert_method_or_default(change, "Begin");
+        if (method == "End") {
+            validate_insert_field_names(
+                change, {"distance", "method", "repeaterKey"});
+            if (change.confirm_repeater_change_point) {
+                throw std::runtime_error(
+                    "Repeater.End insert cannot confirm a change point");
+            }
+            return;
+        }
         const RepeaterStructureKeyEdit structure_keys =
             parse_repeater_structure_key_edit(change);
         if (!structure_keys.changed || structure_keys.values.empty()) {
             throw std::runtime_error("Repeater insert requires at least one structure key");
         }
-        if (insert_method_or_default(change, "Begin") == "Begin0") {
+        if (method == "Begin0") {
             reject_repeater_position_fields(
                 change, "Repeater.Begin0 insert cannot include coordinate offsets");
         }
@@ -2130,6 +2154,9 @@ std::string build_insert_statement(const MapEditChange& change) {
     if (row_kind == "repeater") {
         const std::string method = insert_method_or_default(change, "Begin");
         const std::string key = insert_required_key(change, "repeaterKey");
+        if (method == "End") {
+            return "Repeater[" + key + "].End();";
+        }
         const std::string track_key = insert_required_track_key(change, "trackKey");
         const RepeaterStructureKeyEdit structure_keys =
             parse_repeater_structure_key_edit(change);
@@ -3573,6 +3600,8 @@ struct RepeaterNamedInterval {
     repeater_linkage::Chain interval;
     std::string key;
     bool is_candidate = false;
+    bool allow_existing_overlap = false;
+    bool has_explicit_end = false;
 };
 
 bool validate_repeater_interval_conflicts(
@@ -3590,6 +3619,11 @@ bool validate_repeater_interval_conflicts(
             if (candidate.key != other.key ||
                 !repeater_linkage::half_open_intervals_overlap(
                     candidate.interval, other.interval)) {
+                continue;
+            }
+            if (candidate.allow_existing_overlap && !other.is_candidate &&
+                repeater_linkage::chain_contains_distance(
+                    other.interval, candidate.interval.begin_distance)) {
                 continue;
             }
             append_repeater_interval_overlap_error(
@@ -3728,50 +3762,153 @@ void validate_repeater_key_renames(
 void validate_repeater_insert_key_overlaps(
     MapContext& ctx, const std::vector<const MapEditChange*>& changes,
     MapEditReport& report) {
-    const repeater_linkage::Linkage linkage = repeater_linkage_state(ctx);
-    std::vector<RepeaterNamedInterval> intervals;
-    intervals.reserve(linkage.chains.size() + changes.size());
-    for (const repeater_linkage::Chain& chain : linkage.chains) {
-        intervals.push_back({chain, chain.key, false});
-    }
+    struct InsertEvent {
+        const MapEditChange* change = nullptr;
+        std::string key;
+        std::string method;
+        double distance = 0.0;
+    };
 
+    std::vector<InsertEvent> inserted_events;
+    inserted_events.reserve(changes.size());
+    std::map<std::string, std::vector<size_t>> pair_members;
     for (const MapEditChange* change : changes) {
         const std::string operation =
             ascii_lower(change->operation.empty() ? "update" : change->operation);
+        if (change->confirm_repeater_change_point &&
+            (operation != "insert" || change->row_kind != "repeater")) {
+            report.blocking_errors.push_back(
+                "Repeater change-point confirmation is only valid for Repeater inserts");
+            return;
+        }
+        if (!change->repeater_pair_id.empty() &&
+            (operation != "insert" || change->row_kind != "repeater")) {
+            report.blocking_errors.push_back(
+                "repeaterPairId is only valid for Repeater insert changes");
+            return;
+        }
         if (operation != "insert" || change->row_kind != "repeater") continue;
         try {
             validate_insert_change(*change);
-            const std::string key = repeater_linkage::canonical_key(
+            InsertEvent event;
+            event.change = change;
+            event.key = repeater_linkage::canonical_key(
                 required_string_field(*change, "repeaterKey", ""));
+            event.method = ascii_lower(insert_method_or_default(*change, "Begin"));
             const std::string distance_text = insert_required_number(*change, "distance");
-            double begin_distance = 0.0;
-            if (key.empty() || !parse_edit_number(distance_text, begin_distance)) {
+            if (event.key.empty() || !parse_edit_number(distance_text, event.distance)) {
                 throw std::runtime_error("Repeater insert has an invalid key or distance");
             }
-
-            // A later Begin or End of the same key bounds the newly created
-            // half-open interval. This mirrors the shared linkage rule and
-            // allows a new lifetime to touch an existing End exactly.
-            repeater_linkage::Chain requested;
-            requested.key = key;
-            requested.begin_distance = begin_distance;
-            for (const RepeaterEvent& row : ctx.repeaters) {
-                if (repeater_linkage::canonical_key(value_to_edit_text(row.repeater_key)) != key ||
-                    row.distance <= begin_distance) {
-                    continue;
-                }
-                const std::string method = ascii_lower(row.method);
-                if (method != "begin" && method != "begin0" && method != "end") continue;
-                if (!requested.end_distance || row.distance < *requested.end_distance) {
-                    requested.end_distance = row.distance;
-                }
+            if (change->confirm_repeater_change_point &&
+                event.method != "begin" && event.method != "begin0") {
+                throw std::runtime_error(
+                    "only Repeater Begin inserts can confirm a change point");
             }
-
-            intervals.push_back({std::move(requested), key, true});
-            if (!validate_repeater_interval_conflicts(intervals, report)) return;
+            inserted_events.push_back(std::move(event));
+            if (!change->repeater_pair_id.empty()) {
+                pair_members[change->repeater_pair_id].push_back(
+                    inserted_events.size() - 1);
+            }
         } catch (const std::exception& e) {
             report.blocking_errors.push_back(
                 std::string("Repeater insert validation failed: ") + e.what());
+            return;
+        }
+    }
+
+    for (const auto& pair : pair_members) {
+        if (pair.second.size() != 2) {
+            report.blocking_errors.push_back(
+                "Repeater paired insert must contain exactly one Begin and one End: " +
+                pair.first);
+            return;
+        }
+        const InsertEvent* begin = nullptr;
+        const InsertEvent* end = nullptr;
+        for (size_t index : pair.second) {
+            const InsertEvent& event = inserted_events[index];
+            if (event.method == "begin" || event.method == "begin0") begin = &event;
+            else if (event.method == "end") end = &event;
+        }
+        if (!begin || !end || begin->key != end->key ||
+            begin->change->target_file_path != end->change->target_file_path) {
+            report.blocking_errors.push_back(
+                "Repeater paired insert must use one Begin and one End with the same key and target file: " +
+                pair.first);
+            return;
+        }
+        if (begin->change->confirm_repeater_change_point) {
+            report.blocking_errors.push_back(
+                "Repeater paired insert cannot confirm a Begin change point: " + pair.first);
+            return;
+        }
+        if (end->distance < begin->distance) {
+            report.blocking_errors.push_back(
+                "Repeater End distance cannot be less than Begin distance: pair=" +
+                pair.first);
+            return;
+        }
+    }
+
+    const repeater_linkage::Linkage linkage = repeater_linkage_state(ctx);
+    std::vector<RepeaterNamedInterval> intervals;
+    intervals.reserve(linkage.chains.size() + inserted_events.size());
+    for (const repeater_linkage::Chain& chain : linkage.chains) {
+        intervals.push_back({chain, chain.key, false, false,
+                             chain.end_source_index.has_value()});
+    }
+
+    for (const InsertEvent& inserted : inserted_events) {
+        if (inserted.method != "begin" && inserted.method != "begin0") continue;
+
+        // A later Begin or End of the same key bounds the newly created
+        // half-open interval. Include every event in the typed batch so a
+        // paired End bounds its Begin before source generation.
+        repeater_linkage::Chain requested;
+        requested.key = inserted.key;
+        requested.begin_distance = inserted.distance;
+        bool has_explicit_end = false;
+        auto consider_boundary = [&](double distance, const std::string& method) {
+            if (distance <= inserted.distance ||
+                (method != "begin" && method != "begin0" && method != "end")) {
+                return;
+            }
+            if (!requested.end_distance || distance < *requested.end_distance) {
+                requested.end_distance = distance;
+                has_explicit_end = method == "end";
+            } else if (distance == *requested.end_distance && method == "end") {
+                has_explicit_end = true;
+            }
+        };
+        for (const RepeaterEvent& row : ctx.repeaters) {
+            if (repeater_linkage::canonical_key(
+                    value_to_edit_text(row.repeater_key)) != inserted.key) {
+                continue;
+            }
+            consider_boundary(row.distance, ascii_lower(row.method));
+        }
+        for (const InsertEvent& other : inserted_events) {
+            if (&other == &inserted || other.key != inserted.key) continue;
+            consider_boundary(other.distance, other.method);
+        }
+        intervals.push_back({std::move(requested), inserted.key, true,
+                             inserted.change->confirm_repeater_change_point,
+                             has_explicit_end});
+    }
+
+    if (!validate_repeater_interval_conflicts(intervals, report)) return;
+
+    for (const InsertEvent& inserted : inserted_events) {
+        if (inserted.method != "end") continue;
+        for (const RepeaterNamedInterval& interval : intervals) {
+            if (!interval.has_explicit_end || interval.key != inserted.key ||
+                !repeater_linkage::chain_contains_distance(
+                    interval.interval, inserted.distance)) {
+                continue;
+            }
+            report.blocking_errors.push_back(
+                "Repeater End falls inside a same-name interval that already has an explicit End: key=" +
+                inserted.key + ", interval=" + repeater_interval_text(interval.interval));
             return;
         }
     }

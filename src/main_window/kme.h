@@ -1211,6 +1211,7 @@ struct MapElementEditFieldState {
     MapElementKeySource key_source = MapElementKeySource::None;
     bool required = true;
     bool read_only = false;
+    bool disabled = false;
     bool requires_signal_full_form = false;
 };
 
@@ -1226,7 +1227,9 @@ struct MapElementPendingChange {
     std::string distance_resolution_key;
     std::string distance_boundary_token;
     std::string distance_expression;
+    std::string repeater_pair_id;
     bool confirm_environment_mismatch = false;
+    bool confirm_repeater_change_point = false;
 };
 
 struct MapElementPreviewSnapshot {
@@ -1318,6 +1321,11 @@ struct NewElementWizardState {
     std::string built_target_file;
     std::optional<double> distance_prefill;
     uint64_t insert_sequence = 0;
+    bool repeater_add_begin = true;
+    bool repeater_add_end = true;
+    bool repeater_change_point_prompt_requested = false;
+    bool repeater_extra_end_prompt_requested = false;
+    bool confirm_repeater_change_point_once = false;
     MapElementInspectorState form;
 };
 

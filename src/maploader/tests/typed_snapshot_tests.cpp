@@ -832,6 +832,8 @@ struct RepeaterInsertSpec {
     std::string track_key;
     bool full_coordinates = false;
     std::vector<std::string> structure_keys;
+    std::string pair_id;
+    bool confirm_change_point = false;
 };
 
 struct RepeaterInsertBatch {
@@ -847,8 +849,12 @@ struct RepeaterInsertBatch {
         : target_file(std::move(target)) {
         size_t field_count = 0;
         for (const RepeaterInsertSpec& spec : specs) {
-            field_count += 9 + spec.structure_keys.size() +
-                (spec.full_coordinates ? 6 : 0);
+            const bool is_end = spec.method == "End";
+            field_count += 4 + (spec.pair_id.empty() ? 0 : 1);
+            if (!is_end) {
+                field_count += 5 + spec.structure_keys.size() +
+                    (spec.full_coordinates ? 6 : 0);
+            }
         }
         change_ids.reserve(specs.size());
         field_names.reserve(field_count);
@@ -865,18 +871,21 @@ struct RepeaterInsertBatch {
             append("distance", spec.distance);
             append("method", spec.method);
             append("repeaterKey", spec.repeater_key);
-            append("trackKey", spec.track_key);
-            if (spec.full_coordinates) {
-                append("x", "1"); append("y", "2"); append("z", "3");
-                append("rx", "4"); append("ry", "5"); append("rz", "6");
-            }
-            append("tilt", "0");
-            append("span", "25");
-            append("interval", "5");
-            append("structureKeys.count", std::to_string(spec.structure_keys.size()));
-            for (size_t index = 0; index < spec.structure_keys.size(); ++index) {
-                append(("structureKeys." + std::to_string(index)).c_str(),
-                       spec.structure_keys[index]);
+            if (!spec.pair_id.empty()) append("repeaterPairId", spec.pair_id);
+            if (spec.method != "End") {
+                append("trackKey", spec.track_key);
+                if (spec.full_coordinates) {
+                    append("x", "1"); append("y", "2"); append("z", "3");
+                    append("rx", "4"); append("ry", "5"); append("rz", "6");
+                }
+                append("tilt", "0");
+                append("span", "25");
+                append("interval", "5");
+                append("structureKeys.count", std::to_string(spec.structure_keys.size()));
+                for (size_t index = 0; index < spec.structure_keys.size(); ++index) {
+                    append(("structureKeys." + std::to_string(index)).c_str(),
+                           spec.structure_keys[index]);
+                }
             }
             field_ranges.push_back({
                 offset,
@@ -894,6 +903,9 @@ struct RepeaterInsertBatch {
             change.change_id = utf8_view(change_ids[index]);
             change.edit_id = utf8_view(change_ids[index]);
             change.operation = KV_EDIT_INSERT;
+            if (specs[index].confirm_change_point) {
+                change.flags |= KV_EDIT_CHANGE_CONFIRM_REPEATER_CHANGE_POINT;
+            }
             change.fields = field_ranges[index];
             change.target_file_path = utf8_view(target_file);
         }
@@ -1594,6 +1606,102 @@ void repeater_insert_contract() {
               overlap_report, "Repeater key overlaps another Repeater interval"),
           "Repeater case-insensitive overlapping insert rejected");
 
+    RepeaterInsertBatch confirmed_change_point(source_path, {{
+        "typed-contract-repeater-change-point", "Begin0", "  RAIL  ", "175", "'1'", false,
+        {"pole"}, "", true,
+    }});
+    KvEditReportSnapshot confirmed_report{};
+    dry_run(confirmed_change_point, confirmed_report,
+            "Confirmed Repeater change-point dry-run call");
+    check(confirmed_report.ok && confirmed_report.full_reparse_ok &&
+              confirmed_report.insert_count == 1,
+          "Confirmed same-name Begin insert is accepted as a change point");
+    KvEditReportSnapshot confirmed_apply_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &confirmed_change_point.batch, &confirmed_apply_report,
+              sizeof(confirmed_apply_report)) != 0 && confirmed_apply_report.ok,
+          "Confirmed Repeater change-point apply-to-memory");
+    KvMapSnapshot change_point_snapshot{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &change_point_snapshot,
+                              sizeof(change_point_snapshot)) != 0 &&
+              change_point_snapshot.repeater_count == baseline_repeater_count + 1 &&
+              find_repeater(change_point_snapshot,
+                            "typed-contract-repeater-change-point"),
+          "Confirmed Repeater change point appears in the working copy");
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "Confirmed Repeater change-point reset");
+
+    RepeaterInsertBatch overlapping_pair(source_path, {
+        {"typed-contract-repeater-overlap-pair-begin", "Begin0", "rail", "175",
+         "'1'", false, {"pole"}, "overlap-pair"},
+        {"typed-contract-repeater-overlap-pair-end", "End", "rail", "180",
+         "", false, {}, "overlap-pair"},
+    });
+    KvEditReportSnapshot overlap_pair_report{};
+    dry_run(overlapping_pair, overlap_pair_report,
+            "Overlapping paired Repeater insert dry-run call");
+    check(!overlap_pair_report.ok && edit_report_has_error_prefix(
+              overlap_pair_report, "Repeater key overlaps another Repeater interval"),
+          "Paired Repeater insert retains ordinary overlap protection");
+
+    RepeaterInsertBatch reversed_pair(source_path, {
+        {"typed-contract-repeater-reversed-begin", "Begin0", "reverse-pair", "180",
+         "'1'", false, {"pole"}, "reverse-pair"},
+        {"typed-contract-repeater-reversed-end", "End", "reverse-pair", "170",
+         "", false, {}, "reverse-pair"},
+    });
+    KvEditReportSnapshot reversed_pair_report{};
+    dry_run(reversed_pair, reversed_pair_report,
+            "Reversed paired Repeater insert dry-run call");
+    check(!reversed_pair_report.ok && edit_report_has_error_prefix(
+              reversed_pair_report,
+              "Repeater End distance cannot be less than Begin distance"),
+          "Repeater End before paired Begin is rejected");
+
+    RepeaterInsertBatch equal_pair(source_path, {
+        {"typed-contract-repeater-equal-begin", "Begin0", "equal-pair", "175",
+         "'1'", false, {"pole"}, "equal-pair"},
+        {"typed-contract-repeater-equal-end", "End", "equal-pair", "175",
+         "", false, {}, "equal-pair"},
+    });
+    KvEditReportSnapshot equal_pair_report{};
+    dry_run(equal_pair, equal_pair_report,
+            "Equal-distance paired Repeater insert dry-run call");
+    check(equal_pair_report.ok && equal_pair_report.full_reparse_ok &&
+              equal_pair_report.insert_count == 2,
+          "Equal-distance Repeater Begin and End pair is allowed");
+
+    RepeaterInsertBatch extra_end(source_path, {{
+        "typed-contract-repeater-extra-end", "End", "rail", "175", "", false, {},
+    }});
+    KvEditReportSnapshot extra_end_report{};
+    dry_run(extra_end, extra_end_report, "Extra Repeater End dry-run call");
+    check(!extra_end_report.ok && edit_report_has_error_prefix(
+              extra_end_report,
+              "Repeater End falls inside a same-name interval that already has an explicit End"),
+          "Repeater End inside an already closed interval is rejected");
+
+    RepeaterInsertBatch end_at_old_end(source_path, {{
+        "typed-contract-repeater-at-old-end", "End", "rail", "190", "", false, {},
+    }});
+    KvEditReportSnapshot end_at_old_end_report{};
+    dry_run(end_at_old_end, end_at_old_end_report,
+            "Repeater End at existing End dry-run call");
+    check(end_at_old_end_report.ok && end_at_old_end_report.full_reparse_ok &&
+              end_at_old_end_report.insert_count == 1,
+          "Orphan Repeater End at an existing End boundary is allowed");
+
+    RepeaterInsertBatch isolated_end(source_path, {{
+        "typed-contract-repeater-isolated-end", "End", "isolated-end", "200", "", false, {},
+    }});
+    KvEditReportSnapshot isolated_end_report{};
+    dry_run(isolated_end, isolated_end_report,
+            "Isolated Repeater End dry-run call");
+    check(isolated_end_report.ok && isolated_end_report.full_reparse_ok &&
+              isolated_end_report.insert_count == 1,
+          "Truly isolated Repeater End is allowed");
+
     RepeaterInsertBatch touching(source_path, {{
         "typed-contract-repeater-touching", "Begin0", "rail", "190", "'1'", false,
         {"pole"},
@@ -1617,22 +1725,28 @@ void repeater_insert_contract() {
           "Repeater disjoint insert allowed");
 
     RepeaterInsertBatch valid(source_path, {
-        {"typed-contract-repeater-begin", "Begin", "insert-full", "175", "'1'", true,
-         {"pole", "main1"}},
-        {"typed-contract-repeater-begin0", "Begin0", "insert-zero", "200", "'1'", false,
-         {"pole"}},
+        {"typed-contract-repeater-begin", "Begin", "insert-full", "160", "'1'", true,
+         {"pole", "main1"}, "full-pair"},
+        {"typed-contract-repeater-full-end", "End", "insert-full", "165", "", false,
+         {}, "full-pair"},
+        {"typed-contract-repeater-begin0", "Begin0", "insert-zero", "180", "'1'", false,
+         {"pole"}, "zero-pair"},
+        {"typed-contract-repeater-zero-end", "End", "insert-zero", "185", "", false,
+         {}, "zero-pair"},
+        {"typed-contract-repeater-orphan-end", "End", "insert-orphan", "200", "", false,
+         {}},
     });
     KvEditReportSnapshot dry_report{};
     dry_run(valid, dry_report, "Repeater insert dry-run call");
-    check(dry_report.ok && dry_report.full_reparse_ok && dry_report.insert_count == 2 &&
+    check(dry_report.ok && dry_report.full_reparse_ok && dry_report.insert_count == 5 &&
               dry_report.non_target_changed_count == 0,
-          "Repeater Begin and Begin0 inserts validate");
+          "Repeater Begin/Begin0 pairs and orphan End inserts validate");
 
     KvEditReportSnapshot applied_report{};
     check(kv_edit_apply_to_memory_typed(
               handle.value, &valid.batch, &applied_report,
               sizeof(applied_report)) != 0 && applied_report.ok &&
-              applied_report.full_reparse_ok && applied_report.insert_count == 2,
+              applied_report.full_reparse_ok && applied_report.insert_count == 5,
           "Repeater insert apply-to-memory");
     KvMapSnapshot applied{};
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
@@ -1642,6 +1756,12 @@ void repeater_insert_contract() {
         applied, "typed-contract-repeater-begin");
     const KvRepeaterRow* inserted_zero = find_repeater(
         applied, "typed-contract-repeater-begin0");
+    const KvRepeaterRow* inserted_full_end = find_repeater(
+        applied, "typed-contract-repeater-full-end");
+    const KvRepeaterRow* inserted_zero_end = find_repeater(
+        applied, "typed-contract-repeater-zero-end");
+    const KvRepeaterRow* inserted_orphan_end = find_repeater(
+        applied, "typed-contract-repeater-orphan-end");
     const auto structure_key_at = [](const KvMapSnapshot& snapshot,
                                      const KvRepeaterRow& row, std::uint64_t index) {
         if (!span_valid(row.structure_keys, snapshot.value_count) ||
@@ -1653,7 +1773,8 @@ void repeater_insert_contract() {
             ? map_string(snapshot, value.string_value)
             : std::string{};
     };
-    check(applied.repeater_count == baseline_repeater_count + 2 && inserted_full && inserted_zero &&
+    check(applied.repeater_count == baseline_repeater_count + 5 && inserted_full && inserted_zero &&
+              inserted_full_end && inserted_zero_end && inserted_orphan_end &&
               map_string(applied, inserted_full->method) == "Begin" &&
               map_string(applied, inserted_full->repeater_key.string_value) == "insert-full" &&
               nearly_equal(inserted_full->x, 1.0) && nearly_equal(inserted_full->rz, 6.0) &&
@@ -1663,8 +1784,14 @@ void repeater_insert_contract() {
               map_string(applied, inserted_zero->method) == "Begin0" &&
               map_string(applied, inserted_zero->repeater_key.string_value) == "insert-zero" &&
               nearly_equal(inserted_zero->x, 0.0) && inserted_zero->structure_keys.count == 1 &&
-              structure_key_at(applied, *inserted_zero, 0) == "pole",
-          "Repeater inserts have stable ids, methods, fields, and structure-key lists");
+              structure_key_at(applied, *inserted_zero, 0) == "pole" &&
+              map_string(applied, inserted_full_end->method) == "End" &&
+              nearly_equal(inserted_full_end->distance, 165.0) &&
+              map_string(applied, inserted_zero_end->method) == "End" &&
+              nearly_equal(inserted_zero_end->distance, 185.0) &&
+              map_string(applied, inserted_orphan_end->method) == "End" &&
+              nearly_equal(inserted_orphan_end->distance, 200.0),
+          "Repeater inserts have stable ids, methods, fields, pairs, and orphan End data");
 
     check(kv_edit_reset_memory(handle.value) != 0, "Repeater insert reset call");
     KvMapSnapshot reset{};
@@ -1672,7 +1799,10 @@ void repeater_insert_contract() {
                               &reset, sizeof(reset)) != 0 &&
               reset.repeater_count == baseline_repeater_count &&
               !find_repeater(reset, "typed-contract-repeater-begin") &&
-              !find_repeater(reset, "typed-contract-repeater-begin0"),
+              !find_repeater(reset, "typed-contract-repeater-begin0") &&
+              !find_repeater(reset, "typed-contract-repeater-full-end") &&
+              !find_repeater(reset, "typed-contract-repeater-zero-end") &&
+              !find_repeater(reset, "typed-contract-repeater-orphan-end"),
           "Repeater insert reset restores disk snapshot");
 
     KvEditReportSnapshot reapply_report{};
@@ -1703,20 +1833,30 @@ void repeater_insert_contract() {
           "Repeater insert reloaded snapshot");
     bool reloaded_full = false;
     bool reloaded_zero = false;
+    bool reloaded_full_end = false;
+    bool reloaded_zero_end = false;
+    bool reloaded_orphan_end = false;
     for (std::uint64_t index = 0; index < reloaded_snapshot.repeater_count; ++index) {
         const KvRepeaterRow& row = reloaded_snapshot.repeaters[index];
         const std::string key = map_string(reloaded_snapshot, row.repeater_key.string_value);
         const std::string method = map_string(reloaded_snapshot, row.method);
         reloaded_full = reloaded_full ||
-            (key == "insert-full" && method == "Begin" && nearly_equal(row.distance, 175.0) &&
+            (key == "insert-full" && method == "Begin" && nearly_equal(row.distance, 160.0) &&
              row.structure_keys.count == 2);
         reloaded_zero = reloaded_zero ||
-            (key == "insert-zero" && method == "Begin0" && nearly_equal(row.distance, 200.0) &&
+            (key == "insert-zero" && method == "Begin0" && nearly_equal(row.distance, 180.0) &&
              row.structure_keys.count == 1);
+        reloaded_full_end = reloaded_full_end ||
+            (key == "insert-full" && method == "End" && nearly_equal(row.distance, 165.0));
+        reloaded_zero_end = reloaded_zero_end ||
+            (key == "insert-zero" && method == "End" && nearly_equal(row.distance, 185.0));
+        reloaded_orphan_end = reloaded_orphan_end ||
+            (key == "insert-orphan" && method == "End" && nearly_equal(row.distance, 200.0));
     }
-    check(reloaded_snapshot.repeater_count == baseline_repeater_count + 2 &&
-              reloaded_full && reloaded_zero,
-          "Repeater insert commit/reload retains both forms");
+    check(reloaded_snapshot.repeater_count == baseline_repeater_count + 5 &&
+              reloaded_full && reloaded_zero && reloaded_full_end &&
+              reloaded_zero_end && reloaded_orphan_end,
+          "Repeater insert commit/reload retains paired forms and orphan End");
     std::ifstream committed_source(fixture.map_path, std::ios::binary);
     const std::string committed_text{
         std::istreambuf_iterator<char>(committed_source),
@@ -1726,8 +1866,11 @@ void repeater_insert_contract() {
               std::string::npos &&
           committed_text.find(
               "Repeater['insert-zero'].Begin0('1',0,25,5,'pole');") !=
-              std::string::npos,
-          "Repeater insert source text uses official Begin and Begin0 syntax");
+              std::string::npos &&
+          committed_text.find("Repeater['insert-full'].End();") != std::string::npos &&
+          committed_text.find("Repeater['insert-zero'].End();") != std::string::npos &&
+          committed_text.find("Repeater['insert-orphan'].End();") != std::string::npos,
+          "Repeater insert source text uses official Begin, Begin0, and End syntax");
 }
 
 int edit_contract() {

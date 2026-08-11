@@ -1185,7 +1185,11 @@ struct MapEditChange {
     std::string distance_resolution_key;
     std::string distance_boundary_token;
     std::string distance_expression;
+    // Non-source metadata correlating the two structured insert changes that
+    // produce one Repeater Begin/End wizard operation.
+    std::string repeater_pair_id;
     bool confirm_environment_mismatch = false;
+    bool confirm_repeater_change_point = false;
 };
 
 // Repeater structure keys are represented as a list in the snapshot but as

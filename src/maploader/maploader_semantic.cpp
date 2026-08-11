@@ -641,15 +641,25 @@ void write_repeater(SemanticWriter& out, const KvMapSnapshot& snapshot,
     const std::string source_method = ascii_lower(text(snapshot, row.method));
     const std::string effective_method = ascii_lower(
         changed_string(snapshot, change, "method", row.method));
-    if ((source_method == "begin" || source_method == "begin0") &&
-        effective_method == "end") {
-        for (const auto& field_change : change->field_changes) {
-            if (field_change.first != "method") {
-                throw std::runtime_error(
-                    "Repeater Begin to End conversion only supports the method field");
+    if (effective_method == "end") {
+        if (change) {
+            for (const auto& field_change : change->field_changes) {
+                const bool begin_conversion =
+                    source_method == "begin" || source_method == "begin0";
+                const bool allowed = begin_conversion
+                    ? field_change.first == "method"
+                    : field_change.first == "distance" ||
+                      field_change.first == "method" ||
+                      field_change.first == "repeaterKey";
+                if (!allowed) {
+                    throw std::runtime_error(
+                        begin_conversion
+                            ? "Repeater Begin to End conversion only supports the method field"
+                            : "Repeater.End only supports distance, method, and repeaterKey");
+                }
             }
         }
-        field(out, "distance", row.distance);
+        field(out, "distance", changed_number(change, "distance", row.distance));
         field(out, "method", std::string_view{"End"});
         changed_value(out, snapshot, change, "repeaterKey", row.repeater_key);
         out.label("trackKey");

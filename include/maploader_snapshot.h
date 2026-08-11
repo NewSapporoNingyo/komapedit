@@ -660,8 +660,14 @@ enum KvEditOperation {
 };
 
 #define KV_EDIT_CHANGE_CONFIRM_ENVIRONMENT_MISMATCH (1u << 0)
+/* Confirms that a Repeater Begin-only insert may overlap its active same-name
+ * interval and be interpreted as a change point. */
+#define KV_EDIT_CHANGE_CONFIRM_REPEATER_CHANGE_POINT (1u << 1)
 
 typedef struct KvEditField {
+    /* Repeater Begin+End insert batches use the reserved repeaterPairId field
+     * to correlate exactly one Begin/Begin0 and one End without writing that
+     * metadata to the BVE source. */
     KvUtf8View name;
     KvUtf8View value;
 } KvEditField;

@@ -4172,7 +4172,7 @@ void App::apply_inspector_changes() {
         change.field_changes["form"] = "full";
     }
 
-    if (inspector_.row_kind == "structure.put" &&
+    if (coordinate_offset_inspector &&
         inspector_.coordinate_offsets_enabled) {
         const MapElementEditFieldState* z_field = find_inspector_field(inspector_, "z");
         double z_value = 0.0;
@@ -5106,12 +5106,15 @@ TypedEditBatchStorage typed_edit_batch(
     // storage instead of creating a temporary std::string from a literal.
     static constexpr KvUtf8View k_insert_row_kind_field_name{
         "rowKind", sizeof("rowKind") - 1};
+    static constexpr KvUtf8View k_repeater_pair_id_field_name{
+        "repeaterPairId", sizeof("repeaterPairId") - 1};
     TypedEditBatchStorage storage;
     storage.changes.reserve(inputs.size());
     size_t field_count = 0;
     for (const auto& input : inputs) {
         field_count += input.second.field_changes.size();
         if (input.second.operation == "insert") ++field_count;
+        if (!input.second.repeater_pair_id.empty()) ++field_count;
     }
     storage.fields.reserve(field_count);
     for (const auto& input : inputs) {
@@ -5126,14 +5129,22 @@ TypedEditBatchStorage typed_edit_batch(
         if (source.confirm_environment_mismatch) {
             change.flags |= KV_EDIT_CHANGE_CONFIRM_ENVIRONMENT_MISMATCH;
         }
+        if (source.confirm_repeater_change_point) {
+            change.flags |= KV_EDIT_CHANGE_CONFIRM_REPEATER_CHANGE_POINT;
+        }
         change.fields.offset = static_cast<std::uint64_t>(storage.fields.size());
         change.fields.count = static_cast<std::uint64_t>(source.field_changes.size());
         if (source.operation == "insert") ++change.fields.count;
+        if (!source.repeater_pair_id.empty()) ++change.fields.count;
         if (source.operation == "insert") {
             // The maploader derives insert row kinds from this reserved field
             // and pops it before any typed edit processing runs.
             storage.fields.push_back({k_insert_row_kind_field_name,
                                       edit_utf8_view(source.row_kind)});
+        }
+        if (!source.repeater_pair_id.empty()) {
+            storage.fields.push_back({k_repeater_pair_id_field_name,
+                                      edit_utf8_view(source.repeater_pair_id)});
         }
         for (const auto& field : source.field_changes) {
             storage.fields.push_back({edit_utf8_view(field.first), edit_utf8_view(field.second)});
@@ -6213,7 +6224,7 @@ void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
         if (changed) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
         const float input_width =
             std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.55f);
-        ImGui::BeginDisabled(field.read_only);
+        ImGui::BeginDisabled(field.read_only || field.disabled);
         const std::string previous_value = edit_field_buffer_text(field);
         const bool input_changed = render_map_element_field_control(field, input_width);
         ImGui::EndDisabled();
@@ -6554,6 +6565,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "new_element.usage.repeater.begin", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"endDistance", "endDistance", MapElementNumericConstraint::Finite, true, "0"},
                 {"repeaterKey", "repeaterKey", MapElementNumericConstraint::None, true, ""},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, "0"},
                 {"x", "x", MapElementNumericConstraint::Truncate3, true, "0"},
@@ -6573,6 +6585,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "new_element.usage.repeater.begin0", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"endDistance", "endDistance", MapElementNumericConstraint::Finite, true, "0"},
                 {"repeaterKey", "repeaterKey", MapElementNumericConstraint::None, true, ""},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, "0"},
                 {"tilt", "tilt", MapElementNumericConstraint::Tilt, true, "0"},
@@ -6864,6 +6877,19 @@ std::vector<std::string> new_element_target_candidates(const MapModel& model) {
     return result;
 }
 
+void update_repeater_wizard_field_enablement(NewElementWizardState& wizard) {
+    if (wizard.form.row_kind != "repeater") return;
+    for (MapElementEditFieldState& field : wizard.form.fields) {
+        if (field.key == "repeaterKey") {
+            field.disabled = false;
+        } else if (field.key == "endDistance") {
+            field.disabled = !wizard.repeater_add_end;
+        } else {
+            field.disabled = !wizard.repeater_add_begin;
+        }
+    }
+}
+
 } // namespace
 
 void App::open_new_element_wizard(std::optional<double> distance_prefill) {
@@ -6879,6 +6905,9 @@ void App::open_new_element_wizard(std::optional<double> distance_prefill) {
         wizard.target_candidates_built = false;
         wizard.built_template = -1;
         wizard.built_target_file.clear();
+        wizard.repeater_change_point_prompt_requested = false;
+        wizard.repeater_extra_end_prompt_requested = false;
+        wizard.confirm_repeater_change_point_once = false;
     }
     wizard.open = true;
     wizard.distance_prefill = distance_prefill;
@@ -6896,6 +6925,11 @@ void App::apply_new_element_wizard_distance_prefill() {
     const std::string value = format_double(*wizard.distance_prefill, 0);
     distance->original_value = value;
     set_edit_field_buffer(*distance, value);
+    if (MapElementEditFieldState* end_distance =
+            find_inspector_field(wizard.form, "endDistance")) {
+        end_distance->original_value = value;
+        set_edit_field_buffer(*end_distance, value);
+    }
 }
 
 void App::rebuild_new_element_wizard_form() {
@@ -6906,6 +6940,12 @@ void App::rebuild_new_element_wizard_form() {
         wizard.selected_template = 0;
     }
     const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
+    if (tpl.row_kind == "repeater" &&
+        wizard.built_template != wizard.selected_template) {
+        wizard.repeater_add_begin = true;
+        wizard.repeater_add_end = true;
+        wizard.confirm_repeater_change_point_once = false;
+    }
     MapElementInspectorState form;
     form.open = true;
     form.row_kind = std::string(tpl.row_kind);
@@ -6929,13 +6969,28 @@ void App::rebuild_new_element_wizard_form() {
     if (tpl.section_values) {
         form.fields.push_back(make_section_values_field(form, 0, "0"));
     }
+    const bool coordinate_offset_form =
+        tpl.row_kind == "structure.put" || tpl.row_kind == "repeater";
+    if (coordinate_offset_form) {
+        // The selected template fixes the long/zero-offset source shape, so the
+        // wizard reuses the Inspector's field filtering without its conversion UI.
+        form.coordinate_offsets_enabled = tpl.method == "Put" || tpl.method == "Begin";
+    }
     if (tpl.row_kind == "repeater") {
-        // The wizard picks the source method explicitly, so it only reuses the
-        // Inspector's fields and list editor, not its Begin/Begin0 conversion UI.
-        form.coordinate_offsets_enabled = tpl.method == "Begin";
         form.fields.push_back(make_repeater_structure_key_field(form, 0, {}));
     }
     wizard.form = std::move(form);
+    if (tpl.row_kind == "repeater") {
+        MapElementEditFieldState* begin_distance =
+            find_inspector_field(wizard.form, "distance");
+        MapElementEditFieldState* end_distance =
+            find_inspector_field(wizard.form, "endDistance");
+        if (begin_distance && end_distance) {
+            end_distance->original_value = begin_distance->original_value;
+            set_edit_field_buffer(*end_distance, edit_field_buffer_text(*begin_distance));
+        }
+        update_repeater_wizard_field_enablement(wizard);
+    }
     wizard.built_template = wizard.selected_template;
     wizard.built_target_file = wizard.target_file_path;
 }
@@ -6955,10 +7010,18 @@ bool App::apply_new_element_insert() {
         std::string_view(form.row_kind) != tpl.row_kind) {
         rebuild_new_element_wizard_form();
     }
+    if (tpl.row_kind == "repeater") {
+        if (!wizard.repeater_add_begin && !wizard.repeater_add_end) {
+            set_program_status("status.edit.required_field");
+            return false;
+        }
+        update_repeater_wizard_field_enablement(wizard);
+    }
 
     size_t section_value_count = 0;
     size_t repeater_structure_key_count = 0;
     for (MapElementEditFieldState& field : form.fields) {
+        if (field.disabled) continue;
         if (is_section_values_field(field)) {
             const std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
             if (value.empty()) {
@@ -6990,7 +7053,8 @@ bool App::apply_new_element_insert() {
         set_program_status("status.edit.required_field");
         return false;
     }
-    if (tpl.row_kind == "repeater" && repeater_structure_key_count == 0) {
+    if (tpl.row_kind == "repeater" && wizard.repeater_add_begin &&
+        repeater_structure_key_count == 0) {
         set_program_status("status.edit.required_field");
         return false;
     }
@@ -7022,51 +7086,138 @@ bool App::apply_new_element_insert() {
         }
     }
 
-    MapElementPendingChange change;
-    change.change_id = "insert-" + std::to_string(++wizard.insert_sequence);
-    change.edit_id = change.change_id;
-    change.row_kind = std::string(tpl.row_kind);
-    change.operation = "insert";
-    change.target_file_path = wizard.target_file_path;
-    const EditSourceFileInfo* source_file =
-        find_model_source_file(model_, change.target_file_path);
-    if (!source_file) {
+    double repeater_begin_distance = 0.0;
+    double repeater_end_distance = 0.0;
+    std::string repeater_key;
+    if (tpl.row_kind == "repeater") {
+        const MapElementEditFieldState* key_field =
+            find_inspector_field(form, "repeaterKey");
+        repeater_key = key_field
+            ? trim_gui_ascii_copy(edit_field_buffer_text(*key_field))
+            : std::string{};
+        if (repeater_key.empty()) {
+            set_program_status("status.edit.required_field");
+            return false;
+        }
+        if (wizard.repeater_add_begin) {
+            const MapElementEditFieldState* distance_field =
+                find_inspector_field(form, "distance");
+            if (!distance_field || !parse_gui_edit_number(
+                    edit_field_buffer_text(*distance_field), &repeater_begin_distance)) {
+                set_program_status("status.edit.invalid_number");
+                return false;
+            }
+        }
+        if (wizard.repeater_add_end) {
+            const MapElementEditFieldState* end_distance_field =
+                find_inspector_field(form, "endDistance");
+            if (!end_distance_field || !parse_gui_edit_number(
+                    edit_field_buffer_text(*end_distance_field), &repeater_end_distance)) {
+                set_program_status("status.edit.invalid_number");
+                return false;
+            }
+        }
+        if (wizard.repeater_add_begin && wizard.repeater_add_end &&
+            repeater_end_distance < repeater_begin_distance) {
+            set_program_status("status.edit.repeater_end_before_begin");
+            return false;
+        }
+
+        const repeater_linkage::Linkage linkage =
+            repeater_linkage::pair_linkage(table_repeater_events(model_.repeaters));
+        if (wizard.repeater_add_end && repeater_linkage::chain_at_distance(
+                linkage, repeater_key, repeater_end_distance, true)) {
+            wizard.repeater_extra_end_prompt_requested = true;
+            return false;
+        }
+        if (wizard.repeater_add_begin && !wizard.repeater_add_end &&
+            repeater_linkage::chain_at_distance(
+                linkage, repeater_key, repeater_begin_distance) &&
+            !wizard.confirm_repeater_change_point_once) {
+            wizard.repeater_change_point_prompt_requested = true;
+            return false;
+        }
+    }
+
+    if (!find_model_source_file(model_, wizard.target_file_path)) {
         add_log("[warn]gui_kme.cpp: insert target file is not part of the loaded map: " +
-                change.target_file_path);
+                wizard.target_file_path);
         return false;
     }
+
+    const std::string insert_base =
+        "insert-" + std::to_string(++wizard.insert_sequence);
+    auto make_insert_change = [&](const std::string& edit_id) {
+        MapElementPendingChange change;
+        change.change_id = edit_id;
+        change.edit_id = edit_id;
+        change.row_kind = std::string(tpl.row_kind);
+        change.operation = "insert";
+        change.target_file_path = wizard.target_file_path;
+        return change;
+    };
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     // An insert has no existing source row whose optimistic-concurrency hash
     // must be preserved. Leave expectedSourceHash empty so maploader compares
     // the physical file against the current handle's authoritative disk
     // baseline. The GUI model may represent a dirty working-copy hash and can
     // otherwise become stale across an Apply -> Save -> Apply cycle.
-    for (const MapElementEditFieldState& field : form.fields) {
-        if (field.read_only) continue;
-        if (is_section_values_field(field)) continue;
-        const std::string& backend_key =
-            field.backend_key.empty() ? field.key : field.backend_key;
-        change.field_changes[backend_key] =
-                trim_gui_ascii_copy(edit_field_buffer_text(field));
-    }
-    if (!tpl.method.empty()) {
-        change.field_changes["method"] = std::string(tpl.method);
-    }
     if (tpl.row_kind == "repeater") {
-        change.field_changes["structureKeys.count"] =
-            std::to_string(repeater_structure_key_count);
-    }
-    if (tpl.section_values) {
-        change.field_changes["values.count"] = std::to_string(section_value_count);
-        size_t value_index = 0;
+        const std::string pair_id = wizard.repeater_add_begin && wizard.repeater_add_end
+            ? "repeater-pair-" + std::to_string(wizard.insert_sequence)
+            : std::string{};
+        if (wizard.repeater_add_begin) {
+            MapElementPendingChange begin = make_insert_change(insert_base + "-begin");
+            begin.repeater_pair_id = pair_id;
+            begin.confirm_repeater_change_point =
+                wizard.confirm_repeater_change_point_once;
+            for (const MapElementEditFieldState& field : form.fields) {
+                if (field.read_only || field.disabled || field.key == "endDistance") continue;
+                const std::string& backend_key =
+                    field.backend_key.empty() ? field.key : field.backend_key;
+                begin.field_changes[backend_key] =
+                    trim_gui_ascii_copy(edit_field_buffer_text(field));
+            }
+            begin.field_changes["method"] = std::string(tpl.method);
+            begin.field_changes["structureKeys.count"] =
+                std::to_string(repeater_structure_key_count);
+            candidate[begin.edit_id] = std::move(begin);
+        }
+        if (wizard.repeater_add_end) {
+            MapElementPendingChange end = make_insert_change(insert_base + "-end");
+            end.repeater_pair_id = pair_id;
+            end.field_changes["distance"] =
+                format_double(repeater_end_distance, 12);
+            end.field_changes["repeaterKey"] = repeater_key;
+            end.field_changes["method"] = "End";
+            candidate[end.edit_id] = std::move(end);
+        }
+        wizard.confirm_repeater_change_point_once = false;
+    } else {
+        MapElementPendingChange change = make_insert_change(insert_base);
         for (const MapElementEditFieldState& field : form.fields) {
-            if (!is_section_values_field(field)) continue;
-            change.field_changes["values." + std::to_string(value_index++)] =
+            if (field.read_only || field.disabled || is_section_values_field(field)) continue;
+            const std::string& backend_key =
+                field.backend_key.empty() ? field.key : field.backend_key;
+            change.field_changes[backend_key] =
                 trim_gui_ascii_copy(edit_field_buffer_text(field));
         }
+        if (!tpl.method.empty()) {
+            change.field_changes["method"] = std::string(tpl.method);
+        }
+        if (tpl.section_values) {
+            change.field_changes["values.count"] = std::to_string(section_value_count);
+            size_t value_index = 0;
+            for (const MapElementEditFieldState& field : form.fields) {
+                if (!is_section_values_field(field)) continue;
+                change.field_changes["values." + std::to_string(value_index++)] =
+                    trim_gui_ascii_copy(edit_field_buffer_text(field));
+            }
+        }
+        candidate[change.edit_id] = std::move(change);
     }
 
-    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-    candidate[change.edit_id] = std::move(change);
     if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
             !distance_resolution_workflow_.retry_requested) {
@@ -7162,8 +7313,20 @@ void App::render_new_element_wizard() {
         ImGui::Separator();
         const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
         if (tpl.row_kind == "repeater") {
+            ImGui::BeginDisabled(wizard.repeater_add_begin && !wizard.repeater_add_end);
+            ImGui::Checkbox(tr("chk.new_element_repeater_add_begin").c_str(),
+                            &wizard.repeater_add_begin);
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(wizard.repeater_add_end && !wizard.repeater_add_begin);
+            ImGui::Checkbox(tr("chk.new_element_repeater_add_end").c_str(),
+                            &wizard.repeater_add_end);
+            ImGui::EndDisabled();
+            update_repeater_wizard_field_enablement(wizard);
             render_map_element_field_inputs(wizard.form);
+            ImGui::BeginDisabled(!wizard.repeater_add_begin);
             render_repeater_structure_keys_edit_ui(wizard.form);
+            ImGui::EndDisabled();
         } else if (tpl.section_values) {
             render_map_element_field_inputs(wizard.form);
             render_section_values_edit_ui(wizard.form);
@@ -8472,6 +8635,54 @@ void App::render_popups() {
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
             edit_mode_warning_dont_show_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (new_element_wizard_.open &&
+        new_element_wizard_.repeater_change_point_prompt_requested) {
+        ImGui::OpenPopup(tr("dialog.repeater_change_point_insert_title").c_str());
+        new_element_wizard_.repeater_change_point_prompt_requested = false;
+    }
+    bool apply_repeater_change_point_after_popup = false;
+    if (ImGui::BeginPopupModal(
+            tr("dialog.repeater_change_point_insert_title").c_str(), nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+        ImGui::TextUnformatted(
+            tr("dialog.repeater_change_point_insert_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            new_element_wizard_.confirm_repeater_change_point_once = true;
+            apply_repeater_change_point_after_popup = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            new_element_wizard_.confirm_repeater_change_point_once = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (apply_repeater_change_point_after_popup) {
+        request_edit_ui_operation(PendingEditUiOperation::ApplyNewElement);
+        return;
+    }
+
+    if (new_element_wizard_.open &&
+        new_element_wizard_.repeater_extra_end_prompt_requested) {
+        ImGui::OpenPopup(tr("dialog.repeater_extra_end_title").c_str());
+        new_element_wizard_.repeater_extra_end_prompt_requested = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.repeater_extra_end_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+        ImGui::TextUnformatted(tr("dialog.repeater_extra_end_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
