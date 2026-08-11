@@ -1814,7 +1814,6 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         }
     };
 
-    const auto no_label = [](const TableRow&) { return std::string{}; };
     const auto field_label = [](const char* key) {
         return [key](const TableRow& row) {
             return canvas3d_scene_table_marker_label(row, {key});
@@ -1860,7 +1859,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                          field_label("index"));
     append_table_markers(model.flange_noises, MapMarkerVisualKind::FlangeNoise,
                          Canvas3DSceneMarkerListKind::FlangeNoise,
-                         "flangeNoise.change", no_label);
+                         "flangeNoise.change", field_label("index"));
     append_table_markers(model.joint_noises, MapMarkerVisualKind::JointNoise,
                          Canvas3DSceneMarkerListKind::JointNoise,
                          "jointNoise.play",

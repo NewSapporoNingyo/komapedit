@@ -16,7 +16,6 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 为 3D 线路信息叠加层补充当前不支持的插值（interpolate）情况
 - [ ] 支持通过 3D 操纵器编辑布景旋转和其他放置字段
 - [ ] 支持打开线路时自动加载3D场景预览
-- [ ] 3D场景中的FlangeNoise标牌增加index显示
 
 ### 用户界面与辅助功能
 
