@@ -1327,6 +1327,8 @@ struct NewElementWizardState {
     bool repeater_change_point_prompt_requested = false;
     bool repeater_extra_end_prompt_requested = false;
     bool confirm_repeater_change_point_once = false;
+    std::optional<MapElementInspectorRequest> return_inspector_request;
+    bool close_after_successful_apply = false;
     MapElementInspectorState form;
 };
 
@@ -2110,6 +2112,8 @@ private:
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
     void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);
+    void open_repeater_end_wizard_from_inspector();
+    void finish_new_element_wizard_after_successful_apply();
     void apply_new_element_wizard_distance_prefill();
     void rebuild_new_element_wizard_form();
     bool apply_new_element_insert();

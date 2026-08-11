@@ -6042,10 +6042,20 @@ void App::process_distance_resolution_retry() {
     if (!distance_resolution_workflow_.retry_requested) return;
     DistanceResolutionWorkflowState workflow = std::move(distance_resolution_workflow_);
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
-    apply_edit_ledger_to_preview(workflow.candidate_changes,
-                                 std::move(workflow.reload_request),
-                                 workflow.applying_delete,
-                                 std::move(workflow.origin_edit_id));
+    const bool finish_repeater_end_wizard =
+        new_element_wizard_.open &&
+        new_element_wizard_.close_after_successful_apply &&
+        workflow.reload_request &&
+        new_element_wizard_.return_inspector_request &&
+        workflow.reload_request->edit_id ==
+            new_element_wizard_.return_inspector_request->edit_id;
+    if (apply_edit_ledger_to_preview(workflow.candidate_changes,
+                                     std::move(workflow.reload_request),
+                                     workflow.applying_delete,
+                                     std::move(workflow.origin_edit_id)) &&
+        finish_repeater_end_wizard) {
+        finish_new_element_wizard_after_successful_apply();
+    }
 }
 
 bool App::save_pending_edits(bool refresh_inspector) {
@@ -6520,7 +6530,9 @@ void App::render_element_inspector() {
             if (repeater_navigation_changed) return;
         }
         if (inspector_.repeater_boundary_kind == "open") {
-            ImGui::TextUnformatted(tr("status.repeater_no_end").c_str());
+            if (ImGui::Button(tr("button.add_repeater_end_position").c_str())) {
+                open_repeater_end_wizard_from_inspector();
+            }
         } else if (!inspector_.end_source_file_name.empty()) {
             ImGui::Text("%s %s %d:%d", tr("label.repeater_end_source").c_str(),
                         inspector_.end_source_file_name.c_str(), inspector_.end_line,
@@ -6990,12 +7002,98 @@ void App::open_new_element_wizard(std::optional<double> distance_prefill) {
         wizard.repeater_change_point_prompt_requested = false;
         wizard.repeater_extra_end_prompt_requested = false;
         wizard.confirm_repeater_change_point_once = false;
+        wizard.return_inspector_request.reset();
+        wizard.close_after_successful_apply = false;
     }
     wizard.open = true;
     wizard.distance_prefill = distance_prefill;
     if (!initialize && distance_prefill) {
         apply_new_element_wizard_distance_prefill();
     }
+}
+
+void App::open_repeater_end_wizard_from_inspector() {
+    if (!inspector_.open || inspector_.row_kind != "repeater" ||
+        inspector_.repeater_boundary_kind != "open" || inspector_.edit_id.empty()) {
+        return;
+    }
+
+    size_t row_index = 0;
+    if (!find_row_index_by_edit_id(model_.repeaters, inspector_.edit_id, row_index)) {
+        add_log("[warn]gui_kme.cpp: open Repeater inspector lost its source row: " +
+                inspector_.edit_id);
+        return;
+    }
+    const TableRow& repeater_row = model_.repeaters[row_index];
+    const std::string source_file = !repeater_row.source.file_path.empty()
+        ? repeater_row.source.file_path
+        : inspector_.source_file;
+    const std::string repeater_key = table_cell(repeater_row, "repeaterKey");
+    if (source_file.empty() || repeater_key.empty()) {
+        add_log("[warn]gui_kme.cpp: open Repeater inspector is missing source metadata");
+        return;
+    }
+
+    const std::vector<NewElementTemplate>& templates = new_element_templates();
+    const char* template_id = inspector_.source_zero_offset_method
+        ? "repeater.begin0"
+        : "repeater.begin";
+    const auto selected = std::find_if(
+        templates.begin(), templates.end(),
+        [&](const NewElementTemplate& tpl) { return tpl.id == std::string_view(template_id); });
+    if (selected == templates.end()) {
+        add_log("[error]gui_kme.cpp: Repeater End wizard template is unavailable");
+        return;
+    }
+
+    std::vector<std::string> target_candidates = new_element_target_candidates(model_);
+    if (std::find(target_candidates.begin(), target_candidates.end(), source_file) ==
+        target_candidates.end()) {
+        // Keep the physical Begin source selected even when it has no numeric
+        // distance anchor. Maploader will retain its existing insertion validation
+        // rather than silently redirecting the End to another source file.
+        target_candidates.insert(target_candidates.begin(), source_file);
+    }
+
+    open_new_element_wizard();
+    NewElementWizardState& wizard = new_element_wizard_;
+    wizard.selected_template = static_cast<int>(std::distance(templates.begin(), selected));
+    wizard.target_file_path = source_file;
+    wizard.target_file_candidates = std::move(target_candidates);
+    wizard.target_candidates_built = true;
+    wizard.built_template = -1;
+    wizard.built_target_file.clear();
+    wizard.return_inspector_request = make_inspector_reload_request(inspector_);
+    wizard.close_after_successful_apply = true;
+    rebuild_new_element_wizard_form();
+
+    wizard.repeater_add_begin = false;
+    wizard.repeater_add_end = true;
+    update_repeater_wizard_field_enablement(wizard);
+
+    MapElementEditFieldState* key_field =
+        find_inspector_field(wizard.form, "repeaterKey");
+    MapElementEditFieldState* end_distance_field =
+        find_inspector_field(wizard.form, "endDistance");
+    if (!key_field || !end_distance_field) {
+        add_log("[error]gui_kme.cpp: Repeater End wizard fields are unavailable");
+        wizard.open = false;
+        wizard.return_inspector_request.reset();
+        wizard.close_after_successful_apply = false;
+        return;
+    }
+    key_field->original_value = repeater_key;
+    set_edit_field_buffer(*key_field, repeater_key);
+    end_distance_field->original_value.clear();
+    set_edit_field_buffer(*end_distance_field, {});
+}
+
+void App::finish_new_element_wizard_after_successful_apply() {
+    NewElementWizardState& wizard = new_element_wizard_;
+    if (!wizard.close_after_successful_apply) return;
+    wizard.open = false;
+    wizard.return_inspector_request.reset();
+    wizard.close_after_successful_apply = false;
 }
 
 void App::apply_new_element_wizard_distance_prefill() {
@@ -7300,13 +7398,16 @@ bool App::apply_new_element_insert() {
         candidate[change.edit_id] = std::move(change);
     }
 
-    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) {
+    const std::optional<MapElementInspectorRequest> reload_request =
+        wizard.return_inspector_request;
+    if (!apply_edit_ledger_to_preview(candidate, reload_request, false)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
             !distance_resolution_workflow_.retry_requested) {
             set_program_status("status.edit.pending");
         }
         return false;
     }
+    finish_new_element_wizard_after_successful_apply();
     set_program_status("status.edit.applied_to_preview");
     return true;
 }
