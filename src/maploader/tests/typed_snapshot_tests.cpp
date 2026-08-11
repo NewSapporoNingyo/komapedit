@@ -1672,6 +1672,18 @@ void repeater_insert_contract() {
               equal_pair_report.insert_count == 2,
           "Equal-distance Repeater Begin and End pair is allowed");
 
+    RepeaterInsertBatch incomplete_pair(source_path, {{
+        "typed-contract-repeater-incomplete-begin", "Begin0", "incomplete-pair", "175",
+        "'1'", false, {"pole"}, "incomplete-pair",
+    }});
+    KvEditReportSnapshot incomplete_pair_report{};
+    dry_run(incomplete_pair, incomplete_pair_report,
+            "Incomplete paired Repeater insert dry-run call");
+    check(!incomplete_pair_report.ok && edit_report_has_error_prefix(
+              incomplete_pair_report,
+              "Repeater paired insert must contain exactly one Begin and one End"),
+          "Incomplete paired Repeater insert remains rejected");
+
     RepeaterInsertBatch extra_end(source_path, {{
         "typed-contract-repeater-extra-end", "End", "rail", "175", "", false, {},
     }});
@@ -1804,6 +1816,41 @@ void repeater_insert_contract() {
               !find_repeater(reset, "typed-contract-repeater-zero-end") &&
               !find_repeater(reset, "typed-contract-repeater-orphan-end"),
           "Repeater insert reset restores disk snapshot");
+
+    RepeaterInsertBatch modified_pair(source_path, {
+        {"typed-contract-repeater-begin", "Begin", "insert-full-edited", "160", "'1'",
+         true, {"pole"}, "full-pair"},
+        {"typed-contract-repeater-full-end", "End", "insert-full-edited", "166", "",
+         false, {}, "full-pair"},
+    });
+    KvEditReportSnapshot modified_pair_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &modified_pair.batch, &modified_pair_report,
+              sizeof(modified_pair_report)) != 0 && modified_pair_report.ok &&
+              modified_pair_report.full_reparse_ok &&
+              modified_pair_report.insert_count == 2,
+          "Modified paired Repeater insert ledger replays from disk baseline");
+    KvMapSnapshot modified_pair_snapshot{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &modified_pair_snapshot,
+                              sizeof(modified_pair_snapshot)) != 0,
+          "Modified paired Repeater snapshot");
+    const KvRepeaterRow* modified_begin = find_repeater(
+        modified_pair_snapshot, "typed-contract-repeater-begin");
+    const KvRepeaterRow* modified_end = find_repeater(
+        modified_pair_snapshot, "typed-contract-repeater-full-end");
+    check(modified_pair_snapshot.repeater_count == baseline_repeater_count + 2 &&
+              modified_begin && modified_end &&
+              map_string(modified_pair_snapshot,
+                         modified_begin->repeater_key.string_value) ==
+                  "insert-full-edited" &&
+              map_string(modified_pair_snapshot,
+                         modified_end->repeater_key.string_value) ==
+                  "insert-full-edited" &&
+              nearly_equal(modified_end->distance, 166.0),
+          "Modified paired Repeater replay preserves stable ids and both members");
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "Modified paired Repeater replay reset");
 
     KvEditReportSnapshot reapply_report{};
     check(kv_edit_apply_to_memory_typed(

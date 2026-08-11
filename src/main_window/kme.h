@@ -57,6 +57,7 @@ extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
+struct HeadlessNewElementEditOptions;
 #endif
 
 
@@ -1549,6 +1550,8 @@ public:
         const HeadlessOwnTrackEditOptions& options);
     static int run_debug_headless_other_track_edit(
         const HeadlessOtherTrackEditOptions& options);
+    static int run_debug_headless_new_element_edit(
+        const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 

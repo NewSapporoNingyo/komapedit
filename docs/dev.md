@@ -180,13 +180,16 @@ build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-o
 build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
+build\komapedit.exe --debug-headless-new-element-edit <map-path> --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
-Pass explicit map paths for portable runs. The Repeater-key command always requires one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
+Pass explicit map paths for portable runs. The Repeater-key and new-element-follow-up commands always require one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
+
+`--debug-headless-new-element-edit` drives the production New Map Element wizard, Inspector Apply, and delete/cancel paths. It creates a paired Repeater, changes a normal Begin parameter, the End distance, and the key, cancels the chain, then repeats the follow-up edit/cancel flow for a single-row Structure element. The command is intentionally memory-only: it rejects `--commit`, resets the working copy, reloads from disk, and reports ledger members, stable edit IDs, semantic row checks, and source hashes before returning PASS/FAIL.
 
 At minimum, validate the affected combination of normal and Include map loading, reload, plan/profile/radius charts, station jump, measurement, CSV export, model preview/error handling, 3D tracks/objects/markers/camera/overlay, edit Apply/Revert/Save/Reload, source round trip, encodings/newlines, inline-list drafts, settings persistence, and release contents. Changes to disk writeback require save-then-reload comparison. Performance-sensitive changes require repeatable before/after runs on the same route, parameters, build type, and load profile.
 

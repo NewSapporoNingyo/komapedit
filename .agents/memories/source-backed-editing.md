@@ -26,6 +26,7 @@
 ## GUI lifecycle lessons
 
 - Defer Inspector/delete actions requested from an ImGui table or popup. Mutating Inspector/table/model state during rendering caused crashes; use the shared pending request path.
+- Treat an uncommitted insert as the replay ledger's row-creation shell. Inspector Apply must merge changed fields into that shell while preserving untouched linked inserts and insert-only metadata; deleting the row cancels the insert instead of emitting a delete, and any ledger transition out of inserts must fully rehydrate the preview from the reset working copy.
 - Inline list editors maintain UI drafts separate from applied working-copy changes. Commit the active cell before Apply and block toolbar Save while unapplied list drafts remain.
 - Revert/Reload/exit must discard or resolve drafts and pending deletions through the shared ledger; search refresh must not silently erase pending deletions.
 - Cache/model refresh should preserve unrelated scene geometry, camera, and model caches when the typed content revision allows it.

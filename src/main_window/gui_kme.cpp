@@ -4210,19 +4210,51 @@ void App::apply_inspector_changes() {
                 }
             }
         }
-        for (auto& field : change.field_changes) {
-            merged.field_changes.insert_or_assign(field.first, std::move(field.second));
+        for (const auto& field : change.field_changes) {
+            merged.field_changes.insert_or_assign(field.first, field.second);
         }
+        const auto method = change.field_changes.find("method");
+        if (method != change.field_changes.end()) {
+            const std::string normalized_method = ascii_lower(method->second);
+            const bool long_coordinate_form =
+                normalized_method == "begin" || normalized_method == "put";
+            for (const char* key : {"x", "y", "z", "rx", "ry", "rz"}) {
+                if (!long_coordinate_form) {
+                    merged.field_changes.erase(key);
+                    continue;
+                }
+                const MapElementEditFieldState* field =
+                    find_inspector_field(inspector_, key);
+                if (field) {
+                    merged.field_changes[key] =
+                        trim_gui_ascii_copy(edit_field_buffer_text(*field));
+                }
+            }
+        }
+        if (change.field_changes.find("structureKeys.count") !=
+            change.field_changes.end()) {
+            for (auto field = merged.field_changes.begin();
+                 field != merged.field_changes.end();) {
+                if (field->first.rfind("structureKeys.", 0) == 0) {
+                    field = merged.field_changes.erase(field);
+                } else {
+                    ++field;
+                }
+            }
+            for (const auto& field : change.field_changes) {
+                if (field.first.rfind("structureKeys.", 0) == 0) {
+                    merged.field_changes[field.first] = field.second;
+                }
+            }
+        }
+        size_t section_value_count = 0;
         for (const MapElementEditFieldState& field : inspector_.fields) {
-            if (field.read_only) continue;
+            if (!is_section_values_field(field)) continue;
+            ++section_value_count;
             const std::string& backend_key =
                 field.backend_key.empty() ? field.key : field.backend_key;
             merged.field_changes[backend_key] =
                 trim_gui_ascii_copy(edit_field_buffer_text(field));
-        }
-        size_t section_value_count = 0;
-        for (const MapElementEditFieldState& field : inspector_.fields) {
-            if (is_section_values_field(field)) ++section_value_count;
         }
         if (section_value_count > 0) {
             merged.field_changes["values.count"] = std::to_string(section_value_count);
@@ -4232,6 +4264,16 @@ void App::apply_inspector_changes() {
 
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     for (const std::string& owned_edit_id : inspector_.owned_edit_ids) {
+        const auto existing = candidate.find(owned_edit_id);
+        if (existing != candidate.end() &&
+            existing->second.operation == "insert") {
+            // An Inspector owns every physical row represented by its form,
+            // but an unfinished insert is also the operation that creates
+            // that row. Keep untouched insert shells in the replay ledger;
+            // replacements below merge changed fields into the shells they
+            // actually target.
+            continue;
+        }
         candidate.erase(owned_edit_id);
     }
 
@@ -4262,6 +4304,7 @@ void App::apply_inspector_changes() {
                     [&](const std::string& edit_id) {
                         auto pending = pending_edit_changes_.find(edit_id);
                         return pending != pending_edit_changes_.end() &&
+                            pending->second.operation == "update" &&
                             pending->second.field_changes.find("repeaterKey") !=
                                 pending->second.field_changes.end();
                     });
@@ -4303,13 +4346,18 @@ void App::apply_inspector_changes() {
                 change.row_kind = "repeater";
                 change.operation = "update";
             }
-            if (change.operation != "update") {
+            if (change.operation != "update" && change.operation != "insert") {
                 add_log("[error]gui_kme.cpp: Repeater key edit conflicts with a linked "
-                        "non-update operation: " + chain_edit_id);
+                        "non-update/insert operation: " + chain_edit_id);
                 set_program_status("status.edit.pending");
                 return;
             }
-            if (change.expected_source_hash.empty()) {
+            // Inserts have no disk-baseline row hash. Retaining an empty hash
+            // lets maploader use the handle's authoritative baseline, matching
+            // the new-element path and avoiding a working-copy hash as a false
+            // external-change guard during repeated Apply operations.
+            if (change.operation == "update" &&
+                change.expected_source_hash.empty()) {
                 const TableRow& chain_row = model_.repeaters[row_index];
                 change.expected_source_hash = expected_source_hash_for_edit_target(
                     model_, pending_edit_changes_, chain_edit_id, std::string{},
@@ -4955,6 +5003,19 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         }
         return change;
     };
+    auto cancel_insert_or_add_delete = [&](const std::string& edit_id,
+                                           const std::string& row_kind) {
+        const auto pending = candidate.find(edit_id);
+        if (pending != candidate.end() &&
+            pending->second.operation == "insert") {
+            // The row does not exist on the disk baseline. Removing its insert
+            // from the complete replay ledger is the source-backed equivalent
+            // of deleting it before Save.
+            candidate.erase(pending);
+            return;
+        }
+        candidate[edit_id] = make_delete_change(edit_id, row_kind);
+    };
 
     if (request.row_kind == "curve" || request.row_kind == "gradient") {
         const std::vector<TableRow>& rows = request.row_kind == "curve"
@@ -4972,12 +5033,11 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
             return false;
         }
         related_delete_ids.insert(primary->edit_id);
-        candidate[primary->edit_id] = make_delete_change(primary->edit_id, request.row_kind);
+        cancel_insert_or_add_delete(primary->edit_id, request.row_kind);
         const std::string transition_edit_id = table_cell(*primary, "_transitionEditId");
         if (!transition_edit_id.empty()) {
             related_delete_ids.insert(transition_edit_id);
-            candidate[transition_edit_id] = make_delete_change(
-                transition_edit_id, request.row_kind);
+            cancel_insert_or_add_delete(transition_edit_id, request.row_kind);
         }
     } else if (request.row_kind == "repeater") {
         const std::optional<RepeaterDeleteChain> chain =
@@ -5024,7 +5084,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         }
 
         const auto add_delete = [&](const std::string& edit_id) {
-            candidate[edit_id] = make_delete_change(edit_id, "repeater");
+            cancel_insert_or_add_delete(edit_id, "repeater");
         };
         const size_t selected = chain->selected_begin_index;
         switch (request.repeater_mode) {
@@ -5039,19 +5099,37 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
                 MapElementDeleteRequest target_request = request;
                 target_request.edit_id = begin_edit_ids[selected];
                 target_request.row_kind = "repeater";
-                MapElementPendingChange change;
-                change.change_id = "repeater-trim-" + target_request.edit_id;
-                change.edit_id = target_request.edit_id;
-                change.row_kind = "repeater";
-                change.operation = "update";
-                change.field_changes.emplace("method", "End");
-                std::string metadata_error;
-                change.expected_source_hash = delete_expected_source_hash(
-                    model_, pending_edit_changes_, handle_, target_request, &metadata_error);
-                if (!metadata_error.empty()) {
-                    add_log("[warn]gui_kme.cpp: Repeater trim metadata fallback: " + metadata_error);
+                const auto pending = candidate.find(target_request.edit_id);
+                if (pending != candidate.end() &&
+                    pending->second.operation == "insert") {
+                    MapElementPendingChange change = pending->second;
+                    std::map<std::string, std::string> end_fields;
+                    for (const char* key : {"distance", "repeaterKey"}) {
+                        const auto field = change.field_changes.find(key);
+                        if (field != change.field_changes.end()) {
+                            end_fields.emplace(field->first, field->second);
+                        }
+                    }
+                    end_fields.emplace("method", "End");
+                    change.field_changes = std::move(end_fields);
+                    change.repeater_pair_id.clear();
+                    change.confirm_repeater_change_point = false;
+                    candidate[target_request.edit_id] = std::move(change);
+                } else {
+                    MapElementPendingChange change;
+                    change.change_id = "repeater-trim-" + target_request.edit_id;
+                    change.edit_id = target_request.edit_id;
+                    change.row_kind = "repeater";
+                    change.operation = "update";
+                    change.field_changes.emplace("method", "End");
+                    std::string metadata_error;
+                    change.expected_source_hash = delete_expected_source_hash(
+                        model_, pending_edit_changes_, handle_, target_request, &metadata_error);
+                    if (!metadata_error.empty()) {
+                        add_log("[warn]gui_kme.cpp: Repeater trim metadata fallback: " + metadata_error);
+                    }
+                    candidate[change.edit_id] = std::move(change);
                 }
-                candidate[change.edit_id] = std::move(change);
                 for (size_t index = selected + 1; index < begin_edit_ids.size(); ++index) {
                     add_delete(begin_edit_ids[index]);
                 }
@@ -5063,8 +5141,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
                 break;
         }
     } else {
-        MapElementPendingChange change = make_delete_change(request.edit_id, request.row_kind);
-        candidate[change.edit_id] = std::move(change);
+        cancel_insert_or_add_delete(request.edit_id, request.row_kind);
     }
 
     if (apply_edit_ledger_to_preview(candidate, std::nullopt, true)) {
@@ -5537,9 +5614,14 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         affected_row_kinds.find("curve") != affected_row_kinds.end() ||
         affected_row_kinds.find("gradient") != affected_row_kinds.end() ||
         affected_row_kinds.find("otherTrack.change") != affected_row_kinds.end();
-    const bool full_insert_hydration = std::any_of(
-        changes.begin(), changes.end(),
-        [](const auto& entry) { return entry.second.operation == "insert"; });
+    const auto ledger_contains_insert = [](const auto& ledger) {
+        return std::any_of(
+            ledger.begin(), ledger.end(),
+            [](const auto& entry) { return entry.second.operation == "insert"; });
+    };
+    const bool full_insert_hydration =
+        ledger_contains_insert(changes) ||
+        ledger_contains_insert(pending_edit_changes_);
     if (signal_aspects_hydrated || alignment_hydrated) {
         KvMapSnapshot snapshot{};
         if (!kv_get_map_snapshot(
@@ -10047,6 +10129,498 @@ void App::render() {
     save_runtime_settings_if_changed();
 }
 
+#ifndef NDEBUG
+int App::run_debug_headless_new_element_edit(
+    const HeadlessNewElementEditOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-new-element-edit\n"
+         << "path=" << options.path << "\n"
+         << "commit=0\n"
+         << "memory_apply_only=1\n"
+         << "stage=load-start\n";
+    out->flush();
+
+    LoadResult load = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, LoadModelOptions{true});
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        return 2;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* name, bool value) {
+        *out << name << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+    auto source_hash_for_path = [](const MapModel& model,
+                                   const std::string& path) {
+        const auto found = std::find_if(
+            model.edit_files.begin(), model.edit_files.end(),
+            [&](const EditSourceFileInfo& file) {
+                return file.file_path == path;
+            });
+        return found == model.edit_files.end()
+            ? std::string{}
+            : found->source_hash;
+    };
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    try {
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = load.handle;
+        load.handle = nullptr;
+        app.model_ = std::move(load.model);
+        app.file_path_ = options.path;
+        app.has_model_ = true;
+        app.edit_mode_enabled_ = true;
+        app.edit_registry_loaded_ = true;
+        app.edit_memory_matches_pending_ledger_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.unit_distance_ = options.unit_distance;
+        *out << "stage=load-complete\n";
+
+        const size_t baseline_repeater_count = app.model_.repeaters.size();
+        const size_t baseline_structure_count = app.model_.structures.size();
+        const std::string baseline_entry_hash =
+            source_hash_for_path(app.model_, options.path);
+
+        const std::vector<std::string> target_candidates =
+            new_element_target_candidates(app.model_);
+        if (target_candidates.empty()) {
+            throw std::runtime_error("new-element wizard found no target source file");
+        }
+        const std::string target_file = target_candidates.front();
+        const std::string baseline_target_hash =
+            source_hash_for_path(app.model_, target_file);
+        *out << "target_file=" << target_file << "\n"
+             << "entry_source_hash_before=" << baseline_entry_hash << "\n"
+             << "target_source_hash_before=" << baseline_target_hash << "\n";
+        check("baseline_source_hashes_present",
+              !baseline_entry_hash.empty() && !baseline_target_hash.empty());
+
+        std::vector<double> distance_values;
+        for (const EditStatementInfo& statement : app.model_.edit_statements) {
+            if (statement.statement_kind == "Distance.Set" &&
+                statement.source.file_path == target_file &&
+                std::isfinite(statement.distance_value)) {
+                distance_values.push_back(statement.distance_value);
+            }
+        }
+        std::sort(distance_values.begin(), distance_values.end());
+        distance_values.erase(
+            std::unique(distance_values.begin(), distance_values.end()),
+            distance_values.end());
+        if (distance_values.empty()) {
+            throw std::runtime_error("new-element target has no distance statements");
+        }
+        double begin_distance = distance_values.front();
+        double end_distance = begin_distance;
+        for (size_t index = 1; index < distance_values.size(); ++index) {
+            if (distance_values[index] - distance_values[index - 1] >= 3.0) {
+                begin_distance = distance_values[index - 1] + 1.0;
+                end_distance = begin_distance + 1.0;
+                break;
+            }
+        }
+        *out << "insert_begin_distance=" << format_double(begin_distance, 6) << "\n"
+             << "insert_end_distance=" << format_double(end_distance, 6) << "\n";
+
+        std::string track_key;
+        std::string structure_key;
+        for (const TableRow& row : app.model_.repeaters) {
+            const std::string method = ascii_lower(table_cell(row, "method"));
+            if (method != "begin" && method != "begin0") continue;
+            const std::vector<std::string> keys =
+                split_repeater_structure_keys(table_cell(row, "structureKeys"));
+            if (keys.empty() || table_cell(row, "trackKey").empty()) continue;
+            track_key = table_cell(row, "trackKey");
+            structure_key = keys.front();
+            break;
+        }
+        if (track_key.empty() || structure_key.empty()) {
+            for (const TableRow& row : app.model_.structures) {
+                if (table_cell(row, "trackKey").empty() ||
+                    table_cell(row, "structureKey").empty()) {
+                    continue;
+                }
+                track_key = table_cell(row, "trackKey");
+                structure_key = table_cell(row, "structureKey");
+                break;
+            }
+        }
+        check("source_keys_found", !track_key.empty() && !structure_key.empty());
+        if (track_key.empty() || structure_key.empty()) {
+            throw std::runtime_error("unable to select Repeater source keys");
+        }
+
+        auto repeater_key_in_use = [&](const std::string& key) {
+            const std::string canonical = repeater_linkage::canonical_key(key);
+            return std::any_of(
+                app.model_.repeaters.begin(), app.model_.repeaters.end(),
+                [&](const TableRow& row) {
+                    return repeater_linkage::canonical_key(
+                        table_cell(row, "repeaterKey")) == canonical;
+                });
+        };
+        std::string repeater_key = "headless-new-element-repeater";
+        for (size_t suffix = 0; repeater_key_in_use(repeater_key); ++suffix) {
+            repeater_key = "headless-new-element-repeater-" +
+                std::to_string(suffix + 1);
+        }
+        std::string renamed_repeater_key = repeater_key + "-renamed";
+        while (repeater_key_in_use(renamed_repeater_key)) {
+            renamed_repeater_key += "-next";
+        }
+
+        auto template_index = [&](std::string_view id) {
+            const auto& templates = new_element_templates();
+            const auto found = std::find_if(
+                templates.begin(), templates.end(),
+                [&](const NewElementTemplate& tpl) {
+                    return std::string_view(tpl.id) == id;
+                });
+            return found == templates.end()
+                ? -1
+                : static_cast<int>(std::distance(templates.begin(), found));
+        };
+        auto prepare_wizard = [&](std::string_view template_id) {
+            const int selected_template = template_index(template_id);
+            if (selected_template < 0) return false;
+            app.new_element_wizard_ = NewElementWizardState{};
+            NewElementWizardState& wizard = app.new_element_wizard_;
+            wizard.open = true;
+            wizard.selected_template = selected_template;
+            wizard.target_file_path = target_file;
+            wizard.target_candidates_built = true;
+            wizard.target_file_candidates = {target_file};
+            app.rebuild_new_element_wizard_form();
+            return true;
+        };
+        auto set_field = [&](MapElementInspectorState& form,
+                             const std::string& key,
+                             const std::string& value) {
+            MapElementEditFieldState* field = find_inspector_field(form, key);
+            if (!field || field->read_only || field->disabled) return false;
+            set_edit_field_buffer(*field, value);
+            return true;
+        };
+        auto settle_distance_resolution = [&]() {
+            for (int attempt = 0; attempt < 8; ++attempt) {
+                if (app.distance_resolution_workflow_.phase !=
+                    DistanceResolutionPhase::None) {
+                    const DistanceResolutionRequest& request =
+                        app.distance_resolution_workflow_.request;
+                    DistanceResolutionChoice choice;
+                    if (!request.suggested_expression.empty()) {
+                        choice.distance_expression = request.suggested_expression;
+                    } else if (!request.allowed_boundaries.empty()) {
+                        choice.boundary_token = request.allowed_boundaries.front().token;
+                    } else if (request.can_confirm_reuse) {
+                        choice.confirm_environment_mismatch = true;
+                    } else {
+                        return false;
+                    }
+                    app.apply_distance_resolution_choice(choice);
+                }
+                if (app.distance_resolution_workflow_.retry_requested) {
+                    app.process_distance_resolution_retry();
+                    continue;
+                }
+                return app.distance_resolution_workflow_.phase ==
+                    DistanceResolutionPhase::None;
+            }
+            return false;
+        };
+        auto apply_wizard = [&]() {
+            const bool applied_immediately = app.apply_new_element_insert();
+            if (!applied_immediately &&
+                app.distance_resolution_workflow_.phase ==
+                    DistanceResolutionPhase::None &&
+                !app.distance_resolution_workflow_.retry_requested) {
+                return false;
+            }
+            return settle_distance_resolution();
+        };
+        auto apply_inspector = [&]() {
+            app.apply_inspector_changes();
+            if (!settle_distance_resolution()) return false;
+            app.process_pending_element_inspector();
+            return true;
+        };
+        auto pending_insert = [&](const std::string& edit_id)
+            -> const MapElementPendingChange* {
+            const auto found = app.pending_edit_changes_.find(edit_id);
+            return found != app.pending_edit_changes_.end() &&
+                    found->second.operation == "insert"
+                ? &found->second
+                : nullptr;
+        };
+        auto model_row = [](const std::vector<TableRow>& rows,
+                            const std::string& edit_id) -> const TableRow* {
+            const auto found = std::find_if(
+                rows.begin(), rows.end(),
+                [&](const TableRow& row) { return row.edit_id == edit_id; });
+            return found == rows.end() ? nullptr : &*found;
+        };
+        auto pending_field = [](const MapElementPendingChange* change,
+                                const char* key) {
+            if (!change) return std::string{};
+            const auto field = change->field_changes.find(key);
+            return field == change->field_changes.end()
+                ? std::string{}
+                : field->second;
+        };
+
+        check("repeater_template_found", prepare_wizard("repeater.begin0"));
+        NewElementWizardState& repeater_wizard = app.new_element_wizard_;
+        repeater_wizard.repeater_add_begin = true;
+        repeater_wizard.repeater_add_end = true;
+        update_repeater_wizard_field_enablement(repeater_wizard);
+        bool repeater_fields_ok =
+            set_field(repeater_wizard.form, "distance",
+                      format_double(begin_distance, 6)) &&
+            set_field(repeater_wizard.form, "endDistance",
+                      format_double(end_distance, 6)) &&
+            set_field(repeater_wizard.form, "repeaterKey", repeater_key) &&
+            set_field(repeater_wizard.form, "trackKey", track_key) &&
+            set_field(repeater_wizard.form, "interval", "25") &&
+            set_field(repeater_wizard.form, "structureKeys.0", structure_key);
+        check("repeater_wizard_fields_set", repeater_fields_ok);
+        check("repeater_wizard_apply_ok", repeater_fields_ok && apply_wizard());
+
+        std::string begin_edit_id;
+        std::string end_edit_id;
+        std::string repeater_pair_id;
+        for (const auto& entry : app.pending_edit_changes_) {
+            if (entry.second.row_kind != "repeater" ||
+                entry.second.operation != "insert") {
+                continue;
+            }
+            const auto method = entry.second.field_changes.find("method");
+            if (method == entry.second.field_changes.end()) continue;
+            if (ascii_lower(method->second) == "end") {
+                end_edit_id = entry.first;
+            } else {
+                begin_edit_id = entry.first;
+            }
+            if (repeater_pair_id.empty()) {
+                repeater_pair_id = entry.second.repeater_pair_id;
+            }
+        }
+        const MapElementPendingChange* begin_insert = pending_insert(begin_edit_id);
+        const MapElementPendingChange* end_insert = pending_insert(end_edit_id);
+        *out << "repeater_begin_edit_id=" << begin_edit_id << "\n"
+             << "repeater_end_edit_id=" << end_edit_id << "\n"
+             << "repeater_pair_id=" << repeater_pair_id << "\n";
+        check("repeater_pair_insert_ledger_ok",
+              app.pending_edit_changes_.size() == 2 && begin_insert && end_insert &&
+              !repeater_pair_id.empty() &&
+              begin_insert->repeater_pair_id == repeater_pair_id &&
+              end_insert->repeater_pair_id == repeater_pair_id);
+        check("repeater_pair_model_rows_ok",
+              model_row(app.model_.repeaters, begin_edit_id) &&
+              model_row(app.model_.repeaters, end_edit_id) &&
+              app.model_.repeaters.size() == baseline_repeater_count + 2);
+        *out << "stage=repeater-created\n";
+
+        check("repeater_inspector_open_ok",
+              app.open_element_inspector(begin_edit_id, "repeater"));
+        const double edited_end_distance = end_distance + 1.0;
+        const bool edit_fields_ok =
+            set_field(app.inspector_, "interval", "7") &&
+            set_field(app.inspector_, "endDistance",
+                      format_double(edited_end_distance, 6));
+        check("repeater_inspector_fields_set", edit_fields_ok);
+        check("repeater_insert_followup_apply_ok",
+              edit_fields_ok && apply_inspector());
+        *out << "followup_status=" << app.program_status_key_ << "\n";
+        begin_insert = pending_insert(begin_edit_id);
+        end_insert = pending_insert(end_edit_id);
+        *out << "followup_begin_interval="
+             << pending_field(begin_insert, "interval") << "\n"
+             << "followup_begin_distance="
+             << pending_field(begin_insert, "distance") << "\n"
+             << "followup_end_distance="
+             << pending_field(end_insert, "distance") << "\n"
+             << "followup_begin_pair_id="
+             << (begin_insert ? begin_insert->repeater_pair_id : std::string{}) << "\n"
+             << "followup_end_pair_id="
+             << (end_insert ? end_insert->repeater_pair_id : std::string{}) << "\n";
+        const bool followup_ledger_ok = begin_insert && end_insert &&
+            begin_insert->repeater_pair_id == repeater_pair_id &&
+            end_insert->repeater_pair_id == repeater_pair_id &&
+            begin_insert->field_changes.find("interval") !=
+                begin_insert->field_changes.end() &&
+            begin_insert->field_changes.at("interval") == "7" &&
+            end_insert->field_changes.find("distance") !=
+                end_insert->field_changes.end() &&
+            std::abs(std::stod(end_insert->field_changes.at("distance")) -
+                     edited_end_distance) < 1e-9;
+        check("repeater_insert_followup_ledger_ok", followup_ledger_ok);
+
+        const TableRow* edited_begin_row =
+            model_row(app.model_.repeaters, begin_edit_id);
+        const TableRow* edited_end_row =
+            model_row(app.model_.repeaters, end_edit_id);
+        *out << "snapshot_begin_interval="
+             << (edited_begin_row ? table_cell(*edited_begin_row, "interval")
+                                  : std::string{}) << "\n"
+             << "snapshot_end_distance="
+             << (edited_end_row ? table_cell(*edited_end_row, "distance")
+                                : std::string{}) << "\n";
+        check("repeater_insert_followup_snapshot_ok",
+              edited_begin_row && edited_end_row &&
+              std::abs(table_cell_number(*edited_begin_row, "interval") - 7.0) < 1e-9 &&
+              std::abs(table_cell_number(*edited_end_row, "distance") -
+                       edited_end_distance) < 1e-9);
+        *out << "stage=repeater-followup-applied\n";
+
+        if (!app.inspector_.open || app.inspector_.edit_id != begin_edit_id) {
+            app.open_element_inspector(begin_edit_id, "repeater");
+        }
+        const bool rename_field_ok =
+            set_field(app.inspector_, "repeaterKey", renamed_repeater_key);
+        check("repeater_rename_field_set", rename_field_ok);
+        check("repeater_insert_rename_apply_ok",
+              rename_field_ok && apply_inspector());
+        *out << "rename_status=" << app.program_status_key_ << "\n";
+        begin_insert = pending_insert(begin_edit_id);
+        end_insert = pending_insert(end_edit_id);
+        *out << "renamed_begin_key="
+             << pending_field(begin_insert, "repeaterKey") << "\n"
+             << "renamed_end_key="
+             << pending_field(end_insert, "repeaterKey") << "\n";
+        const bool renamed_ledger_ok = begin_insert && end_insert &&
+            begin_insert->field_changes.find("repeaterKey") !=
+                begin_insert->field_changes.end() &&
+            end_insert->field_changes.find("repeaterKey") !=
+                end_insert->field_changes.end() &&
+            begin_insert->field_changes.at("repeaterKey") == renamed_repeater_key &&
+            end_insert->field_changes.at("repeaterKey") == renamed_repeater_key;
+        check("repeater_insert_rename_ledger_ok", renamed_ledger_ok);
+        *out << "stage=repeater-renamed\n";
+
+        MapElementDeleteRequest repeater_delete;
+        repeater_delete.edit_id = begin_edit_id;
+        repeater_delete.row_kind = "repeater";
+        repeater_delete.repeater_mode = RepeaterDeleteMode::EntireChain;
+        check("repeater_insert_cancel_ok",
+              app.delete_element_target(repeater_delete));
+        check("repeater_insert_cancel_restores_baseline",
+              app.pending_edit_changes_.empty() &&
+              app.model_.repeaters.size() == baseline_repeater_count);
+        *out << "stage=repeater-cancelled\n";
+
+        check("structure_template_found", prepare_wizard("structure.put0"));
+        NewElementWizardState& structure_wizard = app.new_element_wizard_;
+        const bool structure_fields_ok =
+            set_field(structure_wizard.form, "distance",
+                      format_double(begin_distance, 6)) &&
+            set_field(structure_wizard.form, "structureKey", structure_key) &&
+            set_field(structure_wizard.form, "trackKey", track_key) &&
+            set_field(structure_wizard.form, "span", "25");
+        check("structure_wizard_fields_set", structure_fields_ok);
+        check("structure_wizard_apply_ok", structure_fields_ok && apply_wizard());
+        std::string structure_edit_id;
+        for (const auto& entry : app.pending_edit_changes_) {
+            if (entry.second.row_kind == "structure.put" &&
+                entry.second.operation == "insert") {
+                structure_edit_id = entry.first;
+                break;
+            }
+        }
+        check("structure_insert_ledger_ok",
+              !structure_edit_id.empty() &&
+              app.pending_edit_changes_.size() == 1 &&
+              model_row(app.model_.structures, structure_edit_id) &&
+              app.model_.structures.size() == baseline_structure_count + 1);
+        *out << "stage=structure-created\n";
+        check("structure_inspector_open_ok",
+              app.open_element_inspector(structure_edit_id, "structure.put"));
+        const bool structure_edit_field_ok =
+            set_field(app.inspector_, "span", "31");
+        check("structure_inspector_field_set", structure_edit_field_ok);
+        check("structure_insert_followup_apply_ok",
+              structure_edit_field_ok && apply_inspector());
+        const MapElementPendingChange* structure_insert =
+            pending_insert(structure_edit_id);
+        const TableRow* structure_row =
+            model_row(app.model_.structures, structure_edit_id);
+        check("structure_insert_followup_state_ok",
+              structure_insert && structure_row &&
+              structure_insert->field_changes.find("span") !=
+                  structure_insert->field_changes.end() &&
+              structure_insert->field_changes.at("span") == "31" &&
+              std::abs(table_cell_number(*structure_row, "span") - 31.0) < 1e-9);
+        *out << "stage=structure-followup-applied\n";
+
+        MapElementDeleteRequest structure_delete;
+        structure_delete.edit_id = structure_edit_id;
+        structure_delete.row_kind = "structure.put";
+        check("structure_insert_cancel_ok",
+              app.delete_element_target(structure_delete));
+        check("structure_insert_cancel_restores_baseline",
+              app.pending_edit_changes_.empty() &&
+              app.model_.structures.size() == baseline_structure_count);
+        *out << "stage=structure-cancelled\n";
+
+        check("working_copy_reset_ok",
+              app.edit_memory_matches_pending_ledger_ &&
+              kv_edit_reset_memory(app.handle_) != 0);
+        LoadResult disk_reload = load_map_worker(
+            options.path, options.unit_distance, false, 0.0, 0.0,
+            options.unit_distance, LoadModelOptions{true});
+        const std::string entry_hash_after = disk_reload.ok
+            ? source_hash_for_path(disk_reload.model, options.path)
+            : std::string{};
+        const std::string target_hash_after = disk_reload.ok
+            ? source_hash_for_path(disk_reload.model, target_file)
+            : std::string{};
+        *out << "entry_source_hash_after=" << entry_hash_after << "\n"
+             << "target_source_hash_after=" << target_hash_after << "\n";
+        check("disk_reload_ok", disk_reload.ok);
+        check("disk_source_hashes_unchanged",
+              disk_reload.ok && entry_hash_after == baseline_entry_hash &&
+              target_hash_after == baseline_target_hash);
+        if (disk_reload.handle) kv_free(disk_reload.handle);
+        for (const LogLine& line : app.logs_) {
+            if (line.severity == LogSeverity::Error) {
+                *out << "app_error=" << line.text << "\n";
+            }
+        }
+        *out << "stage=reset-and-disk-check-complete\n";
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (load.handle) kv_free(load.handle);
+
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 20;
+}
+#endif
+
 ID3D11Device* g_pd3dDevice = nullptr;
 ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
 IDXGISwapChain* g_pSwapChain = nullptr;
@@ -10262,6 +10836,18 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_section_edit_batch(section_edit_batch);
+    }
+
+    HeadlessNewElementEditOptions new_element_edit =
+        parse_headless_new_element_edit_options(args);
+    if (new_element_edit.requested) {
+        if (!new_element_edit.error.empty()) {
+            std::cerr << new_element_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-new-element-edit <map-path> "
+                      << "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_new_element_edit(new_element_edit);
     }
 
     HeadlessInsertEditOptions insert_edit = parse_headless_insert_edit_options(args);
