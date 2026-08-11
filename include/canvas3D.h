@@ -206,6 +206,7 @@ struct Canvas3DSceneMarker {
     std::string row_kind;
     std::optional<size_t> row_index;
     std::string edit_id;
+    bool unpaired_transition = false;
     std::string track_key;
     ImVec4 theme_color{};
     bool has_theme_color = false;

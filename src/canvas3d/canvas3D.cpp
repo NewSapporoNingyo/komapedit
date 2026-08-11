@@ -1629,7 +1629,8 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                                  Canvas3DSceneMarkerListKind::None,
                              std::string row_kind = {},
                              std::optional<size_t> row_index = std::nullopt,
-                             std::string edit_id = {}) {
+                             std::string edit_id = {},
+                             bool unpaired_transition = false) {
         if (!std::isfinite(distance)) return;
         std::optional<Canvas3DTrackPoint> point =
             scene_sample_track_path_points(*own_track, distance);
@@ -1643,6 +1644,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         marker.row_kind = std::move(row_kind);
         marker.row_index = row_index;
         marker.edit_id = std::move(edit_id);
+        marker.unpaired_transition = unpaired_transition;
         scene.markers.push_back(std::move(marker));
     };
 
@@ -1664,12 +1666,14 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
              std::abs(radius) <= k_scene_route_display_zero_epsilon);
         const std::string edit_id = transition
             ? table_cell(row, "_primaryEditId") : row.edit_id;
+        const bool unpaired_transition = transition &&
+            table_cell(row, "_transitionStatus") == "orphan";
         if (transition) {
             append_marker(MapMarkerVisualKind::CurveTransitionStart,
                           table_cell_number(row, "distance"), "Curve\nTr.",
                           MapMarkerIconVariant::Default,
                           Canvas3DSceneMarkerListKind::None, "curve", row_index,
-                          edit_id);
+                          edit_id, unpaired_transition);
         } else if (end) {
             append_marker(MapMarkerVisualKind::CurveEnd,
                           table_cell_number(row, "distance"), "End",
@@ -1699,11 +1703,13 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         const double distance = table_cell_number(row, "distance");
         const std::string edit_id = transition
             ? table_cell(row, "_primaryEditId") : row.edit_id;
+        const bool unpaired_transition = transition &&
+            table_cell(row, "_transitionStatus") == "orphan";
         if (transition) {
             append_marker(MapMarkerVisualKind::GradientTransitionStart, distance,
                           "Gradient\nTr.", MapMarkerIconVariant::Default,
                           Canvas3DSceneMarkerListKind::None, "gradient", row_index,
-                          edit_id);
+                          edit_id, unpaired_transition);
         } else if (end) {
             append_marker(MapMarkerVisualKind::GradientEnd, distance, "End",
                           MapMarkerIconVariant::Default,
@@ -9733,8 +9739,8 @@ fail:
                 }
                 ImGui::EndDisabled();
             }
-            if ((marker.row_kind == "curve" || marker.row_kind == "gradient") &&
-                marker.edit_id.empty()) {
+            if (context_menu_options.element_properties_enabled &&
+                marker.unpaired_transition) {
                 ImGui::Separator();
                 ImGui::TextWrapped("%s", ui_text.unpaired_transition);
             }
