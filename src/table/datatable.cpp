@@ -2555,7 +2555,19 @@ void App::render_othertracks_window() {
                             scene_track_visibility_changed = true;
                         }
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::TextUnformatted(t.key.empty() ? "\\" : t.key.c_str());
+                        const std::string display_key = t.key.empty() ? "\\" : t.key;
+                        if (begin_text_cell_context_popup(
+                                display_key, "other_track_key_item",
+                                "other_track_key_context")) {
+                            const bool can_rename = edit_actions_available() && !t.key.empty();
+                            ImGui::BeginDisabled(!can_rename);
+                            if (ImGui::MenuItem(
+                                    tr("context.other_track.rename").c_str())) {
+                                request_other_track_rename(t.key);
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::EndPopup();
+                        }
                         ImGui::TableSetColumnIndex(2);
                         ImGui::SetNextItemWidth(-1);
                         ImGui::InputDouble("##min", &t.range_min, 0, 0, "%.1f");

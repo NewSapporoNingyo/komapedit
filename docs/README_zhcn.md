@@ -59,7 +59,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `Gradient.End()`                                                                                                                                                                            |   √   |    √     |    ✕     |     ✕      | 可编辑已有结束距离或删除语句；已配对过渡语句随之处理                                                           |
 | `Gradient.Interpolate(gradient)` / `Gradient.Interpolate()`                                                                                                                                 |   √   |    ✕     |    ✕     |     ✕      | 官方 0/1 参数形式均进入几何，但不生成可编辑坡度行                                                              |
 | `Legacy.Turn`、`Legacy.Curve`、`Legacy.Pitch`                                                                                                                                               |   √   |    △     |    ✕     |     ✕      | 项目兼容语法：均进入自轨道几何；只有已有 `Legacy.Curve` 行支持基于源码的值/距离编辑                            |
-| `Track[trackKey].X.Interpolate(x, radius)` / `Track[trackKey].X.Interpolate(x)` / `Track[trackKey].X.Interpolate()`                                                                         |   √   |    △     |    ✕     |     ✕      | 官方各形式均进入他轨道几何；可编辑已有距离/数值字段或删除，但 track key、方法和参数个数只读                    |
+| `Track[trackKey].X.Interpolate(x, radius)` / `Track[trackKey].X.Interpolate(x)` / `Track[trackKey].X.Interpolate()`                                                                         |   √   |    △     |    ✕     |     ✕      | 官方各形式均进入他轨道几何；可编辑距离/数值字段或删除。`trackKey` 在“属性/编辑”中只读，但可从“其他轨道”表统一重命名整条轨道 |
 | `Track[trackKey].Y.Interpolate(y, radius)` / `Track[trackKey].Y.Interpolate(y)` / `Track[trackKey].Y.Interpolate()`                                                                         |   √   |    △     |    ✕     |     ✕      | 与 X 插值的编辑边界相同；官方各形式均进入他轨道几何                                                            |
 | `Track[trackKey].Position(x, y, radiusH, radiusV)` / `Track[trackKey].Position(x, y, radiusH)` / `Track[trackKey].Position(x, y)`                                                           |   √   |    △     |    ✕     |     ✕      | 官方各形式均进入他轨道几何；可编辑已有数值/距离或删除，但语句形状及 track key 只读                             |
 | `Track[trackKey].Cant.SetGauge(gauge)` / `[旧式] Track[trackKey].Gauge(gauge)`                                                                                                              |   √   |    △     |    ✕     |     ✕      | 进入他轨道轨距；可编辑已有数值/距离或删除，但方法/key 只读                                                     |
@@ -140,7 +140,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
    - `音效文件列表` 和 `3D音效文件列表`：查看已加载的音效文件条目、查找匹配 key、查找未使用条目，并打开关联文件。打开编辑模式后可编辑、调整顺序、清空或删除已有 key、路径和缓冲区数量；“选择文件”会尽可能写入相对路径
    - `地图音效列表`、`地图3D音效列表`、`走行音变化点列表`、`轮缘摩擦音效变化点列表` 和 `道岔音效播放点列表`：查看并定位音效播放/变化位置；打开编辑模式后可对已有事件执行“属性/编辑”或删除
     - `限速点列表`、`轨道变位列表`、`粘着特性变化点列表`、`背景变化点列表`、`驾驶台亮度变化点列表`、`雾效果变化点列表` 和 `绘制距离变化点列表`：查看并定位对应变化点；打开编辑模式后可对已支持的行执行“属性/编辑”或删除。限速 Begin/End 可独立存在，Begin 显示距离和限速值编辑，End 只显示距离编辑
-   - `其他轨道`：切换他轨道显示、调整显示范围和颜色
+   - `其他轨道`：切换他轨道显示、调整显示范围和颜色。打开编辑模式后，可右键 `Key` 单元格并选择“重命名”，统一修改地图及全部 Include 中同名 `Track[...]` 语句的 `trackKey`。该操作沿用现有“应用/保存”流程；Structure、Signal、Repeater 等地图元素中的轨道引用不会随之改名
    - `他列车列表`：查看他列车定义和停止位置、各停止位置分组唯一的只读 `Train.Enable` 时间，切换路径显示，并定位停止位置到平面图
    - `闭塞列表`：在两个动态列表中分别查看 `Section.Begin`/`BeginNew` 和 `Section.SetSpeedLimit`/`Signal.SpeedLimit`，包括显式 `null` 参数与源文件。编辑模式下右键距离单元格可打开“属性/编辑”或删除该行；检查器可编辑距离和可变数量参数，并提供增加/删除参数的按钮
    - `变量列表`：按大小写不敏感的变量名分组查看所有赋值；悬停赋值可见原表达式，源文件右键菜单可打开所在目录

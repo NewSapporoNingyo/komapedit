@@ -134,6 +134,15 @@ struct HeadlessRepeaterKeyEditOptions {
     std::string error;
 };
 
+struct HeadlessOtherTrackKeyEditOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    bool commit = false;
+    std::string error;
+};
+
 struct HeadlessSectionEditBatchOptions {
     bool requested = false;
     std::string path;
@@ -192,6 +201,8 @@ HeadlessStationListEditOptions parse_headless_station_list_edit_options(
 HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
     const std::vector<std::string>& args);
 HeadlessRepeaterKeyEditOptions parse_headless_repeater_key_edit_options(
+    const std::vector<std::string>& args);
+HeadlessOtherTrackKeyEditOptions parse_headless_other_track_key_edit_options(
     const std::vector<std::string>& args);
 HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
     const std::vector<std::string>& args);

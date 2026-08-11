@@ -193,6 +193,60 @@ struct RepeaterRenameFixture {
     std::string path_utf8() const { return map_path.u8string(); }
 };
 
+struct OtherTrackRenameFixture {
+    std::filesystem::path directory;
+    std::filesystem::path map_path;
+    std::filesystem::path include_path;
+
+    OtherTrackRenameFixture() {
+        directory = std::filesystem::temp_directory_path() /
+            ("komapedit-other-track-rename-contract-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(directory);
+        map_path = directory / "map.txt";
+        include_path = directory / "other-track.txt";
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Structure.Load('structures.csv');\n"
+            << "Signal.Load('signals.csv');\n"
+            << "Track['target'].Position(3.8, 0); # preserve root layout\n"
+            << "25;\n"
+            << "Track['target'].X.Interpolate(4.0, 20);\n"
+            << "Structure['pole'].Put('target',1,2,3,0,0,0,0,25);\n"
+            << "Signal['aspect'].Put(0,'target',0,1);\n"
+            << "Repeater['reference'].Begin0('target',0,25,5,'pole');\n"
+            << "50;\n"
+            << "Include('other-track.txt');\n"
+            << "1000;\n"
+            << "Track['blocker'].Position(8,0);\n"
+            << "Track[7].Position(9,0);\n";
+        std::ofstream included(include_path, std::ios::binary | std::ios::trunc);
+        included << "BveTs Map 2.02:utf-8\n"
+                 << "50;\n"
+                 << "Track['target'].Y.Interpolate(0.1); # preserve include layout\n"
+                 << "75;\n"
+                 << "Track['target'].Gauge(1.067);\n"
+                 << "100;\n"
+                 << "Track['target'].Cant.SetGauge(1.067);\n";
+        std::ofstream structures(directory / "structures.csv",
+                                 std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\n"
+                   << "pole,pole.csv\n";
+        std::ofstream signals(directory / "signals.csv",
+                              std::ios::binary | std::ios::trunc);
+        signals << "BveTs Signal Aspects List 2.00:utf-8\n"
+                << "aspect,pole\n";
+    }
+
+    ~OtherTrackRenameFixture() {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+    }
+
+    std::string path_utf8() const { return map_path.u8string(); }
+};
+
 void write_utf16_file(const std::filesystem::path& path,
                       const std::u16string& text,
                       bool little_endian,
@@ -824,6 +878,47 @@ struct RepeaterKeyBatch {
     }
 };
 
+struct OtherTrackKeyBatch {
+    std::string field_name = "trackKey";
+    std::string field_value;
+    std::vector<std::string> change_ids;
+    std::vector<std::string> edit_ids;
+    std::vector<std::string> source_hashes;
+    std::vector<KvEditField> fields;
+    std::vector<KvEditChange> changes;
+    KvEditBatch batch{};
+
+    OtherTrackKeyBatch(
+        const std::vector<std::pair<std::string, std::string>>& targets,
+        std::string value)
+        : field_value(std::move(value)) {
+        change_ids.reserve(targets.size());
+        edit_ids.reserve(targets.size());
+        source_hashes.reserve(targets.size());
+        fields.reserve(targets.size());
+        changes.resize(targets.size());
+        for (size_t index = 0; index < targets.size(); ++index) {
+            change_ids.push_back(
+                "typed-contract-other-track-key-" + std::to_string(index));
+            edit_ids.push_back(targets[index].first);
+            source_hashes.push_back(targets[index].second);
+        }
+        for (size_t index = 0; index < targets.size(); ++index) {
+            fields.push_back(KvEditField{
+                utf8_view(field_name), utf8_view(field_value)});
+            KvEditChange& change = changes[index];
+            change.change_id = utf8_view(change_ids[index]);
+            change.edit_id = utf8_view(edit_ids[index]);
+            change.operation = KV_EDIT_UPDATE;
+            change.fields = KvSpan{static_cast<std::uint64_t>(index), 1};
+            change.expected_source_hash = utf8_view(source_hashes[index]);
+        }
+        batch = KvEditBatch{
+            changes.data(), static_cast<std::uint64_t>(changes.size()),
+            fields.data(), static_cast<std::uint64_t>(fields.size())};
+    }
+};
+
 struct RepeaterInsertSpec {
     std::string change_id;
     std::string method;
@@ -1000,6 +1095,25 @@ const KvRepeaterRow* find_repeater(const KvMapSnapshot& snapshot,
         }
     }
     return nullptr;
+}
+
+const KvOtherTrackChangeRow* find_other_track_change(
+    const KvMapSnapshot& snapshot, std::string_view edit_id) {
+    for (std::uint64_t i = 0; i < snapshot.other_track_change_count; ++i) {
+        const KvOtherTrackChangeRow& row = snapshot.other_track_changes[i];
+        if (arena_view(snapshot.string_data, snapshot.string_size,
+                       row.metadata.edit_id) == edit_id) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
+bool string_track_key_equals(const KvMapSnapshot& snapshot,
+                             const KvValue& key, std::string_view expected) {
+    return key.kind == KV_VALUE_STRING &&
+        arena_view(snapshot.string_data, snapshot.string_size,
+                   key.string_value) == expected;
 }
 
 void check_coordinate_offset_method_conversions(const std::string& map_path) {
@@ -1409,6 +1523,184 @@ void repeater_linkage_boundary_contract() {
                   linkage.chains[0], linkage.chains[1]),
               "Repeater touching half-open intervals do not overlap");
     }
+}
+
+void other_track_key_edit_contract() {
+    OtherTrackRenameFixture fixture;
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "other-track key rename fixture load");
+    if (!handle.value) return;
+
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "other-track key rename baseline snapshot");
+    std::vector<std::pair<std::string, std::string>> targets;
+    for (std::uint64_t index = 0;
+         index < baseline.other_track_change_count; ++index) {
+        const KvOtherTrackChangeRow& row = baseline.other_track_changes[index];
+        if (!string_track_key_equals(baseline, row.track_key, "target")) continue;
+        check(row.metadata.source_file_index < baseline.source_file_count,
+              "other-track key rename source index");
+        if (row.metadata.source_file_index >= baseline.source_file_count) continue;
+        targets.emplace_back(
+            map_string(baseline, row.metadata.edit_id),
+            map_string(
+                baseline,
+                baseline.source_files[row.metadata.source_file_index].source_hash));
+    }
+    check(targets.size() == 5,
+          "other-track key rename fixture has all root and Include targets");
+    if (targets.size() != 5) return;
+
+    OtherTrackKeyBatch incomplete({targets.front()}, "renamed");
+    KvEditReportSnapshot incomplete_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &incomplete.batch, &incomplete_report,
+              sizeof(incomplete_report)) != 0,
+          "other-track incomplete key rename dry-run call");
+    validate_report(incomplete_report);
+    check(!incomplete_report.ok && edit_report_has_error_prefix(
+              incomplete_report,
+              "Other-track key rename must update every statement in the track"),
+          "other-track incomplete key rename rejected");
+
+    OtherTrackKeyBatch conflict(targets, "BLOCKER");
+    KvEditReportSnapshot conflict_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &conflict.batch, &conflict_report,
+              sizeof(conflict_report)) != 0,
+          "other-track conflicting key rename dry-run call");
+    validate_report(conflict_report);
+    check(!conflict_report.ok && edit_report_has_error_prefix(
+              conflict_report, "Other-track key already exists in map"),
+          "other-track distant case-insensitive duplicate rename rejected");
+
+    OtherTrackKeyBatch string_numeric_distinct(targets, "'7'");
+    KvEditReportSnapshot distinct_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &string_numeric_distinct.batch, &distinct_report,
+              sizeof(distinct_report)) != 0 && distinct_report.ok &&
+              distinct_report.full_reparse_ok &&
+              distinct_report.non_target_changed_count == 0,
+          "other-track string and numeric keys remain distinct");
+
+    OtherTrackKeyBatch rename(targets, "renamed");
+    KvEditReportSnapshot dry_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &rename.batch, &dry_report,
+              sizeof(dry_report)) != 0 && dry_report.ok &&
+              dry_report.full_reparse_ok && dry_report.update_count == 5 &&
+              dry_report.changed_file_count == 2 &&
+              dry_report.non_target_changed_count == 0,
+          "other-track whole-key rename dry run");
+
+    KvEditReportSnapshot applied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &rename.batch, &applied_report,
+              sizeof(applied_report)) != 0 && applied_report.ok &&
+              applied_report.full_reparse_ok &&
+              applied_report.non_target_changed_count == 0,
+          "other-track whole-key apply-to-memory");
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0,
+          "other-track renamed snapshot");
+    for (const auto& target : targets) {
+        const KvOtherTrackChangeRow* row =
+            find_other_track_change(applied, target.first);
+        check(row && string_track_key_equals(applied, row->track_key, "renamed"),
+              "other-track target has renamed key and stable edit id");
+    }
+    check(applied.structure_put_count == 1 &&
+              string_track_key_equals(
+                  applied, applied.structure_puts[0].track_key, "target") &&
+              applied.signal_put_count == 1 &&
+              string_track_key_equals(
+                  applied, applied.signal_puts[0].track_key, "target") &&
+              applied.repeater_count == 1 &&
+              string_track_key_equals(
+                  applied, applied.repeaters[0].track_key, "target"),
+          "other-track dependent map elements retain the old track key");
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "other-track whole-key reset");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0,
+          "other-track whole-key reset snapshot");
+    for (const auto& target : targets) {
+        const KvOtherTrackChangeRow* row =
+            find_other_track_change(reset, target.first);
+        check(row && string_track_key_equals(reset, row->track_key, "target"),
+              "other-track reset restores original key and edit id");
+    }
+
+    KvEditReportSnapshot reapplied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &rename.batch, &reapplied_report,
+              sizeof(reapplied_report)) != 0 && reapplied_report.ok,
+          "other-track whole-key second apply before commit");
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(
+              handle.value, &commit_report, sizeof(commit_report)) != 0 &&
+              commit_report.ok && commit_report.full_reparse_ok &&
+              commit_report.changed_file_count == 2,
+          "other-track whole-key commit across root and Include");
+
+    MapHandle reloaded(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(reloaded.value != nullptr, "other-track whole-key reload");
+    if (!reloaded.value) return;
+    KvMapSnapshot reloaded_snapshot{};
+    check(kv_get_map_snapshot(
+              reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+              &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0,
+          "other-track whole-key reload snapshot");
+    for (const auto& target : targets) {
+        const KvOtherTrackChangeRow* row =
+            find_other_track_change(reloaded_snapshot, target.first);
+        check(row && string_track_key_equals(
+                  reloaded_snapshot, row->track_key, "renamed"),
+              "other-track committed key and stable edit id reload");
+    }
+    check(reloaded_snapshot.structure_put_count == 1 &&
+              string_track_key_equals(
+                  reloaded_snapshot,
+                  reloaded_snapshot.structure_puts[0].track_key, "target") &&
+              reloaded_snapshot.signal_put_count == 1 &&
+              string_track_key_equals(
+                  reloaded_snapshot,
+                  reloaded_snapshot.signal_puts[0].track_key, "target") &&
+              reloaded_snapshot.repeater_count == 1 &&
+              string_track_key_equals(
+                  reloaded_snapshot,
+                  reloaded_snapshot.repeaters[0].track_key, "target"),
+          "other-track dependency keys remain unchanged after commit/reload");
+
+    std::ifstream root_source(fixture.map_path, std::ios::binary);
+    const std::string root_text{
+        std::istreambuf_iterator<char>(root_source),
+        std::istreambuf_iterator<char>()};
+    std::ifstream include_source(fixture.include_path, std::ios::binary);
+    const std::string include_text{
+        std::istreambuf_iterator<char>(include_source),
+        std::istreambuf_iterator<char>()};
+    check(root_text.find(
+              "Track['renamed'].Position(3.8, 0); # preserve root layout") !=
+              std::string::npos &&
+          root_text.find(
+              "Structure['pole'].Put('target',1,2,3,0,0,0,0,25);") !=
+              std::string::npos &&
+          include_text.find(
+              "Track['renamed'].Y.Interpolate(0.1); # preserve include layout") !=
+              std::string::npos &&
+          include_text.find("Track['renamed'].Cant.SetGauge(1.067);") !=
+              std::string::npos,
+          "other-track key-only writeback preserves source text and dependencies");
 }
 
 void repeater_key_edit_contract() {
@@ -1922,6 +2214,7 @@ void repeater_insert_contract() {
 
 int edit_contract() {
     repeater_linkage_boundary_contract();
+    other_track_key_edit_contract();
     repeater_key_edit_contract();
     repeater_insert_contract();
     TempFixture fixture;

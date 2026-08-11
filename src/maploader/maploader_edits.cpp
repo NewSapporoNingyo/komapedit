@@ -1353,6 +1353,13 @@ std::string build_other_track_change_statement(
     const MapEditChange& change, const ParsedStatement& statement,
     const OtherTrackChange& row) {
     if (!has_non_distance_field_change(change)) return statement.raw_text;
+    std::string source_text = statement.raw_text;
+    const auto key_change = change.field_changes.find("trackKey");
+    if (key_change != change.field_changes.end()) {
+        source_text = replace_raw_object_key_argument(
+            statement,
+            track_key_field_as_bve_arg(change, "trackKey", row.track_key));
+    }
     std::vector<std::pair<size_t, size_t>> argument_spans;
     std::vector<std::string> args =
         parse_bve_argument_fields(statement.raw_arguments, &argument_spans);
@@ -1362,10 +1369,10 @@ std::string build_other_track_change_statement(
     }
     std::vector<std::optional<std::string>> replacements(args.size());
     for (const auto& field : change.field_changes) {
-        if (field.first == "distance") continue;
+        if (field.first == "distance" || field.first == "trackKey") continue;
         constexpr std::string_view prefix = "parameter";
         if (field.first.compare(0, prefix.size(), prefix) != 0) {
-            throw std::runtime_error("track key and method are read-only");
+            throw std::runtime_error("other-track method is read-only");
         }
         const std::string suffix = field.first.substr(prefix.size());
         if (suffix.empty() ||
@@ -1393,14 +1400,14 @@ std::string build_other_track_change_statement(
         raw_arguments.replace(begin, end - begin, *replacements[index]);
     }
 
-    const size_t open = statement.raw_text.find('(');
-    const size_t close = statement.raw_text.rfind(')');
+    const size_t open = source_text.find('(');
+    const size_t close = source_text.rfind(')');
     if (open == std::string::npos || close == std::string::npos || close < open) {
         throw std::runtime_error("other-track source statement shape is invalid");
     }
-    std::string output = statement.raw_text.substr(0, open + 1);
+    std::string output = source_text.substr(0, open + 1);
     output += raw_arguments;
-    output += statement.raw_text.substr(close);
+    output += source_text.substr(close);
     return output;
 }
 
@@ -3634,6 +3641,172 @@ bool validate_repeater_interval_conflicts(
     return true;
 }
 
+std::string canonical_other_track_key(const Value& value) {
+    return ascii_lower(track_key_display_text(value));
+}
+
+void validate_other_track_key_renames(
+    MapContext& ctx, const std::vector<const MapEditChange*>& changes,
+    MapEditReport& report) {
+    if (ctx.other_track_changes.empty()) return;
+
+    std::vector<std::string> edit_ids(ctx.other_track_changes.size());
+    std::map<std::string, size_t> source_index_by_edit_id;
+    std::map<std::string, std::vector<size_t>> groups;
+    for (size_t index = 0; index < ctx.other_track_changes.size(); ++index) {
+        const OtherTrackChange& row = ctx.other_track_changes[index];
+        edit_ids[index] = element_edit_id(
+            ctx, row.edit_ref, "otherTrack.change");
+        if (!edit_ids[index].empty()) {
+            source_index_by_edit_id.emplace(edit_ids[index], index);
+        }
+        groups[canonical_other_track_key(row.track_key)].push_back(index);
+    }
+
+    std::map<std::string, const MapEditChange*> changes_by_edit_id;
+    for (const MapEditChange* change : changes) {
+        if (source_index_by_edit_id.find(change->edit_id) !=
+            source_index_by_edit_id.end()) {
+            changes_by_edit_id[change->edit_id] = change;
+        }
+    }
+
+    struct RenameRequest {
+        std::string final_key;
+        bool changes_source_value = false;
+    };
+    std::map<std::string, RenameRequest> requests;
+    for (const MapEditChange* change : changes) {
+        const auto source = source_index_by_edit_id.find(change->edit_id);
+        if (source == source_index_by_edit_id.end()) continue;
+        const auto key_change = change->field_changes.find("trackKey");
+        if (key_change == change->field_changes.end()) continue;
+
+        const std::string operation =
+            ascii_lower(change->operation.empty() ? "update" : change->operation);
+        if (operation != "update") {
+            report.blocking_errors.push_back(
+                "Other-track key rename only supports update operations: " +
+                change->edit_id);
+            return;
+        }
+
+        Value parsed;
+        try {
+            parsed = track_key_from_display_text(key_change->second);
+        } catch (const std::exception& e) {
+            report.blocking_errors.push_back(
+                std::string("Other-track key rename has an invalid trackKey: ") +
+                e.what());
+            return;
+        }
+        const std::string final_key = canonical_other_track_key(parsed);
+        if (final_key.empty()) {
+            report.blocking_errors.push_back(
+                "Other-track key rename contains an empty trackKey");
+            return;
+        }
+
+        const OtherTrackChange& row = ctx.other_track_changes[source->second];
+        const std::string original_key = canonical_other_track_key(row.track_key);
+        RenameRequest& request = requests[original_key];
+        if (!request.final_key.empty() && request.final_key != final_key) {
+            report.blocking_errors.push_back(
+                "Other-track key rename must use the same trackKey for every "
+                "statement in the track");
+            return;
+        }
+        request.final_key = final_key;
+        request.changes_source_value = request.changes_source_value ||
+            track_key_display_text(parsed) != track_key_display_text(row.track_key);
+    }
+
+    for (auto request = requests.begin(); request != requests.end();) {
+        if (!request->second.changes_source_value) {
+            request = requests.erase(request);
+        } else {
+            ++request;
+        }
+    }
+    if (requests.empty()) return;
+
+    for (const auto& request : requests) {
+        const auto group = groups.find(request.first);
+        if (group == groups.end()) {
+            report.blocking_errors.push_back(
+                "Other-track key rename resolved an invalid track");
+            return;
+        }
+        for (size_t source_index : group->second) {
+            const std::string& edit_id = edit_ids[source_index];
+            const auto changed = changes_by_edit_id.find(edit_id);
+            if (changed == changes_by_edit_id.end()) {
+                report.blocking_errors.push_back(
+                    "Other-track key rename must update every statement in the "
+                    "track: " + edit_id);
+                return;
+            }
+            const std::string operation = ascii_lower(
+                changed->second->operation.empty()
+                    ? "update" : changed->second->operation);
+            if (operation == "delete") continue;
+            if (operation != "update") {
+                report.blocking_errors.push_back(
+                    "Other-track key rename contains an unsupported operation: " +
+                    edit_id);
+                return;
+            }
+            const auto key_change =
+                changed->second->field_changes.find("trackKey");
+            if (key_change == changed->second->field_changes.end()) {
+                report.blocking_errors.push_back(
+                    "Other-track key rename must update every statement in the "
+                    "track: " + edit_id);
+                return;
+            }
+            Value parsed;
+            try {
+                parsed = track_key_from_display_text(key_change->second);
+            } catch (const std::exception& e) {
+                report.blocking_errors.push_back(
+                    std::string("Other-track key rename has an invalid trackKey: ") +
+                    e.what());
+                return;
+            }
+            if (canonical_other_track_key(parsed) != request.second.final_key) {
+                report.blocking_errors.push_back(
+                    "Other-track key rename must use the same trackKey for every "
+                    "statement in the track");
+                return;
+            }
+        }
+    }
+
+    std::map<std::string, std::string> owner_by_final_key;
+    for (const auto& group : groups) {
+        bool has_surviving_row = false;
+        for (size_t source_index : group.second) {
+            const auto changed = changes_by_edit_id.find(edit_ids[source_index]);
+            if (changed == changes_by_edit_id.end() ||
+                ascii_lower(changed->second->operation.empty()
+                                ? "update" : changed->second->operation) != "delete") {
+                has_surviving_row = true;
+                break;
+            }
+        }
+        if (!has_surviving_row) continue;
+        const auto renamed = requests.find(group.first);
+        const std::string& final_key = renamed == requests.end()
+            ? group.first : renamed->second.final_key;
+        const auto inserted = owner_by_final_key.emplace(final_key, group.first);
+        if (!inserted.second && inserted.first->second != group.first) {
+            report.blocking_errors.push_back(
+                "Other-track key already exists in map: key=" + final_key);
+            return;
+        }
+    }
+}
+
 void validate_repeater_key_renames(
     MapContext& ctx, const std::vector<const MapEditChange*>& changes,
     MapEditReport& report) {
@@ -4855,6 +5028,8 @@ MapEditReport build_edit_report(MapContext& ctx,
     }
     if (!report.blocking_errors.empty()) return report;
 
+    validate_other_track_key_renames(ctx, effective_changes, report);
+    if (!report.blocking_errors.empty()) return report;
     validate_repeater_key_renames(ctx, effective_changes, report);
     if (!report.blocking_errors.empty()) return report;
     validate_repeater_insert_key_overlaps(ctx, effective_changes, report);

@@ -43,8 +43,6 @@ This file is the active project roadmap and contains unfinished items only. Comp
 
 ### 用户界面与辅助功能
 
-- [ ] 修复他轨道编辑窗口中各输入框标题没有使用BVE官方文档中Track语句参数示例的问题
-- [ ] 他轨道trackkey的新建功能
 - [ ] 他轨道与他轨道变化点的新建功能
 - [ ] 在车站列表、布景模型列表、音效文件列表中新增行。
 - [ ] 可将多个地图语句设为1组，通过 `kme.json` 保存地图元素预设组，应用后生成普通 BVE map 语句

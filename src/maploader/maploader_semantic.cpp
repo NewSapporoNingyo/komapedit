@@ -550,7 +550,7 @@ void write_other_track_change(SemanticWriter& out,
             "typed snapshot other-track parameter span is out of bounds");
     }
     field(out, "distance", changed_number(change, "distance", row.distance));
-    field(out, snapshot, "trackKey", row.track_key);
+    changed_track_key(out, snapshot, change, "trackKey", row.track_key);
     field(out, "method", text(snapshot, row.method));
     field(out, "parameterCount",
           static_cast<std::int64_t>(row.parameters.count));
@@ -744,7 +744,7 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "gradient"};
     } else if (target.row_kind == "otherTrack.change") {
         for (const auto& input : change.field_changes) {
-            if (input.first == "distance" ||
+            if (input.first == "distance" || input.first == "trackKey" ||
                 (input.first.compare(0, 9, "parameter") == 0 &&
                  input.first.size() > 9 &&
                  input.first.find_first_not_of("0123456789", 9) ==

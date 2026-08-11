@@ -139,6 +139,7 @@ Editable rows must retain source path, include stack, source span, original stat
 - Use shared inline-table drafts for loaded Station, Structure, Signal, Sound, and Sound3D rows. They do not insert new resource rows.
 - Use `repeater_linkage` and transition-linkage rules across maploader, tables, 2D, and 3D instead of recreating chains locally.
 - Repeater lifetimes are half-open `[first Begin, End)` intervals; an End at the same distance is ordered before every Begin regardless of source order. A `repeaterKey` rename is one typed batch containing every Begin/Begin0 and explicit End in that chain, and maploader rejects incomplete batches or canonical same-name intervals that overlap.
+- An other-track `trackKey` rename is one typed batch containing every surviving `Track[trackKey].*` statement with the same case-insensitive, type-preserving key across the root map and Includes. Maploader rejects incomplete batches and any final key already owned by another other track, without distance/interval exceptions; dependent map-element track references remain non-target rows.
 
 ### UI, tables, and rendering
 
@@ -179,6 +180,7 @@ build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --he
 build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
+build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -188,6 +190,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
 Pass explicit map paths for portable runs. The Repeater-key and new-element-follow-up commands always require one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
+
+`--debug-headless-other-track-key-edit` requires an explicit map path. It selects a string-key other track with at least two statements, checks whole-track atomicity and global duplicate rejection, then performs dry run, memory Apply, Reset, a second Apply, and reload. `--commit` writes the validated working copy and intentionally leaves authorized route changes in place for physical diff inspection; the report includes the old/new keys, every target, changed files, dependency-reference preservation, and source hashes.
 
 `--debug-headless-new-element-edit` drives the production New Map Element wizard, Inspector Apply, and delete/cancel paths. It creates a paired Repeater, changes a normal Begin parameter, the End distance, and the key, cancels the chain, then repeats the follow-up edit/cancel flow for a single-row Structure element. The command is intentionally memory-only: it rejects `--commit`, resets the working copy, reloads from disk, and reports ledger members, stable edit IDs, semantic row checks, and source hashes before returning PASS/FAIL.
 

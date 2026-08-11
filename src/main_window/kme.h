@@ -57,6 +57,7 @@ extern std::ostream* g_debug_plan_benchmark_log;
 struct HeadlessOpenBenchmarkOptions;
 struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
+struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 #endif
 
@@ -1345,6 +1346,16 @@ struct MapElementDeleteRequest {
     RepeaterDeleteMode repeater_mode = RepeaterDeleteMode::EntireChain;
 };
 
+struct OtherTrackRenameState {
+    bool popup_requested = false;
+    std::string source_key;
+    std::string draft_key;
+    std::string apply_key;
+};
+
+bool map_element_inspector_field_forced_read_only(
+    std::string_view row_kind, std::string_view field_key) noexcept;
+
 struct InspectorTargetMetadata {
     std::string row_kind;
     size_t row_index = 0;
@@ -1552,6 +1563,8 @@ public:
         const HeadlessOwnTrackEditOptions& options);
     static int run_debug_headless_other_track_edit(
         const HeadlessOtherTrackEditOptions& options);
+    static int run_debug_headless_other_track_key_edit(
+        const HeadlessOtherTrackKeyEditOptions& options);
     static int run_debug_headless_new_element_edit(
         const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
@@ -1629,6 +1642,8 @@ private:
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
+    std::optional<std::string> pending_other_track_rename_request_;
+    OtherTrackRenameState other_track_rename_;
     NewElementWizardState new_element_wizard_;
     EditableListEditState station_definition_edit_;
     EditableListEditState structure_model_edit_;
@@ -1646,6 +1661,7 @@ private:
         None,
         ApplyInspector,
         ApplyNewElement,
+        ApplyOtherTrackRename,
         Save,
         SaveAndResolveClose,
     };
@@ -2053,6 +2069,9 @@ private:
     void request_element_delete(const std::string& edit_id, const std::string& row_kind,
                                 RepeaterDeleteMode repeater_mode = RepeaterDeleteMode::EntireChain);
     void process_pending_element_delete();
+    void request_other_track_rename(const std::string& track_key);
+    void process_pending_other_track_rename();
+    bool apply_other_track_rename();
     bool delete_element_target(const MapElementDeleteRequest& request);
     bool open_element_inspector(const MapElementInspectorRequest& request);
     bool open_element_inspector(const std::string& edit_id, const std::string& row_kind);

@@ -500,6 +500,7 @@ App / MapModel
 - 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程，不能新增资源行。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
 - Repeater 生命周期使用半开区间 `[第一个 Begin, End)`；同里程 End 无论源码顺序如何都排在全部 Begin 之前。一次 `repeaterKey` 改名 typed batch 必须包含链内全部 Begin/Begin0 和显式 End；批次不完整或规范化同名区间重叠时由 maploader 拒绝。
+- 他轨道 `trackKey` 改名必须形成一个 typed batch，包含根地图及全部 Include 中大小写不敏感且保留数值/字符串类型的同键全部存续 `Track[trackKey].*` 语句。maploader 会拒绝不完整批次，以及最终键与另一条他轨道重名的批次，不使用里程或区间例外；依赖该轨道键的地图元素保持为非目标行。
 
 ### UI、表格与渲染
 
@@ -540,6 +541,7 @@ build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --he
 build\komapedit.exe --debug-headless-distance-edit-batch [map-path] --headless-output build\distance-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-output build\repeater-edit-batch.txt
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
+build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -551,6 +553,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。它会新建配对 Repeater，依次修改 Begin 普通参数、End 距离和 key，取消整条链，再对一个单行 Structure 元素重复“新建后修改并取消”流程。该命令被刻意限制为仅内存操作：拒绝 `--commit`，重置工作副本后从磁盘重载，并在返回 PASS/FAIL 前输出 ledger 成员、稳定 edit ID、语义行检查和前后源哈希。
+
+`--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
 
 最低验证范围应按变更涵盖普通/Include 地图加载、重载、平面/纵断面/半径图、车站跳转、测量、CSV 导出、模型预览/错误、三维轨道/对象/标记/相机/叠加层、编辑的应用/撤销/保存/重载、源码往返、编码/行尾、行内草稿、设置持久化和 Release 内容。磁盘写回变更必须保存后重载比较；性能变更必须在相同线路、参数、构建类型与加载配置上做可重复前后对比。
 

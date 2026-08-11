@@ -625,6 +625,41 @@ HeadlessRepeaterKeyEditOptions parse_headless_repeater_key_edit_options(
     return options;
 }
 
+HeadlessOtherTrackKeyEditOptions parse_headless_other_track_key_edit_options(
+    const std::vector<std::string>& args) {
+    HeadlessOtherTrackKeyEditOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-other-track-key-edit") {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-other-track-key-edit requires a map path";
+    }
+    return options;
+}
+
 HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
     const std::vector<std::string>& args) {
     return parse_headless_optional_map_edit_options<HeadlessSectionEditBatchOptions>(
@@ -5590,6 +5625,541 @@ int run_debug_headless_repeater_key_edit(const HeadlessRepeaterKeyEditOptions& o
     write_result(*out, facts);
     out->flush();
     return facts.passed() ? 0 : 24;
+}
+
+namespace other_track_key_edit_headless {
+
+using EditChange = typed_edit_headless::Change;
+using EditReport = typed_edit_headless::Report;
+using MapHandle = distance_batch_headless::MapHandle;
+
+struct Target {
+    std::string edit_id;
+    std::string expected_source_hash;
+    std::string source_file;
+    std::string method;
+    std::string original_key;
+    int source_line = 0;
+    double distance = 0.0;
+};
+
+struct Facts {
+    std::string path;
+    bool commit_requested = false;
+    std::string original_key;
+    std::string new_key;
+    std::string duplicate_key;
+    std::vector<Target> targets;
+    bool production_gui_apply_ok = false;
+    bool production_gui_reset_ok = false;
+    bool inspector_track_key_read_only = false;
+    bool globally_unused_key = false;
+    bool atomic_guard_ok = false;
+    bool duplicate_guard_ok = false;
+    bool dry_run_ok = false;
+    int dry_run_update_count = 0;
+    bool apply_ok = false;
+    bool apply_snapshot_ok = false;
+    int non_target_changed_count = 0;
+    size_t baseline_dependency_count = 0;
+    bool dependencies_unchanged = false;
+    bool reset_ok = false;
+    bool reset_snapshot_ok = false;
+    bool second_apply_ok = false;
+    bool commit_attempted = false;
+    bool commit_ok = false;
+    bool reload_ok = false;
+    std::vector<std::pair<std::string, std::string>> baseline_hashes;
+    std::vector<std::pair<std::string, std::string>> reload_hashes;
+    std::vector<std::string> changed_files;
+    std::string error;
+
+    bool passed() const {
+        const bool commit_result = !commit_requested ||
+            (commit_attempted && commit_ok && !changed_files.empty());
+        return error.empty() && targets.size() >= 2 &&
+            production_gui_apply_ok && production_gui_reset_ok &&
+            inspector_track_key_read_only && globally_unused_key &&
+            atomic_guard_ok && duplicate_guard_ok && dry_run_ok &&
+            dry_run_update_count == static_cast<int>(targets.size()) &&
+            apply_ok && apply_snapshot_ok && non_target_changed_count == 0 &&
+            dependencies_unchanged && reset_ok && reset_snapshot_ok &&
+            second_apply_ok && commit_result && reload_ok;
+    }
+};
+
+std::string canonical_key(const KvMapSnapshot& snapshot, const KvValue& key) {
+    const std::string prefix = key.kind == KV_VALUE_STRING ? "s:" :
+        key.kind == KV_VALUE_NUMBER ? "n:" : "o:";
+    return prefix + ascii_lower(
+        distance_batch_headless::snapshot_value_text(snapshot, key));
+}
+
+Target target_from_row(const KvMapSnapshot& snapshot,
+                       const KvOtherTrackChangeRow& row) {
+    if (row.metadata.source_file_index == KV_INDEX_NONE ||
+        row.metadata.source_file_index >= snapshot.source_file_count) {
+        throw std::runtime_error(
+            "other-track key target has no source file metadata");
+    }
+    const KvSourceFileRow& source =
+        snapshot.source_files[row.metadata.source_file_index];
+    Target target;
+    target.edit_id = distance_batch_headless::snapshot_text(
+        snapshot, row.metadata.edit_id);
+    target.expected_source_hash = distance_batch_headless::snapshot_text(
+        snapshot, source.source_hash);
+    target.source_file = distance_batch_headless::snapshot_text(
+        snapshot, source.file_path);
+    target.method = distance_batch_headless::snapshot_text(snapshot, row.method);
+    target.original_key =
+        distance_batch_headless::snapshot_value_text(snapshot, row.track_key);
+    target.source_line = row.metadata.line;
+    target.distance = row.distance;
+    if (target.edit_id.empty() || target.expected_source_hash.empty() ||
+        target.source_file.empty()) {
+        throw std::runtime_error(
+            "other-track key target has incomplete edit metadata");
+    }
+    return target;
+}
+
+void select_track(const KvMapSnapshot& snapshot, Facts& facts) {
+    std::map<std::string, std::vector<std::uint64_t>> groups;
+    std::map<std::string, std::string> display_keys;
+    for (std::uint64_t index = 0;
+         index < snapshot.other_track_change_count; ++index) {
+        const KvOtherTrackChangeRow& row = snapshot.other_track_changes[index];
+        if (row.track_key.kind != KV_VALUE_STRING) continue;
+        const std::string canonical = canonical_key(snapshot, row.track_key);
+        groups[canonical].push_back(index);
+        display_keys.emplace(
+            canonical, distance_batch_headless::snapshot_value_text(
+                           snapshot, row.track_key));
+    }
+    auto selected = std::find_if(
+        groups.begin(), groups.end(),
+        [](const auto& group) { return group.second.size() >= 2; });
+    if (selected == groups.end()) {
+        throw std::runtime_error(
+            "map has no string-key other track with at least two Track statements");
+    }
+    facts.original_key = display_keys.at(selected->first);
+    for (std::uint64_t row_index : selected->second) {
+        facts.targets.push_back(target_from_row(
+            snapshot, snapshot.other_track_changes[row_index]));
+    }
+    const auto duplicate = std::find_if(
+        groups.begin(), groups.end(),
+        [&](const auto& group) { return group.first != selected->first; });
+    if (duplicate == groups.end()) {
+        throw std::runtime_error(
+            "map has no second string-key other track for duplicate detection");
+    }
+    facts.duplicate_key = display_keys.at(duplicate->first);
+
+    const std::string base = facts.original_key + "__komapedit_headless";
+    for (int suffix = 0; suffix < 10000; ++suffix) {
+        const std::string candidate = suffix == 0
+            ? base : base + "_" + std::to_string(suffix);
+        if (!groups.count("s:" + ascii_lower(candidate))) {
+            facts.new_key = candidate;
+            facts.globally_unused_key = true;
+            break;
+        }
+    }
+    if (!facts.globally_unused_key) {
+        throw std::runtime_error(
+            "could not generate a globally unused other-track key");
+    }
+}
+
+std::vector<EditChange> build_changes(const Facts& facts,
+                                      const std::string& key) {
+    std::vector<EditChange> changes;
+    changes.reserve(facts.targets.size());
+    for (size_t index = 0; index < facts.targets.size(); ++index) {
+        const Target& target = facts.targets[index];
+        changes.push_back(typed_edit_headless::update(
+            "headless-other-track-key-" + std::to_string(index),
+            target.edit_id, target.expected_source_hash,
+            {{"trackKey", key}}));
+    }
+    return changes;
+}
+
+bool has_error_prefix(const EditReport& report, std::string_view prefix) {
+    return std::any_of(
+        report.blocking_errors.begin(), report.blocking_errors.end(),
+        [&](const std::string& error) { return error.rfind(prefix, 0) == 0; });
+}
+
+bool snapshot_matches(void* handle, const Facts& facts,
+                      const std::string& key) {
+    const KvMapSnapshot snapshot =
+        distance_batch_headless::current_map_snapshot(handle);
+    for (const Target& target : facts.targets) {
+        bool matched = false;
+        for (std::uint64_t index = 0;
+             index < snapshot.other_track_change_count; ++index) {
+            const KvOtherTrackChangeRow& row =
+                snapshot.other_track_changes[index];
+            if (distance_batch_headless::snapshot_text(
+                    snapshot, row.metadata.edit_id) != target.edit_id) {
+                continue;
+            }
+            matched = row.track_key.kind == KV_VALUE_STRING &&
+                distance_batch_headless::snapshot_value_text(
+                    snapshot, row.track_key) == key;
+            break;
+        }
+        if (!matched) return false;
+    }
+    return true;
+}
+
+size_t dependency_count(const KvMapSnapshot& snapshot,
+                        const std::string& key) {
+    auto matches = [&](const KvValue& value) {
+        return value.kind == KV_VALUE_STRING &&
+            ascii_lower(distance_batch_headless::snapshot_value_text(
+                snapshot, value)) == ascii_lower(key);
+    };
+    size_t count = 0;
+    for (std::uint64_t i = 0; i < snapshot.structure_put_count; ++i) {
+        count += matches(snapshot.structure_puts[i].track_key) ? 1 : 0;
+    }
+    for (std::uint64_t i = 0; i < snapshot.structure_between_count; ++i) {
+        count += matches(snapshot.structure_betweens[i].track_key1) ? 1 : 0;
+        count += matches(snapshot.structure_betweens[i].track_key2) ? 1 : 0;
+    }
+    for (std::uint64_t i = 0; i < snapshot.signal_put_count; ++i) {
+        count += matches(snapshot.signal_puts[i].track_key) ? 1 : 0;
+    }
+    for (std::uint64_t i = 0; i < snapshot.repeater_count; ++i) {
+        count += matches(snapshot.repeaters[i].track_key) ? 1 : 0;
+    }
+    for (std::uint64_t i = 0; i < snapshot.other_train_definition_count; ++i) {
+        count += matches(snapshot.other_train_definitions[i].track_key) ? 1 : 0;
+    }
+    return count;
+}
+
+std::vector<std::pair<std::string, std::string>> source_hashes(
+    const KvMapSnapshot& snapshot, const Facts& facts) {
+    std::set<std::string> files;
+    for (const Target& target : facts.targets) files.insert(target.source_file);
+    std::vector<std::pair<std::string, std::string>> hashes;
+    for (std::uint64_t index = 0; index < snapshot.source_file_count; ++index) {
+        const KvSourceFileRow& source = snapshot.source_files[index];
+        const std::string path = distance_batch_headless::snapshot_text(
+            snapshot, source.file_path);
+        if (!files.count(path)) continue;
+        hashes.emplace_back(
+            path, distance_batch_headless::snapshot_text(
+                      snapshot, source.source_hash));
+    }
+    return hashes;
+}
+
+void write_result(std::ostream& out, const Facts& facts) {
+    const auto boolean = [](bool value) { return value ? 1 : 0; };
+    out << "command=debug-headless-other-track-key-edit\n"
+        << "path=" << facts.path << "\n"
+        << "commit_requested=" << boolean(facts.commit_requested) << "\n"
+        << "original_key=" << facts.original_key << "\n"
+        << "new_key=" << facts.new_key << "\n"
+        << "duplicate_candidate_key=" << facts.duplicate_key << "\n"
+        << "target_count=" << facts.targets.size() << "\n"
+        << "production_gui_apply_ok="
+        << boolean(facts.production_gui_apply_ok) << "\n"
+        << "production_gui_reset_ok="
+        << boolean(facts.production_gui_reset_ok) << "\n"
+        << "inspector_track_key_read_only="
+        << boolean(facts.inspector_track_key_read_only) << "\n"
+        << "globally_unused_key=" << boolean(facts.globally_unused_key) << "\n"
+        << "atomic_guard_ok=" << boolean(facts.atomic_guard_ok) << "\n"
+        << "duplicate_guard_ok=" << boolean(facts.duplicate_guard_ok) << "\n"
+        << "dry_run_ok=" << boolean(facts.dry_run_ok) << "\n"
+        << "dry_run_update_count=" << facts.dry_run_update_count << "\n"
+        << "apply_to_memory_ok=" << boolean(facts.apply_ok) << "\n"
+        << "apply_snapshot_ok=" << boolean(facts.apply_snapshot_ok) << "\n"
+        << "non_target_changed_count=" << facts.non_target_changed_count << "\n"
+        << "baseline_dependency_count=" << facts.baseline_dependency_count << "\n"
+        << "dependencies_unchanged=" << boolean(facts.dependencies_unchanged) << "\n"
+        << "reset_ok=" << boolean(facts.reset_ok) << "\n"
+        << "reset_snapshot_ok=" << boolean(facts.reset_snapshot_ok) << "\n"
+        << "second_apply_ok=" << boolean(facts.second_apply_ok) << "\n"
+        << "commit_attempted=" << boolean(facts.commit_attempted) << "\n"
+        << "commit_ok=" << boolean(facts.commit_ok) << "\n"
+        << "reload_ok=" << boolean(facts.reload_ok) << "\n";
+    for (size_t index = 0; index < facts.targets.size(); ++index) {
+        const Target& target = facts.targets[index];
+        out << "target." << index << ".edit_id=" << target.edit_id << "\n"
+            << "target." << index << ".method=" << target.method << "\n"
+            << "target." << index << ".distance="
+            << distance_batch_headless::edit_number(target.distance) << "\n"
+            << "target." << index << ".source_file=" << target.source_file << "\n"
+            << "target." << index << ".source_line=" << target.source_line << "\n";
+    }
+    for (size_t index = 0; index < facts.baseline_hashes.size(); ++index) {
+        out << "baseline_source." << index << ".file="
+            << facts.baseline_hashes[index].first << "\n"
+            << "baseline_source." << index << ".hash="
+            << facts.baseline_hashes[index].second << "\n";
+    }
+    for (size_t index = 0; index < facts.reload_hashes.size(); ++index) {
+        out << "reload_source." << index << ".file="
+            << facts.reload_hashes[index].first << "\n"
+            << "reload_source." << index << ".hash="
+            << facts.reload_hashes[index].second << "\n";
+    }
+    for (size_t index = 0; index < facts.changed_files.size(); ++index) {
+        out << "changed_file." << index << '=' << facts.changed_files[index] << "\n";
+    }
+    out << "error=" << facts.error << "\n"
+        << "result=" << (facts.passed() ? "PASS" : "FAIL") << "\n";
+}
+
+} // namespace other_track_key_edit_headless
+
+int App::run_debug_headless_other_track_key_edit(
+    const HeadlessOtherTrackKeyEditOptions& options) {
+    using namespace other_track_key_edit_headless;
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: "
+                      << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    Facts facts;
+    facts.path = options.path;
+    facts.commit_requested = options.commit;
+    try {
+        MapHandle handle;
+        handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error ? error : "map load failed");
+        }
+        const KvMapSnapshot baseline =
+            distance_batch_headless::current_map_snapshot(handle.value);
+        select_track(baseline, facts);
+        facts.baseline_hashes = source_hashes(baseline, facts);
+        facts.baseline_dependency_count =
+            dependency_count(baseline, facts.original_key);
+
+        LoadResult production_load = load_map_worker(
+            options.path, options.unit_distance, false, 0.0, 0.0,
+            options.unit_distance, LoadModelOptions{true});
+        if (!production_load.ok) {
+            if (production_load.handle) kv_free(production_load.handle);
+            throw std::runtime_error(production_load.error.empty()
+                ? "production GUI-path map load failed"
+                : production_load.error);
+        }
+        ImGui::CreateContext();
+        ImPlot::CreateContext();
+        ImGui::GetIO().IniFilename = nullptr;
+        try {
+            UserSettings settings;
+            settings.language = Language::En;
+            App app(nullptr, settings, 1.0f, false, false);
+            app.handle_ = production_load.handle;
+            production_load.handle = nullptr;
+            app.model_ = std::move(production_load.model);
+            app.file_path_ = options.path;
+            app.has_model_ = true;
+            app.edit_mode_enabled_ = true;
+            app.edit_registry_loaded_ = true;
+            app.edit_memory_matches_pending_ledger_ = true;
+            app.dmin_ = app.model_.default_min;
+            app.dmax_ = app.model_.default_max;
+            app.unit_distance_ = options.unit_distance;
+
+            const auto source_row = std::find_if(
+                app.model_.other_track_changes.begin(),
+                app.model_.other_track_changes.end(),
+                [&](const TableRow& row) {
+                    return row.edit_id == facts.targets.front().edit_id;
+                });
+            if (source_row == app.model_.other_track_changes.end()) {
+                throw std::runtime_error(
+                    "production GUI path could not resolve selected other track");
+            }
+            app.open_element_inspector(
+                MapElementInspectorRequest{
+                    source_row->edit_id, "otherTrack.change"});
+            const auto track_key_field = std::find_if(
+                app.inspector_.fields.begin(), app.inspector_.fields.end(),
+                [](const MapElementEditFieldState& field) {
+                    return field.key == "trackKey";
+                });
+            facts.inspector_track_key_read_only =
+                track_key_field != app.inspector_.fields.end() &&
+                track_key_field->read_only;
+
+            app.other_track_rename_.source_key =
+                table_cell(*source_row, "trackKey");
+            app.other_track_rename_.apply_key = facts.new_key;
+            facts.production_gui_apply_ok = app.apply_other_track_rename() &&
+                app.pending_edit_changes_.size() == facts.targets.size();
+            if (facts.production_gui_apply_ok) {
+                const std::string expected_key = "'" + facts.new_key + "'";
+                for (const Target& target : facts.targets) {
+                    const auto row = std::find_if(
+                        app.model_.other_track_changes.begin(),
+                        app.model_.other_track_changes.end(),
+                        [&](const TableRow& candidate) {
+                            return candidate.edit_id == target.edit_id;
+                        });
+                    facts.production_gui_apply_ok =
+                        facts.production_gui_apply_ok &&
+                        row != app.model_.other_track_changes.end() &&
+                        normalize_track_lookup_key(
+                            table_cell(*row, "trackKey")) ==
+                            normalize_track_lookup_key(expected_key);
+                }
+            }
+            facts.production_gui_reset_ok =
+                facts.production_gui_apply_ok &&
+                app.apply_edit_ledger_to_preview({}, std::nullopt, false) &&
+                app.pending_edit_changes_.empty();
+            if (!facts.production_gui_apply_ok ||
+                !facts.production_gui_reset_ok ||
+                !facts.inspector_track_key_read_only) {
+                throw std::runtime_error(
+                    "production GUI other-track rename path assertions failed");
+            }
+        } catch (...) {
+            ImPlot::DestroyContext();
+            ImGui::DestroyContext();
+            if (production_load.handle) kv_free(production_load.handle);
+            throw;
+        }
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
+
+        const std::vector<EditChange> changes =
+            build_changes(facts, facts.new_key);
+        const EditReport incomplete = typed_edit_headless::dry_run(
+            handle.value, {changes.front()});
+        facts.atomic_guard_ok = !incomplete.ok && has_error_prefix(
+            incomplete,
+            "Other-track key rename must update every statement in the track");
+        if (!facts.atomic_guard_ok) {
+            throw std::runtime_error(
+                "other-track key atomic-track guard assertion failed");
+        }
+
+        const EditReport duplicate = typed_edit_headless::dry_run(
+            handle.value, build_changes(
+                facts, "'" + facts.duplicate_key + "'"));
+        facts.duplicate_guard_ok = !duplicate.ok && has_error_prefix(
+            duplicate, "Other-track key already exists in map");
+        if (!facts.duplicate_guard_ok) {
+            throw std::runtime_error(
+                "other-track duplicate-key guard assertion failed");
+        }
+
+        const EditReport dry =
+            typed_edit_headless::dry_run(handle.value, changes);
+        facts.dry_run_ok = dry.ok && dry.full_reparse_ok &&
+            dry.non_target_changed_count == 0;
+        facts.dry_run_update_count = dry.update_count;
+        if (!facts.dry_run_ok) {
+            throw std::runtime_error(dry.blocking_errors.empty()
+                ? "other-track key dry-run assertions did not match"
+                : dry.blocking_errors.front());
+        }
+
+        const EditReport applied =
+            typed_edit_headless::apply_to_memory(handle.value, changes);
+        facts.apply_ok = applied.ok && applied.full_reparse_ok;
+        facts.non_target_changed_count = applied.non_target_changed_count;
+        facts.apply_snapshot_ok = snapshot_matches(
+            handle.value, facts, facts.new_key);
+        const KvMapSnapshot applied_snapshot =
+            distance_batch_headless::current_map_snapshot(handle.value);
+        facts.dependencies_unchanged =
+            dependency_count(applied_snapshot, facts.original_key) ==
+            facts.baseline_dependency_count;
+        if (!facts.apply_ok || !facts.apply_snapshot_ok ||
+            facts.non_target_changed_count != 0 ||
+            !facts.dependencies_unchanged) {
+            throw std::runtime_error(applied.blocking_errors.empty()
+                ? "other-track key memory Apply assertions did not match"
+                : applied.blocking_errors.front());
+        }
+
+        facts.reset_ok = kv_edit_reset_memory(handle.value) != 0;
+        facts.reset_snapshot_ok = facts.reset_ok && snapshot_matches(
+            handle.value, facts, facts.original_key);
+        if (!facts.reset_snapshot_ok) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error
+                ? error : "other-track key Reset assertions failed");
+        }
+
+        const EditReport second_apply =
+            typed_edit_headless::apply_to_memory(handle.value, changes);
+        facts.second_apply_ok = second_apply.ok &&
+            second_apply.full_reparse_ok &&
+            second_apply.non_target_changed_count == 0 &&
+            snapshot_matches(handle.value, facts, facts.new_key);
+        if (!facts.second_apply_ok) {
+            throw std::runtime_error(second_apply.blocking_errors.empty()
+                ? "other-track key second Apply assertions did not match"
+                : second_apply.blocking_errors.front());
+        }
+
+        if (options.commit) {
+            facts.commit_attempted = true;
+            const EditReport committed =
+                typed_edit_headless::commit(handle.value);
+            facts.commit_ok = committed.ok && committed.full_reparse_ok &&
+                committed.non_target_changed_count == 0;
+            facts.changed_files = committed.changed_files;
+            if (!facts.commit_ok) {
+                throw std::runtime_error(committed.blocking_errors.empty()
+                    ? "other-track key commit assertions did not match"
+                    : committed.blocking_errors.front());
+            }
+        }
+
+        MapHandle reload;
+        reload.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!reload.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(error
+                ? error : "other-track key reload failed");
+        }
+        facts.reload_ok = snapshot_matches(
+            reload.value, facts,
+            options.commit ? facts.new_key : facts.original_key);
+        const KvMapSnapshot reload_snapshot =
+            distance_batch_headless::current_map_snapshot(reload.value);
+        facts.reload_hashes = source_hashes(reload_snapshot, facts);
+        if (!facts.reload_ok) {
+            throw std::runtime_error(
+                "reloaded other-track source anchors did not match");
+        }
+    } catch (const std::exception& e) {
+        facts.error = e.what();
+    }
+
+    write_result(*out, facts);
+    out->flush();
+    return facts.passed() ? 0 : 25;
 }
 
 namespace section_edit_batch_headless {

@@ -1697,13 +1697,18 @@ void App::request_edit_ui_operation(PendingEditUiOperation operation) {
     if (operation == PendingEditUiOperation::None || edit_ui_operation_pending()) return;
 
     const bool apply_operation = operation == PendingEditUiOperation::ApplyInspector ||
-        operation == PendingEditUiOperation::ApplyNewElement;
+        operation == PendingEditUiOperation::ApplyNewElement ||
+        operation == PendingEditUiOperation::ApplyOtherTrackRename;
     if (apply_operation && !edit_actions_available()) return;
     if (operation == PendingEditUiOperation::ApplyInspector &&
         (!inspector_.open || inspector_.edit_id.empty())) {
         return;
     }
     if (operation == PendingEditUiOperation::ApplyNewElement && !new_element_wizard_.open) {
+        return;
+    }
+    if (operation == PendingEditUiOperation::ApplyOtherTrackRename &&
+        (other_track_rename_.source_key.empty() || other_track_rename_.apply_key.empty())) {
         return;
     }
     if (!apply_operation &&
@@ -1738,6 +1743,9 @@ void App::process_pending_edit_ui_operation() {
         break;
     case PendingEditUiOperation::ApplyNewElement:
         apply_new_element_insert();
+        break;
+    case PendingEditUiOperation::ApplyOtherTrackRename:
+        apply_other_track_rename();
         break;
     case PendingEditUiOperation::Save:
         save_pending_edits();
@@ -2298,6 +2306,8 @@ void App::clear_pending_edit_state() {
     inspector_ = MapElementInspectorState{};
     pending_inspector_request_.reset();
     pending_delete_request_.reset();
+    pending_other_track_rename_request_.reset();
+    other_track_rename_ = OtherTrackRenameState{};
     new_element_wizard_ = NewElementWizardState{};
     discard_all_editable_list_drafts();
 }
@@ -2474,6 +2484,11 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change,
 }
 
 bool resource_key_values_equal(std::string_view left, std::string_view right) noexcept;
+
+bool map_element_inspector_field_forced_read_only(
+    std::string_view row_kind, std::string_view field_key) noexcept {
+    return row_kind == "otherTrack.change" && field_key == "trackKey";
+}
 
 std::string structure_model_path_for_key(const MapModel& model,
                                          const std::string& structure_key) {
@@ -2709,6 +2724,28 @@ void App::process_pending_element_delete() {
     delete_element_target(request);
 }
 
+void App::request_other_track_rename(const std::string& track_key) {
+    if (!edit_actions_available() || track_key.empty()) return;
+    pending_other_track_rename_request_ = track_key;
+}
+
+void App::process_pending_other_track_rename() {
+    if (!pending_other_track_rename_request_) return;
+    std::string source_key = std::move(*pending_other_track_rename_request_);
+    pending_other_track_rename_request_.reset();
+    const bool has_editable_row = std::any_of(
+        model_.other_track_changes.begin(), model_.other_track_changes.end(),
+        [&](const TableRow& row) {
+            return !row.edit_id.empty() &&
+                resource_key_values_equal(table_cell(row, "trackKey"), source_key);
+        });
+    if (!has_editable_row) return;
+    other_track_rename_ = OtherTrackRenameState{};
+    other_track_rename_.source_key = std::move(source_key);
+    other_track_rename_.draft_key = other_track_rename_.source_key;
+    other_track_rename_.popup_requested = true;
+}
+
 const EditSourceFileInfo* find_model_source_file(const MapModel& model, const std::string& path) {
     for (const EditSourceFileInfo& file : model.edit_files) {
         if (file.file_path == path) return &file;
@@ -2734,6 +2771,122 @@ std::string expected_source_hash_for_edit_target(
     const EditSourceFileInfo* source_file = find_model_source_file(model, source_file_path);
     if (source_file && !source_file->source_hash.empty()) return source_file->source_hash;
     return {};
+}
+
+bool App::apply_other_track_rename() {
+    if (!edit_actions_available()) return false;
+    const std::string source_key = trim_gui_ascii_copy(other_track_rename_.source_key);
+    const std::string requested_key = trim_gui_ascii_copy(other_track_rename_.apply_key);
+    if (source_key.empty() || requested_key.empty()) {
+        set_program_status("status.edit.required_field");
+        return false;
+    }
+
+    struct TrackViewState {
+        bool found = false;
+        bool visible = false;
+        double range_min = 0.0;
+        double range_max = 0.0;
+        ImVec4 color{};
+    } view_state;
+    for (const OtherTrack& track : model_.other_tracks) {
+        if (!resource_key_values_equal(track.key, source_key)) continue;
+        view_state.found = true;
+        view_state.visible = track.visible;
+        view_state.range_min = track.range_min;
+        view_state.range_max = track.range_max;
+        view_state.color = track.color;
+        break;
+    }
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    std::vector<std::string> target_edit_ids;
+    bool ledger_changed = false;
+    for (const TableRow& row : model_.other_track_changes) {
+        if (row.edit_id.empty() ||
+            !resource_key_values_equal(table_cell(row, "trackKey"), source_key)) {
+            continue;
+        }
+        target_edit_ids.push_back(row.edit_id);
+        auto [pending, inserted] = candidate.try_emplace(row.edit_id);
+        MapElementPendingChange& change = pending->second;
+        if (inserted) {
+            change.change_id = "other-track-key-" + row.edit_id;
+            change.edit_id = row.edit_id;
+            change.row_kind = "otherTrack.change";
+            change.operation = "update";
+        } else if (change.operation == "delete") {
+            continue;
+        } else if (change.operation != "update" ||
+                   change.row_kind != "otherTrack.change") {
+            add_log("[error]gui_kme.cpp: other-track rename conflicts with pending edit: " +
+                    row.edit_id);
+            set_program_status("status.edit.pending");
+            return false;
+        }
+        if (change.expected_source_hash.empty()) {
+            change.expected_source_hash = expected_source_hash_for_edit_target(
+                model_, pending_edit_changes_, row.edit_id, {}, row.source.file_path);
+        }
+
+        const TableRow* baseline_row = &row;
+        const auto original = original_edit_rows_.find(row.edit_id);
+        if (original != original_edit_rows_.end()) {
+            baseline_row = &original->second.row;
+        }
+        const std::string baseline_key =
+            trim_gui_ascii_copy(table_cell(*baseline_row, "trackKey"));
+        if (requested_key == baseline_key) {
+            ledger_changed = change.field_changes.erase("trackKey") != 0 || ledger_changed;
+            if (change.field_changes.empty() && change.replacement_statement.empty()) {
+                candidate.erase(row.edit_id);
+            }
+        } else {
+            auto existing_key = change.field_changes.find("trackKey");
+            if (existing_key == change.field_changes.end() ||
+                existing_key->second != requested_key) {
+                change.field_changes["trackKey"] = requested_key;
+                ledger_changed = true;
+            }
+        }
+    }
+    if (target_edit_ids.empty()) {
+        add_log("[error]gui_kme.cpp: other-track rename found no editable Track statements");
+        set_program_status("status.edit.pending");
+        return false;
+    }
+    if (!ledger_changed) {
+        other_track_rename_ = OtherTrackRenameState{};
+        set_program_status("status.edit.no_changes");
+        return true;
+    }
+
+    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return false;
+
+    std::string applied_key;
+    for (const TableRow& row : model_.other_track_changes) {
+        if (std::find(target_edit_ids.begin(), target_edit_ids.end(), row.edit_id) ==
+            target_edit_ids.end()) {
+            continue;
+        }
+        applied_key = table_cell(row, "trackKey");
+        break;
+    }
+    if (view_state.found && !applied_key.empty()) {
+        for (OtherTrack& track : model_.other_tracks) {
+            if (!resource_key_values_equal(track.key, applied_key)) continue;
+            track.visible = view_state.visible;
+            track.range_min = view_state.range_min;
+            track.range_max = view_state.range_max;
+            track.color = view_state.color;
+            break;
+        }
+        refresh_local_preview_after_edit("otherTrack.change");
+        sync_scene_preview_track_visibility();
+    }
+    other_track_rename_ = OtherTrackRenameState{};
+    set_program_status("status.edit.applied_to_preview");
+    return true;
 }
 
 std::string inspector_expected_source_hash(
@@ -3570,7 +3723,9 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     } else if (request.row_kind == "otherTrack.change") {
         add_row_field("trackKey", "trackKey",
                       MapElementNumericConstraint::None, true);
-        next.fields.back().read_only = true;
+        next.fields.back().read_only =
+            map_element_inspector_field_forced_read_only(
+                request.row_kind, "trackKey");
         add_row_field("distance", "Distance",
                       MapElementNumericConstraint::Finite, true);
 
@@ -5461,6 +5616,7 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
         }
     }
     bool repeater_key_conflict = false;
+    bool other_track_key_conflict = false;
     if (report.blocking_errors) {
         for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
             const std::string message =
@@ -5468,6 +5624,8 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
             repeater_key_conflict = repeater_key_conflict ||
                 message.rfind(
                     "Repeater key overlaps another Repeater interval", 0) == 0;
+            other_track_key_conflict = other_track_key_conflict ||
+                message.rfind("Other-track key already exists in map", 0) == 0;
             add_log("[error]gui_kme.cpp: " + message);
         }
     }
@@ -5481,6 +5639,8 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
     bool ok = report.ok != 0;
     if (!ok && repeater_key_conflict) {
         set_program_status("status.edit.repeater_key_conflict");
+    } else if (!ok && other_track_key_conflict) {
+        set_program_status("status.edit.other_track_key_conflict");
     }
     if (ok) {
         std::string committed_state_error;
@@ -8794,6 +8954,43 @@ void App::render_popups() {
         last_saved_view_3d_settings_ = settings_.view_3d;
     };
 
+    if (other_track_rename_.popup_requested) {
+        ImGui::OpenPopup(tr("dialog.other_track_rename_title").c_str());
+        other_track_rename_.popup_requested = false;
+    }
+    bool apply_other_track_rename_after_popup = false;
+    if (ImGui::BeginPopupModal(
+            tr("dialog.other_track_rename_title").c_str(), nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(tr("label.track_key").c_str());
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(360.0f);
+        ImGui::InputText("##OtherTrackRenameKey", &other_track_rename_.draft_key);
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            const std::string requested_key =
+                trim_gui_ascii_copy(other_track_rename_.draft_key);
+            if (requested_key.empty()) {
+                set_program_status("status.edit.required_field");
+            } else {
+                other_track_rename_.apply_key = requested_key;
+                apply_other_track_rename_after_popup = true;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            other_track_rename_ = OtherTrackRenameState{};
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (apply_other_track_rename_after_popup) {
+        request_edit_ui_operation(PendingEditUiOperation::ApplyOtherTrackRename);
+        return;
+    }
+
     if (popups_.edit_mode_warning) {
         ImGui::OpenPopup(tr("dialog.edit_mode_warning_title").c_str());
         popups_.edit_mode_warning = false;
@@ -10221,6 +10418,7 @@ void App::render() {
     render_draw_distances_window();
     render_speed_limits_window();
     process_pending_element_delete();
+    process_pending_other_track_rename();
     process_pending_element_inspector();
     render_element_inspector();
     render_new_element_wizard();
@@ -10925,6 +11123,19 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_repeater_key_edit(repeater_key_edit);
+    }
+
+    HeadlessOtherTrackKeyEditOptions other_track_key_edit =
+        parse_headless_other_track_key_edit_options(args);
+    if (other_track_key_edit.requested) {
+        if (!other_track_key_edit.error.empty()) {
+            std::cerr << other_track_key_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-other-track-key-edit "
+                         "<map-path> [--unit-distance M] [--commit] "
+                         "[--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_other_track_key_edit(other_track_key_edit);
     }
 
     HeadlessSectionEditBatchOptions section_edit_batch =
