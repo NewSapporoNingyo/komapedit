@@ -7527,6 +7527,19 @@ void App::rebuild_new_element_wizard_form() {
         wizard.selected_template = 0;
     }
     const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
+    const bool retargeting_current_form =
+        wizard.built_template == wizard.selected_template &&
+        wizard.built_target_file != wizard.target_file_path &&
+        wizard.form.open &&
+        std::string_view(wizard.form.row_kind) == tpl.row_kind;
+    if (retargeting_current_form) {
+        // The target controls where the insert is written, while the form owns
+        // both ordinary fields and variable-length draft lists.
+        wizard.form.source_file = wizard.target_file_path;
+        wizard.form.source_file_name = display_name_from_path(wizard.form.source_file);
+        wizard.built_target_file = wizard.target_file_path;
+        return;
+    }
     if (tpl.row_kind == "repeater" &&
         wizard.built_template != wizard.selected_template) {
         wizard.repeater_add_begin = true;
