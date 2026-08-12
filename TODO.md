@@ -14,7 +14,8 @@ This file is the active project progress and contains unfinished items only. Com
 
 - [ ] 3D 场景画质设置：render scale、MSAA、纹理过滤和轮廓质量
 - [ ] 为 3D 线路信息叠加层补充当前不支持的插值（interpolate）情况
-- [ ] 支持通过 3D 操纵器编辑布景旋转和其他放置字段
+- [ ] 支持通过3D操纵器编辑布景旋转和其他放置字段
+- [ ] 支持通过3D操纵器编辑3D音效位置
 - [ ] 支持打开线路时自动加载3D场景预览
 
 ### 用户界面与辅助功能
@@ -27,6 +28,7 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 加入对Legacy.fog的支持
 - [ ] include文件新建与导入、解除引用、删除源文件功能
 - [ ] 资源列表文件新建与导入、解除引用、删除源文件功能
+- [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途
 - [ ] 在车站列表、布景模型列表、音效文件列表中新增行
 - [ ] 变量编辑功能
 - [ ] 可引用变量、运算符、数学函数设置参数
