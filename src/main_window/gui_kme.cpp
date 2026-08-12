@@ -3300,6 +3300,40 @@ MapElementEditFieldState make_repeater_structure_key_field(
     return field;
 }
 
+void replace_repeater_structure_key_fields(
+    MapElementInspectorState& inspector, const std::vector<std::string>& structure_keys) {
+    if (structure_keys.empty()) return;
+
+    size_t insertion_index = inspector.fields.size();
+    for (size_t index = 0; index < inspector.fields.size(); ++index) {
+        if (is_repeater_structure_key_field(inspector.fields[index])) {
+            insertion_index = index;
+            break;
+        }
+        if (inspector.fields[index].key == "endDistance") {
+            insertion_index = index;
+            break;
+        }
+    }
+    inspector.fields.erase(
+        std::remove_if(inspector.fields.begin(), inspector.fields.end(),
+                       [](const MapElementEditFieldState& field) {
+                           return is_repeater_structure_key_field(field);
+                       }),
+        inspector.fields.end());
+    insertion_index = std::min(insertion_index, inspector.fields.size());
+    std::vector<MapElementEditFieldState> restored_fields;
+    restored_fields.reserve(structure_keys.size());
+    for (size_t index = 0; index < structure_keys.size(); ++index) {
+        restored_fields.push_back(
+            make_repeater_structure_key_field(inspector, index, structure_keys[index]));
+    }
+    inspector.fields.insert(
+        inspector.fields.begin() + static_cast<std::ptrdiff_t>(insertion_index),
+        std::make_move_iterator(restored_fields.begin()),
+        std::make_move_iterator(restored_fields.end()));
+}
+
 const char* section_values_label_prefix(const std::string& row_kind) {
     return row_kind == "section.begin" ? "signal" : "v";
 }
@@ -3391,36 +3425,7 @@ void restore_repeater_inspector_draft(MapElementInspectorState& inspector) {
         MapElementEditFieldState* field = find_inspector_field(inspector, entry.first);
         if (field && !field->read_only) set_edit_field_buffer(*field, entry.second);
     }
-    if (structure_keys.empty()) return;
-
-    size_t insertion_index = inspector.fields.size();
-    for (size_t index = 0; index < inspector.fields.size(); ++index) {
-        if (is_repeater_structure_key_field(inspector.fields[index])) {
-            insertion_index = index;
-            break;
-        }
-        if (inspector.fields[index].key == "endDistance") {
-            insertion_index = index;
-            break;
-        }
-    }
-    inspector.fields.erase(
-        std::remove_if(inspector.fields.begin(), inspector.fields.end(),
-                       [](const MapElementEditFieldState& field) {
-                           return is_repeater_structure_key_field(field);
-                       }),
-        inspector.fields.end());
-    insertion_index = std::min(insertion_index, inspector.fields.size());
-    std::vector<MapElementEditFieldState> restored_fields;
-    restored_fields.reserve(structure_keys.size());
-    for (size_t index = 0; index < structure_keys.size(); ++index) {
-        restored_fields.push_back(
-            make_repeater_structure_key_field(inspector, index, structure_keys[index]));
-    }
-    inspector.fields.insert(
-        inspector.fields.begin() + static_cast<std::ptrdiff_t>(insertion_index),
-        std::make_move_iterator(restored_fields.begin()),
-        std::make_move_iterator(restored_fields.end()));
+    replace_repeater_structure_key_fields(inspector, structure_keys);
 }
 
 MapElementInspectorRequest make_inspector_reload_request(const MapElementInspectorState& inspector) {
@@ -6719,6 +6724,12 @@ void App::render_element_inspector() {
                 inspector_.coordinate_offset_discard_prompt_requested = true;
             }
         }
+        if (repeater_inspector) {
+            ImGui::SameLine();
+            if (ImGui::Button(tr("button.insert_repeater_change_point").c_str())) {
+                open_repeater_change_point_wizard_from_inspector();
+            }
+        }
         ImGui::Separator();
     }
     const bool section_inspector = inspector_.row_kind == "section.begin" ||
@@ -7328,26 +7339,25 @@ void App::open_new_element_wizard(std::optional<double> distance_prefill) {
     }
 }
 
-void App::open_repeater_end_wizard_from_inspector() {
-    if (!inspector_.open || inspector_.row_kind != "repeater" ||
-        inspector_.repeater_boundary_kind != "open" || inspector_.edit_id.empty()) {
-        return;
+bool App::prepare_repeater_wizard_from_inspector(std::string& repeater_key) {
+    if (!inspector_.open || inspector_.row_kind != "repeater" || inspector_.edit_id.empty()) {
+        return false;
     }
 
     size_t row_index = 0;
     if (!find_row_index_by_edit_id(model_.repeaters, inspector_.edit_id, row_index)) {
-        add_log("[warn]gui_kme.cpp: open Repeater inspector lost its source row: " +
+        add_log("[warn]gui_kme.cpp: Repeater wizard lost its source row: " +
                 inspector_.edit_id);
-        return;
+        return false;
     }
     const TableRow& repeater_row = model_.repeaters[row_index];
     const std::string source_file = !repeater_row.source.file_path.empty()
         ? repeater_row.source.file_path
         : inspector_.source_file;
-    const std::string repeater_key = table_cell(repeater_row, "repeaterKey");
+    repeater_key = table_cell(repeater_row, "repeaterKey");
     if (source_file.empty() || repeater_key.empty()) {
-        add_log("[warn]gui_kme.cpp: open Repeater inspector is missing source metadata");
-        return;
+        add_log("[warn]gui_kme.cpp: Repeater wizard is missing source metadata");
+        return false;
     }
 
     const std::vector<NewElementTemplate>& templates = new_element_templates();
@@ -7358,8 +7368,8 @@ void App::open_repeater_end_wizard_from_inspector() {
         templates.begin(), templates.end(),
         [&](const NewElementTemplate& tpl) { return tpl.id == std::string_view(template_id); });
     if (selected == templates.end()) {
-        add_log("[error]gui_kme.cpp: Repeater End wizard template is unavailable");
-        return;
+        add_log("[error]gui_kme.cpp: Repeater wizard template is unavailable");
+        return false;
     }
 
     std::vector<std::string> target_candidates = new_element_target_candidates(model_);
@@ -7367,7 +7377,7 @@ void App::open_repeater_end_wizard_from_inspector() {
         target_candidates.end()) {
         // Keep the physical Begin source selected even when it has no numeric
         // distance anchor. Maploader will retain its existing insertion validation
-        // rather than silently redirecting the End to another source file.
+        // rather than silently redirecting the new statement to another source file.
         target_candidates.insert(target_candidates.begin(), source_file);
     }
 
@@ -7382,6 +7392,29 @@ void App::open_repeater_end_wizard_from_inspector() {
     wizard.return_inspector_request = make_inspector_reload_request(inspector_);
     wizard.close_after_successful_apply = true;
     rebuild_new_element_wizard_form();
+
+    if (!find_inspector_field(wizard.form, "distance") ||
+        !find_inspector_field(wizard.form, "endDistance") ||
+        !find_inspector_field(wizard.form, "repeaterKey")) {
+        add_log("[error]gui_kme.cpp: Repeater wizard fields are unavailable");
+        wizard.open = false;
+        wizard.return_inspector_request.reset();
+        wizard.close_after_successful_apply = false;
+        return false;
+    }
+    return true;
+}
+
+void App::open_repeater_end_wizard_from_inspector() {
+    if (!inspector_.open || inspector_.row_kind != "repeater" ||
+        inspector_.repeater_boundary_kind != "open" || inspector_.edit_id.empty()) {
+        return;
+    }
+
+    std::string repeater_key;
+    if (!prepare_repeater_wizard_from_inspector(repeater_key)) return;
+
+    NewElementWizardState& wizard = new_element_wizard_;
 
     wizard.repeater_add_begin = false;
     wizard.repeater_add_end = true;
@@ -7402,6 +7435,64 @@ void App::open_repeater_end_wizard_from_inspector() {
     set_edit_field_buffer(*key_field, repeater_key);
     end_distance_field->original_value.clear();
     set_edit_field_buffer(*end_distance_field, {});
+}
+
+void App::open_repeater_change_point_wizard_from_inspector() {
+    std::string source_repeater_key;
+    if (!prepare_repeater_wizard_from_inspector(source_repeater_key)) return;
+
+    NewElementWizardState& wizard = new_element_wizard_;
+    wizard.repeater_add_begin = true;
+    wizard.repeater_add_end = false;
+    update_repeater_wizard_field_enablement(wizard);
+
+    const MapElementEditFieldState* source_distance =
+        find_inspector_field(inspector_, "distance");
+    MapElementEditFieldState* begin_distance =
+        find_inspector_field(wizard.form, "distance");
+    MapElementEditFieldState* end_distance =
+        find_inspector_field(wizard.form, "endDistance");
+    if (!source_distance || !begin_distance || !end_distance) {
+        add_log("[error]gui_kme.cpp: Repeater change-point wizard distance field is unavailable");
+        wizard.open = false;
+        wizard.return_inspector_request.reset();
+        wizard.close_after_successful_apply = false;
+        return;
+    }
+
+    const auto set_initial_value = [](MapElementEditFieldState& field,
+                                      const std::string& value) {
+        field.original_value = value;
+        set_edit_field_buffer(field, value);
+    };
+    const std::string begin_distance_value = edit_field_buffer_text(*source_distance);
+    set_initial_value(*begin_distance, begin_distance_value);
+    set_initial_value(*end_distance, begin_distance_value);
+
+    for (MapElementEditFieldState& target_field : wizard.form.fields) {
+        if (target_field.key == "distance" || target_field.key == "endDistance" ||
+            is_repeater_structure_key_field(target_field)) {
+            continue;
+        }
+        const MapElementEditFieldState* source_field =
+            find_inspector_field(inspector_, target_field.key);
+        if (source_field && !source_field->read_only) {
+            set_initial_value(target_field, edit_field_buffer_text(*source_field));
+        } else if (target_field.key == "repeaterKey") {
+            set_initial_value(target_field, source_repeater_key);
+        }
+    }
+
+    std::vector<std::string> structure_keys;
+    for (const MapElementEditFieldState& field : inspector_.fields) {
+        if (is_repeater_structure_key_field(field) && !field.read_only) {
+            structure_keys.push_back(edit_field_buffer_text(field));
+        }
+    }
+    if (!structure_keys.empty()) {
+        wizard.form.repeater_structure_keys_original = structure_keys;
+        replace_repeater_structure_key_fields(wizard.form, structure_keys);
+    }
 }
 
 void App::finish_new_element_wizard_after_successful_apply() {

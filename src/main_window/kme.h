@@ -2131,7 +2131,9 @@ private:
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
     void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);
+    bool prepare_repeater_wizard_from_inspector(std::string& repeater_key);
     void open_repeater_end_wizard_from_inspector();
+    void open_repeater_change_point_wizard_from_inspector();
     void finish_new_element_wizard_after_successful_apply();
     void apply_new_element_wizard_distance_prefill();
     void rebuild_new_element_wizard_form();
