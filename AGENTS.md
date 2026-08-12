@@ -100,7 +100,7 @@ Current implementation status comes from source and `TODO.md`, not from an old m
 8. Synchronize the documents owned by the changed behavior/status/workflow.
 9. Review the final diff for scope, ABI/source fidelity, localization, cache/performance impact, generated files, encoding, and whitespace.
 10. Report the outcome, validation evidence, known failures, and remaining manual checks without overclaiming.
-11. If modified the code or documentation, generate a Git commit message based on the actual changes, using the format “Change Type: What Was Done.”
+11. If modified the code or documentation, generate a Git commit message in English based on the actual changes, using the format “Change Type: What Was Done.”
 
 Stop and request a human decision before silently choosing a new file-format strategy, compatibility break, public ABI migration, dependency, framework, or other architecture change not determined by the task.If there are any discrepancies between the requirements specification and the actual code, or if the description is unclear,also stop and ask for human decision.
 
