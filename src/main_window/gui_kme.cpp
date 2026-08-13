@@ -6663,7 +6663,51 @@ bool App::render_map_element_field_control(MapElementEditFieldState& field,
     return input_changed;
 }
 
-void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
+namespace {
+
+bool optional_insertion_argument_prerequisites_enabled(
+    const MapElementInspectorState& inspector, size_t field_index) {
+    for (size_t index = 0; index < field_index; ++index) {
+        const MapElementEditFieldState& preceding = inspector.fields[index];
+        if (preceding.optional_insertion_argument && preceding.disabled) return false;
+    }
+    return true;
+}
+
+void normalize_optional_insertion_argument_enablement(
+    MapElementInspectorState& inspector) {
+    bool earlier_argument_omitted = false;
+    for (MapElementEditFieldState& field : inspector.fields) {
+        if (!field.optional_insertion_argument) continue;
+        if (earlier_argument_omitted) field.disabled = true;
+        earlier_argument_omitted = earlier_argument_omitted || field.disabled;
+    }
+}
+
+bool set_optional_insertion_argument_enabled(
+    MapElementInspectorState& inspector, std::string_view field_key, bool included) {
+    const auto found = std::find_if(
+        inspector.fields.begin(), inspector.fields.end(),
+        [&](const MapElementEditFieldState& field) { return field.key == field_key; });
+    if (found == inspector.fields.end() || !found->optional_insertion_argument) {
+        return false;
+    }
+    const size_t field_index = static_cast<size_t>(
+        std::distance(inspector.fields.begin(), found));
+    if (included &&
+        !optional_insertion_argument_prerequisites_enabled(inspector, field_index)) {
+        return false;
+    }
+    found->disabled = !included;
+    normalize_optional_insertion_argument_enablement(inspector);
+    return true;
+}
+
+} // namespace
+
+void App::render_map_element_field_inputs(
+    MapElementInspectorState& inspector,
+    bool render_optional_insertion_argument_toggles) {
     const bool repeater_inspector = inspector.row_kind == "repeater";
     const bool coordinate_offset_inspector =
         inspector.row_kind == "structure.put" || repeater_inspector;
@@ -6681,6 +6725,9 @@ void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
             is_coordinate_offset_field(field.key)) {
             continue;
         }
+        const bool optional_insertion_argument =
+            render_optional_insertion_argument_toggles &&
+            field.optional_insertion_argument;
         if (field.key == "structureKey" && field_index > 0) ImGui::Separator();
         if (repeater_inspector && field.key == "repeaterKey") ImGui::Separator();
         const bool changed = edit_field_buffer_text(field) != field.original_value;
@@ -6703,11 +6750,28 @@ void App::render_map_element_field_inputs(MapElementInspectorState& inspector) {
             !validate_and_canonicalize_edit_field(field, true)) {
             set_program_status("status.edit.invalid_number");
         }
+        if (optional_insertion_argument) {
+            ImGui::SameLine();
+            bool include_argument = !field.disabled;
+            const std::string include_label =
+                tr("chk.new_element_include_parameter") +
+                "##NewElementOptionalArgument_" + std::to_string(field_index);
+            ImGui::BeginDisabled(
+                !optional_insertion_argument_prerequisites_enabled(inspector, field_index));
+            if (ImGui::Checkbox(include_label.c_str(), &include_argument)) {
+                (void)set_optional_insertion_argument_enabled(
+                    inspector, field.key, include_argument);
+            }
+            ImGui::EndDisabled();
+        }
         if (changed) ImGui::PopStyleColor();
         if (!field.source_distance_string.empty()) {
             render_inline_wrapped_text(tr("label.source_distance_string").c_str(),
                                        field.source_distance_string);
         }
+    }
+    if (render_optional_insertion_argument_toggles) {
+        normalize_optional_insertion_argument_enablement(inspector);
     }
 }
 
@@ -6986,12 +7050,14 @@ struct NewElementFieldSpec {
     MapElementNumericConstraint constraint = MapElementNumericConstraint::None;
     bool required = true;
     const char* default_value = "";
+    bool optional_insertion_argument = false;
 };
 
 enum class NewElementTemplateCategory {
     Scenery,
     Station,
     TrackGeometry,
+    OtherTrack,
     Signal,
     Sound,
     Effects,
@@ -7003,12 +7069,14 @@ struct NewElementTemplateCategoryInfo {
     const char* label_key;
 };
 
-constexpr std::array<NewElementTemplateCategoryInfo, 6>
+constexpr std::array<NewElementTemplateCategoryInfo, 7>
     k_new_element_template_categories = {{
         {"scenery", NewElementTemplateCategory::Scenery, "aux.scenery"},
         {"station", NewElementTemplateCategory::Station, "aux.station"},
         {"track_geometry", NewElementTemplateCategory::TrackGeometry,
          "aux.track_geometry"},
+        {"other_track", NewElementTemplateCategory::OtherTrack,
+         "frame.othertracks"},
         {"signal", NewElementTemplateCategory::Signal, "aux.signal"},
         {"sound", NewElementTemplateCategory::Sound, "aux.sound"},
         {"effects", NewElementTemplateCategory::Effects, "aux.effects"},
@@ -7213,32 +7281,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "other_track.position.xy", NewElementTemplateCategory::TrackGeometry, 2,
-            "otherTrack.change", "Track.Position",
-            "Track[trackKey].Position(x, y);",
-            "new_element.usage.other_track.change", false,
-            {
-                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
-                {"parameter1", "y", MapElementNumericConstraint::Finite, true, "0"},
-            },
-        },
-        {
-            "other_track.position.xy_radius_h", NewElementTemplateCategory::TrackGeometry, 3,
-            "otherTrack.change", "Track.Position",
-            "Track[trackKey].Position(x, y, radiusH);",
-            "new_element.usage.other_track.change", false,
-            {
-                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
-                {"parameter1", "y", MapElementNumericConstraint::Finite, true, "0"},
-                {"parameter2", "radiusH", MapElementNumericConstraint::Finite, true, "0"},
-            },
-        },
-        {
-            "other_track.position.xy_radius_hv", NewElementTemplateCategory::TrackGeometry, 4,
+            "other_track.position", NewElementTemplateCategory::OtherTrack, 0,
             "otherTrack.change", "Track.Position",
             "Track[trackKey].Position(x, y, radiusH, radiusV);",
             "new_element.usage.other_track.change", false,
@@ -7247,78 +7290,36 @@ const std::vector<NewElementTemplate>& new_element_templates() {
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
                 {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
                 {"parameter1", "y", MapElementNumericConstraint::Finite, true, "0"},
-                {"parameter2", "radiusH", MapElementNumericConstraint::Finite, true, "0"},
-                {"parameter3", "radiusV", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter2", "radiusH", MapElementNumericConstraint::Finite, true, "0", true},
+                {"parameter3", "radiusV", MapElementNumericConstraint::Finite, true, "0", true},
             },
         },
         {
-            "other_track.x_interpolate.none", NewElementTemplateCategory::TrackGeometry, 5,
-            "otherTrack.change", "Track.X.Interpolate",
-            "Track[trackKey].X.Interpolate();",
-            "new_element.usage.other_track.change", false,
-            {
-                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-            },
-        },
-        {
-            "other_track.x_interpolate.x", NewElementTemplateCategory::TrackGeometry, 6,
-            "otherTrack.change", "Track.X.Interpolate",
-            "Track[trackKey].X.Interpolate(x);",
-            "new_element.usage.other_track.change", false,
-            {
-                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
-            },
-        },
-        {
-            "other_track.x_interpolate.x_radius", NewElementTemplateCategory::TrackGeometry, 7,
+            "other_track.x_interpolate", NewElementTemplateCategory::OtherTrack, 1,
             "otherTrack.change", "Track.X.Interpolate",
             "Track[trackKey].X.Interpolate(x, radius);",
             "new_element.usage.other_track.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
-                {"parameter1", "radius", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0", true},
+                {"parameter1", "radius", MapElementNumericConstraint::Finite, true, "0", true},
             },
         },
         {
-            "other_track.y_interpolate.none", NewElementTemplateCategory::TrackGeometry, 8,
-            "otherTrack.change", "Track.Y.Interpolate",
-            "Track[trackKey].Y.Interpolate();",
-            "new_element.usage.other_track.change", false,
-            {
-                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-            },
-        },
-        {
-            "other_track.y_interpolate.y", NewElementTemplateCategory::TrackGeometry, 9,
-            "otherTrack.change", "Track.Y.Interpolate",
-            "Track[trackKey].Y.Interpolate(y);",
-            "new_element.usage.other_track.change", false,
-            {
-                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-                {"parameter0", "y", MapElementNumericConstraint::Finite, true, "0"},
-            },
-        },
-        {
-            "other_track.y_interpolate.y_radius", NewElementTemplateCategory::TrackGeometry, 10,
+            "other_track.y_interpolate", NewElementTemplateCategory::OtherTrack, 2,
             "otherTrack.change", "Track.Y.Interpolate",
             "Track[trackKey].Y.Interpolate(y, radius);",
             "new_element.usage.other_track.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-                {"parameter0", "y", MapElementNumericConstraint::Finite, true, "0"},
-                {"parameter1", "radius", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter0", "y", MapElementNumericConstraint::Finite, true, "0", true},
+                {"parameter1", "radius", MapElementNumericConstraint::Finite, true, "0", true},
             },
         },
         {
-            "other_track.cant_set_gauge", NewElementTemplateCategory::TrackGeometry, 11,
+            "other_track.cant_set_gauge", NewElementTemplateCategory::OtherTrack, 3,
             "otherTrack.change", "Track.Cant.SetGauge",
             "Track[trackKey].Cant.SetGauge(gauge);",
             "new_element.usage.other_track.change", false,
@@ -7329,7 +7330,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "other_track.cant_set_center", NewElementTemplateCategory::TrackGeometry, 12,
+            "other_track.cant_set_center", NewElementTemplateCategory::OtherTrack, 4,
             "otherTrack.change", "Track.Cant.SetCenter",
             "Track[trackKey].Cant.SetCenter(x);",
             "new_element.usage.other_track.change", false,
@@ -7340,7 +7341,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "other_track.cant_set_function", NewElementTemplateCategory::TrackGeometry, 13,
+            "other_track.cant_set_function", NewElementTemplateCategory::OtherTrack, 5,
             "otherTrack.change", "Track.Cant.SetFunction",
             "Track[trackKey].Cant.SetFunction(id);",
             "new_element.usage.other_track.change", false,
@@ -7351,7 +7352,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "other_track.cant_begin_transition", NewElementTemplateCategory::TrackGeometry, 14,
+            "other_track.cant_begin_transition", NewElementTemplateCategory::OtherTrack, 6,
             "otherTrack.change", "Track.Cant.BeginTransition",
             "Track[trackKey].Cant.BeginTransition();",
             "new_element.usage.other_track.change", false,
@@ -7361,7 +7362,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "other_track.cant_begin", NewElementTemplateCategory::TrackGeometry, 15,
+            "other_track.cant_begin", NewElementTemplateCategory::OtherTrack, 7,
             "otherTrack.change", "Track.Cant.Begin",
             "Track[trackKey].Cant.Begin(cant);",
             "new_element.usage.other_track.change", false,
@@ -7372,7 +7373,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "other_track.cant_end", NewElementTemplateCategory::TrackGeometry, 16,
+            "other_track.cant_end", NewElementTemplateCategory::OtherTrack, 8,
             "otherTrack.change", "Track.Cant.End",
             "Track[trackKey].Cant.End();",
             "new_element.usage.other_track.change", false,
@@ -7382,24 +7383,14 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
-            "other_track.cant_interpolate.none", NewElementTemplateCategory::TrackGeometry, 17,
-            "otherTrack.change", "Track.Cant.Interpolate",
-            "Track[trackKey].Cant.Interpolate();",
-            "new_element.usage.other_track.change", false,
-            {
-                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-            },
-        },
-        {
-            "other_track.cant_interpolate.cant", NewElementTemplateCategory::TrackGeometry, 18,
+            "other_track.cant_interpolate", NewElementTemplateCategory::OtherTrack, 9,
             "otherTrack.change", "Track.Cant.Interpolate",
             "Track[trackKey].Cant.Interpolate(cant);",
             "new_element.usage.other_track.change", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
-                {"parameter0", "cant", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter0", "cant", MapElementNumericConstraint::Finite, true, "0", true},
             },
         },
         {
@@ -7956,6 +7947,7 @@ void App::rebuild_new_element_wizard_form() {
         field.numeric_constraint = spec.constraint;
         field.key_source = map_element_key_source_for_field(form.row_kind, spec.key);
         field.required = spec.required;
+        field.optional_insertion_argument = spec.optional_insertion_argument;
         field.original_value = spec.key == std::string_view("distance") && wizard.distance_prefill
             ? format_double(*wizard.distance_prefill, 0)
             : std::string(spec.default_value);
@@ -8006,6 +7998,7 @@ bool App::apply_new_element_insert() {
         std::string_view(form.row_kind) != tpl.row_kind) {
         rebuild_new_element_wizard_form();
     }
+    normalize_optional_insertion_argument_enablement(form);
     if (tpl.row_kind == "repeater") {
         if (!wizard.repeater_add_begin && !wizard.repeater_add_end) {
             set_program_status("status.edit.required_field");
@@ -8335,6 +8328,7 @@ void App::render_new_element_wizard() {
         }
         ImGui::Separator();
         const NewElementTemplate& tpl = templates[static_cast<size_t>(wizard.selected_template)];
+        normalize_optional_insertion_argument_enablement(wizard.form);
         if (tpl.row_kind == "repeater") {
             ImGui::BeginDisabled(wizard.repeater_add_begin && !wizard.repeater_add_end);
             ImGui::Checkbox(tr("chk.new_element_repeater_add_begin").c_str(),
@@ -8354,7 +8348,8 @@ void App::render_new_element_wizard() {
             render_map_element_field_inputs(wizard.form);
             render_section_values_edit_ui(wizard.form);
         } else {
-            render_map_element_field_inputs(wizard.form);
+            render_map_element_field_inputs(
+                wizard.form, tpl.row_kind == "otherTrack.change");
         }
         ImGui::Separator();
         if (ImGui::Button(tr("button.apply").c_str())) {
@@ -11339,6 +11334,10 @@ int App::run_debug_headless_new_element_edit(
             set_edit_field_buffer(*field, value);
             return true;
         };
+        auto set_optional_argument = [&](MapElementInspectorState& form,
+                                         std::string_view key, bool included) {
+            return set_optional_insertion_argument_enabled(form, key, included);
+        };
         auto settle_distance_resolution = [&]() {
             for (int attempt = 0; attempt < 8; ++attempt) {
                 if (app.distance_resolution_workflow_.phase !=
@@ -11631,14 +11630,29 @@ int App::run_debug_headless_new_element_edit(
                 std::to_string(suffix + 1);
         }
         check("other_track_position_template_found",
-              prepare_wizard("other_track.position.xy"));
+              prepare_wizard("other_track.position"));
         NewElementWizardState& other_position_wizard = app.new_element_wizard_;
+        const MapElementEditFieldState* radius_h =
+            find_inspector_field(other_position_wizard.form, "parameter2");
+        const MapElementEditFieldState* radius_v =
+            find_inspector_field(other_position_wizard.form, "parameter3");
+        check("other_track_position_optional_defaults_enabled",
+              radius_h && radius_v && !radius_h->disabled && !radius_v->disabled);
+        const bool position_optional_dependency_ok =
+            set_optional_argument(other_position_wizard.form, "parameter2", false) &&
+            (radius_v = find_inspector_field(other_position_wizard.form, "parameter3")) &&
+            radius_v->disabled &&
+            !set_optional_argument(other_position_wizard.form, "parameter3", true) &&
+            set_optional_argument(other_position_wizard.form, "parameter2", true);
+        check("other_track_position_optional_dependency_ok",
+              position_optional_dependency_ok);
         const bool other_position_fields_ok =
             set_field(other_position_wizard.form, "distance",
                       format_double(begin_distance, 6)) &&
             set_field(other_position_wizard.form, "trackKey", other_track_key) &&
             set_field(other_position_wizard.form, "parameter0", "2") &&
-            set_field(other_position_wizard.form, "parameter1", "3");
+            set_field(other_position_wizard.form, "parameter1", "3") &&
+            set_field(other_position_wizard.form, "parameter2", "4");
         check("other_track_position_wizard_fields_set", other_position_fields_ok);
         check("other_track_position_wizard_apply_ok",
               other_position_fields_ok && apply_wizard());
@@ -11650,18 +11664,24 @@ int App::run_debug_headless_new_element_edit(
         check("other_track_position_insert_state_ok",
               !other_position_edit_id.empty() &&
               pending_insert(other_position_edit_id) && other_position_row &&
-              app.model_.other_track_changes.size() ==
-                  baseline_other_track_change_count + 1 &&
-              app.model_.other_tracks.size() == baseline_other_track_count + 1 &&
-              normalize_track_lookup_key(table_cell(*other_position_row, "trackKey")) ==
-                  normalize_track_lookup_key(canonical_other_track_key) &&
-              table_cell(*other_position_row, "filePath") == target_file);
+               app.model_.other_track_changes.size() ==
+                   baseline_other_track_change_count + 1 &&
+               app.model_.other_tracks.size() == baseline_other_track_count + 1 &&
+               table_cell_number(*other_position_row, "parameterCount") == 3.0 &&
+               normalize_track_lookup_key(table_cell(*other_position_row, "trackKey")) ==
+                   normalize_track_lookup_key(canonical_other_track_key) &&
+               table_cell(*other_position_row, "filePath") == target_file);
         *out << "other_track_position_edit_id=" << other_position_edit_id << "\n"
              << "stage=other-track-position-created\n";
 
         check("other_track_same_key_template_found",
-              prepare_wizard("other_track.x_interpolate.x"));
+              prepare_wizard("other_track.x_interpolate"));
         NewElementWizardState& other_interpolate_wizard = app.new_element_wizard_;
+        const bool other_interpolate_optional_shape_ok =
+            set_optional_argument(other_interpolate_wizard.form, "parameter1", false) &&
+            find_inspector_field(other_interpolate_wizard.form, "parameter1")->disabled;
+        check("other_track_interpolate_optional_shape_ok",
+              other_interpolate_optional_shape_ok);
         const bool other_interpolate_fields_ok =
             set_field(other_interpolate_wizard.form, "distance",
                       format_double(end_distance, 6)) &&
@@ -11678,15 +11698,48 @@ int App::run_debug_headless_new_element_edit(
         check("other_track_same_key_reuses_track_ok",
               !other_interpolate_edit_id.empty() &&
               pending_insert(other_interpolate_edit_id) && other_interpolate_row &&
-              app.pending_edit_changes_.size() == 2 &&
-              app.model_.other_track_changes.size() ==
-                  baseline_other_track_change_count + 2 &&
-              app.model_.other_tracks.size() == baseline_other_track_count + 1 &&
-              normalize_track_lookup_key(table_cell(*other_interpolate_row, "trackKey")) ==
-                  normalize_track_lookup_key(canonical_other_track_key) &&
-              table_cell(*other_interpolate_row, "filePath") == target_file);
+               app.pending_edit_changes_.size() == 2 &&
+               app.model_.other_track_changes.size() ==
+                   baseline_other_track_change_count + 2 &&
+               app.model_.other_tracks.size() == baseline_other_track_count + 1 &&
+               table_cell_number(*other_interpolate_row, "parameterCount") == 1.0 &&
+               normalize_track_lookup_key(table_cell(*other_interpolate_row, "trackKey")) ==
+                   normalize_track_lookup_key(canonical_other_track_key) &&
+               table_cell(*other_interpolate_row, "filePath") == target_file);
         *out << "other_track_interpolate_edit_id=" << other_interpolate_edit_id << "\n"
              << "stage=other-track-same-key-created\n";
+
+        check("other_track_cant_interpolate_template_found",
+              prepare_wizard("other_track.cant_interpolate"));
+        NewElementWizardState& other_cant_wizard = app.new_element_wizard_;
+        const bool other_cant_optional_shape_ok =
+            set_optional_argument(other_cant_wizard.form, "parameter0", false) &&
+            find_inspector_field(other_cant_wizard.form, "parameter0")->disabled;
+        check("other_track_cant_interpolate_optional_shape_ok",
+              other_cant_optional_shape_ok);
+        const bool other_cant_fields_ok =
+            set_field(other_cant_wizard.form, "distance",
+                      format_double(end_distance + 1.0, 6)) &&
+            set_field(other_cant_wizard.form, "trackKey", other_track_key);
+        check("other_track_cant_interpolate_wizard_fields_set", other_cant_fields_ok);
+        check("other_track_cant_interpolate_wizard_apply_ok",
+              other_cant_fields_ok && apply_wizard());
+        const std::string other_cant_edit_id = pending_insert_id_for(
+            "otherTrack.change", "Track.Cant.Interpolate");
+        const TableRow* other_cant_row = model_row(
+            app.model_.other_track_changes, other_cant_edit_id);
+        check("other_track_cant_interpolate_no_argument_state_ok",
+              !other_cant_edit_id.empty() && pending_insert(other_cant_edit_id) &&
+              other_cant_row && app.pending_edit_changes_.size() == 3 &&
+              app.model_.other_track_changes.size() ==
+                  baseline_other_track_change_count + 3 &&
+              app.model_.other_tracks.size() == baseline_other_track_count + 1 &&
+              table_cell_number(*other_cant_row, "parameterCount") == 0.0 &&
+              normalize_track_lookup_key(table_cell(*other_cant_row, "trackKey")) ==
+                  normalize_track_lookup_key(canonical_other_track_key) &&
+              table_cell(*other_cant_row, "filePath") == target_file);
+        *out << "other_track_cant_edit_id=" << other_cant_edit_id << "\n"
+             << "stage=other-track-cant-no-argument-created\n";
 
         check("other_track_insert_inspector_open_ok",
               app.open_element_inspector(other_position_edit_id, "otherTrack.change"));
@@ -11711,9 +11764,13 @@ int App::run_debug_headless_new_element_edit(
         MapElementDeleteRequest other_position_delete;
         other_position_delete.edit_id = other_position_edit_id;
         other_position_delete.row_kind = "otherTrack.change";
+        MapElementDeleteRequest other_cant_delete;
+        other_cant_delete.edit_id = other_cant_edit_id;
+        other_cant_delete.row_kind = "otherTrack.change";
         check("other_track_same_key_insert_cancel_ok",
               app.delete_element_target(other_interpolate_delete) &&
-              app.delete_element_target(other_position_delete));
+              app.delete_element_target(other_position_delete) &&
+              app.delete_element_target(other_cant_delete));
         check("other_track_insert_cancel_restores_baseline",
               app.pending_edit_changes_.empty() &&
               app.model_.other_track_changes.size() == baseline_other_track_change_count &&

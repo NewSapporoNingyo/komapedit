@@ -1217,6 +1217,9 @@ struct MapElementEditFieldState {
     bool required = true;
     bool read_only = false;
     bool disabled = false;
+    // New-element templates use this to make a trailing source argument
+    // optional without introducing a second form-state model.
+    bool optional_insertion_argument = false;
     bool requires_signal_full_form = false;
 };
 
@@ -2175,7 +2178,9 @@ private:
     void render_element_inspector();
     bool render_map_element_field_control(MapElementEditFieldState& field,
                                           float width);
-    void render_map_element_field_inputs(MapElementInspectorState& inspector);
+    void render_map_element_field_inputs(
+        MapElementInspectorState& inspector,
+        bool render_optional_insertion_argument_toggles = false);
     void render_repeater_structure_keys_edit_ui(MapElementInspectorState& inspector);
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
