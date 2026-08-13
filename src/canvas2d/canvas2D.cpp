@@ -37,6 +37,8 @@
 
 namespace {
 
+constexpr size_t k_measure_spatial_index_min_point_count = 8192;
+
 TrackPoint matrix_row_track_point(const Matrix& points, size_t row, bool has_theta_column) {
     TrackPoint p;
     p.d = points.at(row, 0);
@@ -1278,6 +1280,7 @@ const PlanData& App::current_plan_data() {
     plan_data_cache_.signal_row_visible = signal_row_visible_;
     plan_data_cache_.other_train_path_visible = other_train_path_visible_;
     plan_data_cache_.valid = true;
+    ++plan_data_cache_.generation;
 #ifndef NDEBUG
     ++plan_data_cache_.rebuild_count;
 #endif
@@ -1655,6 +1658,14 @@ struct PlanScreenTransform {
         double ry = view_s * dx + view_c * dy;
         return ImVec2(screen_cx + static_cast<float>(rx * scale),
                       screen_cy + static_cast<float>(ry * scale));
+    }
+
+    std::pair<double, double> screen_to_plan(ImVec2 screen) const {
+        const double rx = (static_cast<double>(screen.x) - screen_cx) / scale;
+        const double ry = (static_cast<double>(screen.y) - screen_cy) / scale;
+        const double dx = view_c * rx + view_s * ry;
+        const double dy = -view_s * rx + view_c * ry;
+        return {cx + dx, cy + dy};
     }
 
     ImVec2 model_to_screen(double x, double y) const {
@@ -2323,18 +2334,134 @@ void App::render_plan_canvas(ImVec2 size) {
     else if (touch.tap) mouse = touch.tap_pos;
     auto nearest_measure_distance = [&]() -> std::optional<double> {
         PlanScreenTransform measure_transform = make_plan_transform(plan_view_, -data.origin_angle, origin, avail);
-        double best = std::numeric_limits<double>::max();
-        const TrackPoint* best_p = nullptr;
-        for (const auto& p : data.own) {
-            ImVec2 sp = measure_transform.plan_to_screen(p.x, p.y);
-            double dist = std::hypot(sp.x - mouse.x, sp.y - mouse.y);
-            if (dist < best) {
-                best = dist;
-                best_p = &p;
+        constexpr double hit_radius_pixels = 30.0;
+        constexpr double hit_radius_squared = hit_radius_pixels * hit_radius_pixels;
+        const double scale = std::abs(measure_transform.scale);
+        if (!(scale > 0.0) || !std::isfinite(scale)) return std::nullopt;
+
+        const double cell_size = hit_radius_pixels / scale;
+        auto cell_for_point = [cell_size](double x, double y) -> std::optional<MeasureHitTestCell> {
+            if (!std::isfinite(x) || !std::isfinite(y) ||
+                !(cell_size > 0.0) || !std::isfinite(cell_size)) {
+                return std::nullopt;
+            }
+            const long double cell_x = std::floor(static_cast<long double>(x) /
+                                                  static_cast<long double>(cell_size));
+            const long double cell_y = std::floor(static_cast<long double>(y) /
+                                                  static_cast<long double>(cell_size));
+            const long double cell_min = static_cast<long double>(std::numeric_limits<long long>::lowest());
+            const long double cell_max = static_cast<long double>(std::numeric_limits<long long>::max());
+            if (!std::isfinite(cell_x) || !std::isfinite(cell_y) ||
+                cell_x <= cell_min || cell_x >= cell_max ||
+                cell_y <= cell_min || cell_y >= cell_max) {
+                return std::nullopt;
+            }
+            return MeasureHitTestCell{static_cast<long long>(cell_x),
+                                      static_cast<long long>(cell_y)};
+        };
+
+#ifndef NDEBUG
+        const bool use_spatial_index =
+            data.own.size() >= k_measure_spatial_index_min_point_count &&
+            !debug_measure_force_bruteforce_;
+        debug_measure_used_spatial_index_ = use_spatial_index;
+#else
+        const bool use_spatial_index =
+            data.own.size() >= k_measure_spatial_index_min_point_count;
+#endif
+        if (use_spatial_index &&
+            (measure_hit_test_cache_.plan_generation != plan_data_cache_.generation ||
+             measure_hit_test_cache_.scale != scale)) {
+            MeasureHitTestCache rebuilt;
+            rebuilt.plan_generation = plan_data_cache_.generation;
+            rebuilt.scale = scale;
+            rebuilt.cell_size = cell_size;
+            rebuilt.cells.reserve(data.own.size() / 4 + 1);
+            for (size_t index = 0; index < data.own.size(); ++index) {
+                const TrackPoint& point = data.own[index];
+                if (auto cell = cell_for_point(point.x, point.y)) {
+                    rebuilt.cells[*cell].push_back(index);
+                } else {
+                    rebuilt.unindexed_points.push_back(index);
+                }
+            }
+#ifndef NDEBUG
+            rebuilt.rebuild_count = measure_hit_test_cache_.rebuild_count + 1;
+#endif
+            measure_hit_test_cache_ = std::move(rebuilt);
+        }
+
+        double best_squared = hit_radius_squared;
+        size_t best_index = std::numeric_limits<size_t>::max();
+        auto consider_point = [&](size_t index) {
+            const TrackPoint& point = data.own[index];
+            const ImVec2 screen = measure_transform.plan_to_screen(point.x, point.y);
+            const double dx = static_cast<double>(screen.x) - mouse.x;
+            const double dy = static_cast<double>(screen.y) - mouse.y;
+            const double distance_squared = dx * dx + dy * dy;
+            if (!std::isfinite(distance_squared)) return;
+            if (distance_squared < best_squared ||
+                (distance_squared == best_squared && index < best_index)) {
+                best_squared = distance_squared;
+                best_index = index;
+            }
+        };
+
+        if (use_spatial_index) {
+            const auto [mouse_x, mouse_y] = measure_transform.screen_to_plan(mouse);
+            if (auto center = cell_for_point(mouse_x, mouse_y)) {
+                for (long long offset_y = -1; offset_y <= 1; ++offset_y) {
+                    for (long long offset_x = -1; offset_x <= 1; ++offset_x) {
+                        if ((offset_x < 0 && center->x == std::numeric_limits<long long>::lowest()) ||
+                            (offset_x > 0 && center->x == std::numeric_limits<long long>::max()) ||
+                            (offset_y < 0 && center->y == std::numeric_limits<long long>::lowest()) ||
+                            (offset_y > 0 && center->y == std::numeric_limits<long long>::max())) {
+                            continue;
+                        }
+                        const MeasureHitTestCell cell{center->x + offset_x, center->y + offset_y};
+                        const auto found = measure_hit_test_cache_.cells.find(cell);
+                        if (found == measure_hit_test_cache_.cells.end()) continue;
+                        for (size_t index : found->second) consider_point(index);
+                    }
+                }
+                for (size_t index : measure_hit_test_cache_.unindexed_points) {
+                    consider_point(index);
+                }
+            } else {
+                for (size_t index = 0; index < data.own.size(); ++index) {
+                    consider_point(index);
+                }
+            }
+        } else {
+            for (size_t index = 0; index < data.own.size(); ++index) {
+                consider_point(index);
             }
         }
-        if (best_p && best <= 30.0) return best_p->d;
-        return std::nullopt;
+
+#ifndef NDEBUG
+        if (debug_measure_validate_bruteforce_) {
+            double brute_best_squared = hit_radius_squared;
+            size_t brute_best_index = std::numeric_limits<size_t>::max();
+            for (size_t index = 0; index < data.own.size(); ++index) {
+                const TrackPoint& point = data.own[index];
+                const ImVec2 screen = measure_transform.plan_to_screen(point.x, point.y);
+                const double dx = static_cast<double>(screen.x) - mouse.x;
+                const double dy = static_cast<double>(screen.y) - mouse.y;
+                const double distance_squared = dx * dx + dy * dy;
+                if (!std::isfinite(distance_squared)) continue;
+                if (distance_squared < brute_best_squared ||
+                    (distance_squared == brute_best_squared && index < brute_best_index)) {
+                    brute_best_squared = distance_squared;
+                    brute_best_index = index;
+                }
+            }
+            debug_measure_validation_passed_ = debug_measure_validation_passed_ &&
+                brute_best_index == best_index;
+            ++debug_measure_query_count_;
+        }
+#endif
+        if (best_index == std::numeric_limits<size_t>::max()) return std::nullopt;
+        return data.own[best_index].d;
     };
     std::optional<double> hovered_measure_distance;
     if (hovered && mode_ == Mode::Measure && !data.own.empty()) {

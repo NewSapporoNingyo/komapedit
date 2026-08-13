@@ -1088,12 +1088,11 @@ void for_each_loaded_body_line(const LoadedText& loaded, Fn&& fn) {
     size_t pos = 0;
     int line_number = loaded.body_start_line;
     while (pos <= loaded.body.size()) {
-        size_t line_end = loaded.body.find('\n', pos);
-        size_t content_end = line_end == std::string::npos ? loaded.body.size() : line_end;
-        if (content_end > pos && loaded.body[content_end - 1] == '\r') --content_end;
+        const TextLineSpan line = text_line_span(loaded.body, pos);
+        const size_t content_end = line.content_end;
         fn(loaded.body.substr(pos, content_end - pos), pos, content_end, line_number);
-        if (line_end == std::string::npos) break;
-        pos = line_end + 1;
+        if (!line.has_terminator()) break;
+        pos = line.next_begin;
         ++line_number;
     }
 }
@@ -1142,6 +1141,7 @@ void put_other(MapContext& ctx, const Value& track_key, const std::string& eleme
                const Value& value, const std::string& flag = "");
 
 void relocate(MapContext& ctx);
+size_t validate_control_point_distribution(double start, double end, double step);
 void generate_geometry(MapContext& ctx, double unitdist,
                        bool has_arb, double arb_start, double arb_end, double arb_step,
                        const std::vector<double>* extra_controlpoints = nullptr,

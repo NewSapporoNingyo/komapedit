@@ -147,8 +147,9 @@ Editable rows must retain source path, include stack, source span, original stat
 ### UI, tables, and rendering
 
 - Keep the Dear ImGui docking layout and current menu/tool concepts.
-- Add every user-visible string in Simplified Chinese, English, and Japanese, with concise toolbar/menu wording.
-- Keep diagnostics in the existing console, in English by default.
+- Add ordinary application UI text in Simplified Chinese, English, and Japanese, with concise toolbar/menu wording and stable ImGui IDs across languages.
+- Keep labels that directly represent BVE map-statement parameters in the official English names or abbreviations (for example, `distance`, `trackKey`, `x`, and `ry`); do not route those labels through localization.
+- Keep every application-generated diagnostic and headless-output message in English. Console window titles, buttons, and other surrounding application UI remain trilingual.
 - Store real preferences in `settings/settings.ini`, recent-map/background alignment in `settings/history.ini`, and layout in `settings/imgui.ini`.
 - Accept only the exact current settings/history sections, keys, and value grammars emitted by the savers. Unknown, obsolete, wrong-section, or malformed entries use defaults; loading an existing file never rewrites it, while an explicit save emits the complete canonical schema.
 - Preserve plan pan/zoom/rotation/fit, measurement, grids, station jumps, coordinate transforms, marker synchronization, context actions, and background-image alignment.
@@ -172,9 +173,11 @@ Useful Debug headless commands include:
 
 ```bat
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
-build\komapedit.exe --debug-headless-plan-bench <map-path> --headless-output build\headless-plan-bench.txt
+build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt
+build\komapedit.exe --debug-headless-scene-loader-contract --headless-output build\scene-loader-contract.txt
+build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output build\diagnostics-popup-bench.txt
 build\komapedit.exe --debug-headless-scene-camera-transfer <map-path> --headless-output build\scene-camera-transfer.txt
 build\komapedit.exe --debug-headless-source-anchors <map-path> --headless-output build\source-anchors.txt
 build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-output build\station-list-edit.txt
@@ -196,6 +199,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 Pass explicit map paths for portable runs. The Repeater-key and new-element-follow-up commands always require one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
 
+The plan benchmark defaults to `--interaction pan`. The two measurement interactions validate the selected hit-test result against a brute-force scan; small point sets retain the exact linear path, while larger sets use the exact spatial grid. `measure-stationary` keeps the pointer fixed and `measure-moving` follows a deterministic path. The scene-loader contract injects model-copy and PutBetween-worker failures and checks cancellation, request reconciliation, and DLL allocation/free balance. The diagnostics-popup benchmark snapshots 100,000 mixed logs, checks concurrent ordering and revision caching, and verifies clipped rendering.
+
 `--debug-headless-other-track-key-edit` requires an explicit map path. It selects a string-key other track with at least two statements, checks whole-track atomicity and global duplicate rejection, then performs dry run, memory Apply, Reset, a second Apply, and reload. `--commit` writes the validated working copy and intentionally leaves authorized route changes in place for physical diff inspection; the report includes the old/new keys, every target, changed files, dependency-reference preservation, and source hashes.
 
 `--debug-headless-new-element-edit` drives the production New Map Element wizard, Inspector Apply, and delete/cancel paths. It creates a paired Repeater, changes a normal Begin parameter, the End distance, and the key, cancels the chain, then repeats the follow-up edit/cancel flow for a single-row Structure element. The command is intentionally memory-only: it rejects `--commit`, resets the working copy, reloads from disk, and reports ledger members, stable edit IDs, semantic row checks, and source hashes before returning PASS/FAIL.
@@ -214,4 +219,3 @@ Because `komapedit.exe` is a GUI-subsystem executable, PowerShell validation tha
 - Fetch ImGui from its docking branch and ImPlot from upstream.
 - Never remove or bypass license/notice files. A new dependency requires CMake, developer documentation, and third-party notice updates.
 - Route release export is separate from `build_release.bat`; when implemented it must expand includes, optionally constantize expressions, copy only used resources, report results, and protect development directories through temporary output.
-

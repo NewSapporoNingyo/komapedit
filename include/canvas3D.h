@@ -288,6 +288,20 @@ struct Canvas3DSceneStats {
     double window_forward_m = 1200.0;
 };
 
+#ifndef NDEBUG
+struct Canvas3DSceneLoaderContractResult {
+    bool normal_worker = false;
+    bool copy_exception = false;
+    bool put_between_exception = false;
+    bool subset_requeue = false;
+    bool removal_only_cancel = false;
+    bool release_balance = false;
+    size_t successful_load_count = 0;
+    size_t free_count = 0;
+    std::string error;
+};
+#endif
+
 struct Canvas3DSceneCameraPose {
     bool valid = false;
     double distance = 0.0;
@@ -507,6 +521,8 @@ public:
     void process_scene_loading();
 #ifndef NDEBUG
     void set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled);
+    Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
+        const std::string& valid_model_path);
     Canvas3DSceneFogDebugState debug_scene_fog_state() const;
     bool debug_read_scene_render_pixels(std::vector<std::uint8_t>& rgba,
                                         int& width, int& height,

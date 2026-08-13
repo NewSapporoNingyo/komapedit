@@ -626,11 +626,63 @@ std::vector<double> sorted_unique(std::vector<double> values) {
     return values;
 }
 
+namespace {
+
+constexpr size_t k_max_control_point_distribution_count = 10000000;
+constexpr size_t k_max_repeater_scene_sample_count = 1000000;
+
+size_t checked_arange_count(double start,
+                            double end,
+                            double step,
+                            long double end_margin,
+                            size_t supported_limit,
+                            const char* description) {
+    if (!std::isfinite(start) || !std::isfinite(end) || !std::isfinite(step)) {
+        throw std::runtime_error(std::string(description) +
+                                 " start, end, and step must be finite");
+    }
+    if (!(step > 0.0)) {
+        throw std::runtime_error(std::string(description) +
+                                 " step must be greater than zero");
+    }
+    if (!(start + step > start)) {
+        throw std::runtime_error(std::string(description) +
+                                 " step does not advance the start value");
+    }
+
+    const long double exclusive_end = static_cast<long double>(end) + end_margin;
+    const long double begin = static_cast<long double>(start);
+    if (!(exclusive_end > begin)) return 0;
+    const long double requested = std::ceil(
+        (exclusive_end - begin) / static_cast<long double>(step));
+    if (!std::isfinite(requested) ||
+        requested > static_cast<long double>(supported_limit)) {
+        throw std::runtime_error(
+            std::string(description) + " count exceeds supported limit of " +
+            std::to_string(supported_limit));
+    }
+    return static_cast<size_t>(requested);
+}
+
+} // namespace
+
+size_t validate_control_point_distribution(double start, double end, double step) {
+    return checked_arange_count(
+        start, end, step, 0.0L, k_max_control_point_distribution_count,
+        "control-point distribution");
+}
+
 void append_arange(std::vector<double>& values, double start, double end, double step) {
-    if (step <= 0.0) return;
-    int guard = 0;
-    for (double v = start; v < end && guard < 10000000; v += step, ++guard) {
-        values.push_back(v);
+    const size_t count = validate_control_point_distribution(start, end, step);
+    if (count > values.max_size() - values.size()) {
+        throw std::runtime_error("control-point distribution exceeds vector capacity");
+    }
+    values.reserve(values.size() + count);
+    for (size_t index = 0; index < count; ++index) {
+        const long double candidate = static_cast<long double>(start) +
+            static_cast<long double>(index) * static_cast<long double>(step);
+        if (!(candidate < static_cast<long double>(end))) break;
+        values.push_back(static_cast<double>(candidate));
     }
 }
 
@@ -1173,12 +1225,16 @@ std::vector<double> build_scene_adaptive_controlpoints(const MapContext& ctx,
         if (end_distance < repeater.distance) return;
         append_scene_model_distance(values, repeater.distance, repeater.span, min_distance, max_distance);
         append_scene_model_distance(values, end_distance, repeater.span, min_distance, max_distance);
-        if (repeater.interval <= 1e-9 || !std::isfinite(repeater.interval)) return;
-
-        size_t guard = 0;
-        for (double distance = repeater.distance; distance < end_distance + 1e-6; distance += repeater.interval) {
+        const size_t sample_count = checked_arange_count(
+            repeater.distance, end_distance, repeater.interval, 1.0e-6L,
+            k_max_repeater_scene_sample_count, "repeater scene sample");
+        for (size_t index = 0; index < sample_count; ++index) {
+            const long double candidate = static_cast<long double>(repeater.distance) +
+                static_cast<long double>(index) *
+                    static_cast<long double>(repeater.interval);
+            if (!(candidate < static_cast<long double>(end_distance) + 1.0e-6L)) break;
+            const double distance = static_cast<double>(candidate);
             append_scene_model_distance(values, distance, repeater.span, min_distance, max_distance);
-            if (++guard > 1000000) break;
         }
     };
 

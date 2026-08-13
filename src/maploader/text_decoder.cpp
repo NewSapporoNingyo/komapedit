@@ -26,6 +26,38 @@
 
 namespace kme::maploader {
 
+TextLineSpan text_line_span(std::string_view text, size_t begin) noexcept {
+    begin = std::min(begin, text.size());
+    size_t content_end = begin;
+    while (content_end < text.size() &&
+           text[content_end] != '\r' && text[content_end] != '\n') {
+        ++content_end;
+    }
+
+    size_t next_begin = content_end;
+    if (next_begin < text.size()) {
+        if (text[next_begin] == '\r' && next_begin + 1 < text.size() &&
+            text[next_begin + 1] == '\n') {
+            next_begin += 2;
+        } else {
+            ++next_begin;
+        }
+    }
+    return {content_end, next_begin};
+}
+
+size_t text_line_start_at(std::string_view text, size_t offset) noexcept {
+    offset = std::min(offset, text.size());
+    size_t line_start = 0;
+    while (line_start < text.size()) {
+        const TextLineSpan line = text_line_span(text, line_start);
+        if (offset < line.next_begin || offset <= line.content_end) return line_start;
+        if (!line.has_terminator()) break;
+        line_start = line.next_begin;
+    }
+    return line_start;
+}
+
 FileOpenFailureKind classify_file_open_failure(const std::filesystem::path& path) {
     std::error_code error;
     const bool exists = std::filesystem::exists(path, error);
@@ -234,8 +266,9 @@ std::string decode_text_bytes(const std::string& bytes, const std::string& encod
 }
 
 std::string first_line_ascii(const std::string& bytes) {
-    size_t end = bytes.find('\n');
-    if (end == std::string::npos) end = std::min<size_t>(bytes.size(), 512);
+    const TextLineSpan first_line = text_line_span(bytes, 0);
+    size_t end = first_line.content_end;
+    if (!first_line.has_terminator()) end = std::min<size_t>(end, 512);
     std::string line = bytes.substr(0, end);
     for (char& ch : line) {
         unsigned char c = static_cast<unsigned char>(ch);

@@ -28,6 +28,7 @@ struct HeadlessPlanBenchmarkOptions {
     double unit_distance = 25.0;
     double pan_pixels = 8.0;
     double max_frame_ms = 16.667;
+    std::string interaction = "pan";
     bool profile_stages = false;
     std::string error;
 };
@@ -188,6 +189,28 @@ struct HeadlessSettingsPersistenceOptions {
     std::string error;
 };
 
+struct HeadlessDiagnosticsPopupBenchOptions {
+    bool requested = false;
+    std::string output_path;
+    std::string error;
+};
+
+struct HeadlessSceneLoaderContractOptions {
+    bool requested = false;
+    std::string output_path;
+    std::string error;
+};
+
+struct HeadlessResourceSafetyContractResult {
+    bool image_layout = false;
+    bool image_decode = false;
+    bool numeric_conversion = false;
+};
+
+HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
+    const std::string& valid_image_path,
+    const std::string& missing_image_path);
+
 std::vector<std::string> command_line_args_utf8();
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
@@ -220,6 +243,10 @@ HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std
 HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<std::string>& args);
 HeadlessSettingsPersistenceOptions parse_headless_settings_persistence_options(
     const std::vector<std::string>& args);
+HeadlessDiagnosticsPopupBenchOptions parse_headless_diagnostics_popup_bench_options(
+    const std::vector<std::string>& args);
+HeadlessSceneLoaderContractOptions parse_headless_scene_loader_contract_options(
+    const std::vector<std::string>& args);
 int run_headless_load_map(const HeadlessLoadOptions& options);
 int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOptions& options);
 int run_debug_headless_station_list_edit(const HeadlessStationListEditOptions& options);
@@ -230,4 +257,6 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options);
 int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options);
 int run_debug_headless_settings_persistence(
     const HeadlessSettingsPersistenceOptions& options);
+int run_debug_headless_scene_loader_contract(
+    const HeadlessSceneLoaderContractOptions& options);
 #endif

@@ -2536,11 +2536,11 @@ void App::render_othertracks_window() {
             }
             ImGui::EndDisabled();
             if (ImGui::BeginTable("othertracks", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
-                ImGui::TableSetupColumn("Show");
-                ImGui::TableSetupColumn("Key");
-                ImGui::TableSetupColumn("From");
-                ImGui::TableSetupColumn("To");
-                ImGui::TableSetupColumn("Color");
+                ImGui::TableSetupColumn((tr("column.show") + "###OtherTracksShow").c_str());
+                ImGui::TableSetupColumn((tr("column.key") + "###OtherTracksKey").c_str());
+                ImGui::TableSetupColumn((tr("column.from") + "###OtherTracksFrom").c_str());
+                ImGui::TableSetupColumn((tr("column.to") + "###OtherTracksTo").c_str());
+                ImGui::TableSetupColumn((tr("column.color") + "###OtherTracksColor").c_str());
                 setup_fixed_table_header();
                 ImGui::TableHeadersRow();
                 ImGuiListClipper clipper;

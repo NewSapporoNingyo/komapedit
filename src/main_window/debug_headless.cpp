@@ -26,6 +26,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -45,6 +46,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 #ifndef NDEBUG
@@ -327,6 +329,16 @@ HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::ve
                                      [](double value) { return value > 0.0 && std::isfinite(value); })) {
                 return options;
             }
+        } else if (arg == "--interaction") {
+            const std::string* value = take_option_value(
+                args, i, arg, "pan, measure-stationary, or measure-moving", options.error);
+            if (!value) return options;
+            if (*value != "pan" && *value != "measure-stationary" &&
+                *value != "measure-moving") {
+                options.error = "--interaction must be pan, measure-stationary, or measure-moving";
+                return options;
+            }
+            options.interaction = *value;
         } else if (arg == "--headless-output") {
             const std::string* value = take_option_value(args, i, arg, "a path", options.error);
             if (!value) return options;
@@ -761,6 +773,40 @@ HeadlessSettingsPersistenceOptions parse_headless_settings_persistence_options(
     return options;
 }
 
+HeadlessDiagnosticsPopupBenchOptions parse_headless_diagnostics_popup_bench_options(
+    const std::vector<std::string>& args) {
+    HeadlessDiagnosticsPopupBenchOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-diagnostics-popup-bench") {
+            options.requested = true;
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    return options;
+}
+
+HeadlessSceneLoaderContractOptions parse_headless_scene_loader_contract_options(
+    const std::vector<std::string>& args) {
+    HeadlessSceneLoaderContractOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-scene-loader-contract") {
+            options.requested = true;
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    return options;
+}
+
 std::uint64_t hash_double_bits(double value) {
     if (value == 0.0) value = 0.0;
     std::uint64_t bits = 0;
@@ -1140,6 +1186,119 @@ int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options) {
     *out << "result=" << (exit_code == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();
     return exit_code;
+}
+
+int run_debug_headless_scene_loader_contract(
+    const HeadlessSceneLoaderContractOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-scene-loader-contract\n"
+         << "stage=fixture-start\n";
+    struct TempDirectory {
+        std::filesystem::path path;
+        ~TempDirectory() {
+            std::error_code error;
+            std::filesystem::remove_all(path, error);
+        }
+    } temp;
+    temp.path = std::filesystem::temp_directory_path() /
+        ("komapedit-scene-loader-contract-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code directory_error;
+    std::filesystem::create_directories(temp.path, directory_error);
+    if (directory_error) {
+        *out << "error=failed to create scene loader contract fixture: "
+             << directory_error.message() << "\nresult=FAIL\n";
+        return 2;
+    }
+    const std::filesystem::path model_path = temp.path / "triangle.x";
+    {
+        std::ofstream model(model_path, std::ios::binary | std::ios::trunc);
+        model << "xof 0303txt 0032\n"
+                 "Mesh {\n"
+                 "3;\n"
+                 "0.0;0.0;0.0;,\n"
+                 "1.0;0.0;0.0;,\n"
+                 "0.0;1.0;0.0;;\n"
+                 "1;\n"
+                 "3;0,1,2;;\n"
+                 "}\n";
+        if (!model) {
+            *out << "error=failed to write scene loader contract fixture\nresult=FAIL\n";
+            return 2;
+        }
+    }
+    const std::filesystem::path image_path = temp.path / "pixel.bmp";
+    constexpr std::array<unsigned char, 58> bitmap_bytes = {
+        0x42, 0x4d, 0x3a, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x36, 0x00, 0x00, 0x00, 0x28, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x33, 0x22,
+        0x11, 0xff,
+    };
+    {
+        std::ofstream image(image_path, std::ios::binary | std::ios::trunc);
+        image.write(reinterpret_cast<const char*>(bitmap_bytes.data()),
+                    static_cast<std::streamsize>(bitmap_bytes.size()));
+        if (!image) {
+            *out << "error=failed to write image decoder contract fixture\nresult=FAIL\n";
+            return 2;
+        }
+    }
+    *out << "stage=fixture-complete\n"
+         << "stage=worker-contract-start\n";
+    out->flush();
+
+    ScopedComApartment com_apartment;
+    if (!com_apartment.ready()) {
+        *out << "error=COM initialization failed for image decoder contract\n"
+             << "result=FAIL\n";
+        return 2;
+    }
+    Canvas3D canvas(nullptr);
+    const Canvas3DSceneLoaderContractResult contract =
+        canvas.debug_run_scene_loader_contract(model_path.u8string());
+    const HeadlessResourceSafetyContractResult resource_safety =
+        run_debug_resource_safety_contract(
+            image_path.u8string(), (temp.path / "missing.bmp").u8string());
+    const bool passed = contract.error.empty() && contract.normal_worker &&
+        contract.copy_exception && contract.put_between_exception &&
+        contract.subset_requeue && contract.removal_only_cancel &&
+        contract.release_balance && resource_safety.image_layout &&
+        resource_safety.image_decode && resource_safety.numeric_conversion;
+    *out << "stage=worker-contract-complete\n"
+         << "normal_worker=" << (contract.normal_worker ? "PASS" : "FAIL") << "\n"
+         << "copy_exception=" << (contract.copy_exception ? "PASS" : "FAIL") << "\n"
+         << "put_between_exception="
+         << (contract.put_between_exception ? "PASS" : "FAIL") << "\n"
+         << "subset_requeue=" << (contract.subset_requeue ? "PASS" : "FAIL") << "\n"
+         << "removal_only_cancel="
+         << (contract.removal_only_cancel ? "PASS" : "FAIL") << "\n"
+         << "release_balance=" << (contract.release_balance ? "PASS" : "FAIL")
+         << " successful_loads=" << contract.successful_load_count
+         << " frees=" << contract.free_count << "\n"
+         << "image_layout=" << (resource_safety.image_layout ? "PASS" : "FAIL") << "\n"
+         << "image_decode=" << (resource_safety.image_decode ? "PASS" : "FAIL") << "\n"
+         << "numeric_conversion="
+         << (resource_safety.numeric_conversion ? "PASS" : "FAIL") << "\n";
+    if (!contract.error.empty()) *out << "error=" << contract.error << "\n";
+    *out << "result=" << (passed ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return passed ? 0 : 3;
 }
 
 int run_debug_headless_settings_persistence(
@@ -1537,6 +1696,10 @@ int App::run_debug_headless_source_anchors(const std::string& path, double unit_
     }
 
     *out << "file_count=" << model.edit_files.size() << "\n";
+    for (size_t index = 0; index < model.edit_files.size(); ++index) {
+        *out << "source_file_" << index << "="
+             << model.edit_files[index].file_path << "\n";
+    }
     *out << "map_file_count=" << map_files.size() << "\n";
     *out << "list_file_count=" << list_files.size() << "\n";
     *out << "statement_count=" << model.edit_statements.size() << "\n";
@@ -8435,10 +8598,210 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
     ImGui::DestroyContext();
     return passed ? 0 : 3;
 }
+int App::run_debug_headless_diagnostics_popup_benchmark(
+    const HeadlessDiagnosticsPopupBenchOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-diagnostics-popup-bench log_lines=100000\n"
+         << "stage=setup-start\n";
+    out->flush();
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(900.0f, 500.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    *out << "stage=imgui-ready\n";
+    out->flush();
+
+    int exit_code = 0;
+    try {
+        UserSettings settings;
+        App app(nullptr, settings, 1.0f, false, false);
+        *out << "stage=app-ready\n";
+        out->flush();
+        {
+            std::lock_guard<std::mutex> lock(app.log_mutex_);
+            app.logs_.clear();
+            app.error_count_.store(0, std::memory_order_relaxed);
+            app.warn_count_.store(0, std::memory_order_relaxed);
+            ++app.log_revision_;
+            app.diagnostics_snapshot_revision_ =
+                std::numeric_limits<std::uint64_t>::max();
+            app.diagnostics_snapshot_.clear();
+        }
+        *out << "stage=logs-cleared\n";
+        out->flush();
+
+        constexpr size_t log_line_count = 100000;
+        for (size_t index = 0; index < log_line_count; ++index) {
+            const LogSeverity severity = index % 3 == 0
+                ? LogSeverity::Info
+                : index % 3 == 1 ? LogSeverity::Warning : LogSeverity::Error;
+            const char* prefix = severity == LogSeverity::Info
+                ? "[info]" : severity == LogSeverity::Warning ? "[warn]" : "[error]";
+            app.add_log(severity, std::string(prefix) +
+                                      " diagnostics contract line " +
+                                      std::to_string(index));
+            if ((index + 1) % 10000 == 0) {
+                *out << "stage=logs-progress count=" << index + 1 << "\n";
+                out->flush();
+            }
+        }
+        *out << "stage=logs-ready\n";
+        out->flush();
+
+        const auto snapshot_started = std::chrono::steady_clock::now();
+        app.refresh_diagnostics_snapshot();
+        const double snapshot_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - snapshot_started).count();
+        const size_t expected_initial = (log_line_count / 3) * 2;
+        bool count_pass = app.diagnostics_snapshot_.size() == expected_initial;
+
+        const LogLine* snapshot_data = app.diagnostics_snapshot_.data();
+        const std::uint64_t snapshot_revision = app.diagnostics_snapshot_revision_;
+        const auto cached_started = std::chrono::steady_clock::now();
+        app.refresh_diagnostics_snapshot();
+        const double cached_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - cached_started).count();
+        const bool cached_pass = app.diagnostics_snapshot_revision_ == snapshot_revision &&
+            app.diagnostics_snapshot_.data() == snapshot_data;
+        *out << "stage=snapshot-ready\n";
+        out->flush();
+
+        std::atomic<bool> writers_start{false};
+        std::vector<std::thread> writers;
+        for (int writer = 0; writer < 2; ++writer) {
+            writers.emplace_back([&app, &writers_start, writer]() {
+                while (!writers_start.load(std::memory_order_acquire)) std::this_thread::yield();
+                for (int index = 0; index < 200; ++index) {
+                    const LogSeverity severity = index % 2 == 0
+                        ? LogSeverity::Warning : LogSeverity::Error;
+                    app.add_log(severity,
+                                std::string(severity == LogSeverity::Warning
+                                                ? "[warn]" : "[error]") +
+                                    " concurrent diagnostics writer " +
+                                    std::to_string(writer) + " line " +
+                                    std::to_string(index));
+                }
+            });
+        }
+        writers_start.store(true, std::memory_order_release);
+        for (std::thread& writer : writers) writer.join();
+        app.refresh_diagnostics_snapshot();
+        *out << "stage=concurrent-writers-ready\n";
+        out->flush();
+
+        bool order_pass = true;
+        size_t filtered_count = 0;
+        {
+            std::lock_guard<std::mutex> lock(app.log_mutex_);
+            for (const LogLine& line : app.logs_) {
+                if (line.severity == LogSeverity::Info) continue;
+                if (filtered_count >= app.diagnostics_snapshot_.size()) {
+                    order_pass = false;
+                    break;
+                }
+                const LogLine& snapshot_line = app.diagnostics_snapshot_[filtered_count++];
+                if (snapshot_line.severity != line.severity ||
+                    snapshot_line.text != line.text) {
+                    order_pass = false;
+                    break;
+                }
+            }
+            order_pass = order_pass &&
+                filtered_count == app.diagnostics_snapshot_.size() &&
+                app.diagnostics_snapshot_revision_ == app.log_revision_;
+        }
+        count_pass = count_pass && app.logs_.size() == k_max_console_log_lines;
+        *out << "stage=order-check-ready\n";
+        out->flush();
+
+        auto render_clipped_frame = [&]() {
+            size_t submitted = 0;
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
+            ImGui::Begin("DiagnosticsPopupContract", nullptr,
+                         ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoSavedSettings);
+            ImGui::BeginChild("DiagnosticsPopupContractList", ImVec2(860.0f, 440.0f));
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(app.diagnostics_snapshot_.size()));
+            while (clipper.Step()) {
+                for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
+                    ImGui::TextUnformatted(
+                        app.diagnostics_snapshot_[static_cast<size_t>(index)].text.c_str());
+                    ++submitted;
+                }
+            }
+            ImGui::EndChild();
+            ImGui::End();
+            ImGui::EndFrame();
+            return submitted;
+        };
+        (void)render_clipped_frame();
+        *out << "stage=render-warmup-ready\n";
+        out->flush();
+        std::vector<double> frame_ms;
+        frame_ms.reserve(30);
+        size_t maximum_submitted = 0;
+        for (int frame = 0; frame < 30; ++frame) {
+            const auto started = std::chrono::steady_clock::now();
+            maximum_submitted = std::max(maximum_submitted, render_clipped_frame());
+            frame_ms.push_back(std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count());
+        }
+        const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
+        const bool clipping_pass = maximum_submitted > 0 &&
+            maximum_submitted < app.diagnostics_snapshot_.size();
+        const bool passed = count_pass && cached_pass && order_pass && clipping_pass;
+
+        *out << std::fixed << std::setprecision(3)
+             << "snapshot warning_error_count=" << app.diagnostics_snapshot_.size()
+             << " build_ms=" << snapshot_ms
+             << " cached_refresh_ms=" << cached_ms
+             << " concurrent_order=" << (order_pass ? "PASS" : "FAIL")
+             << " cached_revision=" << (cached_pass ? "PASS" : "FAIL") << "\n"
+             << "render submitted_max=" << maximum_submitted
+             << " median_ms=" << timing.median_ms
+             << " p95_ms=" << timing.p95_ms
+             << " clipping=" << (clipping_pass ? "PASS" : "FAIL") << "\n"
+             << "result=" << (passed ? "PASS" : "FAIL") << "\n";
+        if (!passed) exit_code = 3;
+    } catch (const std::exception& error) {
+        *out << "error=diagnostics popup benchmark failed: " << error.what() << "\n"
+             << "result=FAIL\n";
+        exit_code = 4;
+    } catch (...) {
+        *out << "error=diagnostics popup benchmark failed: unknown error\n"
+             << "result=FAIL\n";
+        exit_code = 4;
+    }
+    out->flush();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    return exit_code;
+}
+
 int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                            double unit_distance, double pan_pixels,
                                            double max_frame_ms, const std::string& output_path,
-                                           bool profile_stages) {
+                                           bool profile_stages,
+                                           const std::string& interaction) {
     std::ofstream output_file;
     std::ostream* out = &std::cout;
     if (!output_path.empty()) {
@@ -8455,6 +8818,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
          << "\" frames=" << frames
          << " unit_distance=" << format_double(unit_distance, 3)
          << " pan_pixels=" << format_double(pan_pixels, 3)
+         << " interaction=" << interaction
          << " max_frame_ms=" << format_double(max_frame_ms, 3) << "\n";
     *out << "stage=load-start\n";
     out->flush();
@@ -8494,6 +8858,11 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         app.plot_max_ = app.dmax_;
         app.rebuild_marker_overlay_cache();
         app.reset_marker_visibility();
+        const bool measure_interaction = interaction != "pan";
+        if (measure_interaction) {
+            app.mode_ = Mode::Measure;
+            io.MousePos = ImVec2(640.0f, 360.0f);
+        }
         std::fill(app.other_train_path_visible_.begin(), app.other_train_path_visible_.end(), 1);
         std::fill(app.signal_row_visible_.begin(), app.signal_row_visible_.end(), 1);
         std::fill(app.repeater_row_visible_.begin(), app.repeater_row_visible_.end(), 1);
@@ -8596,9 +8965,17 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
 
         *out << "stage=warmup-start\n";
         out->flush();
-        for (int frame = 0; frame < 1; ++frame) {
+#ifndef NDEBUG
+        app.debug_measure_validate_bruteforce_ = measure_interaction;
+#endif
+        // The first headless frame establishes the ImGui window hover state; the
+        // second frame exercises the same measurement path used during normal input.
+        for (int frame = 0; frame < 2; ++frame) {
             render_frame();
         }
+#ifndef NDEBUG
+        app.debug_measure_validate_bruteforce_ = false;
+#endif
         *out << "stage=warmup-complete\n";
         out->flush();
 
@@ -8615,8 +8992,14 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         app.plan_view_.pan_by_screen_delta(ImVec2(23.0f, -17.0f));
         app.plan_view_.rotation += 0.125;
         const PlanData& panned_data = app.current_plan_data();
-        const bool pan_rotation_hit = app.plan_data_cache_.rebuild_count == hit_count_before &&
+        bool pan_rotation_hit = app.plan_data_cache_.rebuild_count == hit_count_before &&
             plan_data_summary_matches(panned_data, uncached_initial);
+        const std::uint64_t measure_rebuild_before_pan =
+            app.measure_hit_test_cache_.rebuild_count;
+        if (measure_interaction) render_frame();
+        const bool measure_pan_rotation_hit = !measure_interaction ||
+            app.measure_hit_test_cache_.rebuild_count == measure_rebuild_before_pan;
+        pan_rotation_hit = pan_rotation_hit && measure_pan_rotation_hit;
         app.plan_view_.cx = saved_center_x;
         app.plan_view_.cy = saved_center_y;
         app.plan_view_.rotation = saved_rotation;
@@ -8761,9 +9144,12 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         source_revision_pass = source_revision_pass &&
             plan_data_summary_matches(rebuilt_source_data, rebuilt_source_uncached);
 
+        const bool measure_index_pass = !measure_interaction ||
+            (app.debug_measure_validation_passed_ && app.debug_measure_query_count_ > 0 &&
+             measure_pan_rotation_hit);
         const bool cache_checks_pass = uncached_match && stable_hit && pan_rotation_hit &&
             marker_toggles_pass && curve_toggle_pass && row_visibility_pass &&
-            keyed_state_pass && source_revision_pass;
+            keyed_state_pass && source_revision_pass && measure_index_pass;
         *out << "plan_cache_checks uncached_match=" << (uncached_match ? "PASS" : "FAIL")
              << " stable_hit=" << (stable_hit ? "PASS" : "FAIL")
              << " pan_rotation_hit=" << (pan_rotation_hit ? "PASS" : "FAIL")
@@ -8772,13 +9158,32 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
              << " row_visibility=" << (row_visibility_pass ? "PASS" : "FAIL")
              << " keyed_state=" << (keyed_state_pass ? "PASS" : "FAIL")
              << " source_revision=" << (source_revision_pass ? "PASS" : "FAIL")
+             << " measure_index=" << (measure_index_pass ? "PASS" : "FAIL")
+             << " measure_strategy="
+             << (app.debug_measure_used_spatial_index_ ? "grid" : "linear")
+             << " measure_queries=" << app.debug_measure_query_count_
+             << " measure_index_rebuilds=" << app.measure_hit_test_cache_.rebuild_count
              << " result=" << (cache_checks_pass ? "PASS" : "FAIL") << "\n";
 
         std::vector<double> frame_ms;
         frame_ms.reserve(static_cast<size_t>(frames));
+        auto set_interaction_input = [&](int frame) {
+            if (interaction == "pan") return;
+            if (interaction == "measure-moving") {
+                io.MousePos = ImVec2(
+                    50.0f + std::fmod(static_cast<float>(frame) * 37.0f, 1180.0f),
+                    70.0f + std::fmod(static_cast<float>(frame) * 23.0f, 570.0f));
+            } else {
+                io.MousePos = ImVec2(640.0f, 360.0f);
+            }
+        };
         for (int frame = 0; frame < frames; ++frame) {
-            double step = (frame % 120 < 60) ? pan_pixels : -pan_pixels;
-            app.plan_view_.pan_by_screen_delta(ImVec2(static_cast<float>(step), 0.0f));
+            if (interaction == "pan") {
+                const double step = (frame % 120 < 60) ? pan_pixels : -pan_pixels;
+                app.plan_view_.pan_by_screen_delta(ImVec2(static_cast<float>(step), 0.0f));
+            } else {
+                set_interaction_input(frame);
+            }
             auto started_at = std::chrono::steady_clock::now();
             render_frame();
             auto finished_at = std::chrono::steady_clock::now();
@@ -8788,7 +9193,35 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         out->flush();
 
         const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
-        bool pass = cache_checks_pass && timing.p95_ms <= max_frame_ms;
+        const bool measured_with_spatial_index =
+            measure_interaction && app.debug_measure_used_spatial_index_;
+        FrameTimingStats brute_reference_timing;
+        bool measure_speedup_pass = true;
+        if (measured_with_spatial_index) {
+            app.debug_measure_force_bruteforce_ = true;
+            set_interaction_input(0);
+            render_frame();
+            std::vector<double> brute_frame_ms;
+            brute_frame_ms.reserve(static_cast<size_t>(frames));
+            for (int frame = 0; frame < frames; ++frame) {
+                set_interaction_input(frame);
+                const auto started_at = std::chrono::steady_clock::now();
+                render_frame();
+                brute_frame_ms.push_back(std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started_at).count());
+            }
+            app.debug_measure_force_bruteforce_ = false;
+            brute_reference_timing = calculate_frame_timing_stats(brute_frame_ms);
+            if (app.model_.own.rows >= 250000) {
+                measure_speedup_pass = timing.p95_ms <= brute_reference_timing.p95_ms * 0.5;
+            }
+        } else if (measure_interaction) {
+            // The selected small-route path is already the original exhaustive
+            // scan, so a second timed pass would only measure run-to-run noise.
+            brute_reference_timing = timing;
+        }
+        bool pass = cache_checks_pass && timing.p95_ms <= max_frame_ms &&
+            measure_speedup_pass;
 
         *out << std::fixed << std::setprecision(3)
              << "plan_bench avg_ms=" << timing.average_ms
@@ -8797,6 +9230,21 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
              << " max_ms=" << timing.maximum_ms
              << " p95_fps=" << timing.p95_fps
              << " result=" << (pass ? "PASS" : "FAIL") << "\n";
+        if (measure_interaction) {
+            const double reduction_percent = brute_reference_timing.p95_ms > 0.0
+                ? (1.0 - timing.p95_ms / brute_reference_timing.p95_ms) * 100.0
+                : 0.0;
+            *out << "measure_bruteforce_reference strategy="
+                 << (measured_with_spatial_index ? "grid" : "linear")
+                 << " p95_ms="
+                 << brute_reference_timing.p95_ms
+                 << " selected_p95_ms=" << timing.p95_ms
+                 << " reduction_percent=" << reduction_percent
+                 << " large_fixture_requirement="
+                 << (app.model_.own.rows >= 250000
+                         ? (measure_speedup_pass ? "PASS" : "FAIL")
+                         : "N/A") << "\n";
+        }
         if (!pass) exit_code = 3;
     } catch (const std::exception& e) {
         std::cerr << "debug headless plan benchmark failed: " << e.what() << "\n";

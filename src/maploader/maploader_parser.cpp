@@ -111,10 +111,10 @@ private:
             if (std::isspace(c) || c == '\\' || c == '"') {
                 ++pos_;
             } else if (c == '#') {
-                while (!eof() && src_[pos_] != '\n') ++pos_;
+                pos_ = text_line_span(src_, pos_).next_begin;
             } else if (starts_with(pos_, "//")) {
                 pos_ += 2;
-                while (!eof() && src_[pos_] != '\n') ++pos_;
+                pos_ = text_line_span(src_, pos_).next_begin;
             } else if (starts_with(pos_, "\xC2\xA0")) {
                 pos_ += 2;
             } else if (starts_with(pos_, "\xE3\x80\x80")) {
@@ -254,10 +254,10 @@ private:
             if (std::isspace(c) || c == '\\' || c == '"') {
                 ++p;
             } else if (c == '#') {
-                while (p < src_.size() && src_[p] != '\n') ++p;
+                p = text_line_span(src_, p).next_begin;
             } else if (src_.compare(p, 2, "//") == 0) {
                 p += 2;
-                while (p < src_.size() && src_[p] != '\n') ++p;
+                p = text_line_span(src_, p).next_begin;
             } else {
                 break;
             }

@@ -6,8 +6,10 @@
 
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace kme::maploader {
 
@@ -16,6 +18,16 @@ enum class FileOpenFailureKind {
     ExistsButCannotOpen,
     StatusUnknown,
 };
+
+struct TextLineSpan {
+    size_t content_end = 0;
+    size_t next_begin = 0;
+
+    bool has_terminator() const noexcept { return next_begin > content_end; }
+};
+
+TextLineSpan text_line_span(std::string_view text, size_t begin) noexcept;
+size_t text_line_start_at(std::string_view text, size_t offset) noexcept;
 
 std::string path_to_utf8(const std::filesystem::path& path);
 std::filesystem::path path_from_utf8(const std::string& utf8);

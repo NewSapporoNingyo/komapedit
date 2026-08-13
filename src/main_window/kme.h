@@ -22,6 +22,7 @@
 #include <deque>
 #include <filesystem>
 #include <iosfwd>
+#include <limits>
 #include <memory>
 #include <map>
 #include <mutex>
@@ -30,6 +31,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -59,6 +61,7 @@ struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
+struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
 
 
@@ -1538,14 +1541,18 @@ public:
     void render();
     void add_log(std::string text);
     void add_log(LogSeverity severity, std::string text);
+    void refresh_diagnostics_snapshot();
     void request_exit();
     bool on_frame_presented();
 #ifndef NDEBUG
     static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                                  double unit_distance, double pan_pixels,
                                                  double max_frame_ms, const std::string& output_path,
-                                                 bool profile_stages);
+                                                 bool profile_stages,
+                                                 const std::string& interaction);
     static int run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& options);
+    static int run_debug_headless_diagnostics_popup_benchmark(
+        const HeadlessDiagnosticsPopupBenchOptions& options);
     static int run_debug_headless_scene3d_benchmark(const std::string& path, int frames,
                                                     double unit_distance, double max_frame_ms,
                                                     double window_back_m, double window_forward_m,
@@ -1653,6 +1660,10 @@ private:
 
     std::deque<LogLine> logs_;
     std::mutex log_mutex_;
+    std::uint64_t log_revision_ = 0;
+    std::uint64_t diagnostics_snapshot_revision_ =
+        std::numeric_limits<std::uint64_t>::max();
+    std::vector<LogLine> diagnostics_snapshot_;
     std::atomic<int> error_count_{0};
     std::atomic<int> warn_count_{0};
     const char* program_status_key_ = "status.ready";
@@ -1905,11 +1916,49 @@ private:
         std::vector<unsigned char> signal_row_visible;
         std::vector<unsigned char> other_train_path_visible;
         PlanData data;
+        std::uint64_t generation = 0;
 #ifndef NDEBUG
         std::uint64_t rebuild_count = 0;
 #endif
     };
     PlanDataCache plan_data_cache_;
+    struct MeasureHitTestCell {
+        long long x = 0;
+        long long y = 0;
+
+        bool operator==(const MeasureHitTestCell& other) const noexcept {
+            return x == other.x && y == other.y;
+        }
+    };
+    struct MeasureHitTestCellHash {
+        size_t operator()(const MeasureHitTestCell& cell) const noexcept {
+            const std::uint64_t x = static_cast<std::uint64_t>(cell.x);
+            const std::uint64_t y = static_cast<std::uint64_t>(cell.y);
+            const std::uint64_t mixed =
+                x * 0x9e3779b97f4a7c15ULL ^
+                (y + 0x9e3779b97f4a7c15ULL + (x << 6) + (x >> 2));
+            return static_cast<size_t>(mixed);
+        }
+    };
+    struct MeasureHitTestCache {
+        std::uint64_t plan_generation = std::numeric_limits<std::uint64_t>::max();
+        double scale = 0.0;
+        double cell_size = 0.0;
+        std::unordered_map<MeasureHitTestCell, std::vector<size_t>,
+                           MeasureHitTestCellHash> cells;
+        std::vector<size_t> unindexed_points;
+#ifndef NDEBUG
+        std::uint64_t rebuild_count = 0;
+#endif
+    };
+    MeasureHitTestCache measure_hit_test_cache_;
+#ifndef NDEBUG
+    bool debug_measure_validate_bruteforce_ = false;
+    bool debug_measure_force_bruteforce_ = false;
+    bool debug_measure_used_spatial_index_ = false;
+    bool debug_measure_validation_passed_ = true;
+    std::uint64_t debug_measure_query_count_ = 0;
+#endif
     struct ProfileDataCacheKey {
         struct OtherTrackState {
             std::string key;

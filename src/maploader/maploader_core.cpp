@@ -169,10 +169,13 @@ std::string declared_encoding_from_header(const std::string& header) {
 
 std::vector<size_t> build_line_starts(const std::string& text) {
     std::vector<size_t> starts;
-    starts.reserve(std::count(text.begin(), text.end(), '\n') + 1);
     starts.push_back(0);
-    for (size_t i = 0; i < text.size(); ++i) {
-        if (text[i] == '\n' && i + 1 <= text.size()) starts.push_back(i + 1);
+    size_t line_start = 0;
+    while (line_start < text.size()) {
+        const TextLineSpan line = text_line_span(text, line_start);
+        if (!line.has_terminator()) break;
+        starts.push_back(line.next_begin);
+        line_start = line.next_begin;
     }
     return starts;
 }
@@ -194,9 +197,10 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
                                    const std::string& head_str,
                                    double min_version,
                                    bool collect_source_metadata) {
-    size_t line_end = text.find('\n');
-    std::string header = line_end == std::string::npos ? text : text.substr(0, line_end);
-    if (!header.empty() && header.back() == '\r') header.pop_back();
+    const TextLineSpan first_line = text_line_span(text, 0);
+    const bool has_header_terminator = first_line.has_terminator();
+    const size_t line_end = first_line.content_end;
+    std::string header = text.substr(0, line_end);
     const std::string lower_header = ascii_lower(header);
     const std::string lower_prefix = ascii_lower(head_str);
     if (lower_header.rfind(lower_prefix, 0) != 0) {
@@ -207,8 +211,8 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
     if (parse_first_version(header) < min_version) {
         throw std::runtime_error(path_to_utf8(path) + " is under Ver." + canonical_number(min_version));
     }
-    size_t body_offset = line_end == std::string::npos ? text.size() : line_end + 1;
-    std::string body = line_end == std::string::npos ? std::string() : text.substr(body_offset);
+    const size_t body_offset = has_header_terminator ? first_line.next_begin : text.size();
+    std::string body = has_header_terminator ? text.substr(body_offset) : std::string();
     std::string normalized_path = normalized_source_path(path);
     std::string normalized_key = normalized_source_key(normalized_path);
     std::vector<size_t> line_starts;
@@ -216,7 +220,7 @@ LoadedText make_loaded_header_text(const std::filesystem::path& path,
     return {std::move(body), path, std::filesystem::absolute(path).parent_path(), normalized_path,
             normalized_key, std::move(encoding), std::move(newline), std::move(source_hash),
             std::move(line_starts),
-            byte_length, body_offset, line_end == std::string::npos ? 1 : 2};
+            byte_length, body_offset, has_header_terminator ? 2 : 1};
 }
 
 LoadedText load_header_text(const std::filesystem::path& path,
@@ -812,12 +816,8 @@ SignalAspectSourceValues parse_signal_aspect_source_values(
     size_t pos = 0;
     bool has_main_row = false;
     while (pos <= source_text.size()) {
-        size_t line_end = source_text.find('\n', pos);
-        size_t content_end =
-            line_end == std::string::npos ? source_text.size() : line_end;
-        if (content_end > pos && source_text[content_end - 1] == '\r') {
-            --content_end;
-        }
+        const TextLineSpan source_line = text_line_span(source_text, pos);
+        const size_t content_end = source_line.content_end;
         const std::string line =
             source_text.substr(pos, content_end - pos);
         const std::string trimmed = trim_field_copy(line);
@@ -842,8 +842,8 @@ SignalAspectSourceValues parse_signal_aspect_source_values(
                 }
             }
         }
-        if (line_end == std::string::npos) break;
-        pos = line_end + 1;
+        if (!source_line.has_terminator()) break;
+        pos = source_line.next_begin;
     }
     if (!has_main_row) {
         throw std::runtime_error("Signal aspect source block is empty");

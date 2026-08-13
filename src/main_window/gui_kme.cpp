@@ -16,6 +16,7 @@
 
 #include "canvas3D.h"
 #include "maploader.h"
+#include "numeric_safety.h"
 #include "own_track_transition_linkage.h"
 #include "repeater_linkage.h"
 #include "text_decoder.h"
@@ -29,6 +30,9 @@
 #include "implot.h"
 
 #include <windows.h>
+#if defined(_MSC_VER) && !defined(NDEBUG)
+#include <crtdbg.h>
+#endif
 #include <commdlg.h>
 #include <d3d11.h>
 #include <shellapi.h>
@@ -54,6 +58,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -72,6 +77,127 @@ std::ostream* g_debug_plan_benchmark_log = nullptr;
 #endif
 
 namespace {
+
+bool checked_rgba_image_layout(UINT width,
+                               UINT height,
+                               UINT& row_stride,
+                               size_t& pixel_bytes,
+                               std::string& error) {
+    row_stride = 0;
+    pixel_bytes = 0;
+    if (width == 0 || height == 0) {
+        error = "image dimensions must be nonzero";
+        return false;
+    }
+    if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+        height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+        width > std::numeric_limits<UINT>::max() / 4) {
+        error = "image dimensions exceed the Direct3D 11 limit";
+        return false;
+    }
+    row_stride = width * 4;
+    if (height > std::numeric_limits<size_t>::max() / row_stride) {
+        error = "image byte size overflows the host address space";
+        return false;
+    }
+    pixel_bytes = static_cast<size_t>(row_stride) * height;
+    if (pixel_bytes > std::numeric_limits<UINT>::max()) {
+        error = "image byte size exceeds the WIC copy limit";
+        return false;
+    }
+    return true;
+}
+
+struct DecodedRgbaImage {
+    UINT width = 0;
+    UINT height = 0;
+    std::vector<unsigned char> pixels;
+};
+
+enum class WicDecodeDebugFault {
+    None,
+    GetSizeHresult,
+    Allocation,
+};
+
+bool decode_background_image_rgba(const std::string& path,
+                                  DecodedRgbaImage& decoded,
+                                  std::string& error,
+                                  WicDecodeDebugFault debug_fault =
+                                      WicDecodeDebugFault::None) {
+    IWICImagingFactory* factory = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    auto release_wic = [&]() noexcept {
+        release_com(converter);
+        release_com(frame);
+        release_com(decoder);
+        release_com(factory);
+    };
+    auto fail = [&](const char* reason) {
+        release_wic();
+        error = reason;
+        return false;
+    };
+
+    try {
+        HRESULT hr = CoCreateInstance(
+            CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&factory));
+        if (FAILED(hr)) return fail("failed to create the WIC imaging factory");
+        hr = factory->CreateDecoderFromFilename(
+            utf8_to_wide(path).c_str(), nullptr, GENERIC_READ,
+            WICDecodeMetadataCacheOnLoad, &decoder);
+        if (FAILED(hr)) return fail("the file cannot be opened or decoded");
+        hr = decoder->GetFrame(0, &frame);
+        if (FAILED(hr)) return fail("the first image frame cannot be decoded");
+        hr = factory->CreateFormatConverter(&converter);
+        if (FAILED(hr)) return fail("failed to create the WIC format converter");
+        hr = converter->Initialize(
+            frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone,
+            nullptr, 0.0, WICBitmapPaletteTypeCustom);
+        if (FAILED(hr)) return fail("the image cannot be converted to RGBA");
+
+        UINT width = 0;
+        UINT height = 0;
+        hr = debug_fault == WicDecodeDebugFault::GetSizeHresult
+            ? E_FAIL : converter->GetSize(&width, &height);
+        if (FAILED(hr)) return fail("failed to read image dimensions");
+        UINT row_stride = 0;
+        size_t pixel_bytes = 0;
+        if (!checked_rgba_image_layout(
+                width, height, row_stride, pixel_bytes, error)) {
+            release_wic();
+            return false;
+        }
+
+        if (debug_fault == WicDecodeDebugFault::Allocation) {
+            throw std::bad_alloc();
+        }
+        std::vector<unsigned char> pixels(pixel_bytes);
+        hr = converter->CopyPixels(
+            nullptr, row_stride, static_cast<UINT>(pixel_bytes), pixels.data());
+        if (FAILED(hr)) return fail("failed to copy image pixels");
+        release_wic();
+
+        DecodedRgbaImage next;
+        next.width = width;
+        next.height = height;
+        next.pixels = std::move(pixels);
+        decoded = std::move(next);
+        error.clear();
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail("memory allocation failed while decoding the image");
+    } catch (const std::exception& exception) {
+        release_wic();
+        error = exception.what();
+        return false;
+    } catch (...) {
+        return fail("an unknown error occurred while decoding the image");
+    }
+}
 
 const ImWchar* application_font_glyph_ranges(ImFontAtlas& fonts) {
     static ImVector<ImWchar> ranges;
@@ -145,6 +271,69 @@ std::string format_elapsed_seconds_value(double elapsed_seconds) {
 }
 
 } // namespace
+
+#ifndef NDEBUG
+HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
+    const std::string& valid_image_path,
+    const std::string& missing_image_path) {
+    HeadlessResourceSafetyContractResult result;
+    UINT row_stride = 0;
+    size_t pixel_bytes = 0;
+    std::string error;
+    const bool small_valid = checked_rgba_image_layout(
+        2, 3, row_stride, pixel_bytes, error) &&
+        row_stride == 8 && pixel_bytes == 24;
+    const bool zero_rejected = !checked_rgba_image_layout(
+        0, 3, row_stride, pixel_bytes, error);
+    const bool d3d_over_limit_rejected = !checked_rgba_image_layout(
+        D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION + 1, 1,
+        row_stride, pixel_bytes, error);
+    const bool maximum_valid = checked_rgba_image_layout(
+        D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION,
+        D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION,
+        row_stride, pixel_bytes, error) &&
+        row_stride == D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION * 4 &&
+        pixel_bytes == static_cast<size_t>(D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) *
+                           D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION * 4;
+    result.image_layout = small_valid && zero_rejected &&
+        d3d_over_limit_rejected && maximum_valid;
+
+    DecodedRgbaImage valid_image;
+    std::string decode_error;
+    const bool valid_decode = decode_background_image_rgba(
+        valid_image_path, valid_image, decode_error) &&
+        valid_image.width == 1 && valid_image.height == 1 &&
+        valid_image.pixels.size() == 4;
+    DecodedRgbaImage failed_image;
+    const bool missing_rejected = !decode_background_image_rgba(
+        missing_image_path, failed_image, decode_error) &&
+        !decode_error.empty() && failed_image.pixels.empty();
+    const bool hresult_rejected = !decode_background_image_rgba(
+        valid_image_path, failed_image, decode_error,
+        WicDecodeDebugFault::GetSizeHresult) &&
+        decode_error == "failed to read image dimensions";
+    const bool allocation_rejected = !decode_background_image_rgba(
+        valid_image_path, failed_image, decode_error,
+        WicDecodeDebugFault::Allocation) &&
+        decode_error == "memory allocation failed while decoding the image";
+    result.image_decode = valid_decode && missing_rejected &&
+        hresult_rejected && allocation_rejected;
+
+    const int int_min = std::numeric_limits<int>::lowest();
+    const int int_max = std::numeric_limits<int>::max();
+    result.numeric_conversion =
+        kme::truncating_int_or_zero(42.875) == 42 &&
+        kme::truncating_int_or_zero(-42.875) == -42 &&
+        kme::truncating_int_or_zero(static_cast<double>(int_min)) == int_min &&
+        kme::truncating_int_or_zero(static_cast<double>(int_max)) == int_max &&
+        kme::truncating_int_or_zero(static_cast<double>(int_max) + 1.0) == 0 &&
+        kme::truncating_int_or_zero(static_cast<double>(int_min) - 1.0) == 0 &&
+        kme::truncating_int_or_zero(std::numeric_limits<double>::quiet_NaN()) == 0 &&
+        kme::truncating_int_or_zero(std::numeric_limits<double>::infinity()) == 0 &&
+        kme::truncating_int_or_zero(-std::numeric_limits<double>::infinity()) == 0;
+    return result;
+}
+#endif
 
 void set_crosshair_cursor() {
     ::SetCursor(::LoadCursor(nullptr, IDC_CROSS));
@@ -1651,8 +1840,23 @@ void App::add_log(LogSeverity severity, std::string text) {
         if (severity == LogSeverity::Warning) {
             warn_count_.fetch_add(1, std::memory_order_relaxed);
         }
+        ++log_revision_;
     }
     wake_main_window();
+}
+
+void App::refresh_diagnostics_snapshot() {
+    std::lock_guard<std::mutex> lock(log_mutex_);
+    if (diagnostics_snapshot_revision_ == log_revision_) return;
+    std::vector<LogLine> next_snapshot;
+    next_snapshot.reserve(static_cast<size_t>(
+        std::max(0, error_count_.load(std::memory_order_relaxed)) +
+        std::max(0, warn_count_.load(std::memory_order_relaxed))));
+    for (const LogLine& line : logs_) {
+        if (line.severity != LogSeverity::Info) next_snapshot.push_back(line);
+    }
+    diagnostics_snapshot_.swap(next_snapshot);
+    diagnostics_snapshot_revision_ = log_revision_;
 }
 
 void App::stop_loader() {
@@ -1789,6 +1993,7 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();
+        ++log_revision_;
         error_count_.store(0, std::memory_order_relaxed);
         warn_count_.store(0, std::memory_order_relaxed);
     }
@@ -2512,7 +2717,8 @@ Canvas3DPlacementEditTarget scene_edit_target_from_row(
     target.track_key = table_cell(row, "trackKey");
     target.put_between_track_key1 = table_cell(row, "trackKey1");
     target.put_between_track_key2 = table_cell(row, "trackKey2");
-    target.put_between_flag = static_cast<int>(table_cell_number(row, "flag")) & 1;
+    target.put_between_flag =
+        kme::truncating_int_or_zero(table_cell_number(row, "flag")) & 1;
     target.distance = table_cell_number(row, "distance");
     target.x = table_cell_number(row, "x");
     target.y = table_cell_number(row, "y");
@@ -4046,7 +4252,7 @@ void App::sync_scene_placement_edit_from_inspector() {
             edit_field_buffer_text(*track1_field));
         target.put_between_track_key2 = trim_gui_ascii_copy(
             edit_field_buffer_text(*track2_field));
-        target.put_between_flag = static_cast<int>(flag) & 1;
+        target.put_between_flag = kme::truncating_int_or_zero(flag) & 1;
     }
     for (const char* key : {"x", "y", "z", "rx", "ry", "rz", "tilt", "span"}) {
         const MapElementEditFieldState* field = find_inspector_field(inspector_, key);
@@ -8176,88 +8382,117 @@ bool App::apply_background_history(const BackgroundHistory& background) {
 
 bool App::load_background_image(const std::string& path, bool reset_parameters) {
     bg_image_.release();
-    bg_image_.path = path;
-    IWICImagingFactory* factory = nullptr;
-    IWICBitmapDecoder* decoder = nullptr;
-    IWICBitmapFrameDecode* frame = nullptr;
-    IWICFormatConverter* converter = nullptr;
-    UINT w = 0;
-    UINT h = 0;
+    auto fail = [&](const std::string& reason) {
+        bg_image_.release();
+        const std::string message =
+            "[ERROR] Failed to load background image: " + path + ": " + reason;
+        add_log(message);
+        std::cerr << message << std::endl;
+        return false;
+    };
 
-    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-    if (FAILED(hr)) goto fail;
-    hr = factory->CreateDecoderFromFilename(utf8_to_wide(path).c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder);
-    if (FAILED(hr)) goto fail;
-    hr = decoder->GetFrame(0, &frame);
-    if (FAILED(hr)) goto fail;
-    hr = factory->CreateFormatConverter(&converter);
-    if (FAILED(hr)) goto fail;
-    hr = converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
-    if (FAILED(hr)) goto fail;
-    converter->GetSize(&w, &h);
-    bg_image_.width = static_cast<int>(w);
-    bg_image_.height = static_cast<int>(h);
-    bg_image_.pixels_rgba.resize(static_cast<size_t>(w) * h * 4);
-    hr = converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(bg_image_.pixels_rgba.size()), bg_image_.pixels_rgba.data());
-    if (FAILED(hr)) goto fail;
+    try {
+        DecodedRgbaImage decoded;
+        std::string decode_error;
+        if (!decode_background_image_rgba(path, decoded, decode_error)) {
+            return fail(decode_error);
+        }
 
-    release_com(converter);
-    release_com(frame);
-    release_com(decoder);
-    release_com(factory);
-    if (reset_parameters) {
-        bg_width_ = static_cast<double>(w);
-        bg_height_ = static_cast<double>(h);
-        bg_brightness_ = 100.0;
+        bg_image_.path = path;
+        bg_image_.width = static_cast<int>(decoded.width);
+        bg_image_.height = static_cast<int>(decoded.height);
+        bg_image_.pixels_rgba = std::move(decoded.pixels);
+        if (reset_parameters) {
+            bg_width_ = static_cast<double>(decoded.width);
+            bg_height_ = static_cast<double>(decoded.height);
+            bg_brightness_ = 100.0;
+        }
+        if (!rebuild_background_texture()) {
+            bg_image_.release();
+            return false;
+        }
+        return true;
+    } catch (const std::exception& error) {
+        return fail(error.what());
+    } catch (...) {
+        return fail("an unknown error occurred while decoding the image");
     }
-    return rebuild_background_texture();
-
-fail:
-    release_com(converter);
-    release_com(frame);
-    release_com(decoder);
-    release_com(factory);
-    bg_image_.release();
-    add_log("[ERROR]Failed to load background image: " + path);
-    return false;
 }
 
 bool App::rebuild_background_texture() {
     if (!device_ || bg_image_.pixels_rgba.empty()) return false;
-    release_com(bg_image_.srv);
-    std::vector<unsigned char> adjusted = bg_image_.pixels_rgba;
-    double mul = std::clamp(bg_brightness_, 1.0, 200.0) / 100.0;
-    for (size_t i = 0; i + 3 < adjusted.size(); i += 4) {
-        adjusted[i + 0] = static_cast<unsigned char>(std::clamp(adjusted[i + 0] * mul, 0.0, 255.0));
-        adjusted[i + 1] = static_cast<unsigned char>(std::clamp(adjusted[i + 1] * mul, 0.0, 255.0));
-        adjusted[i + 2] = static_cast<unsigned char>(std::clamp(adjusted[i + 2] * mul, 0.0, 255.0));
+    UINT row_stride = 0;
+    size_t pixel_bytes = 0;
+    std::string layout_error;
+    if (bg_image_.width <= 0 || bg_image_.height <= 0 ||
+        !checked_rgba_image_layout(
+            static_cast<UINT>(bg_image_.width),
+            static_cast<UINT>(bg_image_.height),
+            row_stride, pixel_bytes, layout_error) ||
+        pixel_bytes != bg_image_.pixels_rgba.size()) {
+        add_log("[ERROR] Failed to rebuild background image texture: " +
+                (layout_error.empty() ? std::string("pixel buffer size is inconsistent")
+                                      : layout_error));
+        return false;
     }
 
-    D3D11_TEXTURE2D_DESC desc = {};
-    desc.Width = static_cast<UINT>(bg_image_.width);
-    desc.Height = static_cast<UINT>(bg_image_.height);
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA sub = {};
-    sub.pSysMem = adjusted.data();
-    sub.SysMemPitch = static_cast<UINT>(bg_image_.width * 4);
-    ID3D11Texture2D* texture = nullptr;
-    HRESULT hr = device_->CreateTexture2D(&desc, &sub, &texture);
-    if (FAILED(hr)) return false;
+    try {
+        std::vector<unsigned char> adjusted = bg_image_.pixels_rgba;
+        const double mul = std::clamp(bg_brightness_, 1.0, 200.0) / 100.0;
+        for (size_t i = 0; i + 3 < adjusted.size(); i += 4) {
+            adjusted[i + 0] = static_cast<unsigned char>(
+                std::clamp(adjusted[i + 0] * mul, 0.0, 255.0));
+            adjusted[i + 1] = static_cast<unsigned char>(
+                std::clamp(adjusted[i + 1] * mul, 0.0, 255.0));
+            adjusted[i + 2] = static_cast<unsigned char>(
+                std::clamp(adjusted[i + 2] * mul, 0.0, 255.0));
+        }
 
-    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
-    srv_desc.Format = desc.Format;
-    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srv_desc.Texture2D.MipLevels = 1;
-    hr = device_->CreateShaderResourceView(texture, &srv_desc, &bg_image_.srv);
-    texture->Release();
-    if (FAILED(hr)) return false;
-    bg_image_.brightness = bg_brightness_;
-    return true;
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width = static_cast<UINT>(bg_image_.width);
+        desc.Height = static_cast<UINT>(bg_image_.height);
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA sub = {};
+        sub.pSysMem = adjusted.data();
+        sub.SysMemPitch = row_stride;
+        ID3D11Texture2D* texture = nullptr;
+        HRESULT hr = device_->CreateTexture2D(&desc, &sub, &texture);
+        if (FAILED(hr)) {
+            add_log("[ERROR] Failed to rebuild background image texture: "
+                    "Direct3D texture creation failed");
+            return false;
+        }
+
+        ID3D11ShaderResourceView* new_srv = nullptr;
+        D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+        srv_desc.Format = desc.Format;
+        srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srv_desc.Texture2D.MipLevels = 1;
+        hr = device_->CreateShaderResourceView(texture, &srv_desc, &new_srv);
+        texture->Release();
+        if (FAILED(hr)) {
+            release_com(new_srv);
+            add_log("[ERROR] Failed to rebuild background image texture: "
+                    "Direct3D shader-resource-view creation failed");
+            return false;
+        }
+        release_com(bg_image_.srv);
+        bg_image_.srv = new_srv;
+        bg_image_.brightness = bg_brightness_;
+        return true;
+    } catch (const std::exception& error) {
+        add_log("[ERROR] Failed to rebuild background image texture: " +
+                std::string(error.what()));
+        return false;
+    } catch (...) {
+        add_log("[ERROR] Failed to rebuild background image texture: unknown error");
+        return false;
+    }
 }
 
 void App::export_csv_to_directory(const std::filesystem::path& dir) const {
@@ -9076,17 +9311,21 @@ void App::render_status_bar() {
             ImGui::Separator();
             ImGui::BeginChild("##StatusDiagnosticsList", ImVec2(0.0f, 0.0f), false,
                               ImGuiWindowFlags_HorizontalScrollbar);
-            bool has_diagnostics = false;
-            {
-                std::lock_guard<std::mutex> lock(log_mutex_);
-                for (const LogLine& line : logs_) {
-                    if (line.severity == LogSeverity::Info) continue;
-                    has_diagnostics = true;
-                    ImGui::TextColored(log_severity_color(line.severity), "%s", line.text.c_str());
-                }
-            }
-            if (!has_diagnostics) {
+            refresh_diagnostics_snapshot();
+            if (diagnostics_snapshot_.empty()) {
                 ImGui::TextDisabled("%s", tr("status.no_errors_warnings").c_str());
+            } else {
+                ImGuiListClipper clipper;
+                clipper.Begin(static_cast<int>(diagnostics_snapshot_.size()));
+                while (clipper.Step()) {
+                    for (int index = clipper.DisplayStart;
+                         index < clipper.DisplayEnd; ++index) {
+                        const LogLine& line =
+                            diagnostics_snapshot_[static_cast<size_t>(index)];
+                        ImGui::TextColored(
+                            log_severity_color(line.severity), "%s", line.text.c_str());
+                    }
+                }
             }
             ImGui::EndChild();
             ImGui::EndPopup();
@@ -9175,6 +9414,7 @@ void App::render_console() {
     if (ImGui::Button(tr("button.clear").c_str())) {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();
+        ++log_revision_;
         error_count_.store(0, std::memory_order_relaxed);
         warn_count_.store(0, std::memory_order_relaxed);
     }
@@ -9876,12 +10116,12 @@ void App::render_popups() {
     }
 
     if (popups_.range) {
-        ImGui::OpenPopup(tr("menu.plotlimit").c_str());
+        ImGui::OpenPopup((tr("menu.plotlimit") + "###PlotRange").c_str());
         popups_.range = false;
     }
-    if (ImGui::BeginPopupModal(tr("menu.plotlimit").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputDouble("Min", &plot_min_);
-        ImGui::InputDouble("Max", &plot_max_);
+    if (ImGui::BeginPopupModal((tr("menu.plotlimit") + "###PlotRange").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputDouble((tr("label.minimum") + "##PlotRangeMin").c_str(), &plot_min_);
+        ImGui::InputDouble((tr("label.maximum") + "##PlotRangeMax").c_str(), &plot_max_);
         if (ImGui::Button(tr("button.apply").c_str())) {
             dmin_ = plot_min_;
             dmax_ = plot_max_;
@@ -9904,13 +10144,13 @@ void App::render_popups() {
     }
 
     if (popups_.control_points) {
-        ImGui::OpenPopup(tr("menu.controlpoints").c_str());
+        ImGui::OpenPopup((tr("menu.controlpoints") + "###ControlPoints").c_str());
         popups_.control_points = false;
     }
-    if (ImGui::BeginPopupModal(tr("menu.controlpoints").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputDouble("Min", &cp_start_);
-        ImGui::InputDouble("Max", &cp_end_);
-        ImGui::InputDouble("Interval", &cp_interval_);
+    if (ImGui::BeginPopupModal((tr("menu.controlpoints") + "###ControlPoints").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputDouble((tr("label.minimum") + "##ControlPointsMin").c_str(), &cp_start_);
+        ImGui::InputDouble((tr("label.maximum") + "##ControlPointsMax").c_str(), &cp_end_);
+        ImGui::InputDouble((tr("label.interval") + "##ControlPointsInterval").c_str(), &cp_interval_);
         if (ImGui::Button(tr("button.apply").c_str())) {
             regenerate_geometry();
             ImGui::CloseCurrentPopup();
@@ -11289,6 +11529,42 @@ int main(int, char**) {
 #ifndef NDEBUG
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     std::vector<std::string> args = command_line_args_utf8();
+#if defined(_MSC_VER)
+    const bool debug_headless_requested = std::any_of(
+        args.begin(), args.end(), [](const std::string& arg) {
+            return arg == "--headless-load-map" ||
+                arg.rfind("--debug-headless-", 0) == 0;
+        });
+    if (debug_headless_requested) {
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    }
+#endif
+    HeadlessSceneLoaderContractOptions scene_loader_contract =
+        parse_headless_scene_loader_contract_options(args);
+    if (scene_loader_contract.requested) {
+        if (!scene_loader_contract.error.empty()) {
+            std::cerr << scene_loader_contract.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-scene-loader-contract "
+                         "[--headless-output FILE]\n";
+            return 1;
+        }
+        return run_debug_headless_scene_loader_contract(scene_loader_contract);
+    }
+
+    HeadlessDiagnosticsPopupBenchOptions diagnostics_popup_bench =
+        parse_headless_diagnostics_popup_bench_options(args);
+    if (diagnostics_popup_bench.requested) {
+        if (!diagnostics_popup_bench.error.empty()) {
+            std::cerr << diagnostics_popup_bench.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-diagnostics-popup-bench "
+                         "[--headless-output FILE]\n";
+            return 1;
+        }
+        return App::run_debug_headless_diagnostics_popup_benchmark(
+            diagnostics_popup_bench);
+    }
+
     HeadlessTableFindOptions table_find = parse_headless_table_find_options(args);
     if (table_find.requested) {
         if (!table_find.error.empty()) {
@@ -11520,13 +11796,15 @@ int main(int, char**) {
             std::cerr << plan_bench.error << "\n"
                       << "usage: komapedit.exe --debug-headless-plan-bench <map-path> "
                       << "[--frames N] [--unit-distance M] [--pan-pixels P] "
+                      << "[--interaction pan|measure-stationary|measure-moving] "
                       << "[--max-frame-ms MS] [--headless-output FILE] [--profile-stages]\n";
             return 1;
         }
         return App::run_debug_headless_plan_benchmark(plan_bench.path, plan_bench.frames,
                                                       plan_bench.unit_distance, plan_bench.pan_pixels,
                                                       plan_bench.max_frame_ms, plan_bench.output_path,
-                                                      plan_bench.profile_stages);
+                                                      plan_bench.profile_stages,
+                                                      plan_bench.interaction);
     }
 
     HeadlessLoadOptions headless = parse_headless_load_options(args);

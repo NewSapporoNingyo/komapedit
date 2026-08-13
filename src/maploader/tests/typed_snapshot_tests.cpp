@@ -538,6 +538,63 @@ int snapshot_contract() {
                                            &rebuilt_scene, sizeof(rebuilt_scene)),
           "regular geometry invalidates scene");
 
+    KvMapSnapshot geometry_before_invalid_distribution{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &geometry_before_invalid_distribution,
+                              sizeof(geometry_before_invalid_distribution)) != 0,
+          "geometry baseline before invalid distribution");
+    check(kv_generate_geometry(handle.value, 25.0, 1, 0.0, 10000001.0, 1.0) == 0,
+          "over-limit control-point distribution rejected before allocation");
+    const char* distribution_error = kv_get_last_error();
+    check(distribution_error && std::string_view(distribution_error).find(
+                                    "control-point distribution count exceeds supported limit") !=
+                                    std::string_view::npos,
+          "over-limit control-point distribution error");
+    check(kv_generate_geometry(handle.value, 25.0, 1, 0.0, 100.0, 0.0) == 0,
+          "zero control-point step rejected");
+    check(kv_generate_geometry(handle.value, 25.0, 1, 0.0, 100.0, -1.0) == 0,
+          "negative control-point step rejected");
+    check(kv_generate_geometry(handle.value, 25.0, 1,
+                               std::numeric_limits<double>::quiet_NaN(),
+                               100.0, 1.0) == 0,
+          "non-finite control-point bound rejected");
+    check(kv_generate_geometry(handle.value, 25.0, 1, 1.0e16, 1.0e16 + 4.0, 1.0) == 0,
+          "non-advancing floating-point step rejected");
+    KvMapSnapshot geometry_after_invalid_distribution{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &geometry_after_invalid_distribution,
+                              sizeof(geometry_after_invalid_distribution)) != 0 &&
+              geometry_after_invalid_distribution.geometry_revision ==
+                  geometry_before_invalid_distribution.geometry_revision &&
+              geometry_after_invalid_distribution.own_track_geometry.data ==
+                  geometry_before_invalid_distribution.own_track_geometry.data,
+          "invalid control-point distribution preserves the cached geometry");
+
+    {
+        TempFixture repeater_limit_fixture;
+        std::ofstream repeater_map(repeater_limit_fixture.map_path,
+                                   std::ios::binary | std::ios::trunc);
+        repeater_map << "BveTs Map 2.02:utf-8\n"
+                     << "0;\n"
+                     << "Repeater['dense'].Begin0('0',0,0,1,'missing');\n"
+                     << "1000001;\n"
+                     << "Repeater['dense'].End();\n";
+        repeater_map.close();
+        MapHandle repeater_limit_handle(kv_load_map_ex(
+            repeater_limit_fixture.path_utf8().c_str(), 1000001.0, KV_LOAD_PREVIEW));
+        check(repeater_limit_handle.value != nullptr, "repeater sample limit fixture loads");
+        if (repeater_limit_handle.value) {
+            check(kv_generate_scene_geometry(repeater_limit_handle.value, 1000001.0,
+                                             1.0, 1000001.0, 1.0, 0.01) == 0,
+                  "over-limit repeater scene sampling rejected before allocation");
+            const char* error = kv_get_last_error();
+            check(error && std::string_view(error).find(
+                               "repeater scene sample count exceeds supported limit") !=
+                               std::string_view::npos,
+                  "over-limit repeater scene sampling error");
+        }
+    }
+
     {
         TempFixture huge_distance_fixture;
         std::ofstream huge_map(huge_distance_fixture.map_path,
@@ -2227,7 +2284,230 @@ void repeater_insert_contract() {
           "Repeater insert source text uses official Begin, Begin0, and End syntax");
 }
 
+void line_ending_edit_contract() {
+    TempFixture fixture;
+    const std::filesystem::path include_path = fixture.directory / "include.txt";
+    auto convert_newlines = [](std::string_view text, std::string_view newline) {
+        std::string output;
+        for (char ch : text) {
+            if (ch == '\n') output.append(newline);
+            else output.push_back(ch);
+        }
+        return output;
+    };
+    auto write_fixture_file = [&](const std::filesystem::path& path,
+                                  std::string_view text,
+                                  std::string_view newline,
+                                  bool utf8_bom) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (utf8_bom) output.write("\xEF\xBB\xBF", 3);
+        const std::string bytes = convert_newlines(text, newline);
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    };
+    auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::vector<char>(std::istreambuf_iterator<char>(input),
+                                 std::istreambuf_iterator<char>());
+    };
+    auto newline_is_preserved = [](const std::vector<char>& bytes,
+                                   std::string_view newline) {
+        size_t terminators = 0;
+        for (size_t index = 0; index < bytes.size(); ++index) {
+            if (bytes[index] == '\r') {
+                if (newline == "\r\n") {
+                    if (index + 1 >= bytes.size() || bytes[index + 1] != '\n') return false;
+                    ++index;
+                } else if (newline != "\r") {
+                    return false;
+                }
+                ++terminators;
+            } else if (bytes[index] == '\n') {
+                if (newline != "\n") return false;
+                ++terminators;
+            }
+        }
+        return terminators != 0;
+    };
+    auto has_utf8_bom = [](const std::vector<char>& bytes) {
+        return bytes.size() >= 3 &&
+            static_cast<unsigned char>(bytes[0]) == 0xef &&
+            static_cast<unsigned char>(bytes[1]) == 0xbb &&
+            static_cast<unsigned char>(bytes[2]) == 0xbf;
+    };
+
+    struct LogicalBaseline {
+        bool initialized = false;
+        std::uint64_t statement_count = 0;
+        std::string structure_edit_id;
+        std::string signal_edit_id;
+        int structure_line = 0;
+        int structure_line_end = 0;
+        int signal_line = 0;
+        int signal_line_end = 0;
+    };
+    const std::array<std::pair<std::string_view, std::string_view>, 3> newline_cases{{
+        {"lf", "\n"}, {"crlf", "\r\n"}, {"cr", "\r"},
+    }};
+    const std::array<std::pair<std::string_view, bool>, 2> encoding_cases{{
+        {"utf-8", true}, {"cp932", false},
+    }};
+
+    for (const auto& [encoding, utf8_bom] : encoding_cases) {
+        LogicalBaseline logical_baseline;
+        for (const auto& [newline_name, newline] : newline_cases) {
+            const std::string encoding_name(encoding);
+            write_fixture_file(
+                fixture.map_path,
+                "BveTs Map 2.02:" + encoding_name + "\n"
+                "# root comment\n0;\nStructure.Load('structures.csv');\n"
+                "Signal.Load('signals.csv');\nInclude 'include.txt';\n",
+                newline, utf8_bom);
+            write_fixture_file(
+                include_path,
+                "BveTs Map 2.02:" + encoding_name + "\n"
+                "// include comment\n100;\n"
+                "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n",
+                newline, utf8_bom);
+            write_fixture_file(
+                fixture.directory / "structures.csv",
+                "BveTs Structure List 1.00:" + encoding_name + "\n"
+                "pole,pole.x\nglare,glare.x\n",
+                newline, utf8_bom);
+            write_fixture_file(
+                fixture.directory / "signals.csv",
+                "BveTs Signal Aspects List 2.00:" + encoding_name + "\n"
+                "aspect,pole\n,glare\n",
+                newline, utf8_bom);
+            const std::vector<char> root_before = read_bytes(fixture.map_path);
+            std::string structure_edit_id;
+            std::string signal_edit_id;
+
+            {
+                MapHandle handle(kv_load_map_ex(
+                    fixture.path_utf8().c_str(), 25.0,
+                    KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+                check(handle.value != nullptr, "line-ending fixture loads");
+                if (!handle.value) continue;
+                KvMapSnapshot snapshot{};
+                check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                          &snapshot, sizeof(snapshot)) != 0,
+                      "line-ending fixture snapshot");
+                check(snapshot.structure_put_count == 1 && snapshot.signal_aspect_count == 1,
+                      "line-ending fixture typed rows");
+                if (snapshot.structure_put_count != 1 || snapshot.signal_aspect_count != 1) continue;
+                const KvStructurePutRow& structure = snapshot.structure_puts[0];
+                const KvSignalAspectRow& signal = snapshot.signal_aspects[0];
+                structure_edit_id = map_string(snapshot, structure.metadata.edit_id);
+                signal_edit_id = map_string(snapshot, signal.metadata.edit_id);
+                const KvSourceFileRow& structure_source =
+                    snapshot.source_files[structure.metadata.source_file_index];
+                const KvSourceFileRow& signal_source =
+                    snapshot.source_files[signal.metadata.source_file_index];
+                check(map_string(snapshot, structure_source.newline) == newline_name &&
+                          map_string(snapshot, signal_source.newline) == newline_name,
+                      "line-ending source kind");
+                check(map_string(snapshot, structure_source.encoding) == encoding &&
+                          map_string(snapshot, signal_source.encoding) == encoding,
+                      "line-ending source encoding");
+                check(structure.metadata.line == 4 && structure.metadata.line_end == 4 &&
+                          signal.metadata.line == 2 && signal.metadata.line_end == 3,
+                      "line-ending logical line spans");
+                if (!logical_baseline.initialized) {
+                    logical_baseline = {true, snapshot.statement_count,
+                                        structure_edit_id, signal_edit_id,
+                                        structure.metadata.line, structure.metadata.line_end,
+                                        signal.metadata.line, signal.metadata.line_end};
+                } else {
+                    check(snapshot.statement_count == logical_baseline.statement_count &&
+                              structure_edit_id == logical_baseline.structure_edit_id &&
+                              signal_edit_id == logical_baseline.signal_edit_id,
+                          "line-ending semantics and edit identity parity");
+                    check(structure.metadata.line == logical_baseline.structure_line &&
+                              structure.metadata.line_end == logical_baseline.structure_line_end &&
+                              signal.metadata.line == logical_baseline.signal_line &&
+                              signal.metadata.line_end == logical_baseline.signal_line_end,
+                          "line-ending source span parity");
+                }
+
+                UpdateBatch update(
+                    structure_edit_id, map_string(snapshot, structure_source.source_hash),
+                    "7", "x");
+                KvEditReportSnapshot apply_report{};
+                check(kv_edit_apply_to_memory_typed(
+                          handle.value, &update.batch, &apply_report,
+                          sizeof(apply_report)) != 0 && apply_report.ok,
+                      "line-ending map apply-to-memory");
+                KvEditReportSnapshot commit_report{};
+                check(kv_edit_commit_typed(handle.value, &commit_report,
+                                           sizeof(commit_report)) != 0 && commit_report.ok,
+                      "line-ending map commit");
+            }
+
+            check(read_bytes(fixture.map_path) == root_before,
+                  "line-ending root Include file remains unchanged");
+            const std::vector<char> include_after = read_bytes(include_path);
+            check(newline_is_preserved(include_after, newline) &&
+                      has_utf8_bom(include_after) == utf8_bom,
+                  "line-ending map encoding and terminators preserved");
+
+            {
+                MapHandle reloaded(kv_load_map_ex(
+                    fixture.path_utf8().c_str(), 25.0,
+                    KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+                KvMapSnapshot snapshot{};
+                check(reloaded.value && kv_get_map_snapshot(
+                          reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                          &snapshot, sizeof(snapshot)) != 0,
+                      "line-ending map reload");
+                if (!reloaded.value || snapshot.structure_put_count != 1 ||
+                    snapshot.signal_aspect_count != 1) continue;
+                check(map_string(snapshot, snapshot.structure_puts[0].metadata.edit_id) ==
+                          structure_edit_id &&
+                          std::abs(snapshot.structure_puts[0].x - 7.0) < 1e-9,
+                      "line-ending map reload identity and value");
+                const KvSignalAspectRow& signal = snapshot.signal_aspects[0];
+                const KvSourceFileRow& signal_source =
+                    snapshot.source_files[signal.metadata.source_file_index];
+                UpdateBatch delete_glare(
+                    signal_edit_id, map_string(snapshot, signal_source.source_hash),
+                    "1", "deleteGlare");
+                KvEditReportSnapshot apply_report{};
+                check(kv_edit_apply_to_memory_typed(
+                          reloaded.value, &delete_glare.batch, &apply_report,
+                          sizeof(apply_report)) != 0 && apply_report.ok,
+                      "line-ending Signal Aspects apply-to-memory");
+                KvEditReportSnapshot commit_report{};
+                check(kv_edit_commit_typed(reloaded.value, &commit_report,
+                                           sizeof(commit_report)) != 0 && commit_report.ok,
+                      "line-ending Signal Aspects commit");
+            }
+
+            const std::vector<char> signal_after =
+                read_bytes(fixture.directory / "signals.csv");
+            check(newline_is_preserved(signal_after, newline) &&
+                      has_utf8_bom(signal_after) == utf8_bom,
+                  "line-ending Signal Aspects encoding and terminators preserved");
+            MapHandle final_reload(kv_load_map_ex(
+                fixture.path_utf8().c_str(), 25.0,
+                KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+            KvMapSnapshot final_snapshot{};
+            check(final_reload.value && kv_get_map_snapshot(
+                      final_reload.value, KV_MAP_SNAPSHOT_VERSION,
+                      &final_snapshot, sizeof(final_snapshot)) != 0 &&
+                      final_snapshot.signal_aspect_count == 1,
+                  "line-ending Signal Aspects reload");
+            if (final_reload.value && final_snapshot.signal_aspect_count == 1) {
+                const KvSignalAspectRow& signal = final_snapshot.signal_aspects[0];
+                check(map_string(final_snapshot, signal.metadata.edit_id) == signal_edit_id &&
+                          signal.structure_keys.count == signal.metadata.reserved,
+                      "line-ending Signal Aspects row reconnection");
+            }
+        }
+    }
+}
+
 int edit_contract() {
+    line_ending_edit_contract();
     repeater_linkage_boundary_contract();
     other_track_key_edit_contract();
     repeater_key_edit_contract();

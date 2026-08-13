@@ -76,6 +76,10 @@ KV_API int kv_generate_geometry(void* handle, double unit_distance,
     try {
         if (!handle) throw std::runtime_error("handle is null");
         auto* ctx = static_cast<MapContext*>(handle);
+        if (has_arbitrary_distribution != 0) {
+            kme::maploader::detail::validate_control_point_distribution(
+                arbitrary_start, arbitrary_end, arbitrary_step);
+        }
         kme::maploader::detail::invalidate_map_snapshot(*ctx, false, true);
         kme::maploader::detail::invalidate_scene_geometry_snapshot(*ctx, true);
         kme::maploader::detail::generate_geometry(*ctx, unit_distance, has_arbitrary_distribution != 0,

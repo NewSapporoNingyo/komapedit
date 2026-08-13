@@ -211,21 +211,16 @@ size_t offset_from_line_column(const std::string& text, int line, int column) {
     size_t line_start = 0;
     int current_line = 1;
     while (current_line < line) {
-        size_t next = text.find('\n', line_start);
-        if (next == std::string::npos) return std::string::npos;
-        line_start = next + 1;
+        const TextLineSpan source_line = text_line_span(text, line_start);
+        if (!source_line.has_terminator()) return std::string::npos;
+        line_start = source_line.next_begin;
         ++current_line;
     }
 
-    size_t line_end = text.find('\n', line_start);
-    if (line_end == std::string::npos) line_end = text.size();
+    const size_t line_end = text_line_span(text, line_start).content_end;
     size_t offset = line_start;
     int current_column = 1;
     while (offset < line_end && current_column < column) {
-        if (text[offset] == '\r') {
-            ++offset;
-            continue;
-        }
         offset = utf8_next_offset(text, offset);
         ++current_column;
     }
@@ -245,14 +240,13 @@ std::pair<size_t, size_t> source_range_in_text(const SourcePatch& patch,
 std::pair<size_t, size_t> safe_statement_removal_range(
     const SourcePatch& patch,
     const std::pair<size_t, size_t>& statement_range) {
-    size_t line_start = patch.text.rfind('\n', statement_range.first);
-    line_start = line_start == std::string::npos ? 0 : line_start + 1;
-    size_t line_end = patch.text.find('\n', statement_range.second);
-    if (line_end == std::string::npos) line_end = patch.text.size();
+    const size_t line_start = text_line_start_at(patch.text, statement_range.first);
+    const TextLineSpan source_line = text_line_span(patch.text, line_start);
+    size_t line_end = source_line.content_end;
     auto whitespace_only = [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
             char ch = patch.text[i];
-            if (ch != ' ' && ch != '\t' && ch != '\r') return false;
+            if (ch != ' ' && ch != '\t') return false;
         }
         return true;
     };
@@ -260,7 +254,7 @@ std::pair<size_t, size_t> safe_statement_removal_range(
         !whitespace_only(statement_range.second, line_end)) {
         return statement_range;
     }
-    if (line_end < patch.text.size()) ++line_end;
+    if (source_line.has_terminator()) line_end = source_line.next_begin;
     return {line_start, line_end};
 }
 
@@ -844,12 +838,8 @@ std::string build_signal_aspect_statement(
     size_t structure_index = 0;
     bool has_main_row = false;
     while (pos <= source_text.size()) {
-        const size_t newline = source_text.find('\n', pos);
-        size_t content_end =
-            newline == std::string::npos ? source_text.size() : newline;
-        if (content_end > pos && source_text[content_end - 1] == '\r') {
-            --content_end;
-        }
+        const TextLineSpan source_line = text_line_span(source_text, pos);
+        const size_t content_end = source_line.content_end;
         const std::string_view line(
             source_text.data() + pos, content_end - pos);
         const std::string trimmed = trim_field_copy(std::string(line));
@@ -933,13 +923,12 @@ std::string build_signal_aspect_statement(
             }
         }
 
-        const size_t line_after =
-            newline == std::string::npos ? source_text.size() : newline + 1;
+        const size_t line_after = source_line.next_begin;
         if (emit_line && content_end < line_after) {
             out << source_text.substr(content_end, line_after - content_end);
         }
-        if (newline == std::string::npos) break;
-        pos = newline + 1;
+        if (!source_line.has_terminator()) break;
+        pos = source_line.next_begin;
     }
 
     if (!has_main_row ||
@@ -5421,12 +5410,9 @@ MapEditReport build_edit_report(MapContext& ctx,
         // row span deliberately excludes line endings. Keep the identity on
         // that generated main row only so the strict source-range reconnect
         // check still describes the parser's actual candidate statement.
-        const size_t line_end = replacement_text.find('\n');
-        if (line_end == std::string::npos) return range;
-        range.second = line_end;
-        if (range.second != 0 && replacement_text[range.second - 1] == '\r') {
-            --range.second;
-        }
+        const TextLineSpan first_line = text_line_span(replacement_text, 0);
+        if (!first_line.has_terminator()) return range;
+        range.second = first_line.content_end;
         return range;
     };
 

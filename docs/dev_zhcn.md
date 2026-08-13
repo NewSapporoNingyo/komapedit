@@ -508,8 +508,9 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 ### UI、表格与渲染
 
 - 保持 Dear ImGui docking 布局及现有菜单/工具概念。
-- 所有用户可见文本都要同步加入简体中文、英语和日语，并保持工具栏/菜单措辞简短。
-- 诊断继续输出到现有控制台，默认使用英语。
+- 普通应用 UI 的每一条用户可见文本都要同步加入简体中文、英语和日语，并保持工具栏/菜单措辞简短、语言切换时 ImGui ID 稳定。
+- 直接对应 BVE 地图语句参数的标签必须使用官方英文名称或缩写（例如 `distance`、`trackKey`、`x`、`ry`），不得通过本地化函数翻译。
+- 应用生成的诊断正文和 headless 输出必须全部使用英语；控制台窗口标题、按钮及其他周边普通 UI 仍保持三语。
 - 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。
 - 设置与历史只接受保存端写出的精确节、键和值语法。未知项、旧项、错节项或格式错误项使用默认值；读取已有文件绝不自动重写，显式保存才输出完整规范格式。
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
@@ -533,9 +534,11 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ```bat
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
-build\komapedit.exe --debug-headless-plan-bench <map-path> --headless-output build\headless-plan-bench.txt
+build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt
+build\komapedit.exe --debug-headless-scene-loader-contract --headless-output build\scene-loader-contract.txt
+build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output build\diagnostics-popup-bench.txt
 build\komapedit.exe --debug-headless-scene-camera-transfer <map-path> --headless-output build\scene-camera-transfer.txt
 build\komapedit.exe --debug-headless-source-anchors <map-path> --headless-output build\source-anchors.txt
 build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-output build\station-list-edit.txt
@@ -557,6 +560,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 
+plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
+
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。它会新建配对 Repeater，依次修改 Begin 普通参数、End 距离和 key，取消整条链，再对一个单行 Structure 元素重复“新建后修改并取消”流程。该命令被刻意限制为仅内存操作：拒绝 `--commit`，重置工作副本后从磁盘重载，并在返回 PASS/FAIL 前输出 ledger 成员、稳定 edit ID、语义行检查和前后源哈希。
 
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
@@ -575,4 +580,3 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 - ImGui 使用 docking 分支，ImPlot 使用上游版本。
 - 不得删除或绕过许可证/声明文件。新增依赖时同步更新 CMake、开发者文档和第三方声明。
 - 线路发布导出与 `build_release.bat` 相互独立；实现时必须展开 Include、可选常量化表达式、仅复制已用资源、写报告，并通过临时输出保护开发目录。
-
