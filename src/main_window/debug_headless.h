@@ -182,6 +182,12 @@ struct HeadlessTouchInputOptions {
     std::string error;
 };
 
+struct HeadlessSettingsPersistenceOptions {
+    bool requested = false;
+    std::string output_path;
+    std::string error;
+};
+
 std::vector<std::string> command_line_args_utf8();
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
@@ -212,6 +218,8 @@ HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
     const std::vector<std::string>& args);
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args);
 HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<std::string>& args);
+HeadlessSettingsPersistenceOptions parse_headless_settings_persistence_options(
+    const std::vector<std::string>& args);
 int run_headless_load_map(const HeadlessLoadOptions& options);
 int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOptions& options);
 int run_debug_headless_station_list_edit(const HeadlessStationListEditOptions& options);
@@ -220,4 +228,6 @@ int run_debug_headless_repeater_key_edit(const HeadlessRepeaterKeyEditOptions& o
 int run_debug_headless_section_edit_batch(const HeadlessSectionEditBatchOptions& options);
 int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options);
 int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options);
+int run_debug_headless_settings_persistence(
+    const HeadlessSettingsPersistenceOptions& options);
 #endif

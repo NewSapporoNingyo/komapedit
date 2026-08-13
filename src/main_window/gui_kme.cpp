@@ -11299,6 +11299,18 @@ int main(int, char**) {
         return App::run_debug_headless_table_find(table_find.output_path);
     }
 
+    HeadlessSettingsPersistenceOptions settings_persistence =
+        parse_headless_settings_persistence_options(args);
+    if (settings_persistence.requested) {
+        if (!settings_persistence.error.empty()) {
+            std::cerr << settings_persistence.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-settings-persistence "
+                         "[--headless-output FILE]\n";
+            return 1;
+        }
+        return run_debug_headless_settings_persistence(settings_persistence);
+    }
+
     HeadlessTouchInputOptions touch_input_options = parse_headless_touch_input_options(args);
     if (touch_input_options.requested) {
         if (!touch_input_options.error.empty()) {

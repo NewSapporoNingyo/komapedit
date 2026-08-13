@@ -9,6 +9,21 @@ if not exist "%TARGET%\" (
     exit /b 1
 )
 
+for %%F in (settings.ini history.ini imgui.ini) do (
+    if exist "%TARGET%\%%F" (
+        echo Unsupported obsolete settings file: %TARGET%\%%F
+        echo Remove it manually and use the canonical settings layout.
+        exit /b 1
+    )
+)
+for %%F in ("%TARGET%\*.dll") do (
+    if exist "%%~fF" (
+        echo Unsupported obsolete root-level DLL: %%~fF
+        echo Remove it manually and use the canonical bin layout.
+        exit /b 1
+    )
+)
+
 if not exist "%TARGET%\komapedit.exe" (
     echo komapedit.exe was not found: %TARGET%\komapedit.exe
     exit /b 1
@@ -22,21 +37,6 @@ if not exist "%TARGET%\bin\model_loader.dll" (
     exit /b 1
 )
 if not exist "%TARGET%\settings\" mkdir "%TARGET%\settings"
-
-rem Migrate legacy root-level INI files before deleting obsolete root files.
-for %%F in (settings.ini history.ini imgui.ini) do (
-    if exist "%TARGET%\%%F" (
-        if exist "%TARGET%\settings\%%F" (
-            echo Conflicting settings files: %TARGET%\%%F and %TARGET%\settings\%%F
-            exit /b 1
-        )
-        move /y "%TARGET%\%%F" "%TARGET%\settings\%%F" >nul
-        if errorlevel 1 (
-            echo Failed to migrate %TARGET%\%%F to %TARGET%\settings.
-            exit /b 1
-        )
-    )
-)
 
 for %%F in (LICENSE NOTICE THIRD_PARTY_NOTICES.md) do (
     if exist "%%F" copy /y "%%F" "%TARGET%\%%F" >nul

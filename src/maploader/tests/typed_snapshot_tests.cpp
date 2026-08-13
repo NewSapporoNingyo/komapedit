@@ -7,6 +7,10 @@
 #include "maploader.h"
 #include "repeater_linkage.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -402,8 +406,19 @@ void validate_map(const KvMapSnapshot& snapshot, bool edit_metadata) {
 }
 
 int snapshot_contract() {
+    static_assert(KV_MAPLOADER_API_VERSION == 7u, "maploader API contract version");
     TempFixture fixture(true);
     check(kv_api_version() == KV_MAPLOADER_API_VERSION, "API version");
+#if defined(_WIN32)
+    HMODULE module = GetModuleHandleW(L"maploader.dll");
+    check(module != nullptr, "maploader module handle");
+    if (module) {
+        check(GetProcAddress(module, "kv_load_map") == nullptr,
+              "obsolete kv_load_map export removed");
+        check(GetProcAddress(module, "kv_load_map_ex") != nullptr,
+              "kv_load_map_ex export present");
+    }
+#endif
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
     check(handle.value != nullptr, "preview load");
     if (!handle.value) return failures;
@@ -1890,7 +1905,7 @@ void repeater_insert_contract() {
     };
     RepeaterInsertBatch overlapping(source_path, {{
         "typed-contract-repeater-overlap", "Begin0", "  RAIL  ", "175", "'1'", false,
-        {"pole"},
+        {"pole"}, "",
     }});
     KvEditReportSnapshot overlap_report{};
     dry_run(overlapping, overlap_report, "Repeater overlapping insert dry-run call");
@@ -1977,7 +1992,7 @@ void repeater_insert_contract() {
           "Incomplete paired Repeater insert remains rejected");
 
     RepeaterInsertBatch extra_end(source_path, {{
-        "typed-contract-repeater-extra-end", "End", "rail", "175", "", false, {},
+        "typed-contract-repeater-extra-end", "End", "rail", "175", "", false, {}, "",
     }});
     KvEditReportSnapshot extra_end_report{};
     dry_run(extra_end, extra_end_report, "Extra Repeater End dry-run call");
@@ -1987,7 +2002,7 @@ void repeater_insert_contract() {
           "Repeater End inside an already closed interval is rejected");
 
     RepeaterInsertBatch end_at_old_end(source_path, {{
-        "typed-contract-repeater-at-old-end", "End", "rail", "190", "", false, {},
+        "typed-contract-repeater-at-old-end", "End", "rail", "190", "", false, {}, "",
     }});
     KvEditReportSnapshot end_at_old_end_report{};
     dry_run(end_at_old_end, end_at_old_end_report,
@@ -1997,7 +2012,7 @@ void repeater_insert_contract() {
           "Orphan Repeater End at an existing End boundary is allowed");
 
     RepeaterInsertBatch isolated_end(source_path, {{
-        "typed-contract-repeater-isolated-end", "End", "isolated-end", "200", "", false, {},
+        "typed-contract-repeater-isolated-end", "End", "isolated-end", "200", "", false, {}, "",
     }});
     KvEditReportSnapshot isolated_end_report{};
     dry_run(isolated_end, isolated_end_report,
@@ -2008,7 +2023,7 @@ void repeater_insert_contract() {
 
     RepeaterInsertBatch touching(source_path, {{
         "typed-contract-repeater-touching", "Begin0", "rail", "190", "'1'", false,
-        {"pole"},
+        {"pole"}, "",
     }});
     KvEditReportSnapshot touching_report{};
     dry_run(touching, touching_report, "Repeater touching insert dry-run call");
@@ -2019,7 +2034,7 @@ void repeater_insert_contract() {
 
     RepeaterInsertBatch disjoint(source_path, {{
         "typed-contract-repeater-disjoint", "Begin0", "rail", "200", "'1'", false,
-        {"pole"},
+        {"pole"}, "",
     }});
     KvEditReportSnapshot disjoint_report{};
     dry_run(disjoint, disjoint_report, "Repeater disjoint insert dry-run call");
@@ -2038,7 +2053,7 @@ void repeater_insert_contract() {
         {"typed-contract-repeater-zero-end", "End", "insert-zero", "185", "", false,
          {}, "zero-pair"},
         {"typed-contract-repeater-orphan-end", "End", "insert-orphan", "200", "", false,
-         {}},
+         {}, ""},
     });
     KvEditReportSnapshot dry_report{};
     dry_run(valid, dry_report, "Repeater insert dry-run call");

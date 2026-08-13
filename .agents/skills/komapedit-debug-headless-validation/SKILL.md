@@ -20,7 +20,8 @@ description: Select and run komapedit's Debug builds, registered CTests, DLL che
   - `typed_snapshot_contract`;
   - `maploader_gradient_projection_contract`;
   - `typed_edit_contract`;
-  - `maploader_diagnostics_contract`.
+  - `maploader_diagnostics_contract`;
+  - `settings_persistence_contract`.
 - Specialized unregistered `typed_snapshot_tests.exe` modes, such as `signal-glare`, must be invoked explicitly when relevant.
 
 Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is configured.
@@ -37,6 +38,7 @@ Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is conf
 - Own/other track, grouped distance, Station list, Repeater, Section, or insertion edits: use the matching `--debug-headless-*-edit*` mode.
 - Cached table search: `--debug-headless-table-find`.
 - Touch state machine: `--debug-headless-touch-input`.
+- Canonical settings/history persistence: `--debug-headless-settings-persistence`.
 
 Always pass `--headless-output <file>` when the mode supports it.
 

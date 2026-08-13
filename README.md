@@ -119,9 +119,17 @@ creates or reads the following files there:
 - `settings/settings.ini`: stores UI language, font/component/station-marker sizes, 2D line widths, theme color, edit-mode warning state, and 3D canvas options such as fog, draw distance, gizmo size, camera speed, and performance warnings.
 - `settings/history.ini`: stores recent maps and background-image alignment parameters.
 
-The build and distribution-cleanup scripts migrate legacy root-level INI files
-into `settings`. If both legacy and new copies exist, the script stops instead
-of overwriting either file.
+The settings readers accept only the exact sections, keys, and value forms
+written by the current application. Obsolete aliases, values in the wrong
+section, and loose value forms are ignored and use defaults. Loading an existing
+partial or obsolete file does not rewrite it; an explicit settings save writes a
+complete current-format file.
+
+The bundled executable requires maploader API v7 and loads maps only through
+`kv_load_map_ex()`. Earlier DLLs are rejected by the exact API-version check.
+Build and distribution-cleanup scripts do not migrate or delete obsolete
+root-level INIs or DLLs: if either is present, they stop and require a clean
+`bin`/`settings` layout.
 
 ## Usage
 

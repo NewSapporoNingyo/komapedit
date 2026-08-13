@@ -51,10 +51,6 @@ KV_API uint32_t kv_api_version(void) {
     return KV_MAPLOADER_API_VERSION;
 }
 
-KV_API void* kv_load_map(const char* path, double unit_distance) {
-    return kv_load_map_ex(path, unit_distance, KV_LOAD_EDIT_METADATA);
-}
-
 KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned flags) {
     try {
         if (!path) throw std::runtime_error("path is null");

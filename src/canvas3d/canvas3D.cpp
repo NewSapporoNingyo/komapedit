@@ -1353,11 +1353,6 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
     return result;
 }
 
-CpuModelData derive_put_between_model(const CpuModelData& source,
-                                      const SceneModelLoadRequest& request) {
-    return derive_put_between_model(source, prepare_put_between_source(source), request);
-}
-
 void append_scene_route_value_event(
     std::vector<Canvas3DSceneRouteValueEvent>& events,
     const TrackEvent& source,

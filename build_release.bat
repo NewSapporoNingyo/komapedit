@@ -2,6 +2,21 @@
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
+for %%F in (settings.ini history.ini imgui.ini) do (
+    if exist "build_release\%%F" (
+        echo Unsupported obsolete settings file: build_release\%%F
+        echo Remove it manually and use the canonical build_release\settings layout.
+        exit /b 1
+    )
+)
+for %%F in ("build_release\*.dll") do (
+    if exist "%%~fF" (
+        echo Unsupported obsolete root-level DLL: %%~fF
+        echo Remove it manually and use the canonical build_release\bin layout.
+        exit /b 1
+    )
+)
+
 set CMAKE_ARGS=-S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
 if defined NINJA_EXE (
     set CMAKE_ARGS=!CMAKE_ARGS! -DCMAKE_MAKE_PROGRAM=%NINJA_EXE%
@@ -37,26 +52,6 @@ if not exist "build_release\bin\model_loader.dll" (
     exit /b 1
 )
 if not exist "build_release\settings\" mkdir "build_release\settings"
-
-rem Migrate legacy root-level INI files without overwriting newer settings.
-for %%F in (settings.ini history.ini imgui.ini) do (
-    if exist "build_release\%%F" (
-        if exist "build_release\settings\%%F" (
-            echo Conflicting settings files: build_release\%%F and build_release\settings\%%F
-            exit /b 1
-        )
-        move /y "build_release\%%F" "build_release\settings\%%F" >nul
-        if errorlevel 1 (
-            echo Failed to migrate build_release\%%F to build_release\settings.
-            exit /b 1
-        )
-    )
-)
-
-rem Remove obsolete root-level DLLs left by builds made before the runtime layout change.
-for %%F in ("build_release\*.dll") do (
-    if exist "%%~fF" del /f /q "%%~fF"
-)
 
 for %%F in (LICENSE NOTICE THIRD_PARTY_NOTICES.md) do (
     if exist "%%F" copy /y "%%F" "build_release\%%F" >nul

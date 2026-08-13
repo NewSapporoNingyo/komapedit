@@ -68,6 +68,7 @@ Current implementation status comes from source and `TODO.md`, not from an old m
 - Preserve the Dear ImGui docking/window model, shared menu concepts, cross-view navigation, current editing lifecycle, and table/plan/scene identity.
 - Update Simplified Chinese, English, and Japanese together for visible UI text. Keep console diagnostics English by default.
 - Store application preferences in `settings/settings.ini`, recent-map/per-map history in `settings/history.ini`, and Dear ImGui layout in `settings/imgui.ini`; do not invent overlapping sidecar files.
+- Accept only the exact current settings/history sections, keys, and value grammars emitted by the savers. Do not add configuration aliases, migrations, or load-time rewrites without an explicit task that changes this policy.
 - Cache table rows, marker layouts, and scene data outside per-frame loops. Attach stable edit/navigation metadata during hydration/cache construction rather than ambiguous per-frame lookups.
 - Keep 2D pan/zoom/rotation, grid/background alignment, measurement, station/distance jump, markers, and navigation behavior unless the task explicitly changes them.
 - Keep 3D camera jumps, picking/highlights, route overlays, track visibility, Structure/Signal/Repeater gizmos, model loading, and shared marker visuals consistent. `Put`/`Put0` and `Begin`/`Begin0` conversion must use the explicit Inspector coordinate-offset controls and confirm before discarding nonzero offsets; short `Signal.Put` keeps its existing explicit confirmation path.
@@ -137,7 +138,7 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 | `komapedit-3d-preview-workflow` | Canvas3D, scene geometry/cache, models, markers, gizmos, camera/depth, and packaging |
 | `komapedit-table-feature-workflow` | Typed snapshot table features, caching/find, and table↔plan/scene navigation |
 | `komapedit-station-edit-workflow` | `Station.List`/`Station.Put` identity, drafts, source order, markers, and writeback |
-| `komapedit-ui-persistence` | `settings.ini`, `history.ini`, `imgui.ini`, defaults, migrations, and visibility state |
+| `komapedit-ui-persistence` | `settings.ini`, `history.ini`, `imgui.ini`, canonical schemas, defaults, and visibility state |
 | `komapedit-trilingual-ui-menu-change` | Focused EN/ZH/JA UI/menu/label/link changes |
 | `komapedit-doc-sync-validation` | Final doc-only scope, parity, encoding, table, and link validation |
 
@@ -153,7 +154,7 @@ Initial third-party setup uses `.\get_3rd_party_packages.bat`; install Assimp fo
 - Debug output: `build\`; Release output: `build_release\`.
 - Normal changes use Debug first. Release is required only for release packaging/distribution, runtime dependency layout, optimization-specific behavior, or explicit request.
 - Strict self-owned warnings require an explicit configure with `-DKOMAPEDIT_STRICT_WARNINGS=ON -DBUILD_TESTING=ON`.
-- Registered contracts are `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, and `maploader_diagnostics_contract`.
+- Registered contracts are `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `settings_persistence_contract`.
 - The diagnostics contract needs ignored local fixtures under `tests/`; verify availability before interpreting a clean-checkout failure.
 - Use `komapedit-debug-headless-validation` for current headless commands. Because `komapedit.exe` is a GUI-subsystem executable, PowerShell capture must use `Start-Process -Wait -WindowStyle Hidden -PassThru` and `--headless-output`.
 - Separate build/contract/headless evidence from unperformed manual GUI or visual checks.

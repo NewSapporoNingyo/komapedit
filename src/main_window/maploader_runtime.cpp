@@ -14,7 +14,6 @@ namespace {
 
 #define KME_MAPLOADER_FUNCTIONS(X) \
     X(set_log_callback, kv_set_log_callback) \
-    X(load_map, kv_load_map) \
     X(load_map_ex, kv_load_map_ex) \
     X(generate_geometry, kv_generate_geometry) \
     X(generate_scene_geometry, kv_generate_scene_geometry) \
@@ -118,11 +117,6 @@ uint32_t kv_api_version(void) {
 void kv_set_log_callback(KvLogCallback callback) {
     MaploaderRuntime& runtime = maploader_runtime();
     if (runtime.available()) runtime.set_log_callback(callback);
-}
-
-void* kv_load_map(const char* path, double unit_distance) {
-    MaploaderRuntime& runtime = maploader_runtime();
-    return runtime.available() ? runtime.load_map(path, unit_distance) : nullptr;
 }
 
 void* kv_load_map_ex(const char* path, double unit_distance, unsigned flags) {

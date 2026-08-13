@@ -35,14 +35,11 @@ KV_API void kv_set_log_callback(KvLogCallback callback);
    match and never falls back to a legacy transport. */
 KV_API uint32_t kv_api_version(void);
 
-/* Returns an opaque map handle owned by the caller. Release it exactly once
-   with kv_free(). */
-KV_API void* kv_load_map(const char* path, double unit_distance);
-
 #define KV_LOAD_PREVIEW (1u << 0)
 #define KV_LOAD_EDIT_METADATA (1u << 1)
 
-/* Extended loader entry point. KV_LOAD_PREVIEW skips source/edit metadata when
+/* Returns an opaque map handle owned by the caller. Release it exactly once
+   with kv_free(). KV_LOAD_PREVIEW skips source/edit metadata when
    KV_LOAD_EDIT_METADATA is not also set. */
 KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned flags);
 
@@ -104,7 +101,7 @@ KV_API int kv_edit_reset_memory(void* handle);
 /* Returns a thread-local error string owned by maploader.dll. Do not free it. */
 KV_API const char* kv_get_last_error(void);
 
-/* Releases a handle returned by kv_load_map(). Passing NULL is allowed. */
+/* Releases a handle returned by kv_load_map_ex(). Passing NULL is allowed. */
 KV_API void kv_free(void* handle);
 
 /* Releases strings returned by kv_get_source_text(). Passing NULL is allowed. */

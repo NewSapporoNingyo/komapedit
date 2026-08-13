@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
+`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Five contracts are registered: `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `settings_persistence_contract`. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
 
 Runtime output is organized as follows:
 
@@ -77,6 +77,7 @@ Runtime output is organized as follows:
 - The output root contains `komapedit.exe`, `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 - `bin\` contains `maploader.dll`, `model_loader.dll`, Assimp, and copied runtime DLLs.
 - `settings\` contains application-created `settings.ini`, `history.ini`, and `imgui.ini`.
+- The build and distribution-cleanup scripts fail before mutation if obsolete root-level INIs or DLLs are present; they do not migrate, overwrite, or delete those files.
 
 Do not commit build directories, cloned `third_party` source trees, settings files, generated CSV files, local test output, or temporary route/map/model fixtures.
 
@@ -84,7 +85,7 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 
 | Area | Primary files and responsibility |
 | --- | --- |
-| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v6 functions, fixed-width POD snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
+| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v7 functions, fixed-width POD snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
 | Map lifecycle | `src/maploader/maploader.cpp`: C ABI entry points, handles, regeneration, dispatch, source retrieval, and boundary error handling |
 | Map state | `src/maploader/maploader_internal.h`: `MapContext`, parsed rows, source spans, include stacks, edit references, reports, and timing |
 | Parsing | `maploader_core.cpp`, `maploader_parser.cpp`, `text_decoder.cpp/.h`: statements, values, includes, variables, encodings, source anchors, uniqueness checks |
@@ -114,7 +115,7 @@ Use existing boundaries and shared helpers. Do not duplicate source ownership, l
 - Preserve `UNICODE`, `_UNICODE`, `NOMINMAX`, and `WIN32_LEAN_AND_MEAN` assumptions.
 - Never let exceptions, STL types, C++ classes, or ownership-ambiguous pointers cross a public C ABI.
 - Memory allocated by a DLL and returned through the ABI must have a matching free function.
-- The bundled EXE requires exact maploader API v6 and model-loader API v2 matches.
+- The bundled EXE requires exact maploader API v7 and model-loader API v2 matches. `kv_load_map_ex()` is the only map-loading entry point; map, scene, edit-target, and edit-report snapshot versions and structure sizes remain independently versioned and unchanged by the API v7 transition.
 - Treat typed ABI inputs as call-scoped views. Nested snapshot storage is handle-owned and is invalidated according to its documented regular-geometry, scene-geometry, edit-operation, reset, reparse, and free rules.
 - Any public ABI change requires an explicit version/structure-size decision, synchronized EXE/DLL changes, updated callers, and documented ownership and validity.
 
@@ -149,6 +150,7 @@ Editable rows must retain source path, include stack, source span, original stat
 - Add every user-visible string in Simplified Chinese, English, and Japanese, with concise toolbar/menu wording.
 - Keep diagnostics in the existing console, in English by default.
 - Store real preferences in `settings/settings.ini`, recent-map/background alignment in `settings/history.ini`, and layout in `settings/imgui.ini`.
+- Accept only the exact current settings/history sections, keys, and value grammars emitted by the savers. Unknown, obsolete, wrong-section, or malformed entries use defaults; loading an existing file never rewrites it, while an explicit save emits the complete canonical schema.
 - Preserve plan pan/zoom/rotation/fit, measurement, grids, station jumps, coordinate transforms, marker synchronization, context actions, and background-image alignment.
 - Keep table content cached, dynamic Section arguments and explicit `null` values intact, Variable List ordering stable, and row/plan/scene navigation side effects synchronized.
 - Keep Assimp isolated in `model_loader.dll`; handle missing textures, invalid files, and unsupported models without crashing.
@@ -188,6 +190,7 @@ build\komapedit.exe --debug-headless-new-element-edit <map-path> --headless-outp
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
+build\komapedit.exe --debug-headless-settings-persistence --headless-output build\settings-persistence.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
@@ -207,7 +210,7 @@ Because `komapedit.exe` is a GUI-subsystem executable, PowerShell validation tha
 - Preserve `NINJA_EXE`, `VCPKG_ROOT`, and the `x64-mingw-dynamic` fallback.
 - Keep the EXE and notice files at the output root, DLLs in `bin`, and INIs in `settings`.
 - Distribution cleanup preserves `bin`, `settings`, `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
-- Legacy root INIs move into `settings` only when the destination is absent; conflicts abort without overwriting.
+- Obsolete root-level INIs or DLLs are unsupported. Development build, Release build, and distribution cleanup must stop before moving, overwriting, or deleting anything when either is present.
 - Fetch ImGui from its docking branch and ImPlot from upstream.
 - Never remove or bypass license/notice files. A new dependency requires CMake, developer documentation, and third-party notice updates.
 - Route release export is separate from `build_release.bat`; when implemented it must expand includes, optionally constantize expressions, copy only used resources, report results, and protect development directories through temporary output.

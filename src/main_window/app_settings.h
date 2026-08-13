@@ -22,6 +22,7 @@ const std::array<ImVec4, 12>& ui_theme_palette();
 std::filesystem::path default_history_path();
 std::filesystem::path default_imgui_ini_path();
 UserSettings load_user_settings();
+UserSettings load_user_settings(const std::filesystem::path& path);
 bool save_user_settings(const UserSettings& settings);
 bool load_imgui_layout(const std::filesystem::path& path);
 bool save_imgui_layout(const std::filesystem::path& path);

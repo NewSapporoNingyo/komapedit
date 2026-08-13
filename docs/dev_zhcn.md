@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
+普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract` 和 `settings_persistence_contract` 五项契约。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
 
 运行时输出布局如下：
 
@@ -77,6 +77,7 @@ ctest --test-dir build --output-on-failure
 - 输出根目录包含 `komapedit.exe`、`LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md`。
 - `bin\` 包含 `maploader.dll`、`model_loader.dll`、Assimp 和复制的运行时 DLL。
 - `settings\` 包含应用生成的 `settings.ini`、`history.ini` 和 `imgui.ini`。
+- 构建及发布清理脚本若发现输出根目录中存在旧 INI 或 DLL，会在修改任何文件前失败；脚本不会迁移、覆盖或删除这些文件。
 
 不得提交构建目录、克隆的 `third_party` 源码树、设置文件、生成的 CSV、本地测试输出或临时线路/地图/模型固件。
 
@@ -84,7 +85,7 @@ ctest --test-dir build --output-on-failure
 
 | 区域 | 主要文件与职责 |
 | --- | --- |
-| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v6 函数、定宽 POD 快照、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
+| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v7 函数、定宽 POD 快照、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
@@ -114,7 +115,7 @@ ctest --test-dir build --output-on-failure
 #### `include/maploader.h`
 
 - **导出与日志接口**：`KV_API` 控制 DLL 导出/导入；`KvLogCallback` 与 `kv_set_log_callback()` 把 DLL 内的英文诊断交给宿主。`kv_api_version()` 返回 ABI 版本，EXE 必须精确匹配。
-- **句柄创建与几何生成**：`kv_load_map()` 是默认入口，`kv_load_map_ex()` 通过 `KV_LOAD_PREVIEW`、`KV_LOAD_EDIT_METADATA` 选择轻量预览或完整编辑元数据。`kv_generate_geometry()` 生成常规轨道数据，`kv_generate_scene_geometry()` 生成独立失效周期的场景几何；两者都在既有句柄上更新缓存和修订号。
+- **句柄创建与几何生成**：`kv_load_map_ex()` 是唯一地图加载入口，通过 `KV_LOAD_PREVIEW`、`KV_LOAD_EDIT_METADATA` 选择轻量预览或完整编辑元数据。`kv_generate_geometry()` 生成常规轨道数据，`kv_generate_scene_geometry()` 生成独立失效周期的场景几何；两者都在既有句柄上更新缓存和修订号。
 - **只读快照**：`kv_get_map_snapshot()`、`kv_get_scene_geometry_snapshot()` 校验请求版本与结构尺寸后返回句柄拥有的视图。调用方不得释放嵌套指针，并须在重解析或对应几何失效前完成复制。
 - **编辑与源码访问**：`kv_get_edit_target_typed()` 取得一个稳定 edit id 的字段和源码信息，`kv_get_source_text()` 返回当前磁盘或内存覆盖层中的解码文本。`kv_edit_dry_run_typed()`、`kv_edit_apply_to_memory_typed()`、`kv_edit_apply_typed()`、`kv_edit_commit_typed()`、`kv_edit_reset_memory()` 分别承担验证、应用到工作副本、直接写盘、提交工作副本和撤销覆盖层。
 - **错误与释放**：`kv_get_last_error()` 返回线程局部错误文本；`kv_free()` 释放地图句柄，`kv_free_string()` 释放 DLL 分配的独立字符串。
@@ -300,7 +301,7 @@ ctest --test-dir build --output-on-failure
 
 #### `src/main_window/maploader_runtime.cpp`
 
-- `KME_MAPLOADER_FUNCTIONS` 宏是唯一符号清单；`MaploaderRuntime` 构造时从 `runtime_paths::dll_path()` 加载 `maploader.dll`，解析全部函数指针并检查 `kv_api_version()==KV_MAPLOADER_API_VERSION`。失败信息包含 Win32 错误文本。
+- `KME_MAPLOADER_FUNCTIONS` 宏是唯一符号清单；`MaploaderRuntime` 构造时从 `runtime_paths::dll_path()` 加载 `maploader.dll`，解析包括唯一加载入口 `kv_load_map_ex()` 在内的全部函数指针，并检查 `kv_api_version()==KV_MAPLOADER_API_VERSION`。失败信息包含 Win32 错误文本。
 - 文件后半的每个全局 `kv_*` 函数是薄转发器：先 `ensure_loaded()`，再调用缓存函数指针；加载失败时设置可供 GUI 查询的错误并返回失败值。这样 GUI 源码仍可按公共头函数名调用，而链接时不静态依赖 DLL import library。
 
 #### `src/main_window/runtime_paths.h` 与 `src/main_window/runtime_paths.cpp`
@@ -310,11 +311,11 @@ ctest --test-dir build --output-on-failure
 
 #### `src/main_window/app_settings.h` 与 `src/main_window/app_settings.cpp`
 
-- 头文件只暴露默认 INI 路径、用户设置/历史读写、ImGui layout 延迟保存和运行时样式应用函数。
+- 头文件暴露默认 INI 路径、内部显式路径设置加载入口、用户设置/历史读写、ImGui layout 延迟保存和运行时样式应用函数。
 - 实现前段规范化存储路径、最近地图 key/显示名，clamp 字体、控件、marker、线宽、场景距离/操纵器/实例警告阈值；颜色函数负责 hex 序列化、palette、透明度和混色。
-- 语言、bool、2D mode、grid mode 的 to/from string 函数形成稳定 INI 文本协议。`save_user_settings()` 按 section 写入全部偏好；`load_user_settings()` 逐键读取、兼容旧别名、clamp 非法值并返回默认回退。
+- 语言、bool、2D mode、grid mode 的 to/from string 函数形成规范 INI 文本协议。`save_user_settings()` 在 `General`、`WindowVisibility`、`View2D`、`View3D` 中写入 79 个完整规范键；`load_user_settings()` 只接受这些精确节名、键名和值语法，错误、旧别名、错节或未知项使用默认值。读取已有文件不会自动重写，显式保存才写回完整规范文件。
 - `load_imgui_layout()`、`save_imgui_layout()`、`save_imgui_layout_if_requested()` 和 pending flag 管理 `imgui.ini` 的显式/延迟持久化。
-- history 块解析 `[RecentN]`，`load_history_entries()` 保持顺序并读取每地图背景变换，`save_history_entries()` 原子化重写最近项；数字格式函数避免区域设置污染。
+- history 块只解析 `[Recent]` 的 `count`、严格 `[MapN]` 和八个规范字段；`load_history_entries()` 保持路径规范化、去重和最多十项，并拒绝旧分节、字段别名及带尾随字符的数字/索引；`save_history_entries()` 以规范格式重写最近项，数字格式函数避免区域设置污染。
 - `apply_ui_font_size()`、`apply_ui_theme_color()`、`apply_ui_component_size()`、`apply_ui_settings()` 把持久设置投影到 ImGui style，并按 DPI/viewports 修正圆角和尺寸。
 
 #### `src/main_window/gui_kme.cpp`
@@ -426,7 +427,7 @@ ctest --test-dir build --output-on-failure
 
 #### `src/main_window/debug_headless.h`
 
-- 每个 `*Options` 结构对应一个命令行模式：基本加载、plan/scene/open benchmark、场景相机传递、source anchor、roundtrip、distance/own/other track、Station list、Repeater、Section、insert、table find 和 touch。
+- 每个 `*Options` 结构对应一个命令行模式：基本加载、plan/scene/open benchmark、场景相机传递、source anchor、roundtrip、distance/own/other track、Station list、Repeater、Section、insert、table find、touch 和 settings persistence。
 - 头文件声明各 `run_debug_headless_*()` 入口，生产 Release 可不启用这些路径；参数结构使 `main()` 的命令行解析与具体测试实现解耦。
 
 #### `src/main_window/debug_headless.cpp`
@@ -437,12 +438,12 @@ ctest --test-dir build --output-on-failure
 - **距离/自轨道/他轨道批次**：`distance_batch_headless` 的 MapHandle、edit 选择、resolution choice 和 report facts 驱动多文件/Include/变量环境用例；own/other track 模式验证方法不转换、参数形状、Apply/Reset/Commit 和几何变化。
 - **列表与关联编辑**：`station_list_edit_headless` 创建临时 CSV fixture，验证编辑/清空/重排/删除及原编码；`repeater_batch_headless` 验证 chain 更新、trim 转换和原子删除；`section_edit_batch_headless` 验证动态参数增删、null/表达式保留和 commit。
 - **插入与源码锚点**：insert 模式验证允许模板、距离块选择和未知字段拒绝；source-anchor/roundtrip 模式检查物理文件、Include stack、行列/span、stable id 和保存后重载一致性。
-- **UI 纯逻辑检查**：table-find 模式验证大小写、exact/step/unused 状态；touch 模式用 debug 注入检查 tap、long press、scroll、pinch 和消费语义。文件末各 `run_debug_headless_*()` 解析 options、运行对应场景并输出 PASS/FAIL。
+- **UI 与持久化纯逻辑检查**：table-find 模式验证大小写、exact/step/unused 状态；touch 模式用 debug 注入检查 tap、long press、scroll、pinch 和消费语义；settings-persistence 模式仅在自动清理的临时目录中验证规范往返、旧格式拒绝、不自动重写及 History 边界。文件末各 `run_debug_headless_*()` 解析 options、运行对应场景并输出 PASS/FAIL。
 
 #### `src/maploader/tests/typed_snapshot_tests.cpp`
 
 - `TempFixture` 创建并清理临时 map/list，编码帮助函数生成 UTF-8/BOM、UTF-16 与 CP932 输入；`MapHandle` RAII 调用 `kv_free()`；`CHECK_ARRAY` 等断言同时检查 count 与空指针契约。
-- snapshot 测试遍历所有根数组、字符串/span、metadata、capability、revision 和稳定 edit id，并对 Signal glare/可变 key、资源 Load、Include 和场景快照执行定向检查。
+- snapshot 测试遍历所有根数组、字符串/span、metadata、capability、revision 和稳定 edit id，检查 Windows 导出表仅保留 `kv_load_map_ex()` 加载入口，并对 Signal glare/可变 key、资源 Load、Include 和场景快照执行定向检查。
 - geometry 测试构造坡度/曲线 fixture，比较线路长度、平面投影、高程和事件距离，防止纵坡投影回归。
 - `UpdateBatch`、`RepeaterTrimBatch` 等包装器构造 typed edits；edit 测试覆盖 dry-run、memory Apply/Reset、直接 Apply、Commit、concurrency hash、距离消歧、方法/参数形状、语义保护、编码和事务回滚。
 - diagnostics 测试装载 `tests/` 本地 fixture，验证缺文件、错误语法、重复 Load/Enable、未配对 transition、未知 key 及日志/last-error 文本。`main()` 根据 `snapshot`、`geometry`、`edit`、`diagnostics` 和专项参数选择测试组，返回进程状态供 CTest 使用。
@@ -475,7 +476,7 @@ App / MapModel
 - 保持 `UNICODE`、`_UNICODE`、`NOMINMAX` 和 `WIN32_LEAN_AND_MEAN` 假设。
 - 异常、STL 类型、C++ 类或所有权不明确的指针不得跨越公共 C ABI。
 - DLL 通过 ABI 返回的已分配内存必须有配对释放函数。
-- 随附 EXE 要求 maploader API v6 和 model-loader API v2 精确匹配。
+- 随附 EXE 要求 maploader API v7 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；API v7 变更不修改地图、场景、编辑目标和编辑报告各自的快照版本或结构尺寸。
 - 强类型 ABI 输入视为调用期视图；嵌套快照存储由句柄持有，并按已记录的几何重建、编辑操作、重置、重解析和释放规则失效。
 - 公共 ABI 变更必须明确决定版本/结构尺寸，同步修改 EXE、DLL 和调用方，并记录所有权与有效期。
 
@@ -510,6 +511,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 所有用户可见文本都要同步加入简体中文、英语和日语，并保持工具栏/菜单措辞简短。
 - 诊断继续输出到现有控制台，默认使用英语。
 - 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。
+- 设置与历史只接受保存端写出的精确节、键和值语法。未知项、旧项、错节项或格式错误项使用默认值；读取已有文件绝不自动重写，显式保存才输出完整规范格式。
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
 - 缓存表格内容；保持 Section 动态参数与显式 `null`、变量列表顺序及行/平面/场景导航副作用。
 - 将 Assimp 隔离在 `model_loader.dll`；纹理缺失、文件无效和模型不支持时不得崩溃。
@@ -549,6 +551,7 @@ build\komapedit.exe --debug-headless-new-element-edit <map-path> --headless-outp
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
+build\komapedit.exe --debug-headless-settings-persistence --headless-output build\settings-persistence.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
@@ -568,7 +571,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 - 保留 `NINJA_EXE`、`VCPKG_ROOT` 和 `x64-mingw-dynamic` 回退。
 - EXE 与声明文件位于输出根目录，DLL 位于 `bin`，INI 位于 `settings`。
 - 分发清理保留 `bin`、`settings`、`LICENSE`、`NOTICE` 与 `THIRD_PARTY_NOTICES.md`。
-- 旧版根目录 INI 仅在目标不存在时迁入 `settings`；冲突时中止且不覆盖。
+- 输出根目录中的旧 INI 或 DLL 不受支持；开发构建、Release 构建和发布清理发现任一此类文件时，都必须在移动、覆盖或删除任何文件前中止。
 - ImGui 使用 docking 分支，ImPlot 使用上游版本。
 - 不得删除或绕过许可证/声明文件。新增依赖时同步更新 CMake、开发者文档和第三方声明。
 - 线路发布导出与 `build_release.bat` 相互独立；实现时必须展开 Include、可选常量化表达式、仅复制已用资源、写报告，并通过临时输出保护开发目录。

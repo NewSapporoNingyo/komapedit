@@ -670,7 +670,7 @@ HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
 HeadlessInsertEditOptions parse_headless_insert_edit_options(const std::vector<std::string>& args) {
     HeadlessInsertEditOptions options = parse_headless_optional_map_edit_options<HeadlessInsertEditOptions>(
         args, "--debug-headless-insert-edit",
-        [](HeadlessInsertEditOptions& options) { options.commit = true; });
+        [](HeadlessInsertEditOptions& parsed_options) { parsed_options.commit = true; });
     if (!options.requested) return options;
     for (const std::string& arg : args) {
         if (arg == "--repeater-only") options.repeater_only = true;
@@ -737,6 +737,23 @@ HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<s
             options.requested = true;
         } else if (arg == "--headless-output") {
             const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    return options;
+}
+
+HeadlessSettingsPersistenceOptions parse_headless_settings_persistence_options(
+    const std::vector<std::string>& args) {
+    HeadlessSettingsPersistenceOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-settings-persistence") {
+            options.requested = true;
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
             if (!value) return options;
             options.output_path = *value;
         }
@@ -1119,6 +1136,314 @@ int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options) {
     check(queued_after_down >= 2, "touch_down_queues_imgui_mouse_events");
     check(queued_after_up >= queued_after_down + 1, "touch_up_queues_imgui_mouse_events");
     ImGui::DestroyContext();
+
+    *out << "result=" << (exit_code == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return exit_code;
+}
+
+int run_debug_headless_settings_persistence(
+    const HeadlessSettingsPersistenceOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(
+            std::filesystem::path(utf8_to_wide(options.output_path)),
+            std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit debug-headless-settings-persistence\n";
+    int exit_code = 0;
+    auto check = [&](bool condition, const char* label) {
+        *out << label << "=" << (condition ? "PASS" : "FAIL") << "\n";
+        if (!condition) exit_code = 2;
+    };
+    auto color_equal = [](const ImVec4& lhs, const ImVec4& rhs) {
+        return std::abs(lhs.x - rhs.x) < 0.0001f &&
+            std::abs(lhs.y - rhs.y) < 0.0001f &&
+            std::abs(lhs.z - rhs.z) < 0.0001f &&
+            std::abs(lhs.w - rhs.w) < 0.0001f;
+    };
+    auto write_text = [](const std::filesystem::path& path, const std::string& text) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.write(text.data(), static_cast<std::streamsize>(text.size()));
+        return static_cast<bool>(file);
+    };
+    auto read_text = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        std::ostringstream buffer;
+        buffer << file.rdbuf();
+        return buffer.str();
+    };
+
+    const auto unique = std::to_string(GetCurrentProcessId()) + "-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const std::filesystem::path temp_root =
+        std::filesystem::temp_directory_path() /
+        std::filesystem::path("komapedit-settings-contract-" + unique);
+    struct TempDirectoryCleanup {
+        std::filesystem::path path;
+        ~TempDirectoryCleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(path, ec);
+        }
+    } cleanup{temp_root};
+
+    try {
+        std::filesystem::create_directories(temp_root);
+
+        *out << "stage=canonical_roundtrip\n";
+        const std::filesystem::path canonical_path = temp_root / L"settings.ini";
+        UserSettings canonical;
+        canonical.path = canonical_path;
+        canonical.language = Language::En;
+        canonical.font_size = 22.0f;
+        canonical.ui_component_size = 125.0f;
+        canonical.marker_size_percent = 150.0f;
+        canonical.canvas_line_widths = {3.0f, 2.5f, 1.5f, 2.0f};
+        canonical.theme_color = ImVec4(
+            0x12 / 255.0f, 0x34 / 255.0f, 0x56 / 255.0f, 1.0f);
+        canonical.edit_mode_enabled = true;
+        canonical.edit_mode_warning_suppressed = true;
+        canonical.window_visibility.show_station_list_window = true;
+        canonical.window_visibility.show_console_window = false;
+        canonical.view_2d.show_stations = false;
+        canonical.view_2d.show_speedlimits = true;
+        canonical.view_2d.mode = 1;
+        canonical.view_2d.grid_mode = 1;
+        canonical.view_3d.show_scene_owntrack_markers = true;
+        canonical.view_3d.scene_fog_enabled = false;
+        canonical.view_3d.scene_map_draw_distance_enabled = false;
+        canonical.view_3d.scene_draw_distance_m = 2500;
+        canonical.view_3d.scene_edit_component_size_percent = 180;
+        canonical.view_3d.scene_camera_speed_percent = 250;
+        canonical.view_3d.scene_performance_warning_enabled = false;
+        canonical.view_3d.scene_instance_warning_threshold = 3600;
+        canonical.view_3d.scene_instance_critical_warning_threshold = 6200;
+        check(save_user_settings(canonical), "canonical_save");
+        const std::string canonical_text = read_text(canonical_path);
+        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 79,
+              "canonical_key_count_79");
+        UserSettings canonical_loaded = load_user_settings(canonical_path);
+        check(canonical_loaded.language == canonical.language, "canonical_language");
+        check(canonical_loaded.font_size == canonical.font_size, "canonical_font_size");
+        check(canonical_loaded.ui_component_size == canonical.ui_component_size,
+              "canonical_component_size");
+        check(canonical_loaded.marker_size_percent == canonical.marker_size_percent,
+              "canonical_marker_size");
+        check(canonical_loaded.canvas_line_widths.own_track_px ==
+                  canonical.canvas_line_widths.own_track_px &&
+              canonical_loaded.canvas_line_widths.other_track_px ==
+                  canonical.canvas_line_widths.other_track_px &&
+              canonical_loaded.canvas_line_widths.chart_marker_px ==
+                  canonical.canvas_line_widths.chart_marker_px &&
+              canonical_loaded.canvas_line_widths.background_grid_px ==
+                  canonical.canvas_line_widths.background_grid_px,
+              "canonical_line_widths");
+        check(color_equal(canonical_loaded.theme_color, canonical.theme_color),
+              "canonical_theme_color");
+        check(canonical_loaded.edit_mode_enabled == canonical.edit_mode_enabled &&
+                  canonical_loaded.edit_mode_warning_suppressed ==
+                      canonical.edit_mode_warning_suppressed,
+              "canonical_edit_flags");
+        check(canonical_loaded.window_visibility == canonical.window_visibility,
+              "canonical_window_visibility");
+        check(canonical_loaded.view_2d == canonical.view_2d, "canonical_view_2d");
+        check(canonical_loaded.view_3d == canonical.view_3d, "canonical_view_3d");
+
+        *out << "stage=legacy_alias_rejection\n";
+        const std::filesystem::path alias_path = temp_root / L"settings_alias.ini";
+        const std::string alias_text =
+            "[General]\n"
+            "lang=en\n"
+            "font_size=24.0\n"
+            "enable_edit=true\n"
+            "[WindowVisibility]\n"
+            "show_other_train_window=true\n"
+            "[View2D]\n"
+            "show_station_pos=false\n"
+            "view_2d_mode=measure\n"
+            "[View3D]\n"
+            "scene_draw_distance=2400\n";
+        check(write_text(alias_path, alias_text), "legacy_alias_fixture_write");
+        UserSettings alias_loaded = load_user_settings(alias_path);
+        UserSettings defaults;
+        check(alias_loaded.language == defaults.language, "legacy_language_alias_rejected");
+        check(alias_loaded.font_size == 24.0f, "canonical_key_amid_aliases");
+        check(alias_loaded.edit_mode_enabled == defaults.edit_mode_enabled,
+              "legacy_edit_alias_rejected");
+        check(alias_loaded.window_visibility.show_other_trains_window ==
+                  defaults.window_visibility.show_other_trains_window,
+              "legacy_window_alias_rejected");
+        check(alias_loaded.view_2d.show_stations == defaults.view_2d.show_stations &&
+                  alias_loaded.view_2d.mode == defaults.view_2d.mode,
+              "legacy_view_2d_aliases_rejected");
+        check(alias_loaded.view_3d.scene_draw_distance_m ==
+                  defaults.view_3d.scene_draw_distance_m,
+              "legacy_view_3d_alias_rejected");
+        check(read_text(alias_path) == alias_text, "legacy_alias_load_does_not_rewrite");
+        check(save_user_settings(alias_loaded), "explicit_save_after_legacy_load");
+        const std::string rewritten_alias_text = read_text(alias_path);
+        check(std::count(
+                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 79 &&
+                  rewritten_alias_text.find("lang=") == std::string::npos &&
+                  rewritten_alias_text.find("enable_edit=") == std::string::npos,
+              "explicit_save_writes_canonical_schema");
+
+        *out << "stage=strict_section_and_value_rejection\n";
+        const std::filesystem::path invalid_path = temp_root / L"settings_invalid.ini";
+        const std::string invalid_text =
+            "[General]\n"
+            "language=EN\n"
+            "font_size=22junk\n"
+            "ui_component_size=nan\n"
+            "marker_size_percent=inf\n"
+            "own_track_line_width_px=0x4\n"
+            "theme_color=#123456\n"
+            "edit_mode_enabled=yes\n"
+            "show_console_window=false\n"
+            "[Malformed\n"
+            "font_size=30.0\n"
+            "[WindowVisibility]\n"
+            "show_console_window=FALSE\n"
+            "font_size=24.0\n"
+            "[View2D]\n"
+            "show_stations=1\n"
+            "mode=1\n"
+            "grid_mode=moveable\n"
+            "[View3D]\n"
+            "scene_fog_enabled=on\n"
+            "scene_draw_distance_m=1500junk\n"
+            "scene_camera_speed_percent=200x\n";
+        check(write_text(invalid_path, invalid_text), "strict_fixture_write");
+        UserSettings invalid_loaded = load_user_settings(invalid_path);
+        check(invalid_loaded.language == defaults.language &&
+                  invalid_loaded.font_size == defaults.font_size &&
+                  invalid_loaded.ui_component_size == defaults.ui_component_size &&
+                  invalid_loaded.marker_size_percent == defaults.marker_size_percent &&
+                  invalid_loaded.canvas_line_widths.own_track_px ==
+                      defaults.canvas_line_widths.own_track_px,
+              "loose_general_values_rejected");
+        check(color_equal(invalid_loaded.theme_color, defaults.theme_color) &&
+                  invalid_loaded.edit_mode_enabled == defaults.edit_mode_enabled,
+              "loose_color_and_bool_rejected");
+        check(invalid_loaded.window_visibility.show_console_window ==
+                  defaults.window_visibility.show_console_window,
+              "wrong_section_and_case_rejected");
+        check(invalid_loaded.view_2d == defaults.view_2d,
+              "loose_view_2d_values_rejected");
+        check(invalid_loaded.view_3d == defaults.view_3d,
+              "loose_view_3d_values_rejected");
+
+        *out << "stage=missing_keys_no_rewrite\n";
+        const std::filesystem::path partial_path = temp_root / L"settings_partial.ini";
+        const std::string partial_text = "[General]\nlanguage=ja\n";
+        check(write_text(partial_path, partial_text), "partial_fixture_write");
+        UserSettings partial_loaded = load_user_settings(partial_path);
+        check(partial_loaded.language == Language::Ja &&
+                  partial_loaded.font_size == defaults.font_size,
+              "partial_file_uses_defaults_for_missing_keys");
+        check(read_text(partial_path) == partial_text, "partial_file_not_rewritten");
+
+        *out << "stage=history_canonical_and_legacy_boundary\n";
+        const std::filesystem::path history_path = temp_root / L"history.ini";
+        RecentMapEntry first_history;
+        first_history.path = narrow_path(temp_root / L"route-one.txt");
+        first_history.background.has_image = true;
+        first_history.background.image_path = narrow_path(temp_root / L"background.png");
+        first_history.background.x = 12.5;
+        first_history.background.y = -3.25;
+        first_history.background.width = 800.0;
+        first_history.background.height = 600.0;
+        first_history.background.rotation_deg = 4.5;
+        first_history.background.brightness = 75.0;
+        RecentMapEntry second_history;
+        second_history.path = narrow_path(temp_root / L"route-two.txt");
+        check(save_history_entries(history_path, {first_history, second_history}),
+              "canonical_history_save");
+        std::vector<RecentMapEntry> canonical_history =
+            load_history_entries(history_path);
+        check(canonical_history.size() == 2, "canonical_history_count");
+        if (canonical_history.size() == 2) {
+            check(normalized_path_key(canonical_history[0].path) ==
+                      normalized_path_key(first_history.path) &&
+                      normalized_path_key(canonical_history[1].path) ==
+                      normalized_path_key(second_history.path),
+                  "canonical_history_paths");
+            check(canonical_history[0].background.has_image &&
+                      canonical_history[0].background.x == 12.5 &&
+                      canonical_history[0].background.y == -3.25 &&
+                      canonical_history[0].background.width == 800.0 &&
+                      canonical_history[0].background.height == 600.0 &&
+                      canonical_history[0].background.rotation_deg == 4.5 &&
+                      canonical_history[0].background.brightness == 75.0,
+                  "canonical_history_background");
+        }
+
+        const std::filesystem::path legacy_history_path =
+            temp_root / L"history_legacy.ini";
+        const std::string current_path = narrow_path(temp_root / L"current-route.txt");
+        const std::string legacy_history_text =
+            "[Recent]\n"
+            "count=2\n"
+            "[Recent_Map0]\n"
+            "path=" + narrow_path(temp_root / L"old-one.txt") + "\n"
+            "[Recent0]\n"
+            "path=" + narrow_path(temp_root / L"old-two.txt") + "\n"
+            "[Map0junk]\n"
+            "path=" + narrow_path(temp_root / L"old-three.txt") + "\n"
+            "[Map00]\n"
+            "path=" + narrow_path(temp_root / L"old-leading-zero.txt") + "\n"
+            "[Map0]\n"
+            "map_path=" + narrow_path(temp_root / L"old-four.txt") + "\n"
+            "[Map1]\n"
+            "path=" + current_path + "\n"
+            "background_path=" + narrow_path(temp_root / L"old-bg.png") + "\n"
+            "bg_x=12junk\n"
+            "bg_brightness=80garbage\n"
+            "[MapBroken\n"
+            "path=" + narrow_path(temp_root / L"old-after-malformed.txt") + "\n";
+        check(write_text(legacy_history_path, legacy_history_text),
+              "legacy_history_fixture_write");
+        std::vector<RecentMapEntry> legacy_history =
+            load_history_entries(legacy_history_path);
+        check(legacy_history.size() == 1 &&
+                  normalized_path_key(legacy_history[0].path) ==
+                      normalized_path_key(current_path),
+              "legacy_history_sections_and_path_aliases_rejected");
+        if (legacy_history.size() == 1) {
+            check(!legacy_history[0].background.has_image &&
+                      legacy_history[0].background.x == 0.0 &&
+                      legacy_history[0].background.brightness == 100.0,
+                  "legacy_history_fields_and_trailing_numbers_rejected");
+        }
+
+        const std::filesystem::path bad_count_path =
+            temp_root / L"history_bad_count.ini";
+        const std::string bad_count_text =
+            "[Recent]\ncount=1junk\n[Map0]\npath=" + current_path + "\n";
+        check(write_text(bad_count_path, bad_count_text), "bad_count_fixture_write");
+        check(load_history_entries(bad_count_path).empty(),
+              "history_count_trailing_text_rejected");
+
+        const std::filesystem::path leading_zero_count_path =
+            temp_root / L"history_leading_zero_count.ini";
+        const std::string leading_zero_count_text =
+            "[Recent]\ncount=01\n[Map0]\npath=" + current_path + "\n";
+        check(write_text(leading_zero_count_path, leading_zero_count_text),
+              "leading_zero_count_fixture_write");
+        check(load_history_entries(leading_zero_count_path).empty(),
+              "history_count_leading_zero_rejected");
+    } catch (const std::exception& e) {
+        *out << "exception=\"" << e.what() << "\"\n";
+        exit_code = 3;
+    }
 
     *out << "result=" << (exit_code == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();

@@ -30,6 +30,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 std::string normalized_storage_path(const std::string& path) {
     if (trim_ascii(path).empty()) return {};
@@ -81,6 +82,7 @@ float clamp_ui_component_size(float value) {
 
 float clamp_marker_size_percent(float value) {
     if (!std::isfinite(value)) return k_default_marker_size_percent;
+    value = std::clamp(value, k_min_marker_size_percent, k_max_marker_size_percent);
     const int rounded = static_cast<int>(std::round(value / k_marker_size_percent_step)) * k_marker_size_percent_step;
     return std::clamp(static_cast<float>(rounded), k_min_marker_size_percent, k_max_marker_size_percent);
 }
@@ -105,6 +107,9 @@ CanvasLineWidthSettings clamp_canvas_line_widths(CanvasLineWidthSettings value) 
 
 int clamp_scene_draw_distance(double value) {
     if (!std::isfinite(value)) return k_default_scene_draw_distance_m;
+    value = std::clamp(value,
+                       static_cast<double>(k_min_scene_draw_distance_m),
+                       static_cast<double>(k_max_scene_draw_distance_m));
     const int rounded = static_cast<int>(std::round(value / k_scene_draw_distance_step_m)) * k_scene_draw_distance_step_m;
     return std::clamp(rounded, k_min_scene_draw_distance_m, k_max_scene_draw_distance_m);
 }
@@ -124,6 +129,9 @@ int clamp_scene_edit_component_size_percent(double value) {
 
 int clamp_scene_instance_warning_threshold(double value, int fallback) {
     if (!std::isfinite(value)) value = fallback;
+    value = std::clamp(value,
+                       static_cast<double>(k_min_scene_instance_warning_threshold),
+                       static_cast<double>(k_max_scene_instance_warning_threshold));
     const int rounded = static_cast<int>(
         std::round(value / k_scene_instance_warning_threshold_step)) *
         k_scene_instance_warning_threshold_step;
@@ -186,55 +194,18 @@ int hex_digit(char ch) {
 
 std::optional<ImVec4> parse_theme_color(const std::string& text) {
     std::string value = trim_ascii(text);
-    if (value.empty()) return std::nullopt;
-    bool had_hash_prefix = value.front() == '#';
-    if (had_hash_prefix) {
-        value.erase(value.begin());
-        size_t trailing = value.find_first_of(" \t\r\n");
-        if (trailing != std::string::npos) value.erase(trailing);
+    if (value.size() != 6) return std::nullopt;
+    for (char ch : value) {
+        if (hex_digit(ch) < 0) return std::nullopt;
     }
-    if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) value.erase(0, 2);
-
-    if (value.size() == 6 || value.size() == 8) {
-        bool is_hex = true;
-        for (char ch : value) {
-            if (hex_digit(ch) < 0) {
-                is_hex = false;
-                break;
-            }
-        }
-        if (is_hex) {
-            auto byte_at = [&](size_t pos) {
-                return hex_digit(value[pos]) * 16 + hex_digit(value[pos + 1]);
-            };
-            return clamp_theme_color(ImVec4(
-                byte_at(0) / 255.0f,
-                byte_at(2) / 255.0f,
-                byte_at(4) / 255.0f,
-                1.0f));
-        }
-    }
-
-    std::array<float, 3> components{};
-    std::istringstream in(value);
-    std::string part;
-    int count = 0;
-    while (count < static_cast<int>(components.size()) && std::getline(in, part, ',')) {
-        try {
-            components[count++] = std::stof(trim_ascii(part));
-        } catch (...) {
-            return std::nullopt;
-        }
-    }
-    if (count == static_cast<int>(components.size())) {
-        bool byte_range = components[0] > 1.0f || components[1] > 1.0f || components[2] > 1.0f;
-        if (byte_range) {
-            for (float& component : components) component /= 255.0f;
-        }
-        return clamp_theme_color(ImVec4(components[0], components[1], components[2], 1.0f));
-    }
-
-    return std::nullopt;
+    auto byte_at = [&](size_t pos) {
+        return hex_digit(value[pos]) * 16 + hex_digit(value[pos + 1]);
+    };
+    return clamp_theme_color(ImVec4(
+        byte_at(0) / 255.0f,
+        byte_at(2) / 255.0f,
+        byte_at(4) / 255.0f,
+        1.0f));
 }
 
 ImVec4 with_alpha(ImVec4 color, float alpha) {
@@ -263,12 +234,12 @@ std::string language_to_string(Language lang) {
     return "zh";
 }
 
-Language language_from_string(const std::string& text, Language fallback) {
-    std::string value = ascii_lower(trim_ascii(text));
-    if (value == "ja" || value == "jp" || value == "japanese") return Language::Ja;
-    if (value == "en" || value == "english") return Language::En;
-    if (value == "zh" || value == "cn" || value == "chinese" || value == "simplified_chinese") return Language::Zh;
-    return fallback;
+std::optional<Language> language_from_string(const std::string& text) {
+    const std::string value = trim_ascii(text);
+    if (value == "ja") return Language::Ja;
+    if (value == "en") return Language::En;
+    if (value == "zh") return Language::Zh;
+    return std::nullopt;
 }
 
 std::filesystem::path default_settings_path() {
@@ -287,11 +258,11 @@ std::string bool_to_string(bool value) {
     return value ? "true" : "false";
 }
 
-bool parse_bool(const std::string& value, bool fallback) {
-    std::string text = ascii_lower(trim_ascii(value));
-    if (text == "1" || text == "true" || text == "yes" || text == "on") return true;
-    if (text == "0" || text == "false" || text == "no" || text == "off") return false;
-    return fallback;
+std::optional<bool> parse_bool(const std::string& value) {
+    const std::string text = trim_ascii(value);
+    if (text == "true") return true;
+    if (text == "false") return false;
+    return std::nullopt;
 }
 
 int normalize_view_2d_mode(int value) {
@@ -314,19 +285,88 @@ std::string grid_mode_to_string(int value) {
     }
 }
 
-int view_2d_mode_from_string(const std::string& value, int fallback) {
-    std::string text = ascii_lower(trim_ascii(value));
-    if (text == "1" || text == "measure" || text == "measurement") return 1;
-    if (text == "0" || text == "pan" || text == "move") return 0;
-    return normalize_view_2d_mode(fallback);
+std::optional<int> view_2d_mode_from_string(const std::string& value) {
+    const std::string text = trim_ascii(value);
+    if (text == "measure") return 1;
+    if (text == "pan") return 0;
+    return std::nullopt;
 }
 
-int grid_mode_from_string(const std::string& value, int fallback) {
-    std::string text = ascii_lower(trim_ascii(value));
-    if (text == "0" || text == "fixed") return 0;
-    if (text == "1" || text == "movable" || text == "moveable") return 1;
-    if (text == "2" || text == "none" || text == "off") return 2;
-    return normalize_grid_mode(fallback);
+std::optional<int> grid_mode_from_string(const std::string& value) {
+    const std::string text = trim_ascii(value);
+    if (text == "fixed") return 0;
+    if (text == "movable") return 1;
+    if (text == "none") return 2;
+    return std::nullopt;
+}
+
+std::optional<double> parse_finite_number(const std::string& value) {
+    const std::string text = trim_ascii(value);
+    if (text.empty()) return std::nullopt;
+    size_t position = 0;
+    if (text[position] == '+' || text[position] == '-') ++position;
+    bool integer_digits = false;
+    while (position < text.size() &&
+           std::isdigit(static_cast<unsigned char>(text[position]))) {
+        integer_digits = true;
+        ++position;
+    }
+    bool fractional_digits = false;
+    if (position < text.size() && text[position] == '.') {
+        ++position;
+        while (position < text.size() &&
+               std::isdigit(static_cast<unsigned char>(text[position]))) {
+            fractional_digits = true;
+            ++position;
+        }
+    }
+    if (!integer_digits && !fractional_digits) return std::nullopt;
+    if (position < text.size() &&
+        (text[position] == 'e' || text[position] == 'E')) {
+        ++position;
+        if (position < text.size() &&
+            (text[position] == '+' || text[position] == '-')) {
+            ++position;
+        }
+        const size_t exponent_start = position;
+        while (position < text.size() &&
+               std::isdigit(static_cast<unsigned char>(text[position]))) {
+            ++position;
+        }
+        if (position == exponent_start) return std::nullopt;
+    }
+    if (position != text.size()) return std::nullopt;
+    try {
+        size_t used = 0;
+        const double parsed = std::stod(text, &used);
+        if (used != text.size() || !std::isfinite(parsed)) return std::nullopt;
+        return parsed;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<float> parse_bounded_float(
+    const std::string& value, float minimum, float maximum) {
+    auto parsed = parse_finite_number(value);
+    if (!parsed) return std::nullopt;
+    return static_cast<float>(std::clamp(
+        *parsed, static_cast<double>(minimum), static_cast<double>(maximum)));
+}
+
+template <typename Owner, size_t Count>
+bool apply_bool_setting(
+    std::string_view key,
+    const std::string& value,
+    Owner& target,
+    const Owner& defaults,
+    const std::array<std::pair<std::string_view, bool Owner::*>, Count>& fields) {
+    for (const auto& field : fields) {
+        if (field.first != key) continue;
+        target.*(field.second) = parse_bool(value).value_or(defaults.*(field.second));
+        return true;
+    }
+    return false;
 }
 
 bool save_user_settings(const UserSettings& settings) {
@@ -428,360 +468,226 @@ bool save_user_settings(const UserSettings& settings) {
     return true;
 }
 
-UserSettings load_user_settings() {
-    UserSettings settings;
-    settings.path = default_settings_path();
+UserSettings load_user_settings(const std::filesystem::path& path) {
+    const UserSettings defaults;
+    UserSettings settings = defaults;
+    settings.path = path;
 
     std::error_code ec;
-    bool exists = std::filesystem::exists(settings.path, ec);
+    const bool exists = std::filesystem::exists(path, ec);
     if (ec || !exists) {
         save_user_settings(settings);
         return settings;
     }
 
-    std::ifstream in(settings.path, std::ios::binary);
+    std::ifstream in(path, std::ios::binary);
     if (!in) return settings;
 
+    static constexpr std::array<
+        std::pair<std::string_view, bool WindowVisibilitySettings::*>, 31> window_fields{{
+        {"show_othertracks_window", &WindowVisibilitySettings::show_othertracks_window},
+        {"show_station_list_window", &WindowVisibilitySettings::show_station_list_window},
+        {"show_structures_window", &WindowVisibilitySettings::show_structures_window},
+        {"show_structures_between_window", &WindowVisibilitySettings::show_structures_between_window},
+        {"show_structure_models_window", &WindowVisibilitySettings::show_structure_models_window},
+        {"show_other_trains_window", &WindowVisibilitySettings::show_other_trains_window},
+        {"show_sound_list_window", &WindowVisibilitySettings::show_sound_list_window},
+        {"show_sound_3d_list_window", &WindowVisibilitySettings::show_sound_3d_list_window},
+        {"show_repeaters_window", &WindowVisibilitySettings::show_repeaters_window},
+        {"show_signal_aspects_window", &WindowVisibilitySettings::show_signal_aspects_window},
+        {"show_signals_window", &WindowVisibilitySettings::show_signals_window},
+        {"show_sections_window", &WindowVisibilitySettings::show_sections_window},
+        {"show_variables_window", &WindowVisibilitySettings::show_variables_window},
+        {"show_beacons_window", &WindowVisibilitySettings::show_beacons_window},
+        {"show_irregularities_window", &WindowVisibilitySettings::show_irregularities_window},
+        {"show_map_sounds_window", &WindowVisibilitySettings::show_map_sounds_window},
+        {"show_map_sound_3d_window", &WindowVisibilitySettings::show_map_sound_3d_window},
+        {"show_rolling_noises_window", &WindowVisibilitySettings::show_rolling_noises_window},
+        {"show_flange_noises_window", &WindowVisibilitySettings::show_flange_noises_window},
+        {"show_joint_noises_window", &WindowVisibilitySettings::show_joint_noises_window},
+        {"show_backgrounds_window", &WindowVisibilitySettings::show_backgrounds_window},
+        {"show_adhesions_window", &WindowVisibilitySettings::show_adhesions_window},
+        {"show_cab_illuminance_window", &WindowVisibilitySettings::show_cab_illuminance_window},
+        {"show_fogs_window", &WindowVisibilitySettings::show_fogs_window},
+        {"show_draw_distances_window", &WindowVisibilitySettings::show_draw_distances_window},
+        {"show_speed_limits_window", &WindowVisibilitySettings::show_speed_limits_window},
+        {"show_file_structure_window", &WindowVisibilitySettings::show_file_structure_window},
+        {"show_console_window", &WindowVisibilitySettings::show_console_window},
+        {"show_plots_window", &WindowVisibilitySettings::show_plots_window},
+        {"show_model_preview_window", &WindowVisibilitySettings::show_model_preview_window},
+        {"show_scene_preview_window", &WindowVisibilitySettings::show_scene_preview_window},
+    }};
+    static constexpr std::array<
+        std::pair<std::string_view, bool View2DSettings::*>, 25> view_2d_fields{{
+        {"show_stations", &View2DSettings::show_stations},
+        {"show_station_names", &View2DSettings::show_station_names},
+        {"show_station_mileage", &View2DSettings::show_station_mileage},
+        {"show_gradient_pos", &View2DSettings::show_gradient_pos},
+        {"show_gradient_values", &View2DSettings::show_gradient_values},
+        {"show_curve_values", &View2DSettings::show_curve_values},
+        {"show_profile_other", &View2DSettings::show_profile_other},
+        {"show_speedlimits", &View2DSettings::show_speedlimits},
+        {"show_section_markers", &View2DSettings::show_section_markers},
+        {"show_irregularity_markers", &View2DSettings::show_irregularity_markers},
+        {"show_beacon_markers", &View2DSettings::show_beacon_markers},
+        {"show_pretrain_markers", &View2DSettings::show_pretrain_markers},
+        {"show_map_sound_markers", &View2DSettings::show_map_sound_markers},
+        {"show_map_sound_3d_markers", &View2DSettings::show_map_sound_3d_markers},
+        {"show_rolling_noise_markers", &View2DSettings::show_rolling_noise_markers},
+        {"show_flange_noise_markers", &View2DSettings::show_flange_noise_markers},
+        {"show_joint_noise_markers", &View2DSettings::show_joint_noise_markers},
+        {"show_background_markers", &View2DSettings::show_background_markers},
+        {"show_adhesion_markers", &View2DSettings::show_adhesion_markers},
+        {"show_cab_illuminance_markers", &View2DSettings::show_cab_illuminance_markers},
+        {"show_fog_markers", &View2DSettings::show_fog_markers},
+        {"show_draw_distance_markers", &View2DSettings::show_draw_distance_markers},
+        {"show_profile_graph", &View2DSettings::show_profile_graph},
+        {"show_radius_graph", &View2DSettings::show_radius_graph},
+        {"show_background_image", &View2DSettings::show_background_image},
+    }};
+    static constexpr std::array<
+        std::pair<std::string_view, bool View3DSettings::*>, 5> view_3d_fields{{
+        {"show_scene_owntrack_markers", &View3DSettings::show_scene_owntrack_markers},
+        {"show_scene_current_position_on_plan", &View3DSettings::show_scene_current_position_on_plan},
+        {"scene_fog_enabled", &View3DSettings::scene_fog_enabled},
+        {"scene_map_draw_distance_enabled", &View3DSettings::scene_map_draw_distance_enabled},
+        {"scene_performance_warning_enabled", &View3DSettings::scene_performance_warning_enabled},
+    }};
+
+    std::string section;
     std::string line;
-    std::set<std::string> view_2d_keys_seen;
-    std::set<std::string> view_3d_keys_seen;
-    bool edit_mode_key_seen = false;
-    auto parse_line_width = [](const std::string& value, float fallback) {
-        try {
-            return clamp_canvas_line_width(std::stof(value), fallback);
-        } catch (...) {
-            return fallback;
-        }
-    };
     while (std::getline(in, line)) {
-        std::string trimmed_line = trim_ascii(line);
-        if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
-        size_t eq = line.find('=');
+        const size_t comment = line.find_first_of(";#");
+        if (comment != std::string::npos) line.erase(comment);
+        const std::string trimmed_line = trim_ascii(line);
+        if (trimmed_line.empty()) continue;
+        if (trimmed_line.front() == '[') {
+            section.clear();
+            if (trimmed_line.back() != ']') continue;
+            const std::string candidate =
+                trimmed_line.substr(1, trimmed_line.size() - 2);
+            if (candidate == "General" || candidate == "WindowVisibility" ||
+                candidate == "View2D" || candidate == "View3D") {
+                section = candidate;
+            }
+            continue;
+        }
+
+        const size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
-        std::string key = ascii_lower(trim_ascii(line.substr(0, eq)));
-        std::string value = trim_ascii(line.substr(eq + 1));
-        bool is_theme_color_key = key == "theme_color" || key == "ui_theme_color" || key == "interface_theme_color" || key == "accent_color";
-        size_t semicolon_comment = value.find(';');
-        if (semicolon_comment != std::string::npos) value.erase(semicolon_comment);
-        size_t hash_comment = value.find('#');
-        if (hash_comment != std::string::npos && !(is_theme_color_key && hash_comment == 0)) value.erase(hash_comment);
-        value = trim_ascii(value);
-        if (key == "language" || key == "lang") {
-            settings.language = language_from_string(value, settings.language);
-        } else if (key == "font_size" || key == "fontsize" || key == "text_size") {
-            try {
-                settings.font_size = clamp_font_size(std::stof(value));
-            } catch (...) {
-                settings.font_size = k_default_font_size;
+        const std::string key = trim_ascii(line.substr(0, eq));
+        const std::string value = trim_ascii(line.substr(eq + 1));
+
+        if (section == "General") {
+            if (key == "language") {
+                settings.language = language_from_string(value).value_or(defaults.language);
+            } else if (key == "font_size") {
+                auto parsed = parse_bounded_float(value, k_min_font_size, k_max_font_size);
+                settings.font_size = parsed ? clamp_font_size(*parsed) : defaults.font_size;
+            } else if (key == "ui_component_size") {
+                auto parsed = parse_bounded_float(
+                    value, k_min_ui_component_size, k_max_ui_component_size);
+                settings.ui_component_size =
+                    parsed ? clamp_ui_component_size(*parsed) : defaults.ui_component_size;
+            } else if (key == "marker_size_percent") {
+                auto parsed = parse_bounded_float(
+                    value, k_min_marker_size_percent, k_max_marker_size_percent);
+                settings.marker_size_percent =
+                    parsed ? clamp_marker_size_percent(*parsed) : defaults.marker_size_percent;
+            } else if (key == "own_track_line_width_px") {
+                auto parsed = parse_bounded_float(
+                    value, k_min_canvas_line_width_px, k_max_canvas_line_width_px);
+                settings.canvas_line_widths.own_track_px = parsed
+                    ? clamp_canvas_line_width(*parsed, k_default_own_track_line_width_px)
+                    : defaults.canvas_line_widths.own_track_px;
+            } else if (key == "other_track_line_width_px") {
+                auto parsed = parse_bounded_float(
+                    value, k_min_canvas_line_width_px, k_max_canvas_line_width_px);
+                settings.canvas_line_widths.other_track_px = parsed
+                    ? clamp_canvas_line_width(*parsed, k_default_other_track_line_width_px)
+                    : defaults.canvas_line_widths.other_track_px;
+            } else if (key == "chart_marker_line_width_px") {
+                auto parsed = parse_bounded_float(
+                    value, k_min_canvas_line_width_px, k_max_canvas_line_width_px);
+                settings.canvas_line_widths.chart_marker_px = parsed
+                    ? clamp_canvas_line_width(*parsed, k_default_chart_marker_line_width_px)
+                    : defaults.canvas_line_widths.chart_marker_px;
+            } else if (key == "background_grid_line_width_px") {
+                auto parsed = parse_bounded_float(
+                    value, k_min_canvas_line_width_px, k_max_canvas_line_width_px);
+                settings.canvas_line_widths.background_grid_px = parsed
+                    ? clamp_canvas_line_width(*parsed, k_default_background_grid_line_width_px)
+                    : defaults.canvas_line_widths.background_grid_px;
+            } else if (key == "theme_color") {
+                settings.theme_color = parse_theme_color(value).value_or(defaults.theme_color);
+            } else if (key == "edit_mode_enabled") {
+                settings.edit_mode_enabled =
+                    parse_bool(value).value_or(defaults.edit_mode_enabled);
+            } else if (key == "edit_mode_warning_suppressed") {
+                settings.edit_mode_warning_suppressed =
+                    parse_bool(value).value_or(defaults.edit_mode_warning_suppressed);
             }
-        } else if (key == "ui_component_size" || key == "component_size" || key == "ui_scale" || key == "ui_component_scale") {
-            try {
-                settings.ui_component_size = clamp_ui_component_size(std::stof(value));
-            } catch (...) {
-                settings.ui_component_size = k_default_ui_component_size;
+        } else if (section == "WindowVisibility") {
+            apply_bool_setting(key, value, settings.window_visibility,
+                               defaults.window_visibility, window_fields);
+        } else if (section == "View2D") {
+            if (!apply_bool_setting(
+                    key, value, settings.view_2d, defaults.view_2d, view_2d_fields)) {
+                if (key == "mode") {
+                    settings.view_2d.mode =
+                        view_2d_mode_from_string(value).value_or(defaults.view_2d.mode);
+                } else if (key == "grid_mode") {
+                    settings.view_2d.grid_mode =
+                        grid_mode_from_string(value).value_or(defaults.view_2d.grid_mode);
+                }
             }
-        } else if (key == "marker_size_percent" || key == "marker_size_scale_percent" || key == "station_marker_size_percent") {
-            try {
-                settings.marker_size_percent = clamp_marker_size_percent(std::stof(value));
-            } catch (...) {
-                settings.marker_size_percent = k_default_marker_size_percent;
+        } else if (section == "View3D") {
+            if (apply_bool_setting(
+                    key, value, settings.view_3d, defaults.view_3d, view_3d_fields)) {
+                continue;
             }
-        } else if (key == "station_marker_size" || key == "station_marker_radius" || key == "station_size") {
-            try {
-                float raw = std::stof(value);
-                settings.marker_size_percent = raw < k_min_marker_size_percent
-                    ? clamp_marker_size_percent(raw / k_default_station_marker_size * 100.0f)
-                    : clamp_marker_size_percent(raw);
-            } catch (...) {
-                settings.marker_size_percent = k_default_marker_size_percent;
-            }
-        } else if (key == "own_track_line_width_px" ||
-                   key == "own_track_line_width" ||
-                   key == "canvas_own_track_line_width_px" ||
-                   key == "canvas_own_track_line_width") {
-            settings.canvas_line_widths.own_track_px =
-                parse_line_width(value, k_default_own_track_line_width_px);
-        } else if (key == "other_track_line_width_px" ||
-                   key == "other_track_line_width" ||
-                   key == "canvas_other_track_line_width_px" ||
-                   key == "canvas_other_track_line_width") {
-            settings.canvas_line_widths.other_track_px =
-                parse_line_width(value, k_default_other_track_line_width_px);
-        } else if (key == "chart_marker_line_width_px" ||
-                   key == "chart_marker_line_width" ||
-                   key == "canvas_chart_marker_line_width_px" ||
-                   key == "canvas_chart_marker_line_width") {
-            settings.canvas_line_widths.chart_marker_px =
-                parse_line_width(value, k_default_chart_marker_line_width_px);
-        } else if (key == "background_grid_line_width_px" ||
-                   key == "background_grid_line_width" ||
-                   key == "canvas_background_grid_line_width_px" ||
-                   key == "canvas_background_grid_line_width") {
-            settings.canvas_line_widths.background_grid_px =
-                parse_line_width(value, k_default_background_grid_line_width_px);
-        } else if (is_theme_color_key) {
-            if (auto color = parse_theme_color(value)) {
-                settings.theme_color = *color;
-            } else {
-                settings.theme_color = default_theme_color();
-            }
-        } else if (key == "edit_mode_enabled" || key == "enable_edit" || key == "edit_mode") {
-            edit_mode_key_seen = true;
-            settings.edit_mode_enabled = parse_bool(value, settings.edit_mode_enabled);
-        } else if (key == "edit_mode_warning_suppressed") {
-            settings.edit_mode_warning_suppressed =
-                parse_bool(value, settings.edit_mode_warning_suppressed);
-        } else if (key == "show_othertracks_window") {
-            settings.window_visibility.show_othertracks_window = parse_bool(value, settings.window_visibility.show_othertracks_window);
-        } else if (key == "show_station_list_window") {
-            settings.window_visibility.show_station_list_window = parse_bool(value, settings.window_visibility.show_station_list_window);
-        } else if (key == "show_structures_window") {
-            settings.window_visibility.show_structures_window = parse_bool(value, settings.window_visibility.show_structures_window);
-        } else if (key == "show_structures_between_window" || key == "show_structure_between_window") {
-            settings.window_visibility.show_structures_between_window = parse_bool(value, settings.window_visibility.show_structures_between_window);
-        } else if (key == "show_structure_models_window") {
-            settings.window_visibility.show_structure_models_window = parse_bool(value, settings.window_visibility.show_structure_models_window);
-        } else if (key == "show_other_trains_window" || key == "show_other_train_window") {
-            settings.window_visibility.show_other_trains_window = parse_bool(value, settings.window_visibility.show_other_trains_window);
-        } else if (key == "show_sound_list_window" || key == "show_soundlist_window") {
-            settings.window_visibility.show_sound_list_window = parse_bool(value, settings.window_visibility.show_sound_list_window);
-        } else if (key == "show_sound_3d_list_window" || key == "show_sound3d_list_window") {
-            settings.window_visibility.show_sound_3d_list_window = parse_bool(value, settings.window_visibility.show_sound_3d_list_window);
-        } else if (key == "show_repeaters_window") {
-            settings.window_visibility.show_repeaters_window = parse_bool(value, settings.window_visibility.show_repeaters_window);
-        } else if (key == "show_signal_aspects_window" || key == "show_signal_aspect_window") {
-            settings.window_visibility.show_signal_aspects_window = parse_bool(value, settings.window_visibility.show_signal_aspects_window);
-        } else if (key == "show_signals_window" || key == "show_signal_window") {
-            settings.window_visibility.show_signals_window = parse_bool(value, settings.window_visibility.show_signals_window);
-        } else if (key == "show_sections_window" || key == "show_section_window") {
-            settings.window_visibility.show_sections_window = parse_bool(value, settings.window_visibility.show_sections_window);
-        } else if (key == "show_variables_window" || key == "show_variable_window") {
-            settings.window_visibility.show_variables_window = parse_bool(value, settings.window_visibility.show_variables_window);
-        } else if (key == "show_beacons_window" || key == "show_beacon_window") {
-            settings.window_visibility.show_beacons_window = parse_bool(value, settings.window_visibility.show_beacons_window);
-        } else if (key == "show_irregularities_window") {
-            settings.window_visibility.show_irregularities_window = parse_bool(value, settings.window_visibility.show_irregularities_window);
-        } else if (key == "show_map_sounds_window" || key == "show_map_sound_window") {
-            settings.window_visibility.show_map_sounds_window = parse_bool(value, settings.window_visibility.show_map_sounds_window);
-        } else if (key == "show_map_sound_3d_window" || key == "show_map_sounds_3d_window" || key == "show_map_sound3d_window") {
-            settings.window_visibility.show_map_sound_3d_window = parse_bool(value, settings.window_visibility.show_map_sound_3d_window);
-        } else if (key == "show_rolling_noises_window" || key == "show_rolling_noise_window") {
-            settings.window_visibility.show_rolling_noises_window = parse_bool(value, settings.window_visibility.show_rolling_noises_window);
-        } else if (key == "show_flange_noises_window" || key == "show_flange_noise_window") {
-            settings.window_visibility.show_flange_noises_window = parse_bool(value, settings.window_visibility.show_flange_noises_window);
-        } else if (key == "show_joint_noises_window" || key == "show_joint_noise_window") {
-            settings.window_visibility.show_joint_noises_window = parse_bool(value, settings.window_visibility.show_joint_noises_window);
-        } else if (key == "show_backgrounds_window" || key == "show_background_window") {
-            settings.window_visibility.show_backgrounds_window = parse_bool(value, settings.window_visibility.show_backgrounds_window);
-        } else if (key == "show_adhesions_window" || key == "show_adhesion_window") {
-            settings.window_visibility.show_adhesions_window = parse_bool(value, settings.window_visibility.show_adhesions_window);
-        } else if (key == "show_cab_illuminance_window" || key == "show_cabilluminance_window") {
-            settings.window_visibility.show_cab_illuminance_window = parse_bool(value, settings.window_visibility.show_cab_illuminance_window);
-        } else if (key == "show_fogs_window" || key == "show_fog_window") {
-            settings.window_visibility.show_fogs_window = parse_bool(value, settings.window_visibility.show_fogs_window);
-        } else if (key == "show_draw_distances_window") {
-            settings.window_visibility.show_draw_distances_window =
-                parse_bool(value, settings.window_visibility.show_draw_distances_window);
-        } else if (key == "show_speed_limits_window") {
-            settings.window_visibility.show_speed_limits_window =
-                parse_bool(value, settings.window_visibility.show_speed_limits_window);
-        } else if (key == "show_file_structure_window" || key == "show_file_structure_diagram_window") {
-            settings.window_visibility.show_file_structure_window =
-                parse_bool(value, settings.window_visibility.show_file_structure_window);
-        } else if (key == "show_console_window" || key == "show_console") {
-            settings.window_visibility.show_console_window = parse_bool(value, settings.window_visibility.show_console_window);
-        } else if (key == "show_plots_window") {
-            settings.window_visibility.show_plots_window = parse_bool(value, settings.window_visibility.show_plots_window);
-        } else if (key == "show_model_preview_window") {
-            settings.window_visibility.show_model_preview_window = parse_bool(value, settings.window_visibility.show_model_preview_window);
-        } else if (key == "show_scene_preview_window" || key == "show_3d_scene_preview_window") {
-            settings.window_visibility.show_scene_preview_window = parse_bool(value, settings.window_visibility.show_scene_preview_window);
-        } else if (key == "show_stations" || key == "show_station_pos" || key == "show_station_positions") {
-            view_2d_keys_seen.insert("show_stations");
-            settings.view_2d.show_stations = parse_bool(value, settings.view_2d.show_stations);
-        } else if (key == "show_station_names" || key == "show_station_name") {
-            view_2d_keys_seen.insert("show_station_names");
-            settings.view_2d.show_station_names = parse_bool(value, settings.view_2d.show_station_names);
-        } else if (key == "show_station_mileage") {
-            view_2d_keys_seen.insert("show_station_mileage");
-            settings.view_2d.show_station_mileage = parse_bool(value, settings.view_2d.show_station_mileage);
-        } else if (key == "show_gradient_pos" || key == "show_gradient_positions") {
-            view_2d_keys_seen.insert("show_gradient_pos");
-            settings.view_2d.show_gradient_pos = parse_bool(value, settings.view_2d.show_gradient_pos);
-        } else if (key == "show_gradient_values" || key == "show_gradient_value") {
-            view_2d_keys_seen.insert("show_gradient_values");
-            settings.view_2d.show_gradient_values = parse_bool(value, settings.view_2d.show_gradient_values);
-        } else if (key == "show_curve_values" || key == "show_curve_value") {
-            view_2d_keys_seen.insert("show_curve_values");
-            settings.view_2d.show_curve_values = parse_bool(value, settings.view_2d.show_curve_values);
-        } else if (key == "show_profile_other" || key == "show_profile_othertracks") {
-            view_2d_keys_seen.insert("show_profile_other");
-            settings.view_2d.show_profile_other = parse_bool(value, settings.view_2d.show_profile_other);
-        } else if (key == "show_speedlimits" || key == "show_speedlimit") {
-            view_2d_keys_seen.insert("show_speedlimits");
-            settings.view_2d.show_speedlimits = parse_bool(value, settings.view_2d.show_speedlimits);
-        } else if (key == "show_section_markers") {
-            view_2d_keys_seen.insert("show_section_markers");
-            settings.view_2d.show_section_markers =
-                parse_bool(value, settings.view_2d.show_section_markers);
-        } else if (key == "show_irregularity_markers" || key == "show_irregularities" || key == "show_irregularity_points") {
-            view_2d_keys_seen.insert("show_irregularity_markers");
-            settings.view_2d.show_irregularity_markers = parse_bool(value, settings.view_2d.show_irregularity_markers);
-        } else if (key == "show_beacon_markers" || key == "show_beacons" || key == "show_beacon_points") {
-            view_2d_keys_seen.insert("show_beacon_markers");
-            settings.view_2d.show_beacon_markers = parse_bool(value, settings.view_2d.show_beacon_markers);
-        } else if (key == "show_pretrain_markers" || key == "show_pretrains" || key == "show_pretrain_points") {
-            view_2d_keys_seen.insert("show_pretrain_markers");
-            settings.view_2d.show_pretrain_markers = parse_bool(value, settings.view_2d.show_pretrain_markers);
-        } else if (key == "show_map_sound_markers" || key == "show_map_sounds" || key == "show_map_sound_points") {
-            view_2d_keys_seen.insert("show_map_sound_markers");
-            settings.view_2d.show_map_sound_markers = parse_bool(value, settings.view_2d.show_map_sound_markers);
-        } else if (key == "show_map_sound_3d_markers" || key == "show_map_sound3d_markers" || key == "show_map_sound_3d_points") {
-            view_2d_keys_seen.insert("show_map_sound_3d_markers");
-            settings.view_2d.show_map_sound_3d_markers = parse_bool(value, settings.view_2d.show_map_sound_3d_markers);
-        } else if (key == "show_rolling_noise_markers" || key == "show_rolling_noises" || key == "show_rolling_noise_points") {
-            view_2d_keys_seen.insert("show_rolling_noise_markers");
-            settings.view_2d.show_rolling_noise_markers = parse_bool(value, settings.view_2d.show_rolling_noise_markers);
-        } else if (key == "show_flange_noise_markers" || key == "show_flange_noises" || key == "show_flange_noise_points") {
-            view_2d_keys_seen.insert("show_flange_noise_markers");
-            settings.view_2d.show_flange_noise_markers = parse_bool(value, settings.view_2d.show_flange_noise_markers);
-        } else if (key == "show_joint_noise_markers" || key == "show_joint_noises" || key == "show_joint_noise_points") {
-            view_2d_keys_seen.insert("show_joint_noise_markers");
-            settings.view_2d.show_joint_noise_markers = parse_bool(value, settings.view_2d.show_joint_noise_markers);
-        } else if (key == "show_background_markers" || key == "show_backgrounds" || key == "show_background_points") {
-            view_2d_keys_seen.insert("show_background_markers");
-            settings.view_2d.show_background_markers = parse_bool(value, settings.view_2d.show_background_markers);
-        } else if (key == "show_adhesion_markers" || key == "show_adhesions" || key == "show_adhesion_points") {
-            view_2d_keys_seen.insert("show_adhesion_markers");
-            settings.view_2d.show_adhesion_markers = parse_bool(value, settings.view_2d.show_adhesion_markers);
-        } else if (key == "show_cab_illuminance_markers" || key == "show_cabilluminance_markers" || key == "show_cab_illuminance_points") {
-            view_2d_keys_seen.insert("show_cab_illuminance_markers");
-            settings.view_2d.show_cab_illuminance_markers = parse_bool(value, settings.view_2d.show_cab_illuminance_markers);
-        } else if (key == "show_fog_markers" || key == "show_fogs" || key == "show_fog_points") {
-            view_2d_keys_seen.insert("show_fog_markers");
-            settings.view_2d.show_fog_markers = parse_bool(value, settings.view_2d.show_fog_markers);
-        } else if (key == "show_draw_distance_markers") {
-            view_2d_keys_seen.insert("show_draw_distance_markers");
-            settings.view_2d.show_draw_distance_markers =
-                parse_bool(value, settings.view_2d.show_draw_distance_markers);
-        } else if (key == "show_profile_graph" || key == "show_gradient_graph") {
-            view_2d_keys_seen.insert("show_profile_graph");
-            settings.view_2d.show_profile_graph = parse_bool(value, settings.view_2d.show_profile_graph);
-        } else if (key == "show_radius_graph" || key == "show_curve_graph") {
-            view_2d_keys_seen.insert("show_radius_graph");
-            settings.view_2d.show_radius_graph = parse_bool(value, settings.view_2d.show_radius_graph);
-        } else if (key == "show_background_image" || key == "show_bgimage" || key == "bg_show") {
-            view_2d_keys_seen.insert("show_background_image");
-            settings.view_2d.show_background_image = parse_bool(value, settings.view_2d.show_background_image);
-        } else if (key == "mode" || key == "view_2d_mode") {
-            view_2d_keys_seen.insert("mode");
-            settings.view_2d.mode = view_2d_mode_from_string(value, settings.view_2d.mode);
-        } else if (key == "grid_mode" || key == "view_2d_grid_mode") {
-            view_2d_keys_seen.insert("grid_mode");
-            settings.view_2d.grid_mode = grid_mode_from_string(value, settings.view_2d.grid_mode);
-        } else if (key == "show_scene_owntrack_markers" ||
-                   key == "show_scene_own_track_markers" ||
-                   key == "show_3d_scene_owntrack_markers" ||
-                   key == "show_scene_owntrack") {
-            view_3d_keys_seen.insert("show_scene_owntrack_markers");
-            settings.view_3d.show_scene_owntrack_markers = parse_bool(value, settings.view_3d.show_scene_owntrack_markers);
-        } else if (key == "show_scene_current_position_on_plan" ||
-                   key == "show_scene_current_camera_on_plan" ||
-                   key == "show_3d_scene_current_position_on_plan") {
-            view_3d_keys_seen.insert("show_scene_current_position_on_plan");
-            settings.view_3d.show_scene_current_position_on_plan =
-                parse_bool(value, settings.view_3d.show_scene_current_position_on_plan);
-        } else if (key == "scene_fog_enabled") {
-            view_3d_keys_seen.insert("scene_fog_enabled");
-            settings.view_3d.scene_fog_enabled =
-                parse_bool(value, settings.view_3d.scene_fog_enabled);
-        } else if (key == "scene_map_draw_distance_enabled") {
-            view_3d_keys_seen.insert("scene_map_draw_distance_enabled");
-            settings.view_3d.scene_map_draw_distance_enabled =
-                parse_bool(value, settings.view_3d.scene_map_draw_distance_enabled);
-        } else if (key == "scene_draw_distance_m" ||
-                   key == "scene_draw_distance" ||
-                   key == "scene_window_forward_m" ||
-                   key == "draw_distance_m" ||
-                   key == "draw_distance") {
-            view_3d_keys_seen.insert("scene_draw_distance_m");
-            try {
-                settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(std::stod(value));
-            } catch (...) {
-                settings.view_3d.scene_draw_distance_m = k_default_scene_draw_distance_m;
-            }
-        } else if (key == "scene_edit_component_size_percent" ||
-                   key == "edit_component_size_percent") {
-            view_3d_keys_seen.insert("scene_edit_component_size_percent");
-            try {
-                settings.view_3d.scene_edit_component_size_percent =
-                    clamp_scene_edit_component_size_percent(std::stod(value));
-            } catch (...) {
-                settings.view_3d.scene_edit_component_size_percent =
-                    k_default_scene_edit_component_size_percent;
-            }
-        } else if (key == "scene_camera_speed_percent") {
-            view_3d_keys_seen.insert("scene_camera_speed_percent");
-            try {
-                settings.view_3d.scene_camera_speed_percent =
-                    std::clamp(static_cast<int>(std::stod(value)),
-                               k_min_scene_camera_speed_percent,
-                               k_max_scene_camera_speed_percent);
-            } catch (...) {
-                settings.view_3d.scene_camera_speed_percent = k_default_scene_camera_speed_percent;
-            }
-        } else if (key == "scene_performance_warning_enabled") {
-            view_3d_keys_seen.insert("scene_performance_warning_enabled");
-            settings.view_3d.scene_performance_warning_enabled =
-                parse_bool(value, settings.view_3d.scene_performance_warning_enabled);
-        } else if (key == "scene_instance_warning_threshold") {
-            view_3d_keys_seen.insert("scene_instance_warning_threshold");
-            try {
-                settings.view_3d.scene_instance_warning_threshold =
-                    clamp_scene_instance_warning_threshold(
-                        std::stod(value), k_default_scene_instance_warning_threshold);
-            } catch (...) {
-                settings.view_3d.scene_instance_warning_threshold =
-                    k_default_scene_instance_warning_threshold;
-            }
-        } else if (key == "scene_instance_critical_warning_threshold") {
-            view_3d_keys_seen.insert("scene_instance_critical_warning_threshold");
-            try {
-                settings.view_3d.scene_instance_critical_warning_threshold =
-                    clamp_scene_instance_warning_threshold(
-                        std::stod(value), k_default_scene_instance_critical_warning_threshold);
-            } catch (...) {
-                settings.view_3d.scene_instance_critical_warning_threshold =
-                    k_default_scene_instance_critical_warning_threshold;
+            auto parsed = parse_finite_number(value);
+            if (key == "scene_draw_distance_m") {
+                settings.view_3d.scene_draw_distance_m = parsed
+                    ? clamp_scene_draw_distance(*parsed)
+                    : defaults.view_3d.scene_draw_distance_m;
+            } else if (key == "scene_edit_component_size_percent") {
+                settings.view_3d.scene_edit_component_size_percent = parsed
+                    ? clamp_scene_edit_component_size_percent(*parsed)
+                    : defaults.view_3d.scene_edit_component_size_percent;
+            } else if (key == "scene_camera_speed_percent") {
+                settings.view_3d.scene_camera_speed_percent = parsed
+                    ? static_cast<int>(std::clamp(
+                          *parsed,
+                          static_cast<double>(k_min_scene_camera_speed_percent),
+                          static_cast<double>(k_max_scene_camera_speed_percent)))
+                    : defaults.view_3d.scene_camera_speed_percent;
+            } else if (key == "scene_instance_warning_threshold") {
+                settings.view_3d.scene_instance_warning_threshold = parsed
+                    ? clamp_scene_instance_warning_threshold(
+                          *parsed, k_default_scene_instance_warning_threshold)
+                    : defaults.view_3d.scene_instance_warning_threshold;
+            } else if (key == "scene_instance_critical_warning_threshold") {
+                settings.view_3d.scene_instance_critical_warning_threshold = parsed
+                    ? clamp_scene_instance_warning_threshold(
+                          *parsed, k_default_scene_instance_critical_warning_threshold)
+                    : defaults.view_3d.scene_instance_critical_warning_threshold;
             }
         }
     }
-    settings.font_size = clamp_font_size(settings.font_size);
-    settings.ui_component_size = clamp_ui_component_size(settings.ui_component_size);
-    settings.marker_size_percent = clamp_marker_size_percent(settings.marker_size_percent);
+
     settings.canvas_line_widths = clamp_canvas_line_widths(settings.canvas_line_widths);
     settings.theme_color = clamp_theme_color(settings.theme_color);
     settings.view_2d.mode = normalize_view_2d_mode(settings.view_2d.mode);
     settings.view_2d.grid_mode = normalize_grid_mode(settings.view_2d.grid_mode);
-    settings.view_3d.scene_draw_distance_m = clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m);
-    settings.view_3d.scene_edit_component_size_percent =
-        clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent);
-    settings.view_3d.scene_camera_speed_percent =
-        std::clamp(settings.view_3d.scene_camera_speed_percent,
-                   k_min_scene_camera_speed_percent, k_max_scene_camera_speed_percent);
     normalize_scene_instance_warning_thresholds(
         settings.view_3d.scene_instance_warning_threshold,
         settings.view_3d.scene_instance_critical_warning_threshold);
-    if (!edit_mode_key_seen || view_2d_keys_seen.size() < 24 || view_3d_keys_seen.size() < 6 ||
-        view_2d_keys_seen.count("show_draw_distance_markers") == 0 ||
-        view_2d_keys_seen.count("show_section_markers") == 0 ||
-        view_3d_keys_seen.count("scene_map_draw_distance_enabled") == 0 ||
-        view_3d_keys_seen.count("scene_performance_warning_enabled") == 0 ||
-        view_3d_keys_seen.count("scene_instance_warning_threshold") == 0 ||
-        view_3d_keys_seen.count("scene_instance_critical_warning_threshold") == 0) {
-        save_user_settings(settings);
-    }
     return settings;
+}
+
+UserSettings load_user_settings() {
+    return load_user_settings(default_settings_path());
 }
 
 bool load_imgui_layout(const std::filesystem::path& path) {
@@ -831,13 +737,7 @@ bool ensure_history_file(const std::filesystem::path& path) {
 }
 
 double parse_history_double(const std::string& value, double fallback) {
-    try {
-        size_t used = 0;
-        double parsed = std::stod(value, &used);
-        return used == 0 || !std::isfinite(parsed) ? fallback : parsed;
-    } catch (...) {
-        return fallback;
-    }
+    return parse_finite_number(value).value_or(fallback);
 }
 
 std::string history_number(double value) {
@@ -846,24 +746,25 @@ std::string history_number(double value) {
     return out.str();
 }
 
-std::optional<int> parse_history_section_index(std::string section) {
-    section = ascii_lower(trim_ascii(section));
-    size_t pos = std::string::npos;
-    if (section.rfind("map", 0) == 0) {
-        pos = 3;
-    } else if (section.rfind("recent_map", 0) == 0) {
-        pos = 10;
-    } else if (section.rfind("recent", 0) == 0) {
-        pos = 6;
+std::optional<size_t> parse_decimal_index(
+    std::string_view text, size_t maximum) {
+    if (text.empty()) return std::nullopt;
+    if (text.size() > 1 && text.front() == '0') return std::nullopt;
+    size_t value = 0;
+    for (char ch : text) {
+        if (ch < '0' || ch > '9') return std::nullopt;
+        const size_t digit = static_cast<size_t>(ch - '0');
+        if (digit > maximum || value > (maximum - digit) / 10) return std::nullopt;
+        value = value * 10 + digit;
     }
-    if (pos == std::string::npos) return std::nullopt;
-    while (pos < section.size() && !std::isdigit(static_cast<unsigned char>(section[pos]))) ++pos;
-    if (pos >= section.size()) return std::nullopt;
-    try {
-        return std::stoi(section.substr(pos));
-    } catch (...) {
-        return std::nullopt;
-    }
+    return value;
+}
+
+std::optional<int> parse_history_section_index(const std::string& section) {
+    if (section.rfind("Map", 0) != 0) return std::nullopt;
+    auto index = parse_decimal_index(
+        std::string_view(section).substr(3), k_max_recent_maps - 1);
+    return index ? std::optional<int>(static_cast<int>(*index)) : std::nullopt;
 }
 
 std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& path) {
@@ -871,48 +772,67 @@ std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& pa
     std::ifstream in(path, std::ios::binary);
     if (!in) return {};
 
+    const BackgroundHistory default_background;
+    std::optional<size_t> recent_count;
     std::map<int, RecentMapEntry> parsed;
+    bool in_recent_section = false;
     int current_index = -1;
     std::string line;
     while (std::getline(in, line)) {
         std::string trimmed_line = trim_ascii(line);
         if (trimmed_line.empty() || trimmed_line.front() == ';' || trimmed_line.front() == '#') continue;
-        if (trimmed_line.front() == '[' && trimmed_line.back() == ']') {
+        if (trimmed_line.front() == '[') {
+            in_recent_section = false;
+            current_index = -1;
+            if (trimmed_line.back() != ']') continue;
             std::string section = trimmed_line.substr(1, trimmed_line.size() - 2);
-            auto index = parse_history_section_index(section);
-            current_index = index ? *index : -1;
+            in_recent_section = section == "Recent";
+            auto index = in_recent_section
+                ? std::optional<int>{}
+                : parse_history_section_index(section);
+            current_index = index.value_or(-1);
             if (current_index >= 0 && parsed.find(current_index) == parsed.end()) parsed[current_index] = {};
             continue;
         }
-        if (current_index < 0) continue;
         size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
-        std::string key = ascii_lower(trim_ascii(line.substr(0, eq)));
+        std::string key = trim_ascii(line.substr(0, eq));
         std::string value = trim_ascii(line.substr(eq + 1));
+        if (in_recent_section) {
+            if (key == "count") {
+                recent_count = parse_decimal_index(value, k_max_recent_maps);
+            }
+            continue;
+        }
+        if (current_index < 0) continue;
         RecentMapEntry& entry = parsed[current_index];
-        if (key == "path" || key == "map_path" || key == "map") {
+        if (key == "path") {
             entry.path = normalized_storage_path(value);
-        } else if (key == "bg_path" || key == "background_path" || key == "image_path") {
+        } else if (key == "bg_path") {
             entry.background.has_image = !value.empty();
             entry.background.image_path = normalized_storage_path(value);
-        } else if (key == "bg_x" || key == "background_x") {
-            entry.background.x = parse_history_double(value, entry.background.x);
-        } else if (key == "bg_y" || key == "background_y") {
-            entry.background.y = parse_history_double(value, entry.background.y);
-        } else if (key == "bg_width" || key == "background_width") {
-            entry.background.width = parse_history_double(value, entry.background.width);
-        } else if (key == "bg_height" || key == "background_height") {
-            entry.background.height = parse_history_double(value, entry.background.height);
-        } else if (key == "bg_rotation" || key == "bg_rotation_deg" || key == "background_rotation") {
-            entry.background.rotation_deg = parse_history_double(value, entry.background.rotation_deg);
-        } else if (key == "bg_brightness" || key == "background_brightness") {
-            entry.background.brightness = parse_history_double(value, entry.background.brightness);
+        } else if (key == "bg_x") {
+            entry.background.x = parse_history_double(value, default_background.x);
+        } else if (key == "bg_y") {
+            entry.background.y = parse_history_double(value, default_background.y);
+        } else if (key == "bg_width") {
+            entry.background.width = parse_history_double(value, default_background.width);
+        } else if (key == "bg_height") {
+            entry.background.height = parse_history_double(value, default_background.height);
+        } else if (key == "bg_rotation") {
+            entry.background.rotation_deg =
+                parse_history_double(value, default_background.rotation_deg);
+        } else if (key == "bg_brightness") {
+            entry.background.brightness =
+                parse_history_double(value, default_background.brightness);
         }
     }
 
+    if (!recent_count) return {};
     std::vector<RecentMapEntry> entries;
     std::set<std::string> seen;
     for (auto& kv : parsed) {
+        if (static_cast<size_t>(kv.first) >= *recent_count) continue;
         RecentMapEntry entry = std::move(kv.second);
         if (entry.path.empty()) continue;
         std::string key = normalized_path_key(entry.path);
