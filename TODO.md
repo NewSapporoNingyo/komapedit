@@ -21,7 +21,6 @@ This file is the active project progress and contains unfinished items only. Com
 ### 用户界面与辅助功能
 
 - [ ] 布景模型列表/音效文件列表中可通过右键菜单“使用此模型/使用此音效”选项，将对应的资源文件key直接填入新建地图元素向导
-- [ ] 他轨道与他轨道变化点的新建功能
 - [ ] 自轨道曲线变化点新建功能
 - [ ] 自轨道坡度变化点新建功能
 - [ ] 加入对Legacy.fog的支持

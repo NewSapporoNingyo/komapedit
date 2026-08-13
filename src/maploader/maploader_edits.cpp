@@ -2026,6 +2026,107 @@ void validate_insert_method(const MapEditChange& change,
     }
 }
 
+bool other_track_insert_parameter_index(std::string_view field_name, size_t& index) {
+    constexpr std::string_view prefix = "parameter";
+    if (field_name.rfind(prefix, 0) != 0 || field_name.size() == prefix.size()) {
+        return false;
+    }
+    const std::string_view suffix = field_name.substr(prefix.size());
+    if (suffix.size() > 1 && suffix.front() == '0') return false;
+    size_t value = 0;
+    for (const char ch : suffix) {
+        if (ch < '0' || ch > '9') return false;
+        const size_t digit = static_cast<size_t>(ch - '0');
+        if (value > (std::numeric_limits<size_t>::max() - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+    }
+    index = value;
+    return true;
+}
+
+size_t other_track_insert_parameter_count(const MapEditChange& change) {
+    size_t count = 0;
+    for (const auto& field : change.field_changes) {
+        if (field.first == "distance" || field.first == "method" ||
+            field.first == "trackKey") {
+            continue;
+        }
+        size_t index = 0;
+        if (!other_track_insert_parameter_index(field.first, index)) {
+            throw std::runtime_error(
+                "unsupported insert field " + field.first + " for " + change.row_kind);
+        }
+        if (index == std::numeric_limits<size_t>::max()) {
+            throw std::runtime_error("other-track insert parameter index is too large");
+        }
+        count = std::max(count, index + 1);
+        (void)normalized_number_arg(field.second);
+    }
+    for (size_t index = 0; index < count; ++index) {
+        if (change.field_changes.find("parameter" + std::to_string(index)) ==
+            change.field_changes.end()) {
+            throw std::runtime_error(
+                "other-track insert parameters must be numbered continuously from parameter0");
+        }
+    }
+    return count;
+}
+
+void validate_other_track_insert_change(const MapEditChange& change) {
+    const std::string method = insert_method_or_default(change, "");
+    const size_t parameter_count = other_track_insert_parameter_count(change);
+    bool known_method = true;
+    bool valid_arity = false;
+    if (method == "Track.Position") {
+        valid_arity = parameter_count >= 2 && parameter_count <= 4;
+    } else if (method == "Track.X.Interpolate" ||
+               method == "Track.Y.Interpolate") {
+        valid_arity = parameter_count <= 2;
+    } else if (method == "Track.Cant.SetGauge" ||
+               method == "Track.Cant.SetCenter" ||
+               method == "Track.Cant.SetFunction" ||
+               method == "Track.Cant.Begin") {
+        valid_arity = parameter_count == 1;
+    } else if (method == "Track.Cant.BeginTransition" ||
+               method == "Track.Cant.End") {
+        valid_arity = parameter_count == 0;
+    } else if (method == "Track.Cant.Interpolate") {
+        valid_arity = parameter_count <= 1;
+    } else {
+        known_method = false;
+    }
+    if (!known_method) {
+        throw std::runtime_error(
+            "unsupported insert method " + method + " for " + change.row_kind);
+    }
+    if (!valid_arity) {
+        throw std::runtime_error(
+            "invalid parameter count for other-track insert method " + method);
+    }
+
+    const auto key = change.field_changes.find("trackKey");
+    if (key == change.field_changes.end() || trim_field_copy(key->second).empty()) {
+        throw std::runtime_error("other-track insert requires a trackKey");
+    }
+    try {
+        (void)track_key_from_display_text(key->second);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            std::string("other-track insert has an invalid trackKey: ") + e.what());
+    }
+
+    if (method == "Track.Cant.SetFunction") {
+        double function = 0.0;
+        if (!parse_edit_number(change.field_changes.at("parameter0"), function) ||
+            (function != 0.0 && function != 1.0)) {
+            throw std::runtime_error(
+                "Track.Cant.SetFunction insert requires id 0 or 1");
+        }
+    }
+}
+
 void validate_insert_change(const MapEditChange& change) {
     if (change.row_kind.empty()) {
         throw std::runtime_error("insert edit is missing its row kind");
@@ -2083,6 +2184,8 @@ void validate_insert_change(const MapEditChange& change) {
         validate_insert_field_names(change,
                                     {"distance", "signalAspectKey", "section", "trackKey",
                                      "x", "y", "z", "rx", "ry", "rz", "tilt", "span"});
+    } else if (row_kind == "otherTrack.change") {
+        validate_other_track_insert_change(change);
     } else if (row_kind == "irregularity.change") {
         validate_insert_field_names(change,
                                     {"distance", "x", "y", "r", "lx", "ly", "lr"});
@@ -2229,6 +2332,18 @@ std::string build_insert_statement(const MapEditChange& change) {
             + insert_required_number(change, "rz") + ","
             + insert_required_number(change, "tilt") + ","
             + insert_required_number(change, "span") + ");";
+    }
+    if (row_kind == "otherTrack.change") {
+        const std::string method = insert_method_or_default(change, "");
+        const size_t parameter_count = other_track_insert_parameter_count(change);
+        std::string statement = "Track[" + insert_required_track_key(change, "trackKey") +
+            "]." + method.substr(std::string_view("Track.").size()) + "(";
+        for (size_t index = 0; index < parameter_count; ++index) {
+            if (index != 0) statement += ",";
+            statement += insert_required_number(
+                change, ("parameter" + std::to_string(index)).c_str());
+        }
+        return statement + ");";
     }
     if (row_kind == "irregularity.change") {
         return "Irregularity.Change("

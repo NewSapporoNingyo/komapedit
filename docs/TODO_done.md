@@ -129,6 +129,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Add an `Insert Change Point` action in Repeater `Properties/Edit` that opens a source-matched Begin/Begin0 wizard with Begin-only selected and current inspector drafts prefilled.
 - [x] Show the six coordinate-offset fields for `Structure.Put`, while keeping them hidden for `Structure.Put0`, in the New Map Element wizard.
 - [x] Group existing New Map Element wizard templates into expandable/collapsible Map Info-style categories, with Structures first.
+- [x] Create all currently editable official other-track change forms from the New Map Element wizard, including normalized key-based automatic track creation/reuse; legacy `Track.Gauge` and `Track.Cant` aliases remain edit-only.
 - [x] Export own-track and other-track geometry to CSV.
 
 ## 简体中文
@@ -256,4 +257,5 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在连续布景“属性/编辑”中新增“插入变化点”，按源语句打开对应 Begin/Begin0 向导，默认仅添加 Begin，并预填当前检查器草稿
 - [x] 在“新建地图元素向导”中为 `Structure.Put` 显示六个坐标偏移输入框，同时保持 `Structure.Put0` 隐藏这些字段
 - [x] 在“新建地图元素向导”中将现有模板按可展开/折叠的“地图信息列表”式分类显示，并将布景置于最前
+- [x] 在“新建地图元素向导”中新增当前所有可编辑的官方他轨道变化形式；按规范 key 自动创建/复用他轨道，旧式 `Track.Gauge` 和 `Track.Cant` 别名仍仅支持编辑
 - [x] 将自轨道和他轨道几何导出为 CSV

@@ -7213,6 +7213,196 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             },
         },
         {
+            "other_track.position.xy", NewElementTemplateCategory::TrackGeometry, 2,
+            "otherTrack.change", "Track.Position",
+            "Track[trackKey].Position(x, y);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter1", "y", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.position.xy_radius_h", NewElementTemplateCategory::TrackGeometry, 3,
+            "otherTrack.change", "Track.Position",
+            "Track[trackKey].Position(x, y, radiusH);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter1", "y", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter2", "radiusH", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.position.xy_radius_hv", NewElementTemplateCategory::TrackGeometry, 4,
+            "otherTrack.change", "Track.Position",
+            "Track[trackKey].Position(x, y, radiusH, radiusV);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter1", "y", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter2", "radiusH", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter3", "radiusV", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.x_interpolate.none", NewElementTemplateCategory::TrackGeometry, 5,
+            "otherTrack.change", "Track.X.Interpolate",
+            "Track[trackKey].X.Interpolate();",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+            },
+        },
+        {
+            "other_track.x_interpolate.x", NewElementTemplateCategory::TrackGeometry, 6,
+            "otherTrack.change", "Track.X.Interpolate",
+            "Track[trackKey].X.Interpolate(x);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.x_interpolate.x_radius", NewElementTemplateCategory::TrackGeometry, 7,
+            "otherTrack.change", "Track.X.Interpolate",
+            "Track[trackKey].X.Interpolate(x, radius);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter1", "radius", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.y_interpolate.none", NewElementTemplateCategory::TrackGeometry, 8,
+            "otherTrack.change", "Track.Y.Interpolate",
+            "Track[trackKey].Y.Interpolate();",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+            },
+        },
+        {
+            "other_track.y_interpolate.y", NewElementTemplateCategory::TrackGeometry, 9,
+            "otherTrack.change", "Track.Y.Interpolate",
+            "Track[trackKey].Y.Interpolate(y);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "y", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.y_interpolate.y_radius", NewElementTemplateCategory::TrackGeometry, 10,
+            "otherTrack.change", "Track.Y.Interpolate",
+            "Track[trackKey].Y.Interpolate(y, radius);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "y", MapElementNumericConstraint::Finite, true, "0"},
+                {"parameter1", "radius", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.cant_set_gauge", NewElementTemplateCategory::TrackGeometry, 11,
+            "otherTrack.change", "Track.Cant.SetGauge",
+            "Track[trackKey].Cant.SetGauge(gauge);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "gauge", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.cant_set_center", NewElementTemplateCategory::TrackGeometry, 12,
+            "otherTrack.change", "Track.Cant.SetCenter",
+            "Track[trackKey].Cant.SetCenter(x);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "x", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.cant_set_function", NewElementTemplateCategory::TrackGeometry, 13,
+            "otherTrack.change", "Track.Cant.SetFunction",
+            "Track[trackKey].Cant.SetFunction(id);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "id", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.cant_begin_transition", NewElementTemplateCategory::TrackGeometry, 14,
+            "otherTrack.change", "Track.Cant.BeginTransition",
+            "Track[trackKey].Cant.BeginTransition();",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+            },
+        },
+        {
+            "other_track.cant_begin", NewElementTemplateCategory::TrackGeometry, 15,
+            "otherTrack.change", "Track.Cant.Begin",
+            "Track[trackKey].Cant.Begin(cant);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "cant", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "other_track.cant_end", NewElementTemplateCategory::TrackGeometry, 16,
+            "otherTrack.change", "Track.Cant.End",
+            "Track[trackKey].Cant.End();",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+            },
+        },
+        {
+            "other_track.cant_interpolate.none", NewElementTemplateCategory::TrackGeometry, 17,
+            "otherTrack.change", "Track.Cant.Interpolate",
+            "Track[trackKey].Cant.Interpolate();",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+            },
+        },
+        {
+            "other_track.cant_interpolate.cant", NewElementTemplateCategory::TrackGeometry, 18,
+            "otherTrack.change", "Track.Cant.Interpolate",
+            "Track[trackKey].Cant.Interpolate(cant);",
+            "new_element.usage.other_track.change", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
+                {"parameter0", "cant", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
             "beacon.put", NewElementTemplateCategory::Signal, 5,
             "beacon.put", "",
             "Beacon.Put(type, section, sendData);",
@@ -7951,8 +8141,13 @@ bool App::apply_new_element_insert() {
         return false;
     }
 
-    const std::string insert_base =
-        "insert-" + std::to_string(++wizard.insert_sequence);
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    std::string insert_base;
+    do {
+        insert_base = "insert-" + std::to_string(++wizard.insert_sequence);
+    } while (candidate.find(insert_base) != candidate.end() ||
+             candidate.find(insert_base + "-begin") != candidate.end() ||
+             candidate.find(insert_base + "-end") != candidate.end());
     auto make_insert_change = [&](const std::string& edit_id) {
         MapElementPendingChange change;
         change.change_id = edit_id;
@@ -7963,7 +8158,6 @@ bool App::apply_new_element_insert() {
         return change;
     };
 
-    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     // An insert has no existing source row whose optimistic-concurrency hash
     // must be preserved. Leave expectedSourceHash empty so maploader compares
     // the physical file against the current handle's authoritative disk
@@ -11018,6 +11212,9 @@ int App::run_debug_headless_new_element_edit(
 
         const size_t baseline_repeater_count = app.model_.repeaters.size();
         const size_t baseline_structure_count = app.model_.structures.size();
+        const size_t baseline_other_track_count = app.model_.other_tracks.size();
+        const size_t baseline_other_track_change_count =
+            app.model_.other_track_changes.size();
         const std::string baseline_entry_hash =
             source_hash_for_path(app.model_, options.path);
 
@@ -11032,8 +11229,9 @@ int App::run_debug_headless_new_element_edit(
         *out << "target_file=" << target_file << "\n"
              << "entry_source_hash_before=" << baseline_entry_hash << "\n"
              << "target_source_hash_before=" << baseline_target_hash << "\n";
-        check("baseline_source_hashes_present",
-              !baseline_entry_hash.empty() && !baseline_target_hash.empty());
+        check("baseline_target_source_hash_present", !baseline_target_hash.empty());
+        check("entry_source_hash_present_when_entry_is_editable",
+              options.path != target_file || !baseline_entry_hash.empty());
 
         std::vector<double> distance_values;
         for (const EditStatementInfo& statement : app.model_.edit_statements) {
@@ -11206,6 +11404,24 @@ int App::run_debug_headless_new_element_edit(
             return field == change->field_changes.end()
                 ? std::string{}
                 : field->second;
+        };
+        auto pending_insert_id_for = [&](std::string_view row_kind,
+                                         std::string_view method) {
+            const auto found = std::find_if(
+                app.pending_edit_changes_.begin(), app.pending_edit_changes_.end(),
+                [&](const auto& entry) {
+                    if (entry.second.operation != "insert" ||
+                        entry.second.row_kind != row_kind) {
+                        return false;
+                    }
+                    const auto method_field =
+                        entry.second.field_changes.find("method");
+                    return method_field != entry.second.field_changes.end() &&
+                        method_field->second == method;
+                });
+            return found == app.pending_edit_changes_.end()
+                ? std::string{}
+                : found->first;
         };
 
         check("repeater_template_found", prepare_wizard("repeater.begin0"));
@@ -11400,6 +11616,109 @@ int App::run_debug_headless_new_element_edit(
               app.pending_edit_changes_.empty() &&
               app.model_.structures.size() == baseline_structure_count);
         *out << "stage=structure-cancelled\n";
+
+        auto other_track_key_in_use = [&](const std::string& key) {
+            const std::string canonical = normalize_track_lookup_key("'" + key + "'");
+            return std::any_of(
+                app.model_.other_tracks.begin(), app.model_.other_tracks.end(),
+                [&](const OtherTrack& track) {
+                    return normalize_track_lookup_key(track.key) == canonical;
+                });
+        };
+        std::string other_track_key = "headless-new-element-other-track";
+        for (size_t suffix = 0; other_track_key_in_use(other_track_key); ++suffix) {
+            other_track_key = "headless-new-element-other-track-" +
+                std::to_string(suffix + 1);
+        }
+        check("other_track_position_template_found",
+              prepare_wizard("other_track.position.xy"));
+        NewElementWizardState& other_position_wizard = app.new_element_wizard_;
+        const bool other_position_fields_ok =
+            set_field(other_position_wizard.form, "distance",
+                      format_double(begin_distance, 6)) &&
+            set_field(other_position_wizard.form, "trackKey", other_track_key) &&
+            set_field(other_position_wizard.form, "parameter0", "2") &&
+            set_field(other_position_wizard.form, "parameter1", "3");
+        check("other_track_position_wizard_fields_set", other_position_fields_ok);
+        check("other_track_position_wizard_apply_ok",
+              other_position_fields_ok && apply_wizard());
+        const std::string other_position_edit_id = pending_insert_id_for(
+            "otherTrack.change", "Track.Position");
+        const TableRow* other_position_row = model_row(
+            app.model_.other_track_changes, other_position_edit_id);
+        const std::string canonical_other_track_key = "'" + other_track_key + "'";
+        check("other_track_position_insert_state_ok",
+              !other_position_edit_id.empty() &&
+              pending_insert(other_position_edit_id) && other_position_row &&
+              app.model_.other_track_changes.size() ==
+                  baseline_other_track_change_count + 1 &&
+              app.model_.other_tracks.size() == baseline_other_track_count + 1 &&
+              normalize_track_lookup_key(table_cell(*other_position_row, "trackKey")) ==
+                  normalize_track_lookup_key(canonical_other_track_key) &&
+              table_cell(*other_position_row, "filePath") == target_file);
+        *out << "other_track_position_edit_id=" << other_position_edit_id << "\n"
+             << "stage=other-track-position-created\n";
+
+        check("other_track_same_key_template_found",
+              prepare_wizard("other_track.x_interpolate.x"));
+        NewElementWizardState& other_interpolate_wizard = app.new_element_wizard_;
+        const bool other_interpolate_fields_ok =
+            set_field(other_interpolate_wizard.form, "distance",
+                      format_double(end_distance, 6)) &&
+            set_field(other_interpolate_wizard.form, "trackKey",
+                      ascii_lower(other_track_key)) &&
+            set_field(other_interpolate_wizard.form, "parameter0", "4");
+        check("other_track_same_key_wizard_fields_set", other_interpolate_fields_ok);
+        check("other_track_same_key_wizard_apply_ok",
+              other_interpolate_fields_ok && apply_wizard());
+        const std::string other_interpolate_edit_id = pending_insert_id_for(
+            "otherTrack.change", "Track.X.Interpolate");
+        const TableRow* other_interpolate_row = model_row(
+            app.model_.other_track_changes, other_interpolate_edit_id);
+        check("other_track_same_key_reuses_track_ok",
+              !other_interpolate_edit_id.empty() &&
+              pending_insert(other_interpolate_edit_id) && other_interpolate_row &&
+              app.pending_edit_changes_.size() == 2 &&
+              app.model_.other_track_changes.size() ==
+                  baseline_other_track_change_count + 2 &&
+              app.model_.other_tracks.size() == baseline_other_track_count + 1 &&
+              normalize_track_lookup_key(table_cell(*other_interpolate_row, "trackKey")) ==
+                  normalize_track_lookup_key(canonical_other_track_key) &&
+              table_cell(*other_interpolate_row, "filePath") == target_file);
+        *out << "other_track_interpolate_edit_id=" << other_interpolate_edit_id << "\n"
+             << "stage=other-track-same-key-created\n";
+
+        check("other_track_insert_inspector_open_ok",
+              app.open_element_inspector(other_position_edit_id, "otherTrack.change"));
+        const bool other_track_edit_field_ok =
+            set_field(app.inspector_, "parameter0", "6.5");
+        check("other_track_insert_inspector_field_set", other_track_edit_field_ok);
+        check("other_track_insert_followup_apply_ok",
+              other_track_edit_field_ok && apply_inspector());
+        const MapElementPendingChange* other_position_insert =
+            pending_insert(other_position_edit_id);
+        other_position_row = model_row(app.model_.other_track_changes,
+                                       other_position_edit_id);
+        check("other_track_insert_followup_preview_and_ledger_ok",
+              other_position_insert && other_position_row &&
+              pending_field(other_position_insert, "parameter0") == "6.5" &&
+              std::abs(table_cell_number(*other_position_row, "parameter0") - 6.5) < 1e-9);
+        *out << "stage=other-track-followup-applied\n";
+
+        MapElementDeleteRequest other_interpolate_delete;
+        other_interpolate_delete.edit_id = other_interpolate_edit_id;
+        other_interpolate_delete.row_kind = "otherTrack.change";
+        MapElementDeleteRequest other_position_delete;
+        other_position_delete.edit_id = other_position_edit_id;
+        other_position_delete.row_kind = "otherTrack.change";
+        check("other_track_same_key_insert_cancel_ok",
+              app.delete_element_target(other_interpolate_delete) &&
+              app.delete_element_target(other_position_delete));
+        check("other_track_insert_cancel_restores_baseline",
+              app.pending_edit_changes_.empty() &&
+              app.model_.other_track_changes.size() == baseline_other_track_change_count &&
+              app.model_.other_tracks.size() == baseline_other_track_count);
+        *out << "stage=other-track-cancelled\n";
 
         check("working_copy_reset_ok",
               app.edit_memory_matches_pending_ledger_ &&

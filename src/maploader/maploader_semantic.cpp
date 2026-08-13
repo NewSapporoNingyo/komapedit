@@ -1400,6 +1400,7 @@ std::string expected_target_semantic(MapContext& ctx,
 
 struct FakeInsertSnapshotState {
     std::string arena;
+    std::vector<KvValue> values;
     KvStringRef path_ref{};
     KvSourceFileRow source_file_row{};
     KvMapSnapshot snapshot{};
@@ -1414,6 +1415,7 @@ std::string insert_semantic_container(const std::string& row_kind) {
     if (row_kind == "repeater") return "repeater";
     if (row_kind == "station.put") return "station.put";
     if (row_kind == "signal.put") return "signal.data";
+    if (row_kind == "otherTrack.change") return "otherTrack.change";
     if (row_kind == "irregularity.change") return "irregularity";
     if (row_kind == "beacon.put") return "beacon";
     if (row_kind == "mapSound.play") return "mapSound";
@@ -1468,6 +1470,18 @@ std::string expected_insert_semantic(MapContext& ctx,
                semantic_change.field_changes.find("method") == semantic_change.field_changes.end()) {
         semantic_change.field_changes.emplace("method", "PutBetween");
     }
+    std::string other_track_method;
+    KvStringRef other_track_method_ref{};
+    if (row_kind == "otherTrack.change") {
+        other_track_method = insert_method_or_default(change, "");
+        other_track_method_ref = {
+            static_cast<std::uint64_t>(fake.arena.size()),
+            static_cast<std::uint64_t>(other_track_method.size()),
+        };
+        fake.arena += other_track_method;
+    }
+    fake.snapshot.string_data = fake.arena.data();
+    fake.snapshot.string_size = fake.arena.size();
     SemanticWriter out;
     begin_element(out, target.file_path, insert_semantic_container(row_kind));
     if (row_kind == "structure.put") {
@@ -1490,6 +1504,19 @@ std::string expected_insert_semantic(MapContext& ctx,
         KvSignalPutRow row{};
         path_row(row);
         write_signal_put(out, fake.snapshot, row, &change);
+    } else if (row_kind == "otherTrack.change") {
+        KvOtherTrackChangeRow row{};
+        path_row(row);
+        row.method = other_track_method_ref;
+        while (semantic_change.field_changes.find(
+                   "parameter" + std::to_string(fake.values.size())) !=
+               semantic_change.field_changes.end()) {
+            fake.values.push_back({});
+        }
+        row.parameters = {0, static_cast<std::uint64_t>(fake.values.size())};
+        fake.snapshot.values = fake.values.empty() ? nullptr : fake.values.data();
+        fake.snapshot.value_count = static_cast<std::uint64_t>(fake.values.size());
+        write_other_track_change(out, fake.snapshot, row, &semantic_change);
     } else if (row_kind == "irregularity.change") {
         KvIrregularityRow row{};
         path_row(row);

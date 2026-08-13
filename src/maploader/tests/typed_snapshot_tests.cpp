@@ -11,6 +11,7 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -1085,6 +1086,76 @@ struct RepeaterInsertBatch {
     }
 };
 
+struct OtherTrackInsertSpec {
+    std::string change_id;
+    std::string method;
+    std::string distance;
+    std::string track_key;
+    std::vector<std::string> parameters;
+};
+
+struct OtherTrackInsertBatch {
+    std::string target_file;
+    std::vector<std::string> change_ids;
+    std::vector<std::string> field_names;
+    std::vector<std::string> field_values;
+    std::vector<KvEditField> fields;
+    std::vector<KvEditChange> changes;
+    KvEditBatch batch{};
+
+    OtherTrackInsertBatch(std::string target,
+                          const std::vector<OtherTrackInsertSpec>& specs)
+        : target_file(std::move(target)) {
+        size_t field_count = 0;
+        for (const OtherTrackInsertSpec& spec : specs) {
+            field_count += 4 + spec.parameters.size();
+        }
+        change_ids.reserve(specs.size());
+        field_names.reserve(field_count);
+        field_values.reserve(field_count);
+        std::vector<KvSpan> field_ranges;
+        field_ranges.reserve(specs.size());
+        for (const OtherTrackInsertSpec& spec : specs) {
+            const std::uint64_t offset = static_cast<std::uint64_t>(field_names.size());
+            auto append = [&](const std::string& name, const std::string& value) {
+                field_names.push_back(name);
+                field_values.push_back(value);
+            };
+            append("rowKind", "otherTrack.change");
+            append("distance", spec.distance);
+            append("method", spec.method);
+            append("trackKey", spec.track_key);
+            for (size_t index = 0; index < spec.parameters.size(); ++index) {
+                append("parameter" + std::to_string(index), spec.parameters[index]);
+            }
+            field_ranges.push_back({
+                offset,
+                static_cast<std::uint64_t>(field_names.size()) - offset,
+            });
+            change_ids.push_back(spec.change_id);
+        }
+        fields.reserve(field_names.size());
+        for (size_t index = 0; index < field_names.size(); ++index) {
+            fields.push_back({utf8_view(field_names[index]), utf8_view(field_values[index])});
+        }
+        changes.resize(specs.size());
+        for (size_t index = 0; index < specs.size(); ++index) {
+            KvEditChange& change = changes[index];
+            change.change_id = utf8_view(change_ids[index]);
+            change.edit_id = utf8_view(change_ids[index]);
+            change.operation = KV_EDIT_INSERT;
+            change.fields = field_ranges[index];
+            change.target_file_path = utf8_view(target_file);
+        }
+        batch = {
+            changes.empty() ? nullptr : changes.data(),
+            static_cast<std::uint64_t>(changes.size()),
+            fields.empty() ? nullptr : fields.data(),
+            static_cast<std::uint64_t>(fields.size()),
+        };
+    }
+};
+
 struct RepeaterTrimBatch {
     std::string change_update_id = "typed-contract-repeater-trim";
     std::string change_delete_id = "typed-contract-repeater-delete-end";
@@ -1358,6 +1429,18 @@ bool edit_report_has_error_prefix(const KvEditReportSnapshot& report,
             error.substr(0, prefix.size()) == prefix) {
             return true;
         }
+    }
+    return false;
+}
+
+bool edit_report_has_error_containing(const KvEditReportSnapshot& report,
+                                      std::string_view text) {
+    if (!report.blocking_errors) return false;
+    for (std::uint64_t index = 0; index < report.blocking_error_count; ++index) {
+        const std::string_view error = arena_view(
+            report.string_data, report.string_size,
+            report.blocking_errors[index]);
+        if (error.find(text) != std::string_view::npos) return true;
     }
     return false;
 }
@@ -2284,6 +2367,254 @@ void repeater_insert_contract() {
           "Repeater insert source text uses official Begin, Begin0, and End syntax");
 }
 
+void other_track_insert_contract() {
+    TempFixture fixture;
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "other-track insert fixture load");
+    if (!handle.value) return;
+
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0 &&
+              baseline.other_track_change_count == 2 &&
+              baseline.other_track_count == 1,
+          "other-track insert baseline snapshot");
+    if (baseline.other_track_change_count == 0 || !baseline.other_track_changes) return;
+    const KvOtherTrackChangeRow& source_row = baseline.other_track_changes[0];
+    check(source_row.metadata.source_file_index < baseline.source_file_count,
+          "other-track insert source index");
+    if (source_row.metadata.source_file_index >= baseline.source_file_count) return;
+    const std::string source_path = map_string(
+        baseline, baseline.source_files[source_row.metadata.source_file_index].file_path);
+    const std::uint64_t baseline_change_count = baseline.other_track_change_count;
+    const std::uint64_t baseline_track_count = baseline.other_track_count;
+
+    const std::vector<OtherTrackInsertSpec> valid_specs = {
+        {"typed-contract-other-position-xy", "Track.Position", "1", "'Insert-Other'", {"1", "2"}},
+        {"typed-contract-other-position-xyh", "Track.Position", "2", "'insert-other'", {"3", "4", "5"}},
+        {"typed-contract-other-position-xyhv", "Track.Position", "3", "'INSERT-OTHER'", {"6", "7", "8", "9"}},
+        {"typed-contract-other-x-none", "Track.X.Interpolate", "4", "'insert-other'", {}},
+        {"typed-contract-other-x-x", "Track.X.Interpolate", "5", "'insert-other'", {"10"}},
+        {"typed-contract-other-x-radius", "Track.X.Interpolate", "6", "'insert-other'", {"11", "12"}},
+        {"typed-contract-other-y-none", "Track.Y.Interpolate", "7", "'insert-other'", {}},
+        {"typed-contract-other-y-y", "Track.Y.Interpolate", "8", "'insert-other'", {"13"}},
+        {"typed-contract-other-y-radius", "Track.Y.Interpolate", "9", "'insert-other'", {"14", "15"}},
+        {"typed-contract-other-cant-gauge", "Track.Cant.SetGauge", "10", "'insert-other'", {"1.435"}},
+        {"typed-contract-other-cant-center", "Track.Cant.SetCenter", "11", "'insert-other'", {"0.1"}},
+        {"typed-contract-other-cant-function", "Track.Cant.SetFunction", "12", "'insert-other'", {"1"}},
+        {"typed-contract-other-cant-transition", "Track.Cant.BeginTransition", "13", "'insert-other'", {}},
+        {"typed-contract-other-cant-begin", "Track.Cant.Begin", "14", "'insert-other'", {"0.2"}},
+        {"typed-contract-other-cant-end", "Track.Cant.End", "15", "'insert-other'", {}},
+        {"typed-contract-other-cant-interpolate-none", "Track.Cant.Interpolate", "16", "'insert-other'", {}},
+        {"typed-contract-other-numeric", "Track.Cant.Interpolate", "17", "1", {"0.3"}},
+    };
+    OtherTrackInsertBatch valid(source_path, valid_specs);
+    KvEditReportSnapshot dry_report{};
+    check(kv_edit_dry_run_typed(handle.value, &valid.batch, &dry_report,
+                                sizeof(dry_report)) != 0,
+          "other-track insert dry-run call");
+    validate_report(dry_report);
+    check(dry_report.ok && dry_report.full_reparse_ok &&
+              dry_report.insert_count == static_cast<int>(valid_specs.size()) &&
+              dry_report.non_target_changed_count == 0,
+          "all official other-track insert forms validate without non-target changes");
+
+    KvEditReportSnapshot applied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &valid.batch, &applied_report,
+              sizeof(applied_report)) != 0 && applied_report.ok &&
+              applied_report.full_reparse_ok &&
+              applied_report.insert_count == static_cast<int>(valid_specs.size()),
+          "other-track insert apply-to-memory");
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0,
+          "other-track insert applied snapshot");
+    bool rows_match = applied.other_track_change_count ==
+        baseline_change_count + valid_specs.size();
+    for (const OtherTrackInsertSpec& spec : valid_specs) {
+        const KvOtherTrackChangeRow* row = find_other_track_change(applied, spec.change_id);
+        rows_match = rows_match && row &&
+            map_string(applied, row->method) == spec.method &&
+            nearly_equal(row->distance, std::stod(spec.distance)) &&
+            row->parameters.count == spec.parameters.size() &&
+            map_string(applied, row->file_path) == source_path;
+        if (!row || row->parameters.count != spec.parameters.size() ||
+            !span_valid(row->parameters, applied.value_count)) {
+            rows_match = false;
+            continue;
+        }
+        for (size_t index = 0; index < spec.parameters.size(); ++index) {
+            const KvValue& parameter = applied.values[row->parameters.offset + index];
+            rows_match = rows_match && parameter.kind == KV_VALUE_NUMBER &&
+                nearly_equal(parameter.number_value, std::stod(spec.parameters[index]));
+        }
+    }
+    check(rows_match,
+          "other-track inserts preserve all official methods, parameters, target file, and stable ids");
+    const KvOtherTrackChangeRow* string_key_row = find_other_track_change(
+        applied, "typed-contract-other-position-xy");
+    const KvOtherTrackChangeRow* numeric_key_row = find_other_track_change(
+        applied, "typed-contract-other-numeric");
+    size_t normalized_string_track_count = 0;
+    size_t numeric_track_count = 0;
+    size_t quoted_numeric_track_count = 0;
+    for (std::uint64_t index = 0; index < applied.other_track_count; ++index) {
+        const std::string key = map_string(applied, applied.other_tracks[index].key);
+        normalized_string_track_count += key == "'insert-other'" ? 1u : 0u;
+        numeric_track_count += key == "1" ? 1u : 0u;
+        quoted_numeric_track_count += key == "'1'" ? 1u : 0u;
+    }
+    check(applied.other_track_count == baseline_track_count + 2 &&
+              normalized_string_track_count == 1 && numeric_track_count == 1 &&
+              quoted_numeric_track_count == 1 && string_key_row &&
+              string_track_key_equals(applied, string_key_row->track_key, "Insert-Other") &&
+              numeric_key_row && numeric_key_row->track_key.kind == KV_VALUE_NUMBER &&
+              nearly_equal(numeric_key_row->track_key.number_value, 1.0),
+          "new normalized key creates one track, case variants reuse it, and numeric/string keys remain distinct");
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "other-track insert reset call");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0 &&
+              reset.other_track_change_count == baseline_change_count &&
+              reset.other_track_count == baseline_track_count &&
+              !find_other_track_change(reset, "typed-contract-other-position-xy") &&
+              !find_other_track_change(reset, "typed-contract-other-numeric"),
+          "other-track insert reset restores the disk baseline");
+
+    auto rejected_insert = [&](const char* label, const char* expected_error,
+                               const OtherTrackInsertSpec& spec) {
+        OtherTrackInsertBatch invalid(source_path, {spec});
+        KvEditReportSnapshot report{};
+        check(kv_edit_dry_run_typed(handle.value, &invalid.batch, &report,
+                                    sizeof(report)) != 0, label);
+        validate_report(report);
+        check(!report.ok && edit_report_has_error_containing(report, expected_error), label);
+    };
+    rejected_insert("other-track legacy Gauge insert rejected",
+                    "unsupported insert method Track.Gauge", {
+                        "typed-contract-other-legacy-gauge", "Track.Gauge", "20", "'legacy'", {"1.435"},
+                    });
+    rejected_insert("other-track legacy Cant insert rejected",
+                    "unsupported insert method Track.Cant", {
+                        "typed-contract-other-legacy-cant", "Track.Cant", "20", "'legacy'", {"0.1"},
+                    });
+    rejected_insert("other-track wrong Position arity rejected",
+                    "invalid parameter count for other-track insert method Track.Position", {
+                        "typed-contract-other-bad-position", "Track.Position", "20", "'bad'", {"1"},
+                    });
+    rejected_insert("other-track SetFunction id rejected",
+                    "Track.Cant.SetFunction insert requires id 0 or 1", {
+                        "typed-contract-other-bad-function", "Track.Cant.SetFunction", "20", "'bad'", {"2"},
+                    });
+
+    KvEditReportSnapshot reapply_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &valid.batch, &reapply_report,
+              sizeof(reapply_report)) != 0 && reapply_report.ok &&
+              reapply_report.full_reparse_ok,
+          "other-track insert reapply before commit");
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report, sizeof(commit_report)) != 0,
+          "other-track insert commit call");
+    validate_report(commit_report);
+    check(commit_report.ok && commit_report.full_reparse_ok &&
+              commit_report.changed_file_count == 1 && commit_report.changed_files &&
+              arena_view(commit_report.string_data, commit_report.string_size,
+                         commit_report.changed_files[0]) == source_path,
+          "other-track insert commit writes only the requested target source");
+    bool committed_ids_match = commit_report.committed_rows != nullptr;
+    if (committed_ids_match) {
+        for (const OtherTrackInsertSpec& spec : valid_specs) {
+            const bool found = std::any_of(
+                commit_report.committed_rows,
+                commit_report.committed_rows + commit_report.committed_row_count,
+                [&](const KvEditCommittedRow& row) {
+                    return arena_view(commit_report.string_data, commit_report.string_size,
+                                      row.row_kind) == "otherTrack.change" &&
+                        arena_view(commit_report.string_data, commit_report.string_size,
+                                   row.edit_id) == spec.change_id;
+                });
+            committed_ids_match = committed_ids_match && found;
+        }
+    }
+    check(committed_ids_match,
+          "other-track insert commit retains stable identities for every inserted row");
+
+    MapHandle reloaded(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(reloaded.value != nullptr, "other-track insert reload");
+    if (!reloaded.value) return;
+    KvMapSnapshot reloaded_snapshot{};
+    check(kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0,
+          "other-track insert reloaded snapshot");
+    bool reloaded_rows_match = reloaded_snapshot.other_track_change_count ==
+        baseline_change_count + valid_specs.size() &&
+        reloaded_snapshot.other_track_count == baseline_track_count + 2;
+    for (const OtherTrackInsertSpec& spec : valid_specs) {
+        bool found = false;
+        for (std::uint64_t index = 0;
+             index < reloaded_snapshot.other_track_change_count; ++index) {
+            const KvOtherTrackChangeRow& row = reloaded_snapshot.other_track_changes[index];
+            if (map_string(reloaded_snapshot, row.method) != spec.method ||
+                !nearly_equal(row.distance, std::stod(spec.distance)) ||
+                row.parameters.count != spec.parameters.size() ||
+                map_string(reloaded_snapshot, row.file_path) != source_path) {
+                continue;
+            }
+            found = !map_string(reloaded_snapshot, row.metadata.edit_id).empty();
+            for (size_t parameter = 0; found && parameter < spec.parameters.size(); ++parameter) {
+                const KvValue& value = reloaded_snapshot.values[
+                    row.parameters.offset + parameter];
+                found = value.kind == KV_VALUE_NUMBER &&
+                    nearly_equal(value.number_value, std::stod(spec.parameters[parameter]));
+            }
+            if (found) break;
+        }
+        reloaded_rows_match = reloaded_rows_match && found;
+    }
+    check(reloaded_rows_match,
+          "other-track insert save/reload retains source, typed snapshots, and edit identities");
+    std::ifstream committed_source(fixture.map_path, std::ios::binary);
+    const std::string committed_text{
+        std::istreambuf_iterator<char>(committed_source),
+        std::istreambuf_iterator<char>()};
+    const std::vector<std::string> official_source_forms = {
+        "Track['Insert-Other'].Position(1,2);",
+        "Track['insert-other'].Position(3,4,5);",
+        "Track['INSERT-OTHER'].Position(6,7,8,9);",
+        "Track['insert-other'].X.Interpolate();",
+        "Track['insert-other'].X.Interpolate(10);",
+        "Track['insert-other'].X.Interpolate(11,12);",
+        "Track['insert-other'].Y.Interpolate();",
+        "Track['insert-other'].Y.Interpolate(13);",
+        "Track['insert-other'].Y.Interpolate(14,15);",
+        "Track['insert-other'].Cant.SetGauge(1.435);",
+        "Track['insert-other'].Cant.SetCenter(0.1);",
+        "Track['insert-other'].Cant.SetFunction(1);",
+        "Track['insert-other'].Cant.BeginTransition();",
+        "Track['insert-other'].Cant.Begin(0.2);",
+        "Track['insert-other'].Cant.End();",
+        "Track['insert-other'].Cant.Interpolate();",
+        "Track[1].Cant.Interpolate(0.3);",
+    };
+    bool official_source_forms_present = true;
+    for (const std::string& statement : official_source_forms) {
+        official_source_forms_present = official_source_forms_present &&
+            committed_text.find(statement) != std::string::npos;
+    }
+    check(official_source_forms_present &&
+              committed_text.find("Track['legacy'].Gauge(") == std::string::npos &&
+              committed_text.find("Track['legacy'].Cant(") == std::string::npos,
+          "other-track insert source uses only the official current forms");
+}
+
 void line_ending_edit_contract() {
     TempFixture fixture;
     const std::filesystem::path include_path = fixture.directory / "include.txt";
@@ -2512,6 +2843,7 @@ int edit_contract() {
     other_track_key_edit_contract();
     repeater_key_edit_contract();
     repeater_insert_contract();
+    other_track_insert_contract();
     TempFixture fixture;
     check_coordinate_offset_method_conversions(fixture.path_utf8());
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
