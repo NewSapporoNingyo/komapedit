@@ -7284,7 +7284,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.position", NewElementTemplateCategory::OtherTrack, 0,
             "otherTrack.change", "Track.Position",
             "Track[trackKey].Position(x, y, radiusH, radiusV);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.position", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7298,7 +7298,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.x_interpolate", NewElementTemplateCategory::OtherTrack, 1,
             "otherTrack.change", "Track.X.Interpolate",
             "Track[trackKey].X.Interpolate(x, radius);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.x_interpolate", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7310,7 +7310,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.y_interpolate", NewElementTemplateCategory::OtherTrack, 2,
             "otherTrack.change", "Track.Y.Interpolate",
             "Track[trackKey].Y.Interpolate(y, radius);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.y_interpolate", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7322,7 +7322,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.cant_set_gauge", NewElementTemplateCategory::OtherTrack, 3,
             "otherTrack.change", "Track.Cant.SetGauge",
             "Track[trackKey].Cant.SetGauge(gauge);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.cant_set_gauge", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7333,7 +7333,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.cant_set_center", NewElementTemplateCategory::OtherTrack, 4,
             "otherTrack.change", "Track.Cant.SetCenter",
             "Track[trackKey].Cant.SetCenter(x);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.cant_set_center", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7344,7 +7344,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.cant_set_function", NewElementTemplateCategory::OtherTrack, 5,
             "otherTrack.change", "Track.Cant.SetFunction",
             "Track[trackKey].Cant.SetFunction(id);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.cant_set_function", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7355,7 +7355,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.cant_begin_transition", NewElementTemplateCategory::OtherTrack, 6,
             "otherTrack.change", "Track.Cant.BeginTransition",
             "Track[trackKey].Cant.BeginTransition();",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.cant_begin_transition", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7365,7 +7365,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.cant_begin", NewElementTemplateCategory::OtherTrack, 7,
             "otherTrack.change", "Track.Cant.Begin",
             "Track[trackKey].Cant.Begin(cant);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.cant_begin", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7376,7 +7376,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.cant_end", NewElementTemplateCategory::OtherTrack, 8,
             "otherTrack.change", "Track.Cant.End",
             "Track[trackKey].Cant.End();",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.cant_end", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
@@ -7386,7 +7386,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "other_track.cant_interpolate", NewElementTemplateCategory::OtherTrack, 9,
             "otherTrack.change", "Track.Cant.Interpolate",
             "Track[trackKey].Cant.Interpolate(cant);",
-            "new_element.usage.other_track.change", false,
+            "new_element.usage.other_track.cant_interpolate", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"trackKey", "trackKey", MapElementNumericConstraint::None, true, ""},
