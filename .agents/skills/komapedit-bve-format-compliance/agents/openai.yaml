@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit BVE Format Compliance"
+  short_description: "Enforce official BVE route-file syntax"
+  default_prompt: "Use $komapedit-bve-format-compliance to verify a route-format change against the official BVE syntax."

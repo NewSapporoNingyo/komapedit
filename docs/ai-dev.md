@@ -21,6 +21,19 @@ Avoid vague requests such as “make the code better,” “fix all bugs,” “
 
 If an important choice cannot be inferred from current code—such as a format strategy, breaking migration, public ABI change, or new dependency—ask for a read-only investigation first and make the human decision before implementation.
 
+## Mandatory BVE format compliance
+
+Every change that adds or modifies BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback must use [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md). This includes the official Map, Structure List, Signal Aspects List, Sound List, other-train, and Scenario formats covered by its [official-source baseline](../.agents/skills/komapedit-bve-format-compliance/references/official-bve-format-baseline.md).
+
+Use the compliance skill in addition to `komapedit-develop`, `komapedit-fix`, `komapedit-source-backed-editing`, or another matching subsystem skill. It requires the agent to re-open the affected live official page, classify current syntax, official legacy aliases, project compatibility forms, and unsupported forms separately, then build a compliance matrix before implementation. If the official page, request, and current implementation disagree in a behavior-changing way, the agent must stop for a human decision.
+
+```text
+Use $komapedit-bve-format-compliance together with $komapedit-develop (or $komapedit-fix).
+Official formats/elements: [affected files, statements, rows, sections, or keys]
+Operations: [read / validate / edit / create / serialize / write back]
+Acceptance: [documented signatures and semantics, round trip, negative cases, source fidelity]
+```
+
 ## Four common project workflows
 
 The repository provides four scenario skills plus narrower subsystem skills. When the client supports explicit skill invocation, reference the skill name. Otherwise describe the scenario clearly; the agent should route the task through the matching project skill listed in `AGENTS.md`.

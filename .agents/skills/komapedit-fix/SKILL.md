@@ -8,9 +8,10 @@ description: Diagnose and repair a specific komapedit defect or regression. Use 
 ## Prove the problem
 
 1. Read `AGENTS.md` and inspect the exact code path before changing anything.
-2. Record expected behavior, observed behavior, inputs, build type, and the narrowest reproducible condition.
-3. Reproduce with the smallest existing fixture, CTest, headless mode, direct DLL call, or controlled real route that exercises the failure.
-4. If the request is diagnosis-only, stop after establishing the cause and evidence. Do not implement without authorization.
+2. For any syntax-related reading, parsing, validation, editing, creation, serialization, or writeback defect, use `komapedit-bve-format-compliance` to establish the live official contract before deciding what is incorrect.
+3. Record expected behavior, observed behavior, inputs, build type, and the narrowest reproducible condition.
+4. Reproduce with the smallest existing fixture, CTest, headless mode, direct DLL call, or controlled real route that exercises the failure.
+5. If the request is diagnosis-only, stop after establishing the cause and evidence. Do not implement without authorization.
 
 ## Find the owning boundary
 
@@ -28,7 +29,7 @@ Trace the value or state through its full owner chain. Do not patch the visible 
 ## Apply the smallest proven repair
 
 1. Prefer a focused fix in the owning layer and reuse the existing shared path.
-2. Preserve public ABI, official BVE syntax, source fidelity, Apply/Save semantics, stable IDs, localization, and current user interaction unless the bug is in that contract.
+2. Preserve public ABI, official BVE syntax proven by the compliance matrix, source fidelity, Apply/Save semantics, stable IDs, localization, and current user interaction unless the bug is in that contract.
 3. Add a regression check that fails for the original cause when practical. Avoid weakening global validation to make one fixture pass.
 4. Keep unrelated failures separate. Do not widen the patch because another test exposes independent debt.
 5. For caches, repair the key or invalidation owner; do not disable caching globally without evidence.

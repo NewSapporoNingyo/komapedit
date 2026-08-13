@@ -124,6 +124,8 @@ Preserve BVE Map 2.0+, supported legacy syntax, `Include`, variables, predefined
 
 Implement general rules matching official BVE syntax; do not add private route syntax or special-case one route. Presets must emit ordinary BVE map/list statements.
 
+When an AI coding tool changes or adds BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback, it must invoke [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md) in addition to the matching scenario/subsystem skill. Recheck the affected live official page and complete the skill's compliance matrix before implementation.
+
 Editable rows must retain source path, include stack, source span, original statement and arguments, evaluated values, distance expression, parse order, and stable ID. Keep `KvMapSnapshot` exhaustive and strongly typed. Source writeback preserves original encoding and line endings where possible and blocks unrepresentable characters; there is no Save-as-UTF-8 fallback.
 
 ### Editing model

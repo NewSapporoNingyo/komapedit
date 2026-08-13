@@ -21,6 +21,19 @@ AI 工具应自行阅读 [`AGENTS.md`](../AGENTS.md)。可重复执行的工作�
 
 若当前代码无法决定文件格式策略、破坏性迁移、公共 ABI 变化或新增依赖等重要选择，应先要求只读调查，再由人作出决定后实施。
 
+## BVE 格式合规是强制层
+
+凡新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑，都必须使用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。其范围包括[官方来源基线](../.agents/skills/komapedit-bve-format-compliance/references/official-bve-format-baseline.md)所覆盖的 Map、Structure List、Signal Aspects List、Sound List、他列车和 Scenario 格式。
+
+该合规技能必须与 `komapedit-develop`、`komapedit-fix`、`komapedit-source-backed-editing` 或其他匹配的子系统技能同时使用。它要求智能体重新打开受影响的在线官方页面，分别标明当前官方语法、官方旧式别名、项目兼容形式与未支持形式，并在实现前建立合规矩阵。若官方页面、需求与当前实现之间存在会改变行为的差异，智能体必须停止并请人决定。
+
+```text
+同时使用 $komapedit-bve-format-compliance 与 $komapedit-develop（或 $komapedit-fix）。
+官方格式/元素：[受影响的文件、语句、列表行、节或 key]
+操作：[读取 / 校验 / 编辑 / 新建 / 序列化 / 写回]
+验收：[官方签名与语义、往返验证、反例、源码保真]
+```
+
 ## 四种常见项目工作流
 
 仓库提供四个场景技能及多个专项技能。客户端支持显式调用技能时，直接引用技能名称；否则清楚描述任务场景，智能体应根据 `AGENTS.md` 中的项目技能索引进行路由。

@@ -5,6 +5,8 @@ description: Extend or repair komapedit's typed source-backed map/list editing p
 
 # Komapedit Source-Backed Editing
 
+Use `komapedit-bve-format-compliance` first for every touched BVE statement or list-row shape. Its live official-source check and compliance matrix are mandatory for reading, editing, creation, serialization, and writeback; this skill supplies the separate source-lifecycle contract.
+
 ## Trace the complete lifecycle
 
 Read the relevant portions of:

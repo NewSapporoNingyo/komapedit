@@ -36,6 +36,7 @@ Current implementation status comes from source and `TODO.md`, not from an old m
 ### BVE parsing, geometry, and source fidelity
 
 - Implement official BVE map/list syntax; do not add private route syntax extensions.
+- Always invoke `komapedit-bve-format-compliance` before implementation when changing or adding BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback logic, including the covered Map, Structure List, Signal Aspects List, Sound List, other-train, and Scenario formats. Combine it with the matching scenario/subsystem skills; its live official-source check and compliance matrix are mandatory.
 - Preserve currently supported encodings, BOMs, line endings, Include behavior, variables/expressions, parse order, comments, legacy syntax where already supported, and existing geometry semantics.
 - Keep source ownership in maploader records: physical source path, Include stack, source span, original statement/arguments, evaluated values, distance expression, global parse order, and stable edit identity.
 - Do not reparse route source in GUI tables/canvases or create a parallel GUI-owned source document model.
@@ -90,7 +91,7 @@ Current implementation status comes from source and `TODO.md`, not from an old m
 
 ## General workflow
 
-1. Read this file and inspect `.agents/skills` descriptions. Use the matching scenario skill first, then every narrower skill that applies.
+1. Read this file and inspect `.agents/skills` descriptions. Use the matching scenario skill first, then every narrower skill that applies. For the BVE-format work defined above, `komapedit-bve-format-compliance` is mandatory in addition to those skills.
 2. Read the relevant section of `docs/dev.md`, `TODO.md`, current source, public headers, tests, and current working-tree diff.
 3. Convert the request into observable acceptance criteria and identify the owning component boundary.
 4. Inspect before editing. For bugs and slop-fix work, establish evidence and a plan before mutation.
@@ -127,6 +128,7 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 | Skill | Use for |
 | --- | --- |
 | `komapedit-develop` | Everyday scoped feature/behavior development and workflow routing |
+| `komapedit-bve-format-compliance` | Mandatory official-syntax verification for BVE map/list/scenario/train reading, editing, creation, serialization, and writeback |
 | `komapedit-fix` | Evidence-led diagnosis and minimal repair of a concrete defect |
 | `komapedit-slop-fix` | Sustainability audit and evidence-backed cleanup without behavior drift |
 | `komapedit-write-docs` | Documentation ownership, synchronization, bilingual updates, and AGENTS/TODO maintenance |

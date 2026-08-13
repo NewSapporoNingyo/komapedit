@@ -14,6 +14,7 @@ description: Plan and implement scoped feature or behavior changes in komapedit.
 
 ## Route the work
 
+- Use `komapedit-bve-format-compliance` whenever work changes or adds BVE map/list/scenario/train reading, parsing, validation, typed representation, editing, creation, serialization, or writeback. This compliance layer is mandatory in addition to every matching skill below.
 - Use `komapedit-source-backed-editing` for parser-to-save editing work.
 - Use `komapedit-table-feature-workflow` for typed snapshot rows, Map Info tables, table search, and cross-view navigation.
 - Use `komapedit-3d-preview-workflow` for scene/model preview work.
@@ -31,7 +32,7 @@ Read every triggered skill before changing files.
 3. Extend the shared representation first, then its consumers. Typical flows are:
    - parser → `KvMapSnapshot` → `MapModel` → table/2D/3D consumers;
    - source metadata → edit target → semantic validation → source patch → full reparse → GUI refresh.
-4. Preserve the public C ABI rules, source encodings, official BVE syntax, stable edit identities, UI lifecycle, and cache invalidation contracts.
+4. Preserve the public C ABI rules, source encodings, official BVE syntax established by the compliance matrix, stable edit identities, UI lifecycle, and cache invalidation contracts.
 5. Update Simplified Chinese, English, and Japanese together when visible GUI text changes.
 6. Add focused regression coverage when the change has a deterministic contract. Do not invent a large new harness if an existing CTest or Debug headless entry point proves the path.
 
