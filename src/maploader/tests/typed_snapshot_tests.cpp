@@ -92,7 +92,7 @@ struct TempFixture {
     std::filesystem::path directory;
     std::filesystem::path map_path;
 
-    explicit TempFixture(bool snapshot_arrays = false) {
+    explicit TempFixture(bool snapshot_arrays = false, bool sound3d = false) {
         directory = std::filesystem::temp_directory_path() /
             ("komapedit-typed-contract-" + std::to_string(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -104,6 +104,7 @@ struct TempFixture {
             << "Structure.Load('structures.csv');\n"
             << "Station.Load('stations.csv');\n"
             << "Signal.Load('signals.csv');\n";
+        if (sound3d) map << "Sound3D.Load('sounds3d.csv');\n";
         if (snapshot_arrays) {
             map << "$snapshotContract=1;\n"
                 << "DrawDistance.Change(600);\n";
@@ -124,6 +125,12 @@ struct TempFixture {
             << "200;\n"
             << "Track['1'].Position(4.0,0);\n"
             << "SpeedLimit.End();\n";
+        if (sound3d) {
+            map << "225;\n"
+                << "Sound3D['ambient'].Put(1.25,2.5);\n"
+                << "250;\n"
+                << "Track['1'].Position(4.2,0);\n";
+        }
         map.close();
         std::ofstream structures(directory / "structures.csv",
                                  std::ios::binary | std::ios::trunc);
@@ -149,6 +156,12 @@ struct TempFixture {
                 << ",glare1,glare2\r\n"
                 << "aspectB,mainB\r\n"
                 << ",glareB\r\n";
+        if (sound3d) {
+            std::ofstream sounds3d(directory / "sounds3d.csv",
+                                   std::ios::binary | std::ios::trunc);
+            sounds3d << "BveTs Sound List 2.00:utf-8\n"
+                     << "ambient,ambient.wav\n";
+        }
     }
 
     ~TempFixture() {
@@ -1224,6 +1237,18 @@ const KvStructurePutRow* find_structure(const KvMapSnapshot& snapshot,
         const KvStructurePutRow& row = snapshot.structure_puts[i];
         if (arena_view(snapshot.string_data, snapshot.string_size,
                        row.metadata.edit_id) == edit_id) return &row;
+    }
+    return nullptr;
+}
+
+const KvMapSound3DRow* find_map_sound3d(const KvMapSnapshot& snapshot,
+                                        std::string_view edit_id) {
+    for (std::uint64_t i = 0; i < snapshot.map_sound_3d_count; ++i) {
+        const KvMapSound3DRow& row = snapshot.map_sounds_3d[i];
+        if (arena_view(snapshot.string_data, snapshot.string_size,
+                       row.metadata.edit_id) == edit_id) {
+            return &row;
+        }
     }
     return nullptr;
 }
@@ -2837,6 +2862,158 @@ void line_ending_edit_contract() {
     }
 }
 
+void sound3d_edit_contract() {
+    TempFixture fixture(false, true);
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "Sound3D edit fixture load");
+    if (!handle.value) return;
+
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "Sound3D baseline snapshot");
+    check(baseline.map_sound_3d_count == 1,
+          "Sound3D fixture row present");
+    if (baseline.map_sound_3d_count != 1) return;
+    const KvMapSound3DRow& row = baseline.map_sounds_3d[0];
+    const std::string edit_id = map_string(baseline, row.metadata.edit_id);
+    check(!edit_id.empty() && nearly_equal(row.distance, 225.0) &&
+              nearly_equal(row.x, 1.25) && nearly_equal(row.y, 2.5),
+          "Sound3D baseline values and stable edit id");
+    check(row.metadata.source_file_index < baseline.source_file_count,
+          "Sound3D source index");
+    if (edit_id.empty() || row.metadata.source_file_index >= baseline.source_file_count) {
+        return;
+    }
+    const KvSourceFileRow& source =
+        baseline.source_files[row.metadata.source_file_index];
+    const std::string source_hash = map_string(baseline, source.source_hash);
+    const std::string source_path = map_string(baseline, source.file_path);
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+    const std::string disk_before_apply = read_source(fixture.map_path);
+
+    MultiFieldUpdateBatch xy_update(
+        "typed-contract-sound3d-xy", edit_id, source_hash,
+        {{"x", "3.125"}, {"y", "-0.75"}});
+    KvEditReportSnapshot xy_dry_run{};
+    check(kv_edit_dry_run_typed(handle.value, &xy_update.batch,
+                                &xy_dry_run, sizeof(xy_dry_run)) != 0,
+          "Sound3D x/y dry-run call");
+    validate_report(xy_dry_run);
+    check(xy_dry_run.ok && xy_dry_run.full_reparse_ok &&
+              xy_dry_run.update_count == 1 &&
+              xy_dry_run.non_target_changed_count == 0,
+          "Sound3D x/y dry-run validation");
+
+    KvEditReportSnapshot xy_applied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &xy_update.batch,
+              &xy_applied_report, sizeof(xy_applied_report)) != 0,
+          "Sound3D x/y apply-to-memory call");
+    validate_report(xy_applied_report);
+    check(xy_applied_report.ok && xy_applied_report.full_reparse_ok &&
+              xy_applied_report.non_target_changed_count == 0,
+          "Sound3D x/y apply-to-memory validation");
+    KvMapSnapshot xy_applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &xy_applied, sizeof(xy_applied)) != 0,
+          "Sound3D x/y applied snapshot");
+    const KvMapSound3DRow* xy_row = find_map_sound3d(xy_applied, edit_id);
+    check(xy_row && nearly_equal(xy_row->distance, 225.0) &&
+              nearly_equal(xy_row->x, 3.125) && nearly_equal(xy_row->y, -0.75) &&
+              map_string(xy_applied, xy_row->metadata.edit_id) == edit_id,
+          "Sound3D x/y in-memory values and stable edit id");
+    const char* in_memory_source = kv_get_source_text(handle.value, source_path.c_str());
+    check(in_memory_source && std::string_view(in_memory_source).find(
+              "Sound3D['ambient'].Put(3.125,-0.75);") !=
+              std::string_view::npos,
+          "Sound3D x/y in-memory source keeps two arguments");
+    if (in_memory_source) kv_free_string(in_memory_source);
+    check(read_source(fixture.map_path) == disk_before_apply,
+          "Sound3D Apply does not write the map file");
+    MultiFieldUpdateBatch distance_update(
+        "typed-contract-sound3d-distance", edit_id, source_hash,
+        {{"distance", "240"}});
+    KvEditReportSnapshot distance_dry_run{};
+    check(kv_edit_dry_run_typed(handle.value, &distance_update.batch,
+                                &distance_dry_run, sizeof(distance_dry_run)) != 0,
+          "Sound3D distance dry-run call");
+    validate_report(distance_dry_run);
+    check(distance_dry_run.ok && distance_dry_run.full_reparse_ok &&
+              distance_dry_run.update_count == 1 &&
+              distance_dry_run.non_target_changed_count == 0,
+          "Sound3D distance dry-run validation");
+
+    KvEditReportSnapshot distance_applied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &distance_update.batch,
+              &distance_applied_report, sizeof(distance_applied_report)) != 0,
+          "Sound3D distance apply-to-memory call");
+    validate_report(distance_applied_report);
+    check(distance_applied_report.ok && distance_applied_report.full_reparse_ok &&
+              distance_applied_report.non_target_changed_count == 0,
+          "Sound3D distance apply-to-memory validation");
+    KvMapSnapshot distance_applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &distance_applied, sizeof(distance_applied)) != 0,
+          "Sound3D distance applied snapshot");
+    const KvMapSound3DRow* distance_row =
+        find_map_sound3d(distance_applied, edit_id);
+    check(distance_row && nearly_equal(distance_row->distance, 240.0) &&
+              nearly_equal(distance_row->x, 3.125) &&
+              nearly_equal(distance_row->y, -0.75) &&
+              map_string(distance_applied, distance_row->metadata.edit_id) == edit_id,
+          "Sound3D distance in-memory value and stable edit id");
+
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report,
+                               sizeof(commit_report)) != 0,
+          "Sound3D Save call");
+    validate_report(commit_report);
+    check(commit_report.ok && commit_report.full_reparse_ok &&
+              commit_report.non_target_changed_count == 0,
+          "Sound3D Save validation");
+    KvMapSnapshot committed{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &committed, sizeof(committed)) != 0,
+          "Sound3D Save snapshot");
+    const KvMapSound3DRow* committed_row = find_map_sound3d(committed, edit_id);
+    check(committed_row && nearly_equal(committed_row->distance, 240.0) &&
+              nearly_equal(committed_row->x, 3.125) &&
+              nearly_equal(committed_row->y, -0.75) &&
+              map_string(committed, committed_row->metadata.edit_id) == edit_id,
+          "Sound3D Save preserves the current-session edit id");
+    const std::string committed_source = read_source(fixture.map_path);
+    check(committed_source.find("240;\nSound3D['ambient'].Put(3.125,-0.75);") !=
+              std::string::npos &&
+              committed_source.find("Sound3D['ambient'].Put(3.125,-0.75,") ==
+              std::string::npos,
+          "Sound3D Save keeps Put(x, y) syntax");
+
+    MapHandle reload(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(reload.value != nullptr, "Sound3D reload after Save");
+    if (!reload.value) return;
+    KvMapSnapshot reloaded{};
+    check(kv_get_map_snapshot(reload.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reloaded, sizeof(reloaded)) != 0,
+          "Sound3D reload snapshot");
+    const KvMapSound3DRow* reloaded_row = reloaded.map_sound_3d_count == 1
+        ? &reloaded.map_sounds_3d[0] : nullptr;
+    check(reloaded_row && nearly_equal(reloaded_row->distance, 240.0) &&
+              nearly_equal(reloaded_row->x, 3.125) &&
+              nearly_equal(reloaded_row->y, -0.75) &&
+              !map_string(reloaded, reloaded_row->metadata.edit_id).empty(),
+          "Sound3D Save/reload values");
+}
+
 int edit_contract() {
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();
@@ -2844,6 +3021,7 @@ int edit_contract() {
     repeater_key_edit_contract();
     repeater_insert_contract();
     other_track_insert_contract();
+    sound3d_edit_contract();
     TempFixture fixture;
     check_coordinate_offset_method_conversions(fixture.path_utf8());
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,

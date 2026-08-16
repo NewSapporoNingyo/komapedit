@@ -230,6 +230,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在编辑模式未开启时，右键点击3D场景中的曲线变化点或坡度变化点标记，右键菜单仅显示禁用的“属性/编辑”和“删除”，不再错误显示“此BeginTransition没有对应的Begin/End，无法编辑或删除”或发生位置偏移
 - [x] 在 3D 场景线路信息叠加层显示当前曲线半径/超高、坡度、生效限速、闭塞选择出的信号限速和距下一站距离
 - [x] 通过尺寸可调的实时 3D 操纵器编辑 `Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 的 X/Y/Z 位置；检查器按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，Put0/Begin0 提供仅 Z 轴、整米步进的放置/起始里程操纵器
+- [x] 在 3D 场景中将 `Sound3D.Put` 的标签尖端定位到相对自轨道的固定 X/Y 音源；通过实时 X/Y/Z 操纵器编辑 X/Y（0.001 m）或 distance（Z 轴整米），不改变 `Put(x, y)` 语法或音频播放行为
 - [x] 为 `Structure.PutBetween` 的全部检查器字段提供精确的实时顶点变形预览，并通过仅 Z 轴、整米步进的 3D 操纵器编辑 `distance`
 - [x] 通过位于对应轨道中心线上的仅 Z 轴整米操纵器编辑显式 Repeater EndDistance，实时更新实例数量，并在他轨道上按自轨道 distance 比例换算拖动
 - [x] 在属性检查器中编辑关联的连续布景段，支持 Begin 导航、End/变化边界和关联删除选项

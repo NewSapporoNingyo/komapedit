@@ -411,6 +411,7 @@ enum class Canvas3DSceneEditKind {
     StructurePutBetween,
     Signal,
     Repeater,
+    Sound3D,
 };
 
 struct Canvas3DPlacementEditTarget {

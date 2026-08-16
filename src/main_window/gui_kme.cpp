@@ -4177,16 +4177,18 @@ void App::sync_scene_placement_edit_from_inspector() {
     const bool structure_between_target = inspector_.row_kind == "structure.between";
     const bool signal_target = inspector_.row_kind == "signal.put";
     const bool repeater_target = inspector_.row_kind == "repeater";
+    const bool sound3d_target = inspector_.row_kind == "mapSound3D.put";
     if (!scene_preview_started_ || !scene_preview_canvas_ || !inspector_.open ||
         (!structure_target && !structure_between_target && !signal_target &&
-         !repeater_target)) {
+         !repeater_target && !sound3d_target)) {
         clear_scene_placement_edit_target();
         return;
     }
 
     const std::vector<TableRow>& rows = structure_target ? model_.structures :
         structure_between_target ? model_.structures_between :
-        signal_target ? model_.signals : model_.repeaters;
+        signal_target ? model_.signals :
+        repeater_target ? model_.repeaters : model_.map_sound_3d;
     size_t row_index = inspector_.model_row_index;
     const bool cache_hit = inspector_.model_row_source_revision == plan_data_source_revision_ &&
         row_index < rows.size() && rows[row_index].edit_id == inspector_.edit_id;
@@ -4207,7 +4209,8 @@ void App::sync_scene_placement_edit_from_inspector() {
             : signal_target ? Canvas3DSceneEditKind::Signal
             : structure_between_target
                 ? Canvas3DSceneEditKind::StructurePutBetween
-                : Canvas3DSceneEditKind::Structure);
+                : sound3d_target ? Canvas3DSceneEditKind::Sound3D
+                                 : Canvas3DSceneEditKind::Structure);
     const double model_distance = target.distance;
     const std::string model_track_key = target.track_key;
     if (const MapElementEditFieldState* distance_field =
@@ -4304,7 +4307,9 @@ void App::apply_scene_placement_drag_update(const Canvas3DPlacementDragUpdate& u
         (update.kind == Canvas3DSceneEditKind::StructurePutBetween &&
          inspector_.row_kind == "structure.between") ||
         (update.kind == Canvas3DSceneEditKind::Signal && inspector_.row_kind == "signal.put") ||
-        (update.kind == Canvas3DSceneEditKind::Repeater && inspector_.row_kind == "repeater");
+        (update.kind == Canvas3DSceneEditKind::Repeater && inspector_.row_kind == "repeater") ||
+        (update.kind == Canvas3DSceneEditKind::Sound3D &&
+         inspector_.row_kind == "mapSound3D.put");
     if (!inspector_.open || !matching_kind ||
         inspector_.edit_id != update.edit_id) {
         return;
