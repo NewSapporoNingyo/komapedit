@@ -1608,6 +1608,19 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.fogs.push_back(std::move(row));
     }
+    model.legacy_fogs.reserve(static_cast<size_t>(snapshot.legacy_fog_count));
+    for (std::uint64_t i = 0; i < snapshot.legacy_fog_count; ++i) {
+        const KvLegacyFogRow& input = snapshot.legacy_fogs[i];
+        TableRow row;
+        put_map_common_event_cells(row, snapshot, input);
+        row.cells["start"] = format_double(input.start, 6);
+        row.cells["end"] = format_double(input.end, 6);
+        row.cells["red"] = format_double(input.red, 6);
+        row.cells["green"] = format_double(input.green, 6);
+        row.cells["blue"] = format_double(input.blue, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.legacy_fogs.push_back(std::move(row));
+    }
     model.draw_distances.reserve(static_cast<size_t>(snapshot.draw_distance_count));
     for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {
         const KvDrawDistanceRow& input = snapshot.draw_distances[i];
@@ -8759,6 +8772,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Adhesions", dock_right);
     ImGui::DockBuilderDockWindow("CabIlluminance", dock_right);
     ImGui::DockBuilderDockWindow("Fogs", dock_right);
+    ImGui::DockBuilderDockWindow("LegacyFogs", dock_right);
     ImGui::DockBuilderDockWindow("DrawDistances", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("FileStructureDiagram", dock_main);
@@ -8799,6 +8813,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_adhesions_window = show_adhesions_window_;
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
     visibility.show_fogs_window = show_fogs_window_;
+    visibility.show_legacy_fogs_window = show_legacy_fogs_window_;
     visibility.show_draw_distances_window = show_draw_distances_window_;
     visibility.show_speed_limits_window = show_speed_limits_window_;
     visibility.show_file_structure_window = show_file_structure_window_;
@@ -8834,6 +8849,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_adhesions_window_ = visibility.show_adhesions_window;
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
     show_fogs_window_ = visibility.show_fogs_window;
+    show_legacy_fogs_window_ = visibility.show_legacy_fogs_window;
     show_draw_distances_window_ = visibility.show_draw_distances_window;
     show_speed_limits_window_ = visibility.show_speed_limits_window;
     show_file_structure_window_ = visibility.show_file_structure_window;
@@ -9162,7 +9178,7 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 33> k_map_info_menu_entries = {{
+        static constexpr std::array<MapInfoMenuEntry, 34> k_map_info_menu_entries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
@@ -9193,6 +9209,7 @@ void App::render_menu() {
             {"menu.map_info.backgrounds", &App::show_backgrounds_window_},
             {"menu.map_info.cab_illuminance", &App::show_cab_illuminance_window_},
             {"menu.map_info.fogs", &App::show_fogs_window_},
+            {"menu.map_info.legacy_fogs", &App::show_legacy_fogs_window_},
             {"menu.map_info.draw_distances", &App::show_draw_distances_window_},
             {"aux.other", nullptr},
             {"menu.map_info.variables", &App::show_variables_window_},
@@ -10871,6 +10888,8 @@ void App::render_scene_preview_window() {
                               tr("menu.locate_in_cab_illuminance_list"));
         set_marker_list_label(Canvas3DSceneMarkerListKind::Fog,
                               tr("menu.locate_in_fog_list"));
+        set_marker_list_label(Canvas3DSceneMarkerListKind::LegacyFog,
+                              tr("menu.locate_in_legacy_fog_list"));
         set_marker_list_label(Canvas3DSceneMarkerListKind::DrawDistance,
                               tr("menu.locate_in_draw_distance_list"));
         set_marker_list_label(Canvas3DSceneMarkerListKind::SpeedLimit,
@@ -11129,6 +11148,7 @@ void App::render() {
     render_adhesions_window();
     render_cab_illuminance_window();
     render_fogs_window();
+    render_legacy_fogs_window();
     render_draw_distances_window();
     render_speed_limits_window();
     process_pending_element_delete();

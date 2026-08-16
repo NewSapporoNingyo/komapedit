@@ -581,6 +581,7 @@ private:
         offset_row_edit_refs(child.adhesions, statement_index_base);
         offset_row_edit_refs(child.cab_illuminance, statement_index_base);
         offset_row_edit_refs(child.fogs, statement_index_base);
+        offset_row_edit_refs(child.legacy_fogs, statement_index_base);
         offset_row_edit_refs(child.draw_distances, statement_index_base);
         offset_row_edit_refs(child.speedlimits, statement_index_base);
         auto remap_source_file_index = [&](size_t& index) {
@@ -626,6 +627,7 @@ private:
         for (auto& row : child.adhesions) offset_order(row.order);
         for (auto& row : child.cab_illuminance) offset_order(row.order);
         for (auto& row : child.fogs) offset_order(row.order);
+        for (auto& row : child.legacy_fogs) offset_order(row.order);
         for (auto& row : child.draw_distances) offset_order(row.order);
         for (auto& row : child.speedlimits) offset_order(row.order);
         for (auto& row : child.variable_assignments) offset_order(row.order);
@@ -695,6 +697,7 @@ private:
         for (auto& row : child.adhesions) ctx_.adhesions.push_back(std::move(row));
         for (auto& row : child.cab_illuminance) ctx_.cab_illuminance.push_back(std::move(row));
         for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
+        for (auto& row : child.legacy_fogs) ctx_.legacy_fogs.push_back(std::move(row));
         for (auto& row : child.draw_distances) ctx_.draw_distances.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
         for (auto& row : child.variable_assignments) {
@@ -1045,6 +1048,8 @@ private:
             {"legacy.turn", {{1}, 0, 0, {A::Number}}},
             {"legacy.curve", {{1, 2}, 0, 0, {A::Number, A::Number}}},
             {"legacy.pitch", {{1}, 0, 0, {A::Number}}},
+            {"legacy.fog", {{5}, 0, 0,
+                            {A::Number, A::Number, A::Number, A::Number, A::Number}}},
             {"station.load", {{1}, 0, 0, {A::Text}, A::Any, K::Forbidden}},
             {"station.put", {{1, 2, 3, 4}, 0, 0,
                              {A::Any, A::Number, A::Number, A::Number}}},
@@ -1478,6 +1483,19 @@ private:
             put_own(ctx_, "cant", a.size() > 1 ? a.at(1) : Value::num(0.0));
         } else if (fn == "pitch") {
             put_own(ctx_, "gradient", arg_or_null(a));
+        } else if (fn == "fog") {
+            note_distance_use(ctx_);
+            LegacyFogChange row;
+            row.distance = ctx_.distance;
+            row.start = as_number(a[0]);
+            row.end = as_number(a[1]);
+            row.red = as_number(a[2]);
+            row.green = as_number(a[3]);
+            row.blue = as_number(a[4]);
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            attach_active_edit_ref(ctx_, row);
+            ctx_.legacy_fogs.push_back(std::move(row));
         }
     }
 

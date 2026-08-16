@@ -73,6 +73,7 @@ enum class Canvas3DSceneMarkerListKind : std::uint8_t {
     Adhesion,
     CabIlluminance,
     Fog,
+    LegacyFog,
     DrawDistance,
     SpeedLimit,
     Count,

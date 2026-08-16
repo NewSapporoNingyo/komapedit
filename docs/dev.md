@@ -85,7 +85,7 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 
 | Area | Primary files and responsibility |
 | --- | --- |
-| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v7 functions, fixed-width POD snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
+| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v8 functions, fixed-width POD snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
 | Map lifecycle | `src/maploader/maploader.cpp`: C ABI entry points, handles, regeneration, dispatch, source retrieval, and boundary error handling |
 | Map state | `src/maploader/maploader_internal.h`: `MapContext`, parsed rows, source spans, include stacks, edit references, reports, and timing |
 | Parsing | `maploader_core.cpp`, `maploader_parser.cpp`, `text_decoder.cpp/.h`: statements, values, includes, variables, encodings, source anchors, uniqueness checks |
@@ -115,7 +115,7 @@ Use existing boundaries and shared helpers. Do not duplicate source ownership, l
 - Preserve `UNICODE`, `_UNICODE`, `NOMINMAX`, and `WIN32_LEAN_AND_MEAN` assumptions.
 - Never let exceptions, STL types, C++ classes, or ownership-ambiguous pointers cross a public C ABI.
 - Memory allocated by a DLL and returned through the ABI must have a matching free function.
-- The bundled EXE requires exact maploader API v7 and model-loader API v2 matches. `kv_load_map_ex()` is the only map-loading entry point; map, scene, edit-target, and edit-report snapshot versions and structure sizes remain independently versioned and unchanged by the API v7 transition.
+- The bundled EXE requires exact maploader API v8 and model-loader API v2 matches. `kv_load_map_ex()` is the only map-loading entry point; map, scene, edit-target, and edit-report snapshot versions and structure sizes remain independently versioned and unchanged by the API v8 transition.
 - Treat typed ABI inputs as call-scoped views. Nested snapshot storage is handle-owned and is invalidated according to its documented regular-geometry, scene-geometry, edit-operation, reset, reparse, and free rules.
 - Any public ABI change requires an explicit version/structure-size decision, synchronized EXE/DLL changes, updated callers, and documented ownership and validity.
 

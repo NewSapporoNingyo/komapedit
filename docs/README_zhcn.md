@@ -87,6 +87,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `PreTrain.Pass(time)` / `PreTrain.Pass(second)`                                                                                                                                             |   √   |    ✕     |    ✕     |     ✕      | 进入只读列表及地图标记；不支持基于源码的编辑或新建                                                             |
 | `Light.Ambient(...)`、`Light.Diffuse(...)`、`Light.Direction(...)`                                                                                                                          |   ✕   |    ✕     |    ✕     |     -      | 会校验参数形状，但语句不进入地图模型或 3D 渲染器                                                               |
 | `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / `[旧式] Fog.Set(density, red, green, blue)`                                               |   √   |    √     |    √     |     ✕      | 官方 0/1/4 参数 Interpolate 及旧式 Set 均支持编辑、新建和删除；3D 显示插值指数雾                               |
+| `[旧式] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                            |   √   |    ✕     |    ✕     |     ✕      | BVE 仍接受的旧式线性雾语句，只读；在独立列表及平面图/3D 标牌中按源值显示；编辑、新建与 3D 雾效果暂未实现      |
 | `DrawDistance.Change(value)`                                                                                                                                                                |   √   |    √     |    √     |     ✕      | 距离/数值支持编辑、新建和删除；可选地控制场景绘制距离                                                          |
 | `CabIlluminance.Interpolate(value)` / `[旧式] CabIlluminance.Set(value)`                                                                                                                    |   √   |    √     |    √     |     ✕      | 距离/数值支持编辑、新建和删除；不模拟驾驶台亮度效果                                                            |
 | `CabIlluminance.Interpolate()`                                                                                                                                                              |   ✕   |    ✕     |    ✕     |     ✕      | 官方无参数形式可通过语法校验，但目前不生成预览/编辑行                                                          |
@@ -121,7 +122,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 键以及宽松值格式均被忽略并使用默认值。读取已有的不完整或旧格式文件时不会
 自动改写；用户显式保存设置后，程序会写出完整的当前规范格式。
 
-随附程序要求 maploader API v7，并只通过 `kv_load_map_ex()` 加载地图；精确
+随附程序要求 maploader API v8，并只通过 `kv_load_map_ex()` 加载地图；精确
 API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删除输出根目录中的
 旧 INI 或 DLL；发现这些文件时会立即中止，并要求使用干净的 `bin`/`settings`
 布局。

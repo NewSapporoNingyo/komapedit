@@ -665,6 +665,18 @@ struct FogChange {
     EditSourceRef edit_ref;
 };
 
+struct LegacyFogChange {
+    double distance = 0.0;
+    double start = 0.0;
+    double end = 0.0;
+    double red = 0.0;
+    double green = 0.0;
+    double blue = 0.0;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
+};
+
 struct DrawDistanceChange {
     double distance = 0.0;
     double value = 0.0;
@@ -838,6 +850,7 @@ struct MapSnapshotStorage {
     std::vector<KvAdhesionRow> adhesions;
     std::vector<KvCabIlluminanceRow> cab_illuminance;
     std::vector<KvFogRow> fogs;
+    std::vector<KvLegacyFogRow> legacy_fogs;
     std::vector<KvDrawDistanceRow> draw_distances;
     std::vector<KvSpeedLimitRow> speed_limits;
     std::vector<KvVariableAssignmentRow> variable_assignments;
@@ -937,6 +950,7 @@ struct MapContext {
     std::vector<AdhesionChange> adhesions;
     std::vector<CabIlluminanceChange> cab_illuminance;
     std::vector<FogChange> fogs;
+    std::vector<LegacyFogChange> legacy_fogs;
     std::vector<DrawDistanceChange> draw_distances;
     std::vector<SpeedLimitEvent> speedlimits;
     Matrix owntrack_buffer;

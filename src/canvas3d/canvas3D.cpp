@@ -1964,6 +1964,16 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                                  row, {"red", "green", "blue"}, " ", "-");
                              return label;
                          });
+    append_table_markers(model.legacy_fogs, MapMarkerVisualKind::Fog,
+                         Canvas3DSceneMarkerListKind::LegacyFog, "legacyFog.change",
+                         [](const TableRow& row) {
+                             std::string label = canvas3d_scene_table_marker_label(
+                                 row, {"start", "end"}, " ", "-");
+                             label += '\n';
+                             label += canvas3d_scene_table_marker_label(
+                                 row, {"red", "green", "blue"}, " ", "-");
+                             return label;
+                         });
     append_table_markers(model.draw_distances, MapMarkerVisualKind::DrawDistance,
                          Canvas3DSceneMarkerListKind::DrawDistance,
                          "drawDistance.change",

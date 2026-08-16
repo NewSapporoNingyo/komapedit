@@ -1108,6 +1108,19 @@ static const TableColumnDef k_fog_columns[] = {
 constexpr int k_fog_distance_column = 1;
 constexpr int k_fog_file_path_column = IM_ARRAYSIZE(k_fog_columns) - 1;
 
+static const TableColumnDef k_legacy_fog_columns[] = {
+    {"rowNumber", "#", 40.0f},
+    {"distance", "distance", 110.0f},
+    {"start", "start", 80.0f},
+    {"end", "end", 80.0f},
+    {"red", "red", 70.0f},
+    {"green", "green", 70.0f},
+    {"blue", "blue", 70.0f},
+    {"filePath", "filePath", 200.0f},
+};
+constexpr int k_legacy_fog_distance_column = 1;
+constexpr int k_legacy_fog_file_path_column = IM_ARRAYSIZE(k_legacy_fog_columns) - 1;
+
 static const TableColumnDef k_draw_distance_columns[] = {
     {"rowNumber", "#", 40.0f},
     {"distance", "distance", 110.0f},
@@ -2196,6 +2209,30 @@ void App::ensure_table_cache() {
         cached.cells[0] = std::to_string(row_index + 1);
         expand_width_for_text(cache.fog_distance_width, cached.cells[k_fog_distance_column]);
         cache.fog_rows.push_back(std::move(cached));
+    }
+
+    cache.legacy_fog_distance_width = 0.0f;
+    expand_width_for_text(cache.legacy_fog_distance_width,
+                          k_legacy_fog_columns[k_legacy_fog_distance_column].header);
+    cache.legacy_fog_rows.reserve(model_.legacy_fogs.size());
+    for (size_t row_index = 0; row_index < model_.legacy_fogs.size(); ++row_index) {
+        const TableRow& row = model_.legacy_fogs[row_index];
+        CachedTableRow cached;
+        copy_table_row_metadata(row, cached);
+        cached.cells.resize(IM_ARRAYSIZE(k_legacy_fog_columns));
+        cached.open_path = table_cell(row, "filePath");
+        for (int i = 0; i < IM_ARRAYSIZE(k_legacy_fog_columns); ++i) {
+            if (i == k_legacy_fog_file_path_column) {
+                cached.cells[i] = display_name_from_path(cached.open_path);
+                expand_width_for_text(cache.legacy_fog_file_path_width, cached.cells[i]);
+            } else {
+                cached.cells[i] = table_cell(row, k_legacy_fog_columns[i].key);
+            }
+        }
+        cached.cells[0] = std::to_string(row_index + 1);
+        expand_width_for_text(cache.legacy_fog_distance_width,
+                              cached.cells[k_legacy_fog_distance_column]);
+        cache.legacy_fog_rows.push_back(std::move(cached));
     }
 
     table_cache_ = std::move(cache);
@@ -5129,6 +5166,99 @@ void App::render_fogs_window() {
         ImGui::EndTable();
     }
     focus_fogs_next_ = false;
+    ImGui::End();
+}
+
+void App::render_legacy_fogs_window() {
+    if (!show_legacy_fogs_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_legacy_fogs_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.legacy_fogs") + "###LegacyFogs";
+    if (!ImGui::Begin(title.c_str(), &show_legacy_fogs_window_)) {
+        focus_legacy_fogs_next_ = false;
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        focus_legacy_fogs_next_ = false;
+        ImGui::End();
+        return;
+    }
+    ensure_table_cache();
+    if (ImGui::BeginTable("legacyFogs", IM_ARRAYSIZE(k_legacy_fog_columns),
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
+                          ImGuiTableFlags_ScrollY)) {
+        std::string file_name_header = tr("column.file_name");
+        for (int i = 0; i < IM_ARRAYSIZE(k_legacy_fog_columns); ++i) {
+            float width = k_legacy_fog_columns[i].width;
+            if (i == k_legacy_fog_distance_column) width = table_cache_.legacy_fog_distance_width;
+            if (i == k_legacy_fog_file_path_column) width = table_cache_.legacy_fog_file_path_width;
+            const char* header = i == k_legacy_fog_file_path_column
+                ? file_name_header.c_str()
+                : k_legacy_fog_columns[i].header;
+            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
+        }
+        setup_fixed_table_header();
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        const int row_count = static_cast<int>(table_cache_.legacy_fog_rows.size());
+        if (legacy_fog_list_scroll_row_ >= row_count) legacy_fog_list_scroll_row_ = -1;
+        if (legacy_fog_list_highlight_row_ >= row_count) legacy_fog_list_highlight_row_ = -1;
+        const int scroll_target_row = legacy_fog_list_scroll_row_;
+        clipper.Begin(row_count);
+        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
+            clipper.IncludeItemByIndex(scroll_target_row);
+        }
+        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
+        const bool can_locate_scene_preview = can_locate_scene_preview_row();
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
+                const CachedTableRow& row =
+                    table_cache_.legacy_fog_rows[static_cast<size_t>(row_index)];
+                ImGui::TableNextRow();
+                if (row_index == legacy_fog_list_highlight_row_) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+                }
+                if (row_index == scroll_target_row) {
+                    ImGui::SetScrollHereY(0.5f);
+                    legacy_fog_list_scroll_row_ = -1;
+                }
+                ImGui::PushID(row_index);
+                for (int i = 0; i < IM_ARRAYSIZE(k_legacy_fog_columns); ++i) {
+                    ImGui::TableSetColumnIndex(i);
+                    const std::string& value = row.cells[static_cast<size_t>(i)];
+                    if (i == k_legacy_fog_distance_column) {
+                        size_t marker_index = static_cast<size_t>(row_index);
+                        bool can_locate = marker_index < legacy_fog_marker_cache_.size() &&
+                            legacy_fog_marker_cache_[marker_index].has_value();
+                        const TextCellContextAction action = render_marker_text_cell_with_context(
+                            value,
+                            tr("menu.locate_on_plan"), can_locate,
+                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+                        if (action == TextCellContextAction::Primary) {
+                            locate_legacy_fog_row_on_plan(marker_index);
+                        } else if (action == TextCellContextAction::Secondary) {
+                            locate_scene_marker_row_in_scene_preview(
+                                Canvas3DSceneMarkerListKind::LegacyFog, marker_index);
+                        }
+                        continue;
+                    }
+                    if (value.empty()) continue;
+                    if (i == k_legacy_fog_file_path_column) {
+                        render_file_path_cell_with_context(value, row.open_path,
+                                                           tr("menu.open_in_explorer"), row.open_path);
+                    } else {
+                        ImGui::TextUnformatted(value.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    focus_legacy_fogs_next_ = false;
     ImGui::End();
 }
 

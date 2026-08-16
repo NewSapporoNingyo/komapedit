@@ -279,6 +279,7 @@ const char* plan_marker_type_label_key(PlanMarkerKind kind) {
         case PlanMarkerKind::CabIlluminance:
             return "chk.cab_illuminance_markers";
         case PlanMarkerKind::Fog: return "chk.fog_markers";
+        case PlanMarkerKind::LegacyFog: return "chk.fog_markers";
         case PlanMarkerKind::DrawDistance: return "chk.draw_distance_markers";
         case PlanMarkerKind::SpeedLimit: return "chk.speedlimit";
         case PlanMarkerKind::Curve: return "chk.curve_val";
@@ -349,6 +350,7 @@ void App::rebuild_marker_overlay_cache() {
     adhesion_marker_cache_.clear();
     cab_illuminance_marker_cache_.clear();
     fog_marker_cache_.clear();
+    legacy_fog_marker_cache_.clear();
     draw_distance_marker_cache_.clear();
     speed_limit_marker_cache_.clear();
     own_track_edit_marker_cache_.clear();
@@ -716,6 +718,7 @@ void App::rebuild_marker_overlay_cache() {
     build_standard_markers(model_.adhesions, adhesion_marker_cache_, "");
     build_standard_markers(model_.cab_illuminance, cab_illuminance_marker_cache_, "");
     build_standard_markers(model_.fogs, fog_marker_cache_, "");
+    build_standard_markers(model_.legacy_fogs, legacy_fog_marker_cache_, "");
     build_standard_markers(model_.draw_distances, draw_distance_marker_cache_, "value");
     populate_speed_limit_marker_cache(model_, speed_limit_marker_cache_);
     auto build_repeater_segment = [&](TrackSource source, double start, double end,
@@ -1163,6 +1166,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         append_markers(cab_illuminance_marker_cache_, out.cab_illuminance_markers);
     }
     if (show_fog_markers_) append_markers(fog_marker_cache_, out.fog_markers);
+    if (show_fog_markers_) append_markers(legacy_fog_marker_cache_, out.legacy_fog_markers);
     if (show_draw_distance_markers_) {
         append_markers(draw_distance_marker_cache_, out.draw_distance_markers);
     }
@@ -2565,6 +2569,8 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.cab_illuminance_markers, hit_transform);
     std::optional<MarkerHit> hovered_fog_hit =
         nearest_marker_hit(data.fog_markers, hit_transform);
+    std::optional<MarkerHit> hovered_legacy_fog_hit =
+        nearest_marker_hit(data.legacy_fog_markers, hit_transform);
     std::optional<MarkerHit> hovered_draw_distance_hit =
         nearest_marker_hit(data.draw_distance_markers, hit_transform);
     std::optional<MarkerHit> hovered_speed_limit_hit =
@@ -2649,6 +2655,9 @@ void App::render_plan_canvas(ImVec2 size) {
     std::optional<size_t> hovered_fog_row = hovered_fog_hit
         ? std::optional<size_t>(hovered_fog_hit->row_index)
         : std::nullopt;
+    std::optional<size_t> hovered_legacy_fog_row = hovered_legacy_fog_hit
+        ? std::optional<size_t>(hovered_legacy_fog_hit->row_index)
+        : std::nullopt;
     std::optional<size_t> hovered_draw_distance_row = hovered_draw_distance_hit
         ? std::optional<size_t>(hovered_draw_distance_hit->row_index)
         : std::nullopt;
@@ -2682,6 +2691,7 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_flange_noise_hit, PlanMarkerKind::FlangeNoise);
         note(hovered_joint_noise_hit, PlanMarkerKind::JointNoise);
         note(hovered_fog_hit, PlanMarkerKind::Fog);
+        note(hovered_legacy_fog_hit, PlanMarkerKind::LegacyFog);
         note(hovered_draw_distance_hit, PlanMarkerKind::DrawDistance);
         note(hovered_speed_limit_hit, PlanMarkerKind::SpeedLimit);
         note(hovered_curve_edit_hit, PlanMarkerKind::Curve);
@@ -2724,6 +2734,7 @@ void App::render_plan_canvas(ImVec2 size) {
             case PlanMarkerKind::Repeater: return 17;
             case PlanMarkerKind::CabIlluminance: return 18;
             case PlanMarkerKind::Fog: return 19;
+            case PlanMarkerKind::LegacyFog: return 19;
             case PlanMarkerKind::Structure: return 20;
             default: return 100;
         }
@@ -2747,6 +2758,7 @@ void App::render_plan_canvas(ImVec2 size) {
             case PlanMarkerKind::Adhesion: return std::string("adhesion.change");
             case PlanMarkerKind::CabIlluminance: return std::string("cabIlluminance.change");
             case PlanMarkerKind::Fog: return std::string("fog.change");
+            case PlanMarkerKind::LegacyFog: return std::string("legacyFog.change");
             case PlanMarkerKind::DrawDistance: return std::string("drawDistance.change");
             case PlanMarkerKind::SpeedLimit: return std::string("speedlimit");
             case PlanMarkerKind::Station: return std::string("station.put");
@@ -2840,6 +2852,7 @@ void App::render_plan_canvas(ImVec2 size) {
         add_plan_markers(data.repeater_markers, PlanMarkerKind::Repeater);
         add_plan_markers(data.cab_illuminance_markers, PlanMarkerKind::CabIlluminance);
         add_plan_markers(data.fog_markers, PlanMarkerKind::Fog);
+        add_plan_markers(data.legacy_fog_markers, PlanMarkerKind::LegacyFog);
         add_plan_markers(data.structure_markers, PlanMarkerKind::Structure);
         if (candidates.empty()) return entries;
         const ContextCandidate* anchor = &candidates.front();
@@ -3308,6 +3321,29 @@ void App::render_plan_canvas(ImVec2 size) {
     }
     debug_plan_stage("fog_markers");
 
+    if (!data.legacy_fog_markers.empty()) {
+        for (const PlanMarker& marker : data.legacy_fog_markers) {
+            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail)) continue;
+            const double dx = static_cast<double>(point.x - mouse.x);
+            const double dy = static_cast<double>(point.y - mouse.y);
+            const bool marker_hovered =
+                hovered_legacy_fog_row && *hovered_legacy_fog_row == marker.row_index &&
+                dx * dx + dy * dy <= marker_hover_radius_sq;
+            const bool marker_active = marker_emphasized(
+                PlanMarkerKind::LegacyFog, marker.row_index, marker_hovered);
+            const ImU32 color =
+                map_marker_theme_color_u32(MapMarkerVisualKind::Fog);
+            draw_selected_marker_ring(point, PlanMarkerKind::LegacyFog, marker.row_index, color);
+            draw_map_marker_icon(
+                draw, MapMarkerVisualKind::Fog, point,
+                7.0f * marker_size_scale *
+                    (marker_active ? 1.28f : 1.0f));
+            if (marker_active) draw_plan_small_text(draw, point, color, marker.label);
+        }
+    }
+    debug_plan_stage("legacy_fog_markers");
+
     draw_colored_marker_set(data.draw_distance_markers, PlanMarkerKind::DrawDistance,
                             hovered_draw_distance_row,
                             MapMarkerVisualKind::DrawDistance, 7.0f);
@@ -3582,6 +3618,11 @@ void App::render_plan_marker_context_menu(
                 render_standard_menu_items("menu.locate_in_fog_list",
                                            fog_marker_cache_.size(), "fog.change",
                                            [&](size_t row) { locate_fog_row_in_list(row); });
+                break;
+            case PlanMarkerKind::LegacyFog:
+                render_standard_menu_items("menu.locate_in_legacy_fog_list",
+                                           legacy_fog_marker_cache_.size(), "legacyFog.change",
+                                           [&](size_t row) { locate_legacy_fog_row_in_list(row); });
                 break;
             case PlanMarkerKind::DrawDistance:
                 render_standard_menu_items("menu.locate_in_draw_distance_list",

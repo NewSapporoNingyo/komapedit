@@ -39,7 +39,8 @@ public:
             ctx_.joint_noises.size() + ctx_.repeaters.size() +
             ctx_.irregularities.size() + ctx_.backgrounds.size() +
             ctx_.adhesions.size() + ctx_.cab_illuminance.size() +
-            ctx_.fogs.size() + ctx_.draw_distances.size() + ctx_.speedlimits.size();
+            ctx_.fogs.size() + ctx_.legacy_fogs.size() +
+            ctx_.draw_distances.size() + ctx_.speedlimits.size();
         const size_t preview_row_count =
             ctx_.variable_assignments.size() + ctx_.resource_list_loads.size();
         storage_.string_arena.reserve(
@@ -586,6 +587,20 @@ private:
             row.metadata = metadata(input.edit_ref, "fog.change");
             storage_.fogs.push_back(row);
         }
+        storage_.legacy_fogs.reserve(ctx_.legacy_fogs.size());
+        for (const LegacyFogChange& input : ctx_.legacy_fogs) {
+            KvLegacyFogRow row{};
+            row.distance = input.distance;
+            row.start = input.start;
+            row.end = input.end;
+            row.red = input.red;
+            row.green = input.green;
+            row.blue = input.blue;
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "legacyFog.change");
+            storage_.legacy_fogs.push_back(row);
+        }
         storage_.draw_distances.reserve(ctx_.draw_distances.size());
         for (const DrawDistanceChange& input : ctx_.draw_distances) {
             KvDrawDistanceRow row{};
@@ -721,6 +736,7 @@ private:
         add_elements("adhesion.change", ctx_.adhesions);
         add_elements("cabIlluminance.change", ctx_.cab_illuminance);
         add_elements("fog.change", ctx_.fogs);
+        add_elements("legacyFog.change", ctx_.legacy_fogs);
         add_elements("drawDistance.change", ctx_.draw_distances);
         add_elements("speedlimit", ctx_.speedlimits);
     }
@@ -799,6 +815,7 @@ private:
         bind(storage_.adhesions, view.adhesions, view.adhesion_count);
         bind(storage_.cab_illuminance, view.cab_illuminance, view.cab_illuminance_count);
         bind(storage_.fogs, view.fogs, view.fog_count);
+        bind(storage_.legacy_fogs, view.legacy_fogs, view.legacy_fog_count);
         bind(storage_.draw_distances, view.draw_distances, view.draw_distance_count);
         bind(storage_.speed_limits, view.speed_limits, view.speed_limit_count);
         bind(storage_.variable_assignments, view.variable_assignments,

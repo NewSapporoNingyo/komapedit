@@ -107,7 +107,8 @@ struct TempFixture {
         if (sound3d) map << "Sound3D.Load('sounds3d.csv');\n";
         if (snapshot_arrays) {
             map << "$snapshotContract=1;\n"
-                << "DrawDistance.Change(600);\n";
+                << "DrawDistance.Change(600);\n"
+                << "include 'legacy.txt';\n";
         }
         map << "Track['1'].Position(3.8, 0); # preserve other-track layout\n"
             << "100;\n"
@@ -161,6 +162,13 @@ struct TempFixture {
                                    std::ios::binary | std::ios::trunc);
             sounds3d << "BveTs Sound List 2.00:utf-8\n"
                      << "ambient,ambient.wav\n";
+        }
+        if (snapshot_arrays) {
+            std::ofstream legacy_fog_map(directory / "legacy.txt",
+                                         std::ios::binary | std::ios::trunc);
+            legacy_fog_map << "BveTs Map 2.02:utf-8\n"
+                           << "0;\n"
+                           << "Legacy.Fog(50, 600, 128, 128, 128);\n";
         }
     }
 
@@ -336,6 +344,7 @@ void validate_arrays(const KvMapSnapshot& snapshot) {
     CHECK_ARRAY(adhesions, adhesion_count);
     CHECK_ARRAY(cab_illuminance, cab_illuminance_count);
     CHECK_ARRAY(fogs, fog_count);
+    CHECK_ARRAY(legacy_fogs, legacy_fog_count);
     CHECK_ARRAY(draw_distances, draw_distance_count);
     CHECK_ARRAY(speed_limits, speed_limit_count);
     CHECK_ARRAY(variable_assignments, variable_assignment_count);
@@ -420,7 +429,7 @@ void validate_map(const KvMapSnapshot& snapshot, bool edit_metadata) {
 }
 
 int snapshot_contract() {
-    static_assert(KV_MAPLOADER_API_VERSION == 7u, "maploader API contract version");
+    static_assert(KV_MAPLOADER_API_VERSION == 8u, "maploader API contract version");
     TempFixture fixture(true);
     check(kv_api_version() == KV_MAPLOADER_API_VERSION, "API version");
 #if defined(_WIN32)
@@ -462,6 +471,15 @@ int snapshot_contract() {
               "other-track Position typed row");
     }
     check(first.draw_distance_count == 1, "draw-distance fixture row present");
+    check(first.legacy_fog_count == 1, "legacy fog fixture row present");
+    if (first.legacy_fog_count == 1) {
+        const KvLegacyFogRow& legacy_fog = first.legacy_fogs[0];
+        check(legacy_fog.distance == 0.0, "legacy fog distance");
+        check(legacy_fog.start == 50.0 && legacy_fog.end == 600.0, "legacy fog start/end");
+        check(legacy_fog.red == 128.0 && legacy_fog.green == 128.0 &&
+                  legacy_fog.blue == 128.0,
+              "legacy fog rgb");
+    }
     check(first.variable_assignment_count == 1, "variable-assignment fixture row present");
     check(first.resource_list_load_count == 3, "resource-list Load fixture rows present");
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,

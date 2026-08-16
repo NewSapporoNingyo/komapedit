@@ -22,7 +22,8 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 布景模型列表/音效文件列表中可通过右键菜单“使用此模型/使用此音效”选项，将对应的资源文件key直接填入新建地图元素向导
 - [ ] 自轨道曲线变化点新建功能
 - [ ] 自轨道坡度变化点新建功能
-- [ ] 加入对Legacy.fog的支持
+- [ ] Legacy.Fog 语句编辑与新建
+- [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
 - [ ] include文件新建与导入、解除引用、删除源文件功能
 - [ ] 资源列表文件新建与导入、解除引用、删除源文件功能
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途

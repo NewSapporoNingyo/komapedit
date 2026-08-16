@@ -512,6 +512,7 @@ struct TableUiCache {
     std::vector<CachedTableRow> adhesion_rows;
     std::vector<CachedTableRow> cab_illuminance_rows;
     std::vector<CachedTableRow> fog_rows;
+    std::vector<CachedTableRow> legacy_fog_rows;
     std::vector<CachedTableRow> draw_distance_rows;
     std::vector<CachedTableRow> speed_limit_rows;
     std::vector<CachedTableRow> sound_list_rows;
@@ -557,6 +558,8 @@ struct TableUiCache {
     float cab_illuminance_file_path_width = 200.0f;
     float fog_distance_width = 110.0f;
     float fog_file_path_width = 200.0f;
+    float legacy_fog_distance_width = 110.0f;
+    float legacy_fog_file_path_width = 200.0f;
     float draw_distance_distance_width = 110.0f;
     float draw_distance_file_path_width = 200.0f;
     float speed_limit_distance_width = 110.0f;
@@ -622,6 +625,7 @@ struct MapModel {
     std::vector<TableRow> adhesions;
     std::vector<TableRow> cab_illuminance;
     std::vector<TableRow> fogs;
+    std::vector<TableRow> legacy_fogs;
     std::vector<TableRow> draw_distances;
     std::vector<TableRow> variable_assignments;
     std::array<ResourceListSource,
@@ -792,6 +796,7 @@ using PlanBackgroundMarker = PlanMarker;
 using PlanAdhesionMarker = PlanMarker;
 using PlanCabIlluminanceMarker = PlanMarker;
 using PlanFogMarker = PlanMarker;
+using PlanLegacyFogMarker = PlanMarker;
 using PlanDrawDistanceMarker = PlanMarker;
 
 struct PlanOtherTrainStopMarker {
@@ -825,6 +830,7 @@ enum class PlanMarkerKind {
     Adhesion,
     CabIlluminance,
     Fog,
+    LegacyFog,
     DrawDistance,
     SpeedLimit,
     Curve,
@@ -921,6 +927,7 @@ struct PlanData {
     std::vector<PlanAdhesionMarker> adhesion_markers;
     std::vector<PlanCabIlluminanceMarker> cab_illuminance_markers;
     std::vector<PlanFogMarker> fog_markers;
+    std::vector<PlanLegacyFogMarker> legacy_fog_markers;
     std::vector<PlanDrawDistanceMarker> draw_distance_markers;
     std::vector<OwnTrackEditMarker> curve_edit_markers;
     std::vector<OwnTrackEditMarker> gradient_edit_markers;
@@ -1009,6 +1016,7 @@ struct WindowVisibilitySettings {
     bool show_adhesions_window = false;
     bool show_cab_illuminance_window = false;
     bool show_fogs_window = false;
+    bool show_legacy_fogs_window = false;
     bool show_draw_distances_window = false;
     bool show_speed_limits_window = false;
     bool show_file_structure_window = false;
@@ -1042,6 +1050,7 @@ struct WindowVisibilitySettings {
             show_adhesions_window == other.show_adhesions_window &&
             show_cab_illuminance_window == other.show_cab_illuminance_window &&
             show_fogs_window == other.show_fogs_window &&
+            show_legacy_fogs_window == other.show_legacy_fogs_window &&
             show_draw_distances_window == other.show_draw_distances_window &&
             show_speed_limits_window == other.show_speed_limits_window &&
             show_file_structure_window == other.show_file_structure_window &&
@@ -1814,6 +1823,7 @@ private:
     bool show_adhesions_window_ = false;
     bool show_cab_illuminance_window_ = false;
     bool show_fogs_window_ = false;
+    bool show_legacy_fogs_window_ = false;
     bool show_draw_distances_window_ = false;
     bool show_speed_limits_window_ = false;
     bool show_file_structure_window_ = false;
@@ -1839,6 +1849,7 @@ private:
     bool focus_adhesions_next_ = false;
     bool focus_cab_illuminance_next_ = false;
     bool focus_fogs_next_ = false;
+    bool focus_legacy_fogs_next_ = false;
     bool focus_draw_distances_next_ = false;
     bool focus_speed_limits_next_ = false;
     bool focus_file_structure_next_ = false;
@@ -1894,6 +1905,7 @@ private:
     std::vector<std::optional<PlanAdhesionMarker>> adhesion_marker_cache_;
     std::vector<std::optional<PlanCabIlluminanceMarker>> cab_illuminance_marker_cache_;
     std::vector<std::optional<PlanFogMarker>> fog_marker_cache_;
+    std::vector<std::optional<PlanLegacyFogMarker>> legacy_fog_marker_cache_;
     std::vector<std::optional<PlanDrawDistanceMarker>> draw_distance_marker_cache_;
     std::vector<std::optional<PlanMarker>> speed_limit_marker_cache_;
     std::vector<OwnTrackEditMarker> own_track_edit_marker_cache_;
@@ -2017,6 +2029,8 @@ private:
     int cab_illuminance_list_highlight_row_ = -1;
     int fog_list_scroll_row_ = -1;
     int fog_list_highlight_row_ = -1;
+    int legacy_fog_list_scroll_row_ = -1;
+    int legacy_fog_list_highlight_row_ = -1;
     int draw_distance_list_scroll_row_ = -1;
     int draw_distance_list_highlight_row_ = -1;
     int speed_limit_list_scroll_row_ = -1;
@@ -2251,6 +2265,7 @@ private:
     void render_adhesions_window();
     void render_cab_illuminance_window();
     void render_fogs_window();
+    void render_legacy_fogs_window();
     void render_draw_distances_window();
     void render_speed_limits_window();
     void render_file_structure_window();
@@ -2367,6 +2382,8 @@ private:
     void locate_cab_illuminance_row_in_list(size_t row_index);
     void locate_fog_row_on_plan(size_t row_index);
     void locate_fog_row_in_list(size_t row_index);
+    void locate_legacy_fog_row_on_plan(size_t row_index);
+    void locate_legacy_fog_row_in_list(size_t row_index);
     void locate_draw_distance_row_on_plan(size_t row_index);
     void locate_draw_distance_row_in_list(size_t row_index);
     void locate_speed_limit_row_on_plan(size_t row_index);

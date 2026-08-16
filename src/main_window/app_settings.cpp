@@ -410,6 +410,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
     out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
     out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
+    out << "show_legacy_fogs_window=" << bool_to_string(settings.window_visibility.show_legacy_fogs_window) << "\n";
     out << "show_draw_distances_window=" << bool_to_string(settings.window_visibility.show_draw_distances_window) << "\n";
     out << "show_speed_limits_window=" << bool_to_string(settings.window_visibility.show_speed_limits_window) << "\n";
     out << "show_file_structure_window=" << bool_to_string(settings.window_visibility.show_file_structure_window) << "\n";
@@ -484,7 +485,7 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
     if (!in) return settings;
 
     static constexpr std::array<
-        std::pair<std::string_view, bool WindowVisibilitySettings::*>, 31> window_fields{{
+        std::pair<std::string_view, bool WindowVisibilitySettings::*>, 32> window_fields{{
         {"show_othertracks_window", &WindowVisibilitySettings::show_othertracks_window},
         {"show_station_list_window", &WindowVisibilitySettings::show_station_list_window},
         {"show_structures_window", &WindowVisibilitySettings::show_structures_window},
@@ -509,6 +510,7 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
         {"show_adhesions_window", &WindowVisibilitySettings::show_adhesions_window},
         {"show_cab_illuminance_window", &WindowVisibilitySettings::show_cab_illuminance_window},
         {"show_fogs_window", &WindowVisibilitySettings::show_fogs_window},
+        {"show_legacy_fogs_window", &WindowVisibilitySettings::show_legacy_fogs_window},
         {"show_draw_distances_window", &WindowVisibilitySettings::show_draw_distances_window},
         {"show_speed_limits_window", &WindowVisibilitySettings::show_speed_limits_window},
         {"show_file_structure_window", &WindowVisibilitySettings::show_file_structure_window},

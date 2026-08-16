@@ -85,7 +85,7 @@ ctest --test-dir build --output-on-failure
 
 | 区域 | 主要文件与职责 |
 | --- | --- |
-| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v7 函数、定宽 POD 快照、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
+| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v8 函数、定宽 POD 快照、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
@@ -476,7 +476,7 @@ App / MapModel
 - 保持 `UNICODE`、`_UNICODE`、`NOMINMAX` 和 `WIN32_LEAN_AND_MEAN` 假设。
 - 异常、STL 类型、C++ 类或所有权不明确的指针不得跨越公共 C ABI。
 - DLL 通过 ABI 返回的已分配内存必须有配对释放函数。
-- 随附 EXE 要求 maploader API v7 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；API v7 变更不修改地图、场景、编辑目标和编辑报告各自的快照版本或结构尺寸。
+- 随附 EXE 要求 maploader API v8 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；API v8 变更不修改地图、场景、编辑目标和编辑报告各自的快照版本或结构尺寸。
 - 强类型 ABI 输入视为调用期视图；嵌套快照存储由句柄持有，并按已记录的几何重建、编辑操作、重置、重解析和释放规则失效。
 - 公共 ABI 变更必须明确决定版本/结构尺寸，同步修改 EXE、DLL 和调用方，并记录所有权与有效期。
 

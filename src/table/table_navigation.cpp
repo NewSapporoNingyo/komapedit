@@ -320,6 +320,16 @@ void App::locate_fog_row_in_list(size_t row_index) {
                                    fog_list_scroll_row_, fog_list_highlight_row_);
 }
 
+void App::locate_legacy_fog_row_on_plan(size_t row_index) {
+    locate_standard_marker_on_plan(legacy_fog_marker_cache_, row_index, show_fog_markers_);
+}
+
+void App::locate_legacy_fog_row_in_list(size_t row_index) {
+    locate_standard_marker_in_list(legacy_fog_marker_cache_, row_index,
+                                   show_legacy_fogs_window_, focus_legacy_fogs_next_,
+                                   legacy_fog_list_scroll_row_, legacy_fog_list_highlight_row_);
+}
+
 void App::locate_draw_distance_row_on_plan(size_t row_index) {
     locate_standard_marker_on_plan(
         draw_distance_marker_cache_, row_index, show_draw_distance_markers_);
@@ -383,6 +393,9 @@ void App::locate_scene_marker_row_in_list(
     case Canvas3DSceneMarkerListKind::Fog:
         locate_fog_row_in_list(row_index);
         return;
+    case Canvas3DSceneMarkerListKind::LegacyFog:
+        locate_legacy_fog_row_in_list(row_index);
+        return;
     case Canvas3DSceneMarkerListKind::DrawDistance:
         locate_draw_distance_row_in_list(row_index);
         return;
@@ -434,6 +447,9 @@ void App::locate_scene_marker_row_in_scene_preview(
         show_cab_illuminance_markers_ = true;
         break;
     case Canvas3DSceneMarkerListKind::Fog:
+        show_fog_markers_ = true;
+        break;
+    case Canvas3DSceneMarkerListKind::LegacyFog:
         show_fog_markers_ = true;
         break;
     case Canvas3DSceneMarkerListKind::DrawDistance:

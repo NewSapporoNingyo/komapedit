@@ -956,6 +956,7 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
         const uint64_t geometry_revision = snapshot.geometry_revision;
         const uint64_t statement_count = snapshot.statement_count;
         const uint64_t element_count = snapshot.element_count;
+        const uint64_t legacy_fog_count = snapshot.legacy_fog_count;
         const double snapshot_build_seconds = snapshot.build_seconds;
         kv_free(handle);
         auto finished_at = std::chrono::steady_clock::now();
@@ -973,6 +974,7 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
              << " geometry_revision=" << geometry_revision
              << " statements=" << statement_count
              << " elements=" << element_count
+             << " legacyFog=" << legacy_fog_count
              << " othertracks=" << other_count;
         print_headless_buffer_summary(*out, "own", own);
         print_headless_buffer_summary(*out, "curve", curve);
@@ -1387,8 +1389,8 @@ int run_debug_headless_settings_persistence(
         canonical.view_3d.scene_instance_critical_warning_threshold = 6200;
         check(save_user_settings(canonical), "canonical_save");
         const std::string canonical_text = read_text(canonical_path);
-        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 79,
-              "canonical_key_count_79");
+        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 80,
+              "canonical_key_count_80");
         UserSettings canonical_loaded = load_user_settings(canonical_path);
         check(canonical_loaded.language == canonical.language, "canonical_language");
         check(canonical_loaded.font_size == canonical.font_size, "canonical_font_size");
@@ -1450,7 +1452,7 @@ int run_debug_headless_settings_persistence(
         check(save_user_settings(alias_loaded), "explicit_save_after_legacy_load");
         const std::string rewritten_alias_text = read_text(alias_path);
         check(std::count(
-                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 79 &&
+                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 80 &&
                   rewritten_alias_text.find("lang=") == std::string::npos &&
                   rewritten_alias_text.find("enable_edit=") == std::string::npos,
               "explicit_save_writes_canonical_schema");
@@ -1681,6 +1683,7 @@ int App::run_debug_headless_source_anchors(const std::string& path, double unit_
     count_missing_rows(model.adhesions);
     count_missing_rows(model.cab_illuminance);
     count_missing_rows(model.fogs);
+    count_missing_rows(model.legacy_fogs);
 
     std::set<std::string> map_files;
     std::set<std::string> list_files;
@@ -8065,6 +8068,7 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
         hash_marker_cache(source.adhesion_marker_cache_);
         hash_marker_cache(source.cab_illuminance_marker_cache_);
         hash_marker_cache(source.fog_marker_cache_);
+        hash_marker_cache(source.legacy_fog_marker_cache_);
 
         hash.integer(static_cast<std::uint64_t>(source.other_train_stop_marker_cache_.size()));
         for (const auto& marker : source.other_train_stop_marker_cache_) {

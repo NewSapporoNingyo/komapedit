@@ -114,6 +114,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; station definition announcement sound keys are editable, but Sound/Sound3D file-list row insertion and audio playback remain unsupported.
 - [x] Edit or delete existing cab-illuminance setting positions.
 - [x] Edit or delete existing fog effects.
+- [x] Parse the read-only legacy linear-fog statement `Legacy.Fog(start, end, red, green, blue)` into typed snapshot rows and show them in a dedicated table list plus plan/scene markers with their source values; editing, creation, and the 3D fog effect are not implemented.
 
 ### User Interface and Utilities
 
@@ -243,6 +244,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 编辑或删除已有 `Sound.Play`/`Sound3D.Put` 放置和走行音/轮缘摩擦音/道岔音事件；车站定义中的报站音 key 可编辑，但仍不支持新增 Sound/Sound3D 文件列表行，程序也不播放音频
 - [x] 编辑或删除已有驾驶台亮度设定位置
 - [x] 编辑或删除已有雾效果
+- [x] 将只读旧式线性雾语句 `Legacy.Fog(start, end, red, green, blue)` 解析为类型化快照行，并在独立列表及平面图/3D 标牌中按源值显示；编辑、新建与 3D 雾效果未实现
 
 ### 用户界面与辅助功能
 
