@@ -104,6 +104,7 @@ inline constexpr int k_scene_instance_warning_threshold_step = 200;
 inline constexpr double k_scene_window_back_distance_m = 100.0;
 inline constexpr bool k_default_scene_fog_enabled = true;
 inline constexpr bool k_default_scene_map_draw_distance_enabled = true;
+inline constexpr bool k_default_scene_auto_load_on_map_open = false;
 inline constexpr size_t k_max_recent_maps = 10;
 inline constexpr size_t k_max_console_log_lines = 100000;
 inline constexpr const char* k_own_track_lookup_aliases[] = {"", "0", "1", "\\", "own", "main"};
@@ -1137,6 +1138,7 @@ struct View3DSettings {
     bool show_scene_current_position_on_plan = k_default_non_station_aux_info_visible;
     bool scene_fog_enabled = k_default_scene_fog_enabled;
     bool scene_map_draw_distance_enabled = k_default_scene_map_draw_distance_enabled;
+    bool scene_auto_load_on_map_open = k_default_scene_auto_load_on_map_open;
     int scene_draw_distance_m = k_default_scene_draw_distance_m;
     int scene_edit_component_size_percent = k_default_scene_edit_component_size_percent;
     int scene_camera_speed_percent = k_default_scene_camera_speed_percent;
@@ -1150,6 +1152,7 @@ struct View3DSettings {
             show_scene_current_position_on_plan == other.show_scene_current_position_on_plan &&
             scene_fog_enabled == other.scene_fog_enabled &&
             scene_map_draw_distance_enabled == other.scene_map_draw_distance_enabled &&
+            scene_auto_load_on_map_open == other.scene_auto_load_on_map_open &&
             scene_draw_distance_m == other.scene_draw_distance_m &&
             scene_edit_component_size_percent == other.scene_edit_component_size_percent &&
             scene_camera_speed_percent == other.scene_camera_speed_percent &&
@@ -1620,6 +1623,9 @@ private:
     bool scene_map_draw_distance_enabled_ = k_default_scene_map_draw_distance_enabled;
     bool pending_scene_map_draw_distance_enabled_ = k_default_scene_map_draw_distance_enabled;
     bool scene_map_draw_distance_enabled_before_dialog_ = k_default_scene_map_draw_distance_enabled;
+    bool scene_auto_load_on_map_open_ = k_default_scene_auto_load_on_map_open;
+    bool pending_scene_auto_load_on_map_open_ = k_default_scene_auto_load_on_map_open;
+    bool scene_auto_load_on_map_open_before_dialog_ = k_default_scene_auto_load_on_map_open;
     int scene_camera_speed_percent_ = k_default_scene_camera_speed_percent;
     int pending_scene_camera_speed_percent_ = k_default_scene_camera_speed_percent;
     int scene_camera_speed_percent_before_dialog_ = k_default_scene_camera_speed_percent;

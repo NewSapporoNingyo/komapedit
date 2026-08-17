@@ -451,6 +451,7 @@ bool save_user_settings(const UserSettings& settings) {
     out << "show_scene_current_position_on_plan=" << bool_to_string(settings.view_3d.show_scene_current_position_on_plan) << "\n";
     out << "scene_fog_enabled=" << bool_to_string(settings.view_3d.scene_fog_enabled) << "\n";
     out << "scene_map_draw_distance_enabled=" << bool_to_string(settings.view_3d.scene_map_draw_distance_enabled) << "\n";
+    out << "scene_auto_load_on_map_open=" << bool_to_string(settings.view_3d.scene_auto_load_on_map_open) << "\n";
     out << "scene_draw_distance_m=" << clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m) << "\n";
     out << "scene_edit_component_size_percent="
         << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
@@ -548,11 +549,12 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
         {"show_background_image", &View2DSettings::show_background_image},
     }};
     static constexpr std::array<
-        std::pair<std::string_view, bool View3DSettings::*>, 5> view_3d_fields{{
+        std::pair<std::string_view, bool View3DSettings::*>, 6> view_3d_fields{{
         {"show_scene_owntrack_markers", &View3DSettings::show_scene_owntrack_markers},
         {"show_scene_current_position_on_plan", &View3DSettings::show_scene_current_position_on_plan},
         {"scene_fog_enabled", &View3DSettings::scene_fog_enabled},
         {"scene_map_draw_distance_enabled", &View3DSettings::scene_map_draw_distance_enabled},
+        {"scene_auto_load_on_map_open", &View3DSettings::scene_auto_load_on_map_open},
         {"scene_performance_warning_enabled", &View3DSettings::scene_performance_warning_enabled},
     }};
 

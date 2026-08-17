@@ -95,6 +95,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Load model geometry, materials, and diffuse textures through `model_loader.dll`/Assimp.
 - [x] Rotate and zoom the Structure model preview.
 - [x] 3D scene preview canvas for track paths, Structure/Repeater instances, signals, map-element markers, background changes, and interpolated BVE fog effects.
+- [x] Automatically load the 3D scene preview when opening or reloading a map when enabled in 3D Canvas Settings.
 - [x] Display each FlangeNoise scene marker's `index` value in the 3D scene preview.
 - [x] Highlight the nearest whole-metre position on the own-track plane in the 3D scene mileage-selection mode, show a mouse-following mileage label, and open the New Map Element wizard from its context menu with distance prefilled.
 - [x] Jump the 3D scene camera from station selections and numeric distance jumps, and show the current 3D position on the plan view.
@@ -224,6 +225,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 通过 `model_loader.dll`/Assimp 读取模型和贴图
 - [x] 支持旋转和缩放布景模型预览
 - [x] 3D 画布场景预览，可显示轨道路径、布景/连续布景实例、信号、地图元素标记、背景变化和插值后的 BVE 雾效果
+- [x] 在 3D 画布设置中启用后，打开或重新加载地图时自动加载 3D 场景预览
 - [x] 在 3D 场景预览中显示每个 FlangeNoise 标记的 `index` 值
 - [x] 在 3D 场景里程选择模式中高亮自轨道平面上最近的整米位置，显示跟随鼠标的里程标签，并可通过右键菜单打开自动填写 distance 的“新建地图元素向导”
 - [x] 可通过车站跳转和数字里程跳转移动 3D 场景相机，并在平面图上显示当前 3D 位置

@@ -1794,6 +1794,8 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
     scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
     pending_scene_map_draw_distance_enabled_ = scene_map_draw_distance_enabled_;
     scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
+    pending_scene_auto_load_on_map_open_ = scene_auto_load_on_map_open_;
+    scene_auto_load_on_map_open_before_dialog_ = scene_auto_load_on_map_open_;
     pending_scene_camera_speed_percent_ = scene_camera_speed_percent_;
     scene_camera_speed_percent_before_dialog_ = scene_camera_speed_percent_;
     pending_scene_performance_warning_enabled_ = scene_performance_warning_enabled_;
@@ -2173,6 +2175,9 @@ void App::apply_load_result(LoadResult result) {
         clear_background_image();
     }
     if (result.record_history) touch_recent_map(result.path);
+    if (scene_auto_load_on_map_open_ && !scene_preview_started_) {
+        start_scene_preview();
+    }
     load_state_.pending_started_at = result.started_at;
     if (!show_plots_window_) finish_pending_load_timing_after_plan_data_ready();
     if (edit_mode_enabled_ && has_model_ && !file_path_.empty() &&
@@ -8937,6 +8942,7 @@ View3DSettings App::current_view_3d_settings() const {
     view.show_scene_current_position_on_plan = show_scene_current_position_on_plan_;
     view.scene_fog_enabled = scene_fog_enabled_;
     view.scene_map_draw_distance_enabled = scene_map_draw_distance_enabled_;
+    view.scene_auto_load_on_map_open = scene_auto_load_on_map_open_;
     view.scene_draw_distance_m = scene_draw_distance_m_;
     view.scene_edit_component_size_percent = scene_edit_component_size_percent_;
     view.scene_camera_speed_percent = scene_camera_speed_percent_;
@@ -8952,6 +8958,7 @@ void App::apply_view_3d_settings(const View3DSettings& settings) {
     show_scene_current_position_on_plan_ = settings.show_scene_current_position_on_plan;
     scene_fog_enabled_ = settings.scene_fog_enabled;
     scene_map_draw_distance_enabled_ = settings.scene_map_draw_distance_enabled;
+    scene_auto_load_on_map_open_ = settings.scene_auto_load_on_map_open;
     scene_draw_distance_m_ = clamp_scene_draw_distance(settings.scene_draw_distance_m);
     scene_edit_component_size_percent_ =
         clamp_scene_edit_component_size_percent(settings.scene_edit_component_size_percent);
@@ -9021,6 +9028,8 @@ bool App::scene_settings_preview_differs_from_dialog_baseline() const {
         pending_scene_fog_enabled_ != scene_fog_enabled_before_dialog_ ||
         pending_scene_map_draw_distance_enabled_ !=
             scene_map_draw_distance_enabled_before_dialog_ ||
+        pending_scene_auto_load_on_map_open_ !=
+            scene_auto_load_on_map_open_before_dialog_ ||
         pending_scene_performance_warning_enabled_ !=
             scene_performance_warning_enabled_before_dialog_ ||
         pending_scene_instance_warning_threshold_ !=
@@ -9037,6 +9046,7 @@ void App::restore_scene_settings_preview() {
     pending_scene_fog_enabled_ = scene_fog_enabled_before_dialog_;
     pending_scene_map_draw_distance_enabled_ =
         scene_map_draw_distance_enabled_before_dialog_;
+    pending_scene_auto_load_on_map_open_ = scene_auto_load_on_map_open_before_dialog_;
     pending_scene_performance_warning_enabled_ =
         scene_performance_warning_enabled_before_dialog_;
     pending_scene_instance_warning_threshold_ =
@@ -9161,6 +9171,8 @@ void App::render_menu() {
             scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
             pending_scene_map_draw_distance_enabled_ = scene_map_draw_distance_enabled_;
             scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
+            pending_scene_auto_load_on_map_open_ = scene_auto_load_on_map_open_;
+            scene_auto_load_on_map_open_before_dialog_ = scene_auto_load_on_map_open_;
             pending_scene_performance_warning_enabled_ = scene_performance_warning_enabled_;
             scene_performance_warning_enabled_before_dialog_ = scene_performance_warning_enabled_;
             pending_scene_instance_warning_threshold_ = scene_instance_warning_threshold_;
@@ -10169,6 +10181,8 @@ void App::render_popups() {
     }
     bool canvas_3d_settings_popup_open = true;
     if (ImGui::BeginPopupModal(tr("dialog.canvas_3d_settings").c_str(), &canvas_3d_settings_popup_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Checkbox(tr("label.scene_auto_load_on_map_open").c_str(),
+                        &pending_scene_auto_load_on_map_open_);
         if (ImGui::Checkbox(tr("label.scene_fog_effect").c_str(), &pending_scene_fog_enabled_)) {
             apply_scene_fog_effect_to_canvas(pending_scene_fog_enabled_);
         }
@@ -10301,6 +10315,8 @@ void App::render_popups() {
             scene_fog_enabled_before_dialog_ = scene_fog_enabled_;
             scene_map_draw_distance_enabled_ = pending_scene_map_draw_distance_enabled_;
             scene_map_draw_distance_enabled_before_dialog_ = scene_map_draw_distance_enabled_;
+            scene_auto_load_on_map_open_ = pending_scene_auto_load_on_map_open_;
+            scene_auto_load_on_map_open_before_dialog_ = scene_auto_load_on_map_open_;
             apply_scene_draw_distance_to_canvas(scene_draw_distance_m_);
             apply_scene_edit_component_size_to_canvas(scene_edit_component_size_percent_);
             apply_scene_camera_speed_to_canvas(scene_camera_speed_percent_);

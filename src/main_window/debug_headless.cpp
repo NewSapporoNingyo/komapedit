@@ -1381,6 +1381,7 @@ int run_debug_headless_settings_persistence(
         canonical.view_3d.show_scene_owntrack_markers = true;
         canonical.view_3d.scene_fog_enabled = false;
         canonical.view_3d.scene_map_draw_distance_enabled = false;
+        canonical.view_3d.scene_auto_load_on_map_open = true;
         canonical.view_3d.scene_draw_distance_m = 2500;
         canonical.view_3d.scene_edit_component_size_percent = 180;
         canonical.view_3d.scene_camera_speed_percent = 250;
@@ -1389,8 +1390,8 @@ int run_debug_headless_settings_persistence(
         canonical.view_3d.scene_instance_critical_warning_threshold = 6200;
         check(save_user_settings(canonical), "canonical_save");
         const std::string canonical_text = read_text(canonical_path);
-        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 80,
-              "canonical_key_count_80");
+        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 81,
+              "canonical_key_count_81");
         UserSettings canonical_loaded = load_user_settings(canonical_path);
         check(canonical_loaded.language == canonical.language, "canonical_language");
         check(canonical_loaded.font_size == canonical.font_size, "canonical_font_size");
@@ -1452,7 +1453,7 @@ int run_debug_headless_settings_persistence(
         check(save_user_settings(alias_loaded), "explicit_save_after_legacy_load");
         const std::string rewritten_alias_text = read_text(alias_path);
         check(std::count(
-                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 80 &&
+                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 81 &&
                   rewritten_alias_text.find("lang=") == std::string::npos &&
                   rewritten_alias_text.find("enable_edit=") == std::string::npos,
               "explicit_save_writes_canonical_schema");
