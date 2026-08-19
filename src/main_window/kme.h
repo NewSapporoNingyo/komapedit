@@ -2205,6 +2205,10 @@ private:
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
     void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);
+    bool can_use_resource_key_in_new_element_wizard(
+        MapElementKeySource key_source) const;
+    bool use_resource_key_in_new_element_wizard(
+        MapElementKeySource key_source, std::string_view key);
     bool prepare_repeater_wizard_from_inspector(std::string& repeater_key);
     void open_repeater_end_wizard_from_inspector();
     void open_repeater_change_point_wizard_from_inspector();

@@ -121,6 +121,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] Dear ImGui docking-based multi-window layout.
 - [x] UI language switching between Simplified Chinese, English, and Japanese.
+- [x] Prefill the current New Map Element wizard template's matching key from the Structure Model, Sound File, or 3D Sound File List context menu while preserving its other draft fields and target source file.
 - [x] Settings for font size, UI component size, station marker size, 2D line widths, theme color, 3D scene draw distance/fog/map-draw-distance, camera speed, gizmo size, and scene-instance performance warnings.
 - [x] Recent-map history.
 - [x] Save background-image parameters with recent-map entries in `settings/history.ini`.
@@ -252,6 +253,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] Dear ImGui Docking 多窗口布局
 - [x] 简体中文、英文、日文界面语言切换
+- [x] 通过布景模型、音效文件或 3D 音效文件列表的右键菜单，将当前资源 key 预填入“新建地图元素向导”的匹配字段，并保留其他草稿字段和目标源文件
 - [x] 字体大小、组件大小、车站标记大小、2D 线宽、主题色、3D 场景绘制距离/雾效果/地图绘制距离、相机速度、操纵器尺寸和场景实例性能警告设置
 - [x] 最近打开地图历史记录
 - [x] 背景图参数随最近地图保存到 `settings/history.ini`

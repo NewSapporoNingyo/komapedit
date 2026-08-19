@@ -566,6 +566,8 @@ plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实
 
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
 
+该新建地图元素命令还验证布景模型、音效文件和 3D 音效文件列表的 key 仅在当前向导模板有匹配字段时预填，且不改变已打开向导中的其他草稿字段或目标源文件。
+
 最低验证范围应按变更涵盖普通/Include 地图加载、重载、平面/纵断面/半径图、车站跳转、测量、CSV 导出、模型预览/错误、三维轨道/对象/标记/相机/叠加层、编辑的应用/撤销/保存/重载、源码往返、编码/行尾、行内草稿、设置持久化和 Release 内容。磁盘写回变更必须保存后重载比较；性能变更必须在相同线路、参数、构建类型与加载配置上做可重复前后对比。
 
 `komapedit.exe` 是 GUI 子系统程序；PowerShell 中需要捕获输出时，应使用 `Start-Process -Wait -WindowStyle Hidden -PassThru` 并传入 `--headless-output`。

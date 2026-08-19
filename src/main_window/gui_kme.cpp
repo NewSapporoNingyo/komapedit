@@ -7562,6 +7562,20 @@ const std::vector<NewElementTemplate>& new_element_templates() {
     return templates;
 }
 
+bool new_element_template_accepts_key_source(
+    const NewElementTemplate& tpl, MapElementKeySource key_source) {
+    if (key_source == MapElementKeySource::None) return false;
+    for (const NewElementFieldSpec& field : tpl.fields) {
+        if (map_element_key_source_for_field(tpl.row_kind, field.key) == key_source) {
+            return true;
+        }
+    }
+    // Repeater structure keys are appended to the shared form after its
+    // fixed template fields are built.
+    return map_element_key_source_for_field(
+               tpl.row_kind, "structureKeys.0") == key_source;
+}
+
 const std::vector<size_t>& new_element_template_display_order() {
     static const std::vector<size_t> display_order = [] {
         const std::vector<NewElementTemplate>& templates = new_element_templates();
@@ -7722,6 +7736,64 @@ void update_repeater_wizard_field_enablement(NewElementWizardState& wizard) {
 }
 
 } // namespace
+
+bool App::can_use_resource_key_in_new_element_wizard(
+    MapElementKeySource key_source) const {
+    if (!edit_actions_available() || key_source == MapElementKeySource::None) {
+        return false;
+    }
+
+    const std::vector<NewElementTemplate>& templates = new_element_templates();
+    const NewElementWizardState& wizard = new_element_wizard_;
+    if (wizard.selected_template < 0 ||
+        wizard.selected_template >= static_cast<int>(templates.size())) {
+        return false;
+    }
+    const NewElementTemplate& tpl =
+        templates[static_cast<size_t>(wizard.selected_template)];
+    if (!new_element_template_accepts_key_source(tpl, key_source)) {
+        return false;
+    }
+    if (!wizard.open) return true;
+
+    // Do not rebuild an open wizard here: the normal wizard render pass owns
+    // template transitions, and rebuilding here would discard its draft.
+    if (wizard.built_template != wizard.selected_template || !wizard.form.open ||
+        std::string_view(wizard.form.row_kind) != tpl.row_kind) {
+        return false;
+    }
+    return std::any_of(
+        wizard.form.fields.begin(), wizard.form.fields.end(),
+        [key_source](const MapElementEditFieldState& field) {
+            return field.key_source == key_source && !field.read_only &&
+                !field.disabled;
+        });
+}
+
+bool App::use_resource_key_in_new_element_wizard(
+    MapElementKeySource key_source, std::string_view key) {
+    const std::string key_copy(key);
+    if (blank_ascii(key_copy) ||
+        !can_use_resource_key_in_new_element_wizard(key_source)) {
+        return false;
+    }
+
+    NewElementWizardState& wizard = new_element_wizard_;
+    if (!wizard.open) {
+        open_new_element_wizard();
+        rebuild_new_element_wizard_form();
+    }
+    const auto field = std::find_if(
+        wizard.form.fields.begin(), wizard.form.fields.end(),
+        [key_source](const MapElementEditFieldState& candidate) {
+            return candidate.key_source == key_source &&
+                !candidate.read_only && !candidate.disabled;
+        });
+    if (field == wizard.form.fields.end()) return false;
+
+    set_edit_field_buffer(*field, key_copy);
+    return true;
+}
 
 void App::open_new_element_wizard(std::optional<double> distance_prefill) {
     if (distance_prefill && !std::isfinite(*distance_prefill)) {
@@ -11463,6 +11535,174 @@ int App::run_debug_headless_new_element_edit(
                 ? std::string{}
                 : found->first;
         };
+
+        auto resource_key_from_rows = [](const std::vector<TableRow>& rows,
+                                         const char* cell_key) {
+            const auto found = std::find_if(
+                rows.begin(), rows.end(), [&](const TableRow& row) {
+                    return !blank_ascii(table_cell(row, cell_key));
+                });
+            return found == rows.end()
+                ? std::string{}
+                : table_cell(*found, cell_key);
+        };
+        const std::string structure_model_key = resource_key_from_rows(
+            app.model_.structure_models, "structureKey");
+        const std::string sound_key = resource_key_from_rows(
+            app.model_.sound_list, "soundKey");
+        const std::string sound_3d_key = resource_key_from_rows(
+            app.model_.sound_3d_list, "soundKey");
+        check("resource_list_keys_found",
+              !structure_model_key.empty() && !sound_key.empty() &&
+                  !sound_3d_key.empty());
+        if (structure_model_key.empty() || sound_key.empty() ||
+            sound_3d_key.empty()) {
+            throw std::runtime_error("resource-key wizard test requires structure and sound lists");
+        }
+
+        const int structure_template = template_index("structure.put0");
+        const int sound_template = template_index("map_sound.play");
+        const int sound_3d_template = template_index("map_sound3d.put");
+        check("resource_key_templates_found",
+              structure_template >= 0 && sound_template >= 0 &&
+                  sound_3d_template >= 0);
+        if (structure_template < 0 || sound_template < 0 ||
+            sound_3d_template < 0) {
+            throw std::runtime_error("resource-key wizard templates are unavailable");
+        }
+
+        app.new_element_wizard_ = NewElementWizardState{};
+        app.new_element_wizard_.selected_template = structure_template;
+        const bool closed_wizard_structure_prefill =
+            app.can_use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Structure) &&
+            app.use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Structure, structure_model_key);
+        const MapElementEditFieldState* closed_structure_field =
+            find_inspector_field(app.new_element_wizard_.form, "structureKey");
+        check("resource_key_closed_wizard_prefill_ok",
+              closed_wizard_structure_prefill && app.new_element_wizard_.open &&
+                  closed_structure_field &&
+                  edit_field_buffer_text(*closed_structure_field) == structure_model_key);
+
+        check("structure_resource_key_wizard_prepared",
+              prepare_wizard("structure.put0"));
+        NewElementWizardState& resource_wizard = app.new_element_wizard_;
+        const std::string preserved_structure_target =
+            resource_wizard.target_file_path;
+        const bool structure_draft_ready =
+            set_field(resource_wizard.form, "structureKey", "previous-model") &&
+            set_field(resource_wizard.form, "trackKey", "1") &&
+            set_field(resource_wizard.form, "span", "31");
+        const bool structure_prefill = structure_draft_ready &&
+            app.can_use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Structure) &&
+            app.use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Structure, structure_model_key);
+        const MapElementEditFieldState* structure_field =
+            find_inspector_field(resource_wizard.form, "structureKey");
+        const MapElementEditFieldState* structure_track_field =
+            find_inspector_field(resource_wizard.form, "trackKey");
+        const MapElementEditFieldState* structure_span_field =
+            find_inspector_field(resource_wizard.form, "span");
+        check("structure_resource_key_prefill_preserves_draft",
+              structure_prefill && structure_field && structure_track_field &&
+                  structure_span_field &&
+                  edit_field_buffer_text(*structure_field) == structure_model_key &&
+                  edit_field_buffer_text(*structure_track_field) == "1" &&
+                  edit_field_buffer_text(*structure_span_field) == "31" &&
+                  resource_wizard.target_file_path == preserved_structure_target);
+
+        check("repeater_resource_key_wizard_prepared",
+              prepare_wizard("repeater.begin0"));
+        NewElementWizardState& repeater_resource_wizard = app.new_element_wizard_;
+        repeater_resource_wizard.repeater_add_begin = true;
+        repeater_resource_wizard.repeater_add_end = false;
+        update_repeater_wizard_field_enablement(repeater_resource_wizard);
+        const std::string preserved_repeater_target =
+            repeater_resource_wizard.target_file_path;
+        const bool repeater_resource_draft_ready =
+            set_field(repeater_resource_wizard.form, "structureKeys.0",
+                      "previous-repeater-model") &&
+            set_field(repeater_resource_wizard.form, "repeaterKey",
+                      "previous-repeater");
+        const bool repeater_resource_prefill = repeater_resource_draft_ready &&
+            app.can_use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Structure) &&
+            app.use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Structure, structure_model_key);
+        const MapElementEditFieldState* repeater_structure_field =
+            find_inspector_field(repeater_resource_wizard.form, "structureKeys.0");
+        const MapElementEditFieldState* repeater_key_field =
+            find_inspector_field(repeater_resource_wizard.form, "repeaterKey");
+        check("repeater_resource_key_prefill_preserves_state",
+              repeater_resource_prefill && repeater_structure_field &&
+                  repeater_key_field &&
+                  edit_field_buffer_text(*repeater_structure_field) ==
+                      structure_model_key &&
+                  edit_field_buffer_text(*repeater_key_field) ==
+                      "previous-repeater" &&
+                  repeater_resource_wizard.repeater_add_begin &&
+                  !repeater_resource_wizard.repeater_add_end &&
+                  repeater_resource_wizard.target_file_path ==
+                      preserved_repeater_target);
+
+        check("sound_resource_key_wizard_prepared",
+              prepare_wizard("map_sound.play"));
+        const std::string preserved_sound_target =
+            app.new_element_wizard_.target_file_path;
+        const bool sound_draft_ready =
+            set_field(app.new_element_wizard_.form, "soundKey", "previous-sound") &&
+            set_field(app.new_element_wizard_.form, "distance", "37");
+        const bool sound_prefill = sound_draft_ready &&
+            app.can_use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Sound) &&
+            app.use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Sound, sound_key);
+        const MapElementEditFieldState* sound_field =
+            find_inspector_field(app.new_element_wizard_.form, "soundKey");
+        const MapElementEditFieldState* sound_distance_field =
+            find_inspector_field(app.new_element_wizard_.form, "distance");
+        check("sound_resource_key_prefill_preserves_draft",
+              sound_prefill && sound_field && sound_distance_field &&
+                  edit_field_buffer_text(*sound_field) == sound_key &&
+                  edit_field_buffer_text(*sound_distance_field) == "37" &&
+                  app.new_element_wizard_.target_file_path == preserved_sound_target);
+        check("resource_key_template_mismatch_disabled",
+              !app.can_use_resource_key_in_new_element_wizard(
+                  MapElementKeySource::Structure) &&
+                  !app.use_resource_key_in_new_element_wizard(
+                      MapElementKeySource::Structure, structure_model_key));
+
+        check("sound_3d_resource_key_wizard_prepared",
+              prepare_wizard("map_sound3d.put"));
+        const std::string preserved_sound_3d_target =
+            app.new_element_wizard_.target_file_path;
+        const bool sound_3d_draft_ready =
+            set_field(app.new_element_wizard_.form, "soundKey", "previous-3d-sound") &&
+            set_field(app.new_element_wizard_.form, "x", "4") &&
+            set_field(app.new_element_wizard_.form, "y", "5");
+        const bool sound_3d_prefill = sound_3d_draft_ready &&
+            app.can_use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Sound3D) &&
+            app.use_resource_key_in_new_element_wizard(
+                MapElementKeySource::Sound3D, sound_3d_key);
+        const MapElementEditFieldState* sound_3d_field =
+            find_inspector_field(app.new_element_wizard_.form, "soundKey");
+        const MapElementEditFieldState* sound_3d_x_field =
+            find_inspector_field(app.new_element_wizard_.form, "x");
+        const MapElementEditFieldState* sound_3d_y_field =
+            find_inspector_field(app.new_element_wizard_.form, "y");
+        check("sound_3d_resource_key_prefill_preserves_draft",
+              sound_3d_prefill && sound_3d_field && sound_3d_x_field &&
+                  sound_3d_y_field &&
+                  edit_field_buffer_text(*sound_3d_field) == sound_3d_key &&
+                  edit_field_buffer_text(*sound_3d_x_field) == "4" &&
+                  edit_field_buffer_text(*sound_3d_y_field) == "5" &&
+                  app.new_element_wizard_.target_file_path ==
+                      preserved_sound_3d_target);
+        check("resource_key_prefill_keeps_pending_ledger_empty",
+              app.pending_edit_changes_.empty());
 
         check("repeater_template_found", prepare_wizard("repeater.begin0"));
         NewElementWizardState& repeater_wizard = app.new_element_wizard_;

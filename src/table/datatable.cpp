@@ -2644,6 +2644,13 @@ void App::render_editable_list_table(
     const bool is_structure = std::string_view(spec.row_kind) == "structure.model";
     const bool is_signal_aspect =
         std::string_view(spec.row_kind) == "signal.aspect";
+    const MapElementKeySource resource_key_source = is_structure
+        ? MapElementKeySource::Structure
+        : std::string_view(spec.row_kind) == "sound.list"
+        ? MapElementKeySource::Sound
+        : std::string_view(spec.row_kind) == "sound3D.list"
+        ? MapElementKeySource::Sound3D
+        : MapElementKeySource::None;
     const std::vector<EditableListDisplayRow>* display_rows =
         is_signal_aspect
         ? (edit.rows_initialized
@@ -2890,6 +2897,19 @@ void App::render_editable_list_table(
                             cached->cells.size()
                             ? cached->cells[cached_column]
                             : empty));
+                const bool row_key_is_editing = draft &&
+                    edit.editing_edit_id == target_edit_id &&
+                    edit.editing_column == 0;
+                const std::string& resource_key =
+                    resource_key_source == MapElementKeySource::None
+                    ? empty
+                    : draft
+                    ? (row_key_is_editing
+                        ? edit.edit_buffer
+                        : (draft->values.empty() ? empty : draft->values.front()))
+                    : (cached->cells.size() > spec.cache_column_offset
+                        ? cached->cells[spec.cache_column_offset]
+                        : empty);
                 const bool is_editing =
                     editable_cell && edit.editing_edit_id == target_edit_id &&
                     edit.editing_column == field_index;
@@ -2916,6 +2936,22 @@ void App::render_editable_list_table(
                         ImGui::BeginDisabled(blank_ascii(resolved_path));
                         if (ImGui::MenuItem(tr("menu.preview_model").c_str())) {
                             preview_structure_model(resolved_path);
+                        }
+                        ImGui::EndDisabled();
+                        has_top_action = true;
+                    }
+                    if (resource_key_source != MapElementKeySource::None) {
+                        const bool can_use_resource_key = !draft_deleted &&
+                            !row_is_pending_delete(target_edit_id) &&
+                            !blank_ascii(resource_key) &&
+                            can_use_resource_key_in_new_element_wizard(
+                                resource_key_source);
+                        ImGui::BeginDisabled(!can_use_resource_key);
+                        if (ImGui::MenuItem(tr(is_structure
+                                ? "menu.use_this_model"
+                                : "menu.use_this_sound").c_str())) {
+                            use_resource_key_in_new_element_wizard(
+                                resource_key_source, resource_key);
                         }
                         ImGui::EndDisabled();
                         has_top_action = true;
