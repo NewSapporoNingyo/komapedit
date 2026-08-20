@@ -2997,10 +2997,8 @@ void validate_own_track_transition_insert_pairs(
         return left->input_ordinal < right->input_ordinal;
     });
 
-    const auto same_location = [](const PreparedEdit& left, const PreparedEdit& right) {
-        return left.source_file_index == right.source_file_index &&
-            left.source_range == right.source_range &&
-            exact_distance_value(left.target_distance, right.target_distance);
+    const auto same_source_file = [](const PreparedEdit& left, const PreparedEdit& right) {
+        return left.source_file_index == right.source_file_index;
     };
     const auto method = [](const PreparedEdit& edit) {
         return insert_method_or_default(*edit.change, "");
@@ -3014,10 +3012,10 @@ void validate_own_track_transition_insert_pairs(
     const auto consume = [&](const PreparedEdit*& transition, const PreparedEdit& primary,
                              const char* family) {
         if (!transition) return true;
-        if (!same_location(*transition, primary)) {
+        if (!same_source_file(*transition, primary)) {
             report.blocking_errors.push_back(
                 std::string(family) + " BeginTransition and its consuming insert must use "
-                "the same target distance and source file");
+                "the same target source file");
             return false;
         }
         transition = nullptr;

@@ -2529,18 +2529,18 @@ void own_track_insert_contract() {
 
     const std::vector<OwnTrackInsertSpec> valid_specs = {
         {"typed-contract-own-curve-transition-a", "curve", "Curve.BeginTransition", "1", "", "", ""},
-        {"typed-contract-own-curve-begin-cant-b", "curve", "Curve.Begin", "1", "300", "0.15", ""},
-        {"typed-contract-own-curve-begin", "curve", "Curve.Begin", "2", "350", "", ""},
-        {"typed-contract-own-curve-change", "curve", "Curve.Change", "3", "-400", "", ""},
-        {"typed-contract-own-curve-end-transition-a", "curve", "Curve.BeginTransition", "4", "", "", ""},
-        {"typed-contract-own-curve-end-b", "curve", "Curve.End", "4", "", "", ""},
+        {"typed-contract-own-curve-begin-cant-b", "curve", "Curve.Begin", "2", "300", "0.15", ""},
+        {"typed-contract-own-curve-begin", "curve", "Curve.Begin", "3", "350", "", ""},
+        {"typed-contract-own-curve-change", "curve", "Curve.Change", "4", "-400", "", ""},
+        {"typed-contract-own-curve-end-transition-a", "curve", "Curve.BeginTransition", "5", "", "", ""},
+        {"typed-contract-own-curve-end-b", "curve", "Curve.End", "6", "", "", ""},
         {"typed-contract-own-curve-end", "curve", "Curve.End", "7", "", "", ""},
-        {"typed-contract-own-gradient-begin-transition-a", "gradient", "Gradient.BeginTransition", "5", "", "", ""},
-        {"typed-contract-own-gradient-begin-b", "gradient", "Gradient.Begin", "5", "", "", "12.5"},
-        {"typed-contract-own-gradient-end-transition-a", "gradient", "Gradient.BeginTransition", "6", "", "", ""},
-        {"typed-contract-own-gradient-end-b", "gradient", "Gradient.End", "6", "", "", ""},
-        {"typed-contract-own-gradient-begin", "gradient", "Gradient.Begin", "8", "", "", "-8"},
-        {"typed-contract-own-gradient-end", "gradient", "Gradient.End", "9", "", "", ""},
+        {"typed-contract-own-gradient-begin-transition-a", "gradient", "Gradient.BeginTransition", "8", "", "", ""},
+        {"typed-contract-own-gradient-begin-b", "gradient", "Gradient.Begin", "9", "", "", "12.5"},
+        {"typed-contract-own-gradient-end-transition-a", "gradient", "Gradient.BeginTransition", "10", "", "", ""},
+        {"typed-contract-own-gradient-end-b", "gradient", "Gradient.End", "11", "", "", ""},
+        {"typed-contract-own-gradient-begin", "gradient", "Gradient.Begin", "12", "", "", "-8"},
+        {"typed-contract-own-gradient-end", "gradient", "Gradient.End", "13", "", "", ""},
     };
     const size_t curve_insert_count = static_cast<size_t>(std::count_if(
         valid_specs.begin(), valid_specs.end(), [](const OwnTrackInsertSpec& spec) {
@@ -2582,6 +2582,21 @@ void own_track_insert_contract() {
                         "typed-contract-own-bad-gradient-end", "gradient", "Gradient.End",
                         "10", "", "", "5",
                     });
+    {
+        OwnTrackInsertBatch reverse_order(source_path, {
+            {"typed-contract-own-reverse-transition", "curve", "Curve.BeginTransition",
+             "15", "", "", ""},
+            {"typed-contract-own-reverse-primary", "curve", "Curve.Begin",
+             "14", "300", "0.15", ""},
+        });
+        KvEditReportSnapshot report{};
+        check(kv_edit_dry_run_typed(handle.value, &reverse_order.batch, &report,
+                                    sizeof(report)) != 0,
+              "reverse-order transition dry-run call");
+        validate_report(report);
+        check(!report.ok && edit_report_has_error_containing(report, "BeginTransition"),
+              "reverse-order transition insert is rejected");
+    }
 
     KvEditReportSnapshot applied_report{};
     check(kv_edit_apply_to_memory_typed(
@@ -2621,14 +2636,29 @@ void own_track_insert_contract() {
         applied, "typed-contract-own-curve-transition-a");
     const KvCurveRow* curve_begin_cant = find_curve(
         applied, "typed-contract-own-curve-begin-cant-b");
+    const KvCurveRow* curve_end_transition = find_curve(
+        applied, "typed-contract-own-curve-end-transition-a");
+    const KvCurveRow* curve_end = find_curve(
+        applied, "typed-contract-own-curve-end-b");
     const KvGradientRow* gradient_transition = find_gradient(
         applied, "typed-contract-own-gradient-begin-transition-a");
     const KvGradientRow* gradient_begin = find_gradient(
         applied, "typed-contract-own-gradient-begin-b");
-    check(rows_match && curve_transition && curve_begin_cant && gradient_transition &&
-              gradient_begin && curve_transition->order < curve_begin_cant->order &&
-              gradient_transition->order < gradient_begin->order,
-          "own-track inserts retain stable ids, target file, arity, and paired source order");
+    const KvGradientRow* gradient_end_transition = find_gradient(
+        applied, "typed-contract-own-gradient-end-transition-a");
+    const KvGradientRow* gradient_end = find_gradient(
+        applied, "typed-contract-own-gradient-end-b");
+    check(rows_match && curve_transition && curve_begin_cant && curve_end_transition &&
+              curve_end && gradient_transition && gradient_begin && gradient_end_transition &&
+              gradient_end && curve_transition->order < curve_begin_cant->order &&
+              !nearly_equal(curve_transition->distance, curve_begin_cant->distance) &&
+              curve_end_transition->order < curve_end->order &&
+              !nearly_equal(curve_end_transition->distance, curve_end->distance) &&
+              gradient_transition->order < gradient_begin->order &&
+              !nearly_equal(gradient_transition->distance, gradient_begin->distance) &&
+              gradient_end_transition->order < gradient_end->order &&
+              !nearly_equal(gradient_end_transition->distance, gradient_end->distance),
+          "own-track inserts retain stable ids, distinct paired distances, and source order");
 
     check(kv_edit_reset_memory(handle.value) != 0,
           "own-track insert reset call");
@@ -2729,11 +2759,11 @@ void own_track_insert_contract() {
         "Curve.Change(-400);",
         "Curve.BeginTransition();",
         "Curve.End();",
+        "Curve.End();",
         "Gradient.BeginTransition();",
         "Gradient.Begin(12.5);",
         "Gradient.BeginTransition();",
         "Gradient.End();",
-        "Curve.End();",
         "Gradient.Begin(-8);",
         "Gradient.End();",
     };

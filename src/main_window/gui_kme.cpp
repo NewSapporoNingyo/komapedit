@@ -3922,7 +3922,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                 }
                 next.owned_edit_ids.push_back(transition_edit_id);
                 add_related_field(
-                    "transitionStart", "distance", "Transition start",
+                    "transitionStart", "distance", tr("label.transition_start"),
                     inspector_row_field_value(transition_row, request.row_kind, "distance"),
                     inspector_row_field_value(*original_transition_row,
                                               request.row_kind, "distance"),
@@ -3930,7 +3930,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                     transition_hash,
                     transition_info ? transition_info->source_distance_string : std::string{});
             } else {
-                add_field("transitionStart", "Transition start",
+                add_field("transitionStart", tr("label.transition_start"),
                           tr("value.none"), tr("value.none"),
                           MapElementNumericConstraint::None, false);
                 next.fields.back().read_only = true;
@@ -7313,6 +7313,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "new_element.usage.curve.begin_transition", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"transitionStart", "transitionStart", MapElementNumericConstraint::Finite, true, "0"},
                 {"radius", "radius", MapElementNumericConstraint::Finite, true, "0"},
                 {"cant", "cant", MapElementNumericConstraint::Finite, true, "0"},
             },
@@ -7335,6 +7336,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "new_element.usage.curve.end", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"transitionStart", "transitionStart", MapElementNumericConstraint::Finite, true, "0"},
             },
             NewElementOwnTrackTransitionMode::Optional,
         },
@@ -7345,6 +7347,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "new_element.usage.gradient.begin", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"transitionStart", "transitionStart", MapElementNumericConstraint::Finite, true, "0"},
                 {"gradient", "gradient", MapElementNumericConstraint::Finite, true, "0"},
             },
             NewElementOwnTrackTransitionMode::Optional,
@@ -7356,6 +7359,7 @@ const std::vector<NewElementTemplate>& new_element_templates() {
             "new_element.usage.gradient.end", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"transitionStart", "transitionStart", MapElementNumericConstraint::Finite, true, "0"},
             },
             NewElementOwnTrackTransitionMode::Optional,
         },
@@ -7806,6 +7810,25 @@ void update_repeater_wizard_field_enablement(NewElementWizardState& wizard) {
     }
 }
 
+void update_own_track_transition_wizard_field_enablement(
+    NewElementWizardState& wizard) {
+    for (MapElementEditFieldState& field : wizard.form.fields) {
+        if (field.key == "transitionStart") {
+            const bool was_disabled = field.disabled;
+            field.disabled = !wizard.own_track_add_transition;
+            if (was_disabled && !field.disabled &&
+                edit_field_buffer_text(field) == field.original_value) {
+                const MapElementEditFieldState* distance =
+                    find_inspector_field(wizard.form, "distance");
+                if (distance) {
+                    field.original_value = edit_field_buffer_text(*distance);
+                    set_edit_field_buffer(field, field.original_value);
+                }
+            }
+        }
+    }
+}
+
 } // namespace
 
 bool App::can_use_resource_key_in_new_element_wizard(
@@ -8065,6 +8088,11 @@ void App::apply_new_element_wizard_distance_prefill() {
     const std::string value = format_double(*wizard.distance_prefill, 0);
     distance->original_value = value;
     set_edit_field_buffer(*distance, value);
+    if (MapElementEditFieldState* transition_start =
+            find_inspector_field(wizard.form, "transitionStart")) {
+        transition_start->original_value = value;
+        set_edit_field_buffer(*transition_start, value);
+    }
     if (MapElementEditFieldState* end_distance =
             find_inspector_field(wizard.form, "endDistance")) {
         end_distance->original_value = value;
@@ -8113,12 +8141,16 @@ void App::rebuild_new_element_wizard_form() {
         MapElementEditFieldState field;
         field.key = spec.key;
         field.backend_key = spec.key;
-        field.label = spec.label;
+        field.label = spec.key == std::string_view("transitionStart")
+            ? tr("label.transition_start")
+            : spec.label;
         field.numeric_constraint = spec.constraint;
         field.key_source = map_element_key_source_for_field(form.row_kind, spec.key);
         field.required = spec.required;
         field.optional_insertion_argument = spec.optional_insertion_argument;
-        field.original_value = spec.key == std::string_view("distance") && wizard.distance_prefill
+        field.original_value =
+            (spec.key == std::string_view("distance") ||
+             spec.key == std::string_view("transitionStart")) && wizard.distance_prefill
             ? format_double(*wizard.distance_prefill, 0)
             : std::string(spec.default_value);
         set_edit_field_buffer(field, field.original_value);
@@ -8149,6 +8181,7 @@ void App::rebuild_new_element_wizard_form() {
         }
         update_repeater_wizard_field_enablement(wizard);
     }
+    update_own_track_transition_wizard_field_enablement(wizard);
     wizard.built_template = wizard.selected_template;
     wizard.built_target_file = wizard.target_file_path;
 }
@@ -8169,6 +8202,15 @@ bool App::apply_new_element_insert() {
         rebuild_new_element_wizard_form();
     }
     normalize_optional_insertion_argument_enablement(form);
+    if (tpl.own_track_transition_mode ==
+        NewElementOwnTrackTransitionMode::Required) {
+        wizard.own_track_add_transition = true;
+    }
+    const bool own_track_transition_pair =
+        tpl.own_track_transition_mode == NewElementOwnTrackTransitionMode::Required ||
+        (tpl.own_track_transition_mode == NewElementOwnTrackTransitionMode::Optional &&
+         wizard.own_track_add_transition);
+    update_own_track_transition_wizard_field_enablement(wizard);
     if (tpl.row_kind == "repeater") {
         if (!wizard.repeater_add_begin && !wizard.repeater_add_end) {
             set_program_status("status.edit.required_field");
@@ -8303,11 +8345,6 @@ bool App::apply_new_element_insert() {
                 wizard.target_file_path);
         return false;
     }
-    const bool own_track_transition_pair =
-        tpl.own_track_transition_mode == NewElementOwnTrackTransitionMode::Required ||
-        (tpl.own_track_transition_mode == NewElementOwnTrackTransitionMode::Optional &&
-         wizard.own_track_add_transition);
-
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     std::string insert_base;
     do {
@@ -8366,14 +8403,16 @@ bool App::apply_new_element_insert() {
     } else if (own_track_transition_pair) {
         const MapElementEditFieldState* distance_field =
             find_inspector_field(form, "distance");
-        if (!distance_field) {
+        const MapElementEditFieldState* transition_start_field =
+            find_inspector_field(form, "transitionStart");
+        if (!distance_field || !transition_start_field) {
             set_program_status("status.edit.required_field");
             return false;
         }
         MapElementPendingChange transition =
             make_insert_change(insert_base + "-a-transition");
         transition.field_changes["distance"] =
-            trim_gui_ascii_copy(edit_field_buffer_text(*distance_field));
+            trim_gui_ascii_copy(edit_field_buffer_text(*transition_start_field));
         transition.field_changes["method"] = tpl.row_kind == "curve"
             ? "Curve.BeginTransition"
             : "Gradient.BeginTransition";
@@ -8382,7 +8421,8 @@ bool App::apply_new_element_insert() {
         MapElementPendingChange primary =
             make_insert_change(insert_base + "-b-primary");
         for (const MapElementEditFieldState& field : form.fields) {
-            if (field.read_only || field.disabled || is_section_values_field(field)) continue;
+            if (field.read_only || field.disabled || is_section_values_field(field) ||
+                field.key == "transitionStart") continue;
             const std::string& backend_key =
                 field.backend_key.empty() ? field.key : field.backend_key;
             primary.field_changes[backend_key] =
@@ -8564,6 +8604,7 @@ void App::render_new_element_wizard() {
                 ImGui::Checkbox(tr("chk.new_element_own_track_add_transition").c_str(),
                                 &wizard.own_track_add_transition);
             }
+            update_own_track_transition_wizard_field_enablement(wizard);
             render_map_element_field_inputs(
                 wizard.form, tpl.row_kind == "otherTrack.change");
         }
@@ -11490,6 +11531,7 @@ int App::run_debug_headless_new_element_edit(
         }
         *out << "insert_begin_distance=" << format_double(begin_distance, 6) << "\n"
              << "insert_end_distance=" << format_double(end_distance, 6) << "\n";
+        check("own_track_pair_distances_distinct", begin_distance != end_distance);
 
         std::string track_key;
         std::string structure_key;
@@ -11988,12 +12030,24 @@ int App::run_debug_headless_new_element_edit(
         check("curve_end_template_fields",
               prepare_wizard("curve.end") &&
                   find_inspector_field(app.new_element_wizard_.form, "distance") &&
-                  app.new_element_wizard_.form.fields.size() == 1 &&
+                  find_inspector_field(app.new_element_wizard_.form, "transitionStart") &&
+                  find_inspector_field(app.new_element_wizard_.form, "transitionStart")->disabled &&
+                  app.new_element_wizard_.form.fields.size() == 2 &&
+                  !app.new_element_wizard_.own_track_add_transition);
+        check("gradient_begin_template_fields",
+              prepare_wizard("gradient.begin") &&
+                  find_inspector_field(app.new_element_wizard_.form, "distance") &&
+                  find_inspector_field(app.new_element_wizard_.form, "transitionStart") &&
+                  find_inspector_field(app.new_element_wizard_.form, "transitionStart")->disabled &&
+                  find_inspector_field(app.new_element_wizard_.form, "gradient") &&
+                  app.new_element_wizard_.form.fields.size() == 3 &&
                   !app.new_element_wizard_.own_track_add_transition);
         check("gradient_end_template_fields",
               prepare_wizard("gradient.end") &&
                   find_inspector_field(app.new_element_wizard_.form, "distance") &&
-                  app.new_element_wizard_.form.fields.size() == 1 &&
+                  find_inspector_field(app.new_element_wizard_.form, "transitionStart") &&
+                  find_inspector_field(app.new_element_wizard_.form, "transitionStart")->disabled &&
+                  app.new_element_wizard_.form.fields.size() == 2 &&
                   !app.new_element_wizard_.own_track_add_transition);
 
         check("curve_paired_template_prepared",
@@ -12001,7 +12055,10 @@ int App::run_debug_headless_new_element_edit(
         NewElementWizardState& curve_wizard = app.new_element_wizard_;
         const bool curve_pair_fields_ok = curve_wizard.own_track_add_transition &&
             find_inspector_field(curve_wizard.form, "cant") &&
-            set_field(curve_wizard.form, "distance", format_double(begin_distance, 6)) &&
+            find_inspector_field(curve_wizard.form, "transitionStart") &&
+            !find_inspector_field(curve_wizard.form, "transitionStart")->disabled &&
+            set_field(curve_wizard.form, "transitionStart", format_double(begin_distance, 6)) &&
+            set_field(curve_wizard.form, "distance", format_double(end_distance, 6)) &&
             set_field(curve_wizard.form, "radius", "300") &&
             set_field(curve_wizard.form, "cant", "0.15");
         check("curve_paired_wizard_fields_set", curve_pair_fields_ok);
@@ -12026,8 +12083,11 @@ int App::run_debug_headless_new_element_edit(
                   curve_primary_edit_id == "insert-1-b-primary" &&
                   app.pending_edit_changes_.size() == 2 && curve_transition_insert &&
                   curve_primary_insert &&
-                  pending_field(curve_transition_insert, "distance") ==
-                      pending_field(curve_primary_insert, "distance") &&
+                  std::abs(std::stod(pending_field(curve_transition_insert, "distance")) -
+                           begin_distance) < 1e-9 &&
+                  std::abs(std::stod(pending_field(curve_primary_insert, "distance")) -
+                           end_distance) < 1e-9 &&
+                  pending_field(curve_primary_insert, "transitionStart").empty() &&
                   pending_field(curve_primary_insert, "radius") == "300" &&
                   pending_field(curve_primary_insert, "cant") == "0.15");
         check("curve_paired_target_source_and_order_ok",
@@ -12037,6 +12097,10 @@ int App::run_debug_headless_new_element_edit(
                   table_cell(*curve_primary_row, "filePath") == target_file &&
                   table_cell(*curve_primary_row, "_transitionEditId") ==
                       curve_transition_edit_id &&
+                  std::abs(table_cell_number(*curve_transition_row, "distance") -
+                           begin_distance) < 1e-9 &&
+                  std::abs(table_cell_number(*curve_primary_row, "distance") -
+                           end_distance) < 1e-9 &&
                   table_cell_number(*curve_transition_row, "order") <
                       table_cell_number(*curve_primary_row, "order"));
         check("curve_paired_inspector_open_ok",
@@ -12065,9 +12129,17 @@ int App::run_debug_headless_new_element_edit(
 
         check("curve_end_pair_template_prepared", prepare_wizard("curve.end"));
         NewElementWizardState& curve_end_wizard = app.new_element_wizard_;
+        const bool curve_end_primary_distance_set =
+            set_field(curve_end_wizard.form, "distance", format_double(end_distance, 6));
         curve_end_wizard.own_track_add_transition = true;
+        update_own_track_transition_wizard_field_enablement(curve_end_wizard);
         const bool curve_end_pair_fields_ok =
-            set_field(curve_end_wizard.form, "distance", format_double(begin_distance, 6));
+            curve_end_primary_distance_set &&
+            find_inspector_field(curve_end_wizard.form, "transitionStart") &&
+            !find_inspector_field(curve_end_wizard.form, "transitionStart")->disabled &&
+            edit_field_buffer_text(*find_inspector_field(
+                curve_end_wizard.form, "transitionStart")) == format_double(end_distance, 6) &&
+            set_field(curve_end_wizard.form, "transitionStart", format_double(begin_distance, 6));
         check("curve_end_pair_wizard_fields_set", curve_end_pair_fields_ok);
         check("curve_end_pair_wizard_apply_ok",
               curve_end_pair_fields_ok && apply_wizard());
@@ -12079,13 +12151,28 @@ int App::run_debug_headless_new_element_edit(
             app.model_.curve_rows, curve_end_transition_edit_id);
         const TableRow* curve_end_primary_row = model_row(
             app.model_.curve_rows, curve_end_primary_edit_id);
+        const MapElementPendingChange* curve_end_transition_insert =
+            pending_insert(curve_end_transition_edit_id);
+        const MapElementPendingChange* curve_end_primary_insert =
+            pending_insert(curve_end_primary_edit_id);
         check("curve_end_pair_ledger_and_target_ok",
               curve_end_transition_edit_id == "insert-1-a-transition" &&
                   curve_end_primary_edit_id == "insert-1-b-primary" &&
                   curve_end_transition_row && curve_end_primary_row &&
+                  curve_end_transition_insert && curve_end_primary_insert &&
                   app.pending_edit_changes_.size() == 2 &&
+                  std::abs(std::stod(pending_field(curve_end_transition_insert,
+                                                    "distance")) - begin_distance) < 1e-9 &&
+                  std::abs(std::stod(pending_field(curve_end_primary_insert,
+                                                    "distance")) - end_distance) < 1e-9 &&
                   table_cell(*curve_end_primary_row, "_transitionEditId") ==
                       curve_end_transition_edit_id &&
+                  std::abs(table_cell_number(*curve_end_transition_row, "distance") -
+                           begin_distance) < 1e-9 &&
+                  std::abs(table_cell_number(*curve_end_primary_row, "distance") -
+                           end_distance) < 1e-9 &&
+                  table_cell_number(*curve_end_transition_row, "order") <
+                      table_cell_number(*curve_end_primary_row, "order") &&
                   table_cell(*curve_end_transition_row, "filePath") == target_file &&
                   table_cell(*curve_end_primary_row, "filePath") == target_file);
         MapElementDeleteRequest curve_end_pair_delete;
@@ -12099,10 +12186,18 @@ int App::run_debug_headless_new_element_edit(
 
         check("gradient_begin_pair_template_prepared", prepare_wizard("gradient.begin"));
         NewElementWizardState& gradient_begin_wizard = app.new_element_wizard_;
+        const bool gradient_begin_primary_distance_set =
+            set_field(gradient_begin_wizard.form, "distance", format_double(end_distance, 6));
         gradient_begin_wizard.own_track_add_transition = true;
+        update_own_track_transition_wizard_field_enablement(gradient_begin_wizard);
         const bool gradient_begin_pair_fields_ok =
+            gradient_begin_primary_distance_set &&
+            find_inspector_field(gradient_begin_wizard.form, "transitionStart") &&
+            !find_inspector_field(gradient_begin_wizard.form, "transitionStart")->disabled &&
+            edit_field_buffer_text(*find_inspector_field(
+                gradient_begin_wizard.form, "transitionStart")) == format_double(end_distance, 6) &&
             find_inspector_field(gradient_begin_wizard.form, "gradient") &&
-            set_field(gradient_begin_wizard.form, "distance", format_double(begin_distance, 6)) &&
+            set_field(gradient_begin_wizard.form, "transitionStart", format_double(begin_distance, 6)) &&
             set_field(gradient_begin_wizard.form, "gradient", "12");
         check("gradient_begin_pair_wizard_fields_set", gradient_begin_pair_fields_ok);
         check("gradient_begin_pair_wizard_apply_ok",
@@ -12115,15 +12210,29 @@ int App::run_debug_headless_new_element_edit(
             app.model_.gradient_rows, gradient_begin_transition_edit_id);
         const TableRow* gradient_begin_primary_row = model_row(
             app.model_.gradient_rows, gradient_begin_primary_edit_id);
+        const MapElementPendingChange* gradient_begin_transition_insert =
+            pending_insert(gradient_begin_transition_edit_id);
+        const MapElementPendingChange* gradient_begin_primary_insert =
+            pending_insert(gradient_begin_primary_edit_id);
         check("gradient_begin_pair_ledger_and_target_ok",
               gradient_begin_transition_edit_id == "insert-1-a-transition" &&
                   gradient_begin_primary_edit_id == "insert-1-b-primary" &&
                   gradient_begin_transition_row && gradient_begin_primary_row &&
+                  gradient_begin_transition_insert && gradient_begin_primary_insert &&
                   app.pending_edit_changes_.size() == 2 &&
-                  pending_field(pending_insert(gradient_begin_primary_edit_id), "gradient") ==
-                      "12" &&
+                  std::abs(std::stod(pending_field(gradient_begin_transition_insert,
+                                                    "distance")) - begin_distance) < 1e-9 &&
+                  std::abs(std::stod(pending_field(gradient_begin_primary_insert,
+                                                    "distance")) - end_distance) < 1e-9 &&
+                  pending_field(gradient_begin_primary_insert, "gradient") == "12" &&
                   table_cell(*gradient_begin_primary_row, "_transitionEditId") ==
                       gradient_begin_transition_edit_id &&
+                  std::abs(table_cell_number(*gradient_begin_transition_row, "distance") -
+                           begin_distance) < 1e-9 &&
+                  std::abs(table_cell_number(*gradient_begin_primary_row, "distance") -
+                           end_distance) < 1e-9 &&
+                  table_cell_number(*gradient_begin_transition_row, "order") <
+                      table_cell_number(*gradient_begin_primary_row, "order") &&
                   table_cell(*gradient_begin_transition_row, "filePath") == target_file &&
                   table_cell(*gradient_begin_primary_row, "filePath") == target_file);
         MapElementDeleteRequest gradient_begin_pair_delete;
@@ -12137,9 +12246,17 @@ int App::run_debug_headless_new_element_edit(
 
         check("gradient_end_pair_template_prepared", prepare_wizard("gradient.end"));
         NewElementWizardState& gradient_end_wizard = app.new_element_wizard_;
+        const bool gradient_end_primary_distance_set =
+            set_field(gradient_end_wizard.form, "distance", format_double(end_distance, 6));
         gradient_end_wizard.own_track_add_transition = true;
+        update_own_track_transition_wizard_field_enablement(gradient_end_wizard);
         const bool gradient_end_pair_fields_ok =
-            set_field(gradient_end_wizard.form, "distance", format_double(begin_distance, 6));
+            gradient_end_primary_distance_set &&
+            find_inspector_field(gradient_end_wizard.form, "transitionStart") &&
+            !find_inspector_field(gradient_end_wizard.form, "transitionStart")->disabled &&
+            edit_field_buffer_text(*find_inspector_field(
+                gradient_end_wizard.form, "transitionStart")) == format_double(end_distance, 6) &&
+            set_field(gradient_end_wizard.form, "transitionStart", format_double(begin_distance, 6));
         check("gradient_end_pair_wizard_fields_set", gradient_end_pair_fields_ok);
         check("gradient_end_pair_wizard_apply_ok",
               gradient_end_pair_fields_ok && apply_wizard());
@@ -12151,13 +12268,28 @@ int App::run_debug_headless_new_element_edit(
             app.model_.gradient_rows, gradient_end_transition_edit_id);
         const TableRow* gradient_end_primary_row = model_row(
             app.model_.gradient_rows, gradient_end_primary_edit_id);
+        const MapElementPendingChange* gradient_end_transition_insert =
+            pending_insert(gradient_end_transition_edit_id);
+        const MapElementPendingChange* gradient_end_primary_insert =
+            pending_insert(gradient_end_primary_edit_id);
         check("gradient_end_pair_ledger_and_target_ok",
               gradient_end_transition_edit_id == "insert-1-a-transition" &&
                   gradient_end_primary_edit_id == "insert-1-b-primary" &&
                   gradient_end_transition_row && gradient_end_primary_row &&
+                  gradient_end_transition_insert && gradient_end_primary_insert &&
                   app.pending_edit_changes_.size() == 2 &&
+                  std::abs(std::stod(pending_field(gradient_end_transition_insert,
+                                                    "distance")) - begin_distance) < 1e-9 &&
+                  std::abs(std::stod(pending_field(gradient_end_primary_insert,
+                                                    "distance")) - end_distance) < 1e-9 &&
                   table_cell(*gradient_end_primary_row, "_transitionEditId") ==
                       gradient_end_transition_edit_id &&
+                  std::abs(table_cell_number(*gradient_end_transition_row, "distance") -
+                           begin_distance) < 1e-9 &&
+                  std::abs(table_cell_number(*gradient_end_primary_row, "distance") -
+                           end_distance) < 1e-9 &&
+                  table_cell_number(*gradient_end_transition_row, "order") <
+                      table_cell_number(*gradient_end_primary_row, "order") &&
                   table_cell(*gradient_end_transition_row, "filePath") == target_file &&
                   table_cell(*gradient_end_primary_row, "filePath") == target_file);
         MapElementDeleteRequest gradient_end_pair_delete;
@@ -12389,8 +12521,10 @@ int App::run_debug_headless_new_element_edit(
                   prepare_wizard("curve.begin_transition"));
             NewElementWizardState& commit_curve_wizard = app.new_element_wizard_;
             const bool commit_curve_fields_ok =
-                set_field(commit_curve_wizard.form, "distance",
+                set_field(commit_curve_wizard.form, "transitionStart",
                           format_double(begin_distance, 6)) &&
+                set_field(commit_curve_wizard.form, "distance",
+                          format_double(end_distance, 6)) &&
                 set_field(commit_curve_wizard.form, "radius", "450") &&
                 set_field(commit_curve_wizard.form, "cant", "0.12");
             check("commit_curve_pair_fields_set", commit_curve_fields_ok);
@@ -12405,9 +12539,12 @@ int App::run_debug_headless_new_element_edit(
                   prepare_wizard("gradient.begin"));
             NewElementWizardState& commit_gradient_wizard = app.new_element_wizard_;
             commit_gradient_wizard.own_track_add_transition = true;
+            update_own_track_transition_wizard_field_enablement(commit_gradient_wizard);
             const bool commit_gradient_fields_ok =
-                set_field(commit_gradient_wizard.form, "distance",
+                set_field(commit_gradient_wizard.form, "transitionStart",
                           format_double(begin_distance, 6)) &&
+                set_field(commit_gradient_wizard.form, "distance",
+                          format_double(end_distance, 6)) &&
                 set_field(commit_gradient_wizard.form, "gradient", "8");
             check("commit_gradient_pair_fields_set", commit_gradient_fields_ok);
             check("commit_gradient_pair_apply_ok",
@@ -12454,10 +12591,11 @@ int App::run_debug_headless_new_element_edit(
                       entry_hash_after != baseline_entry_hash));
             const auto has_committed_row = [&](const std::vector<TableRow>& rows,
                                                const char* method,
+                                               double distance,
                                                int argument_count) {
                 return std::any_of(rows.begin(), rows.end(), [&](const TableRow& row) {
                     return table_cell(row, "method") == method &&
-                        std::abs(table_cell_number(row, "distance") - begin_distance) < 1e-9 &&
+                        std::abs(table_cell_number(row, "distance") - distance) < 1e-9 &&
                         static_cast<int>(table_cell_number(row, "argumentCount")) ==
                             argument_count &&
                         table_cell(row, "filePath") == target_file;
@@ -12466,13 +12604,13 @@ int App::run_debug_headless_new_element_edit(
             check("commit_reload_own_track_pairs_ok",
                   disk_reload.ok &&
                       has_committed_row(disk_reload.model.curve_rows,
-                                        "Curve.BeginTransition", 0) &&
+                                        "Curve.BeginTransition", begin_distance, 0) &&
                       has_committed_row(disk_reload.model.curve_rows,
-                                        "Curve.Begin", 2) &&
+                                        "Curve.Begin", end_distance, 2) &&
                       has_committed_row(disk_reload.model.gradient_rows,
-                                        "Gradient.BeginTransition", 0) &&
+                                        "Gradient.BeginTransition", begin_distance, 0) &&
                       has_committed_row(disk_reload.model.gradient_rows,
-                                        "Gradient.Begin", 1));
+                                        "Gradient.Begin", end_distance, 1));
             if (disk_reload.handle) kv_free(disk_reload.handle);
             *out << "stage=commit-and-disk-reload-complete\n";
         } else {
