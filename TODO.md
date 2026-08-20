@@ -34,3 +34,6 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 可将多个地图语句设为1组，通过 `kme.json` 保存地图元素预设组，应用后生成普通 BVE map 语句
 - [ ] 自定义工作区：保存多种UI布局作为预设，根据不同使用场景切换UI布局
 - [ ] 线路发行版导出：展开 Include、可选常量化距离/变量表达式、只复制实际使用资源、输出报告，并保护开发线路目录不被覆盖（这是项目中的功能，与仓库中的release构建没有直接关系）
+
+### 问题修复
+- [ ] 新建地图元素向导中无法单独设置曲线/坡道缓和曲线起点位置
