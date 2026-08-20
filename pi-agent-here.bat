@@ -1,0 +1,1 @@
+pi --model your_provider/your-model --thinking max @pi-prompts.txt

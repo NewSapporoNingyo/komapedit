@@ -1,15 +1,15 @@
-third_party/imgui/
 /third_party
 /tests
 /build
 /build_release
 install_Assimp(local).bat
 /local_docs
-/.codex
-pi-prompts.txt
-pi-agent-deepseek-here.bat
-pi-agent-kimik3-here.bat
-pi-agent-grok45-here.bat
 
-# Per-user Codex task history
+#pi
+pi-prompts_local.txt
+pi-agent-here(local).bat
+
+# Codex
+/.codex
 /.agents/memories/rollout-summaries/
+
