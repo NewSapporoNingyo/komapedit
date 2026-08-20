@@ -1343,9 +1343,9 @@ private:
         std::string fn = ascii_lower(function.label);
 
         if (first == "curve") {
-            dispatch_curve(fn, function.args);
+            dispatch_curve(fn, function.args, function.explicit_argument_count);
         } else if (first == "gradient") {
-            dispatch_gradient(fn, function.args);
+            dispatch_gradient(fn, function.args, function.explicit_argument_count);
         } else if (first == "legacy") {
             dispatch_legacy(fn, function.args);
         } else if (first == "station") {
@@ -1406,14 +1406,15 @@ private:
         }
     }
 
-    void dispatch_curve(const std::string& fn, const std::vector<Value>& a) {
+    void dispatch_curve(const std::string& fn, const std::vector<Value>& a,
+                        size_t explicit_argument_count) {
         auto add_edit_row = [&](const std::string& method) {
             CurveEditRow row;
             row.distance = ctx_.distance;
             row.method = method;
             row.radius = a.empty() ? Value::null() : a[0];
             row.cant = a.size() > 1 ? a[1] : Value::null();
-            row.argument_count = static_cast<int>(a.size());
+            row.argument_count = static_cast<int>(explicit_argument_count);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);
@@ -1441,13 +1442,14 @@ private:
         }
     }
 
-    void dispatch_gradient(const std::string& fn, const std::vector<Value>& a) {
+    void dispatch_gradient(const std::string& fn, const std::vector<Value>& a,
+                           size_t explicit_argument_count) {
         auto add_edit_row = [&](const std::string& method) {
             GradientEditRow row;
             row.distance = ctx_.distance;
             row.method = method;
             row.gradient = a.empty() ? Value::null() : a[0];
-            row.argument_count = static_cast<int>(a.size());
+            row.argument_count = static_cast<int>(explicit_argument_count);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             attach_active_edit_ref(ctx_, row);

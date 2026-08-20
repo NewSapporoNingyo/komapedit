@@ -2127,6 +2127,46 @@ void validate_other_track_insert_change(const MapEditChange& change) {
     }
 }
 
+void validate_own_track_insert_change(const MapEditChange& change) {
+    const std::string method = insert_method_or_default(change, "");
+    if (change.row_kind == "curve") {
+        validate_insert_field_names(change, {"distance", "method", "radius", "cant"});
+        validate_insert_method(change, "", {
+            "Curve.BeginTransition", "Curve.Begin", "Curve.Change", "Curve.End",
+        });
+        if (method == "Curve.BeginTransition" || method == "Curve.End") {
+            if (change.field_changes.find("radius") != change.field_changes.end() ||
+                change.field_changes.find("cant") != change.field_changes.end()) {
+                throw std::runtime_error(method + " insert does not accept radius or cant");
+            }
+            return;
+        }
+        (void)required_numeric_value_field(change, "radius", Value::null());
+        if (method == "Curve.Change") {
+            if (change.field_changes.find("cant") != change.field_changes.end()) {
+                throw std::runtime_error("Curve.Change insert accepts exactly one radius argument");
+            }
+            return;
+        }
+        if (change.field_changes.find("cant") != change.field_changes.end()) {
+            (void)required_numeric_value_field(change, "cant", Value::null());
+        }
+        return;
+    }
+
+    validate_insert_field_names(change, {"distance", "method", "gradient"});
+    validate_insert_method(change, "", {
+        "Gradient.BeginTransition", "Gradient.Begin", "Gradient.End",
+    });
+    if (method == "Gradient.BeginTransition" || method == "Gradient.End") {
+        if (change.field_changes.find("gradient") != change.field_changes.end()) {
+            throw std::runtime_error(method + " insert does not accept a gradient argument");
+        }
+        return;
+    }
+    (void)required_numeric_value_field(change, "gradient", Value::null());
+}
+
 void validate_insert_change(const MapEditChange& change) {
     if (change.row_kind.empty()) {
         throw std::runtime_error("insert edit is missing its row kind");
@@ -2186,6 +2226,8 @@ void validate_insert_change(const MapEditChange& change) {
                                      "x", "y", "z", "rx", "ry", "rz", "tilt", "span"});
     } else if (row_kind == "otherTrack.change") {
         validate_other_track_insert_change(change);
+    } else if (row_kind == "curve" || row_kind == "gradient") {
+        validate_own_track_insert_change(change);
     } else if (row_kind == "irregularity.change") {
         validate_insert_field_names(change,
                                     {"distance", "x", "y", "r", "lx", "ly", "lr"});
@@ -2332,6 +2374,29 @@ std::string build_insert_statement(const MapEditChange& change) {
             + insert_required_number(change, "rz") + ","
             + insert_required_number(change, "tilt") + ","
             + insert_required_number(change, "span") + ");";
+    }
+    if (row_kind == "curve") {
+        const std::string method = insert_method_or_default(change, "");
+        if (method == "Curve.BeginTransition" || method == "Curve.End") {
+            return method + "();";
+        }
+        const std::string radius = insert_required_number(change, "radius");
+        if (method == "Curve.Change") {
+            return "Curve.Change(" + radius + ");";
+        }
+        const auto cant = change.field_changes.find("cant");
+        return "Curve.Begin(" + radius +
+            (cant == change.field_changes.end()
+                 ? std::string{}
+                 : "," + insert_required_number(change, "cant")) +
+            ");";
+    }
+    if (row_kind == "gradient") {
+        const std::string method = insert_method_or_default(change, "");
+        if (method == "Gradient.BeginTransition" || method == "Gradient.End") {
+            return method + "();";
+        }
+        return "Gradient.Begin(" + insert_required_number(change, "gradient") + ");";
     }
     if (row_kind == "otherTrack.change") {
         const std::string method = insert_method_or_default(change, "");
@@ -2910,6 +2975,104 @@ struct PreparedEdit {
     std::string suggested_distance_expression;
     DistanceSectionAnalysis section;
 };
+
+void validate_own_track_transition_insert_pairs(
+    const std::vector<PreparedEdit>& prepared, MapEditReport& report) {
+    std::vector<const PreparedEdit*> events;
+    for (const PreparedEdit& edit : prepared) {
+        if (edit.operation != "insert" || !edit.change ||
+            (edit.change->row_kind != "curve" && edit.change->row_kind != "gradient")) {
+            continue;
+        }
+        events.push_back(&edit);
+    }
+    std::stable_sort(events.begin(), events.end(), [](const PreparedEdit* left,
+                                                        const PreparedEdit* right) {
+        if (left->source_file_index != right->source_file_index) {
+            return left->source_file_index < right->source_file_index;
+        }
+        if (left->source_range.first != right->source_range.first) {
+            return left->source_range.first < right->source_range.first;
+        }
+        return left->input_ordinal < right->input_ordinal;
+    });
+
+    const auto same_location = [](const PreparedEdit& left, const PreparedEdit& right) {
+        return left.source_file_index == right.source_file_index &&
+            left.source_range == right.source_range &&
+            exact_distance_value(left.target_distance, right.target_distance);
+    };
+    const auto method = [](const PreparedEdit& edit) {
+        return insert_method_or_default(*edit.change, "");
+    };
+    const auto has_cant = [](const PreparedEdit& edit) {
+        return edit.change->field_changes.find("cant") != edit.change->field_changes.end();
+    };
+
+    const PreparedEdit* curve_transition = nullptr;
+    const PreparedEdit* gradient_transition = nullptr;
+    const auto consume = [&](const PreparedEdit*& transition, const PreparedEdit& primary,
+                             const char* family) {
+        if (!transition) return true;
+        if (!same_location(*transition, primary)) {
+            report.blocking_errors.push_back(
+                std::string(family) + " BeginTransition and its consuming insert must use "
+                "the same target distance and source file");
+            return false;
+        }
+        transition = nullptr;
+        return true;
+    };
+    for (const PreparedEdit* event : events) {
+        const std::string event_method = method(*event);
+        if (event->change->row_kind == "curve") {
+            if (event_method == "Curve.BeginTransition") {
+                if (curve_transition) {
+                    report.blocking_errors.push_back(
+                        "Curve.BeginTransition insert must be followed by one consuming insert");
+                    return;
+                }
+                curve_transition = event;
+            } else if (event_method == "Curve.End" ||
+                       (event_method == "Curve.Begin" && has_cant(*event))) {
+                if (!curve_transition && event_method == "Curve.Begin" && has_cant(*event)) {
+                    report.blocking_errors.push_back(
+                        "Curve.Begin(radius, cant) insert requires a preceding Curve.BeginTransition");
+                    return;
+                }
+                if (!consume(curve_transition, *event, "Curve")) return;
+            } else if (curve_transition) {
+                report.blocking_errors.push_back(
+                    "Curve.BeginTransition insert must immediately precede its consuming insert");
+                return;
+            }
+            continue;
+        }
+
+        if (event_method == "Gradient.BeginTransition") {
+            if (gradient_transition) {
+                report.blocking_errors.push_back(
+                    "Gradient.BeginTransition insert must be followed by one consuming insert");
+                return;
+            }
+            gradient_transition = event;
+        } else if (event_method == "Gradient.Begin" || event_method == "Gradient.End") {
+            if (!consume(gradient_transition, *event, "Gradient")) return;
+        } else if (gradient_transition) {
+            report.blocking_errors.push_back(
+                "Gradient.BeginTransition insert must immediately precede its consuming insert");
+            return;
+        }
+    }
+    if (curve_transition) {
+        report.blocking_errors.push_back(
+            "Curve.BeginTransition insert requires one consuming insert");
+    }
+    if (gradient_transition) {
+        report.blocking_errors.push_back(
+            "Gradient.BeginTransition insert requires one consuming insert");
+    }
+}
 
 struct DistanceEditGroup {
     std::string key;
@@ -4534,9 +4697,14 @@ void validate_edit_report(MapContext& baseline,
     candidate->element_edit_id_cache.clear();
 
     std::set<std::string> deleted_ids;
+    std::set<std::string> inserted_ids;
     for (const MapEditChange& change : changes) {
-        if (ascii_lower(change.operation.empty() ? "update" : change.operation) == "delete") {
+        const std::string operation =
+            ascii_lower(change.operation.empty() ? "update" : change.operation);
+        if (operation == "delete") {
             deleted_ids.insert(change.edit_id);
+        } else if (operation == "insert") {
+            inserted_ids.insert(change.edit_id);
         }
     }
     OwnTrackTransitionState expected_links = own_track_transition_state(baseline);
@@ -4552,6 +4720,24 @@ void validate_edit_report(MapContext& baseline,
         expected_links.orphan_transition_ids.erase(edit_id);
     }
     const OwnTrackTransitionState candidate_links = own_track_transition_state(*candidate);
+    for (const auto& pair : candidate_links.pairs) {
+        const bool transition_inserted = inserted_ids.find(pair.first) != inserted_ids.end();
+        const bool primary_inserted = inserted_ids.find(pair.second) != inserted_ids.end();
+        if (!transition_inserted && !primary_inserted) continue;
+        if (!transition_inserted || !primary_inserted) {
+            report.blocking_errors.push_back(
+                "inserted BeginTransition pairing crossed an existing source statement");
+            return;
+        }
+        expected_links.pairs.insert(pair);
+    }
+    for (const std::string& edit_id : candidate_links.orphan_transition_ids) {
+        if (inserted_ids.find(edit_id) != inserted_ids.end()) {
+            report.blocking_errors.push_back(
+                "inserted BeginTransition did not reparse as a paired transition");
+            return;
+        }
+    }
     if (candidate_links.pairs != expected_links.pairs ||
         candidate_links.orphan_transition_ids != expected_links.orphan_transition_ids) {
         report.blocking_errors.push_back(
@@ -5430,6 +5616,9 @@ MapEditReport build_edit_report(MapContext& ctx,
         }
     }
 
+    if (!report.blocking_errors.empty()) return report;
+
+    validate_own_track_transition_insert_pairs(prepared, report);
     if (!report.blocking_errors.empty()) return report;
 
     std::map<std::string, DistanceEditGroup> distance_groups;

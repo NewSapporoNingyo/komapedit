@@ -716,8 +716,7 @@ HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
             if (!value) return options;
             options.output_path = *value;
         } else if (arg == "--commit") {
-            options.error = "--debug-headless-new-element-edit never commits source files";
-            return options;
+            options.commit = true;
         }
     }
     if (options.requested && options.path.empty() && options.error.empty()) {

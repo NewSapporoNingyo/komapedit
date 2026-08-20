@@ -189,7 +189,7 @@ build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-o
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
-build\komapedit.exe --debug-headless-new-element-edit <map-path> --headless-output build\new-element-edit.txt
+build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
@@ -203,7 +203,7 @@ The plan benchmark defaults to `--interaction pan`. The two measurement interact
 
 `--debug-headless-other-track-key-edit` requires an explicit map path. It selects a string-key other track with at least two statements, checks whole-track atomicity and global duplicate rejection, then performs dry run, memory Apply, Reset, a second Apply, and reload. `--commit` writes the validated working copy and intentionally leaves authorized route changes in place for physical diff inspection; the report includes the old/new keys, every target, changed files, dependency-reference preservation, and source hashes.
 
-`--debug-headless-new-element-edit` drives the production New Map Element wizard, Inspector Apply, and delete/cancel paths. It creates a paired Repeater, changes a normal Begin parameter, the End distance, and the key, cancels the chain, then repeats the follow-up edit/cancel flow for a single-row Structure element and for two other-track changes. The other-track sequence checks new-key track creation, case-insensitive same-key reuse, target-file provenance, Inspector parameter drafts, preview refresh, and cancellation back to baseline. The command is intentionally memory-only: it rejects `--commit`, resets the working copy, reloads from disk, and reports ledger members, stable edit IDs, semantic row checks, and source hashes before returning PASS/FAIL.
+`--debug-headless-new-element-edit` drives the production New Map Element wizard, Inspector Apply, and delete/cancel paths. Alongside its existing resource, Repeater, Structure, and other-track sequences, it checks own-track templates, paired `Curve.BeginTransition()` plus two-argument `Curve.Begin`, optional paired Curve End/Gradient Begin/Gradient End, target-file provenance, Inspector follow-up, and cancellation. Without `--commit`, it resets and reloads the working copy, confirming disk hashes are unchanged. With `--commit`, it follows the normal Save boundary to write one paired curve and one paired gradient set to the selected source, then reports the committed target, hashes, and a fresh reload validation; authorized route changes remain for physical diff inspection.
 
 The New Map Element command also verifies Structure Model, Sound File, and 3D Sound File List keys are only prefilled into a matching current wizard template, without changing an open wizard's other draft fields or target source file.
 

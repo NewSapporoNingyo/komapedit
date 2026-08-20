@@ -168,6 +168,7 @@ struct HeadlessNewElementEditOptions {
     std::string path;
     std::string output_path;
     double unit_distance = 25.0;
+    bool commit = false;
     std::string error;
 };
 

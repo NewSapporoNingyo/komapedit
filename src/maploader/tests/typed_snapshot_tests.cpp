@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -1159,6 +1160,78 @@ struct OtherTrackInsertBatch {
             for (size_t index = 0; index < spec.parameters.size(); ++index) {
                 append("parameter" + std::to_string(index), spec.parameters[index]);
             }
+            field_ranges.push_back({
+                offset,
+                static_cast<std::uint64_t>(field_names.size()) - offset,
+            });
+            change_ids.push_back(spec.change_id);
+        }
+        fields.reserve(field_names.size());
+        for (size_t index = 0; index < field_names.size(); ++index) {
+            fields.push_back({utf8_view(field_names[index]), utf8_view(field_values[index])});
+        }
+        changes.resize(specs.size());
+        for (size_t index = 0; index < specs.size(); ++index) {
+            KvEditChange& change = changes[index];
+            change.change_id = utf8_view(change_ids[index]);
+            change.edit_id = utf8_view(change_ids[index]);
+            change.operation = KV_EDIT_INSERT;
+            change.fields = field_ranges[index];
+            change.target_file_path = utf8_view(target_file);
+        }
+        batch = {
+            changes.empty() ? nullptr : changes.data(),
+            static_cast<std::uint64_t>(changes.size()),
+            fields.empty() ? nullptr : fields.data(),
+            static_cast<std::uint64_t>(fields.size()),
+        };
+    }
+};
+
+struct OwnTrackInsertSpec {
+    std::string change_id;
+    std::string row_kind;
+    std::string method;
+    std::string distance;
+    std::string radius;
+    std::string cant;
+    std::string gradient;
+};
+
+struct OwnTrackInsertBatch {
+    std::string target_file;
+    std::vector<std::string> change_ids;
+    std::vector<std::string> field_names;
+    std::vector<std::string> field_values;
+    std::vector<KvEditField> fields;
+    std::vector<KvEditChange> changes;
+    KvEditBatch batch{};
+
+    OwnTrackInsertBatch(std::string target,
+                        const std::vector<OwnTrackInsertSpec>& specs)
+        : target_file(std::move(target)) {
+        size_t field_count = 0;
+        for (const OwnTrackInsertSpec& spec : specs) {
+            field_count += 3 + (!spec.radius.empty()) + (!spec.cant.empty()) +
+                (!spec.gradient.empty());
+        }
+        change_ids.reserve(specs.size());
+        field_names.reserve(field_count);
+        field_values.reserve(field_count);
+        std::vector<KvSpan> field_ranges;
+        field_ranges.reserve(specs.size());
+        for (const OwnTrackInsertSpec& spec : specs) {
+            const std::uint64_t offset = static_cast<std::uint64_t>(field_names.size());
+            auto append = [&](const char* name, const std::string& value) {
+                field_names.emplace_back(name);
+                field_values.push_back(value);
+            };
+            append("rowKind", spec.row_kind);
+            append("distance", spec.distance);
+            append("method", spec.method);
+            if (!spec.radius.empty()) append("radius", spec.radius);
+            if (!spec.cant.empty()) append("cant", spec.cant);
+            if (!spec.gradient.empty()) append("gradient", spec.gradient);
             field_ranges.push_back({
                 offset,
                 static_cast<std::uint64_t>(field_names.size()) - offset,
@@ -2410,6 +2483,275 @@ void repeater_insert_contract() {
           "Repeater insert source text uses official Begin, Begin0, and End syntax");
 }
 
+const KvCurveRow* find_curve(const KvMapSnapshot& snapshot,
+                             const std::string& edit_id) {
+    for (std::uint64_t index = 0; index < snapshot.curve_count; ++index) {
+        if (map_string(snapshot, snapshot.curves[index].metadata.edit_id) == edit_id) {
+            return &snapshot.curves[index];
+        }
+    }
+    return nullptr;
+}
+
+const KvGradientRow* find_gradient(const KvMapSnapshot& snapshot,
+                                   const std::string& edit_id) {
+    for (std::uint64_t index = 0; index < snapshot.gradient_count; ++index) {
+        if (map_string(snapshot, snapshot.gradients[index].metadata.edit_id) == edit_id) {
+            return &snapshot.gradients[index];
+        }
+    }
+    return nullptr;
+}
+
+void own_track_insert_contract() {
+    TempFixture fixture;
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "own-track insert fixture load");
+    if (!handle.value) return;
+
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0 &&
+              baseline.other_track_change_count != 0 &&
+              baseline.other_track_changes != nullptr,
+          "own-track insert baseline snapshot");
+    if (baseline.other_track_change_count == 0 || !baseline.other_track_changes) return;
+    const KvOtherTrackChangeRow& source_row = baseline.other_track_changes[0];
+    check(source_row.metadata.source_file_index < baseline.source_file_count,
+          "own-track insert source index");
+    if (source_row.metadata.source_file_index >= baseline.source_file_count) return;
+    const std::string source_path = map_string(
+        baseline, baseline.source_files[source_row.metadata.source_file_index].file_path);
+    const std::uint64_t baseline_curve_count = baseline.curve_count;
+    const std::uint64_t baseline_gradient_count = baseline.gradient_count;
+
+    const std::vector<OwnTrackInsertSpec> valid_specs = {
+        {"typed-contract-own-curve-transition-a", "curve", "Curve.BeginTransition", "1", "", "", ""},
+        {"typed-contract-own-curve-begin-cant-b", "curve", "Curve.Begin", "1", "300", "0.15", ""},
+        {"typed-contract-own-curve-begin", "curve", "Curve.Begin", "2", "350", "", ""},
+        {"typed-contract-own-curve-change", "curve", "Curve.Change", "3", "-400", "", ""},
+        {"typed-contract-own-curve-end-transition-a", "curve", "Curve.BeginTransition", "4", "", "", ""},
+        {"typed-contract-own-curve-end-b", "curve", "Curve.End", "4", "", "", ""},
+        {"typed-contract-own-curve-end", "curve", "Curve.End", "7", "", "", ""},
+        {"typed-contract-own-gradient-begin-transition-a", "gradient", "Gradient.BeginTransition", "5", "", "", ""},
+        {"typed-contract-own-gradient-begin-b", "gradient", "Gradient.Begin", "5", "", "", "12.5"},
+        {"typed-contract-own-gradient-end-transition-a", "gradient", "Gradient.BeginTransition", "6", "", "", ""},
+        {"typed-contract-own-gradient-end-b", "gradient", "Gradient.End", "6", "", "", ""},
+        {"typed-contract-own-gradient-begin", "gradient", "Gradient.Begin", "8", "", "", "-8"},
+        {"typed-contract-own-gradient-end", "gradient", "Gradient.End", "9", "", "", ""},
+    };
+    const size_t curve_insert_count = static_cast<size_t>(std::count_if(
+        valid_specs.begin(), valid_specs.end(), [](const OwnTrackInsertSpec& spec) {
+            return spec.row_kind == "curve";
+        }));
+    const size_t gradient_insert_count = valid_specs.size() - curve_insert_count;
+    OwnTrackInsertBatch valid(source_path, valid_specs);
+    KvEditReportSnapshot dry_report{};
+    check(kv_edit_dry_run_typed(handle.value, &valid.batch, &dry_report,
+                                sizeof(dry_report)) != 0,
+          "own-track insert dry-run call");
+    validate_report(dry_report);
+    check(dry_report.ok && dry_report.full_reparse_ok &&
+              dry_report.insert_count == static_cast<int>(valid_specs.size()) &&
+              dry_report.non_target_changed_count == 0,
+          "all official own-track insert forms validate without non-target changes");
+
+    auto rejected_insert = [&](const char* label, const char* expected_error,
+                               const OwnTrackInsertSpec& spec) {
+        OwnTrackInsertBatch invalid(source_path, {spec});
+        KvEditReportSnapshot report{};
+        check(kv_edit_dry_run_typed(handle.value, &invalid.batch, &report,
+                                    sizeof(report)) != 0, label);
+        validate_report(report);
+        check(!report.ok && edit_report_has_error_containing(report, expected_error), label);
+    };
+    rejected_insert("two-argument Curve.Begin requires paired transition",
+                    "requires a preceding Curve.BeginTransition", {
+                        "typed-contract-own-unpaired-curve-begin", "curve", "Curve.Begin",
+                        "10", "300", "0.15", "",
+                    });
+    rejected_insert("Curve.Change rejects a cant argument",
+                    "Curve.Change insert accepts exactly one radius argument", {
+                        "typed-contract-own-bad-curve-change", "curve", "Curve.Change",
+                        "10", "300", "0.15", "",
+                    });
+    rejected_insert("Gradient.End rejects a gradient argument",
+                    "Gradient.End insert does not accept a gradient argument", {
+                        "typed-contract-own-bad-gradient-end", "gradient", "Gradient.End",
+                        "10", "", "", "5",
+                    });
+
+    KvEditReportSnapshot applied_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &valid.batch, &applied_report,
+              sizeof(applied_report)) != 0 && applied_report.ok &&
+              applied_report.full_reparse_ok &&
+              applied_report.insert_count == static_cast<int>(valid_specs.size()),
+          "own-track insert apply-to-memory");
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0,
+          "own-track insert applied snapshot");
+    bool rows_match = applied.curve_count == baseline_curve_count + curve_insert_count &&
+        applied.gradient_count == baseline_gradient_count + gradient_insert_count;
+    for (const OwnTrackInsertSpec& spec : valid_specs) {
+        if (spec.row_kind == "curve") {
+            const KvCurveRow* row = find_curve(applied, spec.change_id);
+            const std::uint32_t argument_count = spec.method == "Curve.Begin"
+                ? (spec.cant.empty() ? 1U : 2U)
+                : spec.method == "Curve.Change" ? 1U : 0U;
+            rows_match = rows_match && row &&
+                map_string(applied, row->method) == spec.method &&
+                nearly_equal(row->distance, std::stod(spec.distance)) &&
+                row->argument_count == argument_count &&
+                map_string(applied, row->file_path) == source_path;
+        } else {
+            const KvGradientRow* row = find_gradient(applied, spec.change_id);
+            const std::uint32_t argument_count = spec.method == "Gradient.Begin" ? 1U : 0U;
+            rows_match = rows_match && row &&
+                map_string(applied, row->method) == spec.method &&
+                nearly_equal(row->distance, std::stod(spec.distance)) &&
+                row->argument_count == argument_count &&
+                map_string(applied, row->file_path) == source_path;
+        }
+    }
+    const KvCurveRow* curve_transition = find_curve(
+        applied, "typed-contract-own-curve-transition-a");
+    const KvCurveRow* curve_begin_cant = find_curve(
+        applied, "typed-contract-own-curve-begin-cant-b");
+    const KvGradientRow* gradient_transition = find_gradient(
+        applied, "typed-contract-own-gradient-begin-transition-a");
+    const KvGradientRow* gradient_begin = find_gradient(
+        applied, "typed-contract-own-gradient-begin-b");
+    check(rows_match && curve_transition && curve_begin_cant && gradient_transition &&
+              gradient_begin && curve_transition->order < curve_begin_cant->order &&
+              gradient_transition->order < gradient_begin->order,
+          "own-track inserts retain stable ids, target file, arity, and paired source order");
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "own-track insert reset call");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0 &&
+              reset.curve_count == baseline_curve_count &&
+              reset.gradient_count == baseline_gradient_count &&
+              !find_curve(reset, "typed-contract-own-curve-begin-cant-b") &&
+              !find_gradient(reset, "typed-contract-own-gradient-begin-b"),
+          "own-track insert reset restores the disk baseline");
+
+    KvEditReportSnapshot reapply_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &valid.batch, &reapply_report,
+              sizeof(reapply_report)) != 0 && reapply_report.ok &&
+              reapply_report.full_reparse_ok,
+          "own-track insert reapply before commit");
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report, sizeof(commit_report)) != 0,
+          "own-track insert commit call");
+    validate_report(commit_report);
+    check(commit_report.ok && commit_report.full_reparse_ok &&
+              commit_report.changed_file_count == 1 && commit_report.changed_files &&
+              arena_view(commit_report.string_data, commit_report.string_size,
+                         commit_report.changed_files[0]) == source_path,
+          "own-track insert commit writes only the requested target source");
+    bool committed_ids_match = commit_report.committed_rows != nullptr;
+    for (const OwnTrackInsertSpec& spec : valid_specs) {
+        const bool found = commit_report.committed_rows && std::any_of(
+            commit_report.committed_rows,
+            commit_report.committed_rows + commit_report.committed_row_count,
+            [&](const KvEditCommittedRow& row) {
+                return arena_view(commit_report.string_data, commit_report.string_size,
+                                  row.row_kind) == spec.row_kind &&
+                    arena_view(commit_report.string_data, commit_report.string_size,
+                               row.edit_id) == spec.change_id;
+            });
+        committed_ids_match = committed_ids_match && found;
+    }
+    check(committed_ids_match,
+          "own-track insert commit retains stable identities for every inserted row");
+
+    MapHandle reloaded(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(reloaded.value != nullptr, "own-track insert reload");
+    if (!reloaded.value) return;
+    KvMapSnapshot reloaded_snapshot{};
+    check(kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0,
+          "own-track insert reloaded snapshot");
+    auto has_curve = [&](const OwnTrackInsertSpec& spec) {
+        const std::uint32_t argument_count = spec.method == "Curve.Begin"
+            ? (spec.cant.empty() ? 1U : 2U)
+            : spec.method == "Curve.Change" ? 1U : 0U;
+        return std::any_of(
+            reloaded_snapshot.curves,
+            reloaded_snapshot.curves + reloaded_snapshot.curve_count,
+            [&](const KvCurveRow& row) {
+                return map_string(reloaded_snapshot, row.method) == spec.method &&
+                    nearly_equal(row.distance, std::stod(spec.distance)) &&
+                    row.argument_count == argument_count &&
+                    map_string(reloaded_snapshot, row.file_path) == source_path &&
+                    !map_string(reloaded_snapshot, row.metadata.edit_id).empty();
+            });
+    };
+    auto has_gradient = [&](const OwnTrackInsertSpec& spec) {
+        const std::uint32_t argument_count = spec.method == "Gradient.Begin" ? 1U : 0U;
+        return std::any_of(
+            reloaded_snapshot.gradients,
+            reloaded_snapshot.gradients + reloaded_snapshot.gradient_count,
+            [&](const KvGradientRow& row) {
+                return map_string(reloaded_snapshot, row.method) == spec.method &&
+                    nearly_equal(row.distance, std::stod(spec.distance)) &&
+                    row.argument_count == argument_count &&
+                    map_string(reloaded_snapshot, row.file_path) == source_path &&
+                    !map_string(reloaded_snapshot, row.metadata.edit_id).empty();
+            });
+    };
+    bool reloaded_rows_match = reloaded_snapshot.curve_count ==
+        baseline_curve_count + curve_insert_count &&
+        reloaded_snapshot.gradient_count == baseline_gradient_count + gradient_insert_count;
+    for (const OwnTrackInsertSpec& spec : valid_specs) {
+        reloaded_rows_match = reloaded_rows_match &&
+            (spec.row_kind == "curve" ? has_curve(spec) : has_gradient(spec));
+    }
+    check(reloaded_rows_match,
+          "own-track insert save/reload retains source and typed snapshots");
+    std::ifstream committed_source(fixture.map_path, std::ios::binary);
+    const std::string committed_text{
+        std::istreambuf_iterator<char>(committed_source),
+        std::istreambuf_iterator<char>()};
+    const std::vector<std::string> official_source_forms = {
+        "Curve.BeginTransition();",
+        "Curve.Begin(300,0.15);",
+        "Curve.Begin(350);",
+        "Curve.Change(-400);",
+        "Curve.BeginTransition();",
+        "Curve.End();",
+        "Gradient.BeginTransition();",
+        "Gradient.Begin(12.5);",
+        "Gradient.BeginTransition();",
+        "Gradient.End();",
+        "Curve.End();",
+        "Gradient.Begin(-8);",
+        "Gradient.End();",
+    };
+    bool source_forms_ordered = true;
+    size_t source_position = 0;
+    for (const std::string& statement : official_source_forms) {
+        const size_t found = committed_text.find(statement, source_position);
+        if (found == std::string::npos) {
+            source_forms_ordered = false;
+            break;
+        }
+        source_position = found + statement.size();
+    }
+    check(source_forms_ordered &&
+              committed_text.find("Curve.BeginCircular(") == std::string::npos,
+          "own-track insert source uses only current official forms in paired order");
+}
+
 void other_track_insert_contract() {
     TempFixture fixture;
     MapHandle handle(kv_load_map_ex(
@@ -3038,6 +3380,7 @@ int edit_contract() {
     other_track_key_edit_contract();
     repeater_key_edit_contract();
     repeater_insert_contract();
+    own_track_insert_contract();
     other_track_insert_contract();
     sound3d_edit_contract();
     TempFixture fixture;

@@ -550,7 +550,7 @@ build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-o
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
-build\komapedit.exe --debug-headless-new-element-edit <map-path> --headless-output build\new-element-edit.txt
+build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
@@ -562,7 +562,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
 
-`--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。它会新建配对 Repeater，依次修改 Begin 普通参数、End 距离和 key，取消整条链，再对一个单行 Structure 元素以及两条他轨道变化语句重复“新建后修改并取消”流程。他轨道序列检查新 key 自动建轨、大小写不敏感的同 key 复用、目标文件来源、Inspector 参数草稿、预览刷新及取消回到基线。该命令被刻意限制为仅内存操作：拒绝 `--commit`，重置工作副本后从磁盘重载，并在返回 PASS/FAIL 前输出 ledger 成员、稳定 edit ID、语义行检查和前后源哈希。
+`--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证自轨道模板、成对的 `Curve.BeginTransition()` 加双参数 `Curve.Begin`、可选配对的 Curve End/Gradient Begin/Gradient End、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
 

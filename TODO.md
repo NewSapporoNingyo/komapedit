@@ -18,8 +18,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 ### 用户界面与辅助功能
 
-- [ ] 自轨道曲线变化点新建功能
-- [ ] 自轨道坡度变化点新建功能
 - [ ] Legacy.Fog 语句编辑与新建
 - [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
 - [ ] include文件新建与导入、解除引用、删除源文件功能

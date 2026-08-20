@@ -1415,6 +1415,8 @@ std::string insert_semantic_container(const std::string& row_kind) {
     if (row_kind == "repeater") return "repeater";
     if (row_kind == "station.put") return "station.put";
     if (row_kind == "signal.put") return "signal.data";
+    if (row_kind == "curve") return "curve";
+    if (row_kind == "gradient") return "gradient";
     if (row_kind == "otherTrack.change") return "otherTrack.change";
     if (row_kind == "irregularity.change") return "irregularity";
     if (row_kind == "beacon.put") return "beacon";
@@ -1480,6 +1482,16 @@ std::string expected_insert_semantic(MapContext& ctx,
         };
         fake.arena += other_track_method;
     }
+    std::string own_track_method;
+    KvStringRef own_track_method_ref{};
+    if (row_kind == "curve" || row_kind == "gradient") {
+        own_track_method = insert_method_or_default(change, "");
+        own_track_method_ref = {
+            static_cast<std::uint64_t>(fake.arena.size()),
+            static_cast<std::uint64_t>(own_track_method.size()),
+        };
+        fake.arena += own_track_method;
+    }
     fake.snapshot.string_data = fake.arena.data();
     fake.snapshot.string_size = fake.arena.size();
     SemanticWriter out;
@@ -1504,6 +1516,29 @@ std::string expected_insert_semantic(MapContext& ctx,
         KvSignalPutRow row{};
         path_row(row);
         write_signal_put(out, fake.snapshot, row, &change);
+    } else if (row_kind == "curve") {
+        KvCurveRow row{};
+        path_row(row);
+        row.method = own_track_method_ref;
+        if (own_track_method == "Curve.Begin") {
+            row.argument_count = semantic_change.field_changes.find("cant") ==
+                semantic_change.field_changes.end() ? 1U : 2U;
+            row.radius.kind = KV_VALUE_NUMBER;
+            if (row.argument_count == 2) row.cant.kind = KV_VALUE_NUMBER;
+        } else if (own_track_method == "Curve.Change") {
+            row.argument_count = 1;
+            row.radius.kind = KV_VALUE_NUMBER;
+        }
+        write_curve(out, fake.snapshot, row, &semantic_change);
+    } else if (row_kind == "gradient") {
+        KvGradientRow row{};
+        path_row(row);
+        row.method = own_track_method_ref;
+        if (own_track_method == "Gradient.Begin") {
+            row.argument_count = 1;
+            row.gradient.kind = KV_VALUE_NUMBER;
+        }
+        write_gradient(out, fake.snapshot, row, &semantic_change);
     } else if (row_kind == "otherTrack.change") {
         KvOtherTrackChangeRow row{};
         path_row(row);

@@ -31,8 +31,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Parse other-track `Track.Position`, `Track.X/Y.Interpolate`, `Track.Gauge`, and `Track.Cant.*` statements.
 - [x] Support control-point range and interval settings, with geometry regeneration.
 - [x] Load and display speed-limit sections.
-- [x] Edit or delete existing own-track curve change points, including paired `Curve.BeginTransition` statements where applicable; insertion and method conversion are not supported.
-- [x] Edit or delete existing own-track gradient change points, including paired `Gradient.BeginTransition` statements where applicable; insertion and method conversion are not supported.
+- [x] Edit or delete existing own-track curve change points, including paired `Curve.BeginTransition` statements where applicable; the New Map Element wizard inserts current `Curve.Begin(radius)`, paired `Curve.BeginTransition()` + `Curve.Begin(radius, cant)`, `Curve.Change(radius)`, and `Curve.End()` forms, while legacy aliases and `Interpolate` remain creation-disabled.
+- [x] Edit or delete existing own-track gradient change points, including paired `Gradient.BeginTransition` statements where applicable; the New Map Element wizard inserts `Gradient.Begin(gradient)` and `Gradient.End()`, optionally atomically preceded by `Gradient.BeginTransition()`, while `Gradient.BeginConst` and `Interpolate` remain creation-disabled.
 - [x] Edit or delete supported existing other-track change statements from their edit-mode 2D/3D markers. Track key, method, and argument count remain read-only; insertion, dragging, gizmos, and method conversion are not supported.
 - [x] Rename an other-track `trackKey` from the Other Tracks table across every same-key `Track[...]` statement in the root map and Includes, with whole-map duplicate protection and no cascading changes to dependent map elements; the change-point Inspector field remains read-only.
 
@@ -162,8 +162,8 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 解析他轨道 `Track.Position`、`Track.X/Y.Interpolate`、`Track.Gauge` 和 `Track.Cant.*` 语句
 - [x] 支持控制点范围和间隔设置，并可重新生成几何
 - [x] 支持限速区间读取与显示
-- [x] 编辑或删除已有自轨道曲线变化点，并在适用时联动成对的 `Curve.BeginTransition`；暂不支持新建和方法转换
-- [x] 编辑或删除已有自轨道坡度变化点，并在适用时联动成对的 `Gradient.BeginTransition`；暂不支持新建和方法转换
+- [x] 编辑或删除已有自轨道曲线变化点，并在适用时联动成对的 `Curve.BeginTransition`；“新建地图元素”向导可新建现行 `Curve.Begin(radius)`、成对的 `Curve.BeginTransition()` + `Curve.Begin(radius, cant)`、`Curve.Change(radius)` 和 `Curve.End()`，旧式别名与 `Interpolate` 仍不提供新建。
+- [x] 编辑或删除已有自轨道坡度变化点，并在适用时联动成对的 `Gradient.BeginTransition`；“新建地图元素”向导可新建 `Gradient.Begin(gradient)` 与 `Gradient.End()`，可原子地前置 `Gradient.BeginTransition()`；`Gradient.BeginConst` 和 `Interpolate` 仍不提供新建。
 - [x] 从编辑模式下的 2D/3D 标记编辑或删除受支持的既有他轨道变化语句；track key、方法和参数个数只读，暂不支持新建、拖动、gizmo 或方法转换
 - [x] 从“其他轨道”表统一重命名根地图及 Include 中同键的全部 `Track[...]` 语句；执行全地图重名保护且不级联修改依赖地图元素，他轨道变化点检查器中的 track key 保持只读
 
