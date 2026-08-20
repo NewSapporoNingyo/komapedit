@@ -1346,7 +1346,11 @@ struct NewElementWizardState {
     bool repeater_change_point_prompt_requested = false;
     bool repeater_extra_end_prompt_requested = false;
     bool confirm_repeater_change_point_once = false;
-    bool own_track_add_transition = false;
+    bool own_track_add_start = true;
+    bool own_track_add_end = true;
+    bool own_track_start_add_transition = true;
+    bool own_track_end_add_transition = true;
+    bool own_track_curve_add_cant = true;
     std::optional<MapElementInspectorRequest> return_inspector_request;
     bool close_after_successful_apply = false;
     MapElementInspectorState form;
