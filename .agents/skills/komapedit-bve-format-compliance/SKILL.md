@@ -8,11 +8,14 @@ description: Verify and implement komapedit route-format behavior against the of
 ## Establish the official contract
 
 1. Read `references/official-bve-format-baseline.md` completely before planning the change.
-2. Identify every affected file format, statement or row shape, cross-file reference, and lifecycle stage.
-3. Open the current official page for each affected format from the reference source table. Treat the live official page as normative and the bundled baseline as a navigation aid and review checklist.
-4. Treat current source and tests as evidence of implemented behavior, not as evidence that a syntax shape is official. Treat route samples, project documentation, and memories as secondary evidence only.
-5. Classify every affected construct as current official syntax, an official legacy alias, project-only compatibility syntax, or unsupported syntax. Never present one class as another.
-6. If the live official page, this baseline, the request, and current code disagree in a way that affects behavior, stop and request a human decision as required by `AGENTS.md`. Do not silently choose a compatibility or migration policy.
+2. Check `references/official-bve-pages/last-updated.txt` before planning. The cache is current only when it contains a valid `YYYY-MM-DD` date no later than today and `0 <= today - date <= 30 days`. If it is missing, malformed, future-dated, or older than 30 days, refresh every source in the baseline's source table and write today's date only after every download succeeds.
+3. Identify every affected file format, statement or row shape, cross-file reference, and lifecycle stage.
+4. Read the cached local HTML page for each affected format from `references/official-bve-pages/`; do not open its online source while the cache is current. Treat the cached page as the task-time official contract and the bundled baseline as a navigation aid and review checklist.
+5. Treat current source and tests as evidence of implemented behavior, not as evidence that a syntax shape is official. Treat route samples, project documentation, and memories as secondary evidence only.
+6. Classify every affected construct as current official syntax, an official legacy alias, project-only compatibility syntax, or unsupported syntax. Never present one class as another.
+7. If a cached page, this baseline, the request, and current code disagree in a way that affects behavior, stop and request a human decision as required by `AGENTS.md`. Do not silently choose a compatibility or migration policy.
+
+The local cache and its `last-updated.txt` timestamp are deliberately Git-ignored; never stage or commit them. When refreshing, stage each download, compare it with the existing cache, and replace the bundle only after every download succeeds. For a format outside the source table, fetch and cache its official page once, add its source/cache mapping to the table, and use the cached copy on later tasks.
 
 Do not infer a signature, optional argument, default, unit, range, alias, comment rule, case rule, or omission behavior from a similar command or another BVE file format.
 
@@ -20,7 +23,7 @@ Do not infer a signature, optional argument, default, unit, range, alias, commen
 
 Record the following for each affected construct in task notes or the implementation plan:
 
-- authoritative official page and the date it was checked;
+- authoritative cached official page and its cache-refresh date;
 - exact header/version and encoding declaration rules;
 - lexical form, separator/terminator, comment syntax, and case behavior;
 - exact element/function or section/key spelling and every documented arity;
@@ -58,17 +61,15 @@ Keep syntax acceptance separate from feature support. Accepting an official form
 3. Prove read and write paths independently, then prove parse → typed snapshot → edit/create → serialize → full reparse for source-backed behavior.
 4. Include the relevant encoding, Include, expression, ordering, and cross-file cases. Use temporary fixtures for write tests.
 5. Update support tables only for behavior actually implemented and validated. Label official legacy aliases and project compatibility syntax accurately.
-6. Report the official pages checked, compliance matrix outcome, tests run, unsupported forms, intentional compatibility behavior, and any unresolved discrepancy.
+6. Report the cached official pages checked and their refresh date, compliance matrix outcome, tests run, unsupported forms, intentional compatibility behavior, and any unresolved discrepancy.
 
 Do not claim official compliance from compilation alone, from one sample route, or from a successful parse that does not prove the documented semantics.
 
-## Maintain the bundled baseline
+## Maintain the local official-page cache and bundled baseline
 
-Use `references/official-bve-format-baseline.md` as a compact snapshot of the six official sources supplied for this project. If a live page has changed:
+Use `references/official-bve-format-baseline.md` as a compact snapshot of the official cache bundle. Refresh the static pages only when the timestamp is missing, malformed, or more than 30 days old; do not fetch them on every invocation. After a refresh, if a cached page has changed:
 
 1. record the exact difference;
-2. update the baseline only from the official page;
+2. update the baseline only from the refreshed official page;
 3. determine whether source, tests, support documentation, or compatibility policy is affected;
 4. stop for a human decision before implementing a behavior-changing interpretation that the current task did not already determine.
-
-For a BVE format outside the six-source scope, locate and read its official specification before implementation. Do not extrapolate from the nearest covered format.

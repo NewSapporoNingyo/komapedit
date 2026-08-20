@@ -1,6 +1,6 @@
 # Official BVE route-format baseline
 
-Verified against the official BVE Trainsim pages on 2026-08-13. The live official pages remain normative; this file is a compact routing aid, signature inventory, and review checklist rather than a replacement specification.
+This baseline was verified against the official BVE Trainsim pages on 2026-08-13. The local official-page cache in `official-bve-pages/` is the task-time contract, and its `last-updated.txt` records the last refresh date; this file is a compact routing aid, signature inventory, and review checklist rather than a replacement specification.
 
 ## Contents
 
@@ -15,16 +15,16 @@ Verified against the official BVE Trainsim pages on 2026-08-13. The live officia
 
 ## Official sources and scope
 
-| Format | Official source | Covered role |
-| --- | --- | --- |
-| Map | [Map file](https://bvets.net/jp/edit/formats/route/map.html) | Route statements, expressions, distance, and Include |
-| Structure List | [Structure list](https://bvets.net/jp/edit/formats/route/structure.html) | Structure keys and model paths |
-| Signal Aspects List | [Signal aspects list](https://bvets.net/jp/edit/formats/route/signal.html) | Aspect keys, indexed structures, and glare rows |
-| Sound List | [Sound list](https://bvets.net/jp/edit/formats/route/sound.html) | Sound keys, WAV paths, and buffer counts |
-| Other-train | [Other-train file](https://bvets.net/jp/edit/formats/route/train.html) | Other-train structures and 3D sound regions |
-| Scenario | [Scenario file](https://bvets.net/jp/edit/formats/scenario.html) | Route/vehicle entry selection and display metadata |
+| Format | Official source | Local cache file | Covered role |
+| --- | --- | --- | --- |
+| Map | [Map file](https://bvets.net/jp/edit/formats/route/map.html) | `map.html` | Route statements, expressions, distance, and Include |
+| Structure List | [Structure list](https://bvets.net/jp/edit/formats/route/structure.html) | `structure.html` | Structure keys and model paths |
+| Signal Aspects List | [Signal aspects list](https://bvets.net/jp/edit/formats/route/signal.html) | `signal.html` | Aspect keys, indexed structures, and glare rows |
+| Sound List | [Sound list](https://bvets.net/jp/edit/formats/route/sound.html) | `sound.html` | Sound keys, WAV paths, and buffer counts |
+| Other-train | [Other-train file](https://bvets.net/jp/edit/formats/route/train.html) | `train.html` | Other-train structures and 3D sound regions |
+| Scenario | [Scenario file](https://bvets.net/jp/edit/formats/scenario.html) | `scenario.html` | Route/vehicle entry selection and display metadata |
 
-This baseline covers only these six supplied official pages. For linked formats such as Station List or vehicle files, retrieve the corresponding official specification before changing their grammar. The Map page defines `Station.Load` and `Station[...].Put`, but it does not define the Station List row schema.
+This baseline initially covers these six official pages. For linked formats such as Station List or vehicle files, add the corresponding official specification to the local cache and this table before changing their grammar. The Map page defines `Station.Load` and `Station[...].Put`, but it does not define the Station List row schema.
 
 Official-page badges such as `NEW` and annotations such as `[old]` describe status; they are not source tokens. Project forms such as `Legacy.*` are compatibility syntax unless an official page explicitly says otherwise.
 
@@ -58,7 +58,7 @@ Do not transfer CSV quoting, escaping, whitespace, duplicate-key, case, or unkno
 
 ## Official Map statement signatures
 
-The list below inventories official shapes visible on the Map page at the verification date. Re-open the relevant live entry before implementation.
+The list below inventories official shapes visible on the cached Map page at the verification date. Read the relevant cached entry before implementation.
 
 ### Own track and other tracks
 
@@ -129,7 +129,7 @@ SpeedLimit.Begin(v)
 SpeedLimit.End()
 ```
 
-Do not interpret `...` as accepting an empty variable-length list. Verify the minimum documented cardinality and each value's semantics on the live page before coding or testing it.
+Do not interpret `...` as accepting an empty variable-length list. Verify the minimum documented cardinality and each value's semantics in the cached page before coding or testing it.
 
 ### Timing, environment, sound, and other trains
 
