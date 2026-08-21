@@ -653,6 +653,23 @@ int snapshot_contract() {
     }
 
     {
+        TempFixture huge_version_fixture;
+        std::ofstream huge_version_map(
+            huge_version_fixture.map_path, std::ios::binary | std::ios::trunc);
+        huge_version_map << "BveTs Map " << std::string(400, '9')
+                         << ":utf-8\n0;\n";
+        huge_version_map.close();
+        MapHandle huge_version_handle(kv_load_map_ex(
+            huge_version_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(huge_version_handle.value == nullptr,
+              "over-range header version is rejected");
+        const char* error = kv_get_last_error();
+        check(error && std::string_view(error).find(
+                           "Header version is invalid") != std::string_view::npos,
+              "over-range header version has a deterministic error");
+    }
+
+    {
         TempFixture numeric_fixture;
         std::ofstream map(numeric_fixture.map_path, std::ios::binary | std::ios::trunc);
         map << "BveTs Map 2.02:utf-8\n"
@@ -3249,6 +3266,83 @@ void line_ending_edit_contract() {
                       "line-ending Signal Aspects row reconnection");
             }
         }
+    }
+
+    auto check_decoded_source_position = [&](TempFixture& position_fixture,
+                                             const char* expected_statement,
+                                             const char* label) {
+        MapHandle handle(kv_load_map_ex(
+            position_fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, label);
+        if (!handle.value) return;
+        KvMapSnapshot snapshot{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &snapshot, sizeof(snapshot)) != 0 &&
+                  snapshot.structure_put_count == 1,
+              "decoded source-position snapshot");
+        if (snapshot.structure_put_count != 1) return;
+        const KvStructurePutRow& row = snapshot.structure_puts[0];
+        const KvSourceFileRow& source =
+            snapshot.source_files[row.metadata.source_file_index];
+        UpdateBatch update(
+            map_string(snapshot, row.metadata.edit_id),
+            map_string(snapshot, source.source_hash), "7", "x");
+        KvEditReportSnapshot report{};
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &update.batch, &report, sizeof(report)) != 0 &&
+                  report.ok,
+              "decoded source-position apply");
+        const char* source_text = kv_get_source_text(
+            handle.value, position_fixture.path_utf8().c_str());
+        const bool statement_preserved = source_text &&
+            std::string_view(source_text).find(expected_statement) !=
+                std::string_view::npos;
+        kv_free_string(source_text);
+        check(statement_preserved,
+              "decoded source-position preserves multibyte text and indentation");
+        check(kv_edit_reset_memory(handle.value) != 0,
+              "decoded source-position reset");
+    };
+
+    {
+        TempFixture utf8_position_fixture;
+        std::ofstream map(
+            utf8_position_fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "Structure.Load('structures.csv');\n"
+            << "0;\n"
+            << "    Structure['電柱'].Put('0',1,2,3,0,0,0,0,25);\n";
+        map.close();
+        std::ofstream structures(
+            utf8_position_fixture.directory / "structures.csv",
+            std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\n電柱,pole.x\n";
+        structures.close();
+        check_decoded_source_position(
+            utf8_position_fixture,
+            "    Structure['電柱'].Put('0',7,2,3,0,0,0,0,25);",
+            "UTF-8 multibyte source-position fixture loads");
+    }
+
+    {
+        TempFixture utf16_position_fixture;
+        write_utf16_file(
+            utf16_position_fixture.map_path,
+            u"BveTs Map 2.02:utf-16le\n"
+            u"Structure.Load('structures.csv');\n"
+            u"0;\n"
+            u"    Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n",
+            true);
+        std::ofstream structures(
+            utf16_position_fixture.directory / "structures.csv",
+            std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\npole,pole.x\n";
+        structures.close();
+        check_decoded_source_position(
+            utf16_position_fixture,
+            "    Structure['pole'].Put('0',7,2,3,0,0,0,0,25);",
+            "UTF-16 decoded source-position fixture loads");
     }
 }
 

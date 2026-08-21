@@ -67,6 +67,7 @@
 #include <string_view>
 #include <tuple>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -344,7 +345,7 @@ void set_move_cursor() {
     ::SetCursor(::LoadCursor(nullptr, IDC_SIZEALL));
 }
 
-std::string edit_field_buffer_text(const MapElementEditFieldState& field) {
+const std::string& edit_field_buffer_text(const MapElementEditFieldState& field) {
     return field.value;
 }
 
@@ -1657,18 +1658,16 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         output.order = input.order;
     }
 
-    static const char* station_keys[] = {
-        "stationKey", "stationName", "arrivalTime", "depertureTime", "stoppageTime",
-        "defaultTime", "signalFlag", "alightingTime", "passengers", "arrivalSoundKey",
-        "depertureSoundKey", "doorReopen", "stuckInDoor"
-    };
+    static_assert(k_station_list_field_names.size() ==
+                  std::extent_v<decltype(KvStationListRow::fields)>);
     model.station_definition_rows.reserve(static_cast<size_t>(snapshot.station_list_count));
     std::map<std::string, size_t> station_definition_row_indices_by_key;
     for (std::uint64_t i = 0; i < snapshot.station_list_count; ++i) {
         const KvStationListRow& input = snapshot.station_list[i];
         TableRow row;
-        for (size_t field = 0; field < 13; ++field) {
-            row.cells[station_keys[field]] = map_snapshot_string(snapshot, input.fields[field]);
+        for (size_t field = 0; field < k_station_list_field_names.size(); ++field) {
+            row.cells[k_station_list_field_names[field]] =
+                map_snapshot_string(snapshot, input.fields[field]);
         }
         apply_map_row_metadata(row, snapshot, input.metadata);
         const std::string object_key = map_snapshot_string(snapshot, input.object_key);
@@ -1939,7 +1938,10 @@ void App::request_edit_ui_operation(PendingEditUiOperation operation) {
     pending.operation = operation;
     pending.progress_status_key = apply_operation
         ? "status.edit.applying"
-        : "status.edit.saving";
+        : (operation == PendingEditUiOperation::Revert ||
+           operation == PendingEditUiOperation::DiscardAndResolveClose)
+            ? "status.edit.reverting"
+            : "status.edit.saving";
     pending.previous_status_key = program_status_key_;
     pending.previous_status_elapsed_suffix = program_status_elapsed_suffix_;
     pending_edit_ui_operation_ = std::move(pending);
@@ -1971,6 +1973,15 @@ void App::process_pending_edit_ui_operation() {
         break;
     case PendingEditUiOperation::SaveAndResolveClose:
         if (save_pending_edits(false)) finish_pending_close_action();
+        break;
+    case PendingEditUiOperation::Revert:
+        revert_all_pending_edits();
+        break;
+    case PendingEditUiOperation::DiscardAndResolveClose:
+        if (pending_close_action_ != PendingCloseAction::DisableEditMode ||
+            discard_pending_edits()) {
+            finish_pending_close_action();
+        }
         break;
     case PendingEditUiOperation::None:
         break;
@@ -6562,12 +6573,9 @@ bool App::resolve_pending_close_action(bool save_changes) {
     if (save_changes) {
         request_edit_ui_operation(PendingEditUiOperation::SaveAndResolveClose);
         return false;
-    } else if (action == PendingCloseAction::DisableEditMode && !discard_pending_edits()) {
-        return false;
     }
-
-    finish_pending_close_action();
-    return true;
+    request_edit_ui_operation(PendingEditUiOperation::DiscardAndResolveClose);
+    return false;
 }
 
 void App::finish_pending_close_action() {
@@ -8887,8 +8895,9 @@ std::string App::choose_folder_dialog() {
     PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
     if (!pidl) return {};
     wchar_t path[MAX_PATH] = {};
-    SHGetPathFromIDListW(pidl, path);
+    const BOOL resolved = SHGetPathFromIDListW(pidl, path);
     CoTaskMemFree(pidl);
+    if (!resolved) return {};
     return wide_to_utf8(path);
 }
 
@@ -10929,7 +10938,8 @@ void App::render_popups() {
         ImGui::PopTextWrapPos();
         ImGui::Separator();
         if (ImGui::Button(tr("button.revert").c_str())) {
-            if (revert_all_pending_edits()) ImGui::CloseCurrentPopup();
+            request_edit_ui_operation(PendingEditUiOperation::Revert);
+            ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
@@ -10944,7 +10954,9 @@ void App::render_popups() {
     }
     ImGuiWindowFlags close_unsaved_flags = ImGuiWindowFlags_AlwaysAutoResize;
     if (pending_edit_ui_operation_.operation ==
-        PendingEditUiOperation::SaveAndResolveClose) {
+            PendingEditUiOperation::SaveAndResolveClose ||
+        pending_edit_ui_operation_.operation ==
+            PendingEditUiOperation::DiscardAndResolveClose) {
         close_unsaved_flags |= ImGuiWindowFlags_NoInputs;
     }
     if (ImGui::BeginPopupModal(tr("dialog.unsaved_changes_title").c_str(), nullptr,
@@ -10981,7 +10993,7 @@ void App::render_popups() {
             if (ImGui::Button(tr(exiting
                     ? "button.discard_changes_and_exit"
                     : "button.discard_changes_and_close_edit").c_str())) {
-                if (resolve_pending_close_action(false)) ImGui::CloseCurrentPopup();
+                resolve_pending_close_action(false);
             }
         }
         ImGui::EndPopup();
@@ -12944,6 +12956,79 @@ int App::run_debug_headless_new_element_edit(
             if (disk_reload.handle) kv_free(disk_reload.handle);
             *out << "stage=commit-and-disk-reload-complete\n";
         } else {
+            check("deferred_revert_template_prepared",
+                  prepare_wizard("structure.put0"));
+            NewElementWizardState& deferred_revert_wizard =
+                app.new_element_wizard_;
+            const bool deferred_revert_fields_ok =
+                set_field(deferred_revert_wizard.form, "distance",
+                          format_double(begin_distance, 6)) &&
+                set_field(deferred_revert_wizard.form, "structureKey",
+                          structure_key) &&
+                set_field(deferred_revert_wizard.form, "trackKey", track_key);
+            check("deferred_revert_insert_created",
+                  deferred_revert_fields_ok && apply_wizard() &&
+                      !app.pending_edit_changes_.empty());
+            const size_t deferred_revert_pending_count =
+                app.pending_edit_changes_.size();
+            app.request_edit_ui_operation(PendingEditUiOperation::Revert);
+            app.process_pending_edit_ui_operation();
+            check("deferred_revert_waits_for_present",
+                  app.pending_edit_ui_operation_.operation ==
+                      PendingEditUiOperation::Revert &&
+                  app.pending_edit_changes_.size() ==
+                      deferred_revert_pending_count);
+            app.pending_edit_ui_operation_.progress_rendered = true;
+            check("deferred_revert_progress_presented",
+                  app.on_frame_presented() &&
+                  !app.pending_edit_changes_.empty());
+            app.process_pending_edit_ui_operation();
+            check("deferred_revert_applied_after_present",
+                  !app.edit_ui_operation_pending() &&
+                  app.pending_edit_changes_.empty() &&
+                  app.model_.structures.size() == baseline_structure_count);
+
+            check("deferred_discard_template_prepared",
+                  prepare_wizard("structure.put0"));
+            NewElementWizardState& deferred_discard_wizard =
+                app.new_element_wizard_;
+            const bool deferred_discard_fields_ok =
+                set_field(deferred_discard_wizard.form, "distance",
+                          format_double(begin_distance, 6)) &&
+                set_field(deferred_discard_wizard.form, "structureKey",
+                          structure_key) &&
+                set_field(deferred_discard_wizard.form, "trackKey", track_key);
+            check("deferred_discard_insert_created",
+                  deferred_discard_fields_ok && apply_wizard() &&
+                      !app.pending_edit_changes_.empty());
+            app.pending_close_action_ = PendingCloseAction::DisableEditMode;
+            check("deferred_discard_queued",
+                  !app.resolve_pending_close_action(false) &&
+                  app.pending_edit_ui_operation_.operation ==
+                      PendingEditUiOperation::DiscardAndResolveClose);
+            app.process_pending_edit_ui_operation();
+            check("deferred_discard_waits_for_present",
+                  app.edit_mode_enabled_ &&
+                  !app.pending_edit_changes_.empty() &&
+                  app.pending_close_action_ ==
+                      PendingCloseAction::DisableEditMode);
+            app.pending_edit_ui_operation_.progress_rendered = true;
+            check("deferred_discard_progress_presented",
+                  app.on_frame_presented() &&
+                  !app.pending_edit_changes_.empty());
+            app.process_pending_edit_ui_operation();
+            check("deferred_discard_applied_after_present",
+                  !app.edit_ui_operation_pending() &&
+                  app.pending_close_action_ == PendingCloseAction::None &&
+                  !app.edit_mode_enabled_ &&
+                  app.pending_edit_changes_.empty() &&
+                  app.model_.structures.size() == baseline_structure_count);
+
+            View2D degenerate_fit;
+            degenerate_fit.fit(10.0, 20.0, 10.0, 20.0,
+                               ImVec2(100.0f, 100.0f));
+            check("degenerate_fit_scale_clamped",
+                  degenerate_fit.scale == 10000.0);
             check("working_copy_reset_ok",
                   app.edit_memory_matches_pending_ledger_ &&
                   kv_edit_reset_memory(app.handle_) != 0);
@@ -12991,11 +13076,23 @@ bool g_SwapChainOccluded = false;
 UINT g_ResizeWidth = 0, g_ResizeHeight = 0;
 ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 
-void CreateRenderTarget() {
+bool CreateRenderTarget() {
+    if (!g_pSwapChain || !g_pd3dDevice) return false;
     ID3D11Texture2D* back_buffer = nullptr;
-    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
-    g_pd3dDevice->CreateRenderTargetView(back_buffer, nullptr, &g_mainRenderTargetView);
+    HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
+    if (FAILED(hr) || !back_buffer) {
+        std::cerr << "CreateRenderTarget: failed to acquire the swap-chain buffer\n";
+        return false;
+    }
+    hr = g_pd3dDevice->CreateRenderTargetView(
+        back_buffer, nullptr, &g_mainRenderTargetView);
     back_buffer->Release();
+    if (FAILED(hr) || !g_mainRenderTargetView) {
+        g_mainRenderTargetView = nullptr;
+        std::cerr << "CreateRenderTarget: failed to create the render-target view\n";
+        return false;
+    }
+    return true;
 }
 
 void CleanupRenderTarget() {
@@ -13031,8 +13128,7 @@ bool CreateDeviceD3D(HWND hWnd) {
         factory->MakeWindowAssociation(hWnd, DXGI_MWA_NO_ALT_ENTER);
         factory->Release();
     }
-    CreateRenderTarget();
-    return true;
+    return CreateRenderTarget();
 }
 
 void CleanupDeviceD3D() {
@@ -13389,7 +13485,6 @@ int main(int, char**) {
     }
     if (app_icon) SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(app_icon));
     if (app_icon_small) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(app_icon_small));
-    touch_input::initialize(hwnd);
     g_main_hwnd = hwnd;
     if (!CreateDeviceD3D(hwnd)) {
         CleanupDeviceD3D();
@@ -13472,9 +13567,16 @@ int main(int, char**) {
 
         if (g_ResizeWidth != 0 && g_ResizeHeight != 0) {
             CleanupRenderTarget();
-            g_pSwapChain->ResizeBuffers(0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
-            g_ResizeWidth = g_ResizeHeight = 0;
-            CreateRenderTarget();
+            const HRESULT resize_hr = g_pSwapChain->ResizeBuffers(
+                0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
+            if (FAILED(resize_hr)) {
+                std::cerr << "ResizeBuffers: failed to resize the main swap chain\n";
+            } else {
+                g_ResizeWidth = g_ResizeHeight = 0;
+            }
+        }
+        if (!g_mainRenderTargetView && !CreateRenderTarget()) {
+            continue;
         }
 
         ImGui_ImplDX11_NewFrame();
@@ -13484,8 +13586,10 @@ int main(int, char**) {
 
         ImGui::Render();
         const float clear_color[4] = {0.06f, 0.07f, 0.08f, 1.0f};
-        g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
+        g_pd3dDeviceContext->OMSetRenderTargets(
+            1, &g_mainRenderTargetView, nullptr);
+        g_pd3dDeviceContext->ClearRenderTargetView(
+            g_mainRenderTargetView, clear_color);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {

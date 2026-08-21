@@ -46,7 +46,6 @@ struct TouchFrame {
     float pinch_rotation_delta = 0.0f;
 };
 
-void initialize(HWND hwnd);
 bool handle_message(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param);
 void new_frame();
 const TouchFrame& current_frame();

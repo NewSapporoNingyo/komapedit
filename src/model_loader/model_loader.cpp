@@ -21,10 +21,23 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
 thread_local std::string g_last_error;
+thread_local const char* g_last_error_fallback = nullptr;
+
+void set_last_error(std::string_view message) noexcept {
+    g_last_error_fallback = nullptr;
+    try {
+        if (message.empty()) g_last_error.clear();
+        else g_last_error.assign(message.data(), message.size());
+    } catch (...) {
+        g_last_error.clear();
+        g_last_error_fallback = "model loader error";
+    }
+}
 
 using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
@@ -270,19 +283,20 @@ ML_API unsigned int ml_api_version(void) {
 }
 
 ML_API int ml_load_model(const char* path, MlMeshData* out_model) {
-    if (!out_model) {
-        g_last_error = "output pointer is null";
-        return 0;
-    }
-    *out_model = {};
     try {
+        if (!out_model) throw std::runtime_error("output pointer is null");
+        *out_model = {};
         if (!path || !*path) throw std::runtime_error("model path is empty");
         *out_model = load_with_assimp(path);
-        g_last_error.clear();
+        set_last_error({});
         return 1;
     } catch (const std::exception& e) {
-        g_last_error = e.what();
-        free_mesh(*out_model);
+        set_last_error(e.what());
+        if (out_model) free_mesh(*out_model);
+        return 0;
+    } catch (...) {
+        set_last_error("unknown model loader error");
+        if (out_model) free_mesh(*out_model);
         return 0;
     }
 }
@@ -293,7 +307,7 @@ ML_API void ml_free_model(MlMeshData* model) {
 }
 
 ML_API const char* ml_get_last_error(void) {
-    return g_last_error.c_str();
+    return g_last_error_fallback ? g_last_error_fallback : g_last_error.c_str();
 }
 
 }

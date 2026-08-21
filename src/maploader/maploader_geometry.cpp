@@ -329,8 +329,7 @@ struct HalfSinResult {
 
 constexpr int k_max_half_sine_integration_panels = 100000;
 
-HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_intermediate, double dL = 1.0) {
-    (void)dL;
+HalfSinResult halfsin_intermediate(double L, double r1, double r2, double l_intermediate) {
     if (l_intermediate <= 0.0) {
         return {0.0, 0.0, 0.0, r1 == 0.0 ? k_inf : r1};
     }
@@ -698,9 +697,9 @@ void generate_owntrack(MapContext& ctx, double unitdist,
     if (extra_controlpoints) {
         list_cp.insert(list_cp.end(), extra_controlpoints->begin(), extra_controlpoints->end());
     }
-    list_cp = sorted_unique(list_cp);
-    double cp_min = list_cp.front();
-    double cp_max = list_cp.back();
+    const auto bounds = std::minmax_element(list_cp.begin(), list_cp.end());
+    double cp_min = *bounds.first;
+    double cp_max = *bounds.second;
     double equaldist_unit = unitdist > 0.0 ? unitdist : 25.0;
     const double boundary_margin = 500.0;
 

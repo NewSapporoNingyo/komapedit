@@ -53,6 +53,9 @@ TrackPoint matrix_row_track_point(const Matrix& points, size_t row, bool has_the
     return p;
 }
 
+std::optional<TrackPoint> sample_matrix_track_point_at_lower_bound(
+    const Matrix& points, double distance, bool has_theta_column, size_t lower_bound_row);
+
 std::optional<TrackPoint> sample_matrix_track_point(const Matrix& points, double distance, bool has_theta_column) {
     if (points.empty() || points.cols < 3) return std::nullopt;
     double first = points.at(0, 0);
@@ -69,23 +72,8 @@ std::optional<TrackPoint> sample_matrix_track_point(const Matrix& points, double
         if (points.at(mid, 0) < distance) lo = mid + 1;
         else hi = mid;
     }
-    if (lo == 0) return matrix_row_track_point(points, 0, has_theta_column);
-    size_t a_row = lo - 1;
-    size_t b_row = std::min(lo, points.rows - 1);
-    TrackPoint a = matrix_row_track_point(points, a_row, has_theta_column);
-    TrackPoint b = matrix_row_track_point(points, b_row, has_theta_column);
-    double span = b.d - a.d;
-    double t = std::abs(span) < eps ? 0.0 : std::clamp((distance - a.d) / span, 0.0, 1.0);
-
-    TrackPoint p;
-    p.d = distance;
-    p.x = a.x + (b.x - a.x) * t;
-    p.y = a.y + (b.y - a.y) * t;
-    p.z = a.z + (b.z - a.z) * t;
-    p.theta = has_theta_column ? angle_lerp(a.theta, b.theta, t) : std::atan2(b.y - a.y, b.x - a.x);
-    p.radius = a.radius + (b.radius - a.radius) * t;
-    p.gradient = a.gradient + (b.gradient - a.gradient) * t;
-    return p;
+    return sample_matrix_track_point_at_lower_bound(
+        points, distance, has_theta_column, lo);
 }
 
 std::optional<TrackPoint> sample_matrix_track_point_at_lower_bound(
@@ -977,10 +965,7 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
         p.d = d;
         p.x = model_.own.at(r, 1);
         p.y = model_.own.at(r, 2);
-        p.z = model_.own.at(r, 3);
         p.theta = model_.own.at(r, 4);
-        p.radius = model_.own.at(r, 5);
-        p.gradient = model_.own.at(r, 6);
         out.own.push_back(p);
         last_own_d = d;
     }
@@ -2022,12 +2007,7 @@ static void draw_repeater_segment_chunks(ImDrawList* draw,
     }
 
     bool dense_overlay = dense_repeater_segment_lod(visible_row_count, transform.scale);
-    double detail_pixel_step = 0.45;
-    if (dense_repeater_overview_lod(visible_row_count, transform.scale)) {
-        detail_pixel_step = 32.0;
-    } else if (dense_overlay) {
-        detail_pixel_step = 4.0;
-    }
+    double detail_pixel_step = dense_overlay ? 4.0 : 0.45;
     ImDrawListFlags old_flags = draw->Flags;
     if (dense_overlay) draw->Flags &= ~ImDrawListFlags_AntiAliasedLines;
     ScreenPolylineBuilder builder(draw, origin, size, color, thickness);

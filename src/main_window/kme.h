@@ -726,7 +726,8 @@ struct View2D {
         double dy = std::max(ymax - ymin, 1e-6);
         cx = (xmin + xmax) * 0.5;
         cy = (ymin + ymax) * 0.5;
-        scale = std::max(0.001, std::min(size.x / dx, size.y / dy) * 0.88);
+        scale = std::clamp(
+            std::min(size.x / dx, size.y / dy) * 0.88, 0.001, 10000.0);
         fitted = true;
     }
 };
@@ -1698,6 +1699,8 @@ private:
         ApplyOtherTrackRename,
         Save,
         SaveAndResolveClose,
+        Revert,
+        DiscardAndResolveClose,
     };
     struct PendingEditUiOperationState {
         PendingEditUiOperation operation = PendingEditUiOperation::None;

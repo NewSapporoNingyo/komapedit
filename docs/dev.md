@@ -150,6 +150,7 @@ Editable rows must retain source path, include stack, source span, original stat
 - Add ordinary application UI text in Simplified Chinese, English, and Japanese, with concise toolbar/menu wording and stable ImGui IDs across languages.
 - Keep labels that directly represent BVE map-statement parameters in the official English names or abbreviations (for example, `distance`, `trackKey`, `x`, and `ry`); do not route those labels through localization.
 - Keep every application-generated diagnostic and headless-output message in English. Console window titles, buttons, and other surrounding application UI remain trilingual.
+- The maploader log callback is published and read atomically so logging does not race with callback replacement. Last-error text remains `thread_local` for each ABI caller thread.
 - Store real preferences in `settings/settings.ini`, recent-map/background alignment in `settings/history.ini`, and layout in `settings/imgui.ini`.
 - Accept only the exact current settings/history sections, keys, and value grammars emitted by the savers. Unknown, obsolete, wrong-section, or malformed entries use defaults; loading an existing file never rewrites it, while an explicit save emits the complete canonical schema.
 - Preserve plan pan/zoom/rotation/fit, measurement, grids, station jumps, coordinate transforms, marker synchronization, context actions, and background-image alignment.

@@ -90,7 +90,7 @@ private:
 
     MapContext& ctx_;
     LoadedText loaded_;
-    std::string src_;
+    const std::string& src_;
     std::filesystem::path file_path_;
     size_t pos_ = 0;
     size_t current_statement_start_ = 0;

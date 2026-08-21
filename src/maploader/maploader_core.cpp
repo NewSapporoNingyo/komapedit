@@ -141,7 +141,11 @@ double parse_first_version(const std::string& header) {
                 break;
             }
         }
-        return std::stod(header.substr(i, j - i));
+        double version = 0.0;
+        if (!parse_finite_number(header.substr(i, j - i), version)) {
+            throw std::runtime_error("Header version is invalid");
+        }
+        return version;
     }
     throw std::runtime_error("Header version not found");
 }

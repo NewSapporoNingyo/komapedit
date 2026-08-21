@@ -65,6 +65,9 @@ KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned fla
         set_last_error(e.what());
         log_error(e.what());
         return nullptr;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return nullptr;
     }
 }
 
@@ -88,6 +91,9 @@ KV_API int kv_generate_geometry(void* handle, double unit_distance,
     } catch (const std::exception& e) {
         set_last_error(e.what());
         log_error(e.what());
+        return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
         return 0;
     }
 }
@@ -176,6 +182,9 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
         set_last_error(e.what());
         log_error(e.what());
         return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return 0;
     }
 }
 
@@ -200,6 +209,9 @@ KV_API int kv_get_map_snapshot(void* handle, uint32_t version,
     } catch (const std::exception& e) {
         set_last_error(e.what());
         return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return 0;
     }
 }
 
@@ -223,6 +235,9 @@ KV_API int kv_get_scene_geometry_snapshot(void* handle, uint32_t version,
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
+        return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
         return 0;
     }
 }
@@ -249,6 +264,9 @@ KV_API int kv_get_edit_target_typed(void* handle, KvUtf8View edit_id,
     } catch (const std::exception& e) {
         set_last_error(e.what());
         return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return 0;
     }
 }
 
@@ -260,6 +278,9 @@ KV_API const char* kv_get_source_text(void* handle, const char* file_path) {
             *ctx, file_path ? file_path : ""));
     } catch (const std::exception& e) {
         set_last_error(e.what());
+        return nullptr;
+    } catch (...) {
+        set_last_error("unknown maploader error");
         return nullptr;
     }
 }
@@ -283,6 +304,9 @@ KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
+        return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
         return 0;
     }
 }
@@ -314,6 +338,9 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
     } catch (const std::exception& e) {
         set_last_error(e.what());
         return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return 0;
     }
 }
 
@@ -327,6 +354,9 @@ KV_API int kv_edit_reset_memory(void* handle) {
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
+        return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
         return 0;
     }
 }
@@ -351,6 +381,9 @@ KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
     } catch (const std::exception& e) {
         set_last_error(e.what());
         return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return 0;
     }
 }
 
@@ -370,6 +403,9 @@ KV_API int kv_edit_commit_typed(void* handle, KvEditReportSnapshot* out_report,
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
+        return 0;
+    } catch (...) {
+        set_last_error("unknown maploader error");
         return 0;
     }
 }

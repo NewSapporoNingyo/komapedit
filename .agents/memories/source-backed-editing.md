@@ -11,6 +11,7 @@
 ## Source identity lessons
 
 - Source ordering must use explicit parser order. `Station.List` once regressed because map-key iteration replaced source order; `ordered_station_list_entries(ctx)` became the shared ordering path.
+- `SourceSpan.byte_*` belongs to the original source/header encoding domain and must not slice decoded working-copy text. Resolve decoded offsets from cached line starts plus line/UTF-8 column coordinates.
 - Same-distance markers and duplicate keys require direct stable edit IDs attached during hydration/cache construction. Distance-only or lazy matching can select the wrong source row.
 - Edited-row reconnection must use the physical replacement identity, not an overly broad span. Signal glare deletion exposed this: glare content can be removed while a separator newline remains, so the surviving main row's identity range must exclude that newline without weakening global uniqueness checks.
 - Commit reports need not repeat Apply counters. Validate committed files, reparse results, snapshots, physical source rows, and refreshed metadata instead.

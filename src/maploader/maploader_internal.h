@@ -793,12 +793,6 @@ struct Matrix {
         if (cols != 0) data.reserve(row_count * cols);
     }
 
-    void push(const std::vector<double>& row) {
-        if (cols == 0) cols = row.size();
-        data.insert(data.end(), row.begin(), row.end());
-        ++rows;
-    }
-
     void push(std::initializer_list<double> row) {
         if (cols == 0) cols = row.size();
         data.insert(data.end(), row.begin(), row.end());

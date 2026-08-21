@@ -271,7 +271,7 @@ ctest --test-dir build --output-on-failure
 
 #### `src/maploader/diagnostics.h` 与 `src/maploader/diagnostics.cpp`
 
-- 头文件声明日志 callback、last-error 和 info/warn/error 门面。实现使用互斥量保护全局 callback，用 `thread_local` 保存每个调用线程的最后错误。
+- 头文件声明日志 callback、last-error 和 info/warn/error 门面。实现以原子读写发布全局 callback，避免日志转发与 callback 替换发生数据竞争；每个调用线程的最后错误仍保存在 `thread_local` 中。
 - `emit_log()` 在 callback 存在时转发完整行；`log_info()`、`log_warn()`、`log_error()` 添加统一级别前缀。ABI 捕获块通过 `set_last_error()` 更新可查询错误，避免混用日志与返回值。
 
 #### `src/maploader/c_api.h` 与 `src/maploader/c_api.cpp`

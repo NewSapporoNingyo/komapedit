@@ -313,9 +313,6 @@ bool pointer_is_touch(std::uint32_t id) {
 
 } // namespace
 
-void initialize(HWND) {
-}
-
 bool handle_message(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
 #ifdef WM_POINTERDOWN
     switch (msg) {

@@ -71,6 +71,7 @@ struct TextReplacement {
 struct SourcePatch {
     const SourceFileRecord* record = nullptr;
     std::string text;
+    std::vector<size_t> line_starts;
     std::string current_hash;
     std::string base_hash;
     bool utf8_bom = false;
@@ -184,6 +185,7 @@ SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& rec
         patch.current_hash = source.current_hash;
         patch.base_hash = source.base_hash.empty() ? source.current_hash : source.base_hash;
         patch.utf8_bom = source.utf8_bom;
+        patch.line_starts = build_line_starts(patch.text);
         return patch;
     }
 
@@ -193,6 +195,7 @@ SourcePatch load_source_patch(const MapContext& ctx, const SourceFileRecord& rec
     patch.base_hash = patch.current_hash;
     patch.utf8_bom = has_utf8_bom(bytes);
     patch.text = decode_text_bytes(bytes, record.encoding);
+    patch.line_starts = build_line_starts(patch.text);
     return patch;
 }
 
@@ -206,17 +209,14 @@ size_t utf8_next_offset(const std::string& text, size_t offset) {
     return offset;
 }
 
-size_t offset_from_line_column(const std::string& text, int line, int column) {
-    if (line <= 0 || column <= 0) return std::string::npos;
-    size_t line_start = 0;
-    int current_line = 1;
-    while (current_line < line) {
-        const TextLineSpan source_line = text_line_span(text, line_start);
-        if (!source_line.has_terminator()) return std::string::npos;
-        line_start = source_line.next_begin;
-        ++current_line;
+size_t offset_from_line_column(const std::string& text,
+                               const std::vector<size_t>& line_starts,
+                               int line,
+                               int column) {
+    if (line <= 0 || column <= 0 || static_cast<size_t>(line) > line_starts.size()) {
+        return std::string::npos;
     }
-
+    const size_t line_start = line_starts[static_cast<size_t>(line - 1)];
     const size_t line_end = text_line_span(text, line_start).content_end;
     size_t offset = line_start;
     int current_column = 1;
@@ -227,14 +227,22 @@ size_t offset_from_line_column(const std::string& text, int line, int column) {
     return offset;
 }
 
-std::pair<size_t, size_t> source_range_in_text(const SourcePatch& patch,
-                                               const SourceSpan& source) {
-    size_t begin = offset_from_line_column(patch.text, source.line, source.column);
-    size_t end = offset_from_line_column(patch.text, source.line_end, source.column_end);
+std::pair<size_t, size_t> source_range_in_text(
+    const std::string& text,
+    const std::vector<size_t>& line_starts,
+    const SourceSpan& source) {
+    size_t begin = offset_from_line_column(text, line_starts, source.line, source.column);
+    size_t end = offset_from_line_column(
+        text, line_starts, source.line_end, source.column_end);
     if (begin == std::string::npos || end == std::string::npos || end < begin) {
         throw std::runtime_error("invalid source span for edit");
     }
     return {begin, end};
+}
+
+std::pair<size_t, size_t> source_range_in_text(const SourcePatch& patch,
+                                               const SourceSpan& source) {
+    return source_range_in_text(patch.text, patch.line_starts, source);
 }
 
 std::pair<size_t, size_t> safe_statement_removal_range(
@@ -1677,12 +1685,13 @@ std::string statement_insertion_text(const std::string& source,
 
 std::string line_indent_of(const SourcePatch& patch, const ParsedStatement& statement) {
     const size_t line_start = offset_from_line_column(
-        patch.text, statement.source.line, 1);
-    if (line_start == std::string::npos || line_start > statement.source.byte_start) {
+        patch.text, patch.line_starts, statement.source.line, 1);
+    const size_t statement_start = source_range_in_text(patch, statement.source).first;
+    if (line_start == std::string::npos || line_start > statement_start) {
         return {};
     }
     std::string indent = patch.text.substr(
-        line_start, statement.source.byte_start - line_start);
+        line_start, statement_start - line_start);
     if (!std::all_of(indent.begin(), indent.end(), [](char ch) {
             return ch == ' ' || ch == '\t';
         })) {
@@ -2768,7 +2777,8 @@ DistanceBoundaryPlan boundary_after_anchor(const MapContext& ctx,
     boundary.after_anchor_position = before_position + 1;
     const auto after_range = source_range_in_text(patch, after.source);
     boundary.insert_offset = after_range.first;
-    size_t line_start = offset_from_line_column(patch.text, after.source.line, 1);
+    size_t line_start = offset_from_line_column(
+        patch.text, patch.line_starts, after.source.line, 1);
     if (line_start != std::string::npos && line_start <= after_range.first &&
         std::all_of(patch.text.begin() + static_cast<std::ptrdiff_t>(line_start),
                     patch.text.begin() + static_cast<std::ptrdiff_t>(after_range.first),
@@ -2811,7 +2821,8 @@ DistanceBoundaryPlan terminal_boundary_for_last_anchor(
     if (terminal_statement_index != k_no_source_ref) {
         const ParsedStatement& terminal = ctx.parsed_statements[terminal_statement_index];
         auto range = source_range_in_text(patch, terminal.source);
-        size_t line_start = offset_from_line_column(patch.text, terminal.source.line, 1);
+        size_t line_start = offset_from_line_column(
+            patch.text, patch.line_starts, terminal.source.line, 1);
         boundary.insert_offset = range.first;
         if (line_start != std::string::npos && line_start <= range.first &&
             std::all_of(patch.text.begin() + static_cast<std::ptrdiff_t>(line_start),
@@ -4466,9 +4477,14 @@ void validate_edit_report(MapContext& baseline,
         return;
     }
 
-    std::map<std::string, const std::string*> patched_text_by_source_key;
+    struct IndexedPatchedText {
+        const std::string* text = nullptr;
+        std::vector<size_t> line_starts;
+    };
+    std::map<std::string, IndexedPatchedText> patched_text_by_source_key;
     for (const MapEditPatchedFile& file : report.patched_files) {
-        patched_text_by_source_key[file.source_key] = &file.text;
+        patched_text_by_source_key[file.source_key] = {
+            &file.text, build_line_starts(file.text)};
     }
     std::map<IdentityLocation, std::vector<CandidateIdentityElement>> candidates_by_location;
     auto collect_candidate_row = [&](const auto& row, const std::string& row_kind) {
@@ -4478,9 +4494,10 @@ void validate_edit_report(MapContext& baseline,
         const std::string& source_key = source_file_key(*candidate, statement.source);
         auto patched_text = patched_text_by_source_key.find(source_key);
         if (patched_text == patched_text_by_source_key.end()) return;
-        SourcePatch source;
-        source.text = *patched_text->second;
-        const auto range = source_range_in_text(source, statement.source);
+        const auto range = source_range_in_text(
+            *patched_text->second.text,
+            patched_text->second.line_starts,
+            statement.source);
         candidates_by_location[IdentityLocation{
             source_key, range.first, range.second, row_kind, ref.element_index,
         }].push_back({
@@ -5327,10 +5344,6 @@ MapEditReport build_edit_report(MapContext& ctx,
     prepared.reserve(effective_changes.size());
     for (size_t input_ordinal = 0; input_ordinal < effective_changes.size(); ++input_ordinal) {
         const MapEditChange& change = *effective_changes[input_ordinal];
-        if (change.edit_id.empty()) {
-            report.blocking_errors.push_back("edit change is missing editId");
-            continue;
-        }
         std::string operation = ascii_lower(change.operation.empty() ? "update" : change.operation);
         EditableTarget target;
         const ParsedStatement* statement = nullptr;
@@ -5523,7 +5536,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                     edit.source_range = range;
                     edit.removal_range = {};
                     const size_t source_line_start = offset_from_line_column(
-                        target_patch.text, origin.source.line, 1);
+                        target_patch.text, target_patch.line_starts, origin.source.line, 1);
                     if (source_line_start != std::string::npos &&
                         source_line_start <= range.first) {
                         std::string indent = target_patch.text.substr(
@@ -5562,7 +5575,7 @@ MapEditReport build_edit_report(MapContext& ctx,
             edit.source_range = range;
             edit.removal_range = safe_statement_removal_range(*patch, range);
             const size_t source_line_start = offset_from_line_column(
-                patch->text, statement->source.line, 1);
+                patch->text, patch->line_starts, statement->source.line, 1);
             if (source_line_start != std::string::npos &&
                 source_line_start <= range.first) {
                 std::string indent = patch->text.substr(
@@ -5826,16 +5839,21 @@ MapEditReport build_edit_report(MapContext& ctx,
         if (any_insert_member) {
             const ParsedStatement& before_anchor = ctx.parsed_statements[
                 group.section.anchors[resolved.boundary.before_anchor_position]];
+            const SourcePatch& group_patch = patches[group.source_file_index];
+            const auto before_anchor_range =
+                source_range_in_text(group_patch, before_anchor.source);
             size_t indent_statement_index = k_no_source_ref;
             for (size_t statement_index :
                  distance_index.statements_for(ctx, before_anchor.source)) {
                 const ParsedStatement& candidate = ctx.parsed_statements[statement_index];
-                if (candidate.source.byte_start <= before_anchor.source.byte_end) continue;
-                if (candidate.source.byte_start >= resolved.boundary.insert_offset) break;
+                const auto candidate_range =
+                    source_range_in_text(group_patch, candidate.source);
+                if (candidate_range.first <= before_anchor_range.second) continue;
+                if (candidate_range.first >= resolved.boundary.insert_offset) break;
                 indent_statement_index = statement_index;
             }
             part_statement_indent = line_indent_of(
-                patches[group.source_file_index],
+                group_patch,
                 indent_statement_index != k_no_source_ref
                     ? ctx.parsed_statements[indent_statement_index]
                     : before_anchor);
@@ -6447,12 +6465,12 @@ MapEditReport commit_memory_edits(MapContext& ctx) {
         return report;
     }
     for (const PendingWrite& write : writes) {
-        for (SourceFileRecord& source_file : ctx.source_files) {
-            if (source_file.source_key == write.source_key) {
-                source_file.source_hash = write.hash;
-                source_file.byte_length = write.bytes.size();
-                break;
-            }
+        auto source_index = ctx.source_file_indices.find(write.source_key);
+        if (source_index != ctx.source_file_indices.end() &&
+            source_index->second < ctx.source_files.size()) {
+            SourceFileRecord& source_file = ctx.source_files[source_index->second];
+            source_file.source_hash = write.hash;
+            source_file.byte_length = write.bytes.size();
         }
         ctx.source_overrides.erase(write.source_key);
     }

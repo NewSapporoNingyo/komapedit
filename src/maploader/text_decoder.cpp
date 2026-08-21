@@ -187,8 +187,7 @@ std::string decode_codepage(const std::string& bytes, unsigned int, bool) {
 }
 #endif
 
-std::string append_utf8_codepoint(char32_t cp) {
-    std::string out;
+void append_utf8_codepoint(std::string& out, char32_t cp) {
     if (cp <= 0x7F) {
         out.push_back(static_cast<char>(cp));
     } else if (cp <= 0x7FF) {
@@ -204,7 +203,6 @@ std::string append_utf8_codepoint(char32_t cp) {
         out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
         out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
     }
-    return out;
 }
 
 std::string decode_utf16(const std::string& bytes, bool little_endian) {
@@ -220,6 +218,7 @@ std::string decode_utf16(const std::string& bytes, bool little_endian) {
         throw std::runtime_error("UTF-16 input has an incomplete trailing code unit");
     }
     std::string out;
+    out.reserve(bytes.size() - start);
     for (size_t i = start; i < bytes.size(); i += 2) {
         unsigned char a = static_cast<unsigned char>(bytes[i]);
         unsigned char b = static_cast<unsigned char>(bytes[i + 1]);
@@ -237,7 +236,7 @@ std::string decode_utf16(const std::string& bytes, bool little_endian) {
                 : static_cast<uint16_t>((c << 8) | d);
             if (low >= 0xDC00 && low <= 0xDFFF) {
                 char32_t cp = 0x10000 + (((unit - 0xD800) << 10) | (low - 0xDC00));
-                out += append_utf8_codepoint(cp);
+                append_utf8_codepoint(out, cp);
                 i += 2;
                 continue;
             }
@@ -246,7 +245,7 @@ std::string decode_utf16(const std::string& bytes, bool little_endian) {
         if (unit >= 0xDC00 && unit <= 0xDFFF) {
             throw std::runtime_error("UTF-16 input contains an unpaired low surrogate");
         }
-        out += append_utf8_codepoint(unit);
+        append_utf8_codepoint(out, unit);
     }
     return out;
 }
