@@ -213,16 +213,6 @@ struct Canvas3DSceneMarker {
     bool has_theme_color = false;
 };
 
-// String views remain valid until the scene or its marker data is refreshed.
-struct Canvas3DSceneMarkerTarget {
-    MapMarkerVisualKind kind = MapMarkerVisualKind::Station;
-    Canvas3DSceneMarkerListKind list_kind = Canvas3DSceneMarkerListKind::None;
-    size_t marker_index = 0;
-    std::string_view row_kind;
-    std::optional<size_t> row_index;
-    std::string_view edit_id;
-};
-
 struct Canvas3DSceneMarkerVisibility {
     std::uint64_t marker_mask = 0;
     std::uint64_t label_mask = 0;
@@ -466,8 +456,6 @@ struct Canvas3DPlacementDragUpdate {
 struct Canvas3DSceneFrameResult {
     Canvas3DSceneContextAction context_action;
     std::optional<Canvas3DPlacementDragUpdate> placement_drag;
-    std::optional<Canvas3DSceneMarkerTarget> hovered_marker;
-    std::optional<double> hovered_mileage;
     std::optional<double> new_element_mileage;
 };
 

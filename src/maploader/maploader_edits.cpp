@@ -1193,6 +1193,30 @@ std::string build_background_statement(const MapEditChange& change,
         change, "structureKey", row.structure_key, raw_arg_at(args, 0)) + ");";
 }
 
+std::string build_adhesion_arguments(const std::string& a,
+                                     const std::string& b,
+                                     const std::string& c) {
+    if (b.empty() != c.empty()) {
+        throw std::runtime_error("Adhesion.Change requires either 1 or 3 parameters");
+    }
+    return a + (b.empty() ? "" : "," + b + "," + c);
+}
+
+std::string build_fog_arguments(std::string_view method,
+                                const std::array<std::string, 4>& values) {
+    const bool density = !values[0].empty();
+    const bool color = !values[1].empty() && !values[2].empty() && !values[3].empty();
+    const bool any_color = !values[1].empty() || !values[2].empty() || !values[3].empty();
+    if (method == "Set") {
+        if (!density || !color) throw std::runtime_error("Fog.Set requires 4 parameters");
+    } else if (any_color != color || (color && !density)) {
+        throw std::runtime_error("Fog.Interpolate requires 0, 1, or 4 parameters");
+    }
+    if (!density) return {};
+    return values[0] + (color ? "," + values[1] + "," + values[2] + "," + values[3]
+                              : std::string{});
+}
+
 std::string build_adhesion_statement(const MapEditChange& change,
                                      const ParsedStatement& statement,
                                      const AdhesionChange& row) {
@@ -1204,10 +1228,7 @@ std::string build_adhesion_statement(const MapEditChange& change,
         change, "b", row.b, raw_arg_at(args, 1));
     const std::string c = optional_numeric_value_field(
         change, "c", row.c, raw_arg_at(args, 2));
-    if (b.empty() != c.empty()) {
-        throw std::runtime_error("Adhesion.Change requires either 1 or 3 parameters");
-    }
-    return "Adhesion.Change(" + a + (b.empty() ? "" : "," + b + "," + c) + ");";
+    return "Adhesion.Change(" + build_adhesion_arguments(a, b, c) + ");";
 }
 
 std::string build_cab_illuminance_statement(const MapEditChange& change,
@@ -1231,20 +1252,7 @@ std::string build_fog_statement(const MapEditChange& change,
         optional_numeric_value_field(change, "green", row.green, raw_arg_at(args, 2)),
         optional_numeric_value_field(change, "blue", row.blue, raw_arg_at(args, 3)),
     };
-    const bool density = !values[0].empty();
-    const bool color = !values[1].empty() && !values[2].empty() && !values[3].empty();
-    const bool any_color = !values[1].empty() || !values[2].empty() || !values[3].empty();
-    if (method == "Set") {
-        if (!density || !color) throw std::runtime_error("Fog.Set requires 4 parameters");
-    } else if (any_color != color || (color && !density)) {
-        throw std::runtime_error("Fog.Interpolate requires 0, 1, or 4 parameters");
-    }
-    std::string arguments;
-    if (density) {
-        arguments = values[0];
-        if (color) arguments += "," + values[1] + "," + values[2] + "," + values[3];
-    }
-    return "Fog." + method + "(" + arguments + ");";
+    return "Fog." + method + "(" + build_fog_arguments(method, values) + ");";
 }
 
 std::string build_draw_distance_statement(const MapEditChange& change,
@@ -2458,10 +2466,7 @@ std::string build_insert_statement(const MapEditChange& change) {
         const std::string a = insert_required_number(change, "a");
         const std::string b = optional_numeric_value_field(change, "b", Value::null());
         const std::string c = optional_numeric_value_field(change, "c", Value::null());
-        if (b.empty() != c.empty()) {
-            throw std::runtime_error("Adhesion.Change requires either 1 or 3 parameters");
-        }
-        return "Adhesion.Change(" + a + (b.empty() ? "" : "," + b + "," + c) + ");";
+        return "Adhesion.Change(" + build_adhesion_arguments(a, b, c) + ");";
     }
     if (row_kind == "cabIlluminance.change") {
         const std::string method = insert_method_or_default(change, "Set");
@@ -2481,20 +2486,7 @@ std::string build_insert_statement(const MapEditChange& change) {
             optional_numeric_value_field(change, "green", Value::null()),
             optional_numeric_value_field(change, "blue", Value::null()),
         };
-        const bool density = !values[0].empty();
-        const bool color = !values[1].empty() && !values[2].empty() && !values[3].empty();
-        const bool any_color = !values[1].empty() || !values[2].empty() || !values[3].empty();
-        if (method == "Set") {
-            if (!density || !color) throw std::runtime_error("Fog.Set requires 4 parameters");
-        } else if (any_color != color || (color && !density)) {
-            throw std::runtime_error("Fog.Interpolate requires 0, 1, or 4 parameters");
-        }
-        std::string arguments;
-        if (density) {
-            arguments = values[0];
-            if (color) arguments += "," + values[1] + "," + values[2] + "," + values[3];
-        }
-        return "Fog." + method + "(" + arguments + ");";
+        return "Fog." + method + "(" + build_fog_arguments(method, values) + ");";
     }
     if (row_kind == "drawDistance.change") {
         return "DrawDistance.Change(" + insert_required_number(change, "value") + ");";

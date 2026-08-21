@@ -10544,26 +10544,10 @@ fail:
         const bool select_mode = scene_interaction_mode == Canvas3DSceneInteractionMode::Select;
         const bool mileage_select_mode =
             scene_interaction_mode == Canvas3DSceneInteractionMode::MileageSelect;
-        if (mileage_select_mode) {
-            result.hovered_mileage = scene_hovered_mileage;
-            if (!stats.loading && hovered && scene_hovered_mileage) {
-                draw_scene_mileage_label(origin, end, pointer_pos,
-                                         *scene_hovered_mileage, ui_text);
-            }
-        }
-        if (select_mode && scene_hovered_marker_index >= 0 &&
-            static_cast<size_t>(scene_hovered_marker_index) <
-                scene_data.markers.size()) {
-            const Canvas3DSceneMarker& marker = scene_data.markers[
-                static_cast<size_t>(scene_hovered_marker_index)];
-            result.hovered_marker = Canvas3DSceneMarkerTarget{
-                marker.kind,
-                marker.list_kind,
-                static_cast<size_t>(scene_hovered_marker_index),
-                marker.row_kind,
-                marker.row_index,
-                marker.edit_id
-            };
+        if (mileage_select_mode && !stats.loading && hovered &&
+            scene_hovered_mileage) {
+            draw_scene_mileage_label(origin, end, pointer_pos,
+                                     *scene_hovered_mileage, ui_text);
         }
         const bool marker_context_available =
             scene_hovered_marker_index >= 0 &&

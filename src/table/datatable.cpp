@@ -2123,117 +2123,32 @@ void App::ensure_table_cache() {
                              cache.speed_limit_distance_width,
                              cache.speed_limit_file_path_width);
 
-    cache.background_distance_width = 0.0f;
-    expand_width_for_text(cache.background_distance_width, k_background_columns[k_background_distance_column].header);
-    cache.background_rows.reserve(model_.backgrounds.size());
-    for (size_t row_index = 0; row_index < model_.backgrounds.size(); ++row_index) {
-        const TableRow& row = model_.backgrounds[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_background_columns));
-        cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(k_background_columns); ++i) {
-            if (i == k_background_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.background_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_background_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.background_distance_width, cached.cells[k_background_distance_column]);
-        cache.background_rows.push_back(std::move(cached));
-    }
-
-    cache.adhesion_distance_width = 0.0f;
-    expand_width_for_text(cache.adhesion_distance_width, k_adhesion_columns[k_adhesion_distance_column].header);
-    cache.adhesion_rows.reserve(model_.adhesions.size());
-    for (size_t row_index = 0; row_index < model_.adhesions.size(); ++row_index) {
-        const TableRow& row = model_.adhesions[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_adhesion_columns));
-        cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(k_adhesion_columns); ++i) {
-            if (i == k_adhesion_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.adhesion_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_adhesion_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.adhesion_distance_width, cached.cells[k_adhesion_distance_column]);
-        cache.adhesion_rows.push_back(std::move(cached));
-    }
-
-    cache.cab_illuminance_distance_width = 0.0f;
-    expand_width_for_text(cache.cab_illuminance_distance_width, k_cab_illuminance_columns[k_cab_illuminance_distance_column].header);
-    cache.cab_illuminance_rows.reserve(model_.cab_illuminance.size());
-    for (size_t row_index = 0; row_index < model_.cab_illuminance.size(); ++row_index) {
-        const TableRow& row = model_.cab_illuminance[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_cab_illuminance_columns));
-        cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(k_cab_illuminance_columns); ++i) {
-            if (i == k_cab_illuminance_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.cab_illuminance_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_cab_illuminance_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.cab_illuminance_distance_width, cached.cells[k_cab_illuminance_distance_column]);
-        cache.cab_illuminance_rows.push_back(std::move(cached));
-    }
-
-    cache.fog_distance_width = 0.0f;
-    expand_width_for_text(cache.fog_distance_width, k_fog_columns[k_fog_distance_column].header);
-    cache.fog_rows.reserve(model_.fogs.size());
-    for (size_t row_index = 0; row_index < model_.fogs.size(); ++row_index) {
-        const TableRow& row = model_.fogs[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_fog_columns));
-        cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(k_fog_columns); ++i) {
-            if (i == k_fog_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.fog_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_fog_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.fog_distance_width, cached.cells[k_fog_distance_column]);
-        cache.fog_rows.push_back(std::move(cached));
-    }
-
-    cache.legacy_fog_distance_width = 0.0f;
-    expand_width_for_text(cache.legacy_fog_distance_width,
-                          k_legacy_fog_columns[k_legacy_fog_distance_column].header);
-    cache.legacy_fog_rows.reserve(model_.legacy_fogs.size());
-    for (size_t row_index = 0; row_index < model_.legacy_fogs.size(); ++row_index) {
-        const TableRow& row = model_.legacy_fogs[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_legacy_fog_columns));
-        cached.open_path = table_cell(row, "filePath");
-        for (int i = 0; i < IM_ARRAYSIZE(k_legacy_fog_columns); ++i) {
-            if (i == k_legacy_fog_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.legacy_fog_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_legacy_fog_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.legacy_fog_distance_width,
-                              cached.cells[k_legacy_fog_distance_column]);
-        cache.legacy_fog_rows.push_back(std::move(cached));
-    }
+    append_change_point_rows(model_.backgrounds, k_background_columns,
+                             k_background_distance_column, k_background_file_path_column,
+                             cache.background_rows,
+                             cache.background_distance_width,
+                             cache.background_file_path_width);
+    append_change_point_rows(model_.adhesions, k_adhesion_columns,
+                             k_adhesion_distance_column, k_adhesion_file_path_column,
+                             cache.adhesion_rows,
+                             cache.adhesion_distance_width,
+                             cache.adhesion_file_path_width);
+    append_change_point_rows(model_.cab_illuminance, k_cab_illuminance_columns,
+                             k_cab_illuminance_distance_column,
+                             k_cab_illuminance_file_path_column,
+                             cache.cab_illuminance_rows,
+                             cache.cab_illuminance_distance_width,
+                             cache.cab_illuminance_file_path_width);
+    append_change_point_rows(model_.fogs, k_fog_columns,
+                             k_fog_distance_column, k_fog_file_path_column,
+                             cache.fog_rows,
+                             cache.fog_distance_width,
+                             cache.fog_file_path_width);
+    append_change_point_rows(model_.legacy_fogs, k_legacy_fog_columns,
+                             k_legacy_fog_distance_column, k_legacy_fog_file_path_column,
+                             cache.legacy_fog_rows,
+                             cache.legacy_fog_distance_width,
+                             cache.legacy_fog_file_path_width);
 
     table_cache_ = std::move(cache);
 }
@@ -4804,94 +4719,55 @@ void App::render_backgrounds_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("backgrounds", IM_ARRAYSIZE(k_background_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_background_columns); ++i) {
-            float width = k_background_columns[i].width;
-            if (i == k_background_distance_column) width = table_cache_.background_distance_width;
-            if (i == k_background_file_path_column) width = table_cache_.background_file_path_width;
-            const char* header = i == k_background_file_path_column
-                ? file_name_header.c_str()
-                : k_background_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.background_rows.size());
-        if (background_list_scroll_row_ >= row_count) background_list_scroll_row_ = -1;
-        if (background_list_highlight_row_ >= row_count) background_list_highlight_row_ = -1;
-        const int scroll_target_row = background_list_scroll_row_;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.background_rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == background_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
+    const bool can_locate_scene_preview = can_locate_scene_preview_row();
+    render_event_table(
+        "backgrounds", k_background_columns,
+        k_background_distance_column, k_background_file_path_column,
+        table_cache_.background_rows,
+        table_cache_.background_distance_width,
+        table_cache_.background_file_path_width,
+        tr("column.file_name"), tr("menu.open_in_explorer"),
+        background_list_scroll_row_, background_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this, can_locate_scene_preview](int row_index, int column,
+                                         const std::string& value) {
+            const size_t marker_index = static_cast<size_t>(row_index);
+            if (column == k_background_distance_column) {
+                const bool can_locate = marker_index < background_marker_cache_.size() &&
+                    background_marker_cache_[marker_index].has_value();
+                const bool can_edit = edit_actions_available() &&
+                    marker_index < model_.backgrounds.size() &&
+                    !model_.backgrounds[marker_index].edit_id.empty();
+                const TextCellContextAction action = render_marker_text_cell_with_context(
+                    value,
+                    tr("menu.locate_on_plan"), can_locate,
+                    tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
+                    tr("dialog.element_properties"), can_edit,
+                    tr("button.delete"), can_edit);
+                if (action == TextCellContextAction::Primary) {
+                    locate_background_row_on_plan(marker_index);
+                } else if (action == TextCellContextAction::Secondary) {
+                    locate_scene_marker_row_in_scene_preview(
+                        Canvas3DSceneMarkerListKind::Background, marker_index);
+                } else if (action == TextCellContextAction::Tertiary) {
+                    request_element_inspector(model_.backgrounds[marker_index].edit_id,
+                                              "background.change");
+                } else if (action == TextCellContextAction::Quaternary) {
+                    request_element_delete(model_.backgrounds[marker_index].edit_id,
+                                           "background.change");
                 }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    background_list_scroll_row_ = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_background_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_background_distance_column) {
-                        size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < background_marker_cache_.size() &&
-                            background_marker_cache_[marker_index].has_value();
-                        const bool can_edit = edit_actions_available() &&
-                            marker_index < model_.backgrounds.size() &&
-                            !model_.backgrounds[marker_index].edit_id.empty();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
-                            value,
-                            tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
-                            tr("dialog.element_properties"), can_edit,
-                            tr("button.delete"), can_edit);
-                        if (action == TextCellContextAction::Primary) {
-                            locate_background_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::Background, marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(model_.backgrounds[marker_index].edit_id,
-                                                      "background.change");
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(model_.backgrounds[marker_index].edit_id,
-                                                   "background.change");
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == k_background_structure_key_column) {
-                        ImGui::PushID("background_structure_key");
-                        if (render_text_cell_with_context(value, tr("menu.find_in_structure_models"), !blank_ascii(value))) {
-                            find_structure_model_for_structure_key(value);
-                        }
-                        ImGui::PopID();
-                    } else if (i == k_background_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           tr("menu.open_in_explorer"), row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
+                return true;
             }
-        }
-        ImGui::EndTable();
-    }
+            if (column == k_background_structure_key_column && !value.empty()) {
+                ImGui::PushID("background_structure_key");
+                const bool should_find = render_text_cell_with_context(
+                    value, tr("menu.find_in_structure_models"), !blank_ascii(value));
+                ImGui::PopID();
+                if (should_find) find_structure_model_for_structure_key(value);
+                return true;
+            }
+            return false;
+        });
     focus_backgrounds_next_ = false;
     ImGui::End();
 }
@@ -4913,88 +4789,37 @@ void App::render_adhesions_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("adhesions", IM_ARRAYSIZE(k_adhesion_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_adhesion_columns); ++i) {
-            float width = k_adhesion_columns[i].width;
-            if (i == k_adhesion_distance_column) width = table_cache_.adhesion_distance_width;
-            if (i == k_adhesion_file_path_column) width = table_cache_.adhesion_file_path_width;
-            const char* header = i == k_adhesion_file_path_column
-                ? file_name_header.c_str()
-                : k_adhesion_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.adhesion_rows.size());
-        if (adhesion_list_scroll_row_ >= row_count) adhesion_list_scroll_row_ = -1;
-        if (adhesion_list_highlight_row_ >= row_count) adhesion_list_highlight_row_ = -1;
-        const int scroll_target_row = adhesion_list_scroll_row_;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.adhesion_rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == adhesion_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    adhesion_list_scroll_row_ = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_adhesion_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_adhesion_distance_column) {
-                        size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < adhesion_marker_cache_.size() &&
-                            adhesion_marker_cache_[marker_index].has_value();
-                        const bool can_edit = edit_actions_available() &&
-                            marker_index < model_.adhesions.size() &&
-                            !model_.adhesions[marker_index].edit_id.empty();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
-                            value,
-                            tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
-                            tr("dialog.element_properties"), can_edit,
-                            tr("button.delete"), can_edit);
-                        if (action == TextCellContextAction::Primary) {
-                            locate_adhesion_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::Adhesion, marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(model_.adhesions[marker_index].edit_id,
-                                                      "adhesion.change");
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(model_.adhesions[marker_index].edit_id,
-                                                   "adhesion.change");
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == k_adhesion_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           tr("menu.open_in_explorer"), row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
-    }
+    render_change_point_table(
+        "adhesions", k_adhesion_columns,
+        k_adhesion_distance_column, k_adhesion_file_path_column,
+        table_cache_.adhesion_rows,
+        table_cache_.adhesion_distance_width,
+        table_cache_.adhesion_file_path_width,
+        tr("column.file_name"), tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"), tr("menu.open_in_explorer"),
+        adhesion_list_scroll_row_, adhesion_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this](size_t row) {
+            return row < adhesion_marker_cache_.size() &&
+                adhesion_marker_cache_[row].has_value();
+        },
+        [this](size_t row) { locate_adhesion_row_on_plan(row); },
+        can_locate_scene_preview_row(),
+        [this](size_t row) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::Adhesion, row);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.adhesions.size() &&
+                !model_.adhesions[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.adhesions[row].edit_id, "adhesion.change");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.adhesions[row].edit_id, "adhesion.change");
+        });
     focus_adhesions_next_ = false;
     ImGui::End();
 }
@@ -5016,88 +4841,39 @@ void App::render_cab_illuminance_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("cab_illuminance", IM_ARRAYSIZE(k_cab_illuminance_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_cab_illuminance_columns); ++i) {
-            float width = k_cab_illuminance_columns[i].width;
-            if (i == k_cab_illuminance_distance_column) width = table_cache_.cab_illuminance_distance_width;
-            if (i == k_cab_illuminance_file_path_column) width = table_cache_.cab_illuminance_file_path_width;
-            const char* header = i == k_cab_illuminance_file_path_column
-                ? file_name_header.c_str()
-                : k_cab_illuminance_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.cab_illuminance_rows.size());
-        if (cab_illuminance_list_scroll_row_ >= row_count) cab_illuminance_list_scroll_row_ = -1;
-        if (cab_illuminance_list_highlight_row_ >= row_count) cab_illuminance_list_highlight_row_ = -1;
-        const int scroll_target_row = cab_illuminance_list_scroll_row_;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.cab_illuminance_rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == cab_illuminance_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    cab_illuminance_list_scroll_row_ = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_cab_illuminance_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_cab_illuminance_distance_column) {
-                        size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < cab_illuminance_marker_cache_.size() &&
-                            cab_illuminance_marker_cache_[marker_index].has_value();
-                        const bool can_edit = edit_actions_available() &&
-                            marker_index < model_.cab_illuminance.size() &&
-                            !model_.cab_illuminance[marker_index].edit_id.empty();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
-                            value,
-                            tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
-                            tr("dialog.element_properties"), can_edit,
-                            tr("button.delete"), can_edit);
-                        if (action == TextCellContextAction::Primary) {
-                            locate_cab_illuminance_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::CabIlluminance, marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(model_.cab_illuminance[marker_index].edit_id,
-                                                      "cabIlluminance.change");
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(model_.cab_illuminance[marker_index].edit_id,
-                                                   "cabIlluminance.change");
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == k_cab_illuminance_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           tr("menu.open_in_explorer"), row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
-    }
+    render_change_point_table(
+        "cab_illuminance", k_cab_illuminance_columns,
+        k_cab_illuminance_distance_column, k_cab_illuminance_file_path_column,
+        table_cache_.cab_illuminance_rows,
+        table_cache_.cab_illuminance_distance_width,
+        table_cache_.cab_illuminance_file_path_width,
+        tr("column.file_name"), tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"), tr("menu.open_in_explorer"),
+        cab_illuminance_list_scroll_row_, cab_illuminance_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this](size_t row) {
+            return row < cab_illuminance_marker_cache_.size() &&
+                cab_illuminance_marker_cache_[row].has_value();
+        },
+        [this](size_t row) { locate_cab_illuminance_row_on_plan(row); },
+        can_locate_scene_preview_row(),
+        [this](size_t row) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::CabIlluminance, row);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.cab_illuminance.size() &&
+                !model_.cab_illuminance[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.cab_illuminance[row].edit_id,
+                                      "cabIlluminance.change");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.cab_illuminance[row].edit_id,
+                                   "cabIlluminance.change");
+        });
     focus_cab_illuminance_next_ = false;
     ImGui::End();
 }
@@ -5119,88 +4895,37 @@ void App::render_fogs_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("fogs", IM_ARRAYSIZE(k_fog_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_fog_columns); ++i) {
-            float width = k_fog_columns[i].width;
-            if (i == k_fog_distance_column) width = table_cache_.fog_distance_width;
-            if (i == k_fog_file_path_column) width = table_cache_.fog_file_path_width;
-            const char* header = i == k_fog_file_path_column
-                ? file_name_header.c_str()
-                : k_fog_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.fog_rows.size());
-        if (fog_list_scroll_row_ >= row_count) fog_list_scroll_row_ = -1;
-        if (fog_list_highlight_row_ >= row_count) fog_list_highlight_row_ = -1;
-        const int scroll_target_row = fog_list_scroll_row_;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row = table_cache_.fog_rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == fog_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    fog_list_scroll_row_ = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_fog_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_fog_distance_column) {
-                        size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < fog_marker_cache_.size() &&
-                            fog_marker_cache_[marker_index].has_value();
-                        const bool can_edit = edit_actions_available() &&
-                            marker_index < model_.fogs.size() &&
-                            !model_.fogs[marker_index].edit_id.empty();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
-                            value,
-                            tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview,
-                            tr("dialog.element_properties"), can_edit,
-                            tr("button.delete"), can_edit);
-                        if (action == TextCellContextAction::Primary) {
-                            locate_fog_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::Fog, marker_index);
-                        } else if (action == TextCellContextAction::Tertiary) {
-                            request_element_inspector(model_.fogs[marker_index].edit_id,
-                                                      "fog.change");
-                        } else if (action == TextCellContextAction::Quaternary) {
-                            request_element_delete(model_.fogs[marker_index].edit_id,
-                                                   "fog.change");
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == k_fog_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           tr("menu.open_in_explorer"), row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndTable();
-    }
+    render_change_point_table(
+        "fogs", k_fog_columns,
+        k_fog_distance_column, k_fog_file_path_column,
+        table_cache_.fog_rows,
+        table_cache_.fog_distance_width,
+        table_cache_.fog_file_path_width,
+        tr("column.file_name"), tr("menu.locate_on_plan"),
+        tr("menu.locate_in_scene_preview"), tr("menu.open_in_explorer"),
+        fog_list_scroll_row_, fog_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this](size_t row) {
+            return row < fog_marker_cache_.size() &&
+                fog_marker_cache_[row].has_value();
+        },
+        [this](size_t row) { locate_fog_row_on_plan(row); },
+        can_locate_scene_preview_row(),
+        [this](size_t row) {
+            locate_scene_marker_row_in_scene_preview(
+                Canvas3DSceneMarkerListKind::Fog, row);
+        },
+        tr("dialog.element_properties"), tr("button.delete"),
+        [this](size_t row) {
+            return edit_actions_available() && row < model_.fogs.size() &&
+                !model_.fogs[row].edit_id.empty();
+        },
+        [this](size_t row) {
+            request_element_inspector(model_.fogs[row].edit_id, "fog.change");
+        },
+        [this](size_t row) {
+            request_element_delete(model_.fogs[row].edit_id, "fog.change");
+        });
     focus_fogs_next_ = false;
     ImGui::End();
 }
@@ -5222,78 +4947,34 @@ void App::render_legacy_fogs_window() {
         return;
     }
     ensure_table_cache();
-    if (ImGui::BeginTable("legacyFogs", IM_ARRAYSIZE(k_legacy_fog_columns),
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                          ImGuiTableFlags_ScrollY)) {
-        std::string file_name_header = tr("column.file_name");
-        for (int i = 0; i < IM_ARRAYSIZE(k_legacy_fog_columns); ++i) {
-            float width = k_legacy_fog_columns[i].width;
-            if (i == k_legacy_fog_distance_column) width = table_cache_.legacy_fog_distance_width;
-            if (i == k_legacy_fog_file_path_column) width = table_cache_.legacy_fog_file_path_width;
-            const char* header = i == k_legacy_fog_file_path_column
-                ? file_name_header.c_str()
-                : k_legacy_fog_columns[i].header;
-            ImGui::TableSetupColumn(header, width > 0.0f ? ImGuiTableColumnFlags_WidthFixed : 0, width);
-        }
-        setup_fixed_table_header();
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        const int row_count = static_cast<int>(table_cache_.legacy_fog_rows.size());
-        if (legacy_fog_list_scroll_row_ >= row_count) legacy_fog_list_scroll_row_ = -1;
-        if (legacy_fog_list_highlight_row_ >= row_count) legacy_fog_list_highlight_row_ = -1;
-        const int scroll_target_row = legacy_fog_list_scroll_row_;
-        clipper.Begin(row_count);
-        if (scroll_target_row >= 0 && scroll_target_row < row_count) {
-            clipper.IncludeItemByIndex(scroll_target_row);
-        }
-        const ImU32 highlight_color = table_row_highlight_color(theme_color_);
-        const bool can_locate_scene_preview = can_locate_scene_preview_row();
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart; row_index < clipper.DisplayEnd; ++row_index) {
-                const CachedTableRow& row =
-                    table_cache_.legacy_fog_rows[static_cast<size_t>(row_index)];
-                ImGui::TableNextRow();
-                if (row_index == legacy_fog_list_highlight_row_) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlight_color);
-                }
-                if (row_index == scroll_target_row) {
-                    ImGui::SetScrollHereY(0.5f);
-                    legacy_fog_list_scroll_row_ = -1;
-                }
-                ImGui::PushID(row_index);
-                for (int i = 0; i < IM_ARRAYSIZE(k_legacy_fog_columns); ++i) {
-                    ImGui::TableSetColumnIndex(i);
-                    const std::string& value = row.cells[static_cast<size_t>(i)];
-                    if (i == k_legacy_fog_distance_column) {
-                        size_t marker_index = static_cast<size_t>(row_index);
-                        bool can_locate = marker_index < legacy_fog_marker_cache_.size() &&
-                            legacy_fog_marker_cache_[marker_index].has_value();
-                        const TextCellContextAction action = render_marker_text_cell_with_context(
-                            value,
-                            tr("menu.locate_on_plan"), can_locate,
-                            tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
-                        if (action == TextCellContextAction::Primary) {
-                            locate_legacy_fog_row_on_plan(marker_index);
-                        } else if (action == TextCellContextAction::Secondary) {
-                            locate_scene_marker_row_in_scene_preview(
-                                Canvas3DSceneMarkerListKind::LegacyFog, marker_index);
-                        }
-                        continue;
-                    }
-                    if (value.empty()) continue;
-                    if (i == k_legacy_fog_file_path_column) {
-                        render_file_path_cell_with_context(value, row.open_path,
-                                                           tr("menu.open_in_explorer"), row.open_path);
-                    } else {
-                        ImGui::TextUnformatted(value.c_str());
-                    }
-                }
-                ImGui::PopID();
+    const bool can_locate_scene_preview = can_locate_scene_preview_row();
+    render_event_table(
+        "legacyFogs", k_legacy_fog_columns,
+        k_legacy_fog_distance_column, k_legacy_fog_file_path_column,
+        table_cache_.legacy_fog_rows,
+        table_cache_.legacy_fog_distance_width,
+        table_cache_.legacy_fog_file_path_width,
+        tr("column.file_name"), tr("menu.open_in_explorer"),
+        legacy_fog_list_scroll_row_, legacy_fog_list_highlight_row_,
+        table_row_highlight_color(theme_color_),
+        [this, can_locate_scene_preview](int row_index, int column,
+                                         const std::string& value) {
+            if (column != k_legacy_fog_distance_column) return false;
+            const size_t marker_index = static_cast<size_t>(row_index);
+            const bool can_locate = marker_index < legacy_fog_marker_cache_.size() &&
+                legacy_fog_marker_cache_[marker_index].has_value();
+            const TextCellContextAction action = render_marker_text_cell_with_context(
+                value,
+                tr("menu.locate_on_plan"), can_locate,
+                tr("menu.locate_in_scene_preview"), can_locate_scene_preview);
+            if (action == TextCellContextAction::Primary) {
+                locate_legacy_fog_row_on_plan(marker_index);
+            } else if (action == TextCellContextAction::Secondary) {
+                locate_scene_marker_row_in_scene_preview(
+                    Canvas3DSceneMarkerListKind::LegacyFog, marker_index);
             }
-        }
-        ImGui::EndTable();
-    }
+            return true;
+        });
     focus_legacy_fogs_next_ = false;
     ImGui::End();
 }

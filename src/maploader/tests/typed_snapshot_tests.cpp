@@ -108,6 +108,8 @@ struct TempFixture {
         if (sound3d) map << "Sound3D.Load('sounds3d.csv');\n";
         if (snapshot_arrays) {
             map << "$snapshotContract=1;\n"
+                << "Curve.Change(800);\n"
+                << "Gradient.Begin(10);\n"
                 << "DrawDistance.Change(600);\n"
                 << "include 'legacy.txt';\n";
         }
@@ -310,6 +312,8 @@ void validate_arrays(const KvMapSnapshot& snapshot) {
     CHECK_ARRAY(file_structure, file_structure_count);
     CHECK_ARRAY(source_files, source_file_count);
     CHECK_ARRAY(controlpoints, controlpoint_count);
+    CHECK_ARRAY(curves, curve_count);
+    CHECK_ARRAY(gradients, gradient_count);
     CHECK_ARRAY(other_tracks, other_track_count);
     CHECK_ARRAY(own_track_events, own_track_event_count);
     CHECK_ARRAY(other_track_events, other_track_event_count);
@@ -891,6 +895,23 @@ int snapshot_contract() {
         }
     }
 
+    {
+        MapHandle editable_handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(editable_handle.value != nullptr, "editable array fixture load");
+        if (editable_handle.value) {
+            KvMapSnapshot editable{};
+            check(kv_get_map_snapshot(editable_handle.value,
+                                      KV_MAP_SNAPSHOT_VERSION, &editable,
+                                      sizeof(editable)) != 0,
+                  "editable array fixture snapshot");
+            validate_map(editable, true);
+            check(editable.curve_count != 0, "nonempty curve array contract");
+            check(editable.gradient_count != 0, "nonempty gradient array contract");
+        }
+    }
+
     std::cout << "typed snapshot contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures;
 }
@@ -956,6 +977,37 @@ struct MultiFieldUpdateBatch {
         change.expected_source_hash = utf8_view(source_hash);
         batch = KvEditBatch{&change, 1, fields.data(),
                             static_cast<std::uint64_t>(fields.size())};
+    }
+};
+
+struct SimpleInsertBatch {
+    std::string target_file;
+    std::string change_id;
+    std::vector<std::string> field_names;
+    std::vector<std::string> field_values;
+    std::vector<KvEditField> fields;
+    KvEditChange change{};
+    KvEditBatch batch{};
+
+    SimpleInsertBatch(std::string target, std::string id,
+                      std::vector<std::pair<std::string, std::string>> values)
+        : target_file(std::move(target)), change_id(std::move(id)) {
+        field_names.reserve(values.size());
+        field_values.reserve(values.size());
+        for (auto& value : values) {
+            field_names.push_back(std::move(value.first));
+            field_values.push_back(std::move(value.second));
+        }
+        fields.reserve(values.size());
+        for (size_t index = 0; index < values.size(); ++index) {
+            fields.push_back({utf8_view(field_names[index]), utf8_view(field_values[index])});
+        }
+        change.change_id = utf8_view(change_id);
+        change.edit_id = utf8_view(change_id);
+        change.operation = KV_EDIT_INSERT;
+        change.fields = KvSpan{0, static_cast<std::uint64_t>(fields.size())};
+        change.target_file_path = utf8_view(target_file);
+        batch = {&change, 1, fields.data(), static_cast<std::uint64_t>(fields.size())};
     }
 };
 
@@ -3498,6 +3550,212 @@ void sound3d_edit_contract() {
           "Sound3D Save/reload values");
 }
 
+void environment_argument_shape_edit_contract() {
+    TempFixture fixture;
+    {
+        std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\nAdhesion.Change(0.35);\n"
+            << "10;\nAdhesion.Change(0.35,0.1,0.2);\n"
+            << "20;\nFog.Interpolate();\n"
+            << "30;\nFog.Interpolate(0.01);\n"
+            << "40;\nFog.Interpolate(0.02,0.1,0.2,0.3);\n"
+            << "50;\nFog.Set(0.03,0.4,0.5,0.6);\n"
+            << "100;\n110;\n120;\n130;\n140;\n150;\n160;\n170;\n180;\n";
+    }
+
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "environment argument-shape fixture load");
+    if (!handle.value) return;
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "environment argument-shape fixture snapshot");
+    check(baseline.adhesion_count == 2 && baseline.fog_count == 4,
+          "environment argument-shape fixture rows");
+    if (baseline.adhesion_count != 2 || baseline.fog_count != 4) return;
+
+    struct TargetIdentity {
+        std::string edit_id;
+        std::string source_hash;
+    };
+    auto target_identity = [&](const auto& row) {
+        TargetIdentity target;
+        target.edit_id = map_string(baseline, row.metadata.edit_id);
+        if (row.metadata.source_file_index < baseline.source_file_count) {
+            target.source_hash = map_string(
+                baseline,
+                baseline.source_files[row.metadata.source_file_index].source_hash);
+        }
+        return target;
+    };
+    const TargetIdentity adhesion_one = target_identity(baseline.adhesions[0]);
+    const TargetIdentity adhesion_three = target_identity(baseline.adhesions[1]);
+    const TargetIdentity fog_empty = target_identity(baseline.fogs[0]);
+    const TargetIdentity fog_density = target_identity(baseline.fogs[1]);
+    const TargetIdentity fog_color = target_identity(baseline.fogs[2]);
+    const TargetIdentity fog_set = target_identity(baseline.fogs[3]);
+    const std::string source_path = fixture.path_utf8();
+
+    auto apply_and_check_source = [&](auto& update, std::string_view expected,
+                                      const char* label) {
+        KvEditReportSnapshot report{};
+        const bool applied = kv_edit_apply_to_memory_typed(
+            handle.value, &update.batch, &report, sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok &&
+            report.non_target_changed_count == 0;
+        const char* source = applied
+            ? kv_get_source_text(handle.value, source_path.c_str()) : nullptr;
+        const bool source_matches = source &&
+            std::string_view(source).find(expected) != std::string_view::npos;
+        check(applied && source_matches, label);
+        kv_free_string(source);
+        check(kv_edit_reset_memory(handle.value) != 0,
+              "environment argument-shape update reset");
+    };
+    MultiFieldUpdateBatch adhesion_update(
+        "environment-adhesion-three-update", adhesion_three.edit_id,
+        adhesion_three.source_hash,
+        {{"a", "0.4"}, {"b", "0.11"}, {"c", "0.22"}});
+    apply_and_check_source(
+        adhesion_update, "Adhesion.Change(0.4,0.11,0.22);",
+        "Adhesion three-parameter update preserves shape");
+    UpdateBatch fog_empty_update(
+        fog_empty.edit_id, fog_empty.source_hash, "0.007", "density");
+    apply_and_check_source(
+        fog_empty_update, "Fog.Interpolate(0.007);",
+        "Fog zero-to-one-parameter update uses official shape");
+    UpdateBatch fog_color_update(
+        fog_color.edit_id, fog_color.source_hash, "0.25", "green");
+    apply_and_check_source(
+        fog_color_update, "Fog.Interpolate(0.02,0.1,0.25,0.3);",
+        "Fog four-parameter Interpolate update preserves shape");
+    UpdateBatch fog_set_update(
+        fog_set.edit_id, fog_set.source_hash, "0.45", "red");
+    apply_and_check_source(
+        fog_set_update, "Fog.Set(0.03,0.45,0.5,0.6);",
+        "Fog legacy Set update preserves official legacy shape");
+
+    auto check_update_error = [&](auto& update, std::string_view expected_error,
+                                  const char* label) {
+        KvEditReportSnapshot report{};
+        const bool called = kv_edit_dry_run_typed(
+            handle.value, &update.batch, &report, sizeof(report)) != 0;
+        check(called && !report.ok &&
+                  edit_report_has_error_containing(report, expected_error),
+              label);
+    };
+    UpdateBatch incomplete_adhesion(
+        adhesion_one.edit_id, adhesion_one.source_hash, "0.1", "b");
+    check_update_error(
+        incomplete_adhesion,
+        "Adhesion.Change requires either 1 or 3 parameters",
+        "Adhesion partial optional update is rejected");
+    UpdateBatch incomplete_fog_color(
+        fog_density.edit_id, fog_density.source_hash, "0.2", "red");
+    check_update_error(
+        incomplete_fog_color,
+        "Fog.Interpolate requires 0, 1, or 4 parameters",
+        "Fog partial Interpolate color update is rejected");
+    UpdateBatch incomplete_fog_set(
+        fog_set.edit_id, fog_set.source_hash, "", "blue");
+    check_update_error(
+        incomplete_fog_set, "Fog.Set requires 4 parameters",
+        "Fog incomplete Set update is rejected");
+
+    auto check_insert = [&](std::string change_id,
+                            std::vector<std::pair<std::string, std::string>> fields,
+                            std::string_view expected,
+                            const char* label) {
+        SimpleInsertBatch insert(source_path, std::move(change_id), std::move(fields));
+        KvEditReportSnapshot report{};
+        const bool applied = kv_edit_apply_to_memory_typed(
+            handle.value, &insert.batch, &report, sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok &&
+            report.non_target_changed_count == 0;
+        const char* source = applied
+            ? kv_get_source_text(handle.value, source_path.c_str()) : nullptr;
+        const bool source_matches = source &&
+            std::string_view(source).find(expected) != std::string_view::npos;
+        check(applied && source_matches, label);
+        kv_free_string(source);
+        check(kv_edit_reset_memory(handle.value) != 0,
+              "environment argument-shape insert reset");
+    };
+    check_insert(
+        "insert-adhesion-one",
+        {{"rowKind", "adhesion.change"}, {"distance", "100"}, {"a", "0.5"}},
+        "Adhesion.Change(0.5);",
+        "Adhesion one-parameter insert uses official shape");
+    check_insert(
+        "insert-adhesion-three",
+        {{"rowKind", "adhesion.change"}, {"distance", "110"},
+         {"a", "0.5"}, {"b", "0.1"}, {"c", "0.2"}},
+        "Adhesion.Change(0.5,0.1,0.2);",
+        "Adhesion three-parameter insert uses official shape");
+    check_insert(
+        "insert-fog-empty",
+        {{"rowKind", "fog.change"}, {"distance", "120"},
+         {"method", "Interpolate"}},
+        "Fog.Interpolate();",
+        "Fog zero-parameter insert uses official shape");
+    check_insert(
+        "insert-fog-density",
+        {{"rowKind", "fog.change"}, {"distance", "130"},
+         {"method", "Interpolate"}, {"density", "0.04"}},
+        "Fog.Interpolate(0.04);",
+        "Fog one-parameter insert uses official shape");
+    check_insert(
+        "insert-fog-color",
+        {{"rowKind", "fog.change"}, {"distance", "140"},
+         {"method", "Interpolate"}, {"density", "0.05"},
+         {"red", "0.1"}, {"green", "0.2"}, {"blue", "0.3"}},
+        "Fog.Interpolate(0.05,0.1,0.2,0.3);",
+        "Fog four-parameter insert uses official shape");
+    check_insert(
+        "insert-fog-set",
+        {{"rowKind", "fog.change"}, {"distance", "150"},
+         {"method", "Set"}, {"density", "0.06"},
+         {"red", "0.4"}, {"green", "0.5"}, {"blue", "0.6"}},
+        "Fog.Set(0.06,0.4,0.5,0.6);",
+        "Fog legacy Set insert preserves supported official legacy shape");
+
+    auto check_insert_error = [&](
+        std::string change_id,
+        std::vector<std::pair<std::string, std::string>> fields,
+        std::string_view expected_error,
+        const char* label) {
+        SimpleInsertBatch insert(source_path, std::move(change_id), std::move(fields));
+        KvEditReportSnapshot report{};
+        const bool called = kv_edit_dry_run_typed(
+            handle.value, &insert.batch, &report, sizeof(report)) != 0;
+        check(called && !report.ok &&
+                  edit_report_has_error_containing(report, expected_error),
+              label);
+    };
+    check_insert_error(
+        "insert-incomplete-adhesion",
+        {{"rowKind", "adhesion.change"}, {"distance", "160"},
+         {"a", "0.5"}, {"b", "0.1"}},
+        "Adhesion.Change requires either 1 or 3 parameters",
+        "Adhesion partial optional insert is rejected");
+    check_insert_error(
+        "insert-incomplete-fog-interpolate",
+        {{"rowKind", "fog.change"}, {"distance", "170"},
+         {"method", "Interpolate"}, {"density", "0.05"}, {"red", "0.1"}},
+        "Fog.Interpolate requires 0, 1, or 4 parameters",
+        "Fog partial Interpolate insert is rejected");
+    check_insert_error(
+        "insert-incomplete-fog-set",
+        {{"rowKind", "fog.change"}, {"distance", "180"},
+         {"method", "Set"}, {"density", "0.05"},
+         {"red", "0.1"}, {"green", "0.2"}},
+        "Fog.Set requires 4 parameters",
+        "Fog incomplete Set insert is rejected");
+}
+
 int edit_contract() {
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();
@@ -3506,6 +3764,7 @@ int edit_contract() {
     repeater_insert_contract();
     own_track_insert_contract();
     other_track_insert_contract();
+    environment_argument_shape_edit_contract();
     sound3d_edit_contract();
     TempFixture fixture;
     check_coordinate_offset_method_conversions(fixture.path_utf8());

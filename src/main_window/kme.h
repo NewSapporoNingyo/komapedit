@@ -2330,6 +2330,7 @@ private:
     void apply_scene_performance_warning_to_canvas(bool enabled,
                                                    int warning_threshold,
                                                    int critical_warning_threshold);
+    void sync_scene_settings_dialog_state_from_current();
     bool scene_settings_preview_differs_from_dialog_baseline() const;
     void restore_scene_settings_preview();
     void save_runtime_settings_if_changed();

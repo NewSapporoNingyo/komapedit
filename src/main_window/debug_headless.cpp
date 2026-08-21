@@ -180,7 +180,7 @@ FrameTimingStats calculate_frame_timing_stats(const std::vector<double>& frame_m
     return stats;
 }
 
-std::array<size_t, 22> plan_data_size_summary(const PlanData& data) {
+std::array<size_t, 27> plan_data_size_summary(const PlanData& data) {
     return {
         data.own.size(),
         data.stations.size(),
@@ -188,6 +188,7 @@ std::array<size_t, 22> plan_data_size_summary(const PlanData& data) {
         data.structure_markers.size(),
         data.repeater_markers.size(),
         data.signal_markers.size(),
+        data.section_markers.size(),
         data.beacon_markers.size(),
         data.pretrain_markers.size(),
         data.other_train_stop_markers.size(),
@@ -202,6 +203,10 @@ std::array<size_t, 22> plan_data_size_summary(const PlanData& data) {
         data.adhesion_markers.size(),
         data.cab_illuminance_markers.size(),
         data.fog_markers.size(),
+        data.legacy_fog_markers.size(),
+        data.draw_distance_markers.size(),
+        data.curve_edit_markers.size(),
+        data.gradient_edit_markers.size(),
         data.curve_sections.size(),
         data.transition_sections.size(),
     };
@@ -249,6 +254,61 @@ Options parse_headless_optional_map_edit_options(
         }
     }
     if (options.requested && options.path.empty()) options.path = k_default_edit_map_path;
+    return options;
+}
+
+template <typename Options, typename CommitHandler>
+Options parse_headless_required_map_edit_options(
+    const std::vector<std::string>& args, std::string_view command,
+    CommitHandler&& handle_commit) {
+    Options options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (std::string_view(arg) == command) {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            handle_commit(options);
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = std::string(command) + " requires a map path";
+    }
+    return options;
+}
+
+template <typename Options>
+Options parse_headless_output_only_options(
+    const std::vector<std::string>& args, std::string_view command) {
+    Options options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (std::string_view(arg) == command) {
+            options.requested = true;
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
     return options;
 }
 
@@ -511,32 +571,11 @@ HeadlessSourceAnchorOptions parse_headless_source_anchor_options(const std::vect
     return options;
 }
 
-HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(const std::vector<std::string>& args) {
-    HeadlessEditRoundtripOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-edit-roundtrip") {
-            options.requested = true;
-            const std::string* value = take_option_value(args, i, arg, "a map path", options.error);
-            if (!value) return options;
-            options.path = *value;
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be positive",
-                                     options.unit_distance, options.error,
-                                     [](double value) { return value > 0.0; })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        }
-    }
-    if (options.requested && options.path.empty()) {
-        options.error = "--debug-headless-edit-roundtrip requires a map path";
-    }
-    return options;
+HeadlessEditRoundtripOptions parse_headless_edit_roundtrip_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessEditRoundtripOptions>(
+        args, "--debug-headless-edit-roundtrip",
+        [](HeadlessEditRoundtripOptions&) {});
 }
 
 HeadlessOwnTrackEditOptions parse_headless_own_track_edit_options(
@@ -562,37 +601,9 @@ HeadlessDistanceEditBatchOptions parse_headless_distance_edit_batch_options(
 
 HeadlessStationListEditOptions parse_headless_station_list_edit_options(
     const std::vector<std::string>& args) {
-    HeadlessStationListEditOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-station-list-edit") {
-            options.requested = true;
-            const std::string* value =
-                take_option_value(args, i, arg, "a map path", options.error);
-            if (!value) return options;
-            options.path = *value;
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) {
-                                         return value > 0.0 && std::isfinite(value);
-                                     })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty() && options.error.empty()) {
-        options.error = "--debug-headless-station-list-edit requires a map path";
-    }
-    return options;
+    return parse_headless_required_map_edit_options<HeadlessStationListEditOptions>(
+        args, "--debug-headless-station-list-edit",
+        [](HeadlessStationListEditOptions& options) { options.commit = true; });
 }
 
 HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
@@ -604,72 +615,16 @@ HeadlessRepeaterEditBatchOptions parse_headless_repeater_edit_batch_options(
 
 HeadlessRepeaterKeyEditOptions parse_headless_repeater_key_edit_options(
     const std::vector<std::string>& args) {
-    HeadlessRepeaterKeyEditOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-repeater-key-edit") {
-            options.requested = true;
-            const std::string* value =
-                take_option_value(args, i, arg, "a map path", options.error);
-            if (!value) return options;
-            options.path = *value;
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) {
-                                         return value > 0.0 && std::isfinite(value);
-                                     })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty() && options.error.empty()) {
-        options.error = "--debug-headless-repeater-key-edit requires a map path";
-    }
-    return options;
+    return parse_headless_required_map_edit_options<HeadlessRepeaterKeyEditOptions>(
+        args, "--debug-headless-repeater-key-edit",
+        [](HeadlessRepeaterKeyEditOptions& options) { options.commit = true; });
 }
 
 HeadlessOtherTrackKeyEditOptions parse_headless_other_track_key_edit_options(
     const std::vector<std::string>& args) {
-    HeadlessOtherTrackKeyEditOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-other-track-key-edit") {
-            options.requested = true;
-            const std::string* value =
-                take_option_value(args, i, arg, "a map path", options.error);
-            if (!value) return options;
-            options.path = *value;
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) {
-                                         return value > 0.0 && std::isfinite(value);
-                                     })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty() && options.error.empty()) {
-        options.error = "--debug-headless-other-track-key-edit requires a map path";
-    }
-    return options;
+    return parse_headless_required_map_edit_options<HeadlessOtherTrackKeyEditOptions>(
+        args, "--debug-headless-other-track-key-edit",
+        [](HeadlessOtherTrackKeyEditOptions& options) { options.commit = true; });
 }
 
 HeadlessSectionEditBatchOptions parse_headless_section_edit_batch_options(
@@ -692,118 +647,39 @@ HeadlessInsertEditOptions parse_headless_insert_edit_options(const std::vector<s
 
 HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
     const std::vector<std::string>& args) {
-    HeadlessNewElementEditOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-new-element-edit") {
-            options.requested = true;
-            const std::string* value =
-                take_option_value(args, i, arg, "a map path", options.error);
-            if (!value) return options;
-            options.path = *value;
-        } else if (arg == "--unit-distance") {
-            if (!parse_double_option(args, i, arg, "a value",
-                                     "--unit-distance must be a positive finite number",
-                                     options.unit_distance, options.error,
-                                     [](double value) {
-                                         return value > 0.0 && std::isfinite(value);
-                                     })) {
-                return options;
-            }
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        } else if (arg == "--commit") {
-            options.commit = true;
-        }
-    }
-    if (options.requested && options.path.empty() && options.error.empty()) {
-        options.error = "--debug-headless-new-element-edit requires a map path";
-    }
-    return options;
+    return parse_headless_required_map_edit_options<HeadlessNewElementEditOptions>(
+        args, "--debug-headless-new-element-edit",
+        [](HeadlessNewElementEditOptions& options) { options.commit = true; });
 }
 
-HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args) {
-    HeadlessTableFindOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-table-find") {
-            options.requested = true;
-        } else if (arg == "--headless-output") {
-            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        }
-    }
-    return options;
+HeadlessTableFindOptions parse_headless_table_find_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_output_only_options<HeadlessTableFindOptions>(
+        args, "--debug-headless-table-find");
 }
 
-HeadlessTouchInputOptions parse_headless_touch_input_options(const std::vector<std::string>& args) {
-    HeadlessTouchInputOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-touch-input") {
-            options.requested = true;
-        } else if (arg == "--headless-output") {
-            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        }
-    }
-    return options;
+HeadlessTouchInputOptions parse_headless_touch_input_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_output_only_options<HeadlessTouchInputOptions>(
+        args, "--debug-headless-touch-input");
 }
 
 HeadlessSettingsPersistenceOptions parse_headless_settings_persistence_options(
     const std::vector<std::string>& args) {
-    HeadlessSettingsPersistenceOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-settings-persistence") {
-            options.requested = true;
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        }
-    }
-    return options;
+    return parse_headless_output_only_options<HeadlessSettingsPersistenceOptions>(
+        args, "--debug-headless-settings-persistence");
 }
 
 HeadlessDiagnosticsPopupBenchOptions parse_headless_diagnostics_popup_bench_options(
     const std::vector<std::string>& args) {
-    HeadlessDiagnosticsPopupBenchOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-diagnostics-popup-bench") {
-            options.requested = true;
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        }
-    }
-    return options;
+    return parse_headless_output_only_options<HeadlessDiagnosticsPopupBenchOptions>(
+        args, "--debug-headless-diagnostics-popup-bench");
 }
 
 HeadlessSceneLoaderContractOptions parse_headless_scene_loader_contract_options(
     const std::vector<std::string>& args) {
-    HeadlessSceneLoaderContractOptions options;
-    for (size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--debug-headless-scene-loader-contract") {
-            options.requested = true;
-        } else if (arg == "--headless-output") {
-            const std::string* value =
-                take_option_value(args, i, arg, "a path", options.error);
-            if (!value) return options;
-            options.output_path = *value;
-        }
-    }
-    return options;
+    return parse_headless_output_only_options<HeadlessSceneLoaderContractOptions>(
+        args, "--debug-headless-scene-loader-contract");
 }
 
 std::uint64_t hash_double_bits(double value) {
@@ -1053,6 +929,40 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
             {"distance", "300"},
             {"signalAspectKey", "structureOnlyKey"},
         }));
+
+        const std::string cache_source_path = "C:\\fixtures\\cache-source.map";
+        auto add_cache_fixture_row = [&](std::vector<TableRow>& rows,
+                                         const char* edit_id,
+                                         int line,
+                                         std::initializer_list<std::pair<const char*, const char*>> cells) {
+            TableRow row = make_row(cells);
+            row.edit_id = edit_id;
+            row.source.file_path = cache_source_path;
+            row.source.line = line;
+            rows.push_back(std::move(row));
+        };
+        add_cache_fixture_row(app.model_.backgrounds, "background-cache-row", 10, {
+            {"distance", "10"}, {"structureKey", "bg"},
+            {"filePath", cache_source_path.c_str()},
+        });
+        add_cache_fixture_row(app.model_.adhesions, "adhesion-cache-row", 20, {
+            {"distance", "20"}, {"a", "0.35"}, {"b", "0.1"}, {"c", "0.2"},
+            {"filePath", cache_source_path.c_str()},
+        });
+        add_cache_fixture_row(app.model_.cab_illuminance, "cab-cache-row", 30, {
+            {"distance", "30"}, {"value", "0.75"},
+            {"filePath", cache_source_path.c_str()},
+        });
+        add_cache_fixture_row(app.model_.fogs, "fog-cache-row", 40, {
+            {"distance", "40"}, {"density", "0.005"},
+            {"red", "0.1"}, {"green", "0.2"}, {"blue", "0.3"},
+            {"filePath", cache_source_path.c_str()},
+        });
+        add_cache_fixture_row(app.model_.legacy_fogs, "legacy-fog-cache-row", 50, {
+            {"distance", "50"}, {"start", "100"}, {"end", "500"},
+            {"red", "128"}, {"green", "129"}, {"blue", "130"},
+            {"filePath", cache_source_path.c_str()},
+        });
         app.has_model_ = true;
 
         auto check = [&](bool condition, const char* label) {
@@ -1088,6 +998,43 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
               app.signal_aspect_find_.unused_row_matches[2] != 0 &&
               app.signal_aspect_find_.scroll_row == 2,
               "marks_only_unused_signal_aspect_row");
+
+        app.ensure_table_cache();
+        auto cached_row_matches = [&](const std::vector<CachedTableRow>& rows,
+                                      const std::vector<std::string>& expected_cells,
+                                      const char* edit_id,
+                                      int line) {
+            return rows.size() == 1 && rows[0].cells == expected_cells &&
+                rows[0].open_path == cache_source_path &&
+                rows[0].edit_id == edit_id &&
+                rows[0].source.file_path == cache_source_path &&
+                rows[0].source.line == line;
+        };
+        check(cached_row_matches(
+                  app.table_cache_.background_rows,
+                  {"1", "10", "bg", "cache-source.map"},
+                  "background-cache-row", 10),
+              "caches_background_change_point_row");
+        check(cached_row_matches(
+                  app.table_cache_.adhesion_rows,
+                  {"1", "20", "0.35", "0.1", "0.2", "cache-source.map"},
+                  "adhesion-cache-row", 20),
+              "caches_adhesion_change_point_row");
+        check(cached_row_matches(
+                  app.table_cache_.cab_illuminance_rows,
+                  {"1", "30", "0.75", "cache-source.map"},
+                  "cab-cache-row", 30),
+              "caches_cab_illuminance_change_point_row");
+        check(cached_row_matches(
+                  app.table_cache_.fog_rows,
+                  {"1", "40", "0.005", "0.1", "0.2", "0.3", "cache-source.map"},
+                  "fog-cache-row", 40),
+              "caches_fog_change_point_row");
+        check(cached_row_matches(
+                  app.table_cache_.legacy_fog_rows,
+                  {"1", "50", "100", "500", "128", "129", "130", "cache-source.map"},
+                  "legacy-fog-cache-row", 50),
+              "caches_legacy_fog_change_point_row");
     } catch (const std::exception& e) {
         *out << "exception=\"" << e.what() << "\"\n";
         exit_code = 3;
@@ -9019,7 +8966,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             const PlanData enabled_uncached = app.build_plan_data(false);
             bool passed = app.plan_data_cache_.rebuild_count == enabled_count_before + 1 &&
                 (app.plan_data_cache_.marker_visibility_mask & (std::uint32_t{1} << bit)) != 0 &&
-                enabled_size == projection(enabled_uncached).size();
+                enabled_size == projection(enabled_uncached).size() &&
+                plan_data_summary_matches(enabled, enabled_uncached);
 
             const std::uint64_t disabled_count_before = app.plan_data_cache_.rebuild_count;
             toggle = false;
@@ -9072,6 +9020,12 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         marker_toggles_pass &= validate_marker_toggle(
             app.show_fog_markers_, 11,
             [](const PlanData& data) -> const auto& { return data.fog_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_draw_distance_markers_, 12,
+            [](const PlanData& data) -> const auto& { return data.draw_distance_markers; });
+        marker_toggles_pass &= validate_marker_toggle(
+            app.show_section_markers_, 13,
+            [](const PlanData& data) -> const auto& { return data.section_markers; });
 
         const bool original_curve_visibility = app.show_curve_values_;
         app.show_curve_values_ = false;
@@ -9083,12 +9037,57 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         bool curve_toggle_pass = app.plan_data_cache_.rebuild_count == curve_count_before + 1 &&
             app.plan_data_cache_.show_curve_values &&
             visible_curves.curve_sections.size() == visible_curves_uncached.curve_sections.size() &&
-            visible_curves.transition_sections.size() == visible_curves_uncached.transition_sections.size();
+            visible_curves.transition_sections.size() == visible_curves_uncached.transition_sections.size() &&
+            plan_data_summary_matches(visible_curves, visible_curves_uncached);
         app.show_curve_values_ = false;
         const PlanData& hidden_curves = app.current_plan_data();
+        const PlanData hidden_curves_uncached = app.build_plan_data(false);
         curve_toggle_pass = curve_toggle_pass && !app.plan_data_cache_.show_curve_values &&
-            hidden_curves.curve_sections.empty() && hidden_curves.transition_sections.empty();
+            hidden_curves.curve_sections.empty() && hidden_curves.transition_sections.empty() &&
+            plan_data_summary_matches(hidden_curves, hidden_curves_uncached);
         app.show_curve_values_ = original_curve_visibility;
+        app.current_plan_data();
+
+        const bool original_edit_mode = app.edit_mode_enabled_;
+        const bool original_gradient_visibility = app.show_gradient_pos_;
+        std::vector<OwnTrackEditMarker> original_edit_markers =
+            std::move(app.own_track_edit_marker_cache_);
+        OwnTrackEditMarker curve_edit_marker;
+        curve_edit_marker.d = (app.dmin_ + app.dmax_) * 0.5;
+        curve_edit_marker.edit_id = "headless-curve-edit-marker";
+        OwnTrackEditMarker gradient_edit_marker = curve_edit_marker;
+        gradient_edit_marker.gradient = true;
+        gradient_edit_marker.edit_id = "headless-gradient-edit-marker";
+        app.own_track_edit_marker_cache_ = {curve_edit_marker, gradient_edit_marker};
+        app.edit_mode_enabled_ = true;
+        app.show_curve_values_ = true;
+        app.show_gradient_pos_ = true;
+        app.plan_data_cache_.valid = false;
+        const PlanData& visible_edit_markers = app.current_plan_data();
+        const PlanData visible_edit_markers_uncached = app.build_plan_data(false);
+        bool edit_marker_toggle_pass = visible_edit_markers.curve_edit_markers.size() == 1 &&
+            visible_edit_markers.gradient_edit_markers.size() == 1 &&
+            plan_data_summary_matches(visible_edit_markers, visible_edit_markers_uncached);
+        app.show_curve_values_ = false;
+        const PlanData& hidden_curve_edit_markers = app.current_plan_data();
+        const PlanData hidden_curve_edit_markers_uncached = app.build_plan_data(false);
+        edit_marker_toggle_pass = edit_marker_toggle_pass &&
+            hidden_curve_edit_markers.curve_edit_markers.empty() &&
+            hidden_curve_edit_markers.gradient_edit_markers.size() == 1 &&
+            plan_data_summary_matches(hidden_curve_edit_markers,
+                                      hidden_curve_edit_markers_uncached);
+        app.show_gradient_pos_ = false;
+        const PlanData& hidden_edit_markers = app.current_plan_data();
+        const PlanData hidden_edit_markers_uncached = app.build_plan_data(false);
+        edit_marker_toggle_pass = edit_marker_toggle_pass &&
+            hidden_edit_markers.curve_edit_markers.empty() &&
+            hidden_edit_markers.gradient_edit_markers.empty() &&
+            plan_data_summary_matches(hidden_edit_markers, hidden_edit_markers_uncached);
+        app.own_track_edit_marker_cache_ = std::move(original_edit_markers);
+        app.edit_mode_enabled_ = original_edit_mode;
+        app.show_curve_values_ = original_curve_visibility;
+        app.show_gradient_pos_ = original_gradient_visibility;
+        app.plan_data_cache_.valid = false;
         app.current_plan_data();
 
         auto validate_row_visibility = [&](auto& visibility, auto cache_snapshot) {
@@ -9152,13 +9151,15 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             (app.debug_measure_validation_passed_ && app.debug_measure_query_count_ > 0 &&
              measure_pan_rotation_hit);
         const bool cache_checks_pass = uncached_match && stable_hit && pan_rotation_hit &&
-            marker_toggles_pass && curve_toggle_pass && row_visibility_pass &&
-            keyed_state_pass && source_revision_pass && measure_index_pass;
+            marker_toggles_pass && curve_toggle_pass && edit_marker_toggle_pass &&
+            row_visibility_pass && keyed_state_pass && source_revision_pass &&
+            measure_index_pass;
         *out << "plan_cache_checks uncached_match=" << (uncached_match ? "PASS" : "FAIL")
              << " stable_hit=" << (stable_hit ? "PASS" : "FAIL")
              << " pan_rotation_hit=" << (pan_rotation_hit ? "PASS" : "FAIL")
              << " marker_toggles=" << (marker_toggles_pass ? "PASS" : "FAIL")
              << " curve_toggle=" << (curve_toggle_pass ? "PASS" : "FAIL")
+             << " edit_marker_toggle=" << (edit_marker_toggle_pass ? "PASS" : "FAIL")
              << " row_visibility=" << (row_visibility_pass ? "PASS" : "FAIL")
              << " keyed_state=" << (keyed_state_pass ? "PASS" : "FAIL")
              << " source_revision=" << (source_revision_pass ? "PASS" : "FAIL")
