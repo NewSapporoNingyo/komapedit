@@ -27,11 +27,12 @@ description: Audit and repair evidence-backed maintainability, correctness, safe
 - Cache keys that omit visible inputs or invalidation with no clear owner.
 - Async/thread paths that can exhaust resources, deadlock, or leave inconsistent state.
 - Logic whose names or structure conceal the real invariant.
+- Overdesign and over-engineering, such as “significantly increasing code complexity for a boundary case that occurs only one in a thousand times.”
 
 ## Repair conservatively
 
 1. Verify every finding against the current tree immediately before editing.
-2. Apply small independent patches. Prefer shared helpers only when semantics and error behavior are genuinely identical.
+2. Do not apply many patches directly to problematic code, as this leads to an accumulation of patch code, increased complexity, and reduced code readability. Instead, use a correct and efficient implementation to directly replace the problematic section.
 3. Preserve user interaction, BVE compatibility, ABI layout/version, source writeback, cache outputs, and rendering behavior.
 4. Never claim improvement from deleted comments, combined lines, renamed whitespace, or moved code alone.
 5. Count self-owned production code before and after. Exclude tests, documentation, generated files, and third-party trees. Explain any increase with measured correctness or performance value.
