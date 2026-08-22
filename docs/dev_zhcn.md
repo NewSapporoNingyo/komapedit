@@ -331,7 +331,7 @@ ctest --test-dir build --output-on-failure
 - **行内资源列表编辑**：draft 判断、spec、字段校验、重排/清空/删除、文件选择和 find-result 重置代码维护 Station/Structure/Signal/Sound/Sound3D 物理行草稿；批量 Apply 前保持原 source hash 和未显示列。
 - **typed 报告适配**：`TypedEditBatchStorage` 拥有调用期字符串与 view；报告字符串/span 函数复制 DLL 视图；committed file/row state 处理重解析后 identity 迁移。距离 resolution choice 函数驱动 Text Preview 选择并重试同一批次。
 - **保存、撤销与关闭**：`save_pending_edits()` 阻止遗漏 inline draft 后调用 commit；`discard_pending_edits()` 清 UI 草稿；`revert_all_pending_edits()` 调用 reset memory；close/reload 状态机根据未保存状态弹窗且不混淆 Save 与 Reload。
-- **Inspector 与新建向导 UI**：字段/Section 可变参数渲染、`render_element_inspector()`、`new_element_templates()`、候选文件/方法/字段表、`apply_new_element_insert()` 和 `render_new_element_wizard()` 仅暴露已支持普通 BVE map 元素。
+- **Inspector 与新建向导 UI**：字段/Section 可变参数渲染、`render_element_inspector()`、`new_element_templates()`、候选文件/方法/字段表、`apply_new_element_insert()` 和 `render_new_element_wizard()` 仅暴露已支持普通 BVE map 元素；向导“应用并编辑”按钮通过 `apply_then_open_created_element` 标志把新建主语句的插入 ID 复用为 `return_inspector_request`，应用成功后经既有 `close_after_successful_apply`/`pending_inspector_request_` 链路关闭向导并打开对应编辑窗口。
 - **文件、历史、背景与导出**：打开 map/image/folder 对话框使用 Win32 shell；recent map 与 background history 函数同步 `history.ini`；图片装载/纹理重建使用 WIC；CSV 导出写 own/other track 矩阵。
 - **布局、菜单和设置**：dockspace 初始化、window visibility 与 2D/3D settings 投影函数保持持久状态；`render_menu()`、`render_toolbar()`、`render_status_bar()`、站点/里程跳转、console 和 popups 构成顶层 UI。
 - **三维/模型预览协调**：`start_scene_preview()`、`rebuild_scene_preview()`、动态刷新、track/marker visibility 同步和 `render_scene_preview_window()` 连接 `MapModel` 与 `Canvas3D`；model preview 函数从结构列表打开单模型。

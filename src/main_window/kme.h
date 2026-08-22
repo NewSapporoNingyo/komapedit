@@ -1354,6 +1354,7 @@ struct NewElementWizardState {
     bool own_track_curve_add_cant = true;
     std::optional<MapElementInspectorRequest> return_inspector_request;
     bool close_after_successful_apply = false;
+    bool apply_then_open_created_element = false;
     MapElementInspectorState form;
 };
 

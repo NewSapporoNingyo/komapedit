@@ -7905,6 +7905,7 @@ void App::open_new_element_wizard(std::optional<double> distance_prefill) {
         wizard.confirm_repeater_change_point_once = false;
         wizard.return_inspector_request.reset();
         wizard.close_after_successful_apply = false;
+        wizard.apply_then_open_created_element = false;
     }
     wizard.open = true;
     wizard.distance_prefill = distance_prefill;
@@ -7974,6 +7975,7 @@ bool App::prepare_repeater_wizard_from_inspector(std::string& repeater_key) {
         wizard.open = false;
         wizard.return_inspector_request.reset();
         wizard.close_after_successful_apply = false;
+        wizard.apply_then_open_created_element = false;
         return false;
     }
     return true;
@@ -8003,6 +8005,7 @@ void App::open_repeater_end_wizard_from_inspector() {
         wizard.open = false;
         wizard.return_inspector_request.reset();
         wizard.close_after_successful_apply = false;
+        wizard.apply_then_open_created_element = false;
         return;
     }
     key_field->original_value = repeater_key;
@@ -8031,6 +8034,7 @@ void App::open_repeater_change_point_wizard_from_inspector() {
         wizard.open = false;
         wizard.return_inspector_request.reset();
         wizard.close_after_successful_apply = false;
+        wizard.apply_then_open_created_element = false;
         return;
     }
 
@@ -8075,6 +8079,7 @@ void App::finish_new_element_wizard_after_successful_apply() {
     wizard.open = false;
     wizard.return_inspector_request.reset();
     wizard.close_after_successful_apply = false;
+    wizard.apply_then_open_created_element = false;
 }
 
 void App::apply_new_element_wizard_distance_prefill() {
@@ -8379,6 +8384,7 @@ bool App::apply_new_element_insert() {
     }
     std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
     std::string insert_base;
+    std::string primary_insert_id;
     const auto insert_id_exists = [&](const std::string& base) {
         if (candidate.find(base) != candidate.end()) return true;
         const std::string prefix = base + "-";
@@ -8434,6 +8440,9 @@ bool App::apply_new_element_insert() {
             end.field_changes["method"] = "End";
             candidate[end.edit_id] = std::move(end);
         }
+        primary_insert_id = wizard.repeater_add_begin
+            ? insert_base + "-begin"
+            : insert_base + "-end";
         wizard.confirm_repeater_change_point_once = false;
     } else if (own_track_wizard) {
         const auto value = [&](const char* key) {
@@ -8480,6 +8489,9 @@ bool App::apply_new_element_insert() {
             end.field_changes["method"] = family + "End";
             candidate[end.edit_id] = std::move(end);
         }
+        primary_insert_id = wizard.own_track_add_start
+            ? insert_base + "-b-start"
+            : insert_base + "-d-end";
     } else {
         MapElementPendingChange change = make_insert_change(insert_base);
         for (const MapElementEditFieldState& field : form.fields) {
@@ -8502,10 +8514,20 @@ bool App::apply_new_element_insert() {
             }
         }
         candidate[change.edit_id] = std::move(change);
+        primary_insert_id = insert_base;
     }
 
+    std::optional<MapElementInspectorRequest> created_element_request;
+    if (wizard.apply_then_open_created_element) {
+        created_element_request = MapElementInspectorRequest{
+            primary_insert_id, std::string(tpl.row_kind)};
+        wizard.return_inspector_request = *created_element_request;
+        wizard.close_after_successful_apply = true;
+    }
     const std::optional<MapElementInspectorRequest> reload_request =
-        wizard.return_inspector_request;
+        created_element_request
+        ? created_element_request
+        : wizard.return_inspector_request;
     if (!apply_edit_ledger_to_preview(candidate, reload_request, false)) {
         if (distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
             !distance_resolution_workflow_.retry_requested) {
@@ -8784,11 +8806,31 @@ void App::render_new_element_wizard() {
         }
         ImGui::Separator();
         if (ImGui::Button(tr("button.apply").c_str())) {
+            if (wizard.apply_then_open_created_element) {
+                wizard.apply_then_open_created_element = false;
+                wizard.close_after_successful_apply = false;
+                wizard.return_inspector_request.reset();
+            }
             request_edit_ui_operation(PendingEditUiOperation::ApplyNewElement);
         }
+        ImGui::SameLine();
+        const bool jump_to_created_element_available =
+            !wizard.return_inspector_request.has_value() ||
+            wizard.apply_then_open_created_element;
+        ImGui::BeginDisabled(!jump_to_created_element_available);
+        if (ImGui::Button(tr("button.apply_jump_to_edit").c_str())) {
+            wizard.apply_then_open_created_element = true;
+            request_edit_ui_operation(PendingEditUiOperation::ApplyNewElement);
+        }
+        ImGui::EndDisabled();
     }
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) {
+        if (wizard.apply_then_open_created_element) {
+            wizard.apply_then_open_created_element = false;
+            wizard.close_after_successful_apply = false;
+            wizard.return_inspector_request.reset();
+        }
         cancel_distance_resolution_workflow();
         wizard.open = false;
     }

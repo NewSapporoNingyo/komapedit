@@ -20,6 +20,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Reject ambiguous maps with multiple same-kind unkeyed resource-list `Load` statements or multiple case-insensitively matching `Train[].Enable` declarations.
 - [x] Insert supported map placement and event/effect statements through the New Map Element wizard; resource/list definition rows remain inline-table-only.
 - [x] Insert `Repeater.Begin`/`Begin0`, `Repeater.End`, or an atomic Begin+End pair through the New Map Element wizard; preserve half-open same-name interval protection, confirmed Begin-only change points, and isolated End statements while blocking extra End statements inside explicitly closed intervals.
+- [x] Add an Apply and Edit button to the New Map Element wizard that applies, closes the wizard, and opens `Properties/Edit` on the primary created statement; the button is disabled in wizards opened from a Repeater `Properties/Edit` window.
 
 ### Own-Track and Other-Track Geometry
 
@@ -152,6 +153,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 拒绝含有多个同种无 key 资源列表 `Load` 语句，或多个名称仅大小写不同的 `Train[].Enable` 声明的歧义地图
 - [x] 通过“新建地图元素”向导新增受支持的地图放置和事件/效果语句；资源/定义列表仍只能通过行内表格编辑
 - [x] 通过“新建地图元素”向导单独新增 `Repeater.Begin`/`Begin0`、`Repeater.End`，或原子新增 Begin+End；保留半开同名区间保护和经确认的 Begin-only 变化点，允许孤立 End，并阻止在已有显式 End 的有效区间内增加 End
+- [x] 在“新建地图元素”向导中新增“应用并编辑”按钮：应用成功后关闭向导，并直接打开本次新建主语句的“属性/编辑”窗口；从 Repeater“属性/编辑”窗口打开的向导中该按钮不可用
 
 ### 自轨道与他轨道几何
 
