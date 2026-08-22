@@ -1745,6 +1745,16 @@ bool find_simple_target(MapContext& ctx, const Rows& rows,
 
 EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id) {
     EditableTarget target;
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        ParsedStatement& statement = ctx.parsed_statements[i];
+        if (statement.statement_kind != "Include") continue;
+        if (statement_edit_id(ctx, statement) != edit_id) continue;
+        target.statement_index = i;
+        target.row_kind = "include";
+        target.row_index = i;
+        target.elements_for_statement = 0;
+        return target;
+    }
     for (size_t i = 0; i < ctx.curves.size(); ++i) {
         const CurveEditRow& row = ctx.curves[i];
         if (match_edit_ref(ctx, row, "curve", i, edit_id, target)) {
@@ -2896,6 +2906,188 @@ std::string first_environment_mismatch(const VariableEnvironmentSnapshot& origin
     return {};
 }
 
+std::string assigned_variable_name(const ParsedStatement& statement) {
+    if (statement.statement_kind != "Variable.Assign") return std::string{};
+    size_t pos = 0;
+    while (pos < statement.raw_text.size() &&
+           std::isspace(static_cast<unsigned char>(statement.raw_text[pos]))) {
+        ++pos;
+    }
+    if (pos >= statement.raw_text.size() || statement.raw_text[pos] != '$') return std::string{};
+    const size_t begin = ++pos;
+    while (pos < statement.raw_text.size() &&
+           edit_expr_ident_part(static_cast<unsigned char>(statement.raw_text[pos]))) {
+        ++pos;
+    }
+    return pos > begin
+        ? ascii_lower(statement.raw_text.substr(begin, pos - begin))
+        : std::string{};
+}
+
+bool parse_include_invocation_number(const std::string& text, size_t& cursor,
+                                     size_t& value) {
+    value = 0;
+    size_t digits = 0;
+    while (cursor < text.size() && text[cursor] >= '0' && text[cursor] <= '9') {
+        if (digits >= 20) return false;
+        value = value * 10 + static_cast<size_t>(text[cursor] - '0');
+        ++cursor;
+        ++digits;
+    }
+    return digits > 0;
+}
+
+bool parse_include_invocation_segment(const std::string& text, size_t& cursor,
+                                      std::string& segment) {
+    size_t length = 0;
+    if (!parse_include_invocation_number(text, cursor, length)) return false;
+    if (cursor >= text.size() || text[cursor] != ':') return false;
+    ++cursor;
+    if (length > text.size() - cursor) return false;
+    segment.assign(text, cursor, length);
+    cursor += length;
+    return true;
+}
+
+bool include_invocation_chain_contains(const std::string& key,
+                                       const std::string& site_source_key,
+                                       size_t site_byte_start,
+                                       size_t site_byte_end) {
+    std::string current = key;
+    while (!current.empty()) {
+        size_t cursor = 0;
+        std::string parent;
+        std::string source;
+        size_t byte_start = 0;
+        size_t byte_end = 0;
+        if (!parse_include_invocation_segment(current, cursor, parent)) return false;
+        if (cursor >= current.size() || current[cursor] != '|') return false;
+        ++cursor;
+        if (!parse_include_invocation_segment(current, cursor, source)) return false;
+        if (cursor >= current.size() || current[cursor] != '|') return false;
+        ++cursor;
+        if (!parse_include_invocation_number(current, cursor, byte_start)) return false;
+        if (cursor >= current.size() || current[cursor] != ':') return false;
+        ++cursor;
+        if (!parse_include_invocation_number(current, cursor, byte_end)) return false;
+        if (source == site_source_key && byte_start == site_byte_start &&
+            byte_end == site_byte_end) {
+            return true;
+        }
+        current = std::move(parent);
+    }
+    return false;
+}
+
+void collect_include_subtree_removals(
+    MapContext& baseline,
+    const std::vector<size_t>& deleted_include_statements,
+    std::vector<bool>& removed_statements,
+    std::set<std::string>* deletions) {
+    struct DeletedCallSite {
+        std::string source_key;
+        size_t byte_start = 0;
+        size_t byte_end = 0;
+    };
+    std::vector<DeletedCallSite> sites;
+    sites.reserve(deleted_include_statements.size());
+    for (size_t statement_index : deleted_include_statements) {
+        if (statement_index >= baseline.parsed_statements.size()) continue;
+        const ParsedStatement& statement =
+            baseline.parsed_statements[statement_index];
+        DeletedCallSite site;
+        site.source_key = source_file_key(baseline, statement.source);
+        site.byte_start = statement.source.byte_start;
+        site.byte_end = statement.source.byte_end;
+        sites.push_back(std::move(site));
+    }
+    removed_statements.assign(baseline.parsed_statements.size(), false);
+    bool any_removed = false;
+    for (size_t i = 0; i < baseline.parsed_statements.size(); ++i) {
+        const ParsedStatement& statement = baseline.parsed_statements[i];
+        const std::string& key =
+            source_include_invocation_key(baseline, statement.source);
+        for (const DeletedCallSite& site : sites) {
+            if (include_invocation_chain_contains(key, site.source_key,
+                                                  site.byte_start,
+                                                  site.byte_end)) {
+                removed_statements[i] = true;
+                any_removed = true;
+                break;
+            }
+        }
+    }
+    if (!any_removed || !deletions) return;
+    auto exclude_rows = [&](const auto& rows, const char* kind) {
+        for (const auto& row : rows) {
+            const EditSourceRef& ref = row.edit_ref;
+            if (!ref.valid() || ref.statement_index >= removed_statements.size() ||
+                !removed_statements[ref.statement_index]) {
+                continue;
+            }
+            deletions->insert(element_edit_id(baseline, ref, kind));
+        }
+    };
+    exclude_rows(baseline.own_track, "own_track");
+    exclude_rows(baseline.curves, "curve");
+    exclude_rows(baseline.gradients, "gradient");
+    exclude_rows(baseline.other_track_changes, "otherTrack.change");
+    exclude_rows(baseline.station_puts, "station.put");
+    {
+        const auto entries = ordered_station_list_entries(baseline);
+        for (size_t i = 0; i < entries.size(); ++i) {
+            const StationListEntry& row = *entries[i];
+            const EditSourceRef& ref = row.edit_ref;
+            if (ref.valid() && ref.statement_index < removed_statements.size() &&
+                removed_statements[ref.statement_index]) {
+                deletions->insert(element_edit_id(baseline, ref, "station.list"));
+            }
+        }
+    }
+    exclude_rows(baseline.structure_loads, "structure.load");
+    exclude_rows(baseline.structure_puts, "structure.put");
+    exclude_rows(baseline.structure_betweens, "structure.between");
+    exclude_rows(baseline.structure_models, "structure.model");
+    exclude_rows(baseline.other_trains, "otherTrain.definition");
+    exclude_rows(baseline.other_train_structure_keys, "otherTrain.structureKey");
+    exclude_rows(baseline.other_train_sound_3d_keys, "otherTrain.sound3DKey");
+    exclude_rows(baseline.other_train_enables, "otherTrain.enable");
+    exclude_rows(baseline.other_train_stops, "otherTrain.stop");
+    exclude_rows(baseline.section_begins, "section.begin");
+    exclude_rows(baseline.section_speed_limits, "section.speedLimit");
+    exclude_rows(baseline.signal_aspects, "signal.aspect");
+    exclude_rows(baseline.signal_puts, "signal.put");
+    exclude_rows(baseline.beacons, "beacon.put");
+    exclude_rows(baseline.pretrains, "preTrain.pass");
+    {
+        size_t sound_index = 0;
+        size_t sound_3d_index = 0;
+        for (const SoundListEntry& row : baseline.sound_list) {
+            const char* kind = row.is_3d ? "sound3D.list" : "sound.list";
+            if (row.is_3d) ++sound_3d_index; else ++sound_index;
+            const EditSourceRef& ref = row.edit_ref;
+            if (ref.valid() && ref.statement_index < removed_statements.size() &&
+                removed_statements[ref.statement_index]) {
+                deletions->insert(element_edit_id(baseline, ref, kind));
+            }
+        }
+    }
+    exclude_rows(baseline.map_sounds, "mapSound.play");
+    exclude_rows(baseline.map_sound_3d, "mapSound3D.put");
+    exclude_rows(baseline.rolling_noises, "rollingNoise.change");
+    exclude_rows(baseline.flange_noises, "flangeNoise.change");
+    exclude_rows(baseline.joint_noises, "jointNoise.play");
+    exclude_rows(baseline.repeaters, "repeater");
+    exclude_rows(baseline.irregularities, "irregularity.change");
+    exclude_rows(baseline.backgrounds, "background.change");
+    exclude_rows(baseline.adhesions, "adhesion.change");
+    exclude_rows(baseline.cab_illuminance, "cabIlluminance.change");
+    exclude_rows(baseline.fogs, "fog.change");
+    exclude_rows(baseline.legacy_fogs, "legacyFog.change");
+    exclude_rows(baseline.draw_distances, "drawDistance.change");
+    exclude_rows(baseline.speedlimits, "speedlimit");
+}
+
 std::string first_multivalued_variable(const MapContext& ctx,
                                        const DistanceSectionAnalysis& section,
                                        const DistancePlanningIndex& distance_index,
@@ -2909,24 +3101,6 @@ std::string first_multivalued_variable(const MapContext& ctx,
         end_offset = ctx.parsed_statements[
             section.anchors[section.last_position + 1]].source.byte_start;
     }
-
-    auto assigned_variable_name = [](const ParsedStatement& statement) {
-        if (statement.statement_kind != "Variable.Assign") return std::string{};
-        size_t pos = 0;
-        while (pos < statement.raw_text.size() &&
-               std::isspace(static_cast<unsigned char>(statement.raw_text[pos]))) {
-            ++pos;
-        }
-        if (pos >= statement.raw_text.size() || statement.raw_text[pos] != '$') return std::string{};
-        const size_t begin = ++pos;
-        while (pos < statement.raw_text.size() &&
-               edit_expr_ident_part(static_cast<unsigned char>(statement.raw_text[pos]))) {
-            ++pos;
-        }
-        return pos > begin
-            ? ascii_lower(statement.raw_text.substr(begin, pos - begin))
-            : std::string{};
-    };
 
     for (const std::string& variable : variables) {
         const Value* first = nullptr;
@@ -4355,6 +4529,84 @@ void validate_repeater_insert_key_overlaps(
     }
 }
 
+bool final_environment_matches_include_deletions(
+    MapContext& baseline,
+    const MapContext& candidate,
+    const std::vector<bool>& removed_statements,
+    std::string& error) {
+    std::map<std::string, size_t> total_variable_writes;
+    std::map<std::string, size_t> removed_variable_writes;
+    for (size_t i = 0; i < baseline.parsed_statements.size(); ++i) {
+        const std::string name =
+            assigned_variable_name(baseline.parsed_statements[i]);
+        if (name.empty()) continue;
+        ++total_variable_writes[name];
+        if (i < removed_statements.size() && removed_statements[i]) {
+            ++removed_variable_writes[name];
+        }
+    }
+    auto removal_owns_variable = [&](const std::string& name) {
+        const auto total = total_variable_writes.find(name);
+        return total != total_variable_writes.end() &&
+            removed_variable_writes[name] == total->second;
+    };
+
+    for (const auto& entry : baseline.variables) {
+        const auto found = candidate.variables.find(entry.first);
+        if (found != candidate.variables.end() &&
+            value_equal(entry.second, found->second)) {
+            continue;
+        }
+        if (!removal_owns_variable(entry.first)) {
+            error = "full reparse changed a variable outside the deleted "
+                    "Include subtree: " + entry.first;
+            return false;
+        }
+    }
+    for (const auto& entry : candidate.variables) {
+        const auto found = baseline.variables.find(entry.first);
+        if (found != baseline.variables.end() &&
+            value_equal(entry.second, found->second)) {
+            continue;
+        }
+        if (!removal_owns_variable(entry.first)) {
+            error = "full reparse changed a variable outside the deleted "
+                    "Include subtree: " + entry.first;
+            return false;
+        }
+    }
+
+    int best_order = std::numeric_limits<int>::min();
+    bool best_removed = false;
+    int last_surviving_order = std::numeric_limits<int>::min();
+    double surviving_distance = 0.0;
+    bool has_surviving_distance = false;
+    for (size_t i = 0; i < baseline.parsed_statements.size(); ++i) {
+        const ParsedStatement& statement = baseline.parsed_statements[i];
+        if (!is_distance_statement(statement)) continue;
+        const bool removed = i < removed_statements.size() && removed_statements[i];
+        if (statement.global_order > best_order) {
+            best_order = statement.global_order;
+            best_removed = removed;
+        }
+        if (!removed && statement.global_order > last_surviving_order) {
+            last_surviving_order = statement.global_order;
+            surviving_distance = statement.distance_value;
+            has_surviving_distance = true;
+        }
+    }
+    double expected_distance = baseline.distance;
+    if (best_removed) {
+        expected_distance = has_surviving_distance ? surviving_distance : 0.0;
+    }
+    if (candidate.distance != expected_distance) {
+        error = "full reparse changed the final distance outside the deleted "
+                "Include subtree";
+        return false;
+    }
+    return true;
+}
+
 void validate_edit_report(MapContext& baseline,
                           const std::vector<MapEditChange>& changes,
                           MapEditReport& report) {
@@ -4393,10 +4645,24 @@ void validate_edit_report(MapContext& baseline,
     std::set<std::string> insert_edit_ids;
     std::map<std::string, std::string> expected_target_canonical;
     int expected_distance_target_count = 0;
+    std::vector<size_t> include_delete_statements;
+    std::set<std::string> include_delete_edit_ids;
     for (const MapEditChange& change : changes) {
         if (change.edit_id.empty()) continue;
         const std::string operation =
             ascii_lower(change.operation.empty() ? "update" : change.operation);
+        if (operation == "delete") {
+            EditableTarget delete_target =
+                find_editable_target(baseline, change.edit_id);
+            if (delete_target.statement_index != k_no_source_ref &&
+                delete_target.row_kind == "include") {
+                if (include_delete_edit_ids.insert(change.edit_id).second) {
+                    include_delete_statements.push_back(
+                        delete_target.statement_index);
+                }
+                continue;
+            }
+        }
         if (operation == "insert") {
             // Insert changes carry a temporary edit id that has no baseline
             // element; the expected semantic is derived from the change fields
@@ -4435,6 +4701,19 @@ void validate_edit_report(MapContext& baseline,
             return;
         }
         if (has_field_change(change, "distance")) ++expected_distance_target_count;
+    }
+
+    std::vector<bool> include_removed_statements;
+    std::set<std::string> include_subtree_deletions;
+    if (!include_delete_statements.empty()) {
+        collect_include_subtree_removals(
+            baseline, include_delete_statements, include_removed_statements,
+            &include_subtree_deletions);
+        for (const std::string& edit_id : include_subtree_deletions) {
+            if (before_by_id.find(edit_id) != before_by_id.end()) {
+                excluded_before.insert(edit_id);
+            }
+        }
     }
 
     using IdentityLocation =
@@ -4714,6 +4993,8 @@ void validate_edit_report(MapContext& baseline,
             inserted_ids.insert(change.edit_id);
         }
     }
+    deleted_ids.insert(include_subtree_deletions.begin(),
+                       include_subtree_deletions.end());
     OwnTrackTransitionState expected_links = own_track_transition_state(baseline);
     for (auto it = expected_links.pairs.begin(); it != expected_links.pairs.end();) {
         if (deleted_ids.find(it->first) != deleted_ids.end() ||
@@ -4786,11 +5067,23 @@ void validate_edit_report(MapContext& baseline,
         return;
     }
 
-    if (!variable_environment_equal(baseline.variables, baseline.distance,
-                                    candidate->variables, candidate->distance)) {
+    bool final_environment_ok = false;
+    std::string environment_error;
+    if (include_removed_statements.empty()) {
+        final_environment_ok = variable_environment_equal(
+            baseline.variables, baseline.distance,
+            candidate->variables, candidate->distance);
+        if (!final_environment_ok) {
+            environment_error =
+                "full reparse changed the final variable or distance environment";
+        }
+    } else {
+        final_environment_ok = final_environment_matches_include_deletions(
+            baseline, *candidate, include_removed_statements, environment_error);
+    }
+    if (!final_environment_ok) {
         report.non_target_changed_count = 1;
-        report.blocking_errors.push_back(
-            "full reparse changed the final variable or distance environment");
+        report.blocking_errors.push_back(std::move(environment_error));
         return;
     }
 
@@ -5580,12 +5873,17 @@ MapEditReport build_edit_report(MapContext& ctx,
             }
             edit.operation = operation;
             if (operation == "delete") {
-                if (target.elements_for_statement != 1) {
+                if (target.row_kind != "include" &&
+                    target.elements_for_statement != 1) {
                     report.blocking_errors.push_back("delete is blocked because the source statement maps to multiple elements: " + change.edit_id);
                     continue;
                 }
                 ++report.delete_count;
             } else if (operation == "update") {
+                if (target.row_kind == "include") {
+                    report.blocking_errors.push_back("include statements only support delete edits: " + change.edit_id);
+                    continue;
+                }
                 if (target.elements_for_statement != 1) {
                     report.blocking_errors.push_back("update is blocked because the source statement maps to multiple elements: " + change.edit_id);
                     continue;

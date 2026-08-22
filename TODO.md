@@ -19,7 +19,7 @@ This file is the active project progress and contains unfinished items only. Com
 
 ### 用户界面与辅助功能
 
-- [ ] include文件新建与导入、解除引用、删除源文件功能
+- [ ] include文件新建与导入、删除源文件功能
 - [ ] 资源列表文件新建与导入、解除引用、删除源文件功能
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途

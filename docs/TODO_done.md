@@ -263,6 +263,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 背景图参数随最近地图保存到 `settings/history.ini`
 - [x] 设置保存到程序目录下的 `settings/settings.ini`
 - [x] Include 文件结构图，以及读取当前内存工作副本的只读源码文本预览
+- [x] 在文件结构图中右键 Include 文件节点并选择“解除引用”，经现有类型化删除/应用/保存流程从上级地图删除对应 `include` 语句；编辑模式关闭时菜单项禁用，后续语句仍依赖该子树内的变量或距离时删除被阻止
 - [x] 编辑模式中分离“应用到预览”“保存到磁盘”“撤销全部待保存改动”和“从磁盘重新加载”，并在存在未保存更改时确认
 - [x] 对启用坐标偏移且 Z 轴偏移绝对值大于 5 m 的 `Repeater.Begin`，在应用时像 `Structure.Put` 一样提示将整米部分重设到起始里程
 - [x] 在连续布景“属性/编辑”中新增“插入变化点”，按源语句打开对应 Begin/Begin0 向导，默认仅添加 Begin，并预填当前检查器草稿

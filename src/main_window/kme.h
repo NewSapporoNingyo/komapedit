@@ -423,6 +423,7 @@ struct EditStatementInfo {
     std::string distance_expression;
     double distance_value = 0.0;
     int global_order = 0;
+    std::string first_evaluated_value;
 };
 
 struct EditElementInfo {
@@ -1896,6 +1897,9 @@ private:
     ImGuiID dock_main_id_ = 0;
     TableUiCache table_cache_;
     FileStructureDiagramLayoutCache file_structure_layout_cache_;
+    std::vector<std::string> file_structure_include_edit_ids_;
+    std::uint64_t file_structure_include_ids_revision_ = 0;
+    bool file_structure_include_ids_current_ = false;
     TextPreviewState text_preview_;
     TableFindState structure_model_find_;
     TableFindState signal_aspect_find_;
@@ -2289,7 +2293,9 @@ private:
     void render_speed_limits_window();
     void render_file_structure_window();
     void render_source_file_context_menu(const char* popup_id,
-                                         const std::string& file_path);
+                                         const std::string& file_path,
+                                         const std::string& include_edit_id = {});
+    const std::vector<std::string>& file_structure_include_edit_ids();
     static bool is_supported_text_preview_file(const std::string& file_path);
     void open_text_preview(const std::string& file_path,
                            bool parser_confirmed_source = false);

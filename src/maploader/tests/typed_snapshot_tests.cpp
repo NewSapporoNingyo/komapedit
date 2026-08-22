@@ -3756,7 +3756,399 @@ void environment_argument_shape_edit_contract() {
         "Fog incomplete Set insert is rejected");
 }
 
+struct IncludeDeleteFixture {
+    std::filesystem::path directory;
+    std::filesystem::path map_path;
+
+    IncludeDeleteFixture() {
+        directory = std::filesystem::temp_directory_path() /
+            ("komapedit-include-delete-contract-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(directory);
+        map_path = directory / "map.txt";
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\n"
+            << "0;\r\n"
+            << "Structure.Load('structures.csv');\r\n"
+            << "$root=1;\r\n"
+            << "25;\r\n"
+            << "include 'child.txt';\r\n"
+            << "$shared=3;\r\n"
+            << "100;\r\n"
+            << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\r\n"
+            << "200;\r\n";
+        map.close();
+        std::ofstream child(directory / "child.txt",
+                            std::ios::binary | std::ios::trunc);
+        child << "BveTs Map 2.02:utf-8\r\n"
+              << "50;\r\n"
+              << "$childOnly=7;\r\n"
+              << "$shared=2;\r\n"
+              << "Structure['pole'].Put('1',9,2,3,0,0,0,0,25);\r\n"
+              << "75;\r\n"
+              << "include 'grandchild.txt';\r\n"
+              << "125;\r\n"
+              << "Repeater['rail'].Begin0('0',1,25,5,'pole');\r\n"
+              << "150;\r\n"
+              << "Repeater['rail'].End();\r\n";
+        child.close();
+        std::ofstream grandchild(directory / "grandchild.txt",
+                                 std::ios::binary | std::ios::trunc);
+        grandchild << "BveTs Map 2.02:utf-8\r\n"
+                   << "80;\r\n"
+                   << "Curve.Begin(300, 0);\r\n"
+                   << "105;\r\n"
+                   << "Curve.End();\r\n";
+        grandchild.close();
+        std::ofstream structures(directory / "structures.csv",
+                                 std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\r\n"
+                   << "pole,pole.csv\r\n";
+    }
+
+    ~IncludeDeleteFixture() {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+    }
+
+    std::string path_utf8() const { return map_path.u8string(); }
+};
+
+struct SimpleEditBatch {
+    std::vector<KvEditChange> changes;
+    std::vector<KvEditField> fields;
+    KvEditBatch batch{};
+
+    SimpleEditBatch(const std::string& edit_id, std::uint32_t operation,
+                    const std::string& source_hash, bool with_field = false) {
+        static const std::string field_name = "distance";
+        static const std::string field_value = "300";
+        static const std::string change_id = "typed-contract-simple-edit";
+        if (with_field) {
+            fields.push_back({utf8_view(field_name), utf8_view(field_value)});
+        }
+        changes.resize(1);
+        changes[0].change_id = utf8_view(change_id);
+        changes[0].edit_id = utf8_view(edit_id);
+        changes[0].operation = operation;
+        if (with_field) {
+            changes[0].fields = KvSpan{0, 1};
+        }
+        changes[0].expected_source_hash = utf8_view(source_hash);
+        batch = {changes.data(), changes.size(),
+                 fields.empty() ? nullptr : fields.data(),
+                 static_cast<std::uint64_t>(fields.size())};
+    }
+};
+
+void include_delete_contract() {
+    IncludeDeleteFixture fixture;
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                    KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "include-delete load");
+    if (!handle.value) return;
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "include-delete baseline snapshot");
+    validate_map(baseline, true);
+    check(baseline.file_structure_count == 3, "include tree fixture depth");
+    const KvStatementRow* child_include = nullptr;
+    std::uint64_t include_count = 0;
+    for (std::uint64_t i = 0; i < baseline.statement_count; ++i) {
+        const KvStatementRow& statement = baseline.statements[i];
+        if (map_string(baseline, statement.statement_kind) != "Include") continue;
+        ++include_count;
+        if (arena_view(baseline.string_data, baseline.string_size,
+                       statement.raw_arguments).find("'child.txt'") !=
+            std::string_view::npos) {
+            child_include = &statement;
+        }
+    }
+    check(include_count == 2 && child_include != nullptr,
+          "nested include statements located");
+    check(baseline.curve_count == 2 && baseline.repeater_count == 2 &&
+              baseline.structure_put_count == 2,
+          "baseline subtree element rows");
+    if (!child_include) return;
+    const std::string include_edit_id =
+        map_string(baseline, child_include->edit_id);
+    const std::string source_hash = map_string(
+        baseline,
+        baseline.source_files[child_include->source.source_file_index]
+            .source_hash);
+
+    {
+        KvEditTargetSnapshot target{};
+        check(kv_get_edit_target_typed(handle.value, utf8_view(include_edit_id),
+                                       &target, sizeof(target)) != 0,
+              "include typed target resolves");
+        check(target.version == KV_EDIT_TARGET_SNAPSHOT_VERSION &&
+                  arena_view(target.string_data, target.string_size,
+                             target.row_kind) == "include",
+              "include target row kind");
+    }
+
+    auto count_includes = [](const KvMapSnapshot& snapshot) {
+        std::uint64_t total = 0;
+        for (std::uint64_t i = 0; i < snapshot.statement_count; ++i) {
+            if (map_string(snapshot, snapshot.statements[i].statement_kind) ==
+                "Include") {
+                ++total;
+            }
+        }
+        return total;
+    };
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch batch(include_edit_id, KV_EDIT_DELETE, source_hash);
+        check(kv_edit_dry_run_typed(
+                  handle.value, &batch.batch, &report, sizeof(report)) != 0 &&
+                  report.ok && report.delete_count == 1 &&
+                  report.full_reparse_ok && report.update_count == 0 &&
+                  report.insert_count == 0,
+              "include delete dry run");
+    }
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch stale_batch(include_edit_id, KV_EDIT_DELETE, "deadbeef");
+        check(!(kv_edit_dry_run_typed(
+                    handle.value, &stale_batch.batch, &report,
+                    sizeof(report)) != 0 && report.ok),
+              "include delete rejects a stale source hash");
+    }
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch update_batch(include_edit_id, KV_EDIT_UPDATE,
+                                     source_hash, true);
+        const bool ran = kv_edit_apply_to_memory_typed(
+                             handle.value, &update_batch.batch, &report,
+                             sizeof(report)) != 0;
+        check(!ran || !report.ok,
+              "include update edits are rejected");
+        bool mentions_delete_only = false;
+        for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
+            if (arena_view(report.string_data, report.string_size,
+                           report.blocking_errors[i]).find(
+                               "only support delete") !=
+                std::string_view::npos) {
+                mentions_delete_only = true;
+            }
+        }
+        check(mentions_delete_only,
+              "include update rejection explains the delete-only contract");
+    }
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch batch(include_edit_id, KV_EDIT_DELETE, source_hash);
+        const bool apply_ok = kv_edit_apply_to_memory_typed(
+            handle.value, &batch.batch, &report, sizeof(report)) != 0;
+        check(apply_ok && report.ok && report.full_reparse_ok &&
+                  report.non_target_changed_count == 0 &&
+                  report.delete_count == 1,
+              "include delete apply to memory");
+        KvMapSnapshot applied{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &applied, sizeof(applied)) != 0,
+              "include delete applied snapshot");
+        validate_map(applied, true);
+        std::uint64_t remaining_includes = count_includes(applied);
+        check(remaining_includes == 0,
+              "deleted include removes the whole nested subtree");
+        check(applied.file_structure_count == 1 &&
+                  applied.curve_count == 0 && applied.repeater_count == 0 &&
+                  applied.structure_put_count == 1,
+              "applied snapshot drops only the removed subtree rows");
+        check(applied.variable_assignment_count == 2,
+              "removed-subtree variable assignments disappear");
+        bool root_assignment_kept = false;
+        for (std::uint64_t i = 0; i < applied.variable_assignment_count; ++i) {
+            if (map_string(applied,
+                           applied.variable_assignments[i].normalized_name) ==
+                "root") {
+                root_assignment_kept = true;
+            }
+        }
+        check(root_assignment_kept, "surviving assignments remain");
+    }
+    check(kv_edit_reset_memory(handle.value) != 0, "include delete reset");
+    baseline = {};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "include delete reset refreshes snapshot view");
+    check(count_includes(baseline) == 2, "reset restores the include statements");
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch reapply(include_edit_id, KV_EDIT_DELETE, source_hash);
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &reapply.batch, &report, sizeof(report)) != 0 &&
+                  report.ok && report.full_reparse_ok,
+              "include delete reapplies after reset");
+        check(kv_edit_commit_typed(
+                  handle.value, &report, sizeof(report)) != 0 && report.ok,
+              "include delete commit");
+        std::ifstream committed(fixture.map_path, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(committed)),
+                         std::istreambuf_iterator<char>());
+        committed.close();
+        check(text.find("include 'child.txt';") == std::string::npos,
+              "commit removes the include statement from disk");
+        check(text.find("$shared=3;") != std::string::npos,
+              "commit preserves unrelated statements and CRLF text");
+        check(std::filesystem::exists(fixture.directory / "child.txt") &&
+                  std::filesystem::exists(fixture.directory / "grandchild.txt"),
+              "removing a reference keeps the included source files");
+    }
+}
+
+void include_diamond_delete_contract() {
+    std::filesystem::path directory = std::filesystem::temp_directory_path() /
+        ("komapedit-include-diamond-contract-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path map_path = directory / "map.txt";
+    {
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Structure.Load('structures.csv');\n"
+            << "include 'twin.txt';\n"
+            << "50;\n"
+            << "include 'twin.txt';\n"
+            << "100;\n"
+            << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n";
+    }
+    {
+        std::ofstream twin(directory / "twin.txt",
+                           std::ios::binary | std::ios::trunc);
+        twin << "BveTs Map 2.02:utf-8\n"
+             << "10;\n"
+             << "Structure['pole'].Put('1',9,2,3,0,0,0,0,25);\n"
+             << "20;\n";
+    }
+    {
+        std::ofstream structures(directory / "structures.csv",
+                                 std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\n"
+                   << "pole,pole.csv\n";
+    }
+    MapHandle handle(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                    KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "diamond include load");
+    if (handle.value) {
+        KvMapSnapshot baseline{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &baseline, sizeof(baseline)) != 0,
+              "diamond include baseline snapshot");
+        check(baseline.file_structure_count == 3 &&
+                  baseline.structure_put_count == 3,
+              "duplicated include rows exist twice");
+        std::vector<std::pair<std::string, std::string>> includes;
+        for (std::uint64_t i = 0; i < baseline.statement_count; ++i) {
+            const KvStatementRow& statement = baseline.statements[i];
+            if (map_string(baseline, statement.statement_kind) != "Include") {
+                continue;
+            }
+            includes.push_back({
+                map_string(baseline, statement.edit_id),
+                map_string(baseline,
+                    baseline.source_files[statement.source.source_file_index]
+                        .source_hash),
+            });
+        }
+        check(includes.size() == 2, "two twin include statements");
+        if (includes.size() == 2) {
+            KvEditReportSnapshot report{};
+            SimpleEditBatch first(includes.front().first, KV_EDIT_DELETE,
+                                  includes.front().second);
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &first.batch, &report,
+                      sizeof(report)) != 0 && report.ok &&
+                      report.non_target_changed_count == 0,
+                  "one of two identical includes can be deleted");
+            KvMapSnapshot applied{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &applied, sizeof(applied)) != 0,
+                  "diamond applied snapshot");
+            check(applied.file_structure_count == 2 &&
+                      applied.structure_put_count == 2,
+                  "deleting one instance keeps the other alive");
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "diamond reset");
+        }
+    }
+    std::error_code cleanup;
+    std::filesystem::remove_all(directory, cleanup);
+}
+
+void include_variable_dependency_blocks_deletion_contract() {
+    std::filesystem::path directory = std::filesystem::temp_directory_path() /
+        ("komapedit-include-dependency-contract-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path map_path = directory / "map.txt";
+    {
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "include 'dep.txt';\n"
+            << "$derived=$base+1;\n"
+            << "0;\n"
+            << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\n";
+    }
+    {
+        std::ofstream dep(directory / "dep.txt",
+                          std::ios::binary | std::ios::trunc);
+        dep << "BveTs Map 2.02:utf-8\n"
+            << "$base=4;\n";
+    }
+    {
+        std::ofstream structures(directory / "structures.csv",
+                                 std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\n"
+                   << "pole,pole.csv\n";
+    }
+    MapHandle handle(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                    KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "variable dependency load");
+    if (handle.value) {
+        KvMapSnapshot baseline{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &baseline, sizeof(baseline)) != 0,
+              "variable dependency baseline snapshot");
+        const KvStatementRow* dep_include = nullptr;
+        for (std::uint64_t i = 0; i < baseline.statement_count; ++i) {
+            const KvStatementRow& statement = baseline.statements[i];
+            if (map_string(baseline, statement.statement_kind) == "Include") {
+                dep_include = &statement;
+            }
+        }
+        check(dep_include != nullptr, "dependency include located");
+        if (dep_include) {
+            KvEditReportSnapshot report{};
+            SimpleEditBatch batch(
+                map_string(baseline, dep_include->edit_id), KV_EDIT_DELETE,
+                map_string(baseline,
+                    baseline.source_files[dep_include->source.source_file_index]
+                        .source_hash));
+            const bool ran = kv_edit_apply_to_memory_typed(
+                handle.value, &batch.batch, &report, sizeof(report));
+            check(!ran || !report.ok ||
+                      report.blocking_error_count > 0,
+                  "deleting an include that feeds surviving variables is blocked");
+        }
+    }
+    std::error_code cleanup;
+    std::filesystem::remove_all(directory, cleanup);
+}
+
 int edit_contract() {
+    include_delete_contract();
+    include_diamond_delete_contract();
+    include_variable_dependency_blocks_deletion_contract();
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();
     other_track_key_edit_contract();

@@ -18,7 +18,9 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <deque>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <utility>
 
@@ -177,8 +179,50 @@ void open_parent_directory_in_explorer(const std::string& file_path) {
     }
 }
 
+const std::vector<std::string>& App::file_structure_include_edit_ids() {
+    if (file_structure_include_ids_current_ &&
+        file_structure_include_ids_revision_ == model_.file_structure_revision &&
+        file_structure_include_edit_ids_.size() == model_.file_structure.size()) {
+        return file_structure_include_edit_ids_;
+    }
+    file_structure_include_ids_current_ = true;
+    file_structure_include_ids_revision_ = model_.file_structure_revision;
+    file_structure_include_edit_ids_.assign(model_.file_structure.size(), {});
+    if (!has_model_) return file_structure_include_edit_ids_;
+    std::map<std::pair<std::string, std::string>,
+             std::deque<const EditStatementInfo*>>
+        include_candidates;
+    for (const EditStatementInfo& statement : model_.edit_statements) {
+        if (statement.statement_kind != "Include") continue;
+        if (statement.source.file_path.empty() ||
+            statement.first_evaluated_value.empty() ||
+            statement.edit_id.empty()) {
+            continue;
+        }
+        include_candidates[{statement.source.file_path,
+                            statement.first_evaluated_value}]
+            .push_back(&statement);
+    }
+    for (size_t i = 0; i < model_.file_structure.size(); ++i) {
+        const FileStructureNode& node = model_.file_structure[i];
+        if (node.parent_index == k_no_file_structure_parent ||
+            node.parent_index >= model_.file_structure.size()) {
+            continue;
+        }
+        const FileStructureNode& parent =
+            model_.file_structure[node.parent_index];
+        auto found = include_candidates.find(
+            {parent.absolute_path, node.include_path});
+        if (found == include_candidates.end() || found->second.empty()) continue;
+        file_structure_include_edit_ids_[i] = found->second.front()->edit_id;
+        found->second.pop_front();
+    }
+    return file_structure_include_edit_ids_;
+}
+
 void App::render_source_file_context_menu(const char* popup_id,
-                                          const std::string& file_path) {
+                                          const std::string& file_path,
+                                          const std::string& include_edit_id) {
     touch_input::open_popup_on_last_item_long_press(popup_id);
     if (!ImGui::BeginPopupContextItem(popup_id, ImGuiPopupFlags_MouseButtonRight)) return;
 
@@ -192,6 +236,13 @@ void App::render_source_file_context_menu(const char* popup_id,
     ImGui::BeginDisabled(!can_open);
     if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
         open_parent_directory_in_explorer(file_path);
+    }
+    ImGui::EndDisabled();
+    ImGui::Separator();
+    ImGui::BeginDisabled(!edit_actions_available() || include_edit_id.empty());
+    if (ImGui::MenuItem(tr("menu.unreference_include").c_str())) {
+        request_element_delete(include_edit_id, "include",
+                               RepeaterDeleteMode::EntireChain);
     }
     ImGui::EndDisabled();
     ImGui::EndPopup();
@@ -259,6 +310,8 @@ void App::render_file_structure_window() {
                                style.FrameRounding, 0, 1.0f);
         }
 
+        const std::vector<std::string>& include_edit_ids =
+            file_structure_include_edit_ids();
         for (size_t i = 0; i < model_.file_structure.size(); ++i) {
             const FileStructureNode& node = model_.file_structure[i];
             const ImVec2 layout_pos = file_structure_layout_cache_.node_positions[i];
@@ -278,7 +331,10 @@ void App::render_file_structure_window() {
             const bool hovered = ImGui::IsItemHovered();
             const bool active = ImGui::IsItemActive();
 
-            render_source_file_context_menu("file_structure_node_context", node.absolute_path);
+            render_source_file_context_menu(
+                "file_structure_node_context", node.absolute_path,
+                i < include_edit_ids.size() ? include_edit_ids[i]
+                                            : std::string{});
 
             ImU32 fill_color = ImGui::GetColorU32(ImGuiCol_Button);
             if (active) fill_color = ImGui::GetColorU32(ImGuiCol_ButtonActive);

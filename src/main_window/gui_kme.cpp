@@ -1156,6 +1156,13 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         row.distance_expression = map_snapshot_string(snapshot, input.distance_expression);
         row.distance_value = input.distance_value;
         row.global_order = input.global_order;
+        if (snapshot.values && input.evaluated_values.count != 0 &&
+            input.evaluated_values.offset < snapshot.value_count &&
+            snapshot.value_count - input.evaluated_values.offset >=
+                input.evaluated_values.count) {
+            row.first_evaluated_value = map_snapshot_value_text(
+                snapshot, snapshot.values[input.evaluated_values.offset]);
+        }
         model.edit_statements.push_back(std::move(row));
     }
     model.edit_elements.reserve(static_cast<size_t>(snapshot.element_count));
@@ -2782,6 +2789,11 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     if (row_kind == "speedlimit") rebuild_speed_limit_runtime_cache(model_);
     const bool alignment_changed = row_kind == "curve" || row_kind == "gradient" ||
         row_kind == "otherTrack.change";
+    if (row_kind == "include" && scene_preview_started_ && scene_preview_canvas_) {
+        scene_preview_dirty_ = true;
+        scene_preview_preserve_models_on_rebuild_ = true;
+        scene_preview_preserve_camera_on_rebuild_ = true;
+    }
     if (alignment_changed && scene_preview_started_ && scene_preview_canvas_) {
         scene_preview_dirty_ = true;
         scene_preview_preserve_models_on_rebuild_ = true;
@@ -2898,7 +2910,7 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "drawDistance.change" || row_kind == "speedlimit" ||
         row_kind == "section.begin" || row_kind == "section.speedLimit" ||
         row_kind == "curve" || row_kind == "gradient" ||
-        row_kind == "otherTrack.change";
+        row_kind == "otherTrack.change" || row_kind == "include";
 }
 
 struct RepeaterDeleteChain {
@@ -6005,9 +6017,17 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             ledger.begin(), ledger.end(),
             [](const auto& entry) { return entry.second.operation == "insert"; });
     };
+    const auto ledger_contains_include_delete = [](const auto& ledger) {
+        return std::any_of(ledger.begin(), ledger.end(), [](const auto& entry) {
+            return entry.second.operation == "delete" &&
+                entry.second.row_kind == "include";
+        });
+    };
     const bool full_insert_hydration =
         ledger_contains_insert(changes) ||
-        ledger_contains_insert(pending_edit_changes_);
+        ledger_contains_insert(pending_edit_changes_) ||
+        ledger_contains_include_delete(changes) ||
+        ledger_contains_include_delete(pending_edit_changes_);
     if (signal_aspects_hydrated || alignment_hydrated) {
         KvMapSnapshot snapshot{};
         if (!kv_get_map_snapshot(
@@ -13394,6 +13414,19 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_insert_edit(insert_edit);
+    }
+
+    HeadlessIncludeDeleteOptions include_delete =
+        parse_headless_include_delete_options(args);
+    if (include_delete.requested) {
+        if (!include_delete.error.empty()) {
+            std::cerr << include_delete.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-include-delete <map-path> "
+                      << "[--index N] [--unit-distance M] [--commit] "
+                      << "[--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_include_delete(include_delete);
     }
 
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);

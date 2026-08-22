@@ -550,6 +550,7 @@ build\komapedit.exe --debug-headless-repeater-edit-batch [map-path] --headless-o
 build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --headless-output build\repeater-key-edit.txt
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
+build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
@@ -565,6 +566,8 @@ plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
+
+`--debug-headless-include-delete` 要求显式传入地图路径，验证一条 Include 语句的类型化删除（通过 `--index` 按源码顺序选择目标，默认 `0`）。运行前会对所有已加载源文件做哈希；随后验证陈旧哈希拒绝、dry-run、内存 Apply 与整棵子树重解析断言（Include 语句及其嵌套子树消失且非目标求值元素保持一致）、Reset 还原；未指定 `--commit` 时证明全部磁盘哈希不变。指定 `--commit` 时重新 Apply 并经正常 Save 边界提交，再从磁盘重载确认 Include 语句已被删除；提交文件与哈希保留在报告中供物理 diff 检查。当存续语句仍依赖被删 Include 子树内的变量或距离赋值时，删除会被有意阻止。
 
 该新建地图元素命令还验证布景模型、音效文件和 3D 音效文件列表的 key 仅在当前向导模板有匹配字段时预填，且不改变已打开向导中的其他草稿字段或目标源文件。
 
