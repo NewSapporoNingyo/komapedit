@@ -10,7 +10,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 - [ ] 拆分 2D 画布内部的视图状态、marker cache、hit-test/context menu、背景图和绘制 primitive，拆分阶段不改变现有行为
 - [ ] 为 2D 平面图中的曲线半径信息补充当前不支持的插值（interpolate）情况
-- [ ] 
 
 ### 3D画布
 
