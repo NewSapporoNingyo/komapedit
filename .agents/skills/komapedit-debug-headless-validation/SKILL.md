@@ -16,12 +16,12 @@ description: Select and run komapedit's Debug builds, registered CTests, DLL che
 
 - Normal Debug: `.\build_dev.bat`.
 - Strict maintenance validation: configure with `-DKOMAPEDIT_STRICT_WARNINGS=ON -DBUILD_TESTING=ON`, then build Debug.
-- Registered contracts:
+- Registered non-headless CTest contracts:
   - `typed_snapshot_contract`;
   - `maploader_gradient_projection_contract`;
   - `typed_edit_contract`;
   - `maploader_diagnostics_contract`;
-  - `settings_persistence_contract`.
+- Headless validation is invoked explicitly and is never registered with CTest.
 - Specialized unregistered `typed_snapshot_tests.exe` modes, such as `signal-glare`, must be invoked explicitly when relevant.
 
 Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is configured.

@@ -1899,6 +1899,7 @@ private:
     FileStructureDiagramLayoutCache file_structure_layout_cache_;
     std::vector<std::string> file_structure_include_edit_ids_;
     std::uint64_t file_structure_include_ids_revision_ = 0;
+    void* file_structure_include_ids_handle_ = nullptr;
     bool file_structure_include_ids_current_ = false;
     TextPreviewState text_preview_;
     TableFindState structure_model_find_;

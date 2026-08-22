@@ -281,15 +281,6 @@ target_link_libraries(komapedit PRIVATE
     gdi32
 )
 
-if(BUILD_TESTING AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_test(NAME settings_persistence_contract
-        COMMAND $<TARGET_FILE:komapedit>
-                --debug-headless-settings-persistence
-                --headless-output
-                ${CMAKE_CURRENT_BINARY_DIR}/settings_persistence_contract.txt
-    )
-endif()
-
 foreach(komapedit_owned_target IN ITEMS
         kme_text_decoder
         maploader

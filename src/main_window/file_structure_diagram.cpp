@@ -182,11 +182,13 @@ void open_parent_directory_in_explorer(const std::string& file_path) {
 const std::vector<std::string>& App::file_structure_include_edit_ids() {
     if (file_structure_include_ids_current_ &&
         file_structure_include_ids_revision_ == model_.file_structure_revision &&
+        file_structure_include_ids_handle_ == handle_ &&
         file_structure_include_edit_ids_.size() == model_.file_structure.size()) {
         return file_structure_include_edit_ids_;
     }
     file_structure_include_ids_current_ = true;
     file_structure_include_ids_revision_ = model_.file_structure_revision;
+    file_structure_include_ids_handle_ = handle_;
     file_structure_include_edit_ids_.assign(model_.file_structure.size(), {});
     if (!has_model_) return file_structure_include_edit_ids_;
     std::map<std::pair<std::string, std::string>,

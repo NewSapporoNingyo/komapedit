@@ -162,7 +162,7 @@ Initial third-party setup uses `.\get_3rd_party_packages.bat`; install Assimp fo
 - Debug output: `build\`; Release output: `build_release\`.
 - Normal changes use Debug first. Release is required only for release packaging/distribution, runtime dependency layout, optimization-specific behavior, or explicit request.
 - Strict self-owned warnings require an explicit configure with `-DKOMAPEDIT_STRICT_WARNINGS=ON -DBUILD_TESTING=ON`.
-- Registered contracts are `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `settings_persistence_contract`.
+- Registered non-headless CTest contracts are `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, and `maploader_diagnostics_contract`. Headless validation must be invoked explicitly and must not be registered with CTest.
 - The diagnostics contract needs ignored local fixtures under `tests/`; verify availability before interpreting a clean-checkout failure.
 - Use `komapedit-debug-headless-validation` for current headless commands. Because `komapedit.exe` is a GUI-subsystem executable, PowerShell capture must use `Start-Process -Wait -WindowStyle Hidden -PassThru` and `--headless-output`.
 - Separate build/contract/headless evidence from unperformed manual GUI or visual checks.

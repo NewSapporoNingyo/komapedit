@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract` 和 `settings_persistence_contract` 五项契约。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
+普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract` 和 `maploader_diagnostics_contract` 四项非 headless 契约；headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
 
 运行时输出布局如下：
 

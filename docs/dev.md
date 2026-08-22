@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Five contracts are registered: `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `settings_persistence_contract`. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
+`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Four non-headless contracts are registered: `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, and `maploader_diagnostics_contract`. Headless validation must be run explicitly and is not registered with CTest. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
 
 Runtime output is organized as follows:
 
