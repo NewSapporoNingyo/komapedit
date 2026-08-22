@@ -406,6 +406,54 @@ HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& 
     return options;
 }
 
+HeadlessLoadScenarioOptions parse_headless_load_scenario_options(
+    const std::vector<std::string>& args) {
+    HeadlessLoadScenarioOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--headless-load-scenario") {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a scenario path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--scenario-index") {
+            if (!parse_integer_option(args, i, arg, 0, 1000000,
+                                      "--scenario-index must be between 0 and 1000000",
+                                      options.scenario_index, options.error)) {
+                return options;
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) {
+                return options;
+            }
+        } else if (arg == "--load-profile") {
+            const std::string* value = take_option_value(
+                args, i, arg, "preview or edit", options.error);
+            if (!value) return options;
+            const std::string& profile = *value;
+            if (profile == "preview" || profile == "edit") {
+                options.load_profile = profile;
+            } else {
+                options.error = "--load-profile must be preview or edit";
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--headless-load-scenario requires a scenario path";
+    }
+    return options;
+}
+
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args) {
     HeadlessPlanBenchmarkOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
@@ -910,6 +958,136 @@ int run_headless_load_map(const HeadlessLoadOptions& options) {
     }
     return 0;
 }
+
+int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)), std::ios::out | std::ios::trunc);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        output_file.write("\xEF\xBB\xBF", 3);
+        out = &output_file;
+    }
+
+    *out << "komapedit headless-load-scenario path=\"" << options.path
+         << "\" scenario_index=" << options.scenario_index
+         << " unit_distance=" << format_double(options.unit_distance, 3)
+         << " load_profile=" << options.load_profile << "\n";
+
+    auto fail = [&](const std::string& message) {
+        *out << "error=" << message << "\nresult=FAIL\n";
+        out->flush();
+        std::cerr << message << "\n";
+        return 2;
+    };
+
+    const int probe_kind = kv_probe_file_kind(options.path.c_str());
+    *out << "probe_kind="
+         << (probe_kind == KV_FILE_KIND_SCENARIO ? "scenario"
+             : probe_kind == KV_FILE_KIND_MAP ? "map" : "unknown")
+         << "\n";
+    if (probe_kind != KV_FILE_KIND_SCENARIO) {
+        return fail("header probe did not identify a BVE Scenario file");
+    }
+
+    uint64_t candidate_count = 0;
+    const KvScenarioRouteCandidate* candidates =
+        kv_resolve_scenario_routes(options.path.c_str(), &candidate_count);
+    if (!candidates || candidate_count == 0) {
+        const char* error = kv_get_last_error();
+        return fail(std::string("scenario route resolution failed: ") +
+                    (error && *error ? error : "maploader failed"));
+    }
+    *out << "candidate_count=" << candidate_count << "\n";
+    for (uint64_t i = 0; i < candidate_count; ++i) {
+        *out << "candidate[" << i << "] text=\"" << candidates[i].route_text
+             << "\" resolved=\"" << candidates[i].resolved_path << "\"\n";
+    }
+    if (options.scenario_index < 0 ||
+        static_cast<uint64_t>(options.scenario_index) >= candidate_count) {
+        kv_free_scenario_candidates(candidates);
+        return fail("--scenario-index is out of range");
+    }
+    const std::string selected_route =
+        candidates[static_cast<size_t>(options.scenario_index)].resolved_path;
+    kv_free_scenario_candidates(candidates);
+    *out << "selected_route=\"" << selected_route << "\"\n";
+
+    std::vector<std::string> captured_logs;
+    ScopedHeadlessMapLogCapture log_capture(captured_logs);
+    auto flush_logs = [&]() {
+        std::vector<std::string> logs;
+        {
+            std::lock_guard<std::mutex> lock(g_headless_map_log_mutex);
+            logs.swap(captured_logs);
+        }
+        for (const std::string& line : logs) *out << line << "\n";
+        out->flush();
+    };
+
+    auto started_at = std::chrono::steady_clock::now();
+    const bool edit_profile = options.load_profile == "edit";
+    unsigned load_flags = edit_profile ? KV_LOAD_EDIT_METADATA : KV_LOAD_PREVIEW;
+    void* handle = kv_load_map_ex(selected_route.c_str(), options.unit_distance, load_flags);
+    auto loaded_at = std::chrono::steady_clock::now();
+    flush_logs();
+    if (!handle) {
+        const char* error = kv_get_last_error();
+        return fail(std::string("resolved map load failed: ") +
+                    (error && *error ? error : "maploader failed"));
+    }
+
+    KvMapSnapshot snapshot{};
+    if (!kv_get_map_snapshot(handle, KV_MAP_SNAPSHOT_VERSION,
+                             &snapshot, sizeof(snapshot))) {
+        const char* error = kv_get_last_error();
+        kv_free(handle);
+        return fail(std::string("typed snapshot unavailable: ") +
+                    (error && *error ? error : "maploader failed"));
+    }
+    auto snapshot_at = std::chrono::steady_clock::now();
+
+    HeadlessBufferSummary own = summarize_headless_buffer(snapshot.own_track_geometry);
+    HeadlessBufferSummary curve = summarize_headless_buffer(snapshot.curve_radius_geometry);
+    HeadlessBufferSummary structures = summarize_headless_buffer(snapshot.structure_put_geometry);
+    const size_t other_count = static_cast<size_t>(snapshot.other_track_count);
+    HeadlessBufferSummary other_total;
+    other_total.cols = 8;
+    for (size_t i = 0; i < other_count; ++i) {
+        HeadlessBufferSummary item = summarize_headless_buffer(snapshot.other_tracks[i].points);
+        other_total.rows += item.rows;
+        other_total.finite = other_total.finite && item.finite;
+        other_total.hash ^= item.hash + 0x9e3779b97f4a7c15ULL +
+            (other_total.hash << 6) + (other_total.hash >> 2);
+    }
+
+    const uint64_t statement_count = snapshot.statement_count;
+    const uint64_t element_count = snapshot.element_count;
+    kv_free(handle);
+    auto finished_at = std::chrono::steady_clock::now();
+
+    const double load_seconds = std::chrono::duration<double>(loaded_at - started_at).count();
+    const double snapshot_seconds = std::chrono::duration<double>(snapshot_at - loaded_at).count();
+    const double total_seconds = std::chrono::duration<double>(finished_at - started_at).count();
+    *out << "load=" << std::fixed << std::setprecision(3) << load_seconds << "s"
+         << " snapshot=" << snapshot_seconds << "s"
+         << " total=" << total_seconds << "s"
+         << " statements=" << statement_count
+         << " elements=" << element_count
+         << " othertracks=" << other_count << "\n";
+    print_headless_buffer_summary(*out, "own", own);
+    print_headless_buffer_summary(*out, "curve", curve);
+    print_headless_buffer_summary(*out, "structures", structures);
+    print_headless_buffer_summary(*out, "other", other_total);
+    flush_logs();
+    *out << "result=PASS\n";
+    out->flush();
+    return 0;
+}
+
 int App::run_debug_headless_table_find(const std::string& output_path) {
     std::ofstream output_file;
     std::ostream* out = &std::cout;

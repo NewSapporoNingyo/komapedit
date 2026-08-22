@@ -21,7 +21,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 - [ ] include文件新建与更换文件功能
 - [ ] 资源列表文件新建与更换文件功能
-- [ ] 通过场景文件直接打开地图
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途
 - [ ] 通过在地图中插入被BVE忽略但本项目可读的”//--kme--“开头的注释，标记特定地图元素

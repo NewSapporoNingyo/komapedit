@@ -1379,6 +1379,21 @@ struct OtherTrackRenameState {
     std::string apply_key;
 };
 
+struct ScenarioRoutePickItem {
+    std::string route_text;
+    std::string resolved_path;
+};
+
+// Pending multi-candidate Route choice for one opened BVE Scenario file.
+// The dialog shows each candidate's original relative-path text while the
+// load itself always uses the resolved absolute map path.
+struct ScenarioRoutePickState {
+    bool popup_requested = false;
+    std::string scenario_path;
+    std::vector<ScenarioRoutePickItem> items;
+    int selected = 0;
+};
+
 bool map_element_inspector_field_forced_read_only(
     std::string_view row_kind, std::string_view field_key) noexcept;
 
@@ -1889,6 +1904,7 @@ private:
     enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
     enum class PendingCloseAction { None, DisableEditMode, ExitApplication };
     PopupState popups_;
+    ScenarioRoutePickState scenario_route_pick_;
     PendingReloadAction pending_reload_action_ = PendingReloadAction::None;
     PendingCloseAction pending_close_action_ = PendingCloseAction::None;
     bool has_saved_layout_ = false;
@@ -2323,6 +2339,7 @@ private:
     void reload_current_map_and_model_preview();
     void reload_current_map_geometry();
     void render_popups();
+    void render_scenario_route_pick_popup();
     void setup_initial_dockspace(ImGuiID dockspace_id);
     WindowVisibilitySettings current_window_visibility() const;
     void apply_window_visibility_settings(const WindowVisibilitySettings& visibility);

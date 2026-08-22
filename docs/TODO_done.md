@@ -21,6 +21,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Insert supported map placement and event/effect statements through the New Map Element wizard; resource/list definition rows remain inline-table-only.
 - [x] Insert `Repeater.Begin`/`Begin0`, `Repeater.End`, or an atomic Begin+End pair through the New Map Element wizard; preserve half-open same-name interval protection, confirmed Begin-only change points, and isolated End statements while blocking extra End statements inside explicitly closed intervals.
 - [x] Add an Apply and Edit button to the New Map Element wizard that applies, closes the wizard, and opens `Properties/Edit` on the primary created statement; the button is disabled in wizards opened from a Repeater `Properties/Edit` window.
+- [x] Open a map directly from a BVE Scenario file: the open dialog accepts `BveTs Scenario 2.00` files, resolves the official `Route` entry (single path or weighted candidates) relative to the scenario directory with declared-encoding decoding, loads the referenced map through the normal pipeline, and shows a fixed-width selection dialog when multiple candidates exist.
 
 ### Own-Track and Other-Track Geometry
 
@@ -154,6 +155,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 通过“新建地图元素”向导新增受支持的地图放置和事件/效果语句；资源/定义列表仍只能通过行内表格编辑
 - [x] 通过“新建地图元素”向导单独新增 `Repeater.Begin`/`Begin0`、`Repeater.End`，或原子新增 Begin+End；保留半开同名区间保护和经确认的 Begin-only 变化点，允许孤立 End，并阻止在已有显式 End 的有效区间内增加 End
 - [x] 在“新建地图元素”向导中新增“应用并编辑”按钮：应用成功后关闭向导，并直接打开本次新建主语句的“属性/编辑”窗口；从 Repeater“属性/编辑”窗口打开的向导中该按钮不可用
+- [x] 通过场景文件直接打开地图：打开对话框接受 `BveTs Scenario 2.00` 场景文件，按官方 `Route` 条目（单路径或多候选加权）以场景文件目录为基准、按声明编码解码解析出地图入口文件，经正常流程加载；存在多个候选时弹出固定宽度选择对话框
 
 ### 自轨道与他轨道几何
 

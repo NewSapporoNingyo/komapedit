@@ -15,6 +15,9 @@ namespace {
 #define KME_MAPLOADER_FUNCTIONS(X) \
     X(set_log_callback, kv_set_log_callback) \
     X(load_map_ex, kv_load_map_ex) \
+    X(probe_file_kind, kv_probe_file_kind) \
+    X(resolve_scenario_routes, kv_resolve_scenario_routes) \
+    X(free_scenario_candidates, kv_free_scenario_candidates) \
     X(generate_geometry, kv_generate_geometry) \
     X(generate_scene_geometry, kv_generate_scene_geometry) \
     X(get_map_snapshot, kv_get_map_snapshot) \
@@ -122,6 +125,25 @@ void kv_set_log_callback(KvLogCallback callback) {
 void* kv_load_map_ex(const char* path, double unit_distance, unsigned flags) {
     MaploaderRuntime& runtime = maploader_runtime();
     return runtime.available() ? runtime.load_map_ex(path, unit_distance, flags) : nullptr;
+}
+
+int kv_probe_file_kind(const char* path) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available() ? runtime.probe_file_kind(path) : KV_FILE_KIND_UNKNOWN;
+}
+
+const KvScenarioRouteCandidate* kv_resolve_scenario_routes(
+    const char* scenario_path, uint64_t* out_count) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available()
+        ? runtime.resolve_scenario_routes(scenario_path, out_count)
+        : nullptr;
+}
+
+void kv_free_scenario_candidates(const KvScenarioRouteCandidate* candidates) {
+    if (!candidates) return;
+    MaploaderRuntime& runtime = maploader_runtime();
+    if (runtime.available()) runtime.free_scenario_candidates(candidates);
 }
 
 int kv_generate_geometry(

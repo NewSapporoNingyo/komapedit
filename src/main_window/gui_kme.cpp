@@ -2011,6 +2011,44 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
         error_count_.store(0, std::memory_order_relaxed);
         warn_count_.store(0, std::memory_order_relaxed);
     }
+
+    // Open-from-scenario support: a BVE Scenario file resolves to the map file
+    // its Route entry points at. Everything downstream (window title, history,
+    // Save/Reload targets) keeps operating on the resolved map path.
+    if (kv_probe_file_kind(path.c_str()) == KV_FILE_KIND_SCENARIO) {
+        uint64_t candidate_count = 0;
+        const KvScenarioRouteCandidate* candidates =
+            kv_resolve_scenario_routes(path.c_str(), &candidate_count);
+        if (!candidates || candidate_count == 0) {
+            const char* error = kv_get_last_error();
+            set_program_status("status.map_load_failed");
+            add_log(LogSeverity::Error,
+                    std::string("Failed to resolve scenario route: ") +
+                        (error && *error ? error : "maploader failed"));
+            return;
+        }
+        std::vector<ScenarioRoutePickItem> items;
+        items.reserve(static_cast<size_t>(candidate_count));
+        for (uint64_t i = 0; i < candidate_count; ++i) {
+            items.push_back(ScenarioRoutePickItem{candidates[i].route_text,
+                                                  candidates[i].resolved_path});
+        }
+        kv_free_scenario_candidates(candidates);
+        if (items.size() == 1) {
+            add_log("Opened via scenario: " + path);
+            add_log("Resolved route: " + items.front().route_text + " -> " +
+                    items.front().resolved_path);
+            path = items.front().resolved_path;
+        } else {
+            scenario_route_pick_.popup_requested = true;
+            scenario_route_pick_.scenario_path = path;
+            scenario_route_pick_.items = std::move(items);
+            scenario_route_pick_.selected = 0;
+            wake_main_window();
+            return;
+        }
+    }
+
     load_state_.running = true;
     load_state_.pending_started_at.reset();
     set_program_status("status.map_loading");
@@ -8865,7 +8903,17 @@ std::string App::open_map_dialog() {
     ofn.hwndOwner = nullptr;
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = L"BVE map files\0*.txt;*.csv\0All files\0*.*\0";
+    std::wstring filter;
+    const auto append_filter =
+        [&](const std::wstring& label, const wchar_t* value) {
+            filter += label;
+            filter.push_back(L'\0');
+            filter += value;
+            filter.push_back(L'\0');
+        };
+    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
+    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
+    ofn.lpstrFilter = filter.c_str();
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
     return {};
@@ -11045,6 +11093,67 @@ void App::render_popups() {
         if (ImGui::Button(tr("button.ok").c_str())) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+
+    render_scenario_route_pick_popup();
+}
+
+void App::render_scenario_route_pick_popup() {
+    if (scenario_route_pick_.popup_requested) {
+        ImGui::OpenPopup(tr("dialog.scenario_route_select_title").c_str());
+        scenario_route_pick_.popup_requested = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal(tr("dialog.scenario_route_select_title").c_str(),
+                                nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    // The child region has a fixed declared size, so long relative paths are
+    // clipped inside the list instead of widening the dialog.
+    const float row_height = ImGui::GetTextLineHeightWithSpacing();
+    const float list_height = std::min(
+        static_cast<float>(scenario_route_pick_.items.size()) * row_height +
+            ImGui::GetStyle().FramePadding.y * 2.0f,
+        260.0f);
+    bool confirm_requested = false;
+    ImGui::BeginChild("##ScenarioRouteList", ImVec2(520.0f, list_height),
+                      ImGuiChildFlags_Borders);
+    for (size_t i = 0; i < scenario_route_pick_.items.size(); ++i) {
+        const ScenarioRoutePickItem& item = scenario_route_pick_.items[i];
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Selectable(item.route_text.c_str(),
+                              scenario_route_pick_.selected ==
+                                  static_cast<int>(i),
+                              ImGuiSelectableFlags_AllowDoubleClick)) {
+            scenario_route_pick_.selected = static_cast<int>(i);
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                confirm_requested = true;
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s\n%s", item.route_text.c_str(),
+                              item.resolved_path.c_str());
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    if (ImGui::Button(tr("button.ok").c_str())) confirm_requested = true;
+    ImGui::SameLine();
+    if (ImGui::Button(tr("button.cancel").c_str())) {
+        scenario_route_pick_ = ScenarioRoutePickState{};
+        ImGui::CloseCurrentPopup();
+    }
+    if (confirm_requested && !scenario_route_pick_.items.empty()) {
+        const ScenarioRoutePickItem chosen =
+            scenario_route_pick_.items[static_cast<size_t>(
+                scenario_route_pick_.selected)];
+        scenario_route_pick_ = ScenarioRoutePickState{};
+        ImGui::CloseCurrentPopup();
+        begin_load(chosen.resolved_path, false, true);
+    }
+    ImGui::EndPopup();
 }
 
 void App::start_scene_preview() {
@@ -13207,6 +13316,7 @@ int main(int, char**) {
     const bool debug_headless_requested = std::any_of(
         args.begin(), args.end(), [](const std::string& arg) {
             return arg == "--headless-load-map" ||
+                arg == "--headless-load-scenario" ||
                 arg.rfind("--debug-headless-", 0) == 0;
         });
     if (debug_headless_requested) {
@@ -13504,6 +13614,19 @@ int main(int, char**) {
             return 1;
         }
         return run_headless_load_map(headless);
+    }
+
+    HeadlessLoadScenarioOptions headless_scenario =
+        parse_headless_load_scenario_options(args);
+    if (headless_scenario.requested) {
+        if (!headless_scenario.error.empty()) {
+            std::cerr << headless_scenario.error << "\n"
+                      << "usage: komapedit.exe --headless-load-scenario <scenario-path> "
+                      << "[--scenario-index N] [--unit-distance M] "
+                      << "[--load-profile preview|edit] [--headless-output FILE]\n";
+            return 1;
+        }
+        return run_headless_load_scenario(headless_scenario);
     }
 #endif
 

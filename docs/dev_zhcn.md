@@ -89,6 +89,7 @@ ctest --test-dir build --output-on-failure
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
+| 场景解析 | `scenario_route.cpp/.h`：BVE 文件类型探测与官方 Scenario `Route` 候选解析，支撑“从场景文件打开地图” |
 | 几何 | `maploader_geometry.cpp`：自/他轨道几何、重定位、曲线、坡度、放置缓冲区与场景控制点 |
 | 身份与快照 | `maploader_identity.cpp`、`maploader_snapshot.cpp`、`maploader_semantic.cpp`：稳定 ID、强类型快照、修订、比较与指纹 |
 | 编辑 | `maploader_edits.cpp`：试运行、内存应用、直接应用、提交、重置、源码补丁、编码感知写回与距离调整 |
@@ -484,6 +485,8 @@ App / MapModel
 
 保持对 BVE Map 2.0+、当前支持的旧式语法、`Include`、变量、预定义 `distance`、数学函数、注释及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关输入的支持。
 
+场景文件只通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_resolve_scenario_routes()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，解析相对场景目录的单路径或多候选加权 `Route`，要求每个目标存在，并返回一个由调用方用 `kv_free_scenario_candidates()` 释放的 malloc 内存块。Scenario 的编辑、新建与写回尚未实现。
+
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 
 AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑时，除匹配的场景/子系统技能外，还必须调用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。实现前必须重新核对受影响的在线官方页面，并完成该技能要求的合规矩阵。
@@ -534,6 +537,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ```bat
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
+build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] --headless-output build\headless-load-scenario.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt

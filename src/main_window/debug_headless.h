@@ -20,6 +20,16 @@ struct HeadlessLoadOptions {
     std::string error;
 };
 
+struct HeadlessLoadScenarioOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    int scenario_index = 0;
+    double unit_distance = 25.0;
+    std::string load_profile = "preview";
+    std::string error;
+};
+
 struct HeadlessPlanBenchmarkOptions {
     bool requested = false;
     std::string path;
@@ -224,6 +234,8 @@ HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
 
 std::vector<std::string> command_line_args_utf8();
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args);
+HeadlessLoadScenarioOptions parse_headless_load_scenario_options(
+    const std::vector<std::string>& args);
 HeadlessPlanBenchmarkOptions parse_headless_plan_benchmark_options(const std::vector<std::string>& args);
 HeadlessOpenBenchmarkOptions parse_headless_open_benchmark_options(const std::vector<std::string>& args);
 HeadlessScene3DBenchmarkOptions parse_headless_scene3d_benchmark_options(const std::vector<std::string>& args);
@@ -261,6 +273,7 @@ HeadlessDiagnosticsPopupBenchOptions parse_headless_diagnostics_popup_bench_opti
 HeadlessSceneLoaderContractOptions parse_headless_scene_loader_contract_options(
     const std::vector<std::string>& args);
 int run_headless_load_map(const HeadlessLoadOptions& options);
+int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options);
 int run_debug_headless_distance_edit_batch(const HeadlessDistanceEditBatchOptions& options);
 int run_debug_headless_station_list_edit(const HeadlessStationListEditOptions& options);
 int run_debug_headless_repeater_edit_batch(const HeadlessRepeaterEditBatchOptions& options);

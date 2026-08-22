@@ -38,6 +38,37 @@ KV_API uint32_t kv_api_version(void);
 #define KV_LOAD_PREVIEW (1u << 0)
 #define KV_LOAD_EDIT_METADATA (1u << 1)
 
+/* Lightweight BVE file-kind probe reading only the first bytes of the file.
+   Returns one of KV_FILE_KIND_*. Missing or unreadable files report
+   KV_FILE_KIND_UNKNOWN so the regular loader can report its own error. */
+#define KV_FILE_KIND_UNKNOWN 0
+#define KV_FILE_KIND_MAP 1
+#define KV_FILE_KIND_SCENARIO 2
+KV_API int kv_probe_file_kind(const char* path);
+
+/* One Route candidate of a BVE Scenario file. route_text is the original
+   relative-path text as written (without any weight suffix); resolved_path is
+   the absolute normalized path of an existing map file. Both strings are
+   UTF-8 and owned by the returned block. */
+typedef struct KvScenarioRouteCandidate {
+    const char* route_text;
+    const char* resolved_path;
+} KvScenarioRouteCandidate;
+
+/* Resolves every Route candidate of a BVE Scenario file per the official
+   Scenario schema, validating the header, comments, weighted-candidate
+   syntax, relative resolution against the Scenario directory, and target
+   existence. Stores the candidate count (always >= 1) in *out_count and
+   returns one allocated block holding the array and all strings. Release it
+   exactly once with kv_free_scenario_candidates(). Returns NULL on failure;
+   inspect kv_get_last_error() for the reason. */
+KV_API const KvScenarioRouteCandidate* kv_resolve_scenario_routes(
+    const char* scenario_path, uint64_t* out_count);
+
+/* Releases a block returned by kv_resolve_scenario_routes(). Passing NULL is
+   allowed. */
+KV_API void kv_free_scenario_candidates(const KvScenarioRouteCandidate* candidates);
+
 /* Returns an opaque map handle owned by the caller. Release it exactly once
    with kv_free(). KV_LOAD_PREVIEW skips source/edit metadata when
    KV_LOAD_EDIT_METADATA is not also set. */

@@ -433,6 +433,8 @@ void validate_map(const KvMapSnapshot& snapshot, bool edit_metadata) {
     }
 }
 
+int scenario_route_contract();
+
 int snapshot_contract() {
     static_assert(KV_MAPLOADER_API_VERSION == 8u, "maploader API contract version");
     TempFixture fixture(true);
@@ -912,7 +914,180 @@ int snapshot_contract() {
         }
     }
 
+    scenario_route_contract();
     std::cout << "typed snapshot contract " << (failures ? "FAIL" : "PASS") << '\n';
+    return failures;
+}
+
+int scenario_route_contract() {
+#if defined(_WIN32)
+    HMODULE module = GetModuleHandleW(L"maploader.dll");
+    check(module != nullptr, "scenario module handle");
+    if (module) {
+        check(GetProcAddress(module, "kv_probe_file_kind") != nullptr,
+              "kv_probe_file_kind export present");
+        check(GetProcAddress(module, "kv_resolve_scenario_routes") != nullptr,
+              "kv_resolve_scenario_routes export present");
+        check(GetProcAddress(module, "kv_free_scenario_candidates") != nullptr,
+              "kv_free_scenario_candidates export present");
+    }
+#endif
+
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() /
+        ("komapedit-scenario-contract-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    struct Cleanup {
+        const std::filesystem::path& dir;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec);
+        }
+    } cleanup{directory};
+
+    auto write_bytes = [&](const std::filesystem::path& path,
+                           const std::string& bytes) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        check(static_cast<bool>(file), "scenario fixture open");
+        file << bytes;
+    };
+    auto scenario_path_string = [&](const char* name) {
+        return (directory / name).u8string();
+    };
+    auto resolve = [&](const std::filesystem::path& path) {
+        uint64_t count = 0;
+        const KvScenarioRouteCandidate* candidates =
+            kv_resolve_scenario_routes(path.u8string().c_str(), &count);
+        return std::pair<const KvScenarioRouteCandidate*, uint64_t>(candidates,
+                                                                    count);
+    };
+
+    std::filesystem::create_directories(directory / "maps");
+    write_bytes(directory / "maps" / "map-a.txt", "BveTs Map 2.02:utf-8\n0;\n");
+    write_bytes(directory / "maps" / "map-b.txt", "BveTs Map 2.02:utf-8\n0;\n");
+
+    check(kv_probe_file_kind(
+              (directory / "maps" / "map-a.txt").u8string().c_str()) ==
+              KV_FILE_KIND_MAP,
+          "probe identifies map header");
+    write_bytes(directory / "plain.txt", "hello world\n");
+    check(kv_probe_file_kind(scenario_path_string("plain.txt").c_str()) ==
+              KV_FILE_KIND_UNKNOWN,
+          "probe rejects plain text");
+
+    // Official single-candidate form with comments, an unrelated key, CRLF
+    // endings, and a trailing comment after the value.
+    write_bytes(directory / "utf8.txt",
+                "BveTs Scenario 2.00:utf-8\r\n"
+                "; leading comment\r\n"
+                "Title = Scenario Contract\r\n"
+                "# hash comment\r\n"
+                "Route = maps\\map-a.txt ; trailing comment\r\n"
+                "Vehicle = train.txt\r\n");
+    check(kv_probe_file_kind(scenario_path_string("utf8.txt").c_str()) ==
+              KV_FILE_KIND_SCENARIO,
+          "probe identifies scenario header");
+    {
+        auto [candidates, count] = resolve(directory / "utf8.txt");
+        check(candidates != nullptr && count == 1,
+              "utf-8 single candidate resolves");
+        if (candidates && count == 1) {
+            check(std::string(candidates[0].route_text) == "maps\\map-a.txt",
+                  "route text preserved verbatim");
+            check(std::string_view(candidates[0].resolved_path).find(
+                      "maps\\map-a.txt") != std::string_view::npos,
+                  "resolved path targets the route file");
+        }
+        kv_free_scenario_candidates(candidates);
+    }
+    kv_free_scenario_candidates(nullptr);
+
+    // Omitted encoding defaults to UTF-8; weighted multi-candidate syntax.
+    write_bytes(directory / "multi.txt",
+                "BveTs Scenario 2.00\n"
+                "Route = maps\\map-b.txt * 2.5 | maps\\map-a.txt\n");
+    {
+        auto [candidates, count] = resolve(directory / "multi.txt");
+        check(candidates != nullptr && count == 2,
+              "weighted candidates resolve in source order");
+        if (candidates && count == 2) {
+            check(std::string(candidates[0].route_text) == "maps\\map-b.txt" &&
+                      std::string(candidates[1].route_text) == "maps\\map-a.txt",
+                  "candidate texts preserved in order");
+        }
+        kv_free_scenario_candidates(candidates);
+    }
+
+    // Duplicate Route entries: the last one wins.
+    write_bytes(directory / "duplicate.txt",
+                "BveTs Scenario 2.00\n"
+                "Route = maps\\map-a.txt\n"
+                "Route = maps\\map-b.txt\n");
+    {
+        auto [candidates, count] = resolve(directory / "duplicate.txt");
+        check(candidates != nullptr && count == 1 &&
+                  std::string(candidates[0].route_text) == "maps\\map-b.txt",
+              "duplicate Route keeps the last entry");
+        kv_free_scenario_candidates(candidates);
+    }
+
+    // shift_jis declaration decodes CP932 relative paths. The target lives in
+    // a directory whose name only round-trips through the declared encoding.
+    const std::wstring japanese_dir_name = L"\x5730\x56f3";
+    std::filesystem::create_directories(directory / japanese_dir_name);
+    write_bytes(directory / japanese_dir_name / "map.txt",
+                "BveTs Map 2.02:utf-8\n0;\n");
+    std::filesystem::create_directories(directory / "timetables");
+    write_bytes(directory / "timetables" / "cp932.txt",
+                std::string("BveTs Scenario 2.00:shift_jis\nRoute = ..\\") +
+                    "\x92\x6e\x90\x7d" + "\\map.txt\n");
+    {
+        auto [candidates, count] = resolve(directory / "timetables" / "cp932.txt");
+        check(candidates != nullptr && count == 1,
+              "shift_jis route decodes and resolves");
+        if (candidates && count == 1) {
+            check(std::string(candidates[0].route_text) ==
+                      (std::string("..\\") + "\xe5\x9c\xb0\xe5\x9b\xb3" +
+                       "\\map.txt"),
+                  "shift_jis route text decodes to UTF-8");
+        }
+        kv_free_scenario_candidates(candidates);
+    }
+
+    // Negative cases expose deterministic diagnostics.
+    auto expect_failure = [&](const char* name, const std::string& body,
+                              const char* message_part, const char* label) {
+        write_bytes(directory / name, body);
+        auto [candidates, count] = resolve(directory / name);
+        check(candidates == nullptr, label);
+        if (!candidates) {
+            const char* error = kv_get_last_error();
+            check(error && std::string_view(error).find(message_part) !=
+                               std::string_view::npos,
+                  (std::string(label) + " diagnostic").c_str());
+        }
+    };
+    expect_failure("noroute.txt",
+                   "BveTs Scenario 2.00\nTitle = No Route Here\n",
+                   "no Route entry", "missing Route rejected");
+    expect_failure("emptyroute.txt",
+                   "BveTs Scenario 2.00\nRoute =    \n",
+                   "Route entry is empty", "empty Route rejected");
+    expect_failure("badweight.txt",
+                   "BveTs Scenario 2.00\nRoute = maps\\map-a.txt * abc\n",
+                   "weight", "invalid weight rejected");
+    expect_failure("zeroweight.txt",
+                   "BveTs Scenario 2.00\nRoute = maps\\map-a.txt * 0\n",
+                   "weight", "non-positive weight rejected");
+    expect_failure("missingtarget.txt",
+                   "BveTs Scenario 2.00\nRoute = maps\\missing.txt\n",
+                   "does not exist", "missing target rejected");
+    expect_failure("wrongheader.txt",
+                   "BveTs Map 2.02:utf-8\n0;\n",
+                   "Invalid file header", "map header rejected by resolver");
+
+    std::cout << "scenario route contract " << (failures ? "FAIL" : "PASS")
+              << '\n';
     return failures;
 }
 

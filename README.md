@@ -20,6 +20,7 @@ Editing is source-backed but still experimental. Back up route files or keep the
 ## Features
 
 - Opens BVE Trainsim 2.0+ map files in UTF-8, UTF-16, CP932/Shift_JIS-related encodings, including nested `Include` files.
+- Opens maps through BVE Scenario files (`BveTs Scenario 2.00`) by resolving the official `Route` entry relative to the scenario directory; multiple weighted candidates are chosen in a selection dialog.
 - Displays plan, elevation/profile, curve-radius, station, speed-limit, other-track, marker, and measurement information.
 - Provides searchable tables for stations, tracks, Structures, repeaters, signals, beacons, sounds, trains, and environmental effects.
 - Previews Structure models and a route scene in 3D.
@@ -134,7 +135,7 @@ root-level INIs or DLLs: if either is present, they stop and require a clean
 
 ## Usage
 
-1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.txt` or `.csv` map file.
+1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.txt` or `.csv` map file. A BVE Scenario file (`BveTs Scenario 2.00`) is resolved through its `Route` entry: with one candidate the referenced map loads directly, and with multiple weighted candidates a fixed-width dialog lists the original relative paths for selection. Editing, saving, reloading, and recent-map history always operate on the resolved map file; scenario weights are validated but never used for automatic selection.
 2. After the map loads, the main window shows the plan view, profile chart, and curve-radius chart.
 3. In the plan view:
    - Drag with the left mouse button to pan.

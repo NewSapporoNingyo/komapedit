@@ -13,6 +13,11 @@
 
 #include "c_api.h"
 #include "diagnostics.h"
+#include "scenario_route.h"
+
+#include <cstring>
+#include <cstdlib>
+#include <new>
 
 namespace {
 
@@ -283,6 +288,70 @@ KV_API const char* kv_get_source_text(void* handle, const char* file_path) {
         set_last_error("unknown maploader error");
         return nullptr;
     }
+}
+
+KV_API int kv_probe_file_kind(const char* path) {
+    try {
+        if (!path) throw std::runtime_error("path is null");
+        return static_cast<int>(kme::maploader::detail::probe_bve_file_kind(
+            path_from_utf8(path)));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return KV_FILE_KIND_UNKNOWN;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return KV_FILE_KIND_UNKNOWN;
+    }
+}
+
+KV_API const KvScenarioRouteCandidate* kv_resolve_scenario_routes(
+    const char* scenario_path, uint64_t* out_count) {
+    try {
+        if (!scenario_path) throw std::runtime_error("scenario path is null");
+        if (!out_count) throw std::runtime_error("candidate count output is null");
+        std::vector<kme::maploader::detail::ScenarioRouteCandidate> candidates =
+            kme::maploader::detail::resolve_scenario_route_candidates(
+                path_from_utf8(scenario_path));
+        if (candidates.empty()) {
+            throw std::runtime_error("scenario has no Route entry");
+        }
+
+        // One allocation holds the candidate array and every string so the
+        // caller releases the whole result with a single free call.
+        size_t string_bytes = 0;
+        for (const auto& candidate : candidates) {
+            string_bytes += candidate.route_text.size() + 1 +
+                candidate.resolved_path.size() + 1;
+        }
+        const size_t array_bytes =
+            candidates.size() * sizeof(KvScenarioRouteCandidate);
+        char* block = static_cast<char*>(std::malloc(array_bytes + string_bytes));
+        if (!block) throw std::bad_alloc();
+        auto* out_array = reinterpret_cast<KvScenarioRouteCandidate*>(block);
+        char* cursor = block + array_bytes;
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            out_array[i].route_text = cursor;
+            std::memcpy(cursor, candidates[i].route_text.c_str(),
+                        candidates[i].route_text.size() + 1);
+            cursor += candidates[i].route_text.size() + 1;
+            out_array[i].resolved_path = cursor;
+            std::memcpy(cursor, candidates[i].resolved_path.c_str(),
+                        candidates[i].resolved_path.size() + 1);
+            cursor += candidates[i].resolved_path.size() + 1;
+        }
+        *out_count = candidates.size();
+        return out_array;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return nullptr;
+    }
+}
+
+KV_API void kv_free_scenario_candidates(const KvScenarioRouteCandidate* candidates) {
+    std::free(const_cast<KvScenarioRouteCandidate*>(candidates));
 }
 
 KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,

@@ -81,6 +81,7 @@ add_library(maploader SHARED
     src/maploader/maploader_snapshot.cpp
     src/maploader/maploader_semantic.cpp
     src/maploader/maploader_edits.cpp
+    src/maploader/scenario_route.cpp
     src/maploader/diagnostics.cpp
     src/maploader/c_api.cpp
 )
