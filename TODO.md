@@ -9,6 +9,8 @@ This file is the active project progress and contains unfinished items only. Com
 ### 2D 平面图与图表显示
 
 - [ ] 拆分 2D 画布内部的视图状态、marker cache、hit-test/context menu、背景图和绘制 primitive，拆分阶段不改变现有行为
+- [ ] 为 2D 平面图中的曲线半径信息补充当前不支持的插值（interpolate）情况
+- [ ] 
 
 ### 3D画布
 
@@ -18,8 +20,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 ### 用户界面与辅助功能
 
-- [ ] Legacy.Fog 语句编辑与新建
-- [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
 - [ ] include文件新建与导入、解除引用、删除源文件功能
 - [ ] 资源列表文件新建与导入、解除引用、删除源文件功能
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途
@@ -35,6 +35,10 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 他列车启用时间编辑与新建
 - [ ] 他列车停止点编辑与新建
 - [ ] 可将多个地图语句设为1组，通过 `kme.json` 保存地图元素预设组，应用后生成普通 BVE map 语句
-- [ ] 可将多个不同distance的地图语句设为1组，以1个语句作为参照，记录其它语句的相对位置。 
+- [ ] 可将多个不同distance的地图语句设为1组，以1个语句作为参照，记录其它语句的相对位置
 - [ ] 自定义工作区：保存多种UI布局作为预设，根据不同使用场景切换UI布局
 - [ ] 线路发行版导出：展开 Include、可选常量化距离/变量表达式、只复制实际使用资源、输出报告，并保护开发线路目录不被覆盖（这是项目中的功能，与仓库中的release构建没有直接关系）
+- [ ] Legacy.Fog 语句编辑与新建
+- [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
+- [ ] 根据曲线半径自动计算缓和曲线长度与超高
+- [ ] 根据坡度自动计算纵曲线长度
