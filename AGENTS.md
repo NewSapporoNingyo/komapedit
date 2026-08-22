@@ -23,6 +23,14 @@ Use the documents by ownership:
 
 Current implementation status comes from source and `TODO.md`, not from an old memory or an exhaustive list copied into this file.
 
+## Important Notes in the Various Types of Coding Agents Listed Below (Very Important)
+You should read the following notes related to your current agent. If a note applies to a different agent, you may ignore it.
+### Pi Agent
+- Running .bat scripts in Pi Agent can be challenging and requires methods such as calling PowerShell to execute them.
+### Opencode
+- In Opencode, the plan/build modes are switched manually by the user. Once a plan is finalized, it should be paused and await user review. Do not use a confirmation dialog to ask the user “Should the plan be executed? Select a option below!” as this will prevent the user from switching to build mode.
+### Codex
+- If the `apply_patch` tool is rejected while modifying a file, immediately stop the current task and report the issue. **Never use alternative methods (such as patches in Git) to modify the file, as this could lead to serious incidents, such as “the entire source code file being wiped.”**
 ## Non-negotiable project constraints
 
 ### Platform and architecture
