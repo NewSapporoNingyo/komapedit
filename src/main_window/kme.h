@@ -1208,6 +1208,47 @@ enum class MapElementNumericConstraint {
     Truncate3,
 };
 
+struct MapElementNumericChoice {
+    int value;
+    const char* description_key;
+};
+
+struct MapElementNumericChoiceSet {
+    const MapElementNumericChoice* choices = nullptr;
+    size_t count = 0;
+};
+
+struct NewElementFieldSpec {
+    const char* key;
+    const char* label;
+    MapElementNumericConstraint constraint = MapElementNumericConstraint::None;
+    bool required = true;
+    const char* default_value = "";
+    bool optional_insertion_argument = false;
+};
+
+enum class NewElementTemplateCategory {
+    Scenery,
+    Station,
+    TrackGeometry,
+    OtherTrack,
+    Signal,
+    Sound,
+    Effects,
+};
+
+struct NewElementTemplate {
+    const char* id;
+    NewElementTemplateCategory category;
+    int category_order = 0;
+    std::string_view row_kind;
+    std::string_view method;
+    const char* syntax;
+    const char* usage_key;
+    bool section_values = false;
+    std::vector<NewElementFieldSpec> fields;
+};
+
 enum class MapElementKeySource {
     None,
     Structure,
@@ -2498,3 +2539,145 @@ private:
         const std::string& initial_directory);
     std::string choose_folder_dialog();
 };
+
+// Internal main-window translation-unit seams. These remain executable-local
+// helpers; they do not participate in either DLL ABI.
+struct KvMapSnapshot;
+enum class Canvas3DSceneEditKind;
+
+extern App* g_app;
+void wake_main_window();
+
+unsigned char ascii_lower(unsigned char ch) noexcept;
+const ImWchar* application_font_glyph_ranges(ImFontAtlas& fonts);
+void merge_required_symbol_glyphs(ImFontAtlas& fonts, float font_size);
+LogSeverity classify_log_severity(std::string_view text) noexcept;
+ImVec4 main_bar_background_color();
+ImVec4 darkened_theme_color(ImVec4 color) noexcept;
+ImVec4 log_severity_color(LogSeverity severity) noexcept;
+std::string format_elapsed_seconds_value(double elapsed_seconds);
+const std::string& edit_field_buffer_text(const MapElementEditFieldState& field);
+void set_edit_field_buffer(MapElementEditFieldState& field, const std::string& value);
+bool parse_gui_edit_number(const std::string& text, double* parsed_value = nullptr);
+MapElementNumericChoiceSet map_element_numeric_choices(
+    MapElementNumericConstraint constraint);
+int gui_numeric_choice_option_index(double value, MapElementNumericConstraint constraint);
+int gui_numeric_choice_option_index(const std::string& text,
+                                    MapElementNumericConstraint constraint);
+void render_inline_wrapped_text(const char* label, const std::string& value);
+double truncate_gui_thousandths(double value);
+std::string format_gui_transform_number(double value);
+MapElementEditFieldState* find_inspector_field(MapElementInspectorState& inspector,
+                                                const std::string& key);
+const MapElementEditFieldState* find_inspector_field(
+    const MapElementInspectorState& inspector, const std::string& key);
+bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,
+                                          bool canonicalize);
+bool row_kind_has_source_distance_string(const std::string& row_kind);
+MapElementNumericConstraint structure_edit_numeric_constraint(const std::string& key);
+std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& nodes);
+
+struct ListAssetSourcePathResult {
+    std::string source_path;
+    std::string resolved_path;
+    std::string fallback_reason;
+};
+
+std::string resolve_list_asset_path(const std::string& list_file,
+                                    const std::string& source_path);
+ListAssetSourcePathResult make_list_asset_source_path(
+    const std::string& list_file, const std::string& selected_file);
+std::string list_asset_picker_initial_directory(const std::string& resolved_file,
+                                                const std::string& list_file);
+std::vector<TableRow> hydrate_signal_aspect_rows(const KvMapSnapshot& snapshot);
+void bind_station_position_edit_ids(MapModel& model);
+void rebuild_speed_limit_runtime_cache(MapModel& model);
+void annotate_own_track_transition_links(MapModel& model);
+MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
+                              const std::string& path,
+                              double snapshot_call_seconds);
+
+bool row_kind_supports_delete(const std::string& row_kind);
+
+struct RepeaterDeleteChain {
+    std::vector<size_t> begin_source_indices;
+    std::optional<size_t> end_source_index;
+    size_t selected_begin_index = 0;
+};
+
+std::optional<RepeaterDeleteChain> repeater_delete_chain_for_edit_id(
+    const std::vector<TableRow>& rows, const std::string& edit_id);
+std::string expected_source_hash_for_edit_target(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& pending_changes,
+    const std::string& edit_id,
+    const std::string& preferred_hash,
+    const std::string& source_file_path);
+std::string delete_expected_source_hash(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& pending_changes,
+    void* handle,
+    const MapElementDeleteRequest& request,
+    std::string* metadata_error);
+std::string inspector_row_field_value(const TableRow& row,
+                                      const std::string& row_kind,
+                                      const std::string& field_key);
+void set_inspector_row_field_value(TableRow& row,
+                                   const std::string& row_kind,
+                                   const std::string& field_key,
+                                   const std::string& value,
+                                   double distance_origin);
+bool resource_key_values_equal(std::string_view left, std::string_view right) noexcept;
+bool track_key_values_equal(std::string_view left, std::string_view right) noexcept;
+const TableRow* find_model_row_for_inspector_request(
+    const MapModel& model,
+    const MapElementInspectorRequest& request,
+    std::string& resolved_edit_id,
+    size_t& resolved_row_index);
+std::string structure_model_path_for_key(const MapModel& model,
+                                         const std::string& structure_key);
+Canvas3DPlacementEditTarget scene_edit_target_from_row(
+    const TableRow& row,
+    Canvas3DSceneEditKind kind,
+    std::string model_path = {});
+void normalize_station_preview_rows(MapModel& model);
+
+bool is_repeater_structure_key_field(const MapElementEditFieldState& field);
+bool is_coordinate_offset_field(std::string_view field);
+bool is_section_values_field(std::string_view field);
+bool is_section_values_field(const MapElementEditFieldState& field);
+void reindex_repeater_structure_key_fields(MapElementInspectorState& inspector);
+MapElementEditFieldState make_repeater_structure_key_field(
+    const MapElementInspectorState& inspector, size_t index, const std::string& value);
+void reindex_section_values_fields(MapElementInspectorState& inspector);
+MapElementEditFieldState make_section_values_field(
+    const MapElementInspectorState& inspector, size_t index, const std::string& value);
+void set_inspector_coordinate_offsets_enabled(MapElementInspectorState& inspector,
+                                              bool enabled);
+bool inspector_coordinate_offsets_are_zero(const MapElementInspectorState& inspector);
+MapElementInspectorRequest make_inspector_reload_request(
+    const MapElementInspectorState& inspector);
+const EditSourceFileInfo* find_model_source_file(const MapModel& model,
+                                                 const std::string& path);
+MapElementKeySource map_element_key_source_for_field(
+    std::string_view row_kind, std::string_view field_key) noexcept;
+std::vector<std::string> split_repeater_structure_keys(const std::string& text);
+void replace_repeater_structure_key_fields(
+    MapElementInspectorState& inspector,
+    const std::vector<std::string>& structure_keys);
+void normalize_optional_insertion_argument_enablement(
+    MapElementInspectorState& inspector);
+bool set_optional_insertion_argument_enabled(
+    MapElementInspectorState& inspector, std::string_view field_key, bool included);
+
+std::vector<std::string> new_element_target_candidates(const MapModel& model);
+void update_repeater_wizard_field_enablement(NewElementWizardState& wizard);
+std::string own_track_curve_method(const NewElementWizardState& wizard);
+void update_own_track_wizard_field_enablement(NewElementWizardState& wizard);
+
+float distance_jump_input_width();
+float distance_jump_control_width(const char* label, const char* button_label);
+int distance_jump_input_filter(ImGuiInputTextCallbackData* data);
+bool parse_distance_jump_input(const char* text, double& distance);
+
+const std::vector<NewElementTemplate>& new_element_templates();

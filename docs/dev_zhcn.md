@@ -95,10 +95,10 @@ ctest --test-dir build --output-on-failure
 | 编辑 | `maploader_edits.cpp`：试运行、内存应用、直接应用、提交、重置、源码补丁、编码感知写回与距离调整；Include 语句支持受限的路径参数更新，经新旧子树掩码的全量重解析验证 |
 | 共享关联 | `include/repeater_linkage.h`、`include/own_track_transition_linkage.h`：Repeater 链与曲线/坡度过渡配对 |
 | 模型读取 | `src/model_loader/model_loader.cpp`、`include/model_loader.h`：Assimp 隔离与 model-loader API v2 |
-| 主窗口 | `gui_kme.cpp`、`kme.h`：应用循环、菜单、加载、编辑检查器、应用/保存/撤销/重载与共享 GUI 状态 |
+| 主窗口 | `gui_kme.cpp`、`kme.h` 及职责明确的 `src/main_window/` 模块：App 状态协调、Win32/D3D11 启动、通用工具/背景图、快照水合/加载、编辑/距离/Inspector/列表草稿/新建元素工作流、对话框/UI、场景预览与无头入口 |
 | 运行时/设置 | `app_settings.cpp/.h`、`runtime_paths.cpp/.h`、`maploader_runtime.cpp`：INI、相对可执行文件路径、DLL 加载、精确 API 检查 |
 | 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
-| Debug 验证 | `debug_headless.cpp/.h`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找与触摸检查 |
+| Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找、触摸和新建元素检查 |
 | 二维视图 | `src/canvas2d/canvas2D.cpp`、`profile_plots.cpp`：平面、图表、变换、标记、测量与背景图 |
 | 三维视图 | `src/canvas3d/canvas3D.cpp`、`include/canvas3D.h`：模型/场景渲染、相机、拾取、标记、叠加层与操纵器 |
 | 表格/导航 | `src/table/datatable.cpp`、`table_navigation.cpp`：缓存表格、行内编辑、查找与行/平面/场景导航 |
@@ -319,24 +319,17 @@ ctest --test-dir build --output-on-failure
 - history 块只解析 `[Recent]` 的 `count`、严格 `[MapN]` 和八个规范字段；`load_history_entries()` 保持路径规范化、去重和最多十项，并拒绝旧分节、字段别名及带尾随字符的数字/索引；`save_history_entries()` 以规范格式重写最近项，数字格式函数避免区域设置污染。
 - `apply_ui_font_size()`、`apply_ui_theme_color()`、`apply_ui_component_size()`、`apply_ui_settings()` 把持久设置投影到 ImGui style，并按 DPI/viewports 修正圆角和尺寸。
 
-#### `src/main_window/gui_kme.cpp`
+#### `src/main_window/gui_kme.cpp` 与拆分模块
 
-- **启动辅助与文本/数值格式**：字体 glyph 合并、日志分级/颜色、UTF-8/UTF-16、路径、数值截断与 inspector numeric constraint 函数为 Win32 UI 提供统一格式。距离跳转过滤和文件名清洗避免各控件重复实现。
-- **ABI 快照复制**：`typed_snapshot_string()`、span 校验、matrix copy 和一组 `map_snapshot_*` 函数安全读取 arena；随后的转换块把每类 `Kv*` 行复制进 `MapModel`，绑定 Station position edit id，重建限速运行时缓存并用共享算法标注曲线/坡度过渡配对。
-- **异步加载**：worker 结构和 `wake_main_window()` 协调后台线程；`stop_loader()`、`poll_loader()`、`begin_edit_metadata_load()`、`load_map_worker()` 分离 Preview 首屏和 Edit metadata 水合；`apply_load_result()`、`merge_edit_metadata()`、`apply_edit_metadata_result()` 在 UI 线程替换模型并使缓存失效。
-- **几何和加载计时**：`finish_pending_load_timing()`、`regenerate_geometry()` 调用 DLL 重建指定范围/步长数据；状态栏阶段函数只在相应数据真正可用后结束计时。
-- **编辑模式与本地预览**：pending/unsaved 查询函数区分 inspector 草稿、inline-list 草稿和工作副本；`set_edit_mode_enabled()`/`apply_edit_mode_enabled()` 管理元数据加载与退出确认；`snapshot_local_preview_row()` 和按 row kind 的更新块让 inspector/gizmo 在正式重解析前同步可视模型。
-- **检查器打开与 Repeater 导航**：request/process/open 函数从 `kv_get_edit_target_typed()` 构建字段 UI；row kind 支持表决定删除能力；Repeater chain、Section values、structure keys 重建函数维护可变字段；Structure/Repeater 坐标偏移按钮在普通形式与 Put0/Begin0 间双向切换，丢弃非零偏移前确认，短式 Signal 仍沿用原确认流程。
-- **三维操纵器联动**：`sync_scene_placement_edit_from_inspector()` 把当前字段投影到 Canvas3D target；`apply_scene_placement_drag_update()` 将普通放置的 X/Y/Z 拖动或 `Structure.PutBetween` 的仅 Z 轴整米 `distance` 拖动写回 inspector buffer，不直接写盘。
-- **Apply 与删除**：`apply_inspector_changes()` 组装 typed edit batch、先 dry-run、处理距离消歧，再 memory Apply 并用新快照刷新模型；`delete_element_target()` 根据普通行、成对过渡或 Repeater 删除模式形成一个或多个物理 change。Include 语句支持受限更新：`process_pending_include_file_change()` 以入口地图目录为相对路径基准（与解析器 rootpath 语义一致）生成 `includePath` 字段，编辑层按补丁位置重连语句并以新旧子树双掩码验证变量/距离环境与非目标元素。
-- **行内资源列表编辑**：draft 判断、spec、字段校验、重排/清空/删除、文件选择和 find-result 重置代码维护 Station/Structure/Signal/Sound/Sound3D 物理行草稿；批量 Apply 前保持原 source hash 和未显示列。
-- **typed 报告适配**：`TypedEditBatchStorage` 拥有调用期字符串与 view；报告字符串/span 函数复制 DLL 视图；committed file/row state 处理重解析后 identity 迁移。距离 resolution choice 函数驱动 Text Preview 选择并重试同一批次。
-- **保存、撤销与关闭**：`save_pending_edits()` 阻止遗漏 inline draft 后调用 commit；`discard_pending_edits()` 清 UI 草稿；`revert_all_pending_edits()` 调用 reset memory；close/reload 状态机根据未保存状态弹窗且不混淆 Save 与 Reload。
-- **Inspector 与新建向导 UI**：字段/Section 可变参数渲染、`render_element_inspector()`、`new_element_templates()`、候选文件/方法/字段表、`apply_new_element_insert()` 和 `render_new_element_wizard()` 仅暴露已支持普通 BVE map 元素；向导“应用并编辑”按钮通过 `apply_then_open_created_element` 标志把新建主语句的插入 ID 复用为 `return_inspector_request`，应用成功后经既有 `close_after_successful_apply`/`pending_inspector_request_` 链路关闭向导并打开对应编辑窗口。
-- **文件、历史、背景与导出**：打开 map/image/folder 对话框使用 Win32 shell；recent map 与 background history 函数同步 `history.ini`；图片装载/纹理重建使用 WIC；CSV 导出写 own/other track 矩阵。
-- **布局、菜单和设置**：dockspace 初始化、window visibility 与 2D/3D settings 投影函数保持持久状态；`render_menu()`、`render_toolbar()`、`render_status_bar()`、站点/里程跳转、console 和 popups 构成顶层 UI。
-- **三维/模型预览协调**：`start_scene_preview()`、`rebuild_scene_preview()`、动态刷新、track/marker visibility 同步和 `render_scene_preview_window()` 连接 `MapModel` 与 `Canvas3D`；model preview 函数从结构列表打开单模型。
-- **每帧与 Win32 入口**：reload/shortcut 函数处理磁盘动作；`App::render()` 调用各窗口；`CreateDeviceD3D()`/render-target 清理函数管理主 swap chain；`WndProc()` 转发 ImGui 与触摸消息；`main()` 初始化窗口、D3D、ImGui/ImPlot、设置和消息循环，并按逆序释放资源。
+- `gui_kme.cpp` 保留 `App` 构造/析构与日志回调；`kme.h` 保持共享状态契约和仅 EXE 内部的跨翻译单元声明，不参与 DLL ABI。
+- `win32_dx11_bootstrap.cpp` 拥有 D3D11 设备/渲染目标、`WndProc()`、窗口消息循环和 `main()`。
+- `gui_common_utils.cpp` 集中字体、主题/日志颜色、编码转换、数值格式、路径及里程跳转控件帮助函数；`background_image.cpp` 拥有 WIC 解码、背景纹理重建与 history 背景持久化。
+- `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联；`map_load_pipeline.cpp` 处理异步加载、结果应用、元数据合并、加载计时和几何再生成。
+- `edit_ledger.cpp` 处理 typed 批次/报告、账本同步、本地预览、删除、保存/撤销/关闭；`distance_resolution_workflow.cpp` 处理距离消歧请求与继续应用。
+- `element_inspector_data.cpp` 管理 Inspector 打开、定位、字段/场景编辑数据与 Apply；`element_inspector_render.cpp` 只渲染 Inspector 字段、可选插入参数和可变 Repeater/Section UI。
+- `editable_list_drafts.cpp` 管理资源列表草稿；`new_element_wizard.cpp` 拥有新元素模板、向导和结构化插入；`headless_entrypoints.cpp` 保留无头新元素编辑契约入口。
+- `app_dialogs.cpp` 拥有文件对话框与模态弹窗；`ui_elements.cpp` 拥有 dockspace、菜单、工具栏、状态栏、控制台、快捷键和设置投影；`scene_preview_lifecycle.cpp` 拥有场景/模型预览的启停、重建、可见性和窗口渲染。
+
 
 #### `src/main_window/file_structure_diagram.cpp`
 

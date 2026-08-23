@@ -95,10 +95,10 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 | Editing | `maploader_edits.cpp`: dry run, in-memory Apply, direct Apply, commit, reset, source patching, encoding-aware writeback, distance adjustment; Include statements support restricted path-argument updates validated by full reparse with old/new subtree masks |
 | Shared linkage | `include/repeater_linkage.h`, `include/own_track_transition_linkage.h`: Repeater chains and Curve/Gradient transition pairing |
 | Model loading | `src/model_loader/model_loader.cpp`, `include/model_loader.h`: Assimp isolation and model-loader API v2 |
-| Main window | `src/main_window/gui_kme.cpp`, `kme.h`: application loop, menus, loading, edit inspector, Apply/Save/Revert/Reload, shared GUI state |
+| Main window | `src/main_window/gui_kme.cpp`, `kme.h`, and focused `src/main_window/` modules: App-state coordination; Win32/D3D11 bootstrap; shared GUI utilities/backgrounds; snapshot hydration/loading; edit, distance, Inspector, list-draft, and new-element workflows; dialogs/UI; scene previews; headless entry points |
 | Runtime/settings | `app_settings.cpp/.h`, `runtime_paths.cpp/.h`, `maploader_runtime.cpp`: INI persistence, executable-relative paths, DLL loading, exact API checks |
 | Source tools | `file_structure_diagram.cpp`, `text_preview.cpp`: Include graph, working-copy source preview, source actions (change included file, unlink Include), distance-boundary selection |
-| Debug validation | `debug_headless.cpp/.h`, `touch_input.cpp/.h`: headless contracts, benchmarks, camera transfer, find, and touch checks |
+| Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `touch_input.cpp/.h`: headless contracts, benchmarks, camera transfer, find, touch, and new-element checks |
 | 2D views | `src/canvas2d/canvas2D.cpp`, `profile_plots.cpp`: plan, charts, transforms, markers, measurement, background images |
 | 3D views | `src/canvas3d/canvas3D.cpp`, `include/canvas3D.h`: model/scene rendering, camera, picking, markers, overlays, gizmos |
 | Tables/navigation | `src/table/datatable.cpp`, `table_navigation.cpp`: cached tables, inline editing, find, row/plan/scene navigation |

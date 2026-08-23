@@ -228,6 +228,21 @@ target_link_libraries(implot PUBLIC imgui)
 
 add_executable(komapedit
     src/main_window/gui_kme.cpp
+    src/main_window/win32_dx11_bootstrap.cpp
+    src/main_window/gui_common_utils.cpp
+    src/main_window/background_image.cpp
+    src/main_window/map_snapshot_hydration.cpp
+    src/main_window/map_load_pipeline.cpp
+    src/main_window/edit_ledger.cpp
+    src/main_window/distance_resolution_workflow.cpp
+    src/main_window/element_inspector_data.cpp
+    src/main_window/element_inspector_render.cpp
+    src/main_window/editable_list_drafts.cpp
+    src/main_window/new_element_wizard.cpp
+    src/main_window/app_dialogs.cpp
+    src/main_window/ui_elements.cpp
+    src/main_window/scene_preview_lifecycle.cpp
+    src/main_window/headless_entrypoints.cpp
     src/main_window/app_settings.cpp
     src/main_window/runtime_paths.cpp
     src/main_window/maploader_runtime.cpp

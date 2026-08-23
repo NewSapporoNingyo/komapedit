@@ -10105,6 +10105,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         *out << std::fixed << std::setprecision(3)
              << "plan_bench avg_ms=" << timing.average_ms
              << " min_ms=" << timing.minimum_ms
+             << " median_ms=" << timing.median_ms
              << " p95_ms=" << timing.p95_ms
              << " max_ms=" << timing.maximum_ms
              << " p95_fps=" << timing.p95_fps
