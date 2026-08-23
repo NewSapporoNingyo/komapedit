@@ -29,6 +29,7 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -422,6 +423,14 @@ HeadlessIncludeReplaceOptions parse_headless_include_replace_options(
         options.error = "--new-path must not contain a single quote";
     }
     return options;
+}
+
+HeadlessIncludeImportCreateOptions parse_headless_include_import_create_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<
+        HeadlessIncludeImportCreateOptions>(
+        args, "--debug-headless-include-import-create",
+        [](HeadlessIncludeImportCreateOptions&) {});
 }
 
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
@@ -5114,6 +5123,312 @@ int run_debug_headless_include_replace(const HeadlessIncludeReplaceOptions& opti
         out->flush();
         return failed_cases == 0 ? 0 : 26;
     } catch (const std::exception& e) {
+        *out << "error=" << e.what() << "\nresult=FAIL\n";
+        out->flush();
+        return 27;
+    }
+}
+
+int run_debug_headless_include_import_create(
+    const HeadlessIncludeImportCreateOptions& options) {
+    using namespace distance_batch_headless;
+    using typed_edit_headless::Change;
+
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* label, bool value) {
+        *out << label << '=' << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+    };
+    auto read_file_bytes = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    };
+    std::vector<std::filesystem::path> created_children;
+    auto cleanup_children = [&]() {
+        for (const std::filesystem::path& child : created_children) {
+            std::error_code error;
+            std::filesystem::remove(child, error);
+        }
+    };
+
+    *out << "command=debug-headless-include-import-create\n"
+         << "map_path=\"" << options.path << "\"\n";
+    try {
+        const std::filesystem::path entry_path(utf8_to_wide(options.path));
+        std::error_code absolute_error;
+        const std::filesystem::path entry_absolute =
+            std::filesystem::absolute(entry_path, absolute_error);
+        if (absolute_error) {
+            throw std::runtime_error("failed to resolve the entry map path");
+        }
+
+        MapHandle handle;
+        handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(std::string("map load failed") +
+                (error ? ": " + std::string(error) : std::string{}));
+        }
+        check("load_ok", true);
+
+        auto load_snapshot = [&](void* map_handle) {
+            KvMapSnapshot result{};
+            if (!kv_get_map_snapshot(map_handle, KV_MAP_SNAPSHOT_VERSION,
+                                     &result, sizeof(result)) ||
+                result.version != KV_MAP_SNAPSHOT_VERSION ||
+                result.structure_size < sizeof(KvMapSnapshot)) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(std::string("map snapshot failed") +
+                    (error ? ": " + std::string(error) : std::string{}));
+            }
+            return result;
+        };
+        auto snapshot_text = [](const KvMapSnapshot& snap, KvStringRef ref) {
+            if (ref.length == 0) return std::string{};
+            if (!snap.string_data || ref.offset > snap.string_size ||
+                ref.length > snap.string_size - ref.offset) {
+                throw std::runtime_error("map snapshot string reference is out of range");
+            }
+            return std::string(snap.string_data + static_cast<size_t>(ref.offset),
+                               static_cast<size_t>(ref.length));
+        };
+
+        const KvMapSnapshot baseline = load_snapshot(handle.value);
+        const std::uint64_t baseline_statement_count = baseline.statement_count;
+        const std::uint64_t baseline_file_structure_count = baseline.file_structure_count;
+        std::string root_source_path;
+        std::vector<std::string> route_source_paths;
+        route_source_paths.reserve(static_cast<size_t>(baseline.source_file_count));
+        for (std::uint64_t i = 0; i < baseline.source_file_count; ++i) {
+            const std::string source_path = snapshot_text(
+                baseline, baseline.source_files[i].file_path);
+            route_source_paths.push_back(source_path);
+            std::error_code equivalent_error;
+            if (std::filesystem::equivalent(
+                    entry_absolute,
+                    std::filesystem::path(utf8_to_wide(source_path)),
+                    equivalent_error)) {
+                root_source_path = source_path;
+            }
+        }
+        if (root_source_path.empty()) {
+            throw std::runtime_error("entry map is not a physical loaded source file");
+        }
+        auto hash_disk_files = [&]() {
+            std::map<std::string, std::string> hashes;
+            for (const std::string& source_path : route_source_paths) {
+                hashes[source_path] = hash_text(read_file_bytes(
+                    std::filesystem::path(utf8_to_wide(source_path))));
+            }
+            return hashes;
+        };
+        const std::map<std::string, std::string> disk_hashes_before =
+            hash_disk_files();
+
+        auto create_unique_child = [&](const char* prefix) {
+            const auto stamp = std::chrono::steady_clock::now()
+                .time_since_epoch().count();
+            for (unsigned int suffix = 1; suffix <= 100; ++suffix) {
+                const std::filesystem::path child = entry_absolute.parent_path() /
+                    (std::string(prefix) + "-" + std::to_string(stamp) + "-" +
+                     std::to_string(suffix) + ".txt");
+                std::error_code exists_error;
+                if (std::filesystem::exists(child, exists_error)) continue;
+                std::string create_error;
+                if (!create_utf8_bve_map_file_exclusive(child, create_error)) {
+                    throw std::runtime_error(create_error);
+                }
+                created_children.push_back(child);
+                return child;
+            }
+            throw std::runtime_error("could not reserve a unique temporary child map path");
+        };
+
+        auto verify_insert = [&](const char* mode,
+                                 const std::filesystem::path& child,
+                                 const ListAssetSourcePathResult& include_path) {
+            if (include_path.source_path.empty()) {
+                throw std::runtime_error(std::string(mode) +
+                    " could not derive an Include path");
+            }
+            const std::string raw_arguments = "'" + include_path.source_path + "'";
+            const std::string canonical_statement =
+                "include " + raw_arguments + ";";
+            Change insertion;
+            insertion.change_id = std::string("headless-include-") + mode;
+            insertion.edit_id = insertion.change_id;
+            insertion.operation = KV_EDIT_INSERT;
+            insertion.target_file_path = root_source_path;
+            insertion.fields = {{"rowKind", "include"},
+                                {"includePath", include_path.source_path}};
+
+            typed_edit_headless::Report dry =
+                typed_edit_headless::dry_run(handle.value, {insertion});
+            for (const std::string& error : dry.blocking_errors) {
+                *out << mode << "_dry_blocking_error=" << error << "\n";
+            }
+            check((std::string(mode) + "_dry_run_ok").c_str(),
+                  dry.ok && dry.insert_count == 1 && dry.full_reparse_ok);
+
+            typed_edit_headless::Report applied =
+                typed_edit_headless::apply_to_memory(handle.value, {insertion});
+            for (const std::string& error : applied.blocking_errors) {
+                *out << mode << "_apply_blocking_error=" << error << "\n";
+            }
+            check((std::string(mode) + "_apply_ok").c_str(),
+                  applied.ok && applied.insert_count == 1 &&
+                      applied.full_reparse_ok && applied.non_target_changed_count == 0);
+
+            const KvMapSnapshot after_apply = load_snapshot(handle.value);
+            bool inserted_statement_found = false;
+            std::uint64_t inserted_start = 0;
+            std::uint64_t first_distance_start =
+                std::numeric_limits<std::uint64_t>::max();
+            std::vector<std::uint64_t> root_include_starts;
+            for (std::uint64_t i = 0; i < after_apply.statement_count; ++i) {
+                const KvStatementRow& row = after_apply.statements[i];
+                if (row.source.source_file_index >= after_apply.source_file_count ||
+                    snapshot_text(after_apply, after_apply.source_files[
+                        row.source.source_file_index].file_path) != root_source_path) {
+                    continue;
+                }
+                const std::string kind = snapshot_text(after_apply, row.statement_kind);
+                if (kind == "Distance.Set") {
+                    first_distance_start = std::min(first_distance_start,
+                                                    row.source.byte_start);
+                } else if (kind == "Include") {
+                    const std::string arguments =
+                        snapshot_text(after_apply, row.raw_arguments);
+                    if (arguments == raw_arguments) {
+                        inserted_statement_found = true;
+                        inserted_start = row.source.byte_start;
+                    } else {
+                        root_include_starts.push_back(row.source.byte_start);
+                    }
+                }
+            }
+            bool child_node_found = false;
+            for (std::uint64_t i = 0; i < after_apply.file_structure_count; ++i) {
+                const KvFileStructureRow& node = after_apply.file_structure[i];
+                if (snapshot_text(after_apply, node.include_path) !=
+                    include_path.source_path) {
+                    continue;
+                }
+                std::error_code equivalent_error;
+                if (std::filesystem::equivalent(
+                        child, std::filesystem::path(utf8_to_wide(
+                                   snapshot_text(after_apply, node.absolute_path))),
+                        equivalent_error)) {
+                    child_node_found = true;
+                    break;
+                }
+            }
+            check((std::string(mode) + "_statement_in_target_source").c_str(),
+                  inserted_statement_found);
+            check((std::string(mode) + "_file_structure_updated").c_str(),
+                  child_node_found);
+
+            bool has_eligible_include = false;
+            std::uint64_t last_eligible_include_start = 0;
+            for (std::uint64_t start : root_include_starts) {
+                if (start >= first_distance_start) continue;
+                has_eligible_include = true;
+                last_eligible_include_start = std::max(last_eligible_include_start, start);
+            }
+            const char* source_text = kv_get_source_text(handle.value,
+                                                          root_source_path.c_str());
+            std::string patched_source = source_text ? source_text : std::string{};
+            kv_free_string(source_text);
+            bool placement_ok = false;
+            if (has_eligible_include) {
+                placement_ok = inserted_start > last_eligible_include_start &&
+                    inserted_start < first_distance_start;
+            } else if (first_distance_start != std::numeric_limits<std::uint64_t>::max()) {
+                placement_ok = inserted_start < first_distance_start;
+            } else {
+                while (!patched_source.empty() &&
+                       std::isspace(static_cast<unsigned char>(patched_source.back()))) {
+                    patched_source.pop_back();
+                }
+                placement_ok = patched_source.size() >= canonical_statement.size() &&
+                    patched_source.compare(patched_source.size() - canonical_statement.size(),
+                                           canonical_statement.size(),
+                                           canonical_statement) == 0;
+            }
+            check((std::string(mode) + "_placement_matches_zero_distance_rule").c_str(),
+                  placement_ok);
+
+            check((std::string(mode) + "_reset_memory_ok").c_str(),
+                  kv_edit_reset_memory(handle.value) != 0);
+            const KvMapSnapshot after_reset = load_snapshot(handle.value);
+            bool reset_removed_insert = true;
+            for (std::uint64_t i = 0; i < after_reset.statement_count; ++i) {
+                const KvStatementRow& row = after_reset.statements[i];
+                if (row.source.source_file_index < after_reset.source_file_count &&
+                    snapshot_text(after_reset, after_reset.source_files[
+                        row.source.source_file_index].file_path) == root_source_path &&
+                    snapshot_text(after_reset, row.statement_kind) == "Include" &&
+                    snapshot_text(after_reset, row.raw_arguments) == raw_arguments) {
+                    reset_removed_insert = false;
+                    break;
+                }
+            }
+            check((std::string(mode) + "_reset_restores_parent").c_str(),
+                  reset_removed_insert &&
+                      after_reset.statement_count == baseline_statement_count &&
+                      after_reset.file_structure_count == baseline_file_structure_count);
+            check((std::string(mode) + "_parent_disk_untouched").c_str(),
+                  hash_disk_files() == disk_hashes_before);
+        };
+
+        const std::filesystem::path imported_child =
+            create_unique_child("komapedit-headless-import");
+        const ListAssetSourcePathResult imported_path = make_list_asset_source_path(
+            options.path, wide_to_utf8(imported_child.wstring()));
+        check("import_relative_path_ready", !imported_path.source_path.empty() &&
+                                           imported_path.fallback_reason.empty());
+        verify_insert("import", imported_child, imported_path);
+
+        const std::filesystem::path created_child =
+            create_unique_child("komapedit-headless-create");
+        check("new_child_standard_header",
+              read_file_bytes(created_child) == "BveTs Map 2.02:utf-8\r\n");
+        std::string overwrite_error;
+        check("new_child_overwrite_rejected",
+              !create_utf8_bve_map_file_exclusive(created_child, overwrite_error) &&
+                  read_file_bytes(created_child) == "BveTs Map 2.02:utf-8\r\n");
+        const ListAssetSourcePathResult created_path = make_list_asset_source_path(
+            options.path, wide_to_utf8(created_child.wstring()));
+        check("create_relative_path_ready", !created_path.source_path.empty() &&
+                                           created_path.fallback_reason.empty());
+        verify_insert("create", created_child, created_path);
+
+        cleanup_children();
+        check("temporary_children_cleaned", std::all_of(
+            created_children.begin(), created_children.end(),
+            [](const std::filesystem::path& child) {
+                std::error_code error;
+                return !std::filesystem::exists(child, error);
+            }));
+        *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+        out->flush();
+        return failed_cases == 0 ? 0 : 26;
+    } catch (const std::exception& e) {
+        cleanup_children();
         *out << "error=" << e.what() << "\nresult=FAIL\n";
         out->flush();
         return 27;

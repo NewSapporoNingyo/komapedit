@@ -197,6 +197,14 @@ struct HeadlessIncludeReplaceOptions {
     std::string error;
 };
 
+struct HeadlessIncludeImportCreateOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessNewElementEditOptions {
     bool requested = false;
     std::string path;
@@ -278,6 +286,8 @@ HeadlessIncludeDeleteOptions parse_headless_include_delete_options(
     const std::vector<std::string>& args);
 HeadlessIncludeReplaceOptions parse_headless_include_replace_options(
     const std::vector<std::string>& args);
+HeadlessIncludeImportCreateOptions parse_headless_include_import_create_options(
+    const std::vector<std::string>& args);
 HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
     const std::vector<std::string>& args);
 HeadlessTableFindOptions parse_headless_table_find_options(const std::vector<std::string>& args);
@@ -298,6 +308,8 @@ int run_debug_headless_section_edit_batch(const HeadlessSectionEditBatchOptions&
 int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options);
 int run_debug_headless_include_delete(const HeadlessIncludeDeleteOptions& options);
 int run_debug_headless_include_replace(const HeadlessIncludeReplaceOptions& options);
+int run_debug_headless_include_import_create(
+    const HeadlessIncludeImportCreateOptions& options);
 int run_debug_headless_touch_input(const HeadlessTouchInputOptions& options);
 int run_debug_headless_settings_persistence(
     const HeadlessSettingsPersistenceOptions& options);

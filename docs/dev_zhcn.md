@@ -548,6 +548,7 @@ build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --h
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
+build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
@@ -565,6 +566,8 @@ plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
 
 `--debug-headless-include-delete` 要求显式传入地图路径，验证一条 Include 语句的类型化删除（通过 `--index` 按源码顺序选择目标，默认 `0`）。运行前会对所有已加载源文件做哈希；随后验证陈旧哈希拒绝、dry-run、内存 Apply 与整棵子树重解析断言（Include 语句及其嵌套子树消失且非目标求值元素保持一致）、Reset 还原；未指定 `--commit` 时证明全部磁盘哈希不变。指定 `--commit` 时重新 Apply 并经正常 Save 边界提交，再从磁盘重载确认 Include 语句已被删除；提交文件与哈希保留在报告中供物理 diff 检查。当存续语句仍依赖被删 Include 子树内的变量或距离赋值时，删除会被有意阻止。
+
+`--debug-headless-include-import-create` 要求显式传入地图路径，会在入口地图同目录创建唯一命名的临时子地图，分别覆盖导入已有子地图和新建子地图。它验证入口物理源中的规范 Include 插入、零距离锚点规则、全量重解析和文件结构刷新、新建子地图的 UTF-8 无 BOM、CRLF `BveTs Map 2.02:utf-8` 文件头、Reset 还原，以及所有既有源文件哈希不变。该命令绝不提交父地图，只删除由自己创建的临时子地图文件。
 
 该新建地图元素命令还验证布景模型、音效文件和 3D 音效文件列表的 key 仅在当前向导模板有匹配字段时预填，且不改变已打开向导中的其他草稿字段或目标源文件。
 

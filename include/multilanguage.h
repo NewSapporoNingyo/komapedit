@@ -19,6 +19,10 @@ struct Translation {
 
     Translation() {
         en = {
+            {"menu.import_submap", "Import Child Map..."},
+            {"menu.new_submap", "New Child Map..."},
+            {"dialog.create_include_file", "Create Child Map File"},
+            {"status.edit.include_create_failed", "Unable to create the child map file."},
             {"frame.sections", "Section List"},
             {"frame.section_begins", "Section Begin Positions"},
             {"frame.section_speed_limits", "Section Speed Limits"},
@@ -184,6 +188,10 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\nBased on kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\nLicense: Apache License 2.0\nThird-party: Dear ImGui (MIT), ImPlot (MIT)\nSee LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md"}
         };
         zh = {
+            {"menu.import_submap", "导入子地图..."},
+            {"menu.new_submap", "新建子地图..."},
+            {"dialog.create_include_file", "创建子地图文件"},
+            {"status.edit.include_create_failed", "无法创建子地图文件。"},
             {"frame.sections", "闭塞列表"},
             {"frame.section_begins", "闭塞开始位置"},
             {"frame.section_speed_limits", "闭塞限速"},
@@ -349,6 +357,10 @@ struct Translation {
             {"about.text", "komapedit\nVersion 0.7.0\nCopyright © 2026 Sapporo_ningyo\n基于 kobushi-trackviewer\nCopyright © 2021-2024 konawasabi\n许可证：Apache License 2.0\n第三方：Dear ImGui (MIT)、ImPlot (MIT)\n详见 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md"}
         };
         ja = {
+            {"menu.import_submap", "子マップをインポート..."},
+            {"menu.new_submap", "子マップを新規作成..."},
+            {"dialog.create_include_file", "子マップファイルを新規作成"},
+            {"status.edit.include_create_failed", "子マップファイルを作成できません。"},
             {"frame.sections", "閉そく一覧"},
             {"frame.section_begins", "閉そく開始位置"},
             {"frame.section_speed_limits", "閉そく速度制限"},

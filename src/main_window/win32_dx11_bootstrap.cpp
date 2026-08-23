@@ -420,6 +420,18 @@ int main(int, char**) {
         return run_debug_headless_include_replace(include_replace);
     }
 
+    HeadlessIncludeImportCreateOptions include_import_create =
+        parse_headless_include_import_create_options(args);
+    if (include_import_create.requested) {
+        if (!include_import_create.error.empty()) {
+            std::cerr << include_import_create.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-include-import-create <map-path> "
+                      << "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_include_import_create(include_import_create);
+    }
+
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);
     if (edit_roundtrip.requested) {
         if (!edit_roundtrip.error.empty()) {

@@ -130,6 +130,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Save background-image parameters with recent-map entries in `settings/history.ini`.
 - [x] Save settings to `settings/settings.ini` under the executable directory.
 - [x] Include-file structure diagram and read-only source text preview using the active in-memory working copy.
+- [x] In edit mode, import an existing child map or exclusively create a new UTF-8/no-BOM/CRLF `BveTs Map 2.02:utf-8` child map from the File Structure Diagram. The canonical Include is staged in the selected physical source after the last zero-distance Include, before the first local distance when needed, or at end of file; normal Save commits the parent map.
 - [x] Edit mode with separate Apply-to-preview, Save-to-disk, global Revert of all pending changes, and Reload-from-disk behavior plus unsaved-change prompts.
 - [x] Prompt to rebase whole metres into the begin distance when applying a coordinate-enabled `Repeater.Begin` whose absolute Z-axis offset exceeds 5 m, matching `Structure.Put` behavior.
 - [x] Add an `Insert Change Point` action in Repeater `Properties/Edit` that opens a source-matched Begin/Begin0 wizard with Begin-only selected and current inspector drafts prefilled.
@@ -265,6 +266,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 背景图参数随最近地图保存到 `settings/history.ini`
 - [x] 设置保存到程序目录下的 `settings/settings.ini`
 - [x] Include 文件结构图，以及读取当前内存工作副本的只读源码文本预览
+- [x] 编辑模式下可从文件结构图导入已有子地图，或排他新建 UTF-8 无 BOM、CRLF 的 `BveTs Map 2.02:utf-8` 子地图；规范 Include 暂存到选定物理源中首个本地距离语句前最后一个零距离 Include 的下方、首个距离语句上方或文件末尾，正常“保存”才提交父地图
 - [x] 在文件结构图中右键 Include 文件节点并选择“解除引用”，经现有类型化删除/应用/保存流程从上级地图删除对应 `include` 语句；编辑模式关闭时菜单项禁用，后续语句仍依赖该子树内的变量或距离时删除被阻止
 - [x] 在文件结构图中右键 Include 文件节点并选择“更换文件...”，选择 .txt/.csv 子地图后经类型化更新流程将上级地图对应 `include` 语句的路径改写为新引用（复用布景模型列表的“优先相对路径、失败时绝对路径”逻辑，基准目录与解析器一致取入口地图目录）；应用后缓存自动刷新且不直接保存；编辑模式关闭时菜单项禁用，后续语句仍依赖旧子树内变量或替换会产生重复声明时编辑被阻止
 - [x] 编辑模式中分离“应用到预览”“保存到磁盘”“撤销全部待保存改动”和“从磁盘重新加载”，并在存在未保存更改时确认

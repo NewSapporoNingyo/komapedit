@@ -1712,6 +1712,113 @@ std::string line_indent_of(const SourcePatch& patch, const ParsedStatement& stat
     return indent;
 }
 
+struct IncludeInsertionPlan {
+    size_t offset = 0;
+    size_t anchor_statement_index = k_no_source_ref;
+    std::string text;
+    size_t identity_begin = 0;
+    size_t identity_end = 0;
+};
+
+bool line_tail_starts_comment(const std::string& text, size_t offset, size_t end) {
+    if (offset >= end) return false;
+    return text[offset] == '#' ||
+        (text[offset] == '/' && offset + 1 < end && text[offset + 1] == '/');
+}
+
+IncludeInsertionPlan plan_include_insertion(const MapContext& ctx,
+                                            size_t source_file_index,
+                                            const SourcePatch& patch,
+                                            const std::string& statement_text) {
+    std::map<std::pair<size_t, size_t>, size_t> physical_statements;
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        const ParsedStatement& statement = ctx.parsed_statements[i];
+        if (statement.source.source_file_index != source_file_index ||
+            (statement.statement_kind != "Include" && !is_distance_statement(statement))) {
+            continue;
+        }
+        const auto key = std::make_pair(statement.source.byte_start, statement.source.byte_end);
+        auto found = physical_statements.find(key);
+        if (found == physical_statements.end() ||
+            statement.global_order < ctx.parsed_statements[found->second].global_order) {
+            physical_statements[key] = i;
+        }
+    }
+
+    std::vector<size_t> statements;
+    statements.reserve(physical_statements.size());
+    for (const auto& entry : physical_statements) statements.push_back(entry.second);
+    std::stable_sort(statements.begin(), statements.end(), [&](size_t left, size_t right) {
+        const SourceSpan& a = ctx.parsed_statements[left].source;
+        const SourceSpan& b = ctx.parsed_statements[right].source;
+        if (a.byte_start != b.byte_start) return a.byte_start < b.byte_start;
+        return source_start_less(a, b);
+    });
+
+    size_t first_distance = k_no_source_ref;
+    size_t last_zero_distance_include = k_no_source_ref;
+    for (size_t index : statements) {
+        const ParsedStatement& statement = ctx.parsed_statements[index];
+        if (is_distance_statement(statement)) {
+            first_distance = index;
+            break;
+        }
+        if (statement.statement_kind == "Include") {
+            last_zero_distance_include = index;
+        }
+    }
+
+    IncludeInsertionPlan plan;
+    const auto finish = [&](size_t offset, const std::string& indent,
+                            size_t anchor) {
+        plan.offset = offset;
+        plan.anchor_statement_index = anchor;
+        plan.text = statement_insertion_text(
+            patch.text, offset, indent + statement_text, *patch.record);
+        plan.identity_begin = plan.text.find(statement_text);
+        if (plan.identity_begin == std::string::npos) {
+            throw std::runtime_error("failed to retain include insert identity");
+        }
+        plan.identity_end = plan.identity_begin + statement_text.size();
+    };
+
+    if (last_zero_distance_include != k_no_source_ref) {
+        const ParsedStatement& anchor = ctx.parsed_statements[last_zero_distance_include];
+        const auto range = source_range_in_text(patch, anchor.source);
+        const size_t line_start = offset_from_line_column(
+            patch.text, patch.line_starts, anchor.source.line, 1);
+        if (line_start == std::string::npos) {
+            throw std::runtime_error("failed to locate Include insertion line");
+        }
+        const TextLineSpan line = text_line_span(patch.text, line_start);
+        size_t tail = range.second;
+        while (tail < line.content_end &&
+               (patch.text[tail] == ' ' || patch.text[tail] == '\t')) {
+            ++tail;
+        }
+        const bool keep_tail_with_anchor =
+            tail == line.content_end ||
+            line_tail_starts_comment(patch.text, tail, line.content_end);
+        finish(keep_tail_with_anchor ? line.next_begin : range.second,
+               line_indent_of(patch, anchor), last_zero_distance_include);
+        return plan;
+    }
+
+    if (first_distance != k_no_source_ref) {
+        const ParsedStatement& anchor = ctx.parsed_statements[first_distance];
+        const size_t line_start = offset_from_line_column(
+            patch.text, patch.line_starts, anchor.source.line, 1);
+        if (line_start == std::string::npos) {
+            throw std::runtime_error("failed to locate distance insertion line");
+        }
+        finish(line_start, line_indent_of(patch, anchor), first_distance);
+        return plan;
+    }
+
+    finish(patch.text.size(), {}, k_no_source_ref);
+    return plan;
+}
+
 template <typename Row>
 bool match_edit_ref(MapContext& ctx, const Row& row, const std::string& row_kind,
                     size_t row_index, const std::string& edit_id, EditableTarget& target) {
@@ -2023,24 +2130,11 @@ std::string build_replacement_statement(const MapEditChange& change,
     throw std::runtime_error("unsupported editable target: " + target.row_kind);
 }
 
+std::string include_path_from_change(const MapEditChange& change);
+
 std::string build_include_statement(const MapEditChange& change,
                                     const ParsedStatement& statement) {
-    if (change.field_changes.size() != 1 ||
-        change.field_changes.begin()->first != "includePath") {
-        throw std::runtime_error(
-            "include updates require exactly one includePath field: " + change.edit_id);
-    }
-    const std::string new_path =
-        trim_field_copy(change.field_changes.begin()->second);
-    if (new_path.empty()) {
-        throw std::runtime_error(
-            "includePath must not be empty: " + change.edit_id);
-    }
-    if (new_path.find('\'') != std::string::npos) {
-        throw std::runtime_error(
-            "includePath must be representable as a single-quoted string literal: " +
-            new_path);
-    }
+    const std::string new_path = include_path_from_change(change);
     const std::string replacement_arguments = "'" + new_path + "'";
     // Replace only the argument slice inside the original statement text so
     // the statement kind spelling and surrounding spacing survive unchanged.
@@ -2075,11 +2169,11 @@ std::string build_include_statement(const MapEditChange& change,
         " " + replacement_arguments + ";";
 }
 
-std::string expected_include_update_path(const MapEditChange& change) {
+std::string include_path_from_change(const MapEditChange& change) {
     if (change.field_changes.size() != 1 ||
         change.field_changes.begin()->first != "includePath") {
         throw std::runtime_error(
-            "include updates require exactly one includePath field: " + change.edit_id);
+            "include edits require exactly one includePath field: " + change.edit_id);
     }
     const std::string new_path = trim_field_copy(change.field_changes.begin()->second);
     if (new_path.empty()) {
@@ -2273,10 +2367,6 @@ void validate_insert_change(const MapEditChange& change) {
     if (change.row_kind.empty()) {
         throw std::runtime_error("insert edit is missing its row kind");
     }
-    if (change.field_changes.find("distance") == change.field_changes.end()) {
-        throw std::runtime_error(
-            "insert edit is missing its distance field: " + change.edit_id);
-    }
     if (!change.replacement_statement.empty()) {
         throw std::runtime_error(
             "insert replacementStatement is unsupported; use structured fields: " +
@@ -2284,11 +2374,19 @@ void validate_insert_change(const MapEditChange& change) {
     }
     if (!change.insert_before_edit_id.empty()) {
         throw std::runtime_error(
-            "insertBeforeEditId is unsupported for distance insertion: " +
+            "insertBeforeEditId is unsupported for insert edits: " +
             change.edit_id);
     }
 
     const std::string& row_kind = change.row_kind;
+    if (row_kind == "include") {
+        (void)include_path_from_change(change);
+        return;
+    }
+    if (change.field_changes.find("distance") == change.field_changes.end()) {
+        throw std::runtime_error(
+            "insert edit is missing its distance field: " + change.edit_id);
+    }
     if (row_kind == "structure.put") {
         validate_insert_field_names(change,
                                     {"distance", "method", "structureKey", "trackKey",
@@ -2394,6 +2492,9 @@ std::string insert_required_track_key(const MapEditChange& change, const char* k
 std::string build_insert_statement(const MapEditChange& change) {
     validate_insert_change(change);
     const std::string& row_kind = change.row_kind;
+    if (row_kind == "include") {
+        return "include '" + include_path_from_change(change) + "';";
+    }
     if (row_kind == "repeater") {
         const std::string method = insert_method_or_default(change, "Begin");
         const std::string key = insert_required_key(change, "repeaterKey");
@@ -3235,6 +3336,9 @@ struct PreparedEdit {
     std::string source_indent;
     std::string replacement_statement;
     std::string operation;
+    bool has_custom_identity_range = false;
+    size_t identity_range_begin = 0;
+    size_t identity_range_end = 0;
     bool moves_distance = false;
     double target_distance = 0.0;
     std::string suggested_distance_expression;
@@ -4833,6 +4937,7 @@ void validate_edit_report(MapContext& baseline,
 
     std::set<std::string> excluded_before;
     std::set<std::string> insert_edit_ids;
+    std::set<std::string> include_insert_edit_ids;
     std::map<std::string, std::string> expected_target_canonical;
     int expected_distance_target_count = 0;
     std::vector<size_t> include_delete_statements;
@@ -4864,7 +4969,7 @@ void validate_edit_report(MapContext& baseline,
                 update_target.row_kind == "include") {
                 std::string new_path;
                 try {
-                    new_path = expected_include_update_path(change);
+                    new_path = include_path_from_change(change);
                 } catch (const std::exception& e) {
                     report.blocking_errors.push_back(
                         std::string("target validation failed for ") +
@@ -4894,6 +4999,26 @@ void validate_edit_report(MapContext& baseline,
                 return;
             }
             insert_edit_ids.insert(change.edit_id);
+            if (change.row_kind == "include") {
+                try {
+                    const std::string new_path = include_path_from_change(change);
+                    if (!expected_target_canonical
+                             .emplace(change.edit_id, "include:" + new_path)
+                             .second) {
+                        report.blocking_errors.push_back(
+                            "more than one edit targets the same element: " +
+                            change.edit_id);
+                        return;
+                    }
+                    include_insert_edit_ids.insert(change.edit_id);
+                } catch (const std::exception& e) {
+                    report.blocking_errors.push_back(
+                        std::string("target validation failed for ") +
+                        change.edit_id + ": " + e.what());
+                    return;
+                }
+                continue;
+            }
             try {
                 expected_target_canonical.emplace(
                     change.edit_id, expected_insert_semantic(baseline, change));
@@ -4987,7 +5112,7 @@ void validate_edit_report(MapContext& baseline,
             &file.text, build_line_starts(file.text)};
     }
     std::map<IdentityLocation, std::vector<CandidateIdentityElement>> candidates_by_location;
-    std::vector<size_t> bound_include_update_statements;
+    std::vector<size_t> bound_include_added_statements;
     auto collect_candidate_row = [&](const auto& row, const std::string& row_kind) {
         const EditSourceRef& ref = row.edit_ref;
         if (!ref.valid() || ref.statement_index >= candidate->parsed_statements.size()) return;
@@ -5054,7 +5179,7 @@ void validate_edit_report(MapContext& baseline,
     // is proven by the evaluated path text at the patched source location.
     std::map<std::string, std::string> candidate_include_canonicals;
     std::map<std::string, size_t> candidate_include_statement_by_id;
-    if (!include_update_expected_paths.empty()) {
+    if (!include_update_expected_paths.empty() || !include_insert_edit_ids.empty()) {
         for (size_t i = 0; i < candidate->parsed_statements.size(); ++i) {
             const ParsedStatement& statement = candidate->parsed_statements[i];
             if (statement.statement_kind != "Include") continue;
@@ -5115,6 +5240,8 @@ void validate_edit_report(MapContext& baseline,
         const bool insert_origin = origin_group.second.size() == 1 &&
             insert_edit_ids.find(origin_group.second.front()->edit_id) !=
                 insert_edit_ids.end();
+        const bool include_origin =
+            origin_group.second.front()->row_kind == "include";
         if (!insert_origin &&
             candidates->second.size() != origin_group.second.size()) {
             report.blocking_errors.push_back(
@@ -5134,12 +5261,22 @@ void validate_edit_report(MapContext& baseline,
             bool bound = false;
             for (size_t i = 0; i < candidates->second.size(); ++i) {
                 const CandidateIdentityElement& candidate_element = candidates->second[i];
-                auto after = after_by_native_id.find(candidate_element.native_edit_id);
                 auto expected = expected_target_canonical.find(
                     origin_group.second.front()->edit_id);
-                if (after == after_by_native_id.end() ||
-                    expected == expected_target_canonical.end() ||
-                    after->second->canonical != expected->second) {
+                bool matched = false;
+                if (include_origin) {
+                    auto canonical_it = candidate_include_canonicals.find(
+                        candidate_element.native_edit_id);
+                    matched = canonical_it != candidate_include_canonicals.end() &&
+                        expected != expected_target_canonical.end() &&
+                        canonical_it->second == expected->second;
+                } else {
+                    auto after = after_by_native_id.find(candidate_element.native_edit_id);
+                    matched = after != after_by_native_id.end() &&
+                        expected != expected_target_canonical.end() &&
+                        after->second->canonical == expected->second;
+                }
+                if (!matched) {
                     continue;
                 }
                 preserve_edit_identity(origin_group.second.front()->edit_id,
@@ -5149,6 +5286,25 @@ void validate_edit_report(MapContext& baseline,
                     if (j == i) continue;
                     insert_extra_native_ids.insert(
                         candidates->second[j].native_edit_id);
+                }
+                if (include_origin) {
+                    for (const CandidateIdentityElement& duplicate : candidates->second) {
+                        auto canonical_it = candidate_include_canonicals.find(
+                            duplicate.native_edit_id);
+                        if (canonical_it == candidate_include_canonicals.end() ||
+                            canonical_it->second != expected->second) {
+                            continue;
+                        }
+                        auto statement_it = candidate_include_statement_by_id.find(
+                            duplicate.native_edit_id);
+                        if (statement_it == candidate_include_statement_by_id.end()) {
+                            report.blocking_errors.push_back(
+                                "validated include insert lost its reparsed statement: " +
+                                origin_group.second.front()->edit_id);
+                            return;
+                        }
+                        bound_include_added_statements.push_back(statement_it->second);
+                    }
                 }
                 bound = true;
                 break;
@@ -5169,8 +5325,6 @@ void validate_edit_report(MapContext& baseline,
                          [](const auto& lhs, const auto& rhs) {
                              return lhs.global_order < rhs.global_order;
                          });
-        const bool include_origin =
-            origin_group.second.front()->row_kind == "include";
         for (size_t i = 0; i < origin_group.second.size(); ++i) {
             const MapEditIdentityOrigin& origin = *origin_group.second[i];
             const CandidateIdentityElement& candidate_element = candidates->second[i];
@@ -5201,11 +5355,11 @@ void validate_edit_report(MapContext& baseline,
                     candidate_element.native_edit_id);
                 if (statement_it == candidate_include_statement_by_id.end()) {
                     report.blocking_errors.push_back(
-                        "validated include update lost its reparsed statement: " +
+                        "validated include edit lost its reparsed statement: " +
                         origin.edit_id);
                     return;
                 }
-                bound_include_update_statements.push_back(statement_it->second);
+                bound_include_added_statements.push_back(statement_it->second);
             }
         }
     }
@@ -5216,9 +5370,9 @@ void validate_edit_report(MapContext& baseline,
     // the non-target and environment checks only police untouched regions.
     std::vector<bool> include_added_statements;
     std::set<std::string> include_subtree_additions;
-    if (!bound_include_update_statements.empty()) {
+    if (!bound_include_added_statements.empty()) {
         include_added_statements.assign(candidate->parsed_statements.size(), false);
-        for (size_t site_index : bound_include_update_statements) {
+        for (size_t site_index : bound_include_added_statements) {
             if (site_index >= candidate->parsed_statements.size()) continue;
             const ParsedStatement& site =
                 candidate->parsed_statements[site_index];
@@ -5411,7 +5565,7 @@ void validate_edit_report(MapContext& baseline,
 
     bool final_environment_ok = false;
     std::string environment_error;
-    if (include_removed_statements.empty() && bound_include_update_statements.empty()) {
+    if (include_removed_statements.empty() && bound_include_added_statements.empty()) {
         final_environment_ok = variable_environment_equal(
             baseline.variables, baseline.distance,
             candidate->variables, candidate->distance);
@@ -5419,7 +5573,7 @@ void validate_edit_report(MapContext& baseline,
             environment_error =
                 "full reparse changed the final variable or distance environment";
         }
-    } else if (bound_include_update_statements.empty()) {
+    } else if (bound_include_added_statements.empty()) {
         final_environment_ok = final_environment_matches_include_deletions(
             baseline, *candidate, include_removed_statements, environment_error);
     } else {
@@ -6053,6 +6207,35 @@ MapEditReport build_edit_report(MapContext& ctx,
                         "source file changed externally: " + file.file_path);
                     continue;
                 }
+                if (change.row_kind == "include") {
+                    try {
+                        const std::string inserted_statement = build_insert_statement(change);
+                        const IncludeInsertionPlan insertion = plan_include_insertion(
+                            ctx, target_file_index, target_patch, inserted_statement);
+                        PreparedEdit edit;
+                        edit.change = &change;
+                        edit.input_ordinal = input_ordinal;
+                        edit.operation = "insert";
+                        edit.target.statement_index = insertion.anchor_statement_index;
+                        edit.target.row_kind = "include";
+                        edit.target.element_index = 0;
+                        edit.target.elements_for_statement = 0;
+                        edit.source_file_index = target_file_index;
+                        edit.source_range = {insertion.offset, insertion.offset};
+                        edit.removal_range = {};
+                        edit.replacement_statement = insertion.text;
+                        edit.has_custom_identity_range = true;
+                        edit.identity_range_begin = insertion.identity_begin;
+                        edit.identity_range_end = insertion.identity_end;
+                        ++report.insert_count;
+                        prepared.push_back(std::move(edit));
+                    } catch (const std::exception& e) {
+                        report.blocking_errors.push_back(
+                            std::string("edit change failed for ") +
+                            change.edit_id + ": " + e.what());
+                    }
+                    continue;
+                }
                 try {
                     const std::string target_text = normalized_number_arg(
                         field_text_or(change, "distance", ""));
@@ -6354,6 +6537,14 @@ MapEditReport build_edit_report(MapContext& ctx,
 
     auto source_identity_range = [&](const PreparedEdit& identity_edit,
                                      const std::string& replacement_text) {
+        if (identity_edit.has_custom_identity_range) {
+            if (identity_edit.identity_range_end < identity_edit.identity_range_begin ||
+                identity_edit.identity_range_end > replacement_text.size()) {
+                throw std::runtime_error("include insert identity range is outside its replacement");
+            }
+            return std::make_pair(identity_edit.identity_range_begin,
+                                  identity_edit.identity_range_end);
+        }
         std::pair<size_t, size_t> range{0, replacement_text.size()};
         if (identity_edit.target.row_kind != "signal.aspect" ||
             !has_field_change(*identity_edit.change, "deleteGlare")) {
@@ -6375,17 +6566,21 @@ MapEditReport build_edit_report(MapContext& ctx,
     auto append_replacement_identity = [&](TextReplacement& replacement,
                                            const PreparedEdit* identity_edit) {
         if (!identity_edit || identity_edit->operation == "delete") return;
-        const ParsedStatement& baseline_statement =
-            ctx.parsed_statements[identity_edit->target.statement_index];
         const auto identity_range =
             source_identity_range(*identity_edit, replacement.text);
+        int baseline_global_order = 0;
+        if (identity_edit->target.statement_index != k_no_source_ref &&
+            identity_edit->target.statement_index < ctx.parsed_statements.size()) {
+            baseline_global_order =
+                ctx.parsed_statements[identity_edit->target.statement_index].global_order;
+        }
         replacement.identities.push_back({
             identity_edit->change->edit_id,
             identity_edit->target.row_kind,
             identity_range.first,
             identity_range.second,
             identity_edit->target.element_index,
-            baseline_statement.global_order,
+            baseline_global_order,
         });
     };
 

@@ -257,6 +257,17 @@ void App::render_source_file_context_menu(const char* popup_id,
                                RepeaterDeleteMode::EntireChain);
     }
     ImGui::EndDisabled();
+    ImGui::Separator();
+    const bool include_insert_available = edit_actions_available() &&
+        find_model_source_file(model_, file_path) != nullptr;
+    ImGui::BeginDisabled(!include_insert_available);
+    if (ImGui::MenuItem(tr("menu.import_submap").c_str())) {
+        request_include_file_insert(file_path, false);
+    }
+    if (ImGui::MenuItem(tr("menu.new_submap").c_str())) {
+        request_include_file_insert(file_path, true);
+    }
+    ImGui::EndDisabled();
     ImGui::EndPopup();
 }
 

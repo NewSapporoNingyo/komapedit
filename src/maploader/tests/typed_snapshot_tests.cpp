@@ -4006,6 +4006,200 @@ void environment_argument_shape_edit_contract() {
         "Fog incomplete Set insert is rejected");
 }
 
+void include_insert_contract() {
+    auto read_text = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+    auto run_case = [&](const char* label, const std::string& parent_text,
+                        const std::string& expected_source, bool verify_commit = false) {
+        const std::filesystem::path directory =
+            std::filesystem::temp_directory_path() /
+            ("komapedit-include-insert-contract-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(directory);
+        const auto check_case = [&](bool condition, const char* suffix) {
+            const std::string message = std::string(label) + " " + suffix;
+            check(condition, message.c_str());
+        };
+        const std::filesystem::path map_path = directory / "map.txt";
+        {
+            std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+            map << parent_text;
+        }
+        for (const char* name : {"child.txt", "first.txt", "second.txt", "late.txt"}) {
+            std::ofstream child(directory / name, std::ios::binary | std::ios::trunc);
+            child << "BveTs Map 2.02:utf-8\r\n";
+        }
+        const std::string disk_before = read_text(map_path);
+        {
+            MapHandle handle(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                            KV_LOAD_EDIT_METADATA));
+            check_case(handle.value != nullptr, "load");
+            if (handle.value) {
+                SimpleInsertBatch insert(map_path.u8string(),
+                                         std::string("include-insert-") + label,
+                                         {{"rowKind", "include"},
+                                          {"includePath", "child.txt"}});
+                KvEditReportSnapshot report{};
+                const bool applied = kv_edit_apply_to_memory_typed(
+                    handle.value, &insert.batch, &report, sizeof(report)) != 0;
+                check_case(applied && report.ok && report.insert_count == 1 &&
+                               report.full_reparse_ok && report.non_target_changed_count == 0,
+                           "applies and reparses");
+                const char* source = applied
+                    ? kv_get_source_text(handle.value, map_path.u8string().c_str()) : nullptr;
+                check_case(source && std::string_view(source) == expected_source,
+                           "preserves the expected CRLF source placement");
+                kv_free_string(source);
+
+                KvMapSnapshot snapshot{};
+                check_case(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                               &snapshot, sizeof(snapshot)) != 0,
+                           "snapshot after include insert");
+                bool inserted_statement_found = false;
+                bool child_node_found = false;
+                for (std::uint64_t i = 0; i < snapshot.statement_count; ++i) {
+                    const KvStatementRow& statement = snapshot.statements[i];
+                    if (map_string(snapshot, statement.statement_kind) != "Include" ||
+                        statement.source.source_file_index >= snapshot.source_file_count ||
+                        map_string(snapshot, snapshot.source_files[
+                            statement.source.source_file_index].file_path) != map_path.u8string()) {
+                        continue;
+                    }
+                    inserted_statement_found = inserted_statement_found ||
+                        arena_view(snapshot.string_data, snapshot.string_size,
+                                   statement.raw_arguments) == "'child.txt'";
+                }
+                for (std::uint64_t i = 0; i < snapshot.file_structure_count; ++i) {
+                    const KvFileStructureRow& node = snapshot.file_structure[i];
+                    child_node_found = child_node_found ||
+                        map_string(snapshot, node.include_path) == "child.txt";
+                }
+                check_case(inserted_statement_found && child_node_found,
+                           "reconnects the inserted physical Include subtree");
+                check_case(kv_edit_reset_memory(handle.value) != 0, "reset");
+            }
+        }
+        check_case(read_text(map_path) == disk_before,
+                   "reset leaves the parent file uncommitted");
+        if (verify_commit) {
+            MapHandle committed(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                               KV_LOAD_EDIT_METADATA));
+            check_case(committed.value != nullptr, "commit load");
+            if (committed.value) {
+                SimpleInsertBatch insert(map_path.u8string(),
+                                         std::string("include-insert-commit-") + label,
+                                         {{"rowKind", "include"},
+                                          {"includePath", "child.txt"}});
+                KvEditReportSnapshot apply_report{};
+                KvEditReportSnapshot commit_report{};
+                const bool committed_ok =
+                    kv_edit_apply_to_memory_typed(
+                        committed.value, &insert.batch, &apply_report,
+                        sizeof(apply_report)) != 0 && apply_report.ok &&
+                    kv_edit_commit_typed(committed.value, &commit_report,
+                                         sizeof(commit_report)) != 0 && commit_report.ok;
+                check_case(committed_ok && read_text(map_path) == expected_source,
+                           "commit preserves UTF-8 without BOM and CRLF");
+            }
+        }
+        std::error_code cleanup;
+        std::filesystem::remove_all(directory, cleanup);
+    };
+
+    const std::string header = "BveTs Map 2.02:utf-8\r\n";
+    run_case("after-last-zero-include",
+             header + "include 'first.txt';\r\n"
+                      "include 'second.txt'; // last zero\r\n"
+                      "0;\r\n",
+             header + "include 'first.txt';\r\n"
+                      "include 'second.txt'; // last zero\r\n"
+                      "include 'child.txt';\r\n"
+                      "0;\r\n",
+             true);
+    run_case("before-first-distance-without-include",
+             header + "# preamble\r\n0;\r\n",
+             header + "# preamble\r\ninclude 'child.txt';\r\n0;\r\n");
+    run_case("before-first-distance-when-only-late-include",
+             header + "0;\r\ninclude 'late.txt';\r\n",
+             header + "include 'child.txt';\r\n0;\r\ninclude 'late.txt';\r\n");
+    run_case("append-without-include-or-distance", header,
+             header + "include 'child.txt';\r\n");
+}
+
+void include_insert_repeated_source_contract() {
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() /
+        ("komapedit-include-insert-repeated-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path map_path = directory / "map.txt";
+    const std::filesystem::path shared_path = directory / "shared.txt";
+    {
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\n"
+            << "Structure.Load('structures.csv');\r\n"
+            << "include 'shared.txt';\r\n"
+            << "include 'shared.txt';\r\n";
+    }
+    {
+        std::ofstream shared(shared_path, std::ios::binary | std::ios::trunc);
+        shared << "BveTs Map 2.02:utf-8\r\n"
+               << "0;\r\n"
+               << "Structure['pole'].Put('',1,0,0,,,,,);\r\n";
+    }
+    {
+        std::ofstream child(directory / "child.txt", std::ios::binary | std::ios::trunc);
+        child << "BveTs Map 2.02:utf-8\r\n"
+              << "Structure['pole'].Put('',2,0,0,,,,,);\r\n";
+    }
+    {
+        std::ofstream structures(directory / "structures.csv",
+                                 std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\r\n"
+                   << "pole,pole.csv\r\n";
+    }
+    {
+        MapHandle handle(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                        KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "repeated-source include insert load");
+        if (handle.value) {
+            KvMapSnapshot baseline{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &baseline, sizeof(baseline)) != 0,
+                  "repeated-source include insert baseline snapshot");
+            const std::uint64_t baseline_puts = baseline.structure_put_count;
+            SimpleInsertBatch insert(shared_path.u8string(), "include-insert-repeated",
+                                     {{"rowKind", "include"},
+                                      {"includePath", "child.txt"}});
+            KvEditReportSnapshot report{};
+            const bool applied = kv_edit_apply_to_memory_typed(
+                handle.value, &insert.batch, &report, sizeof(report)) != 0;
+            check(applied && report.ok && report.insert_count == 1 &&
+                      report.full_reparse_ok && report.non_target_changed_count == 0,
+                  "repeated-source include insert validates every Include invocation");
+            KvMapSnapshot after{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &after, sizeof(after)) != 0,
+                  "repeated-source include insert applied snapshot");
+            check(after.structure_put_count == baseline_puts + 2,
+                  "repeated-source include insert adds one child subtree per invocation");
+            const char* source = applied
+                ? kv_get_source_text(handle.value, shared_path.u8string().c_str()) : nullptr;
+            check(source && std::string_view(source).find(
+                              "include 'child.txt';\r\n0;") != std::string_view::npos,
+                  "repeated-source include insert stays before the local first distance");
+            kv_free_string(source);
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "repeated-source include insert reset");
+        }
+    }
+    std::error_code cleanup;
+    std::filesystem::remove_all(directory, cleanup);
+}
+
 struct IncludeDeleteFixture {
     std::filesystem::path directory;
     std::filesystem::path map_path;
@@ -4694,6 +4888,8 @@ void include_replace_variable_dependency_blocks_contract() {
 }
 
 int edit_contract() {
+    include_insert_contract();
+    include_insert_repeated_source_contract();
     include_delete_contract();
     include_diamond_delete_contract();
     include_variable_dependency_blocks_deletion_contract();

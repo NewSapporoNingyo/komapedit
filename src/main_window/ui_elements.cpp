@@ -1168,6 +1168,7 @@ void App::render() {
     render_speed_limits_window();
     process_pending_element_delete();
     process_pending_include_file_change();
+    process_pending_include_file_insert();
     process_pending_other_track_rename();
     process_pending_element_inspector();
     render_element_inspector();

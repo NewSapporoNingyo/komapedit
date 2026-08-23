@@ -148,6 +148,13 @@ void App::request_include_file_change(const std::string& edit_id,
         edit_id, parent_file_path, node_absolute_path};
 }
 
+void App::request_include_file_insert(const std::string& target_file_path,
+                                      bool create_new_file) {
+    if (!edit_actions_available() || target_file_path.empty()) return;
+    pending_include_file_insert_request_ = IncludeFileInsertRequest{
+        target_file_path, create_new_file};
+}
+
 void App::process_pending_include_file_change() {
     if (!pending_include_file_change_request_) return;
     IncludeFileChangeRequest request =
@@ -243,6 +250,81 @@ const EditSourceFileInfo* find_model_source_file(const MapModel& model, const st
         if (file.file_path == path) return &file;
     }
     return nullptr;
+}
+
+void App::process_pending_include_file_insert() {
+    if (!pending_include_file_insert_request_) return;
+    IncludeFileInsertRequest request =
+        std::move(*pending_include_file_insert_request_);
+    pending_include_file_insert_request_.reset();
+    if (!edit_actions_available() || !has_model_) return;
+
+    if (!find_model_source_file(model_, request.target_file_path)) {
+        add_log("[warn]gui_kme.cpp: Include insert target is not part of the loaded map: " +
+                request.target_file_path);
+        return;
+    }
+    const std::string initial_directory = list_asset_picker_initial_directory(
+        request.target_file_path, model_.path);
+    const std::string selected_file = request.create_new_file
+        ? save_include_file_dialog(initial_directory)
+        : open_include_file_dialog(initial_directory);
+    if (selected_file.empty()) return;
+
+    if (request.create_new_file) {
+        std::string create_error;
+        if (!create_utf8_bve_map_file_exclusive(
+                std::filesystem::path(utf8_to_wide(selected_file)), create_error)) {
+            add_log("[error]gui_kme.cpp: " + create_error + ": " + selected_file);
+            set_program_status("status.edit.include_create_failed");
+            return;
+        }
+    }
+
+    // Include arguments resolve against the entry map directory in the
+    // parser, so that directory is also the relative-path base here.
+    ListAssetSourcePathResult selected_path =
+        make_list_asset_source_path(model_.path, selected_file);
+    if (selected_path.source_path.empty()) {
+        add_log("[warn]gui_kme.cpp: failed to derive an include path for the selected file: selected=\"" +
+                selected_path.resolved_path + "\"");
+        set_program_status("status.edit.required_field");
+        return;
+    }
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    std::string edit_id;
+    for (std::uint64_t suffix = 1;; ++suffix) {
+        edit_id = "include-insert-" + std::to_string(suffix);
+        const bool pending = candidate.find(edit_id) != candidate.end();
+        const bool loaded = std::any_of(
+            model_.edit_statements.begin(), model_.edit_statements.end(),
+            [&](const EditStatementInfo& statement) { return statement.edit_id == edit_id; });
+        if (!pending && !loaded) break;
+    }
+    MapElementPendingChange change;
+    change.change_id = edit_id;
+    change.edit_id = edit_id;
+    change.row_kind = "include";
+    change.operation = "insert";
+    change.target_file_path = request.target_file_path;
+    change.field_changes.emplace("includePath", selected_path.source_path);
+    // Inserts deliberately leave expectedSourceHash empty: maploader compares
+    // the target with its authoritative disk baseline across Apply/Save cycles.
+    candidate[edit_id] = std::move(change);
+
+    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return;
+    if (!selected_path.fallback_reason.empty()) {
+        add_log(
+            LogSeverity::Warning,
+            "[warning]gui_kme.cpp: unable to create a relative include path; "
+            "using absolute path: reason=\"" + selected_path.fallback_reason +
+            "\", selected=\"" + selected_path.resolved_path +
+            "\", map=\"" + model_.path + "\"");
+        set_program_status("status.edit.relative_path_fallback");
+    } else {
+        set_program_status("status.edit.pending");
+    }
 }
 
 std::string expected_source_hash_for_edit_target(

@@ -1422,6 +1422,13 @@ struct IncludeFileChangeRequest {
     std::string node_absolute_path;
 };
 
+// Deferred import/new-child-map request from a file structure node. The
+// selected node is the physical source file that receives the new Include.
+struct IncludeFileInsertRequest {
+    std::string target_file_path;
+    bool create_new_file = false;
+};
+
 struct OtherTrackRenameState {
     bool popup_requested = false;
     std::string source_key;
@@ -1741,6 +1748,7 @@ private:
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
     std::optional<IncludeFileChangeRequest> pending_include_file_change_request_;
+    std::optional<IncludeFileInsertRequest> pending_include_file_insert_request_;
     std::optional<std::string> pending_other_track_rename_request_;
     OtherTrackRenameState other_track_rename_;
     NewElementWizardState new_element_wizard_;
@@ -2226,7 +2234,11 @@ private:
                                      const std::string& parent_file_path,
                                      const std::string& node_absolute_path);
     void process_pending_include_file_change();
+    void request_include_file_insert(const std::string& target_file_path,
+                                     bool create_new_file);
+    void process_pending_include_file_insert();
     std::string open_include_file_dialog(const std::string& initial_directory);
+    std::string save_include_file_dialog(const std::string& initial_directory);
     void request_other_track_rename(const std::string& track_key);
     void process_pending_other_track_rename();
     bool apply_other_track_rename();
@@ -2589,6 +2601,8 @@ ListAssetSourcePathResult make_list_asset_source_path(
     const std::string& list_file, const std::string& selected_file);
 std::string list_asset_picker_initial_directory(const std::string& resolved_file,
                                                 const std::string& list_file);
+bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
+                                        std::string& error);
 std::vector<TableRow> hydrate_signal_aspect_rows(const KvMapSnapshot& snapshot);
 void bind_station_position_edit_ids(MapModel& model);
 void rebuild_speed_limit_runtime_cache(MapModel& model);

@@ -187,6 +187,66 @@ std::string App::open_include_file_dialog(const std::string& initial_directory) 
     return {};
 }
 
+std::string App::save_include_file_dialog(const std::string& initial_directory) {
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    std::wstring filter;
+    const auto append_filter =
+        [&](const std::wstring& label, const wchar_t* value) {
+            filter += label;
+            filter.push_back(L'\0');
+            filter += value;
+            filter.push_back(L'\0');
+        };
+    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
+    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
+    filter.push_back(L'\0');
+    ofn.lpstrFilter = filter.c_str();
+    ofn.nFilterIndex = 1;
+    ofn.lpstrDefExt = L"txt";
+    const std::wstring initial_directory_wide = utf8_to_wide(initial_directory);
+    ofn.lpstrInitialDir = initial_directory_wide.empty()
+        ? nullptr : initial_directory_wide.c_str();
+    const std::wstring title = utf8_to_wide(tr("dialog.create_include_file"));
+    ofn.lpstrTitle = title.c_str();
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetSaveFileNameW(&ofn)) return wide_to_utf8(file);
+    return {};
+}
+
+bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
+                                        std::string& error) {
+    if (path.empty() || path.filename().empty()) {
+        error = "new child map path is empty";
+        return false;
+    }
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        error = "failed to create child map file (Win32 error " +
+            std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
+        return false;
+    }
+    static constexpr char k_header[] = "BveTs Map 2.02:utf-8\r\n";
+    DWORD written = 0;
+    const BOOL wrote = WriteFile(file, k_header,
+                                 static_cast<DWORD>(sizeof(k_header) - 1),
+                                 &written, nullptr);
+    const DWORD write_error = wrote ? ERROR_SUCCESS : GetLastError();
+    const BOOL closed = CloseHandle(file);
+    if (!wrote || written != sizeof(k_header) - 1 || !closed) {
+        error = "failed to write child map header (Win32 error " +
+            std::to_string(static_cast<unsigned long>(
+                wrote && closed ? ERROR_WRITE_FAULT : write_error)) + ")";
+        return false;
+    }
+    return true;
+}
+
 std::string App::choose_folder_dialog() {
     BROWSEINFOW bi = {};
     bi.lpszTitle = L"Select export folder";
