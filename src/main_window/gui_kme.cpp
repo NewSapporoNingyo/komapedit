@@ -2990,6 +2990,89 @@ void App::process_pending_element_delete() {
     delete_element_target(request);
 }
 
+std::string expected_source_hash_for_edit_target(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& pending_changes,
+    const std::string& edit_id,
+    const std::string& preferred_hash,
+    const std::string& source_file_path);
+
+void App::request_include_file_change(const std::string& edit_id,
+                                      const std::string& parent_file_path,
+                                      const std::string& node_absolute_path) {
+    if (!edit_actions_available() || edit_id.empty()) return;
+    pending_include_file_change_request_ = IncludeFileChangeRequest{
+        edit_id, parent_file_path, node_absolute_path};
+}
+
+void App::process_pending_include_file_change() {
+    if (!pending_include_file_change_request_) return;
+    IncludeFileChangeRequest request =
+        std::move(*pending_include_file_change_request_);
+    pending_include_file_change_request_.reset();
+    if (!edit_actions_available() || !has_model_) return;
+
+    const EditStatementInfo* statement = nullptr;
+    for (const EditStatementInfo& item : model_.edit_statements) {
+        if (item.edit_id == request.edit_id && item.statement_kind == "Include") {
+            statement = &item;
+            break;
+        }
+    }
+    if (!statement || statement->source.file_path.empty()) return;
+
+    const std::string initial_directory = list_asset_picker_initial_directory(
+        request.node_absolute_path, model_.path);
+    const std::string selected_file =
+        open_include_file_dialog(initial_directory);
+    if (selected_file.empty()) return;
+
+    // Include arguments resolve against the entry map directory in the
+    // parser, so that directory is also the relative-path base here.
+    ListAssetSourcePathResult selected_path =
+        make_list_asset_source_path(model_.path, selected_file);
+    if (selected_path.source_path.empty()) {
+        add_log("[warn]gui_kme.cpp: failed to derive an include path for the selected file: selected=\"" +
+                selected_path.resolved_path + "\"");
+        set_program_status("status.edit.required_field");
+        return;
+    }
+    if (selected_path.source_path == statement->first_evaluated_value) return;
+
+    std::string source_hash;
+    for (const EditSourceFileInfo& file : model_.edit_files) {
+        if (file.file_path == statement->source.file_path) {
+            source_hash = file.source_hash;
+            break;
+        }
+    }
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    MapElementPendingChange change;
+    change.change_id = "change-" + request.edit_id;
+    change.edit_id = request.edit_id;
+    change.row_kind = "include";
+    change.operation = "update";
+    change.field_changes.emplace("includePath", selected_path.source_path);
+    change.expected_source_hash = expected_source_hash_for_edit_target(
+        model_, pending_edit_changes_, request.edit_id, source_hash,
+        statement->source.file_path);
+    candidate[request.edit_id] = std::move(change);
+
+    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, true)) return;
+    if (!selected_path.fallback_reason.empty()) {
+        add_log(
+            LogSeverity::Warning,
+            "[warning]gui_kme.cpp: unable to create a relative include path; "
+            "using absolute path: reason=\"" + selected_path.fallback_reason +
+            "\", selected=\"" + selected_path.resolved_path +
+            "\", map=\"" + model_.path + "\"");
+        set_program_status("status.edit.relative_path_fallback");
+    } else {
+        set_program_status("status.edit.pending");
+    }
+}
+
 void App::request_other_track_rename(const std::string& track_key) {
     if (!edit_actions_available() || track_key.empty()) return;
     pending_other_track_rename_request_ = track_key;
@@ -6055,17 +6138,18 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             ledger.begin(), ledger.end(),
             [](const auto& entry) { return entry.second.operation == "insert"; });
     };
-    const auto ledger_contains_include_delete = [](const auto& ledger) {
+    const auto ledger_contains_include_edit = [](const auto& ledger) {
         return std::any_of(ledger.begin(), ledger.end(), [](const auto& entry) {
-            return entry.second.operation == "delete" &&
-                entry.second.row_kind == "include";
+            return entry.second.row_kind == "include" &&
+                (entry.second.operation == "delete" ||
+                 entry.second.operation == "update");
         });
     };
     const bool full_insert_hydration =
         ledger_contains_insert(changes) ||
         ledger_contains_insert(pending_edit_changes_) ||
-        ledger_contains_include_delete(changes) ||
-        ledger_contains_include_delete(pending_edit_changes_);
+        ledger_contains_include_edit(changes) ||
+        ledger_contains_include_edit(pending_edit_changes_);
     if (signal_aspects_hydrated || alignment_hydrated) {
         KvMapSnapshot snapshot{};
         if (!kv_get_map_snapshot(
@@ -8979,6 +9063,37 @@ std::string App::open_editable_list_file_dialog(
     return {};
 }
 
+std::string App::open_include_file_dialog(const std::string& initial_directory) {
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    std::wstring filter;
+    const auto append_filter =
+        [&](const std::wstring& label, const wchar_t* value) {
+            filter += label;
+            filter.push_back(L'\0');
+            filter += value;
+            filter.push_back(L'\0');
+        };
+    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
+    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
+    filter.push_back(L'\0');
+    ofn.lpstrFilter = filter.c_str();
+    ofn.nFilterIndex = 1;
+    const std::wstring initial_directory_wide =
+        utf8_to_wide(initial_directory);
+    ofn.lpstrInitialDir = initial_directory_wide.empty()
+        ? nullptr : initial_directory_wide.c_str();
+    const std::wstring title = utf8_to_wide(tr("dialog.select_include_file"));
+    ofn.lpstrTitle = title.c_str();
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
+    return {};
+}
+
 std::string App::choose_folder_dialog() {
     BROWSEINFOW bi = {};
     bi.lpszTitle = L"Select export folder";
@@ -11742,6 +11857,7 @@ void App::render() {
     render_draw_distances_window();
     render_speed_limits_window();
     process_pending_element_delete();
+    process_pending_include_file_change();
     process_pending_other_track_rename();
     process_pending_element_inspector();
     render_element_inspector();
@@ -13537,6 +13653,19 @@ int main(int, char**) {
             return 2;
         }
         return run_debug_headless_include_delete(include_delete);
+    }
+
+    HeadlessIncludeReplaceOptions include_replace =
+        parse_headless_include_replace_options(args);
+    if (include_replace.requested) {
+        if (!include_replace.error.empty()) {
+            std::cerr << include_replace.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-include-replace <map-path> "
+                      << "--new-path <file> [--index N] [--unit-distance M] "
+                      << "[--commit] [--headless-output FILE]\n";
+            return 2;
+        }
+        return run_debug_headless_include_replace(include_replace);
     }
 
     HeadlessEditRoundtripOptions edit_roundtrip = parse_headless_edit_roundtrip_options(args);

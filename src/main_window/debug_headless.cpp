@@ -363,6 +363,67 @@ HeadlessIncludeDeleteOptions parse_headless_include_delete_options(
     return options;
 }
 
+HeadlessIncludeReplaceOptions parse_headless_include_replace_options(
+    const std::vector<std::string>& args) {
+    HeadlessIncludeReplaceOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-include-replace") {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--new-path") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.new_path = *value;
+        } else if (arg == "--index") {
+            const std::string* value =
+                take_option_value(args, i, arg, "an index", options.error);
+            if (!value) return options;
+            try {
+                size_t consumed = 0;
+                long parsed = std::stol(*value, &consumed);
+                if (consumed != value->size() || parsed < 0) {
+                    options.error = "--index must be a nonnegative integer";
+                    return options;
+                }
+                options.index = static_cast<int>(parsed);
+            } catch (const std::exception&) {
+                options.error = "--index must be a nonnegative integer";
+                return options;
+            }
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.commit = true;
+        }
+    }
+    if (!options.requested || !options.error.empty()) return options;
+    if (options.path.empty()) {
+        options.error = "--debug-headless-include-replace requires a map path";
+    } else if (options.new_path.empty()) {
+        options.error = "--debug-headless-include-replace requires --new-path";
+    } else if (options.new_path.find('\'') != std::string::npos) {
+        options.error = "--new-path must not contain a single quote";
+    }
+    return options;
+}
+
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
     for (size_t i = 1; i < args.size(); ++i) {
@@ -4723,6 +4784,325 @@ int run_debug_headless_include_delete(const HeadlessIncludeDeleteOptions& option
                      << reloaded_snapshot.statement_count << "\n"
                      << "reloaded_file_structure_count="
                      << reloaded_snapshot.file_structure_count << "\n";
+            }
+        } else {
+            const auto disk_hashes_after = hash_disk_files();
+            check("disk_untouched_without_commit",
+                  disk_hashes_after == disk_hashes_before);
+        }
+
+        *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+        out->flush();
+        return failed_cases == 0 ? 0 : 26;
+    } catch (const std::exception& e) {
+        *out << "error=" << e.what() << "\nresult=FAIL\n";
+        out->flush();
+        return 27;
+    }
+}
+
+int run_debug_headless_include_replace(const HeadlessIncludeReplaceOptions& options) {
+    using namespace distance_batch_headless;
+    using typed_edit_headless::Change;
+
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* label, bool value) {
+        *out << label << '=' << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+    };
+    auto read_file_bytes = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    };
+
+    const std::string new_arguments = "'" + options.new_path + "'";
+
+    *out << "command=debug-headless-include-replace\n"
+         << "map_path=\"" << options.path << "\"\n"
+         << "index=" << options.index << "\n"
+         << "new_path=" << options.new_path << "\n"
+         << "commit_requested=" << (options.commit ? 1 : 0) << "\n";
+
+    try {
+        MapHandle handle;
+        handle.value = kv_load_map_ex(options.path.c_str(), options.unit_distance,
+                                      KV_LOAD_EDIT_METADATA);
+        if (!handle.value) {
+            const char* error = kv_get_last_error();
+            throw std::runtime_error(std::string("map load failed") +
+                (error ? ": " + std::string(error) : std::string{}));
+        }
+        check("load_ok", true);
+
+        auto load_snapshot = [&](void* map_handle) {
+            KvMapSnapshot result{};
+            if (!kv_get_map_snapshot(map_handle, KV_MAP_SNAPSHOT_VERSION,
+                                     &result, sizeof(result)) ||
+                result.version != KV_MAP_SNAPSHOT_VERSION ||
+                result.structure_size < sizeof(KvMapSnapshot)) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(std::string("map snapshot failed") +
+                    (error ? ": " + std::string(error) : std::string{}));
+            }
+            return result;
+        };
+        auto snapshot_text = [](const KvMapSnapshot& snap, KvStringRef ref) {
+            if (ref.length == 0) return std::string{};
+            if (!snap.string_data || ref.offset > snap.string_size ||
+                ref.length > snap.string_size - ref.offset) {
+                throw std::runtime_error(
+                    "map snapshot string reference is out of range");
+            }
+            return std::string(snap.string_data + static_cast<size_t>(ref.offset),
+                               static_cast<size_t>(ref.length));
+        };
+        struct IncludeTarget {
+            std::string edit_id;
+            std::string source_hash;
+            std::string raw_arguments;
+            std::string evaluated_path;
+            std::string source_file;
+            std::uint64_t byte_start = 0;
+            int global_order = 0;
+        };
+        auto collect_targets = [&](const KvMapSnapshot& snap) {
+            std::vector<IncludeTarget> targets;
+            for (std::uint64_t i = 0; i < snap.statement_count; ++i) {
+                const KvStatementRow& row = snap.statements[i];
+                if (snapshot_text(snap, row.statement_kind) != "Include") continue;
+                IncludeTarget target;
+                target.edit_id = snapshot_text(snap, row.edit_id);
+                target.raw_arguments = snapshot_text(snap, row.raw_arguments);
+                target.global_order = row.global_order;
+                target.byte_start = row.source.byte_start;
+                if (row.evaluated_values.count > 0 &&
+                    row.evaluated_values.offset < snap.value_count) {
+                    const KvValue& value =
+                        snap.values[row.evaluated_values.offset];
+                    target.evaluated_path =
+                        value.kind == KV_VALUE_STRING
+                            ? snapshot_text(snap, value.string_value)
+                            : std::string{};
+                }
+                if (row.source.source_file_index < snap.source_file_count) {
+                    target.source_file = snapshot_text(
+                        snap, snap.source_files[row.source.source_file_index].file_path);
+                    target.source_hash = snapshot_text(
+                        snap,
+                        snap.source_files[row.source.source_file_index].source_hash);
+                }
+                targets.push_back(std::move(target));
+            }
+            return targets;
+        };
+        struct StructureNodeRef {
+            size_t parent_index = static_cast<size_t>(-1);
+            std::string include_path;
+            std::string absolute_path;
+        };
+        auto collect_structure_nodes = [&](const KvMapSnapshot& snap) {
+            std::vector<StructureNodeRef> nodes;
+            nodes.reserve(static_cast<size_t>(snap.file_structure_count));
+            for (std::uint64_t i = 0; i < snap.file_structure_count; ++i) {
+                const KvFileStructureRow& row = snap.file_structure[i];
+                StructureNodeRef node;
+                node.parent_index = row.parent_index < 0
+                    ? static_cast<size_t>(-1)
+                    : static_cast<size_t>(row.parent_index);
+                node.include_path = snapshot_text(snap, row.include_path);
+                node.absolute_path = snapshot_text(snap, row.absolute_path);
+                nodes.push_back(std::move(node));
+            }
+            return nodes;
+        };
+
+        const KvMapSnapshot baseline_snapshot = load_snapshot(handle.value);
+        const std::vector<IncludeTarget> baseline_targets =
+            collect_targets(baseline_snapshot);
+        std::vector<std::string> route_source_paths;
+        route_source_paths.reserve(baseline_snapshot.source_file_count);
+        for (std::uint64_t i = 0; i < baseline_snapshot.source_file_count; ++i) {
+            route_source_paths.push_back(snapshot_text(
+                baseline_snapshot, baseline_snapshot.source_files[i].file_path));
+        }
+        auto hash_disk_files = [&]() {
+            std::map<std::string, std::string> hashes;
+            for (const std::string& path : route_source_paths) {
+                hashes[path] = hash_text(read_file_bytes(
+                    std::filesystem::path(utf8_to_wide(path))));
+            }
+            return hashes;
+        };
+        const auto disk_hashes_before = hash_disk_files();
+
+        *out << "baseline_include_count=" << baseline_targets.size() << "\n";
+        for (size_t i = 0; i < baseline_targets.size(); ++i) {
+            const IncludeTarget& item = baseline_targets[i];
+            *out << "baseline_target=" << i << "|order=" << item.global_order
+                 << "|file=\"" << item.source_file << "\"|args="
+                 << item.raw_arguments << "\n";
+        }
+        check("has_includes", !baseline_targets.empty());
+        if (baseline_targets.empty() || options.index < 0 ||
+            static_cast<size_t>(options.index) >= baseline_targets.size()) {
+            check("target_found", false);
+            *out << "result=FAIL\n";
+            out->flush();
+            return failed_cases == 0 ? 0 : 26;
+        }
+        const IncludeTarget& target =
+            baseline_targets[static_cast<size_t>(options.index)];
+        check("target_found", true);
+        if (new_arguments == target.raw_arguments) {
+            check("new_path_differs", false);
+            *out << "result=FAIL\n";
+            out->flush();
+            return failed_cases == 0 ? 0 : 26;
+        }
+        check("new_path_differs", true);
+        *out << "target_edit_id=" << target.edit_id << "\n"
+             << "target_source_file=\"" << target.source_file << "\"\n"
+             << "target_old_args=" << target.raw_arguments << "\n";
+
+        // The expected reparsed absolute path follows the parser's own rule:
+        // include arguments resolve against the entry map directory.
+        std::filesystem::path expected_absolute;
+        std::error_code ec;
+        std::filesystem::path requested(options.new_path);
+        if (requested.is_absolute()) {
+            expected_absolute = requested.lexically_normal();
+        } else {
+            expected_absolute =
+                (std::filesystem::absolute(std::filesystem::path(utf8_to_wide(
+                     options.path)), ec).parent_path() / requested).lexically_normal();
+            ec.clear();
+        }
+
+        Change replacement;
+        replacement.change_id = "headless-include-replace";
+        replacement.edit_id = target.edit_id;
+        replacement.operation = KV_EDIT_UPDATE;
+        replacement.fields.push_back({"includePath", options.new_path});
+        replacement.expected_source_hash = target.source_hash;
+
+        Change stale = replacement;
+        stale.expected_source_hash = "deadbeef00000000";
+        bool stale_blocked = false;
+        try {
+            typed_edit_headless::Report stale_report =
+                typed_edit_headless::dry_run(handle.value, {stale});
+            stale_blocked = !stale_report.ok;
+            for (const std::string& error : stale_report.blocking_errors) {
+                *out << "stale_blocking_error=" << error << "\n";
+            }
+        } catch (const std::exception&) {
+            stale_blocked = true;
+        }
+        check("stale_hash_blocked", stale_blocked);
+
+        typed_edit_headless::Report dry =
+            typed_edit_headless::dry_run(handle.value, {replacement});
+        for (const std::string& error : dry.blocking_errors) {
+            *out << "dry_blocking_error=" << error << "\n";
+        }
+        check("dry_run_ok", dry.ok && dry.update_count == 1 &&
+                                dry.full_reparse_ok);
+
+        typed_edit_headless::Report applied =
+            typed_edit_headless::apply_to_memory(handle.value, {replacement});
+        for (const std::string& error : applied.blocking_errors) {
+            *out << "apply_blocking_error=" << error << "\n";
+        }
+        check("apply_ok", applied.ok && applied.update_count == 1 &&
+                              applied.full_reparse_ok &&
+                              applied.non_target_changed_count == 0);
+
+        const KvMapSnapshot after_apply = load_snapshot(handle.value);
+        const std::vector<IncludeTarget> after_targets =
+            collect_targets(after_apply);
+        bool statement_replaced = false;
+        for (const IncludeTarget& item : after_targets) {
+            if (item.source_file == target.source_file &&
+                item.byte_start == target.byte_start &&
+                item.raw_arguments == new_arguments) {
+                statement_replaced = true;
+                break;
+            }
+        }
+        check("include_statement_updated", statement_replaced);
+
+        const std::vector<StructureNodeRef> after_nodes =
+            collect_structure_nodes(after_apply);
+        bool structure_updated = false;
+        for (const StructureNodeRef& node : after_nodes) {
+            std::error_code equivalent_error;
+            const bool same_target = node.include_path == options.new_path &&
+                std::filesystem::equivalent(
+                    std::filesystem::path(utf8_to_wide(node.absolute_path)),
+                    expected_absolute, equivalent_error);
+            if (same_target) {
+                structure_updated = true;
+                break;
+            }
+        }
+        check("file_structure_updated", structure_updated);
+        *out << "applied_include_count=" << after_targets.size() << "\n"
+             << "expected_absolute=\"" << expected_absolute.u8string() << "\"\n";
+
+        check("reset_memory_ok", kv_edit_reset_memory(handle.value) != 0);
+        const KvMapSnapshot after_reset = load_snapshot(handle.value);
+        bool reset_restored = false;
+        for (const IncludeTarget& item : collect_targets(after_reset)) {
+            if (item.source_file == target.source_file &&
+                item.byte_start == target.byte_start &&
+                item.raw_arguments == target.raw_arguments) {
+                reset_restored = true;
+                break;
+            }
+        }
+        check("reset_restores_baseline", reset_restored);
+
+        if (options.commit) {
+            typed_edit_headless::Report reapplied = typed_edit_headless::
+                apply_to_memory(handle.value, {replacement});
+            for (const std::string& error : reapplied.blocking_errors) {
+                *out << "reapply_blocking_error=" << error << "\n";
+            }
+            check("reapply_ok", reapplied.ok && reapplied.full_reparse_ok);
+            typed_edit_headless::Report committed =
+                typed_edit_headless::commit(handle.value);
+            check("commit_ok",
+                  committed.ok && !committed.committed_files.empty());
+            MapHandle reloaded;
+            reloaded.value = kv_load_map_ex(options.path.c_str(),
+                                            options.unit_distance,
+                                            KV_LOAD_EDIT_METADATA);
+            check("reload_ok", reloaded.value != nullptr);
+            if (reloaded.value) {
+                bool persisted = false;
+                for (const IncludeTarget& item :
+                     collect_targets(load_snapshot(reloaded.value))) {
+                    if (item.source_file == target.source_file &&
+                        item.byte_start == target.byte_start &&
+                        item.raw_arguments == new_arguments) {
+                        persisted = true;
+                        break;
+                    }
+                }
+                check("reload_keeps_new_path", persisted);
             }
         } else {
             const auto disk_hashes_after = hash_disk_files();

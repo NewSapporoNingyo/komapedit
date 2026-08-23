@@ -21,6 +21,7 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -4102,18 +4103,17 @@ void include_delete_contract() {
                              handle.value, &update_batch.batch, &report,
                              sizeof(report)) != 0;
         check(!ran || !report.ok,
-              "include update edits are rejected");
-        bool mentions_delete_only = false;
+              "include updates without an includePath field are rejected");
+        bool mentions_include_path = false;
         for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
             if (arena_view(report.string_data, report.string_size,
                            report.blocking_errors[i]).find(
-                               "only support delete") !=
-                std::string_view::npos) {
-                mentions_delete_only = true;
+                               "includePath") != std::string_view::npos) {
+                mentions_include_path = true;
             }
         }
-        check(mentions_delete_only,
-              "include update rejection explains the delete-only contract");
+        check(mentions_include_path,
+              "include update rejection names the required includePath field");
     }
 
     {
@@ -4320,10 +4320,311 @@ void include_variable_dependency_blocks_deletion_contract() {
     std::filesystem::remove_all(directory, cleanup);
 }
 
+struct IncludeReplaceFixture {
+    std::filesystem::path directory;
+    std::filesystem::path map_path;
+
+    IncludeReplaceFixture() {
+        directory = std::filesystem::temp_directory_path() /
+            ("komapedit-include-replace-contract-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(directory);
+        map_path = directory / "map.txt";
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\n"
+            << "0;\r\n"
+            << "Structure.Load('structures.csv');\r\n"
+            << "$root=1;\r\n"
+            << "25;\r\n"
+            << "include 'child.txt';\r\n"
+            << "$after=2;\r\n"
+            << "100;\r\n"
+            << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\r\n"
+            << "200;\r\n";
+        map.close();
+        std::ofstream child(directory / "child.txt",
+                            std::ios::binary | std::ios::trunc);
+        child << "BveTs Map 2.02:utf-8\r\n"
+              << "50;\r\n"
+              << "$childOnly=7;\r\n"
+              << "Curve.Begin(300, 0);\r\n"
+              << "75;\r\n"
+              << "Curve.End();\r\n";
+        child.close();
+        std::ofstream other(directory / "other.txt",
+                            std::ios::binary | std::ios::trunc);
+        other << "BveTs Map 2.02:utf-8\r\n"
+              << "60;\r\n"
+              << "$replacementOnly=9;\r\n"
+              << "Repeater['rail'].Begin0('0',1,25,5,'pole');\r\n"
+              << "120;\r\n"
+              << "Repeater['rail'].End();\r\n";
+        other.close();
+        std::ofstream structures(directory / "structures.csv",
+                                 std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\r\n"
+                   << "pole,pole.csv\r\n";
+    }
+
+    ~IncludeReplaceFixture() {
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+    }
+};
+
+void include_replace_contract() {
+    IncludeReplaceFixture fixture;
+    MapHandle handle(kv_load_map_ex(fixture.map_path.u8string().c_str(), 25.0,
+                                    KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "include-replace load");
+    if (!handle.value) return;
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "include-replace baseline snapshot");
+    validate_map(baseline, true);
+    const KvStatementRow* child_include = nullptr;
+    for (std::uint64_t i = 0; i < baseline.statement_count; ++i) {
+        const KvStatementRow& statement = baseline.statements[i];
+        if (map_string(baseline, statement.statement_kind) != "Include") continue;
+        if (arena_view(baseline.string_data, baseline.string_size,
+                       statement.raw_arguments).find("'child.txt'") !=
+            std::string_view::npos) {
+            child_include = &statement;
+        }
+    }
+    check(child_include != nullptr, "include-replace target located");
+    if (!child_include) return;
+    const std::string include_edit_id =
+        map_string(baseline, child_include->edit_id);
+    const std::string source_hash = map_string(
+        baseline,
+        baseline.source_files[child_include->source.source_file_index]
+            .source_hash);
+    const std::uint64_t target_byte_start = child_include->source.byte_start;
+
+    static const std::string replacement_text = "other.txt";
+    static const std::string unrepresentable_text = "with'quote.txt";
+    static const std::string field_name = "includePath";
+    auto build_batch = [&](const std::string& new_text,
+                           const std::string& hash) {
+        SimpleEditBatch batch(include_edit_id, KV_EDIT_UPDATE, hash);
+        batch.fields.assign(1, KvEditField{utf8_view(field_name),
+                                           utf8_view(new_text)});
+        batch.changes[0].fields = KvSpan{0, 1};
+        batch.batch.field_count = 1;
+        batch.batch.fields = batch.fields.data();
+        return batch;
+    };
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch stale_batch =
+            build_batch(replacement_text, "deadbeef");
+        check(!(kv_edit_dry_run_typed(
+                    handle.value, &stale_batch.batch, &report,
+                    sizeof(report)) != 0 && report.ok),
+              "include replace rejects a stale source hash");
+    }
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch quoted = build_batch(unrepresentable_text, source_hash);
+        const bool ran = kv_edit_dry_run_typed(handle.value, &quoted.batch,
+                                               &report, sizeof(report)) != 0;
+        check(!ran || !report.ok,
+              "include replace rejects unrepresentable path text");
+    }
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch batch = build_batch(replacement_text, source_hash);
+        const bool dry_ok = kv_edit_dry_run_typed(
+                                handle.value, &batch.batch, &report,
+                                sizeof(report)) != 0 &&
+                            report.ok && report.update_count == 1 &&
+                            report.full_reparse_ok;
+        check(dry_ok, "include replace dry run");
+    }
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch batch = build_batch(replacement_text, source_hash);
+        const bool apply_ok = kv_edit_apply_to_memory_typed(
+            handle.value, &batch.batch, &report, sizeof(report)) != 0;
+        check(apply_ok && report.ok && report.full_reparse_ok &&
+                  report.non_target_changed_count == 0 &&
+                  report.update_count == 1,
+              "include replace apply to memory");
+        KvMapSnapshot applied{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &applied, sizeof(applied)) != 0,
+              "include replace applied snapshot");
+        validate_map(applied, true);
+        bool statement_updated = false;
+        for (std::uint64_t i = 0; i < applied.statement_count; ++i) {
+            const KvStatementRow& statement = applied.statements[i];
+            if (map_string(applied, statement.statement_kind) != "Include") continue;
+            if (statement.source.byte_start == target_byte_start &&
+                arena_view(applied.string_data, applied.string_size,
+                           statement.raw_arguments) == "'other.txt'") {
+                statement_updated = true;
+            }
+        }
+        check(statement_updated, "applied include statement uses the new path");
+        bool structure_updated = false;
+        for (std::uint64_t i = 0; i < applied.file_structure_count; ++i) {
+            const KvFileStructureRow& node = applied.file_structure[i];
+            if (map_string(applied, node.include_path) != "other.txt") continue;
+            const std::filesystem::path node_absolute =
+                std::filesystem::u8path(map_string(applied, node.absolute_path));
+            std::error_code equivalent_error;
+            if (node.parent_index >= 0 &&
+                std::filesystem::equivalent(
+                    node_absolute, fixture.directory / "other.txt",
+                    equivalent_error)) {
+                structure_updated = true;
+            }
+        }
+        check(structure_updated,
+              "applied file structure points at the replacement file");
+        check(applied.curve_count == 0,
+              "old subtree elements disappear after the swap");
+        check(applied.repeater_count == 2,
+              "replacement subtree elements appear after the swap");
+        check(applied.variable_assignment_count == 3,
+              "variable assignments follow the swapped subtree");
+        std::set<std::string> assignment_names;
+        for (std::uint64_t i = 0; i < applied.variable_assignment_count; ++i) {
+            assignment_names.insert(map_string(
+                applied, applied.variable_assignments[i].normalized_name));
+        }
+        check(assignment_names.count("childonly") == 0 &&
+                  assignment_names.count("replacementonly") == 1 &&
+                  assignment_names.count("root") == 1 &&
+                  assignment_names.count("after") == 1,
+              "swapped variables are replaced while parent ones survive");
+    }
+    check(kv_edit_reset_memory(handle.value) != 0, "include replace reset");
+    KvMapSnapshot restored{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &restored, sizeof(restored)) != 0,
+          "include replace reset snapshot");
+    bool restore_found = false;
+    for (std::uint64_t i = 0; i < restored.statement_count; ++i) {
+        const KvStatementRow& statement = restored.statements[i];
+        if (statement.source.byte_start == target_byte_start &&
+            arena_view(restored.string_data, restored.string_size,
+                       statement.raw_arguments).find("'child.txt'") !=
+                std::string_view::npos) {
+            restore_found = true;
+        }
+    }
+    check(restore_found, "reset restores the original include argument");
+
+    {
+        KvEditReportSnapshot report{};
+        SimpleEditBatch reapply = build_batch(replacement_text, source_hash);
+        check(kv_edit_apply_to_memory_typed(
+                  handle.value, &reapply.batch, &report,
+                  sizeof(report)) != 0 &&
+                  report.ok && report.full_reparse_ok,
+              "include replace reapplies after reset");
+        check(kv_edit_commit_typed(handle.value, &report, sizeof(report)) != 0 &&
+                  report.ok,
+              "include replace commit");
+        std::ifstream committed(fixture.map_path, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(committed)),
+                         std::istreambuf_iterator<char>());
+        committed.close();
+        check(text.find("include 'other.txt';") != std::string::npos,
+              "commit writes the new include path to disk");
+        check(text.find("include 'child.txt';") == std::string::npos,
+              "commit removes the old include path from disk");
+        check(text.find("$after=2;\r\n") != std::string::npos,
+              "commit preserves unrelated statements and CRLF endings");
+    }
+}
+
+void include_replace_variable_dependency_blocks_contract() {
+    std::filesystem::path directory = std::filesystem::temp_directory_path() /
+        ("komapedit-include-replace-dependency-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path map_path = directory / "map.txt";
+    {
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\n"
+            << "include 'dep.txt';\r\n"
+            << "$derived=$base+1;\r\n"
+            << "0;\r\n"
+            << "Structure['pole'].Put('0',1,2,3,0,0,0,0,25);\r\n";
+    }
+    {
+        std::ofstream dep(directory / "dep.txt",
+                          std::ios::binary | std::ios::trunc);
+        dep << "BveTs Map 2.02:utf-8\r\n"
+            << "$base=4;\r\n";
+    }
+    {
+        std::ofstream other(directory / "other.txt",
+                            std::ios::binary | std::ios::trunc);
+        other << "BveTs Map 2.02:utf-8\r\n"
+              << "$unrelated=5;\r\n";
+    }
+    {
+        std::ofstream structures(directory / "structures.csv",
+                                 std::ios::binary | std::ios::trunc);
+        structures << "BveTs Structure List 1.00:utf-8\r\n"
+                   << "pole,pole.csv\r\n";
+    }
+    MapHandle handle(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                    KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "replace dependency load");
+    if (handle.value) {
+        KvMapSnapshot baseline{};
+        check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &baseline, sizeof(baseline)) != 0,
+              "replace dependency baseline snapshot");
+        const KvStatementRow* dep_include = nullptr;
+        for (std::uint64_t i = 0; i < baseline.statement_count; ++i) {
+            const KvStatementRow& statement = baseline.statements[i];
+            if (map_string(baseline, statement.statement_kind) == "Include") {
+                dep_include = &statement;
+            }
+        }
+        check(dep_include != nullptr, "dependency include located");
+        if (dep_include) {
+            const std::string source_hash = map_string(
+                baseline,
+                baseline.source_files[dep_include->source.source_file_index]
+                    .source_hash);
+            static const std::string field_name = "includePath";
+            static const std::string replacement_text = "other.txt";
+            SimpleEditBatch batch(map_string(baseline, dep_include->edit_id),
+                                  KV_EDIT_UPDATE, source_hash);
+            batch.fields.clear();
+            batch.fields.push_back(
+                {utf8_view(field_name), utf8_view(replacement_text)});
+            batch.changes[0].fields = KvSpan{0, 1};
+            batch.batch.field_count = 1;
+            KvEditReportSnapshot report{};
+            const bool ran = kv_edit_apply_to_memory_typed(
+                handle.value, &batch.batch, &report,
+                sizeof(report)) != 0;
+            check(!ran || !report.ok || report.blocking_error_count > 0,
+                  "replacing an include that feeds surviving variables is blocked");
+        }
+    }
+    std::error_code cleanup;
+    std::filesystem::remove_all(directory, cleanup);
+}
+
 int edit_contract() {
     include_delete_contract();
     include_diamond_delete_contract();
     include_variable_dependency_blocks_deletion_contract();
+    include_replace_contract();
+    include_replace_variable_dependency_blocks_contract();
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();
     other_track_key_edit_contract();

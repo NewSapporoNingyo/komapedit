@@ -92,12 +92,12 @@ ctest --test-dir build --output-on-failure
 | 场景解析 | `scenario_route.cpp/.h`：BVE 文件类型探测与官方 Scenario `Route` 候选解析，支撑“从场景文件打开地图” |
 | 几何 | `maploader_geometry.cpp`：自/他轨道几何、重定位、曲线、坡度、放置缓冲区与场景控制点 |
 | 身份与快照 | `maploader_identity.cpp`、`maploader_snapshot.cpp`、`maploader_semantic.cpp`：稳定 ID、强类型快照、修订、比较与指纹 |
-| 编辑 | `maploader_edits.cpp`：试运行、内存应用、直接应用、提交、重置、源码补丁、编码感知写回与距离调整 |
+| 编辑 | `maploader_edits.cpp`：试运行、内存应用、直接应用、提交、重置、源码补丁、编码感知写回与距离调整；Include 语句支持受限的路径参数更新，经新旧子树掩码的全量重解析验证 |
 | 共享关联 | `include/repeater_linkage.h`、`include/own_track_transition_linkage.h`：Repeater 链与曲线/坡度过渡配对 |
 | 模型读取 | `src/model_loader/model_loader.cpp`、`include/model_loader.h`：Assimp 隔离与 model-loader API v2 |
 | 主窗口 | `gui_kme.cpp`、`kme.h`：应用循环、菜单、加载、编辑检查器、应用/保存/撤销/重载与共享 GUI 状态 |
 | 运行时/设置 | `app_settings.cpp/.h`、`runtime_paths.cpp/.h`、`maploader_runtime.cpp`：INI、相对可执行文件路径、DLL 加载、精确 API 检查 |
-| 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作与距离边界选择 |
+| 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
 | Debug 验证 | `debug_headless.cpp/.h`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找与触摸检查 |
 | 二维视图 | `src/canvas2d/canvas2D.cpp`、`profile_plots.cpp`：平面、图表、变换、标记、测量与背景图 |
 | 三维视图 | `src/canvas3d/canvas3D.cpp`、`include/canvas3D.h`：模型/场景渲染、相机、拾取、标记、叠加层与操纵器 |
@@ -328,7 +328,7 @@ ctest --test-dir build --output-on-failure
 - **编辑模式与本地预览**：pending/unsaved 查询函数区分 inspector 草稿、inline-list 草稿和工作副本；`set_edit_mode_enabled()`/`apply_edit_mode_enabled()` 管理元数据加载与退出确认；`snapshot_local_preview_row()` 和按 row kind 的更新块让 inspector/gizmo 在正式重解析前同步可视模型。
 - **检查器打开与 Repeater 导航**：request/process/open 函数从 `kv_get_edit_target_typed()` 构建字段 UI；row kind 支持表决定删除能力；Repeater chain、Section values、structure keys 重建函数维护可变字段；Structure/Repeater 坐标偏移按钮在普通形式与 Put0/Begin0 间双向切换，丢弃非零偏移前确认，短式 Signal 仍沿用原确认流程。
 - **三维操纵器联动**：`sync_scene_placement_edit_from_inspector()` 把当前字段投影到 Canvas3D target；`apply_scene_placement_drag_update()` 将普通放置的 X/Y/Z 拖动或 `Structure.PutBetween` 的仅 Z 轴整米 `distance` 拖动写回 inspector buffer，不直接写盘。
-- **Apply 与删除**：`apply_inspector_changes()` 组装 typed edit batch、先 dry-run、处理距离消歧，再 memory Apply 并用新快照刷新模型；`delete_element_target()` 根据普通行、成对过渡或 Repeater 删除模式形成一个或多个物理 change。
+- **Apply 与删除**：`apply_inspector_changes()` 组装 typed edit batch、先 dry-run、处理距离消歧，再 memory Apply 并用新快照刷新模型；`delete_element_target()` 根据普通行、成对过渡或 Repeater 删除模式形成一个或多个物理 change。Include 语句支持受限更新：`process_pending_include_file_change()` 以入口地图目录为相对路径基准（与解析器 rootpath 语义一致）生成 `includePath` 字段，编辑层按补丁位置重连语句并以新旧子树双掩码验证变量/距离环境与非目标元素。
 - **行内资源列表编辑**：draft 判断、spec、字段校验、重排/清空/删除、文件选择和 find-result 重置代码维护 Station/Structure/Signal/Sound/Sound3D 物理行草稿；批量 Apply 前保持原 source hash 和未显示列。
 - **typed 报告适配**：`TypedEditBatchStorage` 拥有调用期字符串与 view；报告字符串/span 函数复制 DLL 视图；committed file/row state 处理重解析后 identity 迁移。距离 resolution choice 函数驱动 Text Preview 选择并重试同一批次。
 - **保存、撤销与关闭**：`save_pending_edits()` 阻止遗漏 inline draft 后调用 commit；`discard_pending_edits()` 清 UI 草稿；`revert_all_pending_edits()` 调用 reset memory；close/reload 状态机根据未保存状态弹窗且不混淆 Save 与 Reload。
@@ -341,7 +341,7 @@ ctest --test-dir build --output-on-failure
 #### `src/main_window/file_structure_diagram.cpp`
 
 - 布局帮助代码按 Include depth 分组节点，测量文本与节点尺寸并缓存连线、总范围和 revision；`file_structure_layout_is_current()` 避免每帧重算，`rebuild_file_structure_layout()` 只在源码结构或字体/尺寸变化时重建。
-- `open_parent_directory_in_explorer()` 通过 ShellExecute 打开物理目录。`render_source_file_context_menu()` 是结构图和属性检查器共享的“打开目录/源码预览”动作。
+- `open_parent_directory_in_explorer()` 通过 ShellExecute 打开物理目录。`render_source_file_context_menu()` 是结构图和属性检查器共享的“打开目录/源码预览”动作；Include 节点在编辑模式下还提供“更换文件...”与“解除引用”两个延迟请求入口。
 - `App::render_file_structure_window()` 绘制可平移画布、层级连接线、主文件/Include 节点、hover tooltip 和右键菜单，并把选中节点交给工作副本 Text Preview。
 
 #### `src/main_window/text_preview.cpp`

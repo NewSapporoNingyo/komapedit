@@ -1372,6 +1372,15 @@ struct MapElementDeleteRequest {
     RepeaterDeleteMode repeater_mode = RepeaterDeleteMode::EntireChain;
 };
 
+// Deferred "change included file" request from the file structure diagram.
+// The parent file owns the include statement; the node path only feeds the
+// file picker's initial directory.
+struct IncludeFileChangeRequest {
+    std::string edit_id;
+    std::string parent_file_path;
+    std::string node_absolute_path;
+};
+
 struct OtherTrackRenameState {
     bool popup_requested = false;
     std::string source_key;
@@ -1690,6 +1699,7 @@ private:
     MapElementInspectorState inspector_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
+    std::optional<IncludeFileChangeRequest> pending_include_file_change_request_;
     std::optional<std::string> pending_other_track_rename_request_;
     OtherTrackRenameState other_track_rename_;
     NewElementWizardState new_element_wizard_;
@@ -2171,6 +2181,11 @@ private:
     void request_element_delete(const std::string& edit_id, const std::string& row_kind,
                                 RepeaterDeleteMode repeater_mode = RepeaterDeleteMode::EntireChain);
     void process_pending_element_delete();
+    void request_include_file_change(const std::string& edit_id,
+                                     const std::string& parent_file_path,
+                                     const std::string& node_absolute_path);
+    void process_pending_include_file_change();
+    std::string open_include_file_dialog(const std::string& initial_directory);
     void request_other_track_rename(const std::string& track_key);
     void process_pending_other_track_rename();
     bool apply_other_track_rename();
@@ -2311,7 +2326,9 @@ private:
     void render_file_structure_window();
     void render_source_file_context_menu(const char* popup_id,
                                          const std::string& file_path,
-                                         const std::string& include_edit_id = {});
+                                         const std::string& include_edit_id = {},
+                                         const std::string& parent_file_path = {},
+                                         const std::string& include_path = {});
     const std::vector<std::string>& file_structure_include_edit_ids();
     static bool is_supported_text_preview_file(const std::string& file_path);
     void open_text_preview(const std::string& file_path,

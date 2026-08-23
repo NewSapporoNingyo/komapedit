@@ -224,7 +224,9 @@ const std::vector<std::string>& App::file_structure_include_edit_ids() {
 
 void App::render_source_file_context_menu(const char* popup_id,
                                           const std::string& file_path,
-                                          const std::string& include_edit_id) {
+                                          const std::string& include_edit_id,
+                                          const std::string& parent_file_path,
+                                          const std::string& include_path) {
     touch_input::open_popup_on_last_item_long_press(popup_id);
     if (!ImGui::BeginPopupContextItem(popup_id, ImGuiPopupFlags_MouseButtonRight)) return;
 
@@ -241,7 +243,15 @@ void App::render_source_file_context_menu(const char* popup_id,
     }
     ImGui::EndDisabled();
     ImGui::Separator();
-    ImGui::BeginDisabled(!edit_actions_available() || include_edit_id.empty());
+    const bool include_edit_available =
+        edit_actions_available() && !include_edit_id.empty();
+    ImGui::BeginDisabled(!include_edit_available || parent_file_path.empty() ||
+                         include_path.empty());
+    if (ImGui::MenuItem(tr("menu.change_include_file").c_str())) {
+        request_include_file_change(include_edit_id, parent_file_path, file_path);
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!include_edit_available);
     if (ImGui::MenuItem(tr("menu.unreference_include").c_str())) {
         request_element_delete(include_edit_id, "include",
                                RepeaterDeleteMode::EntireChain);
@@ -333,10 +343,16 @@ void App::render_file_structure_window() {
             const bool hovered = ImGui::IsItemHovered();
             const bool active = ImGui::IsItemActive();
 
+            const std::string& parent_file_path =
+                node.parent_index != k_no_file_structure_parent &&
+                        node.parent_index < model_.file_structure.size()
+                    ? model_.file_structure[node.parent_index].absolute_path
+                    : std::string{};
             render_source_file_context_menu(
                 "file_structure_node_context", node.absolute_path,
                 i < include_edit_ids.size() ? include_edit_ids[i]
-                                            : std::string{});
+                                            : std::string{},
+                parent_file_path, node.include_path);
 
             ImU32 fill_color = ImGui::GetColorU32(ImGuiCol_Button);
             if (active) fill_color = ImGui::GetColorU32(ImGuiCol_ButtonActive);
