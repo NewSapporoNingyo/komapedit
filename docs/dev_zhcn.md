@@ -548,6 +548,7 @@ build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --h
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
+build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -556,6 +557,8 @@ build\komapedit.exe --debug-headless-touch-input --headless-output build\headles
 build\komapedit.exe --debug-headless-settings-persistence --headless-output build\settings-persistence.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
+
+`--debug-headless-resource-list-replace` 复现预览加载后再加载并合并编辑元数据的生命周期，随后为 `Structure.Load` 打开正式的 Win32 文件选择框。请手动选择不同且有效的 Structure List。它验证稳定 edit ID 已合并、内存 Apply 与完整重解析、布景模型列表缓存刷新、路径更新，以及重新从磁盘加载后的全部源哈希不变。该命令绝不调用 Save 或 Commit；取消、选择相同文件或无效列表都会报告 `FAIL`。
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 

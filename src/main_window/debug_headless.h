@@ -205,6 +205,14 @@ struct HeadlessIncludeImportCreateOptions {
     std::string error;
 };
 
+struct HeadlessResourceListReplaceOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessNewElementEditOptions {
     bool requested = false;
     std::string path;
@@ -287,6 +295,8 @@ HeadlessIncludeDeleteOptions parse_headless_include_delete_options(
 HeadlessIncludeReplaceOptions parse_headless_include_replace_options(
     const std::vector<std::string>& args);
 HeadlessIncludeImportCreateOptions parse_headless_include_import_create_options(
+    const std::vector<std::string>& args);
+HeadlessResourceListReplaceOptions parse_headless_resource_list_replace_options(
     const std::vector<std::string>& args);
 HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
     const std::vector<std::string>& args);

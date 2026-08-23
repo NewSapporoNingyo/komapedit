@@ -1531,4 +1531,180 @@ int App::run_debug_headless_new_element_edit(
     out->flush();
     return failed_cases == 0 ? 0 : 20;
 }
+
+int App::run_debug_headless_resource_list_replace(
+    const HeadlessResourceListReplaceOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-resource-list-replace\n"
+         << "map_path=" << options.path << "\n"
+         << "memory_apply_only=1\n"
+         << "resource_list_kind=Structure\n"
+         << "stage=preview-load-start\n";
+    out->flush();
+
+    LoadModelOptions preview_options;
+    preview_options.load_profile = "preview";
+    LoadResult preview = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, preview_options);
+    if (!preview.ok) {
+        *out << "preview_load_error=" << preview.error << "\nresult=FAIL\n";
+        if (preview.handle) kv_free(preview.handle);
+        return 2;
+    }
+
+    LoadModelOptions edit_options;
+    edit_options.full_edit_registry = true;
+    edit_options.load_profile = "edit";
+    LoadResult edit_metadata = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, edit_options);
+    if (!edit_metadata.ok) {
+        *out << "edit_metadata_load_error=" << edit_metadata.error << "\nresult=FAIL\n";
+        if (preview.handle) kv_free(preview.handle);
+        if (edit_metadata.handle) kv_free(edit_metadata.handle);
+        return 3;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* name, bool value) {
+        *out << name << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+    const auto source_hashes = [](const MapModel& model) {
+        std::map<std::string, std::string> hashes;
+        for (const EditSourceFileInfo& file : model.edit_files) {
+            hashes.emplace(file.file_path, file.source_hash);
+        }
+        return hashes;
+    };
+    const size_t structure_index = static_cast<size_t>(ResourceListKind::Structure);
+    const std::string expected_edit_id =
+        edit_metadata.model.resource_list_sources[structure_index].edit_id;
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        {
+            UserSettings settings;
+            settings.language = Language::En;
+            App app(nullptr, settings, 1.0f, false, false);
+            app.handle_ = preview.handle;
+            preview.handle = nullptr;
+            app.model_ = std::move(preview.model);
+            app.file_path_ = options.path;
+            app.has_model_ = true;
+            app.edit_mode_enabled_ = true;
+            app.edit_memory_matches_pending_ledger_ = true;
+            app.dmin_ = app.model_.default_min;
+            app.dmax_ = app.model_.default_max;
+            app.unit_distance_ = options.unit_distance;
+
+            *out << "stage=preview-load-complete\n";
+            app.apply_edit_metadata_result(std::move(edit_metadata));
+            edit_metadata.handle = nullptr;
+            const ResourceListSource& merged_source =
+                app.model_.resource_list_sources[structure_index];
+            check("edit_metadata_merge_completed", app.edit_registry_loaded_);
+            check("structure_source_present", merged_source.present);
+            check("structure_edit_id_preserved",
+                  !expected_edit_id.empty() &&
+                      merged_source.edit_id == expected_edit_id);
+            if (!merged_source.present || merged_source.edit_id.empty() ||
+                merged_source.source_file_path.empty()) {
+                throw std::runtime_error("Structure.Load source is not editable after metadata merge");
+            }
+
+            const std::string baseline_evaluated_path = merged_source.evaluated_path;
+            const std::string baseline_resolved_path = merged_source.resolved_path;
+            const std::map<std::string, std::string> baseline_source_hashes =
+                source_hashes(app.model_);
+            check("loaded_source_hashes_present", !baseline_source_hashes.empty());
+            app.ensure_table_cache();
+            check("baseline_structure_list_cache_ready",
+                  app.table_cache_.valid &&
+                      app.table_cache_.structure_model_rows.size() ==
+                          app.model_.structure_models.size());
+
+            app.request_resource_list_file_change(ResourceListKind::Structure);
+            check("file_picker_request_queued",
+                  app.pending_resource_list_file_change_request_.has_value());
+            *out << "stage=file-dialog\n";
+            out->flush();
+            app.process_pending_resource_list_file_change();
+            const DWORD dialog_error = CommDlgExtendedError();
+
+            const ResourceListSource& applied_source =
+                app.model_.resource_list_sources[structure_index];
+            const auto pending = app.pending_edit_changes_.find(expected_edit_id);
+            const bool source_path_changed =
+                applied_source.evaluated_path != baseline_evaluated_path &&
+                applied_source.resolved_path != baseline_resolved_path;
+            const bool pending_update = pending != app.pending_edit_changes_.end() &&
+                pending->second.row_kind == "resourceList.load" &&
+                pending->second.operation == "update" &&
+                pending->second.field_changes.find("resourceListPath") !=
+                    pending->second.field_changes.end();
+            *out << "dialog_error=" << dialog_error << "\n"
+                 << "source_path_before=" << baseline_resolved_path << "\n"
+                 << "source_path_after=" << applied_source.resolved_path << "\n";
+            check("different_valid_structure_list_selected", source_path_changed);
+            check("memory_apply_full_reparse_ok",
+                  source_path_changed && pending_update &&
+                      app.edit_memory_matches_pending_ledger_ && app.handle_);
+            app.ensure_table_cache();
+            check("structure_list_cache_refreshed",
+                  source_path_changed && app.table_cache_.valid &&
+                      app.table_cache_.structure_model_rows.size() ==
+                          app.model_.structure_models.size());
+
+            LoadResult disk_reload = load_map_worker(
+                options.path, options.unit_distance, false, 0.0, 0.0,
+                options.unit_distance, edit_options);
+            const std::map<std::string, std::string> disk_source_hashes =
+                disk_reload.ok ? source_hashes(disk_reload.model)
+                               : std::map<std::string, std::string>{};
+            *out << "disk_reload_ok=" << (disk_reload.ok ? 1 : 0) << "\n"
+                 << "loaded_source_file_count=" << baseline_source_hashes.size() << "\n";
+            check("all_loaded_disk_source_hashes_unchanged",
+                  disk_reload.ok && disk_source_hashes == baseline_source_hashes);
+            if (disk_reload.handle) kv_free(disk_reload.handle);
+            for (const LogLine& line : app.logs_) {
+                if (line.severity == LogSeverity::Error) {
+                    *out << "app_error=" << line.text << "\n";
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (preview.handle) kv_free(preview.handle);
+    if (edit_metadata.handle) kv_free(edit_metadata.handle);
+
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 21;
+}
 #endif

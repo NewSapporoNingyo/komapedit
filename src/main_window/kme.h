@@ -61,6 +61,7 @@ struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
+struct HeadlessResourceListReplaceOptions;
 struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
 
@@ -1684,6 +1685,8 @@ public:
         const HeadlessOtherTrackKeyEditOptions& options);
     static int run_debug_headless_new_element_edit(
         const HeadlessNewElementEditOptions& options);
+    static int run_debug_headless_resource_list_replace(
+        const HeadlessResourceListReplaceOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 

@@ -424,6 +424,10 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
     current.edit_files = std::move(edit_model.edit_files);
     current.edit_statements = std::move(edit_model.edit_statements);
     current.edit_elements = std::move(edit_model.edit_elements);
+    for (size_t i = 0; i < current.resource_list_sources.size(); ++i) {
+        current.resource_list_sources[i].edit_id =
+            edit_model.resource_list_sources[i].edit_id;
+    }
     merge_table_row_edit_metadata(current.curve_rows, edit_model.curve_rows);
     merge_table_row_edit_metadata(current.gradient_rows, edit_model.gradient_rows);
     merge_table_row_edit_metadata(current.other_track_changes,

@@ -420,6 +420,18 @@ int main(int, char**) {
         return run_debug_headless_include_replace(include_replace);
     }
 
+    HeadlessResourceListReplaceOptions resource_list_replace =
+        parse_headless_resource_list_replace_options(args);
+    if (resource_list_replace.requested) {
+        if (!resource_list_replace.error.empty()) {
+            std::cerr << resource_list_replace.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-resource-list-replace <map-path> "
+                      << "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_resource_list_replace(resource_list_replace);
+    }
+
     HeadlessIncludeImportCreateOptions include_import_create =
         parse_headless_include_import_create_options(args);
     if (include_import_create.requested) {

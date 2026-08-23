@@ -195,6 +195,7 @@ build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --h
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
+build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -203,6 +204,8 @@ build\komapedit.exe --debug-headless-touch-input --headless-output build\headles
 build\komapedit.exe --debug-headless-settings-persistence --headless-output build\settings-persistence.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
+
+`--debug-headless-resource-list-replace` reproduces preview loading followed by edit-metadata loading and merge, then opens the production Win32 picker for `Structure.Load`. Manually select a different valid Structure List. It verifies the merged stable edit ID, memory Apply with complete reparse, refreshed structure-list cache, updated path, and unchanged hashes after a fresh disk reload. It never calls Save or Commit; cancelling, selecting the same file, or selecting an invalid list reports `FAIL`.
 
 Pass explicit map paths for portable runs. The Repeater-key and new-element-follow-up commands always require one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
 
