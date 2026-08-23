@@ -2210,11 +2210,12 @@ private:
     }
 
     void dispatch_cab_illuminance(const std::string& fn, const std::vector<Value>& a) {
-        if ((fn != "interpolate" && fn != "set") || a.empty()) return;
+        const bool no_value = a.empty() || a[0].is_null();
+        if ((fn != "interpolate" && fn != "set") || (fn == "set" && no_value)) return;
         note_distance_use(ctx_);
         CabIlluminanceChange row;
         row.distance = ctx_.distance;
-        row.value = a[0];
+        row.value = no_value ? Value::cont() : a[0];
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
         attach_active_edit_ref(ctx_, row);

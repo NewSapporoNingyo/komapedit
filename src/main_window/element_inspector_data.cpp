@@ -406,6 +406,9 @@ bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
 std::string inspector_row_field_value(const TableRow& row,
                                       const std::string& row_kind,
                                       const std::string& field_key) {
+    if (row_kind == "cabIlluminance.change" && field_key == "value") {
+        return table_cell(row, "_sourceValue");
+    }
     if (row_kind == "station.put") {
         if (field_key == "distance") return table_cell(row, "_distance");
         if (field_key == "stationKey") return table_cell(row, "posKey");
@@ -427,6 +430,10 @@ void set_inspector_row_field_value(TableRow& row,
                                    const std::string& value,
                                    double distance_origin) {
     if (row_kind == "signal.put" && field_key == "form") return;
+    if (row_kind == "cabIlluminance.change" && field_key == "value") {
+        row.cells["_sourceValue"] = value;
+        return;
+    }
     if (row_kind == "station.put") {
         if (field_key == "distance") {
             row.cells["_distance"] = value;
@@ -984,7 +991,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("c", "c", MapElementNumericConstraint::Finite, false);
     } else if (request.row_kind == "cabIlluminance.change") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
-        add_row_field("value", "value", MapElementNumericConstraint::Finite, true);
+        add_row_field("value", "value", MapElementNumericConstraint::Finite, false);
     } else if (request.row_kind == "fog.change") {
         const bool source_set = target_info &&
             ascii_lower(target_info->statement_kind) == "fog.set";

@@ -359,6 +359,26 @@ void put_map_common_event_cells(TableRow& output, const KvMapSnapshot& snapshot,
     output.cells["order"] = std::to_string(input.order);
 }
 
+void normalize_cab_illuminance_preview_rows(MapModel& model) {
+    std::vector<size_t> rows;
+    rows.reserve(model.cab_illuminance.size());
+    for (size_t index = 0; index < model.cab_illuminance.size(); ++index) {
+        rows.push_back(index);
+    }
+    std::stable_sort(rows.begin(), rows.end(), [&](size_t left, size_t right) {
+        return table_cell_number(model.cab_illuminance[left], "order") <
+            table_cell_number(model.cab_illuminance[right], "order");
+    });
+
+    std::string previous_value;
+    for (const size_t index : rows) {
+        TableRow& row = model.cab_illuminance[index];
+        const std::string source_value = table_cell(row, "_sourceValue");
+        row.cells["value"] = source_value.empty() ? previous_value : source_value;
+        if (!source_value.empty()) previous_value = source_value;
+    }
+}
+
 std::vector<TableRow> hydrate_signal_aspect_rows(
     const KvMapSnapshot& snapshot) {
     std::vector<TableRow> rows;
@@ -1054,10 +1074,14 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         const KvCabIlluminanceRow& input = snapshot.cab_illuminance[i];
         TableRow row;
         put_map_common_event_cells(row, snapshot, input);
-        row.cells["value"] = map_snapshot_value_text(snapshot, input.value);
+        row.cells["_sourceValue"] = input.value.kind == KV_VALUE_CONTINUE
+            ? std::string{}
+            : map_snapshot_value_text(snapshot, input.value);
+        row.cells["value"] = row.cells["_sourceValue"];
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.cab_illuminance.push_back(std::move(row));
     }
+    normalize_cab_illuminance_preview_rows(model);
     model.fogs.reserve(static_cast<size_t>(snapshot.fog_count));
     for (std::uint64_t i = 0; i < snapshot.fog_count; ++i) {
         const KvFogRow& input = snapshot.fogs[i];

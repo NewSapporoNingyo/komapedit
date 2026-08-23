@@ -522,7 +522,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             "new_element.usage.cab_illuminance.set", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"value", "value", MapElementNumericConstraint::Finite, true, "0"},
+                {"value", "value", MapElementNumericConstraint::Finite, false, ""},
             },
         },
         {
@@ -532,7 +532,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             "new_element.usage.cab_illuminance.interpolate", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
-                {"value", "value", MapElementNumericConstraint::Finite, true, "0"},
+                {"value", "value", MapElementNumericConstraint::Finite, false, ""},
             },
         },
         {

@@ -1236,8 +1236,12 @@ std::string build_cab_illuminance_statement(const MapEditChange& change,
                                             const CabIlluminanceChange& row) {
     if (!has_non_distance_field_change(change)) return statement.raw_text;
     const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
-    return "CabIlluminance." + source_change_method(statement, "CabIlluminance") + "(" +
-        required_numeric_value_field(change, "value", row.value, raw_arg_at(args, 0)) + ");";
+    const std::string value = optional_numeric_value_field(
+        change, "value", row.value, raw_arg_at(args, 0));
+    const std::string method = value.empty()
+        ? "Interpolate"
+        : source_change_method(statement, "CabIlluminance");
+    return "CabIlluminance." + method + "(" + value + ");";
 }
 
 std::string build_fog_statement(const MapEditChange& change,
@@ -2554,7 +2558,10 @@ std::string build_insert_statement(const MapEditChange& change) {
         if (method != "Set" && method != "Interpolate") {
             throw std::runtime_error("unsupported CabIlluminance method for insert: " + method);
         }
-        return "CabIlluminance." + method + "(" + insert_required_number(change, "value") + ");";
+        const std::string value = optional_numeric_value_field(
+            change, "value", Value::null());
+        if (value.empty()) return "CabIlluminance.Interpolate();";
+        return "CabIlluminance." + method + "(" + value + ");";
     }
     if (row_kind == "fog.change") {
         const std::string method = insert_method_or_default(change, "Set");

@@ -427,6 +427,9 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     if (row_kind == "station.put" || row_kind == "station.list") {
         normalize_station_preview_rows(model_);
     }
+    if (row_kind == "cabIlluminance.change") {
+        normalize_cab_illuminance_preview_rows(model_);
+    }
     if (row_kind == "speedlimit") rebuild_speed_limit_runtime_cache(model_);
     const bool alignment_changed = row_kind == "curve" || row_kind == "gradient" ||
         row_kind == "otherTrack.change";

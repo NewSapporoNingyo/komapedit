@@ -3737,7 +3737,12 @@ void environment_argument_shape_edit_contract() {
             << "30;\nFog.Interpolate(0.01);\n"
             << "40;\nFog.Interpolate(0.02,0.1,0.2,0.3);\n"
             << "50;\nFog.Set(0.03,0.4,0.5,0.6);\n"
-            << "100;\n110;\n120;\n130;\n140;\n150;\n160;\n170;\n180;\n";
+            << "60;\nCabIlluminance.Interpolate();\n"
+            << "70;\nCabIlluminance.Interpolate(0.25);\n"
+            << "80;\nCabIlluminance.Interpolate();\n"
+            << "90;\nCabIlluminance.Set(0.5);\n"
+            << "100;\nCabIlluminance.Interpolate();\n"
+            << "110;\n120;\n130;\n140;\n150;\n160;\n170;\n180;\n190;\n200;\n210;\n";
     }
 
     MapHandle handle(kv_load_map_ex(
@@ -3749,9 +3754,11 @@ void environment_argument_shape_edit_contract() {
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                               &baseline, sizeof(baseline)) != 0,
           "environment argument-shape fixture snapshot");
-    check(baseline.adhesion_count == 2 && baseline.fog_count == 4,
+    check(baseline.adhesion_count == 2 && baseline.fog_count == 4 &&
+              baseline.cab_illuminance_count == 5,
           "environment argument-shape fixture rows");
-    if (baseline.adhesion_count != 2 || baseline.fog_count != 4) return;
+    if (baseline.adhesion_count != 2 || baseline.fog_count != 4 ||
+        baseline.cab_illuminance_count != 5) return;
 
     struct TargetIdentity {
         std::string edit_id;
@@ -3773,10 +3780,39 @@ void environment_argument_shape_edit_contract() {
     const TargetIdentity fog_density = target_identity(baseline.fogs[1]);
     const TargetIdentity fog_color = target_identity(baseline.fogs[2]);
     const TargetIdentity fog_set = target_identity(baseline.fogs[3]);
+    const TargetIdentity cab_empty_first = target_identity(baseline.cab_illuminance[0]);
+    const TargetIdentity cab_interpolate = target_identity(baseline.cab_illuminance[1]);
+    const TargetIdentity cab_empty_after_interpolate = target_identity(baseline.cab_illuminance[2]);
+    const TargetIdentity cab_set = target_identity(baseline.cab_illuminance[3]);
+    const TargetIdentity cab_empty_after_set = target_identity(baseline.cab_illuminance[4]);
+    check(baseline.cab_illuminance[0].value.kind == KV_VALUE_CONTINUE &&
+              baseline.cab_illuminance[1].value.kind == KV_VALUE_NUMBER &&
+              nearly_equal(baseline.cab_illuminance[1].value.number_value, 0.25) &&
+              baseline.cab_illuminance[2].value.kind == KV_VALUE_CONTINUE &&
+              baseline.cab_illuminance[3].value.kind == KV_VALUE_NUMBER &&
+              nearly_equal(baseline.cab_illuminance[3].value.number_value, 0.5) &&
+              baseline.cab_illuminance[4].value.kind == KV_VALUE_CONTINUE,
+          "CabIlluminance no-argument rows retain CONTINUE values");
+    check(!cab_empty_first.edit_id.empty() && !cab_interpolate.edit_id.empty() &&
+              !cab_empty_after_interpolate.edit_id.empty() && !cab_set.edit_id.empty() &&
+              !cab_empty_after_set.edit_id.empty(),
+          "CabIlluminance rows retain edit identities");
     const std::string source_path = fixture.path_utf8();
 
+    const auto source_occurrences = [](std::string_view source, std::string_view text) {
+        size_t count = 0;
+        for (size_t offset = 0; !text.empty();) {
+            offset = source.find(text, offset);
+            if (offset == std::string_view::npos) break;
+            ++count;
+            offset += text.size();
+        }
+        return count;
+    };
+
     auto apply_and_check_source = [&](auto& update, std::string_view expected,
-                                      const char* label) {
+                                      const char* label, size_t expected_count = 0,
+                                      std::string_view unexpected = {}) {
         KvEditReportSnapshot report{};
         const bool applied = kv_edit_apply_to_memory_typed(
             handle.value, &update.batch, &report, sizeof(report)) != 0 &&
@@ -3785,7 +3821,11 @@ void environment_argument_shape_edit_contract() {
         const char* source = applied
             ? kv_get_source_text(handle.value, source_path.c_str()) : nullptr;
         const bool source_matches = source &&
-            std::string_view(source).find(expected) != std::string_view::npos;
+            std::string_view(source).find(expected) != std::string_view::npos &&
+            (expected_count == 0 ||
+             source_occurrences(source, expected) == expected_count) &&
+            (unexpected.empty() ||
+             std::string_view(source).find(unexpected) == std::string_view::npos);
         check(applied && source_matches, label);
         kv_free_string(source);
         check(kv_edit_reset_memory(handle.value) != 0,
@@ -3813,6 +3853,22 @@ void environment_argument_shape_edit_contract() {
     apply_and_check_source(
         fog_set_update, "Fog.Set(0.03,0.45,0.5,0.6);",
         "Fog legacy Set update preserves official legacy shape");
+    UpdateBatch cab_empty_to_value(
+        cab_empty_first.edit_id, cab_empty_first.source_hash, "0.33", "value");
+    apply_and_check_source(
+        cab_empty_to_value, "CabIlluminance.Interpolate(0.33);",
+        "CabIlluminance no-argument update writes a value");
+    UpdateBatch cab_interpolate_to_empty(
+        cab_interpolate.edit_id, cab_interpolate.source_hash, "", "value");
+    apply_and_check_source(
+        cab_interpolate_to_empty, "CabIlluminance.Interpolate();",
+        "CabIlluminance clearing writes the no-argument form", 4);
+    UpdateBatch cab_set_to_empty(
+        cab_set.edit_id, cab_set.source_hash, "", "value");
+    apply_and_check_source(
+        cab_set_to_empty, "CabIlluminance.Interpolate();",
+        "CabIlluminance legacy Set clearing writes Interpolate", 4,
+        "CabIlluminance.Set();");
 
     auto check_update_error = [&](auto& update, std::string_view expected_error,
                                   const char* label) {
@@ -3844,7 +3900,8 @@ void environment_argument_shape_edit_contract() {
     auto check_insert = [&](std::string change_id,
                             std::vector<std::pair<std::string, std::string>> fields,
                             std::string_view expected,
-                            const char* label) {
+                            const char* label, size_t expected_count = 0,
+                            std::string_view unexpected = {}) {
         SimpleInsertBatch insert(source_path, std::move(change_id), std::move(fields));
         KvEditReportSnapshot report{};
         const bool applied = kv_edit_apply_to_memory_typed(
@@ -3854,7 +3911,11 @@ void environment_argument_shape_edit_contract() {
         const char* source = applied
             ? kv_get_source_text(handle.value, source_path.c_str()) : nullptr;
         const bool source_matches = source &&
-            std::string_view(source).find(expected) != std::string_view::npos;
+            std::string_view(source).find(expected) != std::string_view::npos &&
+            (expected_count == 0 ||
+             source_occurrences(source, expected) == expected_count) &&
+            (unexpected.empty() ||
+             std::string_view(source).find(unexpected) == std::string_view::npos);
         check(applied && source_matches, label);
         kv_free_string(source);
         check(kv_edit_reset_memory(handle.value) != 0,
@@ -3876,7 +3937,7 @@ void environment_argument_shape_edit_contract() {
         {{"rowKind", "fog.change"}, {"distance", "120"},
          {"method", "Interpolate"}},
         "Fog.Interpolate();",
-        "Fog zero-parameter insert uses official shape");
+        "Fog zero-parameter insert uses official shape", 2);
     check_insert(
         "insert-fog-density",
         {{"rowKind", "fog.change"}, {"distance", "130"},
@@ -3897,6 +3958,19 @@ void environment_argument_shape_edit_contract() {
          {"red", "0.4"}, {"green", "0.5"}, {"blue", "0.6"}},
         "Fog.Set(0.06,0.4,0.5,0.6);",
         "Fog legacy Set insert preserves supported official legacy shape");
+    check_insert(
+        "insert-cab-empty-interpolate",
+        {{"rowKind", "cabIlluminance.change"}, {"distance", "200"},
+         {"method", "Interpolate"}},
+        "CabIlluminance.Interpolate();",
+        "CabIlluminance blank Interpolate insert uses official shape", 4);
+    check_insert(
+        "insert-cab-empty-set",
+        {{"rowKind", "cabIlluminance.change"}, {"distance", "210"},
+         {"method", "Set"}, {"value", ""}},
+        "CabIlluminance.Interpolate();",
+        "CabIlluminance blank legacy Set insert uses Interpolate", 4,
+        "CabIlluminance.Set();");
 
     auto check_insert_error = [&](
         std::string change_id,
@@ -3913,19 +3987,19 @@ void environment_argument_shape_edit_contract() {
     };
     check_insert_error(
         "insert-incomplete-adhesion",
-        {{"rowKind", "adhesion.change"}, {"distance", "160"},
+        {{"rowKind", "adhesion.change"}, {"distance", "170"},
          {"a", "0.5"}, {"b", "0.1"}},
         "Adhesion.Change requires either 1 or 3 parameters",
         "Adhesion partial optional insert is rejected");
     check_insert_error(
         "insert-incomplete-fog-interpolate",
-        {{"rowKind", "fog.change"}, {"distance", "170"},
+        {{"rowKind", "fog.change"}, {"distance", "180"},
          {"method", "Interpolate"}, {"density", "0.05"}, {"red", "0.1"}},
         "Fog.Interpolate requires 0, 1, or 4 parameters",
         "Fog partial Interpolate insert is rejected");
     check_insert_error(
         "insert-incomplete-fog-set",
-        {{"rowKind", "fog.change"}, {"distance", "180"},
+        {{"rowKind", "fog.change"}, {"distance", "190"},
          {"method", "Set"}, {"density", "0.05"},
          {"red", "0.1"}, {"green", "0.2"}},
         "Fog.Set requires 4 parameters",

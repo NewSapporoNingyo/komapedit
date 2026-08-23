@@ -2593,6 +2593,7 @@ std::vector<TableRow> hydrate_signal_aspect_rows(const KvMapSnapshot& snapshot);
 void bind_station_position_edit_ids(MapModel& model);
 void rebuild_speed_limit_runtime_cache(MapModel& model);
 void annotate_own_track_transition_links(MapModel& model);
+void normalize_cab_illuminance_preview_rows(MapModel& model);
 MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
                               const std::string& path,
                               double snapshot_call_seconds);

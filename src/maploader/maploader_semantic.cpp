@@ -270,6 +270,26 @@ void changed_required_number_value(SemanticWriter& out,
     }
 }
 
+void changed_cab_illuminance_value(SemanticWriter& out,
+                                   const KvMapSnapshot& snapshot,
+                                   const MapEditChange* change,
+                                   const char* key,
+                                   const KvValue& fallback) {
+    out.label(key);
+    const std::string* input = changed_field(change, key);
+    if (input) {
+        if (trim_field_copy(*input).empty()) {
+            out.value(Value::cont());
+        } else {
+            out.value(Value::num(parse_changed_number(*input, key)));
+        }
+    } else if (fallback.kind == KV_VALUE_NULL) {
+        out.value(Value::cont());
+    } else {
+        out.value(snapshot, fallback);
+    }
+}
+
 void write_structure_model(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const KvStructureModelRow& row,
                            const MapEditChange* change = nullptr) {
@@ -414,7 +434,7 @@ void write_cab_illuminance(SemanticWriter& out, const KvMapSnapshot& snapshot,
                            const KvCabIlluminanceRow& row,
                            const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
-    changed_required_number_value(out, snapshot, change, "value", row.value);
+    changed_cab_illuminance_value(out, snapshot, change, "value", row.value);
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
