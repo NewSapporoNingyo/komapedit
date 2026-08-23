@@ -921,6 +921,56 @@ std::string edit_report_string(const KvEditReportSnapshot& report, KvStringRef r
                        static_cast<size_t>(ref.length));
 }
 
+bool App::validate_resource_list_file_change_candidate(
+    const std::map<std::string, MapElementPendingChange>& changes,
+    ResourceListKind kind) {
+    if (!edit_actions_available() || !handle_ || load_state_.running) return false;
+    TypedEditBatchStorage batch_storage = typed_edit_batch(changes);
+    const KvEditBatch batch = batch_storage.view();
+    KvEditReportSnapshot report{};
+    if (!kv_edit_dry_run_typed(handle_, &batch, &report, sizeof(report))) {
+        const char* error = kv_get_last_error();
+        add_log(std::string("[error]gui_kme.cpp: resource-list replacement dry run failed: ") +
+                (error && *error ? error : "unknown error"));
+        return false;
+    }
+
+    const char* header_error = nullptr;
+    const char* status_key = nullptr;
+    switch (kind) {
+    case ResourceListKind::Structure:
+        header_error = "resource-list-header-mismatch:structure";
+        status_key = "status.edit.not_structure_list_file";
+        break;
+    case ResourceListKind::Signal:
+        header_error = "resource-list-header-mismatch:signal";
+        status_key = "status.edit.not_signal_aspect_list_file";
+        break;
+    case ResourceListKind::Sound:
+    case ResourceListKind::Sound3D:
+        header_error = "resource-list-header-mismatch:sound";
+        status_key = "status.edit.not_sound_list_file";
+        break;
+    case ResourceListKind::Station:
+    case ResourceListKind::Count:
+        return false;
+    }
+    bool header_mismatch = false;
+    if (report.blocking_errors) {
+        for (std::uint64_t i = 0; i < report.blocking_error_count; ++i) {
+            const std::string message = edit_report_string(
+                report, report.blocking_errors[i]);
+            header_mismatch = header_mismatch ||
+                message.find(header_error) != std::string::npos;
+        }
+    }
+    if (!parse_and_log_edit_report(report, {})) {
+        if (header_mismatch) set_program_status(status_key);
+        return false;
+    }
+    return true;
+}
+
 bool edit_report_span_valid(KvSpan span, std::uint64_t size) {
     return span.offset <= size && span.count <= size - span.offset;
 }
@@ -1311,11 +1361,19 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
                  entry.second.operation == "update");
         });
     };
+    const auto ledger_contains_resource_list_load_edit = [](const auto& ledger) {
+        return std::any_of(ledger.begin(), ledger.end(), [](const auto& entry) {
+            return entry.second.row_kind == "resourceList.load" &&
+                entry.second.operation == "update";
+        });
+    };
     const bool full_insert_hydration =
         ledger_contains_insert(changes) ||
         ledger_contains_insert(pending_edit_changes_) ||
         ledger_contains_include_edit(changes) ||
-        ledger_contains_include_edit(pending_edit_changes_);
+        ledger_contains_include_edit(pending_edit_changes_) ||
+        ledger_contains_resource_list_load_edit(changes) ||
+        ledger_contains_resource_list_load_edit(pending_edit_changes_);
     if (signal_aspects_hydrated || alignment_hydrated) {
         KvMapSnapshot snapshot{};
         if (!kv_get_map_snapshot(

@@ -1141,6 +1141,17 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         row.cells["order"] = std::to_string(input.order);
         model.variable_assignments.push_back(std::move(row));
     }
+    const auto resource_list_statement_kind = [](std::uint32_t kind) {
+        switch (static_cast<ResourceListKind>(kind)) {
+        case ResourceListKind::Station: return "station.load";
+        case ResourceListKind::Structure: return "structure.load";
+        case ResourceListKind::Signal: return "signal.load";
+        case ResourceListKind::Sound: return "sound.load";
+        case ResourceListKind::Sound3D: return "sound3d.load";
+        case ResourceListKind::Count: break;
+        }
+        return "";
+    };
     for (std::uint64_t i = 0; i < snapshot.resource_list_load_count; ++i) {
         const KvResourceListLoadRow& input = snapshot.resource_list_loads[i];
         if (input.kind >= static_cast<std::uint32_t>(ResourceListKind::Count)) continue;
@@ -1151,6 +1162,15 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         output.resolved_path = map_snapshot_string(snapshot, input.resolved_path);
         output.source_file_path = map_snapshot_string(snapshot, input.file_path);
         output.order = input.order;
+        const char* statement_kind = resource_list_statement_kind(input.kind);
+        for (const EditStatementInfo& statement : model.edit_statements) {
+            if (ascii_lower(statement.statement_kind) == statement_kind &&
+                statement.source.file_path == output.source_file_path &&
+                statement.first_evaluated_value == output.evaluated_path) {
+                output.edit_id = statement.edit_id;
+                break;
+            }
+        }
     }
 
     static_assert(k_station_list_field_names.size() ==

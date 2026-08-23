@@ -300,6 +300,7 @@ enum class ResourceListKind : std::uint8_t {
 
 struct ResourceListSource {
     bool present = false;
+    std::string edit_id;
     std::string evaluated_path;
     std::string raw_argument;
     std::string resolved_path;
@@ -1431,6 +1432,18 @@ struct IncludeFileInsertRequest {
     bool create_new_file = false;
 };
 
+struct ResourceListFileChangeRequest {
+    ResourceListKind kind = ResourceListKind::Structure;
+    std::string edit_id;
+    std::string source_file_path;
+    std::string current_evaluated_path;
+    std::string current_resolved_path;
+    std::string selected_source_path;
+    std::string selected_resolved_path;
+    std::string fallback_reason;
+    bool confirmed_discard = false;
+};
+
 struct OtherTrackRenameState {
     bool popup_requested = false;
     std::string source_key;
@@ -1751,6 +1764,10 @@ private:
     std::optional<MapElementDeleteRequest> pending_delete_request_;
     std::optional<IncludeFileChangeRequest> pending_include_file_change_request_;
     std::optional<IncludeFileInsertRequest> pending_include_file_insert_request_;
+    std::optional<ResourceListFileChangeRequest>
+        pending_resource_list_file_change_request_;
+    std::optional<ResourceListFileChangeRequest>
+        resource_list_file_change_confirmation_;
     std::optional<std::string> pending_other_track_rename_request_;
     OtherTrackRenameState other_track_rename_;
     NewElementWizardState new_element_wizard_;
@@ -1961,6 +1978,7 @@ private:
         bool close_unsaved_confirm = false;
         bool revert_all_edits_confirm = false;
         bool edit_mode_warning = false;
+        bool resource_list_file_change_confirm = false;
     };
     enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
     enum class PendingCloseAction { None, DisableEditMode, ExitApplication };
@@ -2236,10 +2254,18 @@ private:
                                      const std::string& parent_file_path,
                                      const std::string& node_absolute_path);
     void process_pending_include_file_change();
+    void request_resource_list_file_change(ResourceListKind kind);
+    void process_pending_resource_list_file_change();
+    bool validate_resource_list_file_change_candidate(
+        const std::map<std::string, MapElementPendingChange>& changes,
+        ResourceListKind kind);
     void request_include_file_insert(const std::string& target_file_path,
                                      bool create_new_file);
     void process_pending_include_file_insert();
-    std::string open_include_file_dialog(const std::string& initial_directory);
+    std::string open_include_file_dialog(
+        const std::string& initial_directory,
+        const char* title_key = "dialog.select_include_file",
+        const char* filter_key = "dialog.filter.map_files");
     std::string save_include_file_dialog(const std::string& initial_directory);
     void request_other_track_rename(const std::string& track_key);
     void process_pending_other_track_rename();

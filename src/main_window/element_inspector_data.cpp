@@ -347,6 +347,160 @@ std::string expected_source_hash_for_edit_target(
     return {};
 }
 
+namespace {
+
+const char* resource_list_content_row_kind(ResourceListKind kind) {
+    switch (kind) {
+    case ResourceListKind::Structure: return "structure.model";
+    case ResourceListKind::Signal: return "signal.aspect";
+    case ResourceListKind::Sound: return "sound.list";
+    case ResourceListKind::Sound3D: return "sound3D.list";
+    case ResourceListKind::Station:
+    case ResourceListKind::Count:
+        return "";
+    }
+    return "";
+}
+
+bool resource_list_content_change_is_for_source(
+    const MapModel& model, const MapElementPendingChange& change,
+    ResourceListKind kind, const std::string& source_path) {
+    const char* row_kind = resource_list_content_row_kind(kind);
+    if (*row_kind == '\0' || change.row_kind != row_kind) return false;
+    return std::any_of(
+        model.edit_elements.begin(), model.edit_elements.end(),
+        [&](const EditElementInfo& element) {
+            return element.edit_id == change.edit_id &&
+                element.row_kind == row_kind &&
+                element.source_file_path == source_path;
+        });
+}
+
+} // namespace
+
+void App::request_resource_list_file_change(ResourceListKind kind) {
+    if (!edit_actions_available() || !has_model_ ||
+        kind == ResourceListKind::Station || kind == ResourceListKind::Count) {
+        return;
+    }
+    const size_t index = static_cast<size_t>(kind);
+    if (index >= model_.resource_list_sources.size()) return;
+    const ResourceListSource& source = model_.resource_list_sources[index];
+    if (!source.present || source.edit_id.empty() || source.source_file_path.empty()) return;
+    pending_resource_list_file_change_request_ = ResourceListFileChangeRequest{
+        kind, source.edit_id, source.source_file_path, source.evaluated_path,
+        source.resolved_path, {}, {}, {}, false};
+}
+
+void App::process_pending_resource_list_file_change() {
+    if (!pending_resource_list_file_change_request_) return;
+    ResourceListFileChangeRequest request =
+        std::move(*pending_resource_list_file_change_request_);
+    pending_resource_list_file_change_request_.reset();
+    if (!edit_actions_available() || !has_model_) return;
+
+    if (request.selected_source_path.empty()) {
+        const std::string initial_directory = list_asset_picker_initial_directory(
+            request.current_resolved_path, model_.path);
+        const std::string selected_file = open_include_file_dialog(
+            initial_directory, "dialog.select_resource_list_file",
+            "dialog.filter.resource_list_files");
+        if (selected_file.empty()) return;
+        ListAssetSourcePathResult selected_path = make_list_asset_source_path(
+            model_.path, selected_file);
+        if (selected_path.source_path.empty()) {
+            add_log("[warn]gui_kme.cpp: failed to derive a resource-list path for the selected file: selected=\"" +
+                    selected_path.resolved_path + "\"");
+            set_program_status("status.edit.required_field");
+            return;
+        }
+        request.selected_source_path = std::move(selected_path.source_path);
+        request.selected_resolved_path = std::move(selected_path.resolved_path);
+        request.fallback_reason = std::move(selected_path.fallback_reason);
+    }
+    if (request.selected_source_path == request.current_evaluated_path) return;
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    bool discards_applied_content = false;
+    for (auto change = candidate.begin(); change != candidate.end();) {
+        if (resource_list_content_change_is_for_source(
+                model_, change->second, request.kind,
+                request.current_resolved_path)) {
+            change = candidate.erase(change);
+            discards_applied_content = true;
+        } else {
+            ++change;
+        }
+    }
+
+    const EditSourceFileInfo* source_file = find_model_source_file(
+        model_, request.source_file_path);
+    MapElementPendingChange change;
+    change.change_id = "resource-list-load-" + request.edit_id;
+    change.edit_id = request.edit_id;
+    change.row_kind = "resourceList.load";
+    change.operation = "update";
+    change.field_changes.emplace("resourceListPath", request.selected_source_path);
+    change.expected_source_hash = expected_source_hash_for_edit_target(
+        model_, pending_edit_changes_, request.edit_id,
+        source_file ? source_file->source_hash : std::string{},
+        request.source_file_path);
+    candidate[request.edit_id] = std::move(change);
+
+    if (!validate_resource_list_file_change_candidate(candidate, request.kind)) return;
+
+    EditableListEditState* target_edit = nullptr;
+    const EditableListSpec* target_spec = nullptr;
+    switch (request.kind) {
+    case ResourceListKind::Structure:
+        target_edit = &structure_model_edit_;
+        target_spec = &k_structure_model_edit_spec;
+        break;
+    case ResourceListKind::Signal:
+        target_edit = &signal_aspect_edit_;
+        target_spec = &k_signal_aspect_edit_spec;
+        break;
+    case ResourceListKind::Sound:
+        target_edit = &sound_list_edit_;
+        target_spec = &k_sound_list_edit_spec;
+        break;
+    case ResourceListKind::Sound3D:
+        target_edit = &sound_3d_list_edit_;
+        target_spec = &k_sound_3d_list_edit_spec;
+        break;
+    case ResourceListKind::Station:
+    case ResourceListKind::Count:
+        return;
+    }
+    const bool discards_drafts = target_edit && target_spec &&
+        has_editable_list_drafts(*target_edit, *target_spec);
+    if (!request.confirmed_discard &&
+        (discards_drafts || discards_applied_content)) {
+        resource_list_file_change_confirmation_ = std::move(request);
+        popups_.resource_list_file_change_confirm = true;
+        return;
+    }
+
+    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return;
+    if (target_edit && target_spec) {
+        *target_edit = EditableListEditState{};
+        invalidate_table_cache();
+        rebind_other_editable_list_drafts(target_edit);
+        reset_editable_list_find_results(*target_spec);
+    }
+    if (!request.fallback_reason.empty()) {
+        add_log(
+            LogSeverity::Warning,
+            "[warning]gui_kme.cpp: unable to create a relative resource-list path; "
+            "using absolute path: reason=\"" + request.fallback_reason +
+            "\", selected=\"" + request.selected_resolved_path +
+            "\", map=\"" + model_.path + "\"");
+        set_program_status("status.edit.relative_path_fallback");
+    } else {
+        set_program_status("status.edit.pending");
+    }
+}
+
 bool App::apply_other_track_rename() {
     if (!edit_actions_available()) return false;
     const std::string source_key = trim_gui_ascii_copy(other_track_rename_.source_key);

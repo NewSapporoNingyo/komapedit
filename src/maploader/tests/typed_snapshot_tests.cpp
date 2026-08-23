@@ -4974,6 +4974,214 @@ void include_replace_contract() {
     }
 }
 
+void resource_list_replace_contract() {
+    struct Fixture {
+        std::filesystem::path directory;
+        std::filesystem::path map_path;
+
+        Fixture() {
+            directory = std::filesystem::temp_directory_path() /
+                ("komapedit-resource-list-replace-contract-" + std::to_string(
+                    std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(directory);
+            map_path = directory / "map.txt";
+            std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\r\n"
+                << "0;\r\n"
+                << "Structure.Load('structures-old.csv');\r\n"
+                << "Signal.Load('signals-old.csv');\r\n"
+                << "Sound.Load('sounds-old.csv');\r\n"
+                << "Sound3D.Load('sounds3d-old.csv');\r\n"
+                << "$unrelated=1;\r\n";
+            const auto write = [&](const char* name, const char* text) {
+                std::ofstream file(directory / name, std::ios::binary | std::ios::trunc);
+                file << text;
+            };
+            write("structures-old.csv", "BveTs Structure List 1.00:utf-8\r\nold,old.csv\r\n");
+            write("structures-new.csv", "BveTs Structure List 1.00:utf-8\r\nnew,new.csv\r\n");
+            write("signals-old.csv", "BveTs Signal Aspects List 2.00:utf-8\r\nold,old\r\n");
+            write("signals-new.csv", "BveTs Signal Aspects List 2.00:utf-8\r\nnew,new\r\n");
+            write("signals-v1.csv", "BveTs Signal Aspects List 1.00:utf-8\r\nold,old\r\n");
+            write("sounds-old.csv", "BveTs Sound List 2.00:utf-8\r\nold,old.wav\r\n");
+            write("sounds-new.csv", "BveTs Sound List 2.00:utf-8\r\nnew,new.wav\r\n");
+            write("sounds3d-old.csv", "BveTs Sound List 2.00:utf-8\r\nold3d,old3d.wav\r\n");
+            write("sounds3d-new.csv", "BveTs Sound List 2.00:utf-8\r\nnew3d,new3d.wav\r\n");
+            write("sounds-v1.csv", "BveTs Sound List 1.00:utf-8\r\nold,old.wav\r\n");
+        }
+
+        ~Fixture() {
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } fixture;
+
+    struct PathBatch {
+        std::vector<std::string> change_ids;
+        std::vector<std::string> edit_ids;
+        std::vector<std::string> values;
+        std::vector<KvEditField> fields;
+        std::vector<KvEditChange> changes;
+        KvEditBatch batch{};
+
+        PathBatch(const std::vector<std::pair<std::string, std::string>>& updates,
+                  const std::string& source_hash) {
+            static const std::string field_name = "resourceListPath";
+            change_ids.reserve(updates.size());
+            edit_ids.reserve(updates.size());
+            values.reserve(updates.size());
+            for (size_t i = 0; i < updates.size(); ++i) {
+                change_ids.push_back("resource-list-path-" + std::to_string(i));
+                edit_ids.push_back(updates[i].first);
+                values.push_back(updates[i].second);
+            }
+            fields.reserve(updates.size());
+            changes.resize(updates.size());
+            for (size_t i = 0; i < updates.size(); ++i) {
+                fields.push_back({utf8_view(field_name), utf8_view(values[i])});
+                KvEditChange& change = changes[i];
+                change.change_id = utf8_view(change_ids[i]);
+                change.edit_id = utf8_view(edit_ids[i]);
+                change.operation = KV_EDIT_UPDATE;
+                change.fields = {static_cast<std::uint64_t>(i), 1};
+                change.expected_source_hash = utf8_view(source_hash);
+            }
+            batch = {changes.data(), static_cast<std::uint64_t>(changes.size()),
+                     fields.data(), static_cast<std::uint64_t>(fields.size())};
+        }
+    };
+
+    MapHandle handle(kv_load_map_ex(fixture.map_path.u8string().c_str(), 25.0,
+                                    KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "resource-list replace load");
+    if (!handle.value) return;
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "resource-list replace baseline snapshot");
+    validate_map(baseline, true);
+
+    std::map<std::string, std::string> edit_ids;
+    std::string source_hash;
+    for (std::uint64_t i = 0; i < baseline.statement_count; ++i) {
+        const KvStatementRow& statement = baseline.statements[i];
+        const std::string kind = map_string(baseline, statement.statement_kind);
+        const char* edit_kind = nullptr;
+        if (kind == "Structure.Load") edit_kind = "structure.load";
+        else if (kind == "Signal.Load") edit_kind = "signal.load";
+        else if (kind == "Sound.Load") edit_kind = "sound.load";
+        else if (kind == "Sound3D.Load") edit_kind = "sound3d.load";
+        if (edit_kind) {
+            edit_ids[edit_kind] = map_string(baseline, statement.edit_id);
+            if (statement.source.source_file_index < baseline.source_file_count) {
+                source_hash = map_string(
+                    baseline,
+                    baseline.source_files[statement.source.source_file_index].source_hash);
+            }
+        }
+    }
+    check(edit_ids.size() == 4 && !source_hash.empty(),
+          "resource-list replace source targets located");
+    if (edit_ids.size() != 4 || source_hash.empty()) return;
+
+    const auto update_one = [&](const std::string& kind, const std::string& path,
+                                const char* marker, const char* label) {
+        PathBatch batch({{edit_ids[kind], path}}, source_hash);
+        KvEditReportSnapshot report{};
+        const bool ran = kv_edit_dry_run_typed(
+            handle.value, &batch.batch, &report, sizeof(report)) != 0;
+        check(ran && !report.ok &&
+                  edit_report_has_error_containing(report, marker),
+              label);
+    };
+    update_one("structure.load", "signals-new.csv",
+               "resource-list-header-mismatch:structure",
+               "resource-list replacement rejects a mismatched list type");
+    update_one("signal.load", "signals-v1.csv",
+               "resource-list-header-mismatch:signal",
+               "resource-list replacement rejects unsupported Signal List version");
+    update_one("sound.load", "sounds-v1.csv",
+               "resource-list-header-mismatch:sound",
+               "resource-list replacement rejects unsupported Sound List version");
+
+    const std::vector<std::pair<std::string, std::string>> replacements = {
+        {edit_ids["structure.load"], "structures-new.csv"},
+        {edit_ids["signal.load"], "signals-new.csv"},
+        {edit_ids["sound.load"], "sounds-new.csv"},
+        {edit_ids["sound3d.load"], "sounds3d-new.csv"},
+    };
+    {
+        PathBatch batch(replacements, source_hash);
+        KvEditReportSnapshot report{};
+        const bool dry_ok = kv_edit_dry_run_typed(
+                                handle.value, &batch.batch, &report,
+                                sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok && report.update_count == 4;
+        check(dry_ok,
+              "resource-list replacement accepts Structure 1.00 and shared Sound List headers");
+    }
+    KvEditReportSnapshot applied_report{};
+    PathBatch apply_batch(replacements, source_hash);
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &apply_batch.batch, &applied_report,
+              sizeof(applied_report)) != 0 &&
+              applied_report.ok && applied_report.full_reparse_ok &&
+              applied_report.non_target_changed_count == 0 &&
+              applied_report.update_count == 4,
+          "resource-list replacement applies all lists to memory");
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0,
+          "resource-list replacement applied snapshot");
+    const auto list_path = [&](std::uint32_t kind) {
+        for (std::uint64_t i = 0; i < applied.resource_list_load_count; ++i) {
+            const KvResourceListLoadRow& row = applied.resource_list_loads[i];
+            if (row.kind == kind) return map_string(applied, row.evaluated_path);
+        }
+        return std::string{};
+    };
+    check(list_path(KV_RESOURCE_LIST_STRUCTURE) == "structures-new.csv" &&
+              list_path(KV_RESOURCE_LIST_SIGNAL) == "signals-new.csv" &&
+              list_path(KV_RESOURCE_LIST_SOUND) == "sounds-new.csv" &&
+              list_path(KV_RESOURCE_LIST_SOUND_3D) == "sounds3d-new.csv" &&
+              applied.structure_model_count == 1 &&
+              applied.signal_aspect_count == 1 && applied.sound_list_count == 2,
+          "resource-list replacement refreshes the typed list rows");
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "resource-list replacement reset");
+    KvMapSnapshot restored{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &restored, sizeof(restored)) != 0,
+          "resource-list replacement restored snapshot");
+    bool restored_old_structure = false;
+    for (std::uint64_t i = 0; i < restored.resource_list_load_count; ++i) {
+        const KvResourceListLoadRow& row = restored.resource_list_loads[i];
+        restored_old_structure = restored_old_structure ||
+            (row.kind == KV_RESOURCE_LIST_STRUCTURE &&
+             map_string(restored, row.evaluated_path) == "structures-old.csv");
+    }
+    check(restored_old_structure, "resource-list replacement reset restores old paths");
+
+    PathBatch commit_batch(replacements, source_hash);
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &commit_batch.batch, &commit_report,
+              sizeof(commit_report)) != 0 && commit_report.ok &&
+              kv_edit_commit_typed(handle.value, &commit_report,
+                                   sizeof(commit_report)) != 0 &&
+              commit_report.ok,
+          "resource-list replacement commits the rewritten map paths");
+    std::ifstream committed(fixture.map_path, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(committed)),
+                     std::istreambuf_iterator<char>());
+    check(text.find("Structure.Load('structures-new.csv');\r\n") != std::string::npos &&
+              text.find("Signal.Load('signals-new.csv');\r\n") != std::string::npos &&
+              text.find("Sound.Load('sounds-new.csv');\r\n") != std::string::npos &&
+              text.find("Sound3D.Load('sounds3d-new.csv');\r\n") != std::string::npos &&
+              text.find("$unrelated=1;\r\n") != std::string::npos,
+          "resource-list replacement preserves CRLF and unrelated map source");
+}
+
 void include_replace_variable_dependency_blocks_contract() {
     std::filesystem::path directory = std::filesystem::temp_directory_path() /
         ("komapedit-include-replace-dependency-" + std::to_string(
@@ -5056,6 +5264,7 @@ int edit_contract() {
     include_diamond_delete_contract();
     include_variable_dependency_blocks_deletion_contract();
     include_replace_contract();
+    resource_list_replace_contract();
     include_replace_variable_dependency_blocks_contract();
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();

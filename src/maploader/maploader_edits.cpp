@@ -52,6 +52,44 @@ struct EditableTarget {
     int elements_for_statement = 0;
 };
 
+struct ResourceListEditSpec {
+    ResourceListLoadKind kind;
+    const char* header;
+    double minimum_version;
+    const char* error_key;
+    const char* content_row_kind;
+};
+
+const ResourceListEditSpec* resource_list_edit_spec_for_statement(
+    std::string_view statement_kind) {
+    static constexpr ResourceListEditSpec k_structure{
+        ResourceListLoadKind::Structure, "BveTs Structure List ", 1.0,
+        "structure", "structure.model"};
+    static constexpr ResourceListEditSpec k_signal{
+        ResourceListLoadKind::Signal, "BveTs Signal Aspects List ", 2.0,
+        "signal", "signal.aspect"};
+    static constexpr ResourceListEditSpec k_sound{
+        ResourceListLoadKind::Sound, "BveTs Sound List ", 2.0,
+        "sound", "sound.list"};
+    static constexpr ResourceListEditSpec k_sound_3d{
+        ResourceListLoadKind::Sound3D, "BveTs Sound List ", 2.0,
+        "sound", "sound3D.list"};
+    const std::string kind = ascii_lower(std::string(statement_kind));
+    if (kind == "structure.load") return &k_structure;
+    if (kind == "signal.load") return &k_signal;
+    if (kind == "sound.load") return &k_sound;
+    if (kind == "sound3d.load") return &k_sound_3d;
+    return nullptr;
+}
+
+const ResourceListLoad* resource_list_load_for_kind(
+    const MapContext& ctx, ResourceListLoadKind kind) {
+    const auto found = std::find_if(
+        ctx.resource_list_loads.begin(), ctx.resource_list_loads.end(),
+        [kind](const ResourceListLoad& row) { return row.kind == kind; });
+    return found == ctx.resource_list_loads.end() ? nullptr : &*found;
+}
+
 struct TextReplacementIdentity {
     std::string edit_id;
     std::string row_kind;
@@ -1866,6 +1904,18 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
         target.elements_for_statement = 0;
         return target;
     }
+    for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
+        ParsedStatement& statement = ctx.parsed_statements[i];
+        if (!resource_list_edit_spec_for_statement(statement.statement_kind) ||
+            statement_edit_id(ctx, statement) != edit_id) {
+            continue;
+        }
+        target.statement_index = i;
+        target.row_kind = "resourceList.load";
+        target.row_index = i;
+        target.elements_for_statement = 0;
+        return target;
+    }
     for (size_t i = 0; i < ctx.curves.size(); ++i) {
         const CurveEditRow& row = ctx.curves[i];
         if (match_edit_ref(ctx, row, "curve", i, edit_id, target)) {
@@ -2130,16 +2180,37 @@ std::string build_replacement_statement(const MapEditChange& change,
     throw std::runtime_error("unsupported editable target: " + target.row_kind);
 }
 
-std::string include_path_from_change(const MapEditChange& change);
+std::string path_from_single_field_change(const MapEditChange& change,
+                                          const char* field_name,
+                                          const char* target_name) {
+    if (change.field_changes.size() != 1 ||
+        change.field_changes.begin()->first != field_name) {
+        throw std::runtime_error(
+            std::string(target_name) + " edits require exactly one " +
+            field_name + " field: " + change.edit_id);
+    }
+    const std::string new_path = trim_field_copy(change.field_changes.begin()->second);
+    if (new_path.empty()) {
+        throw std::runtime_error(
+            std::string(field_name) + " must not be empty: " + change.edit_id);
+    }
+    if (new_path.find('\'') != std::string::npos) {
+        throw std::runtime_error(
+            std::string(field_name) +
+            " must be representable as a single-quoted string literal: " + new_path);
+    }
+    return new_path;
+}
 
-std::string build_include_statement(const MapEditChange& change,
-                                    const ParsedStatement& statement) {
-    const std::string new_path = include_path_from_change(change);
+std::string build_path_statement(const MapEditChange& change,
+                                 const ParsedStatement& statement,
+                                 const std::string& new_path,
+                                 const char* target_name) {
     const std::string replacement_arguments = "'" + new_path + "'";
     // Replace only the argument slice inside the original statement text so
     // the statement kind spelling and surrounding spacing survive unchanged.
     // raw_arguments is a trimmed contiguous slice of raw_text, so the search
-    // succeeds for every parseable include statement with a path argument.
+    // succeeds for every parseable source statement with a path argument.
     if (!statement.raw_arguments.empty()) {
         const size_t position = statement.raw_text.find(statement.raw_arguments);
         if (position != std::string::npos) {
@@ -2163,29 +2234,55 @@ std::string build_include_statement(const MapEditChange& change,
     }
     if (kind_end == kind_start) {
         throw std::runtime_error(
-            "failed to rewrite the include statement: " + change.edit_id);
+            std::string("failed to rewrite the ") + target_name +
+            " statement: " + change.edit_id);
     }
     return statement.raw_text.substr(kind_start, kind_end - kind_start) +
         " " + replacement_arguments + ";";
 }
 
 std::string include_path_from_change(const MapEditChange& change) {
-    if (change.field_changes.size() != 1 ||
-        change.field_changes.begin()->first != "includePath") {
+    return path_from_single_field_change(change, "includePath", "include");
+}
+
+std::string resource_list_path_from_change(const MapEditChange& change) {
+    return path_from_single_field_change(
+        change, "resourceListPath", "resource list");
+}
+
+std::string build_include_statement(const MapEditChange& change,
+                                    const ParsedStatement& statement) {
+    return build_path_statement(
+        change, statement, include_path_from_change(change), "include");
+}
+
+std::string build_resource_list_load_statement(const MapEditChange& change,
+                                               const ParsedStatement& statement) {
+    return build_path_statement(
+        change, statement, resource_list_path_from_change(change),
+        "resource list");
+}
+
+void validate_resource_list_header(MapContext& ctx,
+                                   const ParsedStatement& statement,
+                                   const MapEditChange& change) {
+    const ResourceListEditSpec* spec =
+        resource_list_edit_spec_for_statement(statement.statement_kind);
+    if (!spec) {
         throw std::runtime_error(
-            "include edits require exactly one includePath field: " + change.edit_id);
+            "resource list edit has an unsupported source statement: " +
+            statement.statement_kind);
     }
-    const std::string new_path = trim_field_copy(change.field_changes.begin()->second);
-    if (new_path.empty()) {
+    const std::string path = resource_list_path_from_change(change);
+    try {
+        (void)load_header_text(
+            ctx, join_path(ctx.rootpath, path), spec->header,
+            spec->minimum_version);
+    } catch (const std::exception& e) {
         throw std::runtime_error(
-            "includePath must not be empty: " + change.edit_id);
+            std::string("resource-list-header-mismatch:") + spec->error_key +
+            ": " + e.what());
     }
-    if (new_path.find('\'') != std::string::npos) {
-        throw std::runtime_error(
-            "includePath must be representable as a single-quoted string literal: " +
-            new_path);
-    }
-    return new_path;
 }
 
 std::string insert_method_or_default(const MapEditChange& change, const char* fallback) {
@@ -4944,6 +5041,16 @@ void validate_edit_report(MapContext& baseline,
     std::vector<size_t> include_delete_statements;
     std::set<std::string> include_delete_edit_ids;
     std::map<size_t, std::string> include_update_expected_paths;
+    struct ResourceListReplacement {
+        const ResourceListEditSpec* spec = nullptr;
+        std::string edit_id;
+        size_t baseline_statement_index = k_no_source_ref;
+        std::string baseline_content_source_key;
+        std::string baseline_structure_load_edit_id;
+        std::string candidate_content_source_key;
+        std::string candidate_structure_load_edit_id;
+    };
+    std::vector<ResourceListReplacement> resource_list_replacements;
     for (const MapEditChange& change : changes) {
         if (change.edit_id.empty()) continue;
         const std::string operation =
@@ -4987,6 +5094,60 @@ void validate_edit_report(MapContext& baseline,
                 }
                 include_update_expected_paths.emplace(
                     update_target.statement_index, std::move(new_path));
+                continue;
+            }
+            if (update_target.statement_index != k_no_source_ref &&
+                update_target.row_kind == "resourceList.load") {
+                const ParsedStatement& statement = baseline.parsed_statements[
+                    update_target.statement_index];
+                const ResourceListEditSpec* spec =
+                    resource_list_edit_spec_for_statement(statement.statement_kind);
+                const ResourceListLoad* load = spec
+                    ? resource_list_load_for_kind(baseline, spec->kind)
+                    : nullptr;
+                if (!spec || !load) {
+                    report.blocking_errors.push_back(
+                        "target validation lost the resource list source: " +
+                        change.edit_id);
+                    return;
+                }
+                std::string new_path;
+                try {
+                    new_path = resource_list_path_from_change(change);
+                } catch (const std::exception& e) {
+                    report.blocking_errors.push_back(
+                        std::string("target validation failed for ") +
+                        change.edit_id + ": " + e.what());
+                    return;
+                }
+                if (!expected_target_canonical
+                         .emplace(change.edit_id,
+                                  std::string("resourceList:") + spec->error_key +
+                                      ":" + new_path)
+                         .second) {
+                    report.blocking_errors.push_back(
+                        "more than one edit targets the same element: " +
+                        change.edit_id);
+                    return;
+                }
+                ResourceListReplacement replacement;
+                replacement.spec = spec;
+                replacement.edit_id = change.edit_id;
+                replacement.baseline_statement_index = update_target.statement_index;
+                replacement.baseline_content_source_key = normalized_source_key(
+                    load->resolved_path);
+                if (spec->kind == ResourceListLoadKind::Structure) {
+                    for (const StructureLoad& structure_load : baseline.structure_loads) {
+                        if (structure_load.edit_ref.statement_index !=
+                            update_target.statement_index) {
+                            continue;
+                        }
+                        replacement.baseline_structure_load_edit_id = element_edit_id(
+                            baseline, structure_load.edit_ref, "structure.load");
+                        break;
+                    }
+                }
+                resource_list_replacements.push_back(std::move(replacement));
                 continue;
             }
         }
@@ -5206,6 +5367,39 @@ void validate_edit_report(MapContext& baseline,
         }
     }
 
+    // Resource-list Load statements follow the same source-only identity
+    // rule as Include, but their loaded list rows are scoped separately below.
+    std::map<std::string, std::string> candidate_resource_list_canonicals;
+    std::map<std::string, size_t> candidate_resource_list_statement_by_id;
+    if (!resource_list_replacements.empty()) {
+        for (size_t i = 0; i < candidate->parsed_statements.size(); ++i) {
+            const ParsedStatement& statement = candidate->parsed_statements[i];
+            const ResourceListEditSpec* spec =
+                resource_list_edit_spec_for_statement(statement.statement_kind);
+            if (!spec) continue;
+            const std::string& source_key =
+                source_file_key(*candidate, statement.source);
+            auto patched_text = patched_text_by_source_key.find(source_key);
+            if (patched_text == patched_text_by_source_key.end()) continue;
+            const auto range = source_range_in_text(
+                *patched_text->second.text,
+                patched_text->second.line_starts,
+                statement.source);
+            candidate_resource_list_canonicals[statement.edit_id] =
+                std::string("resourceList:") + spec->error_key + ":" +
+                (statement.evaluated_values.empty()
+                    ? std::string{}
+                    : as_text(statement.evaluated_values.front()));
+            candidate_resource_list_statement_by_id.emplace(statement.edit_id, i);
+            candidates_by_location[IdentityLocation{
+                source_key, range.first, range.second, "resourceList.load", 0,
+            }].push_back({
+                statement.edit_id,
+                statement.global_order,
+            });
+        }
+    }
+
     std::map<std::string, std::string> candidate_to_stable_edit_ids;
     std::map<std::string, std::string> stable_to_candidate_edit_ids;
     auto preserve_edit_identity = [&](const std::string& stable_id,
@@ -5230,6 +5424,14 @@ void validate_edit_report(MapContext& baseline,
 
     std::set<std::string> candidate_target_ids;
     std::set<std::string> insert_extra_native_ids;
+    const auto source_path_canonical = [&](const std::string& edit_id)
+        -> const std::string* {
+        auto include = candidate_include_canonicals.find(edit_id);
+        if (include != candidate_include_canonicals.end()) return &include->second;
+        auto resource = candidate_resource_list_canonicals.find(edit_id);
+        return resource == candidate_resource_list_canonicals.end()
+            ? nullptr : &resource->second;
+    };
     for (auto& origin_group : origins_by_location) {
         auto candidates = candidates_by_location.find(origin_group.first);
         if (candidates == candidates_by_location.end() ||
@@ -5243,6 +5445,9 @@ void validate_edit_report(MapContext& baseline,
                 insert_edit_ids.end();
         const bool include_origin =
             origin_group.second.front()->row_kind == "include";
+        const bool resource_list_origin =
+            origin_group.second.front()->row_kind == "resourceList.load";
+        const bool source_path_origin = include_origin || resource_list_origin;
         if (!insert_origin &&
             candidates->second.size() != origin_group.second.size()) {
             report.blocking_errors.push_back(
@@ -5265,12 +5470,11 @@ void validate_edit_report(MapContext& baseline,
                 auto expected = expected_target_canonical.find(
                     origin_group.second.front()->edit_id);
                 bool matched = false;
-                if (include_origin) {
-                    auto canonical_it = candidate_include_canonicals.find(
+                if (source_path_origin) {
+                    const std::string* canonical = source_path_canonical(
                         candidate_element.native_edit_id);
-                    matched = canonical_it != candidate_include_canonicals.end() &&
-                        expected != expected_target_canonical.end() &&
-                        canonical_it->second == expected->second;
+                    matched = canonical && expected != expected_target_canonical.end() &&
+                        *canonical == expected->second;
                 } else {
                     auto after = after_by_native_id.find(candidate_element.native_edit_id);
                     matched = after != after_by_native_id.end() &&
@@ -5331,12 +5535,11 @@ void validate_edit_report(MapContext& baseline,
             const CandidateIdentityElement& candidate_element = candidates->second[i];
             auto expected = expected_target_canonical.find(origin.edit_id);
             bool matched = false;
-            if (include_origin) {
-                auto canonical_it = candidate_include_canonicals.find(
+            if (source_path_origin) {
+                const std::string* canonical = source_path_canonical(
                     candidate_element.native_edit_id);
-                matched = canonical_it != candidate_include_canonicals.end() &&
-                    expected != expected_target_canonical.end() &&
-                    canonical_it->second == expected->second;
+                matched = canonical && expected != expected_target_canonical.end() &&
+                    *canonical == expected->second;
             } else {
                 auto after = after_by_native_id.find(candidate_element.native_edit_id);
                 matched = after != after_by_native_id.end() &&
@@ -5366,6 +5569,44 @@ void validate_edit_report(MapContext& baseline,
     }
     if (!report.blocking_errors.empty()) return;
 
+    for (ResourceListReplacement& replacement : resource_list_replacements) {
+        const auto candidate_id = stable_to_candidate_edit_ids.find(
+            replacement.edit_id);
+        if (candidate_id == stable_to_candidate_edit_ids.end()) {
+            report.blocking_errors.push_back(
+                "validated resource list edit lost its reparsed statement: " +
+                replacement.edit_id);
+            return;
+        }
+        const auto statement = candidate_resource_list_statement_by_id.find(
+            candidate_id->second);
+        const ResourceListLoad* load = resource_list_load_for_kind(
+            *candidate, replacement.spec->kind);
+        if (statement == candidate_resource_list_statement_by_id.end() || !load) {
+            report.blocking_errors.push_back(
+                "validated resource list edit lost its reloaded list: " +
+                replacement.edit_id);
+            return;
+        }
+        replacement.candidate_content_source_key = normalized_source_key(
+            load->resolved_path);
+        if (replacement.spec->kind == ResourceListLoadKind::Structure) {
+            for (const StructureLoad& structure_load : candidate->structure_loads) {
+                if (structure_load.edit_ref.statement_index != statement->second) continue;
+                replacement.candidate_structure_load_edit_id = element_edit_id(
+                    *candidate, structure_load.edit_ref, "structure.load");
+                break;
+            }
+            if (replacement.baseline_structure_load_edit_id.empty() ||
+                replacement.candidate_structure_load_edit_id.empty()) {
+                report.blocking_errors.push_back(
+                    "validated Structure.Load edit lost its source row: " +
+                    replacement.edit_id);
+                return;
+            }
+        }
+    }
+
     // The swapped-in file's subtree is new content on the candidate side of
     // the reparse comparison. Collect its statement mask and element ids so
     // the non-target and environment checks only police untouched regions.
@@ -5393,10 +5634,33 @@ void validate_edit_report(MapContext& baseline,
             *candidate, include_added_statements, &include_subtree_additions);
     }
 
+    const auto resource_list_element_is_replaced =
+        [&](const SemanticElement& element, bool candidate_side) {
+        for (const ResourceListReplacement& replacement : resource_list_replacements) {
+            const std::string& content_source_key = candidate_side
+                ? replacement.candidate_content_source_key
+                : replacement.baseline_content_source_key;
+            if (element.row_kind == replacement.spec->content_row_kind &&
+                normalized_source_key(element.source_file) == content_source_key) {
+                return true;
+            }
+            const std::string& structure_load_id = candidate_side
+                ? replacement.candidate_structure_load_edit_id
+                : replacement.baseline_structure_load_edit_id;
+            if (!structure_load_id.empty() &&
+                element.row_kind == "structure.load" &&
+                element.edit_id == structure_load_id) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     std::vector<const SemanticElement*> before_non_targets;
     before_non_targets.reserve(before_elements.size() - excluded_before.size());
     for (const SemanticElement& element : before_elements) {
-        if (excluded_before.find(element.edit_id) == excluded_before.end()) {
+        if (excluded_before.find(element.edit_id) == excluded_before.end() &&
+            !resource_list_element_is_replaced(element, false)) {
             before_non_targets.push_back(&element);
         }
     }
@@ -5415,6 +5679,11 @@ void validate_edit_report(MapContext& baseline,
             include_subtree_additions.end()) {
             // Elements of a swapped-in Include subtree belong to the update
             // itself, not to the untouched remainder of the route.
+            continue;
+        }
+        if (resource_list_element_is_replaced(element, true)) {
+            // A resource-list Load replacement owns only the selected list's
+            // rows; every map element and every other list remains strict.
             continue;
         }
         if (before_position >= before_non_targets.size() ||
@@ -6446,12 +6715,19 @@ MapEditReport build_edit_report(MapContext& ctx,
                 }
                 ++report.delete_count;
             } else if (operation == "update") {
-                if (target.row_kind == "include") {
-                    // Include statements own no typed element rows. Their only
-                    // supported update rewrites the path argument in place;
-                    // validation proves the swapped reference by full reparse.
-                    edit.replacement_statement = build_include_statement(
-                        change, *statement);
+                if (target.row_kind == "include" ||
+                    target.row_kind == "resourceList.load") {
+                    // These source statements own no typed element rows. Their
+                    // supported update rewrites only the path argument; full
+                    // reparse validation proves the swapped reference.
+                    if (target.row_kind == "resourceList.load") {
+                        validate_resource_list_header(ctx, *statement, change);
+                        edit.replacement_statement =
+                            build_resource_list_load_statement(change, *statement);
+                    } else {
+                        edit.replacement_statement = build_include_statement(
+                            change, *statement);
+                    }
                     ++report.update_count;
                 } else {
                     if (target.elements_for_statement != 1) {

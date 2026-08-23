@@ -156,7 +156,9 @@ std::string App::open_editable_list_file_dialog(
     return {};
 }
 
-std::string App::open_include_file_dialog(const std::string& initial_directory) {
+std::string App::open_include_file_dialog(const std::string& initial_directory,
+                                          const char* title_key,
+                                          const char* filter_key) {
     wchar_t file[MAX_PATH] = {};
     OPENFILENAMEW ofn = {};
     ofn.lStructSize = sizeof(ofn);
@@ -171,7 +173,7 @@ std::string App::open_include_file_dialog(const std::string& initial_directory) 
             filter += value;
             filter.push_back(L'\0');
         };
-    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
+    append_filter(utf8_to_wide(tr(filter_key)), L"*.txt;*.csv");
     append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
     filter.push_back(L'\0');
     ofn.lpstrFilter = filter.c_str();
@@ -180,7 +182,7 @@ std::string App::open_include_file_dialog(const std::string& initial_directory) 
         utf8_to_wide(initial_directory);
     ofn.lpstrInitialDir = initial_directory_wide.empty()
         ? nullptr : initial_directory_wide.c_str();
-    const std::wstring title = utf8_to_wide(tr("dialog.select_include_file"));
+    const std::wstring title = utf8_to_wide(tr(title_key));
     ofn.lpstrTitle = title.c_str();
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
@@ -305,6 +307,34 @@ void App::render_popups() {
     if (apply_other_track_rename_after_popup) {
         request_edit_ui_operation(PendingEditUiOperation::ApplyOtherTrackRename);
         return;
+    }
+
+    if (popups_.resource_list_file_change_confirm) {
+        ImGui::OpenPopup(tr("dialog.resource_list_file_change_title").c_str());
+        popups_.resource_list_file_change_confirm = false;
+    }
+    if (ImGui::BeginPopupModal(
+            tr("dialog.resource_list_file_change_title").c_str(), nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 520.0f);
+        ImGui::TextUnformatted(tr("dialog.resource_list_file_change_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.ok").c_str())) {
+            if (resource_list_file_change_confirmation_) {
+                resource_list_file_change_confirmation_->confirmed_discard = true;
+                pending_resource_list_file_change_request_ = std::move(
+                    *resource_list_file_change_confirmation_);
+                resource_list_file_change_confirmation_.reset();
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            resource_list_file_change_confirmation_.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 
     if (popups_.edit_mode_warning) {

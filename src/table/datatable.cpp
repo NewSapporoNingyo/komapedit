@@ -53,10 +53,12 @@ float scroll_x_table_height_for_rows(int row_count) {
         style.ScrollbarSize + style.CellPadding.y * 3.0f;
 }
 
-void render_file_path_cell_with_context(const std::string& display_text, const std::string& open_path,
+bool render_file_path_cell_with_context(const std::string& display_text, const std::string& open_path,
                                         const std::string& menu_label, const std::string& tooltip_text = {},
-                                        ImU32 text_color = 0) {
-    if (display_text.empty()) return;
+                                        ImU32 text_color = 0,
+                                        const std::string& change_label = {},
+                                        bool change_enabled = false) {
+    if (display_text.empty()) return false;
 
     if (text_color == 0) text_color = ImGui::GetColorU32(ImGuiCol_Text);
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -72,6 +74,7 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
     ImGui::GetWindowDrawList()->AddText(pos, text_color, display_text.c_str());
 
     touch_input::open_popup_on_last_item_long_press("file_path_context");
+    bool change_requested = false;
     if (ImGui::BeginPopupContextItem("file_path_context", ImGuiPopupFlags_MouseButtonRight)) {
         bool can_open = !blank_ascii(open_path);
         ImGui::BeginDisabled(!can_open);
@@ -79,18 +82,27 @@ void render_file_path_cell_with_context(const std::string& display_text, const s
             open_parent_directory_in_explorer(open_path);
         }
         ImGui::EndDisabled();
+        if (!change_label.empty()) {
+            ImGui::Separator();
+            ImGui::BeginDisabled(!change_enabled);
+            change_requested = ImGui::MenuItem(change_label.c_str());
+            ImGui::EndDisabled();
+        }
         ImGui::EndPopup();
     }
+    return change_requested;
 }
 
-void render_resource_list_source(const ResourceListSource& source,
+bool render_resource_list_source(const ResourceListSource& source,
                                  const std::string& label,
-                                 const std::string& open_label) {
+                                 const std::string& open_label,
+                                 const std::string& change_label = {},
+                                 bool change_enabled = false) {
     ImGui::TextUnformatted((label + ":").c_str());
     ImGui::SameLine();
     if (!source.present) {
         ImGui::TextDisabled("-");
-        return;
+        return false;
     }
     std::string tooltip;
     if (!source.raw_argument.empty()) {
@@ -100,9 +112,10 @@ void render_resource_list_source(const ResourceListSource& source,
         if (!tooltip.empty()) tooltip += "\n";
         tooltip += source.resolved_path;
     }
-    render_file_path_cell_with_context(
+    return render_file_path_cell_with_context(
         source.evaluated_path.empty() ? "-" : source.evaluated_path,
-        source.resolved_path, open_label, tooltip);
+        source.resolved_path, open_label, tooltip, 0,
+        change_label, change_enabled);
 }
 
 bool begin_text_cell_context_popup(const std::string& display_text, const char* item_id,
@@ -3446,9 +3459,12 @@ void App::render_structure_models_window() {
         ImGui::End();
         return;
     }
-    render_resource_list_source(
+    if (render_resource_list_source(
         model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Structure)],
-        tr("label.source_path"), tr("menu.open_in_explorer"));
+        tr("label.source_path"), tr("menu.open_in_explorer"),
+        tr("menu.change_file"), edit_actions_available())) {
+        request_resource_list_file_change(ResourceListKind::Structure);
+    }
     ensure_table_cache();
 
     render_table_find_panel(
@@ -3689,9 +3705,12 @@ void App::render_sound_list_window() {
         ImGui::End();
         return;
     }
-    render_resource_list_source(
+    if (render_resource_list_source(
         model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Sound)],
-        tr("label.source_path"), tr("menu.open_in_explorer"));
+        tr("label.source_path"), tr("menu.open_in_explorer"),
+        tr("menu.change_file"), edit_actions_available())) {
+        request_resource_list_file_change(ResourceListKind::Sound);
+    }
     ensure_table_cache();
     render_sound_file_find_panel(false);
     ImGui::BeginDisabled(
@@ -3722,9 +3741,12 @@ void App::render_sound_3d_list_window() {
         ImGui::End();
         return;
     }
-    render_resource_list_source(
+    if (render_resource_list_source(
         model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Sound3D)],
-        tr("label.source_path"), tr("menu.open_in_explorer"));
+        tr("label.source_path"), tr("menu.open_in_explorer"),
+        tr("menu.change_file"), edit_actions_available())) {
+        request_resource_list_file_change(ResourceListKind::Sound3D);
+    }
     ensure_table_cache();
     render_sound_file_find_panel(true);
     ImGui::BeginDisabled(
@@ -3887,10 +3909,13 @@ void App::render_signal_aspects_window() {
         ImGui::End();
         return;
     }
-    render_resource_list_source(
+    if (render_resource_list_source(
         model_.resource_list_sources[
             static_cast<size_t>(ResourceListKind::Signal)],
-        tr("label.source_path"), tr("menu.open_in_explorer"));
+        tr("label.source_path"), tr("menu.open_in_explorer"),
+        tr("menu.change_file"), edit_actions_available())) {
+        request_resource_list_file_change(ResourceListKind::Signal);
+    }
     ensure_table_cache();
     const bool stale_find_results = signal_aspect_find_.has_run &&
         signal_aspect_find_.committed != signal_aspect_find_.query;
