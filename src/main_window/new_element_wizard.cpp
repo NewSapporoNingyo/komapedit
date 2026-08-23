@@ -709,24 +709,31 @@ bool new_element_target_is_resource_list(
 
 std::vector<std::string> new_element_target_candidates(const MapModel& model) {
     std::map<std::string, size_t> distance_counts;
+    std::set<std::string> files_with_statements;
     for (const EditStatementInfo& statement : model.edit_statements) {
-        // Distance.Set is the parser's internal classification for a source
-        // line whose expression sets the current BVE distance. It is not a
-        // BVE source function and must never be emitted as source text.
-        if (statement.statement_kind != "Distance.Set" ||
-            statement.source.file_path.empty() ||
+        if (statement.source.file_path.empty() ||
             new_element_target_is_resource_list(model, statement.source.file_path)) {
             continue;
         }
+        files_with_statements.insert(statement.source.file_path);
+        // Distance.Set is the parser's internal classification for a source
+        // line whose expression sets the current BVE distance. It is not a
+        // BVE source function and must never be emitted as source text.
+        if (statement.statement_kind != "Distance.Set") continue;
         ++distance_counts[statement.source.file_path];
     }
 
     std::vector<std::pair<std::string, size_t>> ranked;
-    ranked.reserve(distance_counts.size());
+    ranked.reserve(model.edit_files.size());
     for (const EditSourceFileInfo& file : model.edit_files) {
         auto count = distance_counts.find(file.file_path);
+        if (file.file_path.empty() || new_element_target_is_resource_list(model, file.file_path)) {
+            continue;
+        }
         if (count != distance_counts.end()) {
             ranked.emplace_back(file.file_path, count->second);
+        } else if (files_with_statements.find(file.file_path) == files_with_statements.end()) {
+            ranked.emplace_back(file.file_path, 0);
         }
     }
     std::stable_sort(ranked.begin(), ranked.end(),

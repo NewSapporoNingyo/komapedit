@@ -3339,6 +3339,7 @@ struct PreparedEdit {
     bool has_custom_identity_range = false;
     size_t identity_range_begin = 0;
     size_t identity_range_end = 0;
+    bool initial_empty_source_insert = false;
     bool moves_distance = false;
     double target_distance = 0.0;
     std::string suggested_distance_expression;
@@ -6052,6 +6053,12 @@ MapEditReport build_edit_report(MapContext& ctx,
     MapEditReport report;
     std::map<size_t, SourcePatch> patches;
     DistancePlanningIndex distance_index(ctx);
+    std::set<std::string> map_source_keys;
+    for (const FileStructureRecord& record : ctx.file_structure) {
+        if (!record.absolute_path.empty()) {
+            map_source_keys.insert(normalized_source_key(record.absolute_path));
+        }
+    }
 
     auto change_signature = [](const MapEditChange& change) {
         std::ostringstream out;
@@ -6242,6 +6249,36 @@ MapEditReport build_edit_report(MapContext& ctx,
                     double target_distance = 0.0;
                     if (!parse_edit_number(target_text, target_distance)) {
                         throw std::runtime_error("invalid numeric edit value: " + target_text);
+                    }
+                    const bool target_has_parsed_statement = std::any_of(
+                        ctx.parsed_statements.begin(), ctx.parsed_statements.end(),
+                        [&](const ParsedStatement& candidate) {
+                            return candidate.source.source_file_index == target_file_index;
+                        });
+                    if (!target_has_parsed_statement &&
+                        map_source_keys.find(file.source_key) != map_source_keys.end()) {
+                        PreparedEdit edit;
+                        edit.change = &change;
+                        edit.input_ordinal = input_ordinal;
+                        edit.operation = "insert";
+                        edit.target.statement_index = k_no_source_ref;
+                        edit.target.row_kind = change.row_kind;
+                        edit.target.element_index = 0;
+                        edit.target.elements_for_statement = 1;
+                        edit.source_file_index = target_file_index;
+                        edit.source_range = {target_patch.text.size(), target_patch.text.size()};
+                        edit.removal_range = {};
+                        edit.replacement_statement = change.replacement_statement.empty()
+                            ? build_insert_statement(change)
+                            : trim_field_copy(change.replacement_statement);
+                        if (edit.replacement_statement.empty()) {
+                            throw std::runtime_error("insert produced an empty statement");
+                        }
+                        edit.target_distance = target_distance;
+                        edit.initial_empty_source_insert = true;
+                        ++report.insert_count;
+                        prepared.push_back(std::move(edit));
+                        continue;
                     }
                     // The insert has no existing map element to anchor to. Pick
                     // only a parser-recognized numeric distance statement in the
@@ -6618,6 +6655,7 @@ MapEditReport build_edit_report(MapContext& ctx,
     };
 
     for (const PreparedEdit& edit : prepared) {
+        if (edit.initial_empty_source_insert) continue;
         if (edit.moves_distance && edit.operation != "insert") {
             add_source_replacement(edit.source_file_index,
                                    edit.removal_range.first,
@@ -6880,6 +6918,76 @@ MapEditReport build_edit_report(MapContext& ctx,
         insertion.end = offset;
         insertion.text = statement_insertion_text(
             patch.text, offset, insertion_body, *patch.record);
+        const size_t body_offset = insertion.text.find(insertion_body);
+        if (body_offset == std::string::npos) {
+            report.blocking_errors.push_back(
+                "failed to retain edit identity in a generated distance insertion");
+        } else {
+            for (TextReplacementIdentity& identity : insertion_identities) {
+                identity.relative_begin += body_offset;
+                identity.relative_end += body_offset;
+            }
+            insertion.identities = std::move(insertion_identities);
+        }
+        patch.replacements.push_back(std::move(insertion));
+    }
+
+    std::map<size_t, std::vector<const PreparedEdit*>> empty_source_inserts;
+    for (const PreparedEdit& edit : prepared) {
+        if (edit.initial_empty_source_insert) {
+            empty_source_inserts[edit.source_file_index].push_back(&edit);
+        }
+    }
+    for (auto& entry : empty_source_inserts) {
+        const size_t file_index = entry.first;
+        std::vector<const PreparedEdit*>& inserts = entry.second;
+        std::stable_sort(inserts.begin(), inserts.end(),
+                         [](const PreparedEdit* left, const PreparedEdit* right) {
+                             if (!exact_distance_value(left->target_distance,
+                                                       right->target_distance)) {
+                                 return left->target_distance < right->target_distance;
+                             }
+                             return left->input_ordinal < right->input_ordinal;
+                         });
+
+        SourcePatch& patch = patches[file_index];
+        const std::string nl = newline_text(patch.record->newline);
+        std::string insertion_body;
+        std::vector<TextReplacementIdentity> insertion_identities;
+        for (size_t distance_begin = 0; distance_begin < inserts.size();) {
+            size_t distance_end = distance_begin + 1;
+            while (distance_end < inserts.size() &&
+                   exact_distance_value(inserts[distance_begin]->target_distance,
+                                        inserts[distance_end]->target_distance)) {
+                ++distance_end;
+            }
+            if (!insertion_body.empty()) insertion_body += nl;
+            insertion_body += canonical_number(inserts[distance_begin]->target_distance) + ";";
+            ++report.created_distance_block_count;
+            for (size_t index = distance_begin; index < distance_end; ++index) {
+                const PreparedEdit& edit = *inserts[index];
+                insertion_body += nl;
+                const size_t statement_begin = insertion_body.size();
+                insertion_body += edit.replacement_statement;
+                const auto identity_range =
+                    source_identity_range(edit, edit.replacement_statement);
+                insertion_identities.push_back({
+                    edit.change->edit_id,
+                    edit.target.row_kind,
+                    statement_begin + identity_range.first,
+                    statement_begin + identity_range.second,
+                    edit.target.element_index,
+                    0,
+                });
+            }
+            distance_begin = distance_end;
+        }
+
+        TextReplacement insertion;
+        insertion.begin = patch.text.size();
+        insertion.end = patch.text.size();
+        insertion.text = statement_insertion_text(
+            patch.text, insertion.begin, insertion_body, *patch.record);
         const size_t body_offset = insertion.text.find(insertion_body);
         if (body_offset == std::string::npos) {
             report.blocking_errors.push_back(

@@ -4129,6 +4129,167 @@ void include_insert_contract() {
              header + "include 'child.txt';\r\n");
 }
 
+void empty_submap_insert_contract() {
+    auto read_text = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() /
+        ("komapedit-empty-submap-insert-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path map_path = directory / "map.txt";
+    const std::filesystem::path submap_path = directory / "submap.txt";
+    const std::string submap_before =
+        "BveTs Map 2.02:utf-8\r\n"
+        "// awaiting first element\r\n";
+    {
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\n"
+            << "include 'submap.txt';\r\n"
+            << "0;\r\n";
+    }
+    {
+        std::ofstream submap(submap_path, std::ios::binary | std::ios::trunc);
+        submap << submap_before;
+    }
+    const std::string disk_before = read_text(submap_path);
+    const std::string target_file = submap_path.u8string();
+    {
+        MapHandle handle(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                        KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "empty submap insert load");
+        if (handle.value) {
+            KvMapSnapshot baseline{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &baseline, sizeof(baseline)) != 0,
+                  "empty submap insert baseline snapshot");
+            std::uint64_t submap_source_index = baseline.source_file_count;
+            for (std::uint64_t index = 0; index < baseline.source_file_count; ++index) {
+                if (map_string(baseline, baseline.source_files[index].file_path) == target_file) {
+                    submap_source_index = index;
+                    break;
+                }
+            }
+            bool submap_has_statement = false;
+            for (std::uint64_t index = 0; index < baseline.statement_count; ++index) {
+                submap_has_statement = submap_has_statement ||
+                    baseline.statements[index].source.source_file_index == submap_source_index;
+            }
+            check(submap_source_index < baseline.source_file_count && !submap_has_statement,
+                  "header-only submap remains in source metadata without map statements");
+
+            const std::array<std::string, 3> ids = {
+                "empty-submap-200", "empty-submap-100-a", "empty-submap-100-b"};
+            const std::array<std::array<std::string, 4>, 3> values = {{
+                {{"cabIlluminance.change", "200", "Set", "0.2"}},
+                {{"cabIlluminance.change", "100", "Set", "0.1"}},
+                {{"cabIlluminance.change", "100", "Set", "0.3"}},
+            }};
+            const std::array<std::string, 4> field_names = {
+                "rowKind", "distance", "method", "value"};
+            std::vector<KvEditField> fields;
+            fields.reserve(ids.size() * field_names.size());
+            std::array<KvEditChange, 3> changes{};
+            for (size_t index = 0; index < changes.size(); ++index) {
+                const size_t field_offset = fields.size();
+                for (size_t field = 0; field < field_names.size(); ++field) {
+                    fields.push_back({utf8_view(field_names[field]),
+                                      utf8_view(values[index][field])});
+                }
+                changes[index].change_id = utf8_view(ids[index]);
+                changes[index].edit_id = utf8_view(ids[index]);
+                changes[index].operation = KV_EDIT_INSERT;
+                changes[index].target_file_path = utf8_view(target_file);
+                changes[index].fields = {
+                    field_offset, static_cast<std::uint64_t>(field_names.size())};
+            }
+            const KvEditBatch batch = {
+                changes.data(), static_cast<std::uint64_t>(changes.size()), fields.data(),
+                static_cast<std::uint64_t>(fields.size())};
+            KvEditReportSnapshot report{};
+            const bool applied = kv_edit_apply_to_memory_typed(
+                handle.value, &batch, &report, sizeof(report)) != 0;
+            check(applied && report.ok && report.insert_count == 3 &&
+                      report.created_distance_block_count == 2 && report.full_reparse_ok &&
+                      report.non_target_changed_count == 0,
+                  "empty submap first inserts group distances and fully reparse");
+            const char* source = applied
+                ? kv_get_source_text(handle.value, target_file.c_str()) : nullptr;
+            const std::string expected_source = submap_before +
+                "100;\r\n"
+                "CabIlluminance.Set(0.1);\r\n"
+                "CabIlluminance.Set(0.3);\r\n"
+                "200;\r\n"
+                "CabIlluminance.Set(0.2);\r\n";
+            check(source && std::string_view(source) == expected_source,
+                  "empty submap first inserts preserve comments and canonical distance ordering");
+            kv_free_string(source);
+
+            KvMapSnapshot applied_snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &applied_snapshot, sizeof(applied_snapshot)) != 0,
+                  "empty submap insert applied snapshot");
+            auto has_insert = [&](std::string_view id, double distance, double value) {
+                return std::any_of(
+                    applied_snapshot.cab_illuminance,
+                    applied_snapshot.cab_illuminance + applied_snapshot.cab_illuminance_count,
+                    [&](const KvCabIlluminanceRow& row) {
+                        return map_string(applied_snapshot, row.metadata.edit_id) == id &&
+                            map_string(applied_snapshot, row.file_path) == target_file &&
+                            nearly_equal(row.distance, distance) &&
+                            row.value.kind == KV_VALUE_NUMBER &&
+                            nearly_equal(row.value.number_value, value);
+                    });
+            };
+            check(applied_snapshot.cab_illuminance_count == 3 &&
+                      has_insert(ids[0], 200.0, 0.2) &&
+                      has_insert(ids[1], 100.0, 0.1) &&
+                      has_insert(ids[2], 100.0, 0.3),
+                  "empty submap inserts retain stable target identities");
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "empty submap insert reset");
+        }
+    }
+    check(read_text(submap_path) == disk_before,
+          "empty submap insert reset leaves disk unchanged");
+
+    const std::filesystem::path nonempty_map_path = directory / "nonempty-map.txt";
+    const std::filesystem::path nonempty_submap_path = directory / "nonempty-submap.txt";
+    {
+        std::ofstream map(nonempty_map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\n"
+            << "include 'nonempty-submap.txt';\r\n"
+            << "0;\r\n";
+    }
+    {
+        std::ofstream submap(nonempty_submap_path, std::ios::binary | std::ios::trunc);
+        submap << "BveTs Map 2.02:utf-8\r\n"
+               << "$already=1;\r\n";
+    }
+    {
+        MapHandle handle(kv_load_map_ex(nonempty_map_path.u8string().c_str(), 25.0,
+                                        KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "nonempty submap insert load");
+        if (handle.value) {
+            SimpleInsertBatch insert(
+                nonempty_submap_path.u8string(), "nonempty-submap-no-anchor",
+                {{"rowKind", "cabIlluminance.change"}, {"distance", "100"},
+                 {"method", "Set"}, {"value", "0.1"}});
+            KvEditReportSnapshot report{};
+            const bool ran = kv_edit_dry_run_typed(
+                handle.value, &insert.batch, &report, sizeof(report)) != 0;
+            check(ran && !report.ok && edit_report_has_error_containing(
+                      report, "insert target file contains no numeric distance statements"),
+                  "nonempty submap without a numeric distance keeps the existing rejection");
+        }
+    }
+    std::error_code cleanup;
+    std::filesystem::remove_all(directory, cleanup);
+}
+
 void include_insert_repeated_source_contract() {
     const std::filesystem::path directory =
         std::filesystem::temp_directory_path() /
@@ -4889,6 +5050,7 @@ void include_replace_variable_dependency_blocks_contract() {
 
 int edit_contract() {
     include_insert_contract();
+    empty_submap_insert_contract();
     include_insert_repeated_source_contract();
     include_delete_contract();
     include_diamond_delete_contract();
