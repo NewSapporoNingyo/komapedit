@@ -165,17 +165,34 @@ void rebuild_file_structure_layout(const MapModel& model,
 
 } // namespace
 
-void open_parent_directory_in_explorer(const std::string& file_path) {
+void open_parent_directory_in_explorer(const std::string& file_path,
+                                       std::string* error) {
+    if (error) error->clear();
     if (blank_ascii(file_path)) return;
+    const auto set_error = [error](std::string message) {
+        if (error) *error = std::move(message);
+    };
     try {
         std::filesystem::path path = utf8_to_wide(file_path);
         std::error_code ec;
         std::filesystem::path absolute = std::filesystem::absolute(path, ec);
-        if (!ec) path = absolute;
+        if (ec) {
+            set_error("Unable to resolve parent directory: " + file_path);
+            return;
+        }
+        path = absolute;
         std::filesystem::path directory = path.parent_path();
-        if (directory.empty()) return;
-        ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        if (directory.empty() || !std::filesystem::is_directory(directory, ec) || ec) {
+            set_error("Specified file and directory do not exist: " + file_path);
+            return;
+        }
+        const INT_PTR result = reinterpret_cast<INT_PTR>(
+            ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+        if (result <= 32) {
+            set_error("Unable to open parent directory: " + file_path);
+        }
     } catch (...) {
+        set_error("Unable to resolve parent directory: " + file_path);
     }
 }
 
@@ -226,12 +243,14 @@ void App::render_source_file_context_menu(const char* popup_id,
                                           const std::string& file_path,
                                           const std::string& include_edit_id,
                                           const std::string& parent_file_path,
-                                          const std::string& include_path) {
+                                          const std::string& include_path,
+                                          bool file_is_valid) {
     touch_input::open_popup_on_last_item_long_press(popup_id);
     if (!ImGui::BeginPopupContextItem(popup_id, ImGuiPopupFlags_MouseButtonRight)) return;
 
     const bool can_open = !blank_ascii(file_path);
-    const bool can_preview = can_open && is_supported_text_preview_file(file_path);
+    const bool can_preview = file_is_valid && can_open &&
+        is_supported_text_preview_file(file_path);
     ImGui::BeginDisabled(!can_preview);
     if (ImGui::MenuItem(tr("menu.preview_text").c_str())) {
         open_text_preview(file_path, true);
@@ -239,7 +258,11 @@ void App::render_source_file_context_menu(const char* popup_id,
     ImGui::EndDisabled();
     ImGui::BeginDisabled(!can_open);
     if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
-        open_parent_directory_in_explorer(file_path);
+        std::string error;
+        open_parent_directory_in_explorer(file_path, &error);
+        if (!error.empty()) {
+            add_log(LogSeverity::Error, std::move(error));
+        }
     }
     ImGui::EndDisabled();
     ImGui::Separator();
@@ -258,7 +281,7 @@ void App::render_source_file_context_menu(const char* popup_id,
     }
     ImGui::EndDisabled();
     ImGui::Separator();
-    const bool include_insert_available = edit_actions_available() &&
+    const bool include_insert_available = file_is_valid && edit_actions_available() &&
         find_model_source_file(model_, file_path) != nullptr;
     ImGui::BeginDisabled(!include_insert_available);
     if (ImGui::MenuItem(tr("menu.import_submap").c_str())) {
@@ -361,13 +384,20 @@ void App::render_file_structure_window() {
                     : std::string{};
             render_source_file_context_menu(
                 "file_structure_node_context", node.absolute_path,
-                i < include_edit_ids.size() ? include_edit_ids[i]
-                                            : std::string{},
-                parent_file_path, node.include_path);
+                 i < include_edit_ids.size() ? include_edit_ids[i]
+                                             : std::string{},
+                 parent_file_path, node.include_path, node.is_valid);
 
-            ImU32 fill_color = ImGui::GetColorU32(ImGuiCol_Button);
-            if (active) fill_color = ImGui::GetColorU32(ImGuiCol_ButtonActive);
-            else if (hovered) fill_color = ImGui::GetColorU32(ImGuiCol_ButtonHovered);
+            ImU32 fill_color;
+            if (!node.is_valid) {
+                fill_color = ImGui::GetColorU32(
+                    active || hovered ? log_severity_color(LogSeverity::Error)
+                                      : darkened_theme_color(log_severity_color(LogSeverity::Error)));
+            } else {
+                fill_color = ImGui::GetColorU32(ImGuiCol_Button);
+                if (active) fill_color = ImGui::GetColorU32(ImGuiCol_ButtonActive);
+                else if (hovered) fill_color = ImGui::GetColorU32(ImGuiCol_ButtonHovered);
+            }
             draw_list->AddRectFilled(node_min, node_max, fill_color, style.FrameRounding);
             draw_list->AddRect(node_min, node_max, ImGui::GetColorU32(ImGuiCol_Border),
                                style.FrameRounding, 0, std::max(1.0f, style.FrameBorderSize));

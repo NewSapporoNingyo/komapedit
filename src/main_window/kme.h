@@ -208,7 +208,8 @@ inline ImVec4 clamp_theme_color(ImVec4 color) {
 }
 std::string theme_color_to_string(const ImVec4& color);
 std::string display_name_from_path(const std::string& path);
-void open_parent_directory_in_explorer(const std::string& file_path);
+void open_parent_directory_in_explorer(const std::string& file_path,
+                                       std::string* error = nullptr);
 
 struct Matrix {
     std::vector<double> data;
@@ -320,6 +321,7 @@ struct FileStructureNode {
     std::string include_path;
     std::string absolute_path;
     std::string display_name;
+    bool is_valid = true;
 };
 
 struct FileStructureDiagramGroupLayout {
@@ -2381,7 +2383,8 @@ private:
                                          const std::string& file_path,
                                          const std::string& include_edit_id = {},
                                          const std::string& parent_file_path = {},
-                                         const std::string& include_path = {});
+                                         const std::string& include_path = {},
+                                         bool file_is_valid = true);
     const std::vector<std::string>& file_structure_include_edit_ids();
     static bool is_supported_text_preview_file(const std::string& file_path);
     void open_text_preview(const std::string& file_path,

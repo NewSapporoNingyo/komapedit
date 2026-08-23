@@ -5897,14 +5897,71 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
     check(diagnostics_contain("Unknown SignalAspectKey"),
           "unknown signal aspect key warning");
 
+    TempFixture skipped_includes;
+    {
+        std::ofstream invalid_child(skipped_includes.directory / "invalid-include.txt",
+                                    std::ios::binary | std::ios::trunc);
+        invalid_child << "This is not a BVE map.\n0;\n";
+        std::ofstream map(skipped_includes.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "Include 'missing-include.txt';\n"
+            << "Include 'invalid-include.txt';\n"
+            << "0;\n"
+            << "SpeedLimit.Begin(80);\n";
+    }
+    clear_diagnostics();
+    MapHandle skipped_include_handle(kv_load_map_ex(
+        skipped_includes.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(skipped_include_handle.value != nullptr,
+          "missing and invalid Includes do not reject the entry map");
+    check(diagnostics_contain("[WARN]"), "skipped Includes use warning severity");
+    check(!diagnostics_contain("[ERROR]"), "skipped Includes do not use error severity");
+    check(diagnostics_contain("Include load skipped: missing-include.txt"),
+          "missing Include warning identifies the skipped reference");
+    check(diagnostics_contain("Include load skipped: invalid-include.txt"),
+          "invalid Include warning identifies the skipped reference");
+    if (skipped_include_handle.value) {
+        KvMapSnapshot snapshot{};
+        check(kv_get_map_snapshot(skipped_include_handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &snapshot, sizeof(snapshot)) != 0,
+              "skipped Include snapshot");
+        check(snapshot.speed_limit_count == 1,
+              "valid statement after skipped Includes reaches IR");
+        check(snapshot.file_structure_count == 3,
+              "file structure retains skipped Include nodes");
+        check(snapshot.source_file_count == 1,
+              "skipped Include files are not loaded source files");
+        std::uint64_t skipped_node_count = 0;
+        for (std::uint64_t i = 0; i < snapshot.file_structure_count; ++i) {
+            const KvFileStructureRow& node = snapshot.file_structure[i];
+            const std::string include_path = map_string(snapshot, node.include_path);
+            if (include_path != "missing-include.txt" &&
+                include_path != "invalid-include.txt") {
+                continue;
+            }
+            ++skipped_node_count;
+            const std::string node_path = map_string(snapshot, node.absolute_path);
+            bool source_file_found = false;
+            for (std::uint64_t source_index = 0;
+                 source_index < snapshot.source_file_count; ++source_index) {
+                source_file_found = source_file_found ||
+                    map_string(snapshot, snapshot.source_files[source_index].file_path) ==
+                        node_path;
+            }
+            check(!source_file_found,
+                  "skipped Include node is absent from loaded source files");
+        }
+        check(skipped_node_count == 2,
+              "file structure retains both skipped Include nodes");
+    }
+
     struct FatalCase {
         const char* file;
         const char* error_text;
     };
-    const std::array<FatalCase, 3> fatal_cases{{
+    const std::array<FatalCase, 1> fatal_cases{{
         {"map_error_invalid_header.txt", "Invalid file header"},
-        {"map_error_missing_include.txt", "Include load failed"},
-        {"map_error_invalid_include.txt", "Include load failed"},
     }};
     for (const FatalCase& fatal : fatal_cases) {
         clear_diagnostics();

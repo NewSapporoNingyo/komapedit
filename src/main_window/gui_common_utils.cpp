@@ -401,6 +401,7 @@ std::uint64_t file_structure_revision(const std::vector<FileStructureNode>& node
         hash.byte(0xff);
         hash.bytes(node.absolute_path);
         hash.byte(0xff);
+        hash.byte(node.is_valid ? 1 : 0);
     }
     return hash.value;
 }

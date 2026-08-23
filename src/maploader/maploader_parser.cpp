@@ -77,6 +77,7 @@ private:
     struct IncludeResult {
         MapContext context;
         std::string error;
+        bool fatal = false;
     };
 
     struct PendingInclude {
@@ -85,6 +86,7 @@ private:
         std::string include_invocation_key;
         double seed_distance = 0.0;
         std::unordered_map<std::string, Value> seed_variables;
+        MapDiagnostic source;
         std::future<IncludeResult> future;
     };
 
@@ -417,9 +419,11 @@ private:
     static IncludeResult parse_include_context(MapContext seed, std::filesystem::path child) {
         IncludeResult result;
         result.context = std::move(seed);
+        bool child_header_loaded = false;
         try {
             ActiveTimingScope active(result.context.timing);
             LoadedText loaded = load_header_text(result.context, child, "BveTs Map ", 2.0);
+            child_header_loaded = true;
             register_source_file(result.context, loaded);
             result.context.current_file_path = loaded.normalized_path;
             if (!result.context.file_structure.empty()) {
@@ -427,8 +431,15 @@ private:
             }
             Parser nested(result.context, std::move(loaded));
             nested.parse();
+        } catch (const FatalParseError& e) {
+            result.error = e.what();
+            result.fatal = true;
+        } catch (const std::bad_alloc&) {
+            result.error = "out of memory while loading Include";
+            result.fatal = true;
         } catch (const std::exception& e) {
             result.error = e.what();
+            result.fatal = child_header_loaded;
         }
         return result;
     }
@@ -464,6 +475,7 @@ private:
         pending.include_invocation_key = std::move(include_invocation_key);
         pending.seed_distance = seed.distance;
         pending.seed_variables = seed.variables;
+        pending.source = diagnostic_source(body_start, "Include");
         pending.future = launch_bounded_maploader_task(
             [seed = std::move(seed), child]() mutable {
                 return parse_include_context(std::move(seed), child);
@@ -720,44 +732,40 @@ private:
     void flush_pending_includes() {
         if (pending_includes_.empty()) return;
 
-        std::string first_error;
+        std::string first_fatal_error;
         for (auto& pending : pending_includes_) {
             IncludeResult result;
             try {
                 result = pending.future.get();
             } catch (const std::exception& e) {
                 result.error = e.what();
+                result.fatal = true;
             }
-            if (!result.error.empty()) {
-                if (include_result_is_stale(pending, result.context)) {
-                    result = parse_include_context(
-                        make_child_seed(pending.path, pending.include_path,
-                                        pending.include_invocation_key), pending.path);
-                }
-                if (!result.error.empty()) {
-                    for (auto& diagnostic : result.context.diagnostics) {
-                        ctx_.diagnostics.push_back(std::move(diagnostic));
-                    }
-                    if (first_error.empty()) first_error = result.error;
-                    continue;
-                }
-            } else if (include_result_is_stale(pending, result.context)) {
+            if (include_result_is_stale(pending, result.context)) {
                 result = parse_include_context(
                     make_child_seed(pending.path, pending.include_path,
                                     pending.include_invocation_key), pending.path);
-                if (!result.error.empty()) {
-                    for (auto& diagnostic : result.context.diagnostics) {
-                        ctx_.diagnostics.push_back(std::move(diagnostic));
-                    }
-                    if (first_error.empty()) first_error = result.error;
+            }
+            if (!result.error.empty()) {
+                for (auto& diagnostic : result.context.diagnostics) {
+                    ctx_.diagnostics.push_back(std::move(diagnostic));
+                }
+                if (result.fatal) {
+                    if (first_fatal_error.empty()) first_fatal_error = result.error;
                     continue;
                 }
+                merge_file_structure(result.context);
+                MapDiagnostic diagnostic = pending.source;
+                diagnostic.message = "Include load skipped: " + pending.include_path + ": " +
+                    result.error;
+                ctx_.diagnostics.push_back(std::move(diagnostic));
+                continue;
             }
             merge_include_context(result.context);
         }
         pending_includes_.clear();
-        if (!first_error.empty()) {
-            throw FatalParseError("Include load failed: " + first_error);
+        if (!first_fatal_error.empty()) {
+            throw FatalParseError("Include load failed: " + first_fatal_error);
         }
     }
 

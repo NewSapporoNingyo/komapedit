@@ -598,8 +598,6 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         root.display_name = display_name_from_path(path);
         model.file_structure.push_back(std::move(root));
     }
-    model.file_structure_revision = file_structure_revision(model.file_structure);
-
     model.edit_files.reserve(static_cast<size_t>(snapshot.source_file_count));
     for (std::uint64_t i = 0; i < snapshot.source_file_count; ++i) {
         const KvSourceFileRow& input = snapshot.source_files[i];
@@ -612,6 +610,18 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         file.byte_length = static_cast<size_t>(input.byte_length);
         model.edit_files.push_back(std::move(file));
     }
+    std::set<std::string> loaded_file_paths;
+    for (const EditSourceFileInfo& file : model.edit_files) {
+        loaded_file_paths.insert(file.file_path);
+    }
+    for (FileStructureNode& node : model.file_structure) {
+        if (node.parent_index != k_no_file_structure_parent) {
+            node.is_valid = loaded_file_paths.find(node.absolute_path) !=
+                loaded_file_paths.end();
+        }
+    }
+    model.file_structure_revision = file_structure_revision(model.file_structure);
+
     model.edit_statements.reserve(static_cast<size_t>(snapshot.statement_count));
     for (std::uint64_t i = 0; i < snapshot.statement_count; ++i) {
         const KvStatementRow& input = snapshot.statements[i];
