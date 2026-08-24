@@ -390,7 +390,9 @@ void App::process_pending_new_file_create() {
         set_program_status("status.new_file.invalid_path");
         return;
     }
-    const std::filesystem::path path = directory / std::filesystem::path(utf8_to_wide(request.file_name));
+    std::filesystem::path file_name(utf8_to_wide(request.file_name));
+    file_name += request.use_csv_extension ? L".csv" : L".txt";
+    const std::filesystem::path path = directory / file_name;
     if (std::filesystem::exists(path, ec) || ec) {
         add_log("[warn]gui_kme.cpp: new BVE file already exists: " + wide_to_utf8(path.wstring()));
         set_program_status("status.new_file.create_failed");
@@ -430,6 +432,17 @@ void App::process_pending_new_file_create() {
         return;
     }
     new_file_wizard_.open = false;
+    if (request.load_after_create && request.kind == NewFileKind::Map) {
+        if (has_model_ && has_unsaved_edit_state()) {
+            pending_new_file_load_path_ = selected_file;
+            pending_reload_action_ = PendingReloadAction::NewFile;
+            popups_.reload_unsaved_confirm = true;
+            wake_main_window();
+            return;
+        }
+        begin_load(selected_file, false, true);
+        return;
+    }
     if (request.target_file_path.empty()) set_program_status("status.new_file.created");
 }
 

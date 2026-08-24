@@ -1925,13 +1925,27 @@ void App::render_new_file_wizard() {
 
     ImGui::SameLine();
     ImGui::BeginChild("##NewFileForm", ImVec2(-1.0f, -ImGui::GetFrameHeightWithSpacing()), true);
+    const NewFileTemplate& tpl =
+        k_new_file_templates[static_cast<size_t>(wizard.selected_template)];
+    const ImGuiStyle& style = ImGui::GetStyle();
     ImGui::TextUnformatted(tr("label.new_file_name").c_str());
-    ImGui::SetNextItemWidth(-1.0f);
+    const float extension_control_width = ImGui::GetFrameHeight() * 2.0f +
+        ImGui::CalcTextSize(".txt").x + ImGui::CalcTextSize(".csv").x +
+        style.ItemSpacing.x * 2.0f + style.ItemInnerSpacing.x * 2.0f;
+    ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x -
+                                     extension_control_width));
     ImGui::InputText("##NewFileName", &wizard.file_name);
+    ImGui::SameLine();
+    if (ImGui::RadioButton(".txt##NewFileTextExtension", !wizard.use_csv_extension)) {
+        wizard.use_csv_extension = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(".csv##NewFileCsvExtension", wizard.use_csv_extension)) {
+        wizard.use_csv_extension = true;
+    }
 
     ImGui::TextUnformatted(tr("label.new_file_directory").c_str());
     const std::string select_directory = tr("button.select_directory");
-    const ImGuiStyle& style = ImGui::GetStyle();
     const float select_directory_width = ImGui::CalcTextSize(select_directory.c_str()).x +
         style.FramePadding.x * 2.0f;
     ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x -
@@ -1966,14 +1980,24 @@ void App::render_new_file_wizard() {
         ImGui::TextWrapped("%s", tr("status.new_file.reference_requires_edit").c_str());
     }
     ImGui::Separator();
-    ImGui::BeginDisabled(reference_requested && !edit_actions_available());
+    const bool create_disabled = reference_requested && !edit_actions_available();
+    ImGui::BeginDisabled(create_disabled);
     if (ImGui::Button(tr("button.confirm").c_str())) {
-        const NewFileTemplate& tpl =
-            k_new_file_templates[static_cast<size_t>(wizard.selected_template)];
         request_new_file_create(NewFileCreateRequest{
-            tpl.kind, wizard.file_name, wizard.directory, wizard.target_file_path});
+            tpl.kind, wizard.file_name, wizard.directory, wizard.target_file_path,
+            wizard.use_csv_extension});
     }
     ImGui::EndDisabled();
+    if (tpl.kind == NewFileKind::Map) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(create_disabled || load_state_.running);
+        if (ImGui::Button(tr("button.confirm_and_load").c_str())) {
+            request_new_file_create(NewFileCreateRequest{
+                tpl.kind, wizard.file_name, wizard.directory, wizard.target_file_path,
+                wizard.use_csv_extension, true});
+        }
+        ImGui::EndDisabled();
+    }
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) wizard.open = false;
     ImGui::EndChild();

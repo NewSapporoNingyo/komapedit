@@ -511,10 +511,14 @@ bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
 void App::execute_pending_reload_action() {
     PendingReloadAction action = pending_reload_action_;
     pending_reload_action_ = PendingReloadAction::None;
+    std::string new_file_path = std::move(pending_new_file_load_path_);
+    pending_new_file_load_path_.clear();
     if (action == PendingReloadAction::MapAndModelPreview) {
         perform_reload_current_map_and_model_preview();
     } else if (action == PendingReloadAction::GeometryOnly) {
         perform_reload_current_map_geometry();
+    } else if (action == PendingReloadAction::NewFile) {
+        begin_load(std::move(new_file_path), false, true);
     }
 }
 

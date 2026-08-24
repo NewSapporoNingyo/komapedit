@@ -1417,6 +1417,7 @@ enum class NewFileKind : std::uint8_t {
 struct NewFileWizardState {
     bool open = false;
     int selected_template = 0;
+    bool use_csv_extension = false;
     bool target_candidates_built = false;
     std::vector<std::string> target_file_candidates;
     std::string target_file_path;
@@ -1429,6 +1430,8 @@ struct NewFileCreateRequest {
     std::string file_name;
     std::string directory;
     std::string target_file_path;
+    bool use_csv_extension = false;
+    bool load_after_create = false;
 };
 
 enum class RepeaterDeleteMode {
@@ -2014,11 +2017,12 @@ private:
         bool edit_mode_warning = false;
         bool resource_list_file_change_confirm = false;
     };
-    enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
+    enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly, NewFile };
     enum class PendingCloseAction { None, DisableEditMode, ExitApplication };
     PopupState popups_;
     ScenarioRoutePickState scenario_route_pick_;
     PendingReloadAction pending_reload_action_ = PendingReloadAction::None;
+    std::string pending_new_file_load_path_;
     PendingCloseAction pending_close_action_ = PendingCloseAction::None;
     bool has_saved_layout_ = false;
     bool initial_dockspace_done_ = false;

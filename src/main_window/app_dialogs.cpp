@@ -9,6 +9,10 @@
 #pragma execution_character_set("utf-8")
 #endif
 
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+
 #include "kme.h"
 #include "app_settings.h"
 #include "debug_headless.h"
@@ -36,7 +40,7 @@
 #include <commdlg.h>
 #include <d3d11.h>
 #include <shellapi.h>
-#include <shlobj.h>
+#include <shobjidl.h>
 #include <wincodec.h>
 
 #include <algorithm>
@@ -283,17 +287,33 @@ bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
 }
 
 std::string App::choose_folder_dialog(const char* title_key) {
-    BROWSEINFOW bi = {};
+    IFileOpenDialog* dialog = nullptr;
+    HRESULT hr = CoCreateInstance(
+        CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
+        reinterpret_cast<void**>(&dialog));
+    if (FAILED(hr) || !dialog) return {};
+
+    FILEOPENDIALOGOPTIONS options = {};
+    hr = dialog->GetOptions(&options);
+    if (SUCCEEDED(hr)) {
+        hr = dialog->SetOptions(static_cast<FILEOPENDIALOGOPTIONS>(
+            options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST));
+    }
     const std::wstring title = utf8_to_wide(tr(title_key));
-    bi.lpszTitle = title.c_str();
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
-    if (!pidl) return {};
-    wchar_t path[MAX_PATH] = {};
-    const BOOL resolved = SHGetPathFromIDListW(pidl, path);
-    CoTaskMemFree(pidl);
-    if (!resolved) return {};
-    return wide_to_utf8(path);
+    if (SUCCEEDED(hr)) hr = dialog->SetTitle(title.c_str());
+    if (SUCCEEDED(hr)) hr = dialog->Show(nullptr);
+
+    IShellItem* item = nullptr;
+    if (SUCCEEDED(hr)) hr = dialog->GetResult(&item);
+    PWSTR path = nullptr;
+    if (SUCCEEDED(hr) && item) hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+
+    std::string selected;
+    if (SUCCEEDED(hr) && path) selected = wide_to_utf8(path);
+    if (path) CoTaskMemFree(path);
+    if (item) item->Release();
+    dialog->Release();
+    return selected;
 }
 
 void App::render_popups() {
@@ -1116,6 +1136,7 @@ void App::render_popups() {
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
             pending_reload_action_ = PendingReloadAction::None;
+            pending_new_file_load_path_.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
