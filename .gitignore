@@ -13,3 +13,4 @@ pi-agent-here(local).bat
 /.codex
 /.agents/memories/rollout-summaries/
 
+/testmap
