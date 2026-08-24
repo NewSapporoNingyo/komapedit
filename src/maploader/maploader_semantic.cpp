@@ -786,7 +786,8 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
     } else if (target.row_kind == "signal.aspect") {
         for (const auto& input : change.field_changes) {
             if (input.first == "signalAspectKey" ||
-                input.first == "deleteGlare") {
+                input.first == "deleteGlare" ||
+                input.first == "addGlare") {
                 continue;
             }
             size_t key_index = 0;
@@ -1456,6 +1457,71 @@ std::string insert_semantic_container(const std::string& row_kind) {
     throw std::runtime_error("unsupported semantic insert container: " + row_kind);
 }
 
+bool is_resource_list_content_insert_kind(const std::string& row_kind) {
+    return row_kind == "station.list" ||
+        row_kind == "structure.model" ||
+        row_kind == "signal.aspect" ||
+        row_kind == "sound.list" ||
+        row_kind == "sound3D.list";
+}
+
+std::vector<std::string> resource_list_insert_fields(
+    const MapEditChange& change) {
+    const std::string statement = build_insert_statement(change);
+    const size_t line_end = statement.find_first_of("\r\n");
+    return parse_comma_separated_fields(
+        statement.substr(0, line_end), true);
+}
+
+std::string expected_resource_list_content_insert_semantic(
+    const SourceFileRecord& target,
+    const MapEditChange& change) {
+    SemanticWriter out;
+    if (change.row_kind == "signal.aspect") {
+        begin_element(out, target.file_path, "signal.aspects");
+        write_signal_aspect_values(
+            out, parse_signal_aspect_source_values(build_insert_statement(change)));
+        return out.take();
+    }
+
+    const std::vector<std::string> fields = resource_list_insert_fields(change);
+    if (change.row_kind == "structure.model") {
+        if (fields.size() != k_structure_list_field_names.size()) {
+            throw std::runtime_error("Structure List insert has an invalid field count");
+        }
+        begin_element(out, target.file_path, "structure.models");
+        field(out, "structureKey", fields[0]);
+        field(out, "filePath", fields[1]);
+        return out.take();
+    }
+    if (change.row_kind == "sound.list" || change.row_kind == "sound3D.list") {
+        if (fields.size() != k_sound_list_field_names.size()) {
+            throw std::runtime_error("Sound List insert has an invalid field count");
+        }
+        begin_element(out, target.file_path, "soundList");
+        field(out, "soundKey", fields[0]);
+        field(out, "filePath", fields[1]);
+        field(out, "bufferCount", static_cast<std::int64_t>(
+            parse_sound_buffer_count(fields[2])));
+        field(out, "is3D", change.row_kind == "sound3D.list");
+        return out.take();
+    }
+    if (change.row_kind == "station.list") {
+        if (fields.size() != k_station_list_field_names.size()) {
+            throw std::runtime_error("Station List insert has an invalid field count");
+        }
+        begin_element(out, target.file_path,
+                      "station.list." + ascii_lower(fields[0]));
+        for (const std::string& field_value : fields) {
+            out.label("field");
+            out.string(field_value);
+        }
+        return out.take();
+    }
+    throw std::runtime_error(
+        "unsupported resource-list semantic insert target: " + change.row_kind);
+}
+
 std::string expected_insert_semantic(MapContext& ctx,
                                      const MapEditChange& change) {
     validate_insert_change(change);
@@ -1465,6 +1531,9 @@ std::string expected_insert_semantic(MapContext& ctx,
             "insert target file is not part of the map: " + change.target_file_path);
     }
     const SourceFileRecord& target = ctx.source_files[target_index];
+    if (is_resource_list_content_insert_kind(change.row_kind)) {
+        return expected_resource_list_content_insert_semantic(target, change);
+    }
 
     // The write_* helpers only consult the snapshot for fallback values and the
     // row file path. The wizard supplies every editable field, so a minimal

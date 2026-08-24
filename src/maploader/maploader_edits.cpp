@@ -52,6 +52,8 @@ struct EditableTarget {
     int elements_for_statement = 0;
 };
 
+EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id);
+
 struct ResourceListEditSpec {
     ResourceListLoadKind kind;
     const char* header;
@@ -96,6 +98,38 @@ const ResourceListEditSpec* resource_list_edit_spec_for_statement(
     if (kind == "sound.load") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound);
     if (kind == "sound3d.load") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound3D);
     return nullptr;
+}
+
+const ResourceListEditSpec* resource_list_edit_spec_for_content_row_kind(
+    std::string_view row_kind) {
+    if (row_kind == "station.list") {
+        return resource_list_edit_spec_for_kind(ResourceListLoadKind::Station);
+    }
+    if (row_kind == "structure.model") {
+        return resource_list_edit_spec_for_kind(ResourceListLoadKind::Structure);
+    }
+    if (row_kind == "signal.aspect") {
+        return resource_list_edit_spec_for_kind(ResourceListLoadKind::Signal);
+    }
+    if (row_kind == "sound.list") {
+        return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound);
+    }
+    if (row_kind == "sound3D.list") {
+        return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound3D);
+    }
+    return nullptr;
+}
+
+std::string_view resource_list_content_statement_kind(
+    ResourceListLoadKind kind) {
+    switch (kind) {
+    case ResourceListLoadKind::Station: return "StationList.Row";
+    case ResourceListLoadKind::Structure: return "StructureList.Row";
+    case ResourceListLoadKind::Signal: return "SignalAspectList.Row";
+    case ResourceListLoadKind::Sound: return "SoundList.Row";
+    case ResourceListLoadKind::Sound3D: return "Sound3DList.Row";
+    }
+    return {};
 }
 
 const ResourceListLoad* resource_list_load_for_kind(
@@ -876,9 +910,35 @@ std::string build_station_list_statement(const MapEditChange& change,
         });
 }
 
+std::optional<size_t> signal_aspect_add_glare_count(
+    const MapEditChange& change) {
+    const auto input = change.field_changes.find("addGlare");
+    if (input == change.field_changes.end()) return std::nullopt;
+    const std::string text = trim_field_copy(input->second);
+    if (text.empty()) {
+        throw std::runtime_error("Signal aspect addGlare field is empty");
+    }
+    size_t count = 0;
+    for (const char ch : text) {
+        if (ch < '0' || ch > '9' ||
+            count > (std::numeric_limits<size_t>::max() -
+                     static_cast<size_t>(ch - '0')) / 10) {
+            throw std::runtime_error(
+                "Signal aspect addGlare field must be a positive integer");
+        }
+        count = count * 10 + static_cast<size_t>(ch - '0');
+    }
+    if (count == 0) {
+        throw std::runtime_error(
+            "Signal aspect addGlare field must be a positive integer");
+    }
+    return count;
+}
+
 std::string build_signal_aspect_statement(
     const MapEditChange& change,
-    const ParsedStatement& statement) {
+    const ParsedStatement& statement,
+    std::string_view inserted_newline) {
     const std::string& source_text = change.replacement_statement.empty()
         ? statement.raw_arguments
         : change.replacement_statement;
@@ -894,11 +954,19 @@ std::string build_signal_aspect_statement(
         }
         delete_glare = true;
     }
+    const std::optional<size_t> add_glare_count =
+        signal_aspect_add_glare_count(change);
+    if (delete_glare && add_glare_count) {
+        throw std::runtime_error(
+            "Signal aspect cannot add and delete glare in one edit");
+    }
 
     std::ostringstream out;
     size_t pos = 0;
     size_t structure_index = 0;
+    size_t main_structure_count = 0;
     bool has_main_row = false;
+    bool has_secondary_row = false;
     while (pos <= source_text.size()) {
         const TextLineSpan source_line = text_line_span(source_text, pos);
         const size_t content_end = source_line.content_end;
@@ -926,6 +994,8 @@ std::string build_signal_aspect_statement(
                 } else if (!semantic_fields[0].empty()) {
                     throw std::runtime_error(
                         "Signal aspect source block contains multiple main rows");
+                } else {
+                    has_secondary_row = true;
                 }
 
                 if (delete_glare && !main_row) {
@@ -981,6 +1051,7 @@ std::string build_signal_aspect_statement(
                         }
                     }
                     out << source.comment_suffix;
+                    if (main_row) main_structure_count = structure_index;
                 }
             }
         }
@@ -993,14 +1064,45 @@ std::string build_signal_aspect_statement(
         pos = source_line.next_begin;
     }
 
+    const size_t source_structure_count = structure_index;
     if (!has_main_row ||
-        structure_index != source_values.structure_keys.size()) {
+        source_structure_count != source_values.structure_keys.size()) {
         throw std::runtime_error(
             "Signal aspect source block field mapping is inconsistent");
     }
+    std::vector<std::string> added_glare_values;
+    if (add_glare_count) {
+        if (has_secondary_row) {
+            throw std::runtime_error(
+                "Signal aspect already has a glare row");
+        }
+        if (main_structure_count == 0 ||
+            *add_glare_count != main_structure_count) {
+            throw std::runtime_error(
+                "Signal aspect glare must use the main row structure-key count");
+        }
+        added_glare_values.reserve(*add_glare_count);
+        for (size_t index = 0; index < *add_glare_count; ++index) {
+            const std::string field_name = signal_aspect_structure_key_field_name(
+                source_structure_count + index);
+            const auto value = change.field_changes.find(field_name);
+            if (value == change.field_changes.end()) {
+                throw std::runtime_error(
+                    "Signal aspect addGlare is missing field: " + field_name);
+            }
+            added_glare_values.push_back(normalized_signal_aspect_edit_value(
+                value->second, field_name, false));
+        }
+        if (std::none_of(added_glare_values.begin(), added_glare_values.end(),
+                         [](const std::string& value) { return !value.empty(); })) {
+            throw std::runtime_error(
+                "Signal aspect glare requires at least one structure key");
+        }
+    }
     for (const auto& field : change.field_changes) {
         if (field.first == "signalAspectKey" ||
-            field.first == "deleteGlare") {
+            field.first == "deleteGlare" ||
+            field.first == "addGlare") {
             continue;
         }
         size_t key_index = 0;
@@ -1009,10 +1111,16 @@ std::string build_signal_aspect_statement(
             throw std::runtime_error(
                 "unsupported Signal aspect edit field: " + field.first);
         }
-        if (key_index >= structure_index) {
+        if (key_index >= source_structure_count + added_glare_values.size()) {
             throw std::runtime_error(
                 "Signal aspect edit cannot add a structure-key column: " +
                 field.first);
+        }
+    }
+    if (!added_glare_values.empty()) {
+        out << (inserted_newline.empty() ? std::string_view("\n") : inserted_newline);
+        for (size_t index = 0; index < added_glare_values.size(); ++index) {
+            out << "," << csv_field(added_glare_values[index]);
         }
     }
     return out.str();
@@ -1774,6 +1882,12 @@ struct ReferenceInsertionPlan {
     size_t identity_end = 0;
 };
 
+struct ResourceListContentInsertionPlan {
+    size_t offset = 0;
+    size_t anchor_statement_index = k_no_source_ref;
+    std::string indent;
+};
+
 bool line_tail_starts_comment(const std::string& text, size_t offset, size_t end) {
     if (offset >= end) return false;
     return text[offset] == '#' ||
@@ -1869,6 +1983,91 @@ ReferenceInsertionPlan plan_reference_insertion(const MapContext& ctx,
     }
 
     finish(patch.text.size(), {}, k_no_source_ref);
+    return plan;
+}
+
+ResourceListContentInsertionPlan plan_resource_list_content_insertion(
+    MapContext& ctx,
+    const MapEditChange& change,
+    const ResourceListEditSpec& spec,
+    size_t source_file_index,
+    const SourcePatch& patch) {
+    const ResourceListLoad* load = resource_list_load_for_kind(ctx, spec.kind);
+    if (!load || !patch.record ||
+        normalized_source_key(load->resolved_path) !=
+            normalized_source_key(patch.record->file_path)) {
+        throw std::runtime_error(
+            "resource-list insert target does not match the loaded " +
+            std::string(spec.error_key) + " list");
+    }
+
+    const auto make_before_plan = [&](size_t statement_index) {
+        if (statement_index >= ctx.parsed_statements.size()) {
+            throw std::runtime_error("resource-list insert anchor is invalid");
+        }
+        const ParsedStatement& statement = ctx.parsed_statements[statement_index];
+        const auto range = source_range_in_text(patch, statement.source);
+        const size_t line_start = offset_from_line_column(
+            patch.text, patch.line_starts, statement.source.line, 1);
+        if (line_start == std::string::npos || line_start > range.first) {
+            throw std::runtime_error("failed to locate resource-list insert anchor");
+        }
+        ResourceListContentInsertionPlan plan;
+        plan.offset = line_start;
+        plan.anchor_statement_index = statement_index;
+        plan.indent = line_indent_of(patch, statement);
+        return plan;
+    };
+
+    if (!change.insert_before_edit_id.empty()) {
+        const EditableTarget anchor = find_editable_target(
+            ctx, change.insert_before_edit_id);
+        if (anchor.statement_index == k_no_source_ref ||
+            anchor.statement_index >= ctx.parsed_statements.size() ||
+            anchor.row_kind != spec.content_row_kind) {
+            throw std::runtime_error(
+                "resource-list insert anchor is not a matching list row: " +
+                change.insert_before_edit_id);
+        }
+        if (ctx.parsed_statements[anchor.statement_index].source.source_file_index !=
+            source_file_index) {
+            throw std::runtime_error(
+                "resource-list insert anchor belongs to another source file");
+        }
+        return make_before_plan(anchor.statement_index);
+    }
+
+    size_t last_statement_index = k_no_source_ref;
+    size_t last_end = 0;
+    for (size_t index = 0; index < ctx.parsed_statements.size(); ++index) {
+        const ParsedStatement& statement = ctx.parsed_statements[index];
+        if (statement.source.source_file_index != source_file_index ||
+            statement.statement_kind !=
+                resource_list_content_statement_kind(spec.kind)) {
+            continue;
+        }
+        const auto range = source_range_in_text(patch, statement.source);
+        if (last_statement_index == k_no_source_ref || range.second > last_end) {
+            last_statement_index = index;
+            last_end = range.second;
+        }
+    }
+    if (last_statement_index == k_no_source_ref) {
+        throw std::runtime_error(
+            "resource-list insert target contains no existing logical row");
+    }
+
+    const ParsedStatement& last = ctx.parsed_statements[last_statement_index];
+    const size_t line_start = offset_from_line_column(
+        patch.text, patch.line_starts, last.source.line_end, 1);
+    if (line_start == std::string::npos) {
+        throw std::runtime_error("failed to locate resource-list append line");
+    }
+    const TextLineSpan line = text_line_span(patch.text, line_start);
+    ResourceListContentInsertionPlan plan;
+    plan.offset = line.next_begin;
+    plan.anchor_statement_index = last_statement_index;
+    plan.indent = line_indent_of(patch, last);
     return plan;
 }
 
@@ -2382,6 +2581,106 @@ void validate_insert_field_names(
     }
 }
 
+template <size_t FieldCount>
+void validate_resource_list_insert_fields(
+    const MapEditChange& change,
+    const std::array<const char*, FieldCount>& field_names) {
+    for (const auto& field : change.field_changes) {
+        const bool known = std::any_of(
+            field_names.begin(), field_names.end(),
+            [&](const char* name) { return field.first == name; });
+        if (!known) {
+            throw std::runtime_error(
+                "unsupported insert field " + field.first + " for " +
+                change.row_kind);
+        }
+    }
+    for (const char* name : field_names) {
+        if (change.field_changes.find(name) == change.field_changes.end()) {
+            throw std::runtime_error(
+                "resource-list insert is missing field " + std::string(name));
+        }
+    }
+}
+
+void validate_signal_aspect_insert_fields(const MapEditChange& change) {
+    constexpr size_t k_primary_structure_key_count = 5;
+    const std::optional<size_t> add_glare_count =
+        signal_aspect_add_glare_count(change);
+    if (add_glare_count &&
+        *add_glare_count != k_primary_structure_key_count) {
+        throw std::runtime_error(
+            "Signal aspect insert glare must contain five structure keys");
+    }
+    const size_t permitted_structure_key_count =
+        k_primary_structure_key_count +
+        (add_glare_count ? *add_glare_count : 0);
+    for (const auto& field : change.field_changes) {
+        if (field.first == "signalAspectKey" || field.first == "addGlare") {
+            continue;
+        }
+        size_t index = 0;
+        if (!parse_signal_aspect_structure_key_field_name(field.first, index) ||
+            index >= permitted_structure_key_count) {
+            throw std::runtime_error(
+                "unsupported Signal aspect insert field: " + field.first);
+        }
+    }
+    const auto aspect_key = change.field_changes.find("signalAspectKey");
+    if (aspect_key == change.field_changes.end()) {
+        throw std::runtime_error("Signal aspect insert is missing signalAspectKey");
+    }
+    (void)normalized_signal_aspect_edit_value(
+        aspect_key->second, "signalAspectKey", true);
+
+    bool has_main_structure_key = false;
+    bool has_glare_structure_key = false;
+    for (size_t index = 0; index < permitted_structure_key_count; ++index) {
+        const std::string field_name = signal_aspect_structure_key_field_name(index);
+        const auto field = change.field_changes.find(field_name);
+        if (field == change.field_changes.end()) {
+            throw std::runtime_error(
+                "Signal aspect insert is missing field: " + field_name);
+        }
+        const std::string value = normalized_signal_aspect_edit_value(
+            field->second, field_name, false);
+        if (index < k_primary_structure_key_count) {
+            has_main_structure_key = has_main_structure_key || !value.empty();
+        } else {
+            has_glare_structure_key = has_glare_structure_key || !value.empty();
+        }
+    }
+    if (!has_main_structure_key) {
+        throw std::runtime_error(
+            "Signal aspect insert requires at least one structure key");
+    }
+    if (add_glare_count && !has_glare_structure_key) {
+        throw std::runtime_error(
+            "Signal aspect glare requires at least one structure key");
+    }
+}
+
+void validate_resource_list_content_insert_change(const MapEditChange& change) {
+    const ResourceListEditSpec* spec =
+        resource_list_edit_spec_for_content_row_kind(change.row_kind);
+    if (!spec) return;
+    switch (spec->kind) {
+    case ResourceListLoadKind::Station:
+        validate_resource_list_insert_fields(change, k_station_list_field_names);
+        return;
+    case ResourceListLoadKind::Structure:
+        validate_resource_list_insert_fields(change, k_structure_list_field_names);
+        return;
+    case ResourceListLoadKind::Signal:
+        validate_signal_aspect_insert_fields(change);
+        return;
+    case ResourceListLoadKind::Sound:
+    case ResourceListLoadKind::Sound3D:
+        validate_resource_list_insert_fields(change, k_sound_list_field_names);
+        return;
+    }
+}
+
 void validate_insert_method(const MapEditChange& change,
                             const char* fallback,
                             std::initializer_list<const char*> allowed_methods) {
@@ -2545,7 +2844,9 @@ void validate_insert_change(const MapEditChange& change) {
             "insert replacementStatement is unsupported; use structured fields: " +
             change.edit_id);
     }
-    if (!change.insert_before_edit_id.empty()) {
+    const ResourceListEditSpec* content_spec =
+        resource_list_edit_spec_for_content_row_kind(change.row_kind);
+    if (!change.insert_before_edit_id.empty() && !content_spec) {
         throw std::runtime_error(
             "insertBeforeEditId is unsupported for insert edits: " +
             change.edit_id);
@@ -2559,6 +2860,10 @@ void validate_insert_change(const MapEditChange& change) {
     if (row_kind == "resourceList.load") {
         (void)resource_list_insert_spec_from_change(change);
         (void)resource_list_insert_path_from_change(change);
+        return;
+    }
+    if (content_spec) {
+        validate_resource_list_content_insert_change(change);
         return;
     }
     if (change.field_changes.find("distance") == change.field_changes.end()) {
@@ -2663,11 +2968,105 @@ std::string insert_required_track_key(const MapEditChange& change, const char* k
     return value;
 }
 
+template <size_t FieldCount, typename Normalize>
+std::string build_resource_list_insert_csv(
+    const MapEditChange& change,
+    const std::array<const char*, FieldCount>& field_names,
+    Normalize&& normalize) {
+    std::ostringstream out;
+    for (size_t index = 0; index < FieldCount; ++index) {
+        if (index != 0) out << ",";
+        const auto field = change.field_changes.find(field_names[index]);
+        if (field == change.field_changes.end()) {
+            throw std::runtime_error(
+                "resource-list insert is missing field " +
+                std::string(field_names[index]));
+        }
+        out << csv_field(normalize(field->second, index));
+    }
+    return out.str();
+}
+
+std::string build_resource_list_content_insert_statement(
+    const MapEditChange& change,
+    std::string_view inserted_newline) {
+    const ResourceListEditSpec* spec =
+        resource_list_edit_spec_for_content_row_kind(change.row_kind);
+    if (!spec) {
+        throw std::runtime_error(
+            "unsupported resource-list insert row kind: " + change.row_kind);
+    }
+    switch (spec->kind) {
+    case ResourceListLoadKind::Station:
+        return build_resource_list_insert_csv(
+            change, k_station_list_field_names,
+            [](const std::string& value, size_t field_index) {
+                return normalized_station_list_edit_value(value, field_index);
+            });
+    case ResourceListLoadKind::Structure:
+        return build_resource_list_insert_csv(
+            change, k_structure_list_field_names,
+            [](const std::string& value, size_t field_index) {
+                return normalized_resource_list_edit_value(
+                    value, k_structure_list_field_names[field_index]);
+            });
+    case ResourceListLoadKind::Sound:
+    case ResourceListLoadKind::Sound3D:
+        return build_resource_list_insert_csv(
+            change, k_sound_list_field_names,
+            [](const std::string& value, size_t field_index) {
+                return field_index == 2
+                    ? normalized_sound_buffer_count_edit_value(value)
+                    : normalized_resource_list_edit_value(
+                        value, k_sound_list_field_names[field_index]);
+            });
+    case ResourceListLoadKind::Signal:
+        break;
+    }
+
+    constexpr size_t k_primary_structure_key_count = 5;
+    std::ostringstream out;
+    const auto aspect_key = change.field_changes.find("signalAspectKey");
+    if (aspect_key == change.field_changes.end()) {
+        throw std::runtime_error("Signal aspect insert is missing signalAspectKey");
+    }
+    out << csv_field(normalized_signal_aspect_edit_value(
+        aspect_key->second, "signalAspectKey", true));
+    for (size_t index = 0; index < k_primary_structure_key_count; ++index) {
+        const std::string field_name = signal_aspect_structure_key_field_name(index);
+        const auto field = change.field_changes.find(field_name);
+        if (field == change.field_changes.end()) {
+            throw std::runtime_error(
+                "Signal aspect insert is missing field: " + field_name);
+        }
+        out << "," << csv_field(normalized_signal_aspect_edit_value(
+            field->second, field_name, false));
+    }
+    const std::optional<size_t> add_glare_count =
+        signal_aspect_add_glare_count(change);
+    if (!add_glare_count) return out.str();
+
+    out << (inserted_newline.empty() ? std::string_view("\n") : inserted_newline);
+    for (size_t index = 0; index < *add_glare_count; ++index) {
+        const std::string field_name = signal_aspect_structure_key_field_name(
+            k_primary_structure_key_count + index);
+        const auto field = change.field_changes.find(field_name);
+        if (field == change.field_changes.end()) {
+            throw std::runtime_error(
+                "Signal aspect insert is missing field: " + field_name);
+        }
+        out << "," << csv_field(normalized_signal_aspect_edit_value(
+            field->second, field_name, false));
+    }
+    return out.str();
+}
+
 // Builds the complete single-statement text for a KV_EDIT_INSERT change from
 // its field values alone. There is no existing source row or raw argument
 // text to preserve, so every emitted argument comes from the change fields
 // with the same BVE quoting/number normalization the update builders use.
-std::string build_insert_statement(const MapEditChange& change) {
+std::string build_insert_statement(const MapEditChange& change,
+                                   std::string_view inserted_newline) {
     validate_insert_change(change);
     const std::string& row_kind = change.row_kind;
     if (row_kind == "include") {
@@ -2677,6 +3076,10 @@ std::string build_insert_statement(const MapEditChange& change) {
         const ResourceListEditSpec* spec = resource_list_insert_spec_from_change(change);
         return std::string(resource_list_insert_statement_kind(*spec)) + "('" +
             resource_list_insert_path_from_change(change) + "');";
+    }
+    if (resource_list_edit_spec_for_content_row_kind(row_kind)) {
+        return build_resource_list_content_insert_statement(
+            change, inserted_newline);
     }
     if (row_kind == "repeater") {
         const std::string method = insert_method_or_default(change, "Begin");
@@ -6599,6 +7002,39 @@ MapEditReport build_edit_report(MapContext& ctx,
                         "source file changed externally: " + file.file_path);
                     continue;
                 }
+                if (const ResourceListEditSpec* content_spec =
+                        resource_list_edit_spec_for_content_row_kind(change.row_kind)) {
+                    try {
+                        const ResourceListContentInsertionPlan insertion =
+                            plan_resource_list_content_insertion(
+                                ctx, change, *content_spec, target_file_index,
+                                target_patch);
+                        const std::string inserted_statement = build_insert_statement(
+                            change, newline_text(target_patch.record->newline));
+                        PreparedEdit edit;
+                        edit.change = &change;
+                        edit.input_ordinal = input_ordinal;
+                        edit.operation = "insert";
+                        edit.target.statement_index = insertion.anchor_statement_index;
+                        edit.target.row_kind = change.row_kind;
+                        edit.target.element_index = 0;
+                        edit.target.elements_for_statement = 1;
+                        edit.source_file_index = target_file_index;
+                        edit.source_range = {insertion.offset, insertion.offset};
+                        edit.removal_range = {};
+                        edit.replacement_statement = insertion.indent + inserted_statement;
+                        edit.has_custom_identity_range = true;
+                        edit.identity_range_begin = insertion.indent.size();
+                        edit.identity_range_end = edit.replacement_statement.size();
+                        ++report.insert_count;
+                        prepared.push_back(std::move(edit));
+                    } catch (const std::exception& e) {
+                        report.blocking_errors.push_back(
+                            std::string("edit change failed for ") +
+                            change.edit_id + ": " + e.what());
+                    }
+                    continue;
+                }
                 if (change.row_kind == "include" ||
                     change.row_kind == "resourceList.load") {
                     try {
@@ -6854,7 +7290,10 @@ MapEditReport build_edit_report(MapContext& ctx,
                         report.blocking_errors.push_back("update is blocked because the source statement maps to multiple elements: " + change.edit_id);
                         continue;
                     }
-                    edit.replacement_statement = build_replacement_statement(change, *statement, target);
+                    edit.replacement_statement = target.row_kind == "signal.aspect"
+                        ? build_signal_aspect_statement(
+                            change, *statement, newline_text(patch->record->newline))
+                        : build_replacement_statement(change, *statement, target);
                     if (has_field_change(change, "distance")) {
                         const std::string target_text = normalized_number_arg(
                             field_text_or(change, "distance",
@@ -7050,17 +7489,18 @@ MapEditReport build_edit_report(MapContext& ctx,
         patches[file_index].replacements.push_back(std::move(replacement));
     };
 
-    const auto is_reference_insert = [](const PreparedEdit& edit) {
+    const auto is_direct_source_insert = [](const PreparedEdit& edit) {
         return edit.operation == "insert" &&
             (edit.target.row_kind == "include" ||
-             edit.target.row_kind == "resourceList.load");
+             edit.target.row_kind == "resourceList.load" ||
+             resource_list_edit_spec_for_content_row_kind(edit.target.row_kind));
     };
     std::map<std::pair<size_t, size_t>, std::vector<const PreparedEdit*>>
-        reference_inserts;
+        direct_source_inserts;
 
     for (const PreparedEdit& edit : prepared) {
-        if (is_reference_insert(edit)) {
-            reference_inserts[{edit.source_file_index, edit.source_range.first}].push_back(&edit);
+        if (is_direct_source_insert(edit)) {
+            direct_source_inserts[{edit.source_file_index, edit.source_range.first}].push_back(&edit);
             continue;
         }
         if (edit.initial_empty_source_insert) continue;
@@ -7081,7 +7521,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         }
     }
 
-    for (auto& entry : reference_inserts) {
+    for (auto& entry : direct_source_inserts) {
         const size_t file_index = entry.first.first;
         const size_t offset = entry.first.second;
         std::vector<const PreparedEdit*>& inserts = entry.second;
@@ -7124,7 +7564,7 @@ MapEditReport build_edit_report(MapContext& ctx,
         const size_t body_offset = insertion.text.find(insertion_body);
         if (body_offset == std::string::npos) {
             report.blocking_errors.push_back(
-                "failed to retain edit identity in a generated reference insertion");
+                "failed to retain edit identity in a generated source insertion");
         } else {
             for (TextReplacementIdentity& identity : identities) {
                 identity.relative_begin += body_offset;

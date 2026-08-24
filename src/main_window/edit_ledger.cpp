@@ -860,17 +860,56 @@ TypedEditBatchStorage typed_edit_batch(
         "rowKind", sizeof("rowKind") - 1};
     static constexpr KvUtf8View k_repeater_pair_id_field_name{
         "repeaterPairId", sizeof("repeaterPairId") - 1};
+    const auto is_resource_list_content_insert = [](
+        const MapElementPendingChange& change) {
+        return change.operation == "insert" &&
+            (change.row_kind == "station.list" ||
+             change.row_kind == "structure.model" ||
+             change.row_kind == "signal.aspect" ||
+             change.row_kind == "sound.list" ||
+             change.row_kind == "sound3D.list");
+    };
+    std::vector<const MapElementPendingChange*> ordered;
+    ordered.reserve(inputs.size());
+    for (const auto& input : inputs) ordered.push_back(&input.second);
+    std::map<std::pair<std::string, std::string>, std::vector<size_t>>
+        insert_groups;
+    for (size_t index = 0; index < ordered.size(); ++index) {
+        const MapElementPendingChange& change = *ordered[index];
+        if (is_resource_list_content_insert(change)) {
+            insert_groups[{change.target_file_path, change.insert_before_edit_id}]
+                .push_back(index);
+        }
+    }
+    for (auto& entry : insert_groups) {
+        std::vector<size_t>& indices = entry.second;
+        std::stable_sort(indices.begin(), indices.end(), [&](size_t left, size_t right) {
+            const MapElementPendingChange& a = *ordered[left];
+            const MapElementPendingChange& b = *ordered[right];
+            if (a.resource_list_insert_order != b.resource_list_insert_order) {
+                return a.resource_list_insert_order < b.resource_list_insert_order;
+            }
+            return a.change_id < b.change_id;
+        });
+        std::vector<const MapElementPendingChange*> members;
+        members.reserve(indices.size());
+        for (size_t index : indices) members.push_back(ordered[index]);
+        std::sort(indices.begin(), indices.end());
+        for (size_t index = 0; index < indices.size(); ++index) {
+            ordered[indices[index]] = members[index];
+        }
+    }
     TypedEditBatchStorage storage;
     storage.changes.reserve(inputs.size());
     size_t field_count = 0;
-    for (const auto& input : inputs) {
-        field_count += input.second.field_changes.size();
-        if (input.second.operation == "insert") ++field_count;
-        if (!input.second.repeater_pair_id.empty()) ++field_count;
+    for (const MapElementPendingChange* source : ordered) {
+        field_count += source->field_changes.size();
+        if (source->operation == "insert") ++field_count;
+        if (!source->repeater_pair_id.empty()) ++field_count;
     }
     storage.fields.reserve(field_count);
-    for (const auto& input : inputs) {
-        const MapElementPendingChange& source = input.second;
+    for (const MapElementPendingChange* source_pointer : ordered) {
+        const MapElementPendingChange& source = *source_pointer;
         KvEditChange change{};
         change.change_id = edit_utf8_view(source.change_id);
         change.edit_id = edit_utf8_view(source.edit_id);
@@ -904,6 +943,7 @@ TypedEditBatchStorage typed_edit_batch(
         change.replacement_statement = edit_utf8_view(source.replacement_statement);
         change.target_file_path = edit_utf8_view(source.target_file_path);
         change.expected_source_hash = edit_utf8_view(source.expected_source_hash);
+        change.insert_before_edit_id = edit_utf8_view(source.insert_before_edit_id);
         change.distance_resolution_key = edit_utf8_view(source.distance_resolution_key);
         change.distance_boundary_token = edit_utf8_view(source.distance_boundary_token);
         change.distance_expression = edit_utf8_view(source.distance_expression);

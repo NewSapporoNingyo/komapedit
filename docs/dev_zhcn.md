@@ -496,7 +496,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 按源文件、Include 上下文/区段和目标距离规划批量移动；保持语句顺序及用户注释或空距离结构。
 - 应用或保存前完整重解析，证明目标语义值，并拒绝非目标元素或最终变量/距离环境的意外变化。
 - 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
-- 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程，不能新增资源行。
+- 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程。编辑模式右键可在上下新增行，固定 BVE CSV 字段数为 Structure 2、Sound/Sound3D 3、Station 13、Signal 主行 6；Signal 主行/glare 成对作为一个插入块，glare 需显式新增。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
 - Repeater 生命周期使用半开区间 `[第一个 Begin, End)`；同里程 End 无论源码顺序如何都排在全部 Begin 之前。一次 `repeaterKey` 改名 typed batch 必须包含链内全部 Begin/Begin0 和显式 End；批次不完整或规范化同名区间重叠时由 maploader 拒绝。
 - 他轨道 `trackKey` 改名必须形成一个 typed batch，包含根地图及全部 Include 中大小写不敏感且保留数值/字符串类型的同键全部存续 `Track[trackKey].*` 语句。maploader 会拒绝不完整批次，以及最终键与另一条他轨道重名的批次，不使用里程或区间例外；依赖该轨道键的地图元素保持为非目标行。
@@ -549,6 +549,7 @@ build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] 
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
+build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -559,6 +560,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
 `--debug-headless-resource-list-replace` 复现预览加载后再加载并合并编辑元数据的生命周期，随后为 `Structure.Load` 打开正式的 Win32 文件选择框。请手动选择不同且有效的 Structure List。它验证稳定 edit ID 已合并、内存 Apply 与完整重解析、布景模型列表缓存刷新、路径更新，以及重新从磁盘加载后的全部源哈希不变。该命令绝不调用 Save 或 Commit；取消、选择相同文件或无效列表都会报告 `FAIL`。
+
+`--debug-headless-resource-list-insert <map-path> --kind structure|signal` 是无界面、仅内存的资源列表新增行验证。`structure` 要求列表经 Include 加载，并验证上下新增顺序、2 字段源行、hydration、Reset 与磁盘哈希不变。`signal` 选择已有主行/glare 块，验证新增不会将其拆开，再验证一个无 glare 的 6 字段主行和一个手动新增的 6 字段 glare。`--commit` 会被拒绝。
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 

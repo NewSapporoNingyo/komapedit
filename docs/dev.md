@@ -142,7 +142,7 @@ Editable rows must retain source path, include stack, source span, original stat
 - Batch distance moves by source file, Include context/section, and target distance. Preserve statement order and user-authored comments or empty distance structure.
 - Fully reparse before Apply or Save, prove target semantic values, and reject unexpected changes to non-target elements or the final variable/distance environment.
 - Preserve statement method and argument shapes except for explicit Inspector actions: the coordinate-offset buttons convert `Structure.Put`/`Put0` and `Repeater.Begin`/`Begin0` in either direction (confirming before nonzero offsets are discarded), while short `Signal.Put` and Repeater trim keep their existing confirmation flows.
-- Use shared inline-table drafts for loaded Station, Structure, Signal, Sound, and Sound3D rows. They do not insert new resource rows.
+- Use shared inline-table drafts for loaded Station, Structure, Signal, Sound, and Sound3D rows. Edit-mode context menus insert above/below with fixed BVE CSV widths (Structure 2, Sound/Sound3D 3, Station 13, Signal primary 6); Signal primary/glare pairs are one insertion block, and glare is explicit.
 - Use `repeater_linkage` and transition-linkage rules across maploader, tables, 2D, and 3D instead of recreating chains locally.
 - Repeater lifetimes are half-open `[first Begin, End)` intervals; an End at the same distance is ordered before every Begin regardless of source order. A `repeaterKey` rename is one typed batch containing every Begin/Begin0 and explicit End in that chain, and maploader rejects incomplete batches or canonical same-name intervals that overlap.
 - An other-track `trackKey` rename is one typed batch containing every surviving `Track[trackKey].*` statement with the same case-insensitive, type-preserving key across the root map and Includes. Maploader rejects incomplete batches and any final key already owned by another other track, without distance/interval exceptions; dependent map-element track references remain non-target rows.
@@ -196,6 +196,7 @@ build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] 
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
+build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -206,6 +207,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
 `--debug-headless-resource-list-replace` reproduces preview loading followed by edit-metadata loading and merge, then opens the production Win32 picker for `Structure.Load`. Manually select a different valid Structure List. It verifies the merged stable edit ID, memory Apply with complete reparse, refreshed structure-list cache, updated path, and unchanged hashes after a fresh disk reload. It never calls Save or Commit; cancelling, selecting the same file, or selecting an invalid list reports `FAIL`.
+
+`--debug-headless-resource-list-insert <map-path> --kind structure|signal` is a non-interactive, memory-only proof of resource-list row insertion. `structure` requires an Include-loaded list and verifies above/below order, two-field source rows, hydration, Reset, and unchanged disk hashes. `signal` selects an existing primary/glare block, proves neither insertion splits it, then verifies a six-field primary without glare and a manually added six-field glare. `--commit` is rejected.
 
 Pass explicit map paths for portable runs. The Repeater-key and new-element-follow-up commands always require one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
 

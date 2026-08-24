@@ -1131,7 +1131,8 @@ bool parse_signal_aspect_structure_key_field_name(
 struct MapEditChange;
 std::string build_signal_aspect_statement(
     const MapEditChange& change,
-    const ParsedStatement& statement);
+    const ParsedStatement& statement,
+    std::string_view inserted_newline = "\n");
 bool value_equal(const Value& a, const Value& b);
 bool variable_value_matches(const std::unordered_map<std::string, Value>& current,
                             const std::unordered_map<std::string, Value>& seed,
@@ -1451,6 +1452,8 @@ struct SemanticMapSnapshot {
 
 SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx);
 void validate_insert_change(const MapEditChange& change);
+std::string build_insert_statement(const MapEditChange& change,
+                                   std::string_view inserted_newline = "\n");
 std::string insert_method_or_default(const MapEditChange& change,
                                      const char* fallback);
 std::string expected_target_semantic(MapContext& ctx,

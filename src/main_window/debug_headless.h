@@ -213,6 +213,15 @@ struct HeadlessResourceListReplaceOptions {
     std::string error;
 };
 
+struct HeadlessResourceListInsertOptions {
+    bool requested = false;
+    std::string path;
+    std::string kind;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessNewFileWizardOptions {
     bool requested = false;
     std::string path;
@@ -305,6 +314,8 @@ HeadlessIncludeReplaceOptions parse_headless_include_replace_options(
 HeadlessIncludeImportCreateOptions parse_headless_include_import_create_options(
     const std::vector<std::string>& args);
 HeadlessResourceListReplaceOptions parse_headless_resource_list_replace_options(
+    const std::vector<std::string>& args);
+HeadlessResourceListInsertOptions parse_headless_resource_list_insert_options(
     const std::vector<std::string>& args);
 HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
     const std::vector<std::string>& args);

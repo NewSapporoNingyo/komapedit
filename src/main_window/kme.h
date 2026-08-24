@@ -62,6 +62,7 @@ struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 struct HeadlessResourceListReplaceOptions;
+struct HeadlessResourceListInsertOptions;
 struct HeadlessNewFileWizardOptions;
 struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
@@ -1292,6 +1293,8 @@ struct MapElementPendingChange {
     std::string replacement_statement;
     std::string target_file_path;
     std::string expected_source_hash;
+    std::string insert_before_edit_id;
+    std::uint64_t resource_list_insert_order = 0;
     std::string distance_resolution_key;
     std::string distance_boundary_token;
     std::string distance_expression;
@@ -1598,6 +1601,7 @@ inline constexpr EditableListSpec k_signal_aspect_edit_spec = {
 
 struct EditableListDraftRow {
     std::string target_edit_id;
+    std::string local_draft_id;
     std::string target_source_file;
     std::string target_expected_source_hash;
     int target_line = 0;
@@ -1610,10 +1614,12 @@ struct EditableListDraftRow {
     std::string payload_raw_statement;
     std::vector<std::string> values;
     std::string resolved_path;
+    bool inserted = false;
     bool deleted = false;
     size_t primary_structure_field_count = 0;
     size_t secondary_structure_field_count = 0;
     bool secondary_row_deleted = false;
+    bool secondary_row_added = false;
 };
 
 struct EditableListEditState {
@@ -1626,12 +1632,14 @@ struct EditableListEditState {
     std::string edit_buffer;
     bool edit_buffer_fresh = false;
     bool rows_initialized = false;
+    std::uint64_t next_local_draft_id = 1;
     std::vector<EditableListDraftRow> rows;
     std::vector<size_t> visible_rows;
     std::vector<EditableListDisplayRow> display_rows;
 };
 
 bool editable_list_row_has_draft(const EditableListDraftRow& row);
+const std::string& editable_list_row_identity(const EditableListDraftRow& row);
 std::string editable_list_field_name(const EditableListSpec& spec,
                                      size_t field_index);
 std::vector<size_t> editable_list_visible_row_indices(
@@ -1717,6 +1725,8 @@ public:
         const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_resource_list_replace(
         const HeadlessResourceListReplaceOptions& options);
+    static int run_debug_headless_resource_list_insert(
+        const HeadlessResourceListInsertOptions& options);
     static int run_debug_headless_new_file_wizard(
         const HeadlessNewFileWizardOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
@@ -2339,6 +2349,9 @@ private:
     bool move_editable_list_row(EditableListEditState& edit,
                                 const EditableListSpec& spec,
                                 int visible_row, int direction);
+    bool insert_editable_list_row(EditableListEditState& edit,
+                                  const EditableListSpec& spec,
+                                  int visible_row, bool above);
     bool clear_editable_list_cell(EditableListEditState& edit,
                                   const EditableListSpec& spec,
                                   int visible_row, int column);
@@ -2352,6 +2365,9 @@ private:
         EditableListEditState& edit,
         const EditableListSpec& spec,
         int visible_row);
+    bool add_editable_list_secondary_row(EditableListEditState& edit,
+                                         const EditableListSpec& spec,
+                                         int visible_row);
     void apply_editable_list_drafts(EditableListEditState& edit,
                                     const EditableListSpec& spec);
     void rebind_other_editable_list_drafts(const EditableListEditState* applied);

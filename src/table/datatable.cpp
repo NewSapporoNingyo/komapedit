@@ -2694,7 +2694,7 @@ void App::render_editable_list_table(
     const auto edit_id_at = [&](int logical_row) -> const std::string& {
         EditableListDraftRow* draft = draft_at(logical_row);
         return draft
-            ? draft->target_edit_id
+            ? editable_list_row_identity(*draft)
             : cached_at(logical_row)->edit_id;
     };
     const auto row_deleted_at = [&](int logical_row) {
@@ -2721,7 +2721,7 @@ void App::render_editable_list_table(
             const CachedTableRow* cached =
                 cached_at(logical_row);
             const std::string& target_edit_id =
-                draft ? draft->target_edit_id : cached->edit_id;
+                draft ? editable_list_row_identity(*draft) : cached->edit_id;
             const std::string& resolved_path =
                 draft ? draft->resolved_path : cached->open_path;
             const bool whole_draft_deleted =
@@ -2910,6 +2910,25 @@ void App::render_editable_list_table(
                     }
                     if (has_top_action) ImGui::Separator();
 
+                    ImGui::BeginDisabled(!row_editable);
+                    if (ImGui::MenuItem(
+                            tr("context.editable_list.insert_above").c_str())) {
+                        insert_editable_list_row(
+                            edit, spec, logical_row, true);
+                        ImGui::EndDisabled();
+                        ImGui::EndPopup();
+                        return;
+                    }
+                    if (ImGui::MenuItem(
+                            tr("context.editable_list.insert_below").c_str())) {
+                        insert_editable_list_row(
+                            edit, spec, logical_row, false);
+                        ImGui::EndDisabled();
+                        ImGui::EndPopup();
+                        return;
+                    }
+                    ImGui::EndDisabled();
+
                     const bool move_up_available =
                         row_editable && logical_row > 0 &&
                         !edit_id_at(logical_row - 1).empty() &&
@@ -2928,6 +2947,9 @@ void App::render_editable_list_table(
                             tr("context.editable_list.move_up").c_str())) {
                         move_editable_list_row(
                             edit, spec, logical_row, -1);
+                        ImGui::EndDisabled();
+                        ImGui::EndPopup();
+                        return;
                     }
                     ImGui::EndDisabled();
                     ImGui::BeginDisabled(!move_down_available);
@@ -2935,6 +2957,9 @@ void App::render_editable_list_table(
                             tr("context.editable_list.move_down").c_str())) {
                         move_editable_list_row(
                             edit, spec, logical_row, 1);
+                        ImGui::EndDisabled();
+                        ImGui::EndPopup();
+                        return;
                     }
                     ImGui::EndDisabled();
                     ImGui::BeginDisabled(!row_editable || !editable_cell);
@@ -2947,6 +2972,9 @@ void App::render_editable_list_table(
                                 secondary_row;
                             edit.selected_column = column;
                         }
+                        ImGui::EndDisabled();
+                        ImGui::EndPopup();
+                        return;
                     }
                     ImGui::EndDisabled();
                     ImGui::BeginDisabled(!row_editable);
@@ -2954,12 +2982,37 @@ void App::render_editable_list_table(
                             tr("context.editable_list.delete_row").c_str())) {
                         delete_editable_list_row(
                             edit, spec, logical_row);
+                        ImGui::EndDisabled();
+                        ImGui::EndPopup();
+                        return;
                     }
                     ImGui::EndDisabled();
                     const size_t secondary_structure_field_count =
                         draft
                         ? draft->secondary_structure_field_count
                         : cached->secondary_structure_field_count;
+                    const size_t primary_structure_field_count =
+                        draft
+                        ? draft->primary_structure_field_count
+                        : cached->primary_structure_field_count;
+                    if (is_signal_aspect) {
+                        const bool add_glare_available =
+                            row_editable &&
+                            secondary_structure_field_count == 0 &&
+                            (!draft || !draft->secondary_row_deleted) &&
+                            primary_structure_field_count != 0;
+                        ImGui::BeginDisabled(!add_glare_available);
+                        if (ImGui::MenuItem(
+                                tr("context.signal_aspect.add_glare")
+                                    .c_str())) {
+                            add_editable_list_secondary_row(
+                                edit, spec, logical_row);
+                            ImGui::EndDisabled();
+                            ImGui::EndPopup();
+                            return;
+                        }
+                        ImGui::EndDisabled();
+                    }
                     if (is_signal_aspect &&
                         secondary_structure_field_count != 0) {
                         const bool delete_glare_available =
@@ -2973,6 +3026,9 @@ void App::render_editable_list_table(
                                     .c_str())) {
                             delete_editable_list_secondary_row(
                                 edit, spec, logical_row);
+                            ImGui::EndDisabled();
+                            ImGui::EndPopup();
+                            return;
                         }
                         ImGui::EndDisabled();
                     }
@@ -3008,7 +3064,7 @@ void App::render_editable_list_table(
                             edit.rows[edit.visible_rows[
                                 static_cast<size_t>(logical_row)]];
                         edit.editing_column = field_index;
-                        edit.editing_edit_id = active.target_edit_id;
+                        edit.editing_edit_id = editable_list_row_identity(active);
                         edit.editing_baseline =
                             active.values[static_cast<size_t>(field_index)];
                         edit.edit_buffer = edit.editing_baseline;
@@ -3147,8 +3203,8 @@ void App::render_station_list_window() {
             };
             const auto edit_id_at = [&](int visible_row) -> const std::string& {
                 if (edit.rows_initialized) {
-                    return edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]
-                        .target_edit_id;
+                    return editable_list_row_identity(
+                        edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]]);
                 }
                 return rows[static_cast<size_t>(visible_row)].edit_id;
             };
@@ -3169,26 +3225,56 @@ void App::render_station_list_window() {
                     !row_deleted_at(visible_row + 1) &&
                     source_file_at(visible_row + 1) == source_file_at(visible_row);
                 if (!ImGui::BeginPopupContextItem("##station_definition_context")) return;
+                ImGui::BeginDisabled(!actions_available);
+                if (ImGui::MenuItem(
+                        tr("context.station_list.insert_above").c_str())) {
+                    insert_editable_list_row(
+                        edit, k_station_definition_edit_spec, visible_row, true);
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
+                }
+                if (ImGui::MenuItem(
+                        tr("context.station_list.insert_below").c_str())) {
+                    insert_editable_list_row(
+                        edit, k_station_definition_edit_spec, visible_row, false);
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
+                }
+                ImGui::EndDisabled();
                 ImGui::BeginDisabled(!move_up_available);
                 if (ImGui::MenuItem(tr("context.station_list.move_up").c_str())) {
                     move_editable_list_row(
                         edit, k_station_definition_edit_spec, visible_row, -1);
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
                 }
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!move_down_available);
                 if (ImGui::MenuItem(tr("context.station_list.move_down").c_str())) {
                     move_editable_list_row(
                         edit, k_station_definition_edit_spec, visible_row, 1);
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
                 }
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!actions_available);
                 if (ImGui::MenuItem(tr("context.station_list.clear_cell").c_str())) {
                     clear_editable_list_cell(
                         edit, k_station_definition_edit_spec, visible_row, column);
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
                 }
                 if (ImGui::MenuItem(tr("context.station_list.delete_row").c_str())) {
                     delete_editable_list_row(
                         edit, k_station_definition_edit_spec, visible_row);
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
                 }
                 ImGui::EndDisabled();
                 ImGui::EndPopup();
@@ -3203,7 +3289,7 @@ void App::render_station_list_window() {
                         ? &edit.rows[edit.visible_rows[static_cast<size_t>(row_index)]]
                         : nullptr;
                     const std::string& target_edit_id = draft_row
-                        ? draft_row->target_edit_id : cached_row->edit_id;
+                        ? editable_list_row_identity(*draft_row) : cached_row->edit_id;
                     const bool draft_deleted = draft_row && draft_row->deleted;
                     const bool row_editable =
                         can_edit && !draft_deleted && !target_edit_id.empty();
@@ -3266,7 +3352,8 @@ void App::render_station_list_window() {
                                 EditableListDraftRow& active_row =
                                     edit.rows[edit.visible_rows[static_cast<size_t>(row_index)]];
                                 edit.editing_column = col;
-                                edit.editing_edit_id = active_row.target_edit_id;
+                                edit.editing_edit_id =
+                                    editable_list_row_identity(active_row);
                                 edit.editing_baseline =
                                     active_row.values[static_cast<size_t>(col)];
                                 edit.edit_buffer = edit.editing_baseline;
@@ -3945,6 +4032,24 @@ void App::render_signal_aspects_window() {
             signal_aspect_edit_, k_signal_aspect_edit_spec);
     }
     ImGui::EndDisabled();
+    const bool has_inserted_signal_draft =
+        signal_aspect_edit_.rows_initialized &&
+        std::any_of(
+            signal_aspect_edit_.rows.begin(), signal_aspect_edit_.rows.end(),
+            [](const EditableListDraftRow& row) { return row.inserted; });
+    if (has_inserted_signal_draft) {
+        const size_t required_columns =
+            k_signal_aspect_structure_key_column_offset + 5;
+        while (table_cache_.signal_aspect_column_headers.size() <
+               required_columns) {
+            const size_t key_index =
+                table_cache_.signal_aspect_column_headers.size() -
+                k_signal_aspect_structure_key_column_offset + 1;
+            table_cache_.signal_aspect_column_headers.push_back(
+                "structureKey" + std::to_string(key_index));
+            table_cache_.signal_aspect_column_widths.push_back(120.0f);
+        }
+    }
     render_editable_list_table(
         "signal_aspects", nullptr,
         static_cast<int>(

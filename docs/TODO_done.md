@@ -83,11 +83,11 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Provide shared find and unused-entry search panels for Structure models, signal aspects, and sound lists.
 - [x] Edit, clear, reorder, or delete existing Structure model-list keys and file paths through the source-backed inline table editor; selecting a file writes a relative path where possible.
 - [x] Edit or delete existing `Station.Put` rows, including distance, `stationKey`, door side, and stop margins.
-- [x] Edit, clear, reorder, or delete existing station-definition rows loaded through `Station.Load`; adding station rows is not supported.
+- [x] Edit, clear, reorder, or delete station-definition rows loaded through `Station.Load`.
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Speed Limit Point List`, `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
 - [x] Display `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`.
-- [x] Edit, clear, reorder, or delete existing `Signal.Load` aspect definitions and their optional glare rows through the source-backed inline table editor; adding rows or structure-key columns is not supported.
+- [x] Edit, clear, reorder, or delete `Signal.Load` aspect definitions and their optional glare rows through the source-backed inline table editor; adding structure-key columns is not supported.
 - [x] Edit or delete existing `Beacon.Put` rows through the source-backed property inspector.
 - [x] Provide a source-backed `Properties/Edit` inspector for supported Structure/Signal/Station/Repeater placements and Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows; expose it from applicable tables and 2D/3D markers, with live X/Y/Z gizmos for editable Structure, Signal, and Repeater Begin placements.
 - [x] Open Properties/Edit for Structure and Signal placements from their 2D plan markers.
@@ -115,7 +115,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] Display `Sound File List`, `3D Sound File List`, `Map Sound List`, and `Map 3D Sound List`.
 - [x] Edit, clear, reorder, or delete existing `Sound.Load` and `Sound3D.Load` file-list rows through source-backed inline tables; selecting a file writes a relative path where possible.
-- [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; station definition announcement sound keys are editable, but Sound/Sound3D file-list row insertion and audio playback remain unsupported.
+- [x] Edit or delete existing `Sound.Play`/`Sound3D.Put` placements and rolling/flange/joint-noise events; station definition announcement sound keys are editable, but audio playback remains unsupported.
 - [x] Edit or delete existing cab-illuminance setting positions.
 - [x] Edit or delete existing fog effects.
 - [x] Parse the read-only legacy linear-fog statement `Legacy.Fog(start, end, red, green, blue)` into typed snapshot rows and show them in a dedicated table list plus plan/scene markers with their source values; editing, creation, and the 3D fog effect are not implemented.
@@ -133,6 +133,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Include-file structure diagram and read-only source text preview using the active in-memory working copy.
 - [x] In edit mode, import an existing child map or exclusively create a new UTF-8/no-BOM/CRLF `BveTs Map 2.02:utf-8` child map from the File Structure Diagram. The canonical Include is staged in the selected physical source after the last zero-distance Include, before the first local distance when needed, or at end of file; normal Save commits the parent map.
 - [x] In edit mode, use `Change File...` on the top path of the Structure Model, Signal Aspect, Sound File, or 3D Sound File List to replace the matching `*.Load` source path. The candidate uses the map loader's existing list-title/version checks (Structure List 1.00+, Signal Aspects List 2.00+, and Sound List 2.00+ for both sound lists), refreshes the working copy/list cache immediately, and saves through normal Save; confirmation discards only the target list's unapplied drafts or applied-but-unsaved old-content edits.
+- [x] In edit mode, right-click any Station, Structure, Signal, Sound, or Sound3D resource-list content cell to insert a shared inline-draft row above or below. Insertions preserve source encoding/line endings and Apply/Save behavior, use fixed BVE CSV widths (Structure 2, Station 13, Signal 6, Sound/Sound3D 3), and keep Signal primary/glare pairs together; a new Signal primary has no glare until `Add Glare` is chosen.
 - [x] Edit mode with separate Apply-to-preview, Save-to-disk, global Revert of all pending changes, and Reload-from-disk behavior plus unsaved-change prompts.
 - [x] Prompt to rebase whole metres into the begin distance when applying a coordinate-enabled `Repeater.Begin` whose absolute Z-axis offset exceeds 5 m, matching `Structure.Put` behavior.
 - [x] Add an `Insert Change Point` action in Repeater `Properties/Edit` that opens a source-matched Begin/Begin0 wizard with Begin-only selected and current inspector drafts prefilled.
@@ -220,11 +221,11 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 为布景模型、信号现示和音效列表提供共享查找和未使用条目搜索面板
 - [x] 通过源文件关联行内表格编辑器编辑、清空、调整顺序或删除已有的布景模型列表 key 和文件路径；选择文件时会尽可能写入相对路径
 - [x] 编辑或删除已有 `Station.Put` 行，包括 distance、`stationKey`、车门侧和停车余量
-- [x] 编辑、清空、调整顺序或删除由 `Station.Load` 载入的已有车站定义行；暂不支持新增车站行
+- [x] 编辑、清空、调整顺序或删除由 `Station.Load` 载入的车站定义行
 - [x] 显示 `信号现示列表`、`地图信号列表` 和 `应答器列表`
 - [x] 显示 `限速点列表`、`轨道变位列表`、`粘着特性变化点列表`、走行音、轮缘摩擦音效和道岔音效相关表格
 - [x] 显示 `背景变化点列表`、`驾驶台亮度变化点列表`、`雾效果变化点列表` 和 `绘制距离变化点列表`
-- [x] 通过源码回写的行内表格编辑器编辑、清空、调整顺序或删除已有的 `Signal.Load` 信号现示定义及可选 glare 行；暂不支持新增行或现示结构 key 列
+- [x] 通过源码回写的行内表格编辑器编辑、清空、调整顺序或删除 `Signal.Load` 信号现示定义及可选 glare 行；暂不支持新增现示结构 key 列
 - [x] 通过基于源锚点的属性检查器编辑或删除已有 `Beacon.Put` 行
 - [x] 为已支持的布景/信号机/车站/Repeater 放置，以及限速点、轨道变位、应答器、音效/噪声、背景、粘着、驾驶台亮度、雾和绘制距离行提供“属性/编辑”检查器；可从适用的表格和 2D/3D 标记进入，并为可编辑的布景、信号机和 Repeater Begin 放置提供实时 X/Y/Z 操纵器
 - [x] 从 2D 平面图的布景/信号机放置标记打开“属性/编辑”
@@ -253,7 +254,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] 显示 `音效文件列表`、`3D音效文件列表`、`地图音效列表` 和 `地图3D音效列表`
 - [x] 通过源文件关联行内表格编辑器编辑、清空、调整顺序或删除已有的 `Sound.Load` 和 `Sound3D.Load` 文件列表行；选择文件时会尽可能写入相对路径
-- [x] 编辑或删除已有 `Sound.Play`/`Sound3D.Put` 放置和走行音/轮缘摩擦音/道岔音事件；车站定义中的报站音 key 可编辑，但仍不支持新增 Sound/Sound3D 文件列表行，程序也不播放音频
+- [x] 编辑或删除已有 `Sound.Play`/`Sound3D.Put` 放置和走行音/轮缘摩擦音/道岔音事件；车站定义中的报站音 key 可编辑，程序不播放音频
 - [x] 编辑或删除已有驾驶台亮度设定位置
 - [x] 编辑或删除已有雾效果
 - [x] 将只读旧式线性雾语句 `Legacy.Fog(start, end, red, green, blue)` 解析为类型化快照行，并在独立列表及平面图/3D 标牌中按源值显示；编辑、新建与 3D 雾效果未实现
@@ -271,6 +272,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Include 文件结构图，以及读取当前内存工作副本的只读源码文本预览
 - [x] 编辑模式下可从文件结构图导入已有子地图，或排他新建 UTF-8 无 BOM、CRLF 的 `BveTs Map 2.02:utf-8` 子地图；规范 Include 暂存到选定物理源中首个本地距离语句前最后一个零距离 Include 的下方、首个距离语句上方或文件末尾，正常“保存”才提交父地图
 - [x] 编辑模式下可在布景模型、信号现示、音效文件或 3D 音效文件列表顶部路径右键选择“更换文件...”，替换对应 `*.Load` 源路径。候选文件沿用地图加载器既有列表标题/版本校验（Structure List 1.00+、Signal Aspects List 2.00+，Sound 与 Sound3D 共用 Sound List 2.00+），立即刷新内存工作副本/列表缓存并经正常“保存”写盘；确认时只丢弃目标列表未应用草稿或已应用但未保存的旧内容修改。
+- [x] 编辑模式下可在 Station、Structure、Signal、Sound、Sound3D 资源列表任意内容单元格右键，在上方或下方新增共享行内草稿；插入保留源码编码/换行并走既有应用/保存流程，固定 BVE CSV 字段数依次为 13、2、6、3、3，Signal 主行/glare 成对保持绑定，新 Signal 主行默认无 glare，需手动“新增眩光”。
 - [x] 在文件结构图中右键 Include 文件节点并选择“解除引用”，经现有类型化删除/应用/保存流程从上级地图删除对应 `include` 语句；编辑模式关闭时菜单项禁用，后续语句仍依赖该子树内的变量或距离时删除被阻止
 - [x] 在文件结构图中右键 Include 文件节点并选择“更换文件...”，选择 .txt/.csv 子地图后经类型化更新流程将上级地图对应 `include` 语句的路径改写为新引用（复用布景模型列表的“优先相对路径、失败时绝对路径”逻辑，基准目录与解析器一致取入口地图目录）；应用后缓存自动刷新且不直接保存；编辑模式关闭时菜单项禁用，后续语句仍依赖旧子树内变量或替换会产生重复声明时编辑被阻止
 - [x] 编辑模式中分离“应用到预览”“保存到磁盘”“撤销全部待保存改动”和“从磁盘重新加载”，并在存在未保存更改时确认

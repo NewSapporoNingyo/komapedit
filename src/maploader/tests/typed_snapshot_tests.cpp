@@ -5451,6 +5451,422 @@ void resource_list_insert_contract() {
     std::filesystem::remove_all(directory, cleanup);
 }
 
+void resource_list_content_insert_contract() {
+    struct Fixture {
+        std::filesystem::path directory;
+        std::filesystem::path map_path;
+
+        Fixture() {
+            directory = std::filesystem::temp_directory_path() /
+                ("komapedit-resource-list-content-insert-" + std::to_string(
+                    std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(directory);
+            map_path = directory / "map.txt";
+            std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\r\n"
+                << "Structure.Load('structures.csv');\r\n"
+                << "Sound.Load('sounds.csv');\r\n"
+                << "Sound3D.Load('sounds3d.csv');\r\n"
+                << "Station.Load('stations.csv');\r\n"
+                << "Signal.Load('signals.csv');\r\n"
+                << "0;\r\n";
+            std::ofstream structures(directory / "structures.csv",
+                                     std::ios::binary | std::ios::trunc);
+            structures << "BveTs Structure List 1.00:utf-8\r\n"
+                       << "# keep structure comment\r\n"
+                       << "s1,s1.csv\r\n"
+                       << "s2,s2.csv\r\n"
+                       << "g1,g1.csv\r\n"
+                       << "g2,g2.csv\r\n";
+            std::ofstream sounds(directory / "sounds.csv",
+                                 std::ios::binary | std::ios::trunc);
+            sounds << "BveTs Sound List 2.00:utf-8\r\n"
+                   << "# keep sound comment\r\n"
+                   << "snd1,snd1.wav,1\r\n"
+                   << "snd2,snd2.wav,1\r\n";
+            std::ofstream sounds3d(directory / "sounds3d.csv",
+                                   std::ios::binary | std::ios::trunc);
+            sounds3d << "BveTs Sound List 2.00:utf-8\r\n"
+                     << "# keep sound3d comment\r\n"
+                     << "snd3a,snd3a.wav,1\r\n"
+                     << "snd3b,snd3b.wav,1\r\n";
+            std::ofstream stations(directory / "stations.csv",
+                                   std::ios::binary | std::ios::trunc);
+            stations << "BveTs Station List 1.00:utf-8\r\n"
+                     << "# keep station comment\r\n"
+                     << "sta1,Station 1,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0\r\n"
+                     << "sta2,Station 2,10:00,10:01,30,15,1,20,100,arr.wav,dep.wav,1,0\r\n";
+            std::ofstream signals(directory / "signals.csv",
+                                  std::ios::binary | std::ios::trunc);
+            signals << "BveTs Signal Aspects List 2.00:utf-8\r\n"
+                    << "# keep signal comment\r\n"
+                    << "sigA,s1,s2\r\n"
+                    << ",g1,g2\r\n"
+                    << "sigB,s1\r\n";
+        }
+
+        ~Fixture() {
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } fixture;
+
+    const auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+    };
+    const auto source_text = [](void* handle, const std::string& path) {
+        const char* text = kv_get_source_text(handle, path.c_str());
+        std::string value = text ? text : "";
+        kv_free_string(text);
+        return value;
+    };
+    const auto crlf_only = [](const std::string& text) {
+        for (size_t index = 0; index < text.size(); ++index) {
+            if (text[index] == '\n' && (index == 0 || text[index - 1] != '\r')) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto csv_count_at = [](const std::string& text, size_t begin) {
+        const size_t end = text.find_first_of("\r\n", begin);
+        return static_cast<size_t>(std::count(
+            text.begin() + static_cast<std::ptrdiff_t>(begin),
+            text.begin() + static_cast<std::ptrdiff_t>(
+                end == std::string::npos ? text.size() : end), ',')) + 1;
+    };
+
+    MapHandle handle(kv_load_map_ex(
+        fixture.map_path.u8string().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "resource-list content insert load");
+    if (!handle.value) return;
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "resource-list content insert baseline snapshot");
+    if (baseline.structure_model_count < 2 || baseline.station_list_count < 2 ||
+        baseline.signal_aspect_count < 2) {
+        check(false, "resource-list content insert baseline rows present");
+        return;
+    }
+
+    struct ListTarget {
+        std::string file;
+        std::string hash;
+        std::string first_edit_id;
+        std::string second_edit_id;
+    };
+    const auto target_for = [&](const KvRowMetadata& first,
+                                const KvRowMetadata& second) {
+        ListTarget target;
+        if (first.source_file_index >= baseline.source_file_count ||
+            second.source_file_index != first.source_file_index) {
+            return target;
+        }
+        const KvSourceFileRow& source =
+            baseline.source_files[first.source_file_index];
+        target.file = map_string(baseline, source.file_path);
+        target.hash = map_string(baseline, source.source_hash);
+        target.first_edit_id = map_string(baseline, first.edit_id);
+        target.second_edit_id = map_string(baseline, second.edit_id);
+        return target;
+    };
+    std::vector<const KvSoundListRow*> sounds;
+    std::vector<const KvSoundListRow*> sounds3d;
+    for (std::uint64_t index = 0; index < baseline.sound_list_count; ++index) {
+        const KvSoundListRow& row = baseline.sound_list[index];
+        (row.is_3d ? sounds3d : sounds).push_back(&row);
+    }
+    check(sounds.size() >= 2 && sounds3d.size() >= 2,
+          "resource-list content insert sound rows present");
+    if (sounds.size() < 2 || sounds3d.size() < 2) return;
+
+    const ListTarget structure_target = target_for(
+        baseline.structure_models[0].metadata, baseline.structure_models[1].metadata);
+    const ListTarget station_target = target_for(
+        baseline.station_list[0].metadata, baseline.station_list[1].metadata);
+    const ListTarget signal_target = target_for(
+        baseline.signal_aspects[0].metadata, baseline.signal_aspects[1].metadata);
+    const ListTarget sound_target = target_for(
+        sounds[0]->metadata, sounds[1]->metadata);
+    const ListTarget sound3d_target = target_for(
+        sounds3d[0]->metadata, sounds3d[1]->metadata);
+    check(!structure_target.file.empty() && !station_target.file.empty() &&
+              !signal_target.file.empty() && !sound_target.file.empty() &&
+              !sound3d_target.file.empty(),
+          "resource-list content insert source targets present");
+    if (structure_target.file.empty() || station_target.file.empty() ||
+        signal_target.file.empty() || sound_target.file.empty() ||
+        sound3d_target.file.empty()) {
+        return;
+    }
+
+    struct InsertSpec {
+        std::string id;
+        std::string row_kind;
+        std::string target_file;
+        std::string source_hash;
+        std::string insert_before_edit_id;
+        std::vector<std::pair<std::string, std::string>> fields;
+    };
+    struct InsertBatch {
+        std::vector<InsertSpec> specs;
+        std::vector<std::string> change_ids;
+        std::vector<std::string> field_names;
+        std::vector<std::string> field_values;
+        std::vector<KvEditField> fields;
+        std::vector<KvEditChange> changes;
+        KvEditBatch batch{};
+
+        explicit InsertBatch(std::vector<InsertSpec> input)
+            : specs(std::move(input)) {
+            size_t field_count = 0;
+            for (const InsertSpec& spec : specs) field_count += 1 + spec.fields.size();
+            change_ids.reserve(specs.size());
+            field_names.reserve(field_count);
+            field_values.reserve(field_count);
+            changes.resize(specs.size());
+            std::vector<std::pair<size_t, size_t>> ranges;
+            ranges.reserve(specs.size());
+            for (const InsertSpec& spec : specs) {
+                const size_t begin = field_names.size();
+                field_names.push_back("rowKind");
+                field_values.push_back(spec.row_kind);
+                for (const auto& field : spec.fields) {
+                    field_names.push_back(field.first);
+                    field_values.push_back(field.second);
+                }
+                ranges.push_back({begin, field_names.size() - begin});
+                change_ids.push_back(spec.id);
+            }
+            fields.reserve(field_names.size());
+            for (size_t index = 0; index < field_names.size(); ++index) {
+                fields.push_back({utf8_view(field_names[index]),
+                                  utf8_view(field_values[index])});
+            }
+            for (size_t index = 0; index < specs.size(); ++index) {
+                const InsertSpec& spec = specs[index];
+                KvEditChange& change = changes[index];
+                change.change_id = utf8_view(change_ids[index]);
+                change.edit_id = utf8_view(change_ids[index]);
+                change.operation = KV_EDIT_INSERT;
+                change.fields = {static_cast<std::uint64_t>(ranges[index].first),
+                                 static_cast<std::uint64_t>(ranges[index].second)};
+                change.target_file_path = utf8_view(spec.target_file);
+                change.expected_source_hash = utf8_view(spec.source_hash);
+                change.insert_before_edit_id = utf8_view(spec.insert_before_edit_id);
+            }
+            batch = {changes.data(), static_cast<std::uint64_t>(changes.size()),
+                     fields.data(), static_cast<std::uint64_t>(fields.size())};
+        }
+    };
+    const auto structure_fields = [](const std::string& key) {
+        return std::vector<std::pair<std::string, std::string>>{
+            {"structureKey", key}, {"filePath", key + ".csv"}};
+    };
+    const auto sound_fields = [](const std::string& key) {
+        return std::vector<std::pair<std::string, std::string>>{
+            {"soundKey", key}, {"filePath", key + ".wav"}, {"bufferCount", "1"}};
+    };
+    const auto station_fields = [](const std::string& key) {
+        static constexpr std::array<const char*, 13> names = {{
+            "stationKey", "stationName", "arrivalTime", "depertureTime",
+            "stoppageTime", "defaultTime", "signalFlag", "alightingTime",
+            "passengers", "arrivalSoundKey", "depertureSoundKey", "doorReopen",
+            "stuckInDoor",
+        }};
+        std::vector<std::pair<std::string, std::string>> result;
+        result.reserve(names.size());
+        for (size_t index = 0; index < names.size(); ++index) {
+            result.emplace_back(names[index], index == 0 ? key : std::string{});
+        }
+        return result;
+    };
+    const auto signal_fields = [](const std::string& key, bool add_glare) {
+        std::vector<std::pair<std::string, std::string>> result;
+        result.emplace_back("signalAspectKey", key);
+        for (size_t index = 1; index <= 5; ++index) {
+            result.emplace_back("structureKey" + std::to_string(index),
+                                index == 1 ? "s1" : std::string{});
+        }
+        if (add_glare) {
+            result.emplace_back("addGlare", "5");
+            for (size_t index = 6; index <= 10; ++index) {
+                result.emplace_back("structureKey" + std::to_string(index),
+                                    index == 6 ? "g1" : std::string{});
+            }
+        }
+        return result;
+    };
+    const auto append_three = [](std::vector<InsertSpec>& specs,
+                                 const ListTarget& target,
+                                 const char* row_kind,
+                                 const char* prefix,
+                                 const auto& fields) {
+        specs.push_back({std::string(prefix) + "-above-a", row_kind,
+                         target.file, target.hash, target.first_edit_id,
+                         fields(std::string(prefix) + "AboveA")});
+        specs.push_back({std::string(prefix) + "-above-b", row_kind,
+                         target.file, target.hash, target.first_edit_id,
+                         fields(std::string(prefix) + "AboveB")});
+        specs.push_back({std::string(prefix) + "-below", row_kind,
+                         target.file, target.hash, target.second_edit_id,
+                         fields(std::string(prefix) + "Below")});
+    };
+
+    std::vector<InsertSpec> inserts;
+    append_three(inserts, structure_target, "structure.model", "ctStructure",
+                 structure_fields);
+    append_three(inserts, sound_target, "sound.list", "ctSound", sound_fields);
+    append_three(inserts, sound3d_target, "sound3D.list", "ctSound3D", sound_fields);
+    append_three(inserts, station_target, "station.list", "ctStation", station_fields);
+    inserts.push_back({"ct-signal-above-a", "signal.aspect", signal_target.file,
+                       signal_target.hash, signal_target.first_edit_id,
+                       signal_fields("ctSignalAboveA", false)});
+    inserts.push_back({"ct-signal-above-b", "signal.aspect", signal_target.file,
+                       signal_target.hash, signal_target.first_edit_id,
+                       signal_fields("ctSignalAboveB", true)});
+    inserts.push_back({"ct-signal-below", "signal.aspect", signal_target.file,
+                       signal_target.hash, signal_target.second_edit_id,
+                       signal_fields("ctSignalBelow", false)});
+    InsertBatch batch(std::move(inserts));
+    KvEditReportSnapshot dry_report{};
+    check(kv_edit_dry_run_typed(handle.value, &batch.batch, &dry_report,
+                                sizeof(dry_report)) != 0 && dry_report.ok &&
+              dry_report.full_reparse_ok && dry_report.insert_count == 15 &&
+              dry_report.non_target_changed_count == 0,
+          "resource-list content insert dry-run");
+    KvEditReportSnapshot apply_report{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &batch.batch, &apply_report,
+                                        sizeof(apply_report)) != 0 && apply_report.ok &&
+              apply_report.full_reparse_ok && apply_report.insert_count == 15,
+          "resource-list content insert apply-to-memory");
+
+    const auto ordered = [&](const ListTarget& target,
+                             std::initializer_list<std::string_view> keys) {
+        const std::string text = source_text(handle.value, target.file);
+        size_t previous = 0;
+        bool result = crlf_only(text);
+        for (std::string_view key : keys) {
+            const size_t position = text.find(key, previous);
+            result = result && position != std::string::npos;
+            if (position == std::string::npos) break;
+            previous = position + key.size();
+        }
+        return result;
+    };
+    const std::string structure_source = source_text(handle.value, structure_target.file);
+    const std::string sound_source = source_text(handle.value, sound_target.file);
+    const std::string sound3d_source = source_text(handle.value, sound3d_target.file);
+    const std::string station_source = source_text(handle.value, station_target.file);
+    const std::string signal_source = source_text(handle.value, signal_target.file);
+    check(ordered(structure_target, {"ctStructureAboveA,", "ctStructureAboveB,", "s1,",
+                                     "ctStructureBelow,", "s2,"}) &&
+              ordered(sound_target, {"ctSoundAboveA,", "ctSoundAboveB,", "snd1,",
+                                     "ctSoundBelow,", "snd2,"}) &&
+              ordered(sound3d_target, {"ctSound3DAboveA,", "ctSound3DAboveB,", "snd3a,",
+                                       "ctSound3DBelow,", "snd3b,"}) &&
+              ordered(station_target, {"ctStationAboveA,", "ctStationAboveB,", "sta1,",
+                                       "ctStationBelow,", "sta2,"}) &&
+              ordered(signal_target, {"ctSignalAboveA,", "ctSignalAboveB,", "sigA,",
+                                      ",g1,g2", "ctSignalBelow,", "sigB,"}),
+          "resource-list content insert keeps same-anchor order and Signal glare blocks");
+    const size_t structure_above = structure_source.find("ctStructureAboveA,");
+    const size_t sound_above = sound_source.find("ctSoundAboveA,");
+    const size_t sound3d_above = sound3d_source.find("ctSound3DAboveA,");
+    const size_t station_above = station_source.find("ctStationAboveA,");
+    const size_t signal_above = signal_source.find("ctSignalAboveA,");
+    const size_t signal_glare = signal_source.find("\n,g1,,,,", signal_source.find("ctSignalAboveB,"));
+    check(structure_source.find("# keep structure comment\r\n") != std::string::npos &&
+              sound_source.find("# keep sound comment\r\n") != std::string::npos &&
+              sound3d_source.find("# keep sound3d comment\r\n") != std::string::npos &&
+              station_source.find("# keep station comment\r\n") != std::string::npos &&
+              signal_source.find("# keep signal comment\r\n") != std::string::npos &&
+              structure_above != std::string::npos && csv_count_at(structure_source, structure_above) == 2 &&
+              sound_above != std::string::npos && csv_count_at(sound_source, sound_above) == 3 &&
+              sound3d_above != std::string::npos && csv_count_at(sound3d_source, sound3d_above) == 3 &&
+              station_above != std::string::npos && csv_count_at(station_source, station_above) == 13 &&
+              signal_above != std::string::npos && csv_count_at(signal_source, signal_above) == 6 &&
+              signal_glare != std::string::npos && csv_count_at(signal_source, signal_glare + 1) == 6,
+          "resource-list content insert emits exact CSV fields and preserves CRLF/comments");
+
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0 &&
+              applied.structure_model_count == baseline.structure_model_count + 3 &&
+              applied.station_list_count == baseline.station_list_count + 3 &&
+              applied.signal_aspect_count == baseline.signal_aspect_count + 3 &&
+              applied.sound_list_count == baseline.sound_list_count + 6,
+          "resource-list content insert hydrates all five typed row families");
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "resource-list content insert reset");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0 &&
+              reset.structure_model_count == baseline.structure_model_count &&
+              reset.station_list_count == baseline.station_list_count &&
+              reset.signal_aspect_count == baseline.signal_aspect_count &&
+              reset.sound_list_count == baseline.sound_list_count,
+          "resource-list content insert reset restores baseline rows");
+    check(source_text(handle.value, structure_target.file) ==
+              read_bytes(fixture.directory / "structures.csv") &&
+              source_text(handle.value, signal_target.file) ==
+              read_bytes(fixture.directory / "signals.csv"),
+          "resource-list content insert reset leaves disk source unchanged");
+
+    const std::string signal_b_id = signal_target.second_edit_id;
+    MultiFieldUpdateBatch add_glare(
+        "ct-signal-add-glare", signal_b_id, signal_target.hash,
+        {{"addGlare", "1"}, {"structureKey2", "g1"}});
+    KvEditReportSnapshot glare_dry{};
+    check(kv_edit_dry_run_typed(handle.value, &add_glare.batch, &glare_dry,
+                                sizeof(glare_dry)) != 0 && glare_dry.ok,
+          "resource-list content insert validates existing Signal glare addition");
+    KvEditReportSnapshot glare_apply{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &add_glare.batch, &glare_apply,
+                                        sizeof(glare_apply)) != 0 && glare_apply.ok &&
+              source_text(handle.value, signal_target.file).find("sigB,s1\r\n,g1") !=
+                  std::string::npos,
+          "resource-list content insert adds Signal glare with source newline");
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "resource-list content insert glare reset");
+
+    InsertBatch invalid_main({{
+        "ct-signal-invalid-main", "signal.aspect", signal_target.file,
+        signal_target.hash, signal_target.first_edit_id,
+        {{"signalAspectKey", "ctSignalInvalidMain"},
+         {"structureKey1", ""}, {"structureKey2", ""},
+         {"structureKey3", ""}, {"structureKey4", ""},
+         {"structureKey5", ""}},
+    }});
+    InsertBatch invalid_glare({{
+        "ct-signal-invalid-glare", "signal.aspect", signal_target.file,
+        signal_target.hash, signal_target.first_edit_id,
+        {{"signalAspectKey", "ctSignalInvalidGlare"},
+         {"structureKey1", "s1"}, {"structureKey2", ""},
+         {"structureKey3", ""}, {"structureKey4", ""},
+         {"structureKey5", ""}, {"addGlare", "5"},
+         {"structureKey6", ""}, {"structureKey7", ""},
+         {"structureKey8", ""}, {"structureKey9", ""},
+         {"structureKey10", ""}},
+    }});
+    KvEditReportSnapshot invalid_main_report{};
+    KvEditReportSnapshot invalid_glare_report{};
+    const bool invalid_main_ran = kv_edit_dry_run_typed(
+        handle.value, &invalid_main.batch, &invalid_main_report,
+        sizeof(invalid_main_report)) != 0;
+    const bool invalid_glare_ran = kv_edit_dry_run_typed(
+        handle.value, &invalid_glare.batch, &invalid_glare_report,
+        sizeof(invalid_glare_report)) != 0;
+    check((!invalid_main_ran || !invalid_main_report.ok ||
+           invalid_main_report.blocking_error_count != 0) &&
+              (!invalid_glare_ran || !invalid_glare_report.ok ||
+               invalid_glare_report.blocking_error_count != 0),
+          "resource-list content insert rejects empty Signal main and glare rows");
+}
+
 void include_replace_variable_dependency_blocks_contract() {
     std::filesystem::path directory = std::filesystem::temp_directory_path() /
         ("komapedit-include-replace-dependency-" + std::to_string(
@@ -5535,6 +5951,7 @@ int edit_contract() {
     include_replace_contract();
     resource_list_replace_contract();
     resource_list_insert_contract();
+    resource_list_content_insert_contract();
     include_replace_variable_dependency_blocks_contract();
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();

@@ -444,6 +444,51 @@ HeadlessResourceListReplaceOptions parse_headless_resource_list_replace_options(
         });
 }
 
+HeadlessResourceListInsertOptions parse_headless_resource_list_insert_options(
+    const std::vector<std::string>& args) {
+    HeadlessResourceListInsertOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-resource-list-insert") {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a map path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--kind") {
+            const std::string* value =
+                take_option_value(args, i, arg, "structure or signal", options.error);
+            if (!value) return options;
+            options.kind = ascii_lower(*value);
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a value",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) {
+                                         return value > 0.0 && std::isfinite(value);
+                                     })) {
+                return options;
+            }
+        } else if (arg == "--headless-output") {
+            const std::string* value =
+                take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.error =
+                "--debug-headless-resource-list-insert is memory-apply only";
+        }
+    }
+    if (!options.requested || !options.error.empty()) return options;
+    if (options.path.empty()) {
+        options.error = "--debug-headless-resource-list-insert requires a map path";
+    } else if (options.kind != "structure" && options.kind != "signal") {
+        options.error =
+            "--debug-headless-resource-list-insert requires --kind structure or signal";
+    }
+    return options;
+}
+
 HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
     const std::vector<std::string>& args) {
     return parse_headless_required_map_edit_options<HeadlessNewFileWizardOptions>(

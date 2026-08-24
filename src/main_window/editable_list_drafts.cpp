@@ -74,9 +74,14 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 bool editable_list_row_has_draft(const EditableListDraftRow& row) {
-    return row.deleted || row.secondary_row_deleted ||
+    return row.inserted || row.deleted || row.secondary_row_deleted ||
+        row.secondary_row_added ||
         row.payload_edit_id != row.target_edit_id ||
         row.values != row.original_values;
+}
+
+const std::string& editable_list_row_identity(const EditableListDraftRow& row) {
+    return row.target_edit_id.empty() ? row.local_draft_id : row.target_edit_id;
 }
 
 std::string editable_list_field_name(const EditableListSpec& spec,
@@ -118,6 +123,10 @@ bool move_editable_list_draft_row(
         left.target_source_file != right.target_source_file) {
         return false;
     }
+    if (left.inserted || right.inserted) {
+        std::swap(left, right);
+        return true;
+    }
     std::swap(left.payload_edit_id, right.payload_edit_id);
     std::swap(left.payload_source_file, right.payload_source_file);
     std::swap(left.payload_line, right.payload_line);
@@ -131,6 +140,8 @@ bool move_editable_list_draft_row(
               right.secondary_structure_field_count);
     std::swap(left.secondary_row_deleted,
               right.secondary_row_deleted);
+    std::swap(left.secondary_row_added,
+              right.secondary_row_added);
     return true;
 }
 
@@ -204,8 +215,92 @@ bool build_editable_list_pending_changes(
     std::map<std::string, MapElementPendingChange>& candidate_changes,
     std::string& error_message) {
     candidate_changes = existing_changes;
-    for (const EditableListDraftRow& row : rows) {
+    const auto set_field = [&](MapElementPendingChange& change,
+                               size_t field, const std::string& value) {
+        const std::string field_name = editable_list_field_name(spec, field);
+        if (field_name.empty()) {
+            error_message = std::string(spec.row_kind) +
+                " draft has no field name for column " +
+                std::to_string(field);
+            return false;
+        }
+        change.field_changes[field_name] = value;
+        return true;
+    };
+    const auto validate_insert_shape = [&](const EditableListDraftRow& row) {
+        if (!spec.numbered_structure_key_fields) {
+            if (row.values.size() != spec.field_count) {
+                error_message = std::string(spec.row_kind) +
+                    " insert has an invalid field count";
+                return false;
+            }
+            return true;
+        }
+        const size_t glare_count = row.secondary_row_added
+            ? row.secondary_structure_field_count : 0;
+        if (row.primary_structure_field_count != 5 ||
+            (glare_count != 0 && glare_count != 5) ||
+            row.values.size() != 6 + glare_count) {
+            error_message = "signal.aspect insert must contain one aspect key and five structure keys";
+            return false;
+        }
+        return true;
+    };
+    const auto append_all_fields = [&](MapElementPendingChange& change,
+                                       const EditableListDraftRow& row) {
+        for (size_t field = 0; field < row.values.size(); ++field) {
+            if (!set_field(change, field, row.values[field])) return false;
+        }
+        return true;
+    };
+    for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
+        const EditableListDraftRow& row = rows[row_index];
         if (!editable_list_row_has_draft(row)) continue;
+        if (row.inserted) {
+            if (row.deleted) continue;
+            if (row.local_draft_id.empty() || row.target_source_file.empty()) {
+                error_message = std::string(spec.row_kind) +
+                    " insert has no local ID or source file";
+                return false;
+            }
+            if (!validate_insert_shape(row)) return false;
+
+            MapElementPendingChange change;
+            change.change_id = std::string(spec.change_prefix) + row.local_draft_id;
+            change.edit_id = row.local_draft_id;
+            change.row_kind = spec.row_kind;
+            change.operation = "insert";
+            change.target_file_path = row.target_source_file;
+            change.expected_source_hash = row.target_expected_source_hash;
+            change.resource_list_insert_order =
+                static_cast<std::uint64_t>(row_index + 1);
+            if (!append_all_fields(change, row)) return false;
+            if (row.secondary_row_added) {
+                const size_t glare_begin = row.values.size() -
+                    row.secondary_structure_field_count;
+                const bool has_glare_key = std::any_of(
+                    row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
+                    row.values.end(),
+                    [](const std::string& value) { return !value.empty(); });
+                if (!has_glare_key) {
+                    error_message = "signal.aspect glare requires at least one structure key";
+                    return false;
+                }
+                change.field_changes["addGlare"] =
+                    std::to_string(row.secondary_structure_field_count);
+            }
+            for (size_t next = row_index + 1; next < rows.size(); ++next) {
+                const EditableListDraftRow& anchor = rows[next];
+                if (!anchor.inserted && !anchor.deleted &&
+                    anchor.target_source_file == row.target_source_file &&
+                    !anchor.target_edit_id.empty()) {
+                    change.insert_before_edit_id = anchor.target_edit_id;
+                    break;
+                }
+            }
+            candidate_changes[row.local_draft_id] = std::move(change);
+            continue;
+        }
         if (row.target_edit_id.empty()) {
             error_message = std::string(spec.row_kind) +
                 " draft has no target edit ID";
@@ -229,21 +324,47 @@ bool build_editable_list_pending_changes(
             change.expected_source_hash = row.target_expected_source_hash;
         }
 
+        const bool pending_insert = existing != candidate_changes.end() &&
+            existing->second.operation == "insert";
+        if (row.deleted && pending_insert) {
+            candidate_changes.erase(existing);
+            continue;
+        }
         if (row.deleted) {
             change.operation = "delete";
             change.field_changes.clear();
             change.replacement_statement.clear();
         } else {
             if (existing != candidate_changes.end() &&
-                existing->second.operation != "update") {
+                existing->second.operation != "update" && !pending_insert) {
                 error_message = std::string(spec.row_kind) +
                     " draft conflicts with a pending " +
                     existing->second.operation + ": " + row.target_edit_id;
                 return false;
             }
-            change.operation = "update";
+            change.operation = pending_insert ? "insert" : "update";
             const bool moved = row.payload_edit_id != row.target_edit_id;
-            if (moved) {
+            if (pending_insert) {
+                if (!validate_insert_shape(row)) return false;
+                change.field_changes.clear();
+                change.replacement_statement.clear();
+                if (!append_all_fields(change, row)) return false;
+                if (spec.numbered_structure_key_fields &&
+                    row.secondary_structure_field_count != 0) {
+                    const size_t glare_begin = row.values.size() -
+                        row.secondary_structure_field_count;
+                    const bool has_glare_key = std::any_of(
+                        row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
+                        row.values.end(),
+                        [](const std::string& value) { return !value.empty(); });
+                    if (!has_glare_key) {
+                        error_message = "signal.aspect glare requires at least one structure key";
+                        return false;
+                    }
+                    change.field_changes["addGlare"] =
+                        std::to_string(row.secondary_structure_field_count);
+                }
+            } else if (moved) {
                 if (row.payload_source_file != row.target_source_file ||
                     row.payload_raw_statement.empty()) {
                     error_message = std::string(spec.row_kind) +
@@ -253,39 +374,41 @@ bool build_editable_list_pending_changes(
                 }
                 change.field_changes.clear();
                 for (size_t field = 0; field < row.values.size(); ++field) {
-                    const std::string field_name =
-                        editable_list_field_name(spec, field);
-                    if (field_name.empty()) {
-                        error_message = std::string(spec.row_kind) +
-                            " draft has no field name for column " +
-                            std::to_string(field);
-                        return false;
-                    }
-                    change.field_changes[field_name] = row.values[field];
+                    if (!set_field(change, field, row.values[field])) return false;
                 }
                 change.replacement_statement = row.payload_raw_statement;
             } else {
-                if (row.values.size() != row.original_values.size()) {
+                const size_t expected_field_count = row.original_values.size() +
+                    (row.secondary_row_added
+                        ? row.secondary_structure_field_count : 0);
+                if (row.values.size() != expected_field_count) {
                     error_message = std::string(spec.row_kind) +
                         " draft field count changed unexpectedly";
                     return false;
                 }
                 for (size_t field = 0; field < row.values.size(); ++field) {
-                    if (row.values[field] != row.original_values[field]) {
-                        const std::string field_name =
-                            editable_list_field_name(spec, field);
-                        if (field_name.empty()) {
-                            error_message = std::string(spec.row_kind) +
-                                " draft has no field name for column " +
-                                std::to_string(field);
-                            return false;
-                        }
-                        change.field_changes[field_name] = row.values[field];
+                    if (field >= row.original_values.size() ||
+                        row.values[field] != row.original_values[field]) {
+                        if (!set_field(change, field, row.values[field])) return false;
                     }
                 }
             }
             if (row.secondary_row_deleted) {
                 change.field_changes["deleteGlare"] = "1";
+            }
+            if (row.secondary_row_added) {
+                const size_t glare_begin = row.values.size() -
+                    row.secondary_structure_field_count;
+                const bool has_glare_key = std::any_of(
+                    row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
+                    row.values.end(),
+                    [](const std::string& value) { return !value.empty(); });
+                if (!has_glare_key) {
+                    error_message = "signal.aspect glare requires at least one structure key";
+                    return false;
+                }
+                change.field_changes["addGlare"] =
+                    std::to_string(row.secondary_structure_field_count);
             }
         }
         candidate_changes[row.target_edit_id] = std::move(change);
@@ -412,7 +535,8 @@ void App::commit_editable_list_active_edit(EditableListEditState& edit,
         initialize_editable_list_draft_rows(edit, spec)) {
         const auto row = std::find_if(
             edit.rows.begin(), edit.rows.end(), [&](const EditableListDraftRow& candidate) {
-                return candidate.target_edit_id == edit.editing_edit_id;
+                return editable_list_row_identity(candidate) ==
+                    edit.editing_edit_id;
             });
         if (row != edit.rows.end() && !row->deleted &&
             static_cast<size_t>(edit.editing_column) <
@@ -446,7 +570,58 @@ bool App::move_editable_list_row(EditableListEditState& edit,
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
     if (!move_editable_list_draft_row(
             edit.rows, edit.visible_rows, visible_row, direction)) return false;
+    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
     edit.selected_row = visible_row + direction;
+    edit.selected_secondary_row = false;
+    rebuild_editable_list_display_rows(edit, spec);
+    return true;
+}
+
+bool App::insert_editable_list_row(EditableListEditState& edit,
+                                   const EditableListSpec& spec,
+                                   int visible_row, bool above) {
+    commit_editable_list_active_edit(edit, spec);
+    if (!initialize_editable_list_draft_rows(edit, spec) ||
+        visible_row < 0 ||
+        visible_row >= static_cast<int>(edit.visible_rows.size())) {
+        return false;
+    }
+    const size_t anchor_index =
+        edit.visible_rows[static_cast<size_t>(visible_row)];
+    if (anchor_index >= edit.rows.size()) return false;
+    const EditableListDraftRow& anchor = edit.rows[anchor_index];
+    if (anchor.deleted || anchor.target_source_file.empty()) return false;
+
+    EditableListDraftRow row;
+    const std::string local_prefix = std::string(spec.change_prefix) + "draft-";
+    do {
+        row.local_draft_id = local_prefix +
+            std::to_string(edit.next_local_draft_id++);
+    } while (pending_edit_changes_.find(row.local_draft_id) !=
+                 pending_edit_changes_.end() ||
+             std::any_of(edit.rows.begin(), edit.rows.end(),
+                         [&](const EditableListDraftRow& candidate) {
+                             return editable_list_row_identity(candidate) ==
+                                 row.local_draft_id;
+                         }));
+    row.target_source_file = anchor.target_source_file;
+    row.target_expected_source_hash = anchor.target_expected_source_hash;
+    row.inserted = true;
+    if (spec.numbered_structure_key_fields) {
+        row.values.assign(6, {});
+        row.primary_structure_field_count = 5;
+    } else {
+        row.values.assign(spec.field_count, {});
+    }
+    row.original_values = row.values;
+    const size_t insert_index = above ? anchor_index : anchor_index + 1;
+    edit.rows.insert(
+        edit.rows.begin() + static_cast<std::ptrdiff_t>(insert_index),
+        std::move(row));
+    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
+    edit.selected_row = above ? visible_row : visible_row + 1;
+    edit.selected_column = 0;
+    edit.selected_secondary_row = false;
     rebuild_editable_list_display_rows(edit, spec);
     return true;
 }
@@ -478,7 +653,8 @@ bool App::choose_editable_list_file(EditableListEditState& edit,
     }
     EditableListDraftRow& row =
         edit.rows[edit.visible_rows[static_cast<size_t>(visible_row)]];
-    if (row.deleted || row.target_edit_id.empty()) return false;
+    if (row.deleted || row.target_source_file.empty() ||
+        static_cast<size_t>(spec.path_field) >= row.values.size()) return false;
 
     const std::string selected_file = open_editable_list_file_dialog(
         spec, list_asset_picker_initial_directory(
@@ -510,6 +686,20 @@ bool App::delete_editable_list_row(EditableListEditState& edit,
                                    int visible_row) {
     commit_editable_list_active_edit(edit, spec);
     if (!initialize_editable_list_draft_rows(edit, spec)) return false;
+    if (visible_row < 0 ||
+        visible_row >= static_cast<int>(edit.visible_rows.size())) return false;
+    const size_t draft_index = edit.visible_rows[static_cast<size_t>(visible_row)];
+    if (draft_index >= edit.rows.size()) return false;
+    if (edit.rows[draft_index].inserted) {
+        edit.rows.erase(edit.rows.begin() + static_cast<std::ptrdiff_t>(draft_index));
+        edit.visible_rows = editable_list_visible_row_indices(edit.rows);
+        edit.selected_row = std::min(
+            visible_row, static_cast<int>(edit.visible_rows.size()) - 1);
+        edit.selected_column = -1;
+        edit.selected_secondary_row = false;
+        rebuild_editable_list_display_rows(edit, spec);
+        return true;
+    }
     if (!delete_editable_list_draft_row(
             edit.rows, edit.visible_rows, visible_row)) return false;
     edit.selected_row = visible_row;
@@ -535,9 +725,48 @@ bool App::delete_editable_list_secondary_row(
         row.secondary_structure_field_count == 0) {
         return false;
     }
+    if (row.secondary_row_added) {
+        if (row.values.size() < row.secondary_structure_field_count) return false;
+        row.values.resize(
+            row.values.size() - row.secondary_structure_field_count);
+        row.secondary_structure_field_count = 0;
+        row.secondary_row_added = false;
+        edit.selected_row = visible_row;
+        edit.selected_secondary_row = false;
+        rebuild_editable_list_display_rows(edit, spec);
+        return true;
+    }
     row.secondary_row_deleted = true;
     edit.selected_row = visible_row;
     edit.selected_secondary_row = true;
+    return true;
+}
+
+bool App::add_editable_list_secondary_row(
+    EditableListEditState& edit,
+    const EditableListSpec& spec,
+    int visible_row) {
+    commit_editable_list_active_edit(edit, spec);
+    if (!spec.numbered_structure_key_fields ||
+        !initialize_editable_list_draft_rows(edit, spec) ||
+        visible_row < 0 ||
+        visible_row >= static_cast<int>(edit.visible_rows.size())) {
+        return false;
+    }
+    EditableListDraftRow& row = edit.rows[
+        edit.visible_rows[static_cast<size_t>(visible_row)]];
+    if (row.deleted || row.secondary_row_deleted ||
+        row.secondary_structure_field_count != 0 ||
+        row.primary_structure_field_count == 0) {
+        return false;
+    }
+    row.values.resize(
+        row.values.size() + row.primary_structure_field_count);
+    row.secondary_structure_field_count = row.primary_structure_field_count;
+    row.secondary_row_added = true;
+    edit.selected_row = visible_row;
+    edit.selected_secondary_row = true;
+    rebuild_editable_list_display_rows(edit, spec);
     return true;
 }
 
@@ -578,6 +807,7 @@ void App::rebind_other_editable_list_drafts(
         };
         bool rebound = true;
         for (EditableListDraftRow& row : binding.edit->rows) {
+            if (row.inserted) continue;
             const CachedTableRow* target = find_location(
                 row.target_source_file, row.target_line, row.target_column);
             const CachedTableRow* payload = find_location(

@@ -432,6 +432,19 @@ int main(int, char**) {
         return App::run_debug_headless_resource_list_replace(resource_list_replace);
     }
 
+    HeadlessResourceListInsertOptions resource_list_insert =
+        parse_headless_resource_list_insert_options(args);
+    if (resource_list_insert.requested) {
+        if (!resource_list_insert.error.empty()) {
+            std::cerr << resource_list_insert.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-resource-list-insert <map-path> "
+                         "--kind structure|signal [--unit-distance M] "
+                         "[--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_resource_list_insert(resource_list_insert);
+    }
+
     HeadlessNewFileWizardOptions new_file_wizard =
         parse_headless_new_file_wizard_options(args);
     if (new_file_wizard.requested) {

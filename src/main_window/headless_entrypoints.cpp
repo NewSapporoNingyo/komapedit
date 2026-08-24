@@ -123,7 +123,13 @@ int App::run_debug_headless_new_element_edit(
 
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    ImGui::GetIO().IniFilename = nullptr;
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
     try {
         UserSettings settings;
         settings.language = Language::En;
@@ -1523,6 +1529,7 @@ int App::run_debug_headless_new_element_edit(
         *out << "exception=" << e.what() << "\n";
         ++failed_cases;
     }
+    ImGui::EndFrame();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
     if (load.handle) kv_free(load.handle);
@@ -1706,6 +1713,312 @@ int App::run_debug_headless_resource_list_replace(
     *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();
     return failed_cases == 0 ? 0 : 21;
+}
+
+int App::run_debug_headless_resource_list_insert(
+    const HeadlessResourceListInsertOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-resource-list-insert\n"
+         << "map_path=" << options.path << "\n"
+         << "kind=" << options.kind << "\n"
+         << "memory_apply_only=1\n"
+         << "stage=load-start\n";
+    out->flush();
+
+    LoadModelOptions load_options;
+    load_options.full_edit_registry = true;
+    load_options.load_profile = "edit";
+    LoadResult load = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, load_options);
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        return 2;
+    }
+
+    int failed_cases = 0;
+    const auto check = [&](const char* name, bool value) {
+        *out << name << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+    const auto source_hashes = [](const MapModel& model) {
+        std::map<std::string, std::string> hashes;
+        for (const EditSourceFileInfo& file : model.edit_files) {
+            hashes.emplace(file.file_path, file.source_hash);
+        }
+        return hashes;
+    };
+    const auto source_text = [](void* handle, const std::string& path) {
+        const char* text = kv_get_source_text(handle, path.c_str());
+        std::string value = text ? text : "";
+        kv_free_string(text);
+        return value;
+    };
+    const auto csv_field_count_at = [](const std::string& text, size_t begin) {
+        const size_t end = text.find_first_of("\r\n", begin);
+        return static_cast<size_t>(std::count(
+            text.begin() + static_cast<std::ptrdiff_t>(begin),
+            text.begin() + static_cast<std::ptrdiff_t>(end == std::string::npos
+                ? text.size() : end), ',')) + 1;
+    };
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = load.handle;
+        load.handle = nullptr;
+        app.model_ = std::move(load.model);
+        app.file_path_ = options.path;
+        app.has_model_ = true;
+        app.edit_mode_enabled_ = true;
+        app.edit_registry_loaded_ = true;
+        app.edit_memory_matches_pending_ledger_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.unit_distance_ = options.unit_distance;
+        const std::map<std::string, std::string> baseline_hashes =
+            source_hashes(app.model_);
+        check("loaded_source_hashes_present", !baseline_hashes.empty());
+        *out << "stage=load-complete\n";
+
+        if (options.kind == "structure") {
+            EditableListEditState& edit = app.structure_model_edit_;
+            const EditableListSpec& spec = k_structure_model_edit_spec;
+            app.ensure_table_cache();
+            check("structure_drafts_initialized",
+                  app.initialize_editable_list_draft_rows(edit, spec));
+            if (edit.visible_rows.empty()) {
+                throw std::runtime_error("Structure List contains no editable rows");
+            }
+            const EditableListDraftRow& original =
+                edit.rows[edit.visible_rows.front()];
+            const std::string original_key = original.values.empty()
+                ? std::string{}
+                : original.values.front();
+            const std::string target_file = original.target_source_file;
+            const ResourceListSource& load_source = app.model_.resource_list_sources[
+                static_cast<size_t>(ResourceListKind::Structure)];
+            check("structure_list_source_present", !target_file.empty());
+            check("structure_load_comes_from_include",
+                  !load_source.source_file_path.empty() &&
+                      load_source.source_file_path != options.path);
+            check("structure_original_key_present", !original_key.empty());
+
+            constexpr const char* above_key = "kmeHeadlessStructureAbove";
+            constexpr const char* below_key = "kmeHeadlessStructureBelow";
+            check("structure_insert_above_draft",
+                  app.insert_editable_list_row(edit, spec, 0, true));
+            EditableListDraftRow& above = edit.rows[edit.visible_rows.front()];
+            above.values[0] = above_key;
+            check("structure_insert_below_draft",
+                  app.insert_editable_list_row(edit, spec, 1, false));
+            EditableListDraftRow& below =
+                edit.rows[edit.visible_rows[2]];
+            below.values[0] = below_key;
+            const EditableListDraftRow& final_above =
+                edit.rows[edit.visible_rows.front()];
+            const EditableListDraftRow& final_below =
+                edit.rows[edit.visible_rows[2]];
+            check("structure_insert_field_counts",
+                  final_above.values.size() == 2 &&
+                      final_below.values.size() == 2);
+            app.apply_editable_list_drafts(edit, spec);
+
+            const std::string working = source_text(app.handle_, target_file);
+            const size_t above_pos = working.find(std::string(above_key) + ",");
+            const size_t original_pos = working.find(original_key + ",");
+            const size_t below_pos = working.find(std::string(below_key) + ",");
+            const size_t inserted_count = static_cast<size_t>(std::count_if(
+                app.pending_edit_changes_.begin(), app.pending_edit_changes_.end(),
+                [&](const auto& entry) {
+                    return entry.second.operation == "insert" &&
+                        entry.second.row_kind == spec.row_kind;
+                }));
+            check("structure_memory_apply_ok",
+                  app.edit_memory_matches_pending_ledger_ && inserted_count == 2);
+            check("structure_insert_order",
+                  above_pos != std::string::npos &&
+                      original_pos != std::string::npos &&
+                      below_pos != std::string::npos &&
+                      above_pos < original_pos && original_pos < below_pos);
+            check("structure_insert_exact_csv_fields",
+                  above_pos != std::string::npos && below_pos != std::string::npos &&
+                      csv_field_count_at(working, above_pos) == 2 &&
+                      csv_field_count_at(working, below_pos) == 2);
+            check("structure_hydration_contains_insertions",
+                  app.model_.structure_models.size() >= 2 &&
+                      std::any_of(app.model_.structure_models.begin(),
+                                  app.model_.structure_models.end(),
+                                  [&](const TableRow& row) {
+                                      return table_cell(row, "structureKey") == above_key;
+                                  }) &&
+                      std::any_of(app.model_.structure_models.begin(),
+                                  app.model_.structure_models.end(),
+                                  [&](const TableRow& row) {
+                                      return table_cell(row, "structureKey") == below_key;
+                                  }));
+        } else {
+            EditableListEditState& edit = app.signal_aspect_edit_;
+            const EditableListSpec& spec = k_signal_aspect_edit_spec;
+            app.ensure_table_cache();
+            check("signal_drafts_initialized",
+                  app.initialize_editable_list_draft_rows(edit, spec));
+            int target_row = -1;
+            for (size_t index = 0; index < edit.visible_rows.size(); ++index) {
+                const EditableListDraftRow& candidate =
+                    edit.rows[edit.visible_rows[index]];
+                if (candidate.secondary_structure_field_count != 0 &&
+                    candidate.primary_structure_field_count != 0 &&
+                    candidate.values.size() > 1 &&
+                    !candidate.values[0].empty() && !candidate.values[1].empty()) {
+                    target_row = static_cast<int>(index);
+                    break;
+                }
+            }
+            if (target_row < 0) {
+                throw std::runtime_error(
+                    "Signal Aspects List contains no editable main/glare pair");
+            }
+            const EditableListDraftRow& original = edit.rows[
+                edit.visible_rows[static_cast<size_t>(target_row)]];
+            const std::string original_key = original.values[0];
+            const std::string structure_key = original.values[1];
+            const std::string target_file = original.target_source_file;
+            const std::string original_source_block = original.payload_raw_statement;
+            check("signal_list_source_present", !target_file.empty());
+
+            constexpr const char* above_key = "kmeHeadlessSignalAbove";
+            constexpr const char* below_key = "kmeHeadlessSignalBelow";
+            check("signal_insert_above_draft",
+                  app.insert_editable_list_row(edit, spec, target_row, true));
+            EditableListDraftRow& above = edit.rows[
+                edit.visible_rows[static_cast<size_t>(target_row)]];
+            above.values[0] = above_key;
+            above.values[1] = structure_key;
+            const int original_after_above = target_row + 1;
+            check("signal_insert_below_pair_draft",
+                  app.insert_editable_list_row(
+                      edit, spec, original_after_above, false));
+            EditableListDraftRow& below = edit.rows[
+                edit.visible_rows[static_cast<size_t>(original_after_above + 1)]];
+            below.values[0] = below_key;
+            below.values[1] = structure_key;
+            check("signal_add_glare_draft",
+                  app.add_editable_list_secondary_row(
+                      edit, spec, original_after_above + 1));
+            check("signal_cancel_new_glare_draft",
+                  app.delete_editable_list_secondary_row(
+                      edit, spec, original_after_above + 1));
+            const EditableListDraftRow& glare_cancelled = edit.rows[
+                edit.visible_rows[static_cast<size_t>(original_after_above + 1)]];
+            check("signal_new_glare_cancelled_without_delete",
+                  glare_cancelled.values.size() == 6 &&
+                      glare_cancelled.secondary_structure_field_count == 0 &&
+                      !glare_cancelled.secondary_row_added);
+            check("signal_readd_glare_draft",
+                  app.add_editable_list_secondary_row(
+                      edit, spec, original_after_above + 1));
+            const EditableListDraftRow& final_above = edit.rows[
+                edit.visible_rows[static_cast<size_t>(target_row)]];
+            EditableListDraftRow& below_with_glare = edit.rows[
+                edit.visible_rows[static_cast<size_t>(original_after_above + 1)]];
+            check("signal_insert_field_counts",
+                  final_above.values.size() == 6 &&
+                      below_with_glare.values.size() == 11 &&
+                      below_with_glare.secondary_structure_field_count == 5);
+            below_with_glare.values[6] = structure_key;
+            app.apply_editable_list_drafts(edit, spec);
+
+            const std::string working = source_text(app.handle_, target_file);
+            const size_t above_pos = working.find(std::string(above_key) + ",");
+            const size_t original_pos = working.find(original_key + ",");
+            const size_t original_block_end = original_pos == std::string::npos
+                ? std::string::npos
+                : original_pos + original_source_block.size();
+            const size_t below_pos = working.find(std::string(below_key) + ",");
+            const size_t below_glare_pos = below_pos == std::string::npos
+                ? std::string::npos
+                : working.find("\n,", below_pos);
+            *out << "signal_positions=" << above_pos << "," << original_pos << ","
+                 << original_block_end << "," << below_pos << ","
+                 << below_glare_pos << "\n";
+            const auto signal_row_by_key = [&](const std::string& key) -> const TableRow* {
+                const auto found = std::find_if(
+                    app.model_.signal_aspects.begin(),
+                    app.model_.signal_aspects.end(),
+                    [&](const TableRow& row) {
+                        return table_cell(row, "signalAspectKey") == key;
+                    });
+                return found == app.model_.signal_aspects.end() ? nullptr : &*found;
+            };
+            const TableRow* above_row = signal_row_by_key(above_key);
+            const TableRow* below_row = signal_row_by_key(below_key);
+            check("signal_memory_apply_ok", app.edit_memory_matches_pending_ledger_);
+            check("signal_existing_pair_not_split",
+                  above_pos != std::string::npos &&
+                      original_pos != std::string::npos &&
+                      below_pos != std::string::npos &&
+                      !original_source_block.empty() &&
+                      above_pos < original_pos && original_block_end <= below_pos);
+            check("signal_insert_exact_csv_fields",
+                  above_pos != std::string::npos && below_pos != std::string::npos &&
+                      below_glare_pos != std::string::npos &&
+                      csv_field_count_at(working, above_pos) == 6 &&
+                      csv_field_count_at(working, below_pos) == 6 &&
+                      csv_field_count_at(working, below_glare_pos + 1) == 6);
+            check("signal_default_and_manual_glare_binding",
+                  above_row && below_row &&
+                      table_cell_number(*above_row,
+                                        "_signalGlareStructureKeyCount") == 0.0 &&
+                      table_cell_number(*below_row,
+                                        "_signalGlareStructureKeyCount") > 0.0);
+        }
+
+        check("memory_reset_ok", kv_edit_reset_memory(app.handle_) != 0);
+        LoadResult disk_reload = load_map_worker(
+            options.path, options.unit_distance, false, 0.0, 0.0,
+            options.unit_distance, load_options);
+        const std::map<std::string, std::string> disk_hashes = disk_reload.ok
+            ? source_hashes(disk_reload.model)
+            : std::map<std::string, std::string>{};
+        check("disk_reload_ok", disk_reload.ok);
+        check("all_disk_source_hashes_unchanged",
+              disk_reload.ok && disk_hashes == baseline_hashes);
+        if (disk_reload.handle) kv_free(disk_reload.handle);
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (load.handle) kv_free(load.handle);
+
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 22;
 }
 
 int App::run_debug_headless_new_file_wizard(
