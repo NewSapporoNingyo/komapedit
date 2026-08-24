@@ -938,6 +938,10 @@ bool App::validate_resource_list_file_change_candidate(
     const char* header_error = nullptr;
     const char* status_key = nullptr;
     switch (kind) {
+    case ResourceListKind::Station:
+        header_error = "resource-list-header-mismatch:station";
+        status_key = "status.edit.not_station_list_file";
+        break;
     case ResourceListKind::Structure:
         header_error = "resource-list-header-mismatch:structure";
         status_key = "status.edit.not_structure_list_file";
@@ -951,7 +955,6 @@ bool App::validate_resource_list_file_change_candidate(
         header_error = "resource-list-header-mismatch:sound";
         status_key = "status.edit.not_sound_list_file";
         break;
-    case ResourceListKind::Station:
     case ResourceListKind::Count:
         return false;
     }

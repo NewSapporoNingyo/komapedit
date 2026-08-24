@@ -62,6 +62,9 @@ struct ResourceListEditSpec {
 
 const ResourceListEditSpec* resource_list_edit_spec_for_statement(
     std::string_view statement_kind) {
+    static constexpr ResourceListEditSpec k_station{
+        ResourceListLoadKind::Station, "BveTs Station List ", 0.04,
+        "station", "station.list"};
     static constexpr ResourceListEditSpec k_structure{
         ResourceListLoadKind::Structure, "BveTs Structure List ", 1.0,
         "structure", "structure.model"};
@@ -75,6 +78,7 @@ const ResourceListEditSpec* resource_list_edit_spec_for_statement(
         ResourceListLoadKind::Sound3D, "BveTs Sound List ", 2.0,
         "sound", "sound3D.list"};
     const std::string kind = ascii_lower(std::string(statement_kind));
+    if (kind == "station.load") return &k_station;
     if (kind == "structure.load") return &k_structure;
     if (kind == "signal.load") return &k_signal;
     if (kind == "sound.load") return &k_sound;

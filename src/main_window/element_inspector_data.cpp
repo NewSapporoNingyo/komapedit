@@ -355,7 +355,7 @@ const char* resource_list_content_row_kind(ResourceListKind kind) {
     case ResourceListKind::Signal: return "signal.aspect";
     case ResourceListKind::Sound: return "sound.list";
     case ResourceListKind::Sound3D: return "sound3D.list";
-    case ResourceListKind::Station:
+    case ResourceListKind::Station: return "station.list";
     case ResourceListKind::Count:
         return "";
     }
@@ -380,7 +380,7 @@ bool resource_list_content_change_is_for_source(
 
 void App::request_resource_list_file_change(ResourceListKind kind) {
     if (!edit_actions_available() || !has_model_ ||
-        kind == ResourceListKind::Station || kind == ResourceListKind::Count) {
+        kind == ResourceListKind::Count) {
         return;
     }
     const size_t index = static_cast<size_t>(kind);
@@ -452,6 +452,10 @@ void App::process_pending_resource_list_file_change() {
     EditableListEditState* target_edit = nullptr;
     const EditableListSpec* target_spec = nullptr;
     switch (request.kind) {
+    case ResourceListKind::Station:
+        target_edit = &station_definition_edit_;
+        target_spec = &k_station_definition_edit_spec;
+        break;
     case ResourceListKind::Structure:
         target_edit = &structure_model_edit_;
         target_spec = &k_structure_model_edit_spec;
@@ -468,7 +472,6 @@ void App::process_pending_resource_list_file_change() {
         target_edit = &sound_3d_list_edit_;
         target_spec = &k_sound_3d_list_edit_spec;
         break;
-    case ResourceListKind::Station:
     case ResourceListKind::Count:
         return;
     }

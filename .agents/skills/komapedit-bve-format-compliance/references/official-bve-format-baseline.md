@@ -1,6 +1,6 @@
 # Official BVE route-format baseline
 
-This baseline was verified against the official BVE Trainsim pages on 2026-08-13. The local official-page cache in `official-bve-pages/` is the task-time contract, and its `last-updated.txt` records the last refresh date; this file is a compact routing aid, signature inventory, and review checklist rather than a replacement specification.
+This baseline was verified against the official BVE Trainsim pages on 2026-08-13. Station List coverage was added from the official page on 2026-08-24. The local official-page cache in `official-bve-pages/` is the task-time contract, and its `last-updated.txt` records the last refresh date; this file is a compact routing aid, signature inventory, and review checklist rather than a replacement specification.
 
 ## Contents
 
@@ -18,23 +18,25 @@ This baseline was verified against the official BVE Trainsim pages on 2026-08-13
 | Format | Official source | Local cache file | Covered role |
 | --- | --- | --- | --- |
 | Map | [Map file](https://bvets.net/jp/edit/formats/route/map.html) | `map.html` | Route statements, expressions, distance, and Include |
+| Station List | [Station list](https://bvets.net/jp/edit/formats/route/station.html) | `station.html` | Station definitions and `Map Station.Load` keys |
 | Structure List | [Structure list](https://bvets.net/jp/edit/formats/route/structure.html) | `structure.html` | Structure keys and model paths |
 | Signal Aspects List | [Signal aspects list](https://bvets.net/jp/edit/formats/route/signal.html) | `signal.html` | Aspect keys, indexed structures, and glare rows |
 | Sound List | [Sound list](https://bvets.net/jp/edit/formats/route/sound.html) | `sound.html` | Sound keys, WAV paths, and buffer counts |
 | Other-train | [Other-train file](https://bvets.net/jp/edit/formats/route/train.html) | `train.html` | Other-train structures and 3D sound regions |
 | Scenario | [Scenario file](https://bvets.net/jp/edit/formats/scenario.html) | `scenario.html` | Route/vehicle entry selection and display metadata |
 
-This baseline initially covers these six official pages. For linked formats such as Station List or vehicle files, add the corresponding official specification to the local cache and this table before changing their grammar. The Map page defines `Station.Load` and `Station[...].Put`, but it does not define the Station List row schema.
+This baseline covers these seven official pages. For linked formats such as vehicle files, add the corresponding official specification to the local cache and this table before changing their grammar.
 
 Official-page badges such as `NEW` and annotations such as `[old]` describe status; they are not source tokens. Project forms such as `Legacy.*` are compatibility syntax unless an official page explicitly says otherwise.
 
 ## File-level grammar
 
-For all six formats, place the documented format string first. An optional encoding name follows a colon with no whitespace around the colon; omission means UTF-8. Do not assume that the set of encodings accepted by current komapedit is the full set an official BVE implementation may declare.
+For all seven formats, place the documented format string first. An optional encoding name follows a colon with no whitespace around the colon; omission means UTF-8. Do not assume that the set of encodings accepted by current komapedit is the full set an official BVE implementation may declare.
 
 | Format | Exact format string | Body model | Official comments |
 | --- | --- | --- | --- |
 | Map | `BveTs Map 2.02` | Semicolon-terminated statements | `#` or `//` to end of line |
+| Station List | `BveTs Station List 2.00` | Thirteen-column comma-separated rows | `#` to end of line |
 | Structure List | `BveTs Structure List 2.00` | Comma-separated rows | `#` to end of line |
 | Signal Aspects List | `BveTs Signal Aspects List 2.00` | Variable-width comma-separated rows | `#` to end of line |
 | Sound List | `BveTs Sound List 2.00` | Two- or three-column comma-separated rows | `#` to end of line |
@@ -169,6 +171,12 @@ High-risk semantic constraints include load-before-use relationships, Begin/End 
 
 ## Resource-list schemas
 
+### Station List
+
+The current official header is `BveTs Station List 2.00`. Use thirteen comma-separated columns in this order: `stationKey`, `stationName`, `arrivalTime`, `depertureTime`, `stoppageTime`, `defaultTime`, `signalFlag`, `alightingTime`, `passengers`, `arrivalSoundKey`, `depertureSoundKey`, `doorReopen`, and `stuckInDoor`. Preserve the official `deperture` spelling; the two sound-key columns reference Sound List keys.
+
+`Station.Load(filePath)` is a Map statement and resolves its path relative to the Map that owns the statement. The project keeps existing compatibility with a `BveTs Station List` header version of 0.04 or newer; that compatibility rule is not a claim that the current official header is anything other than 2.00.
+
 ### Structure List
 
 Use exactly two documented columns:
@@ -217,9 +225,9 @@ Comment
 ## Cross-file checks
 
 - Resolve every relative path from the owning file documented by the official format, not from the process working directory.
-- Verify that `Structure.Load`, `Signal.Load`, `Sound.Load`, `Sound3D.Load`, `Train.Add`, and `Train[...].Load` connect to the correct file family.
+- Verify that `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, `Sound3D.Load`, `Train.Add`, and `Train[...].Load` connect to the correct file family.
 - Verify Structure keys used by Map placement/repeaters/backgrounds, Signal aspect rows, and Other-train structures against the loaded Structure List.
 - Verify Signal aspect keys and structure-index order against `Signal[...].Put`, `Section.Begin`, and `Section.SetSpeedLimit` semantics.
 - Verify Sound keys used by Map and Other-train sound placement against the loaded Sound List.
-- Verify Scenario `Route` choices point to Map files with their own valid headers. Vehicle-file grammar is outside this six-page baseline.
+- Verify Scenario `Route` choices point to Map files with their own valid headers. Vehicle-file grammar is outside this seven-page baseline.
 - Preserve source order wherever row adjacency or positional indexing carries meaning; do not replace it with unordered-map iteration during writeback.

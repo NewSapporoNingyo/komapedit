@@ -4988,6 +4988,7 @@ void resource_list_replace_contract() {
             std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
             map << "BveTs Map 2.02:utf-8\r\n"
                 << "0;\r\n"
+                << "Station.Load('stations-old.csv');\r\n"
                 << "Structure.Load('structures-old.csv');\r\n"
                 << "Signal.Load('signals-old.csv');\r\n"
                 << "Sound.Load('sounds-old.csv');\r\n"
@@ -4997,6 +4998,9 @@ void resource_list_replace_contract() {
                 std::ofstream file(directory / name, std::ios::binary | std::ios::trunc);
                 file << text;
             };
+            write("stations-old.csv", "BveTs Station List 2.00:utf-8\r\nold,Old\r\n");
+            write("stations-new.csv", "BveTs Station List 0.04:utf-8\r\nnew,New\r\n");
+            write("stations-v003.csv", "BveTs Station List 0.03:utf-8\r\nold,Old\r\n");
             write("structures-old.csv", "BveTs Structure List 1.00:utf-8\r\nold,old.csv\r\n");
             write("structures-new.csv", "BveTs Structure List 1.00:utf-8\r\nnew,new.csv\r\n");
             write("signals-old.csv", "BveTs Signal Aspects List 2.00:utf-8\r\nold,old\r\n");
@@ -5066,7 +5070,8 @@ void resource_list_replace_contract() {
         const KvStatementRow& statement = baseline.statements[i];
         const std::string kind = map_string(baseline, statement.statement_kind);
         const char* edit_kind = nullptr;
-        if (kind == "Structure.Load") edit_kind = "structure.load";
+        if (kind == "Station.Load") edit_kind = "station.load";
+        else if (kind == "Structure.Load") edit_kind = "structure.load";
         else if (kind == "Signal.Load") edit_kind = "signal.load";
         else if (kind == "Sound.Load") edit_kind = "sound.load";
         else if (kind == "Sound3D.Load") edit_kind = "sound3d.load";
@@ -5079,9 +5084,9 @@ void resource_list_replace_contract() {
             }
         }
     }
-    check(edit_ids.size() == 4 && !source_hash.empty(),
+    check(edit_ids.size() == 5 && !source_hash.empty(),
           "resource-list replace source targets located");
-    if (edit_ids.size() != 4 || source_hash.empty()) return;
+    if (edit_ids.size() != 5 || source_hash.empty()) return;
 
     const auto update_one = [&](const std::string& kind, const std::string& path,
                                 const char* marker, const char* label) {
@@ -5096,6 +5101,12 @@ void resource_list_replace_contract() {
     update_one("structure.load", "signals-new.csv",
                "resource-list-header-mismatch:structure",
                "resource-list replacement rejects a mismatched list type");
+    update_one("station.load", "signals-new.csv",
+               "resource-list-header-mismatch:station",
+               "resource-list replacement rejects a mismatched Station List type");
+    update_one("station.load", "stations-v003.csv",
+               "resource-list-header-mismatch:station",
+               "resource-list replacement rejects unsupported Station List version");
     update_one("signal.load", "signals-v1.csv",
                "resource-list-header-mismatch:signal",
                "resource-list replacement rejects unsupported Signal List version");
@@ -5104,6 +5115,7 @@ void resource_list_replace_contract() {
                "resource-list replacement rejects unsupported Sound List version");
 
     const std::vector<std::pair<std::string, std::string>> replacements = {
+        {edit_ids["station.load"], "stations-new.csv"},
         {edit_ids["structure.load"], "structures-new.csv"},
         {edit_ids["signal.load"], "signals-new.csv"},
         {edit_ids["sound.load"], "sounds-new.csv"},
@@ -5115,9 +5127,9 @@ void resource_list_replace_contract() {
         const bool dry_ok = kv_edit_dry_run_typed(
                                 handle.value, &batch.batch, &report,
                                 sizeof(report)) != 0 &&
-            report.ok && report.full_reparse_ok && report.update_count == 4;
+            report.ok && report.full_reparse_ok && report.update_count == 5;
         check(dry_ok,
-              "resource-list replacement accepts Structure 1.00 and shared Sound List headers");
+              "resource-list replacement accepts Station List 0.04 compatibility and other supported headers");
     }
     KvEditReportSnapshot applied_report{};
     PathBatch apply_batch(replacements, source_hash);
@@ -5126,23 +5138,25 @@ void resource_list_replace_contract() {
               sizeof(applied_report)) != 0 &&
               applied_report.ok && applied_report.full_reparse_ok &&
               applied_report.non_target_changed_count == 0 &&
-              applied_report.update_count == 4,
+              applied_report.update_count == 5,
           "resource-list replacement applies all lists to memory");
     KvMapSnapshot applied{};
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                               &applied, sizeof(applied)) != 0,
           "resource-list replacement applied snapshot");
-    const auto list_path = [&](std::uint32_t kind) {
-        for (std::uint64_t i = 0; i < applied.resource_list_load_count; ++i) {
-            const KvResourceListLoadRow& row = applied.resource_list_loads[i];
-            if (row.kind == kind) return map_string(applied, row.evaluated_path);
+    const auto list_path = [](const KvMapSnapshot& snapshot, std::uint32_t kind) {
+        for (std::uint64_t i = 0; i < snapshot.resource_list_load_count; ++i) {
+            const KvResourceListLoadRow& row = snapshot.resource_list_loads[i];
+            if (row.kind == kind) return map_string(snapshot, row.evaluated_path);
         }
         return std::string{};
     };
-    check(list_path(KV_RESOURCE_LIST_STRUCTURE) == "structures-new.csv" &&
-              list_path(KV_RESOURCE_LIST_SIGNAL) == "signals-new.csv" &&
-              list_path(KV_RESOURCE_LIST_SOUND) == "sounds-new.csv" &&
-              list_path(KV_RESOURCE_LIST_SOUND_3D) == "sounds3d-new.csv" &&
+    check(list_path(applied, KV_RESOURCE_LIST_STATION) == "stations-new.csv" &&
+              list_path(applied, KV_RESOURCE_LIST_STRUCTURE) == "structures-new.csv" &&
+              list_path(applied, KV_RESOURCE_LIST_SIGNAL) == "signals-new.csv" &&
+              list_path(applied, KV_RESOURCE_LIST_SOUND) == "sounds-new.csv" &&
+              list_path(applied, KV_RESOURCE_LIST_SOUND_3D) == "sounds3d-new.csv" &&
+              applied.station_list_count == 1 &&
               applied.structure_model_count == 1 &&
               applied.signal_aspect_count == 1 && applied.sound_list_count == 2,
           "resource-list replacement refreshes the typed list rows");
@@ -5153,14 +5167,19 @@ void resource_list_replace_contract() {
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                               &restored, sizeof(restored)) != 0,
           "resource-list replacement restored snapshot");
+    bool restored_old_station = false;
     bool restored_old_structure = false;
     for (std::uint64_t i = 0; i < restored.resource_list_load_count; ++i) {
         const KvResourceListLoadRow& row = restored.resource_list_loads[i];
+        restored_old_station = restored_old_station ||
+            (row.kind == KV_RESOURCE_LIST_STATION &&
+             map_string(restored, row.evaluated_path) == "stations-old.csv");
         restored_old_structure = restored_old_structure ||
             (row.kind == KV_RESOURCE_LIST_STRUCTURE &&
              map_string(restored, row.evaluated_path) == "structures-old.csv");
     }
-    check(restored_old_structure, "resource-list replacement reset restores old paths");
+    check(restored_old_station && restored_old_structure,
+          "resource-list replacement reset restores old paths");
 
     PathBatch commit_batch(replacements, source_hash);
     KvEditReportSnapshot commit_report{};
@@ -5174,12 +5193,25 @@ void resource_list_replace_contract() {
     std::ifstream committed(fixture.map_path, std::ios::binary);
     std::string text((std::istreambuf_iterator<char>(committed)),
                      std::istreambuf_iterator<char>());
-    check(text.find("Structure.Load('structures-new.csv');\r\n") != std::string::npos &&
+    check(text.find("Station.Load('stations-new.csv');\r\n") != std::string::npos &&
+              text.find("Structure.Load('structures-new.csv');\r\n") != std::string::npos &&
               text.find("Signal.Load('signals-new.csv');\r\n") != std::string::npos &&
               text.find("Sound.Load('sounds-new.csv');\r\n") != std::string::npos &&
               text.find("Sound3D.Load('sounds3d-new.csv');\r\n") != std::string::npos &&
               text.find("$unrelated=1;\r\n") != std::string::npos,
           "resource-list replacement preserves CRLF and unrelated map source");
+    MapHandle reloaded(kv_load_map_ex(fixture.map_path.u8string().c_str(), 25.0,
+                                      KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot reloaded_snapshot{};
+    check(reloaded.value != nullptr &&
+              kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                                  &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0 &&
+              list_path(reloaded_snapshot, KV_RESOURCE_LIST_STATION) ==
+                  "stations-new.csv" &&
+              reloaded_snapshot.station_list_count == 1 &&
+              map_string(reloaded_snapshot,
+                         reloaded_snapshot.station_list[0].fields[0]) == "new",
+          "resource-list replacement reloads Station List path and rows");
 }
 
 void include_replace_variable_dependency_blocks_contract() {

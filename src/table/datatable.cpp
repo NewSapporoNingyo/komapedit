@@ -3036,9 +3036,12 @@ void App::render_station_list_window() {
         ImGui::End();
         return;
     }
-    render_resource_list_source(
-        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Station)],
-        tr("label.source_path"), tr("menu.open_in_explorer"));
+    if (render_resource_list_source(
+            model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Station)],
+            tr("label.source_path"), tr("menu.open_in_explorer"),
+            tr("menu.change_file"), edit_actions_available())) {
+        request_resource_list_file_change(ResourceListKind::Station);
+    }
     ensure_table_cache();
     auto render_station_table = [&](const char* table_id,
                                     const TableColumnDef* columns,
