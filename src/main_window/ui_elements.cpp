@@ -534,6 +534,10 @@ void App::render_menu() {
     if (!ImGui::BeginMainMenuBar()) return;
     const bool operation_pending = edit_ui_operation_pending();
     if (ImGui::BeginMenu(tr("menu.file").c_str())) {
+        if (ImGui::MenuItem(tr("menu.new_file").c_str(), nullptr, false,
+                            !operation_pending)) {
+            open_new_file_wizard();
+        }
         if (ImGui::MenuItem(tr("menu.open").c_str(), "Ctrl+O", false,
                             !operation_pending)) {
             std::string p = open_map_dialog();
@@ -1170,10 +1174,12 @@ void App::render() {
     process_pending_include_file_change();
     process_pending_resource_list_file_change();
     process_pending_include_file_insert();
+    process_pending_new_file_create();
     process_pending_other_track_rename();
     process_pending_element_inspector();
     render_element_inspector();
     render_new_element_wizard();
+    render_new_file_wizard();
     render_popups();
     process_distance_resolution_retry();
     touch_input::apply_touch_scroll_to_hovered_window();

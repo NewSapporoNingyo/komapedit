@@ -94,6 +94,34 @@ constexpr std::array<NewElementTemplateCategoryInfo, 7>
         {"effects", NewElementTemplateCategory::Effects, "aux.effects"},
     }};
 
+struct NewFileTemplateCategoryInfo {
+    const char* id;
+    const char* label_key;
+};
+
+struct NewFileTemplate {
+    NewFileKind kind;
+    const char* category_id;
+    const char* label;
+    const char* usage_key;
+};
+
+constexpr std::array<NewFileTemplateCategoryInfo, 3>
+    k_new_file_template_categories = {{
+        {"presets", "new_file.category.presets"},
+        {"map", "new_file.category.map"},
+        {"resource_lists", "new_file.category.resource_lists"},
+    }};
+
+constexpr std::array<NewFileTemplate, 6> k_new_file_templates = {{
+    {NewFileKind::Map, "map", "BveTs Map 2.02", "new_file.usage.map"},
+    {NewFileKind::Structure, "resource_lists", "Structure", "new_file.usage.structure"},
+    {NewFileKind::Signal, "resource_lists", "Signal", "new_file.usage.signal"},
+    {NewFileKind::Sound, "resource_lists", "Sound", "new_file.usage.sound"},
+    {NewFileKind::Sound3D, "resource_lists", "Sound3D", "new_file.usage.sound3d"},
+    {NewFileKind::Station, "resource_lists", "Station", "new_file.usage.station"},
+}};
+
 const std::vector<NewElementTemplate>& new_element_templates_internal() {
     static const std::vector<NewElementTemplate> templates = {
         {
@@ -1833,6 +1861,121 @@ void App::render_new_element_wizard() {
         cancel_distance_resolution_workflow();
         wizard.open = false;
     }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+void App::open_new_file_wizard() {
+    new_file_wizard_ = NewFileWizardState{};
+    new_file_wizard_.open = true;
+}
+
+void App::render_new_file_wizard() {
+    if (!new_file_wizard_.open) return;
+    NewFileWizardState& wizard = new_file_wizard_;
+    if (!wizard.target_candidates_built) {
+        if (has_model_) wizard.target_file_candidates = new_element_target_candidates(model_);
+        wizard.target_candidates_built = true;
+        wizard.target_file_path = wizard.target_file_candidates.empty()
+            ? std::string{}
+            : wizard.target_file_candidates.front();
+    }
+    if (wizard.selected_template < 0 ||
+        wizard.selected_template >= static_cast<int>(k_new_file_templates.size())) {
+        wizard.selected_template = 0;
+    }
+
+    const std::string title = tr("dialog.new_file_wizard") + "###NewFileWizard";
+    ImGui::SetNextWindowSize(ImVec2(980.0f, 660.0f), ImGuiCond_Always);
+    const bool operation_pending = edit_ui_operation_pending();
+    bool* wizard_open = operation_pending ? nullptr : &wizard.open;
+    ImGuiWindowFlags wizard_flags = ImGuiWindowFlags_NoResize;
+    if (operation_pending) wizard_flags |= ImGuiWindowFlags_NoInputs;
+    if (!ImGui::Begin(title.c_str(), wizard_open, wizard_flags)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::BeginChild("##NewFileTemplateList", ImVec2(360.0f, -ImGui::GetFrameHeightWithSpacing()),
+                      true);
+    const ImVec4 dim_text = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    for (const NewFileTemplateCategoryInfo& category : k_new_file_template_categories) {
+        const std::string category_label = tr(category.label_key) +
+            "###NewFileTemplateCategory_" + category.id;
+        if (!ImGui::CollapsingHeader(category_label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+            continue;
+        }
+        for (size_t index = 0; index < k_new_file_templates.size(); ++index) {
+            const NewFileTemplate& tpl = k_new_file_templates[index];
+            if (std::string_view(tpl.category_id) != category.id) continue;
+            const std::string label = std::string(tpl.label) + "###NewFileTemplate_" +
+                std::to_string(index);
+            if (ImGui::Selectable(label.c_str(), wizard.selected_template == static_cast<int>(index))) {
+                wizard.selected_template = static_cast<int>(index);
+            }
+            const std::string& usage = tr(tpl.usage_key);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", usage.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
+            render_new_element_usage_text(usage);
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginChild("##NewFileForm", ImVec2(-1.0f, -ImGui::GetFrameHeightWithSpacing()), true);
+    ImGui::TextUnformatted(tr("label.new_file_name").c_str());
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputText("##NewFileName", &wizard.file_name);
+
+    ImGui::TextUnformatted(tr("label.new_file_directory").c_str());
+    const std::string select_directory = tr("button.select_directory");
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float select_directory_width = ImGui::CalcTextSize(select_directory.c_str()).x +
+        style.FramePadding.x * 2.0f;
+    ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x -
+                                     select_directory_width - style.ItemSpacing.x));
+    ImGui::InputText("##NewFileDirectory", &wizard.directory);
+    ImGui::SameLine();
+    if (ImGui::Button(select_directory.c_str())) {
+        const std::string selected = choose_folder_dialog("dialog.select_new_file_directory");
+        if (!selected.empty()) wizard.directory = selected;
+    }
+
+    ImGui::TextUnformatted(tr("label.new_file_reference").c_str());
+    const std::string target_preview = wizard.target_file_path.empty()
+        ? tr("status.edit.no_distance_source")
+        : display_name_from_path(wizard.target_file_path);
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::BeginDisabled(wizard.target_file_candidates.empty());
+    if (ImGui::BeginCombo("##NewFileTargetFile", target_preview.c_str())) {
+        for (const std::string& file_path : wizard.target_file_candidates) {
+            const bool selected = file_path == wizard.target_file_path;
+            if (ImGui::Selectable(display_name_from_path(file_path).c_str(), selected)) {
+                wizard.target_file_path = file_path;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+
+    const bool reference_requested = !wizard.target_file_path.empty();
+    if (reference_requested && !edit_actions_available()) {
+        ImGui::TextWrapped("%s", tr("status.new_file.reference_requires_edit").c_str());
+    }
+    ImGui::Separator();
+    ImGui::BeginDisabled(reference_requested && !edit_actions_available());
+    if (ImGui::Button(tr("button.confirm").c_str())) {
+        const NewFileTemplate& tpl =
+            k_new_file_templates[static_cast<size_t>(wizard.selected_template)];
+        request_new_file_create(NewFileCreateRequest{
+            tpl.kind, wizard.file_name, wizard.directory, wizard.target_file_path});
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(tr("button.close").c_str())) wizard.open = false;
     ImGui::EndChild();
     ImGui::End();
 }

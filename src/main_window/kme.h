@@ -62,6 +62,7 @@ struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 struct HeadlessResourceListReplaceOptions;
+struct HeadlessNewFileWizardOptions;
 struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
 
@@ -1404,6 +1405,32 @@ struct NewElementWizardState {
     MapElementInspectorState form;
 };
 
+enum class NewFileKind : std::uint8_t {
+    Map,
+    Structure,
+    Signal,
+    Sound,
+    Sound3D,
+    Station,
+};
+
+struct NewFileWizardState {
+    bool open = false;
+    int selected_template = 0;
+    bool target_candidates_built = false;
+    std::vector<std::string> target_file_candidates;
+    std::string target_file_path;
+    std::string file_name;
+    std::string directory;
+};
+
+struct NewFileCreateRequest {
+    NewFileKind kind = NewFileKind::Map;
+    std::string file_name;
+    std::string directory;
+    std::string target_file_path;
+};
+
 enum class RepeaterDeleteMode {
     EntireChain,
     ChangePoint,
@@ -1687,6 +1714,8 @@ public:
         const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_resource_list_replace(
         const HeadlessResourceListReplaceOptions& options);
+    static int run_debug_headless_new_file_wizard(
+        const HeadlessNewFileWizardOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 
@@ -1767,6 +1796,7 @@ private:
     std::optional<MapElementDeleteRequest> pending_delete_request_;
     std::optional<IncludeFileChangeRequest> pending_include_file_change_request_;
     std::optional<IncludeFileInsertRequest> pending_include_file_insert_request_;
+    std::optional<NewFileCreateRequest> pending_new_file_create_request_;
     std::optional<ResourceListFileChangeRequest>
         pending_resource_list_file_change_request_;
     std::optional<ResourceListFileChangeRequest>
@@ -1774,6 +1804,7 @@ private:
     std::optional<std::string> pending_other_track_rename_request_;
     OtherTrackRenameState other_track_rename_;
     NewElementWizardState new_element_wizard_;
+    NewFileWizardState new_file_wizard_;
     EditableListEditState station_definition_edit_;
     EditableListEditState structure_model_edit_;
     EditableListEditState signal_aspect_edit_;
@@ -2265,6 +2296,11 @@ private:
     void request_include_file_insert(const std::string& target_file_path,
                                      bool create_new_file);
     void process_pending_include_file_insert();
+    void request_new_file_create(NewFileCreateRequest request);
+    void process_pending_new_file_create();
+    bool stage_new_file_reference(NewFileKind kind,
+                                  const std::string& target_file_path,
+                                  const std::string& selected_file);
     std::string open_include_file_dialog(
         const std::string& initial_directory,
         const char* title_key = "dialog.select_include_file",
@@ -2334,6 +2370,8 @@ private:
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
     void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);
+    void render_new_file_wizard();
+    void open_new_file_wizard();
     bool can_use_resource_key_in_new_element_wizard(
         MapElementKeySource key_source) const;
     bool use_resource_key_in_new_element_wizard(
@@ -2581,7 +2619,7 @@ private:
     std::string open_editable_list_file_dialog(
         const EditableListSpec& spec,
         const std::string& initial_directory);
-    std::string choose_folder_dialog();
+    std::string choose_folder_dialog(const char* title_key = "dialog.select_export_folder");
 };
 
 // Internal main-window translation-unit seams. These remain executable-local
@@ -2633,8 +2671,13 @@ ListAssetSourcePathResult make_list_asset_source_path(
     const std::string& list_file, const std::string& selected_file);
 std::string list_asset_picker_initial_directory(const std::string& resolved_file,
                                                 const std::string& list_file);
+bool create_utf8_bve_file_exclusive(const std::filesystem::path& path,
+                                    std::string_view header,
+                                    std::string& error);
 bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
                                         std::string& error);
+std::string_view new_bve_file_header(NewFileKind kind);
+std::string_view new_file_resource_list_kind(NewFileKind kind);
 std::vector<TableRow> hydrate_signal_aspect_rows(const KvMapSnapshot& snapshot);
 void bind_station_position_edit_ids(MapModel& model);
 void rebuild_speed_limit_runtime_cache(MapModel& model);

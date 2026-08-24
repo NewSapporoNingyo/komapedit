@@ -444,6 +444,13 @@ HeadlessResourceListReplaceOptions parse_headless_resource_list_replace_options(
         });
 }
 
+HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessNewFileWizardOptions>(
+        args, "--debug-headless-new-file-wizard",
+        [](HeadlessNewFileWizardOptions&) {});
+}
+
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
     for (size_t i = 1; i < args.size(); ++i) {

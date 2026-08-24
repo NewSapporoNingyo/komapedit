@@ -5214,6 +5214,243 @@ void resource_list_replace_contract() {
           "resource-list replacement reloads Station List path and rows");
 }
 
+void resource_list_insert_contract() {
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() /
+        ("komapedit-resource-list-insert-contract-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path map_path = directory / "map.txt";
+    {
+        std::ofstream map(map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\n"
+            << "# keep this comment\r\n"
+            << "0;\r\n"
+            << "$unrelated=1;\r\n";
+    }
+    struct ResourceFile {
+        const char* kind;
+        const char* path;
+        const char* header;
+        std::uint32_t snapshot_kind;
+        const char* statement;
+    };
+    const std::array<ResourceFile, 5> resources = {{
+        {"structure", "structures.csv", "BveTs Structure List 2.00:utf-8\r\n",
+         KV_RESOURCE_LIST_STRUCTURE, "Structure.Load('structures.csv');\r\n"},
+        {"signal", "signals.csv", "BveTs Signal Aspects List 2.00:utf-8\r\n",
+         KV_RESOURCE_LIST_SIGNAL, "Signal.Load('signals.csv');\r\n"},
+        {"sound", "sounds.csv", "BveTs Sound List 2.00:utf-8\r\n",
+         KV_RESOURCE_LIST_SOUND, "Sound.Load('sounds.csv');\r\n"},
+        {"sound3d", "sounds3d.csv", "BveTs Sound List 2.00:utf-8\r\n",
+         KV_RESOURCE_LIST_SOUND_3D, "Sound3D.Load('sounds3d.csv');\r\n"},
+        {"station", "stations.csv", "BveTs Station List 2.00:utf-8\r\n",
+         KV_RESOURCE_LIST_STATION, "Station.Load('stations.csv');\r\n"},
+    }};
+    for (const ResourceFile& resource : resources) {
+        std::ofstream file(directory / resource.path, std::ios::binary | std::ios::trunc);
+        file << resource.header;
+    }
+
+    const auto list_path = [](const KvMapSnapshot& snapshot, std::uint32_t kind) {
+        for (std::uint64_t i = 0; i < snapshot.resource_list_load_count; ++i) {
+            const KvResourceListLoadRow& row = snapshot.resource_list_loads[i];
+            if (row.kind == kind) return map_string(snapshot, row.evaluated_path);
+        }
+        return std::string{};
+    };
+    struct ResourceListInsertBatch {
+        std::string target_file;
+        std::vector<std::string> change_ids;
+        std::vector<std::string> field_names;
+        std::vector<std::string> field_values;
+        std::vector<KvEditField> fields;
+        std::vector<KvEditChange> changes;
+        KvEditBatch batch{};
+
+        ResourceListInsertBatch(std::string target,
+                                const std::array<ResourceFile, 5>& resources)
+            : target_file(std::move(target)) {
+            change_ids.reserve(resources.size());
+            field_names.reserve(resources.size() * 3);
+            field_values.reserve(resources.size() * 3);
+            changes.resize(resources.size());
+            for (const ResourceFile& resource : resources) {
+                change_ids.push_back(std::string("resource-list-batch-") + resource.kind);
+                field_names.insert(field_names.end(),
+                                   {"rowKind", "resourceListKind", "resourceListPath"});
+                field_values.insert(field_values.end(),
+                                    {"resourceList.load", resource.kind, resource.path});
+            }
+            fields.reserve(field_names.size());
+            for (size_t i = 0; i < field_names.size(); ++i) {
+                fields.push_back({utf8_view(field_names[i]), utf8_view(field_values[i])});
+            }
+            for (size_t i = 0; i < changes.size(); ++i) {
+                KvEditChange& change = changes[i];
+                change.change_id = utf8_view(change_ids[i]);
+                change.edit_id = utf8_view(change_ids[i]);
+                change.operation = KV_EDIT_INSERT;
+                change.fields = {static_cast<std::uint64_t>(i * 3), 3};
+                change.target_file_path = utf8_view(target_file);
+            }
+            batch = {changes.data(), static_cast<std::uint64_t>(changes.size()),
+                     fields.data(), static_cast<std::uint64_t>(fields.size())};
+        }
+    };
+
+    const std::filesystem::path blank_map_path = directory / "blank-map.txt";
+    {
+        std::ofstream blank_map(blank_map_path, std::ios::binary | std::ios::trunc);
+        blank_map << "BveTs Map 2.02:utf-8\r\n";
+    }
+    MapHandle blank_handle(kv_load_map_ex(blank_map_path.u8string().c_str(), 25.0,
+                                          KV_LOAD_EDIT_METADATA));
+    check(blank_handle.value != nullptr, "resource-list insert blank map load");
+    if (blank_handle.value) {
+        ResourceListInsertBatch batch(blank_map_path.u8string(), resources);
+        KvEditReportSnapshot dry_report{};
+        check(kv_edit_dry_run_typed(blank_handle.value, &batch.batch, &dry_report,
+                                    sizeof(dry_report)) != 0 &&
+                  dry_report.ok && dry_report.full_reparse_ok &&
+                  dry_report.insert_count == resources.size() &&
+                  dry_report.non_target_changed_count == 0,
+              "resource-list insert batch dry run on a blank standard map");
+        KvEditReportSnapshot apply_report{};
+        check(kv_edit_apply_to_memory_typed(blank_handle.value, &batch.batch, &apply_report,
+                                            sizeof(apply_report)) != 0 &&
+                  apply_report.ok && apply_report.full_reparse_ok &&
+                  apply_report.insert_count == resources.size() &&
+                  apply_report.non_target_changed_count == 0,
+              "resource-list insert batch applies to a blank standard map");
+        std::string expected_source = "BveTs Map 2.02:utf-8\r\n";
+        for (const ResourceFile& resource : resources) expected_source += resource.statement;
+        const char* blank_source = kv_get_source_text(
+            blank_handle.value, blank_map_path.u8string().c_str());
+        check(blank_source && std::string_view(blank_source) == expected_source,
+              "resource-list insert batch preserves blank-map CRLF reference order");
+        kv_free_string(blank_source);
+        KvEditReportSnapshot commit_report{};
+        check(kv_edit_commit_typed(blank_handle.value, &commit_report, sizeof(commit_report)) != 0 &&
+                  commit_report.ok,
+              "resource-list insert batch commits blank map references");
+        MapHandle blank_reloaded(kv_load_map_ex(blank_map_path.u8string().c_str(), 25.0,
+                                                KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot blank_snapshot{};
+        bool blank_paths_match = blank_reloaded.value != nullptr &&
+            kv_get_map_snapshot(blank_reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                                &blank_snapshot, sizeof(blank_snapshot)) != 0 &&
+            blank_snapshot.resource_list_load_count == resources.size();
+        for (const ResourceFile& resource : resources) {
+            blank_paths_match = blank_paths_match &&
+                list_path(blank_snapshot, resource.snapshot_kind) == resource.path;
+        }
+        check(blank_paths_match,
+              "resource-list insert batch reloads all empty blank-map lists");
+    }
+
+    MapHandle handle(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                    KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "resource-list insert load");
+    if (!handle.value) return;
+    for (const ResourceFile& resource : resources) {
+        SimpleInsertBatch insert(
+            map_path.u8string(), std::string("resource-list-insert-") + resource.kind,
+            {{"rowKind", "resourceList.load"},
+             {"resourceListKind", resource.kind},
+             {"resourceListPath", resource.path}});
+        KvEditReportSnapshot dry_report{};
+        check(kv_edit_dry_run_typed(handle.value, &insert.batch, &dry_report,
+                                    sizeof(dry_report)) != 0 &&
+                  dry_report.ok && dry_report.full_reparse_ok &&
+                  dry_report.insert_count == 1 &&
+                  dry_report.non_target_changed_count == 0,
+              (std::string("resource-list insert dry run ") + resource.kind).c_str());
+        KvEditReportSnapshot apply_report{};
+        check(kv_edit_apply_to_memory_typed(handle.value, &insert.batch, &apply_report,
+                                            sizeof(apply_report)) != 0 &&
+                  apply_report.ok && apply_report.full_reparse_ok &&
+                  apply_report.insert_count == 1 &&
+                  apply_report.non_target_changed_count == 0,
+              (std::string("resource-list insert applies ") + resource.kind).c_str());
+    }
+
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &applied, sizeof(applied)) != 0,
+          "resource-list insert applied snapshot");
+    bool paths_match = applied.resource_list_load_count == resources.size();
+    for (const ResourceFile& resource : resources) {
+        paths_match = paths_match &&
+            list_path(applied, resource.snapshot_kind) == resource.path;
+    }
+    check(paths_match, "resource-list insert refreshes all typed load paths");
+
+    const char* source = kv_get_source_text(handle.value, map_path.u8string().c_str());
+    const std::string source_text = source ? source : "";
+    kv_free_string(source);
+    size_t prior = 0;
+    bool source_order_matches = true;
+    for (const ResourceFile& resource : resources) {
+        const size_t position = source_text.find(resource.statement);
+        source_order_matches = source_order_matches && position != std::string::npos &&
+            position >= prior;
+        prior = position == std::string::npos
+            ? prior
+            : position + std::string_view(resource.statement).size();
+    }
+    const size_t distance = source_text.find("0;\r\n");
+    check(source_order_matches && distance != std::string::npos && prior <= distance &&
+              source_text.find("# keep this comment\r\n") != std::string::npos &&
+              source_text.find("$unrelated=1;\r\n") != std::string::npos,
+          "resource-list insert stays ordered before the first distance and preserves source");
+
+    const std::filesystem::path duplicate_path = directory / "structures-duplicate.csv";
+    {
+        std::ofstream duplicate(duplicate_path, std::ios::binary | std::ios::trunc);
+        duplicate << "BveTs Structure List 2.00:utf-8\r\n";
+    }
+    SimpleInsertBatch duplicate(
+        map_path.u8string(), "resource-list-insert-duplicate",
+        {{"rowKind", "resourceList.load"},
+         {"resourceListKind", "structure"},
+         {"resourceListPath", "structures-duplicate.csv"}});
+    KvEditReportSnapshot duplicate_report{};
+    const bool duplicate_ran = kv_edit_dry_run_typed(
+        handle.value, &duplicate.batch, &duplicate_report, sizeof(duplicate_report)) != 0;
+    check(!duplicate_ran || !duplicate_report.ok || duplicate_report.blocking_error_count > 0,
+          "resource-list insert rejects a duplicate list type");
+
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report, sizeof(commit_report)) != 0 &&
+              commit_report.ok,
+          "resource-list insert commits all paths");
+    std::ifstream committed(map_path, std::ios::binary);
+    const std::string committed_text((std::istreambuf_iterator<char>(committed)),
+                                     std::istreambuf_iterator<char>());
+    bool committed_paths_match = true;
+    for (const ResourceFile& resource : resources) {
+        committed_paths_match = committed_paths_match &&
+            committed_text.find(resource.statement) != std::string::npos;
+    }
+    check(committed_paths_match && committed_text.find("$unrelated=1;\r\n") != std::string::npos,
+          "resource-list insert commit preserves exact source references");
+
+    MapHandle reloaded(kv_load_map_ex(map_path.u8string().c_str(), 25.0,
+                                      KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot reloaded_snapshot{};
+    bool reload_paths_match = reloaded.value != nullptr &&
+        kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                            &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0;
+    for (const ResourceFile& resource : resources) {
+        reload_paths_match = reload_paths_match &&
+            list_path(reloaded_snapshot, resource.snapshot_kind) == resource.path;
+    }
+    check(reload_paths_match, "resource-list insert reloads all empty lists");
+
+    std::error_code cleanup;
+    std::filesystem::remove_all(directory, cleanup);
+}
+
 void include_replace_variable_dependency_blocks_contract() {
     std::filesystem::path directory = std::filesystem::temp_directory_path() /
         ("komapedit-include-replace-dependency-" + std::to_string(
@@ -5297,6 +5534,7 @@ int edit_contract() {
     include_variable_dependency_blocks_deletion_contract();
     include_replace_contract();
     resource_list_replace_contract();
+    resource_list_insert_contract();
     include_replace_variable_dependency_blocks_contract();
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();

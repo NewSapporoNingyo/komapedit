@@ -220,28 +220,56 @@ std::string App::save_include_file_dialog(const std::string& initial_directory) 
     return {};
 }
 
-bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
-                                        std::string& error) {
+std::string_view new_bve_file_header(NewFileKind kind) {
+    switch (kind) {
+    case NewFileKind::Map: return "BveTs Map 2.02:utf-8\r\n";
+    case NewFileKind::Structure: return "BveTs Structure List 2.00:utf-8\r\n";
+    case NewFileKind::Signal: return "BveTs Signal Aspects List 2.00:utf-8\r\n";
+    case NewFileKind::Sound:
+    case NewFileKind::Sound3D: return "BveTs Sound List 2.00:utf-8\r\n";
+    case NewFileKind::Station: return "BveTs Station List 2.00:utf-8\r\n";
+    }
+    return {};
+}
+
+std::string_view new_file_resource_list_kind(NewFileKind kind) {
+    switch (kind) {
+    case NewFileKind::Structure: return "structure";
+    case NewFileKind::Signal: return "signal";
+    case NewFileKind::Sound: return "sound";
+    case NewFileKind::Sound3D: return "sound3d";
+    case NewFileKind::Station: return "station";
+    case NewFileKind::Map: return {};
+    }
+    return {};
+}
+
+bool create_utf8_bve_file_exclusive(const std::filesystem::path& path,
+                                    std::string_view header,
+                                    std::string& error) {
     if (path.empty() || path.filename().empty()) {
-        error = "new child map path is empty";
+        error = "new BVE file path is empty";
+        return false;
+    }
+    if (header.empty() || header.size() > static_cast<size_t>(std::numeric_limits<DWORD>::max())) {
+        error = "new BVE file header is invalid";
         return false;
     }
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
-        error = "failed to create child map file (Win32 error " +
+        error = "failed to create BVE file (Win32 error " +
             std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
         return false;
     }
-    static constexpr char k_header[] = "BveTs Map 2.02:utf-8\r\n";
     DWORD written = 0;
-    const BOOL wrote = WriteFile(file, k_header,
-                                 static_cast<DWORD>(sizeof(k_header) - 1),
+    const BOOL wrote = WriteFile(file, header.data(),
+                                 static_cast<DWORD>(header.size()),
                                  &written, nullptr);
     const DWORD write_error = wrote ? ERROR_SUCCESS : GetLastError();
     const BOOL closed = CloseHandle(file);
-    if (!wrote || written != sizeof(k_header) - 1 || !closed) {
-        error = "failed to write child map header (Win32 error " +
+    if (!wrote || written != header.size() || !closed) {
+        error = "failed to write BVE file header (Win32 error " +
             std::to_string(static_cast<unsigned long>(
                 wrote && closed ? ERROR_WRITE_FAULT : write_error)) + ")";
         return false;
@@ -249,9 +277,15 @@ bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
     return true;
 }
 
-std::string App::choose_folder_dialog() {
+bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
+                                        std::string& error) {
+    return create_utf8_bve_file_exclusive(path, new_bve_file_header(NewFileKind::Map), error);
+}
+
+std::string App::choose_folder_dialog(const char* title_key) {
     BROWSEINFOW bi = {};
-    bi.lpszTitle = L"Select export folder";
+    const std::wstring title = utf8_to_wide(tr(title_key));
+    bi.lpszTitle = title.c_str();
     bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
     PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
     if (!pidl) return {};

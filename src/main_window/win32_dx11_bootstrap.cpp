@@ -432,6 +432,18 @@ int main(int, char**) {
         return App::run_debug_headless_resource_list_replace(resource_list_replace);
     }
 
+    HeadlessNewFileWizardOptions new_file_wizard =
+        parse_headless_new_file_wizard_options(args);
+    if (new_file_wizard.requested) {
+        if (!new_file_wizard.error.empty()) {
+            std::cerr << new_file_wizard.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-new-file-wizard <new-map-path-under-tests> "
+                      << "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_new_file_wizard(new_file_wizard);
+    }
+
     HeadlessIncludeImportCreateOptions include_import_create =
         parse_headless_include_import_create_options(args);
     if (include_import_create.requested) {

@@ -60,8 +60,8 @@ struct ResourceListEditSpec {
     const char* content_row_kind;
 };
 
-const ResourceListEditSpec* resource_list_edit_spec_for_statement(
-    std::string_view statement_kind) {
+const ResourceListEditSpec* resource_list_edit_spec_for_kind(
+    ResourceListLoadKind kind) {
     static constexpr ResourceListEditSpec k_station{
         ResourceListLoadKind::Station, "BveTs Station List ", 0.04,
         "station", "station.list"};
@@ -77,12 +77,24 @@ const ResourceListEditSpec* resource_list_edit_spec_for_statement(
     static constexpr ResourceListEditSpec k_sound_3d{
         ResourceListLoadKind::Sound3D, "BveTs Sound List ", 2.0,
         "sound", "sound3D.list"};
+    switch (kind) {
+    case ResourceListLoadKind::Station: return &k_station;
+    case ResourceListLoadKind::Structure: return &k_structure;
+    case ResourceListLoadKind::Signal: return &k_signal;
+    case ResourceListLoadKind::Sound: return &k_sound;
+    case ResourceListLoadKind::Sound3D: return &k_sound_3d;
+    }
+    return nullptr;
+}
+
+const ResourceListEditSpec* resource_list_edit_spec_for_statement(
+    std::string_view statement_kind) {
     const std::string kind = ascii_lower(std::string(statement_kind));
-    if (kind == "station.load") return &k_station;
-    if (kind == "structure.load") return &k_structure;
-    if (kind == "signal.load") return &k_signal;
-    if (kind == "sound.load") return &k_sound;
-    if (kind == "sound3d.load") return &k_sound_3d;
+    if (kind == "station.load") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Station);
+    if (kind == "structure.load") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Structure);
+    if (kind == "signal.load") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Signal);
+    if (kind == "sound.load") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound);
+    if (kind == "sound3d.load") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound3D);
     return nullptr;
 }
 
@@ -1754,10 +1766,10 @@ std::string line_indent_of(const SourcePatch& patch, const ParsedStatement& stat
     return indent;
 }
 
-struct IncludeInsertionPlan {
+struct ReferenceInsertionPlan {
     size_t offset = 0;
     size_t anchor_statement_index = k_no_source_ref;
-    std::string text;
+    std::string statement;
     size_t identity_begin = 0;
     size_t identity_end = 0;
 };
@@ -1768,15 +1780,17 @@ bool line_tail_starts_comment(const std::string& text, size_t offset, size_t end
         (text[offset] == '/' && offset + 1 < end && text[offset + 1] == '/');
 }
 
-IncludeInsertionPlan plan_include_insertion(const MapContext& ctx,
-                                            size_t source_file_index,
-                                            const SourcePatch& patch,
-                                            const std::string& statement_text) {
+ReferenceInsertionPlan plan_reference_insertion(const MapContext& ctx,
+                                                size_t source_file_index,
+                                                const SourcePatch& patch,
+                                                const std::string& statement_text) {
     std::map<std::pair<size_t, size_t>, size_t> physical_statements;
     for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
         const ParsedStatement& statement = ctx.parsed_statements[i];
         if (statement.source.source_file_index != source_file_index ||
-            (statement.statement_kind != "Include" && !is_distance_statement(statement))) {
+            (statement.statement_kind != "Include" &&
+             !resource_list_edit_spec_for_statement(statement.statement_kind) &&
+             !is_distance_statement(statement))) {
             continue;
         }
         const auto key = std::make_pair(statement.source.byte_start, statement.source.byte_end);
@@ -1798,39 +1812,36 @@ IncludeInsertionPlan plan_include_insertion(const MapContext& ctx,
     });
 
     size_t first_distance = k_no_source_ref;
-    size_t last_zero_distance_include = k_no_source_ref;
+    size_t last_zero_distance_reference = k_no_source_ref;
     for (size_t index : statements) {
         const ParsedStatement& statement = ctx.parsed_statements[index];
         if (is_distance_statement(statement)) {
             first_distance = index;
             break;
         }
-        if (statement.statement_kind == "Include") {
-            last_zero_distance_include = index;
+        if (statement.statement_kind == "Include" ||
+            resource_list_edit_spec_for_statement(statement.statement_kind)) {
+            last_zero_distance_reference = index;
         }
     }
 
-    IncludeInsertionPlan plan;
+    ReferenceInsertionPlan plan;
     const auto finish = [&](size_t offset, const std::string& indent,
                             size_t anchor) {
         plan.offset = offset;
         plan.anchor_statement_index = anchor;
-        plan.text = statement_insertion_text(
-            patch.text, offset, indent + statement_text, *patch.record);
-        plan.identity_begin = plan.text.find(statement_text);
-        if (plan.identity_begin == std::string::npos) {
-            throw std::runtime_error("failed to retain include insert identity");
-        }
+        plan.statement = indent + statement_text;
+        plan.identity_begin = indent.size();
         plan.identity_end = plan.identity_begin + statement_text.size();
     };
 
-    if (last_zero_distance_include != k_no_source_ref) {
-        const ParsedStatement& anchor = ctx.parsed_statements[last_zero_distance_include];
+    if (last_zero_distance_reference != k_no_source_ref) {
+        const ParsedStatement& anchor = ctx.parsed_statements[last_zero_distance_reference];
         const auto range = source_range_in_text(patch, anchor.source);
         const size_t line_start = offset_from_line_column(
             patch.text, patch.line_starts, anchor.source.line, 1);
         if (line_start == std::string::npos) {
-            throw std::runtime_error("failed to locate Include insertion line");
+            throw std::runtime_error("failed to locate reference insertion line");
         }
         const TextLineSpan line = text_line_span(patch.text, line_start);
         size_t tail = range.second;
@@ -1842,7 +1853,7 @@ IncludeInsertionPlan plan_include_insertion(const MapContext& ctx,
             tail == line.content_end ||
             line_tail_starts_comment(patch.text, tail, line.content_end);
         finish(keep_tail_with_anchor ? line.next_begin : range.second,
-               line_indent_of(patch, anchor), last_zero_distance_include);
+               line_indent_of(patch, anchor), last_zero_distance_reference);
         return plan;
     }
 
@@ -2254,6 +2265,54 @@ std::string resource_list_path_from_change(const MapEditChange& change) {
         change, "resourceListPath", "resource list");
 }
 
+void validate_resource_list_insert_fields(const MapEditChange& change) {
+    const auto kind = change.field_changes.find("resourceListKind");
+    const auto path = change.field_changes.find("resourceListPath");
+    if (change.field_changes.size() != 2 || kind == change.field_changes.end() ||
+        path == change.field_changes.end()) {
+        throw std::runtime_error(
+            "resource list insert requires resourceListKind and resourceListPath fields: " +
+            change.edit_id);
+    }
+}
+
+const ResourceListEditSpec* resource_list_insert_spec_from_change(const MapEditChange& change) {
+    validate_resource_list_insert_fields(change);
+    const std::string kind = ascii_lower(trim_field_copy(
+        change.field_changes.find("resourceListKind")->second));
+    if (kind == "station") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Station);
+    if (kind == "structure") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Structure);
+    if (kind == "signal") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Signal);
+    if (kind == "sound") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound);
+    if (kind == "sound3d") return resource_list_edit_spec_for_kind(ResourceListLoadKind::Sound3D);
+    throw std::runtime_error("unsupported resourceListKind for insert: " + kind);
+}
+
+std::string resource_list_insert_path_from_change(const MapEditChange& change) {
+    validate_resource_list_insert_fields(change);
+    const std::string path = trim_field_copy(
+        change.field_changes.find("resourceListPath")->second);
+    if (path.empty()) {
+        throw std::runtime_error("resourceListPath must not be empty: " + change.edit_id);
+    }
+    if (path.find('\'') != std::string::npos) {
+        throw std::runtime_error(
+            "resourceListPath must be representable as a single-quoted string literal: " + path);
+    }
+    return path;
+}
+
+const char* resource_list_insert_statement_kind(const ResourceListEditSpec& spec) {
+    switch (spec.kind) {
+    case ResourceListLoadKind::Station: return "Station.Load";
+    case ResourceListLoadKind::Structure: return "Structure.Load";
+    case ResourceListLoadKind::Signal: return "Signal.Load";
+    case ResourceListLoadKind::Sound: return "Sound.Load";
+    case ResourceListLoadKind::Sound3D: return "Sound3D.Load";
+    }
+    throw std::runtime_error("resource list insert has an unsupported kind");
+}
+
 std::string build_include_statement(const MapEditChange& change,
                                     const ParsedStatement& statement) {
     return build_path_statement(
@@ -2282,6 +2341,19 @@ void validate_resource_list_header(MapContext& ctx,
         (void)load_header_text(
             ctx, join_path(ctx.rootpath, path), spec->header,
             spec->minimum_version);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            std::string("resource-list-header-mismatch:") + spec->error_key +
+            ": " + e.what());
+    }
+}
+
+void validate_resource_list_insert_header(MapContext& ctx, const MapEditChange& change) {
+    const ResourceListEditSpec* spec = resource_list_insert_spec_from_change(change);
+    const std::string path = resource_list_insert_path_from_change(change);
+    try {
+        (void)load_header_text(
+            ctx, join_path(ctx.rootpath, path), spec->header, spec->minimum_version);
     } catch (const std::exception& e) {
         throw std::runtime_error(
             std::string("resource-list-header-mismatch:") + spec->error_key +
@@ -2484,6 +2556,11 @@ void validate_insert_change(const MapEditChange& change) {
         (void)include_path_from_change(change);
         return;
     }
+    if (row_kind == "resourceList.load") {
+        (void)resource_list_insert_spec_from_change(change);
+        (void)resource_list_insert_path_from_change(change);
+        return;
+    }
     if (change.field_changes.find("distance") == change.field_changes.end()) {
         throw std::runtime_error(
             "insert edit is missing its distance field: " + change.edit_id);
@@ -2595,6 +2672,11 @@ std::string build_insert_statement(const MapEditChange& change) {
     const std::string& row_kind = change.row_kind;
     if (row_kind == "include") {
         return "include '" + include_path_from_change(change) + "';";
+    }
+    if (row_kind == "resourceList.load") {
+        const ResourceListEditSpec* spec = resource_list_insert_spec_from_change(change);
+        return std::string(resource_list_insert_statement_kind(*spec)) + "('" +
+            resource_list_insert_path_from_change(change) + "');";
     }
     if (row_kind == "repeater") {
         const std::string method = insert_method_or_default(change, "Begin");
@@ -5048,6 +5130,7 @@ void validate_edit_report(MapContext& baseline,
     struct ResourceListReplacement {
         const ResourceListEditSpec* spec = nullptr;
         std::string edit_id;
+        bool is_insert = false;
         size_t baseline_statement_index = k_no_source_ref;
         std::string baseline_content_source_key;
         std::string baseline_structure_load_edit_id;
@@ -5177,6 +5260,34 @@ void validate_edit_report(MapContext& baseline,
                         return;
                     }
                     include_insert_edit_ids.insert(change.edit_id);
+                } catch (const std::exception& e) {
+                    report.blocking_errors.push_back(
+                        std::string("target validation failed for ") +
+                        change.edit_id + ": " + e.what());
+                    return;
+                }
+                continue;
+            }
+            if (change.row_kind == "resourceList.load") {
+                try {
+                    const ResourceListEditSpec* spec =
+                        resource_list_insert_spec_from_change(change);
+                    const std::string new_path = resource_list_insert_path_from_change(change);
+                    if (!expected_target_canonical
+                             .emplace(change.edit_id,
+                                      std::string("resourceList:") + spec->error_key +
+                                          ":" + new_path)
+                             .second) {
+                        report.blocking_errors.push_back(
+                            "more than one edit targets the same element: " +
+                            change.edit_id);
+                        return;
+                    }
+                    ResourceListReplacement replacement;
+                    replacement.spec = spec;
+                    replacement.edit_id = change.edit_id;
+                    replacement.is_insert = true;
+                    resource_list_replacements.push_back(std::move(replacement));
                 } catch (const std::exception& e) {
                     report.blocking_errors.push_back(
                         std::string("target validation failed for ") +
@@ -5601,8 +5712,9 @@ void validate_edit_report(MapContext& baseline,
                     *candidate, structure_load.edit_ref, "structure.load");
                 break;
             }
-            if (replacement.baseline_structure_load_edit_id.empty() ||
-                replacement.candidate_structure_load_edit_id.empty()) {
+            if (!replacement.is_insert &&
+                (replacement.baseline_structure_load_edit_id.empty() ||
+                 replacement.candidate_structure_load_edit_id.empty())) {
                 report.blocking_errors.push_back(
                     "validated Structure.Load edit lost its source row: " +
                     replacement.edit_id);
@@ -6487,23 +6599,27 @@ MapEditReport build_edit_report(MapContext& ctx,
                         "source file changed externally: " + file.file_path);
                     continue;
                 }
-                if (change.row_kind == "include") {
+                if (change.row_kind == "include" ||
+                    change.row_kind == "resourceList.load") {
                     try {
+                        if (change.row_kind == "resourceList.load") {
+                            validate_resource_list_insert_header(ctx, change);
+                        }
                         const std::string inserted_statement = build_insert_statement(change);
-                        const IncludeInsertionPlan insertion = plan_include_insertion(
+                        const ReferenceInsertionPlan insertion = plan_reference_insertion(
                             ctx, target_file_index, target_patch, inserted_statement);
                         PreparedEdit edit;
                         edit.change = &change;
                         edit.input_ordinal = input_ordinal;
                         edit.operation = "insert";
                         edit.target.statement_index = insertion.anchor_statement_index;
-                        edit.target.row_kind = "include";
+                        edit.target.row_kind = change.row_kind;
                         edit.target.element_index = 0;
                         edit.target.elements_for_statement = 0;
                         edit.source_file_index = target_file_index;
                         edit.source_range = {insertion.offset, insertion.offset};
                         edit.removal_range = {};
-                        edit.replacement_statement = insertion.text;
+                        edit.replacement_statement = insertion.statement;
                         edit.has_custom_identity_range = true;
                         edit.identity_range_begin = insertion.identity_begin;
                         edit.identity_range_end = insertion.identity_end;
@@ -6934,7 +7050,19 @@ MapEditReport build_edit_report(MapContext& ctx,
         patches[file_index].replacements.push_back(std::move(replacement));
     };
 
+    const auto is_reference_insert = [](const PreparedEdit& edit) {
+        return edit.operation == "insert" &&
+            (edit.target.row_kind == "include" ||
+             edit.target.row_kind == "resourceList.load");
+    };
+    std::map<std::pair<size_t, size_t>, std::vector<const PreparedEdit*>>
+        reference_inserts;
+
     for (const PreparedEdit& edit : prepared) {
+        if (is_reference_insert(edit)) {
+            reference_inserts[{edit.source_file_index, edit.source_range.first}].push_back(&edit);
+            continue;
+        }
         if (edit.initial_empty_source_insert) continue;
         if (edit.moves_distance && edit.operation != "insert") {
             add_source_replacement(edit.source_file_index,
@@ -6951,6 +7079,60 @@ MapEditReport build_edit_report(MapContext& ctx,
                                                               : edit.replacement_statement,
                                    edit.operation == "delete" ? nullptr : &edit);
         }
+    }
+
+    for (auto& entry : reference_inserts) {
+        const size_t file_index = entry.first.first;
+        const size_t offset = entry.first.second;
+        std::vector<const PreparedEdit*>& inserts = entry.second;
+        std::stable_sort(inserts.begin(), inserts.end(),
+                         [](const PreparedEdit* left, const PreparedEdit* right) {
+                             return left->input_ordinal < right->input_ordinal;
+                         });
+
+        SourcePatch& patch = patches[file_index];
+        const std::string nl = newline_text(patch.record->newline);
+        std::string insertion_body;
+        std::vector<TextReplacementIdentity> identities;
+        for (const PreparedEdit* insert : inserts) {
+            if (!insertion_body.empty()) insertion_body += nl;
+            const size_t statement_begin = insertion_body.size();
+            insertion_body += insert->replacement_statement;
+            const auto identity_range =
+                source_identity_range(*insert, insert->replacement_statement);
+            int baseline_global_order = 0;
+            if (insert->target.statement_index != k_no_source_ref &&
+                insert->target.statement_index < ctx.parsed_statements.size()) {
+                baseline_global_order =
+                    ctx.parsed_statements[insert->target.statement_index].global_order;
+            }
+            identities.push_back({
+                insert->change->edit_id,
+                insert->target.row_kind,
+                statement_begin + identity_range.first,
+                statement_begin + identity_range.second,
+                insert->target.element_index,
+                baseline_global_order,
+            });
+        }
+
+        TextReplacement insertion;
+        insertion.begin = offset;
+        insertion.end = offset;
+        insertion.text = statement_insertion_text(
+            patch.text, offset, insertion_body, *patch.record);
+        const size_t body_offset = insertion.text.find(insertion_body);
+        if (body_offset == std::string::npos) {
+            report.blocking_errors.push_back(
+                "failed to retain edit identity in a generated reference insertion");
+        } else {
+            for (TextReplacementIdentity& identity : identities) {
+                identity.relative_begin += body_offset;
+                identity.relative_end += body_offset;
+            }
+            insertion.identities = std::move(identities);
+        }
+        patch.replacements.push_back(std::move(insertion));
     }
 
     for (const ResolvedDistanceGroup& resolved : resolved_groups) {

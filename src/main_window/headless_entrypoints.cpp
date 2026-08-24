@@ -1707,4 +1707,237 @@ int App::run_debug_headless_resource_list_replace(
     out->flush();
     return failed_cases == 0 ? 0 : 21;
 }
+
+int App::run_debug_headless_new_file_wizard(
+    const HeadlessNewFileWizardOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-new-file-wizard\n"
+         << "map_path=" << options.path << "\n";
+
+    const auto read_file_bytes = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    };
+    std::error_code path_error;
+    const std::filesystem::path tests_directory =
+        std::filesystem::absolute(std::filesystem::path(L"tests"), path_error).lexically_normal();
+    const std::filesystem::path requested_path(utf8_to_wide(options.path));
+    const std::filesystem::path map_path =
+        std::filesystem::absolute(requested_path, path_error).lexically_normal();
+    const std::filesystem::path relative_to_tests = map_path.lexically_relative(tests_directory);
+    const bool path_is_under_tests = !path_error && !requested_path.empty() &&
+        !map_path.filename().empty() && !relative_to_tests.empty() &&
+        !relative_to_tests.is_absolute() && relative_to_tests.begin() != relative_to_tests.end() &&
+        *relative_to_tests.begin() != "..";
+    std::error_code exists_error;
+    if (!path_is_under_tests || !std::filesystem::is_directory(map_path.parent_path(), path_error) ||
+        path_error || std::filesystem::exists(map_path, exists_error) || exists_error) {
+        *out << "error=new-file wizard headless path must be a nonexistent file below tests/\n"
+             << "result=FAIL\n";
+        out->flush();
+        return 2;
+    }
+
+    struct ResourceFile {
+        NewFileKind kind;
+        ResourceListKind source_kind;
+        const char* name;
+        const char* header;
+        const char* statement;
+    };
+    const std::array<ResourceFile, 5> resources = {{
+        {NewFileKind::Structure, ResourceListKind::Structure, "new-structure.csv",
+         "BveTs Structure List 2.00:utf-8\r\n",
+         "Structure.Load('new-structure.csv');\r\n"},
+        {NewFileKind::Signal, ResourceListKind::Signal, "new-signal.csv",
+         "BveTs Signal Aspects List 2.00:utf-8\r\n",
+         "Signal.Load('new-signal.csv');\r\n"},
+        {NewFileKind::Sound, ResourceListKind::Sound, "new-sound.csv",
+         "BveTs Sound List 2.00:utf-8\r\n",
+         "Sound.Load('new-sound.csv');\r\n"},
+        {NewFileKind::Sound3D, ResourceListKind::Sound3D, "new-sound3d.csv",
+         "BveTs Sound List 2.00:utf-8\r\n",
+         "Sound3D.Load('new-sound3d.csv');\r\n"},
+        {NewFileKind::Station, ResourceListKind::Station, "new-station.csv",
+         "BveTs Station List 2.00:utf-8\r\n",
+         "Station.Load('new-station.csv');\r\n"},
+    }};
+
+    int failed_cases = 0;
+    auto check = [&](const char* label, bool value) {
+        *out << label << '=' << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+    std::vector<std::filesystem::path> created_files;
+    const auto cleanup_created_files = [&]() {
+        for (auto it = created_files.rbegin(); it != created_files.rend(); ++it) {
+            std::error_code error;
+            std::filesystem::remove(*it, error);
+        }
+    };
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        {
+            UserSettings settings;
+            settings.language = Language::En;
+            App app(nullptr, settings, 1.0f, false, false);
+            const std::string directory = wide_to_utf8(map_path.parent_path().wstring());
+            const std::string map_name = wide_to_utf8(map_path.filename().wstring());
+            app.request_new_file_create({NewFileKind::Map, map_name, directory, {}});
+            app.process_pending_new_file_create();
+            check("blank_map_created",
+                  std::filesystem::exists(map_path) &&
+                      read_file_bytes(map_path) == "BveTs Map 2.02:utf-8\r\n");
+            if (!std::filesystem::exists(map_path)) {
+                throw std::runtime_error("new map confirmation did not create the requested file");
+            }
+            created_files.push_back(map_path);
+            std::string map_overwrite_error;
+            check("blank_map_overwrite_rejected",
+                  !create_utf8_bve_file_exclusive(
+                      map_path, new_bve_file_header(NewFileKind::Map), map_overwrite_error) &&
+                      read_file_bytes(map_path) == "BveTs Map 2.02:utf-8\r\n");
+
+            LoadModelOptions edit_options;
+            edit_options.full_edit_registry = true;
+            edit_options.load_profile = "edit";
+            const std::string map_path_utf8 = wide_to_utf8(map_path.wstring());
+            LoadResult load = load_map_worker(
+                map_path_utf8, options.unit_distance, false, 0.0, 0.0,
+                options.unit_distance, edit_options);
+            if (!load.ok) {
+                if (load.handle) kv_free(load.handle);
+                throw std::runtime_error("blank map load failed: " + load.error);
+            }
+            app.handle_ = load.handle;
+            load.handle = nullptr;
+            app.model_ = std::move(load.model);
+            app.file_path_ = map_path_utf8;
+            app.has_model_ = true;
+            app.edit_mode_enabled_ = true;
+            app.edit_registry_loaded_ = true;
+            app.edit_memory_matches_pending_ledger_ = true;
+            app.dmin_ = app.model_.default_min;
+            app.dmax_ = app.model_.default_max;
+            app.unit_distance_ = options.unit_distance;
+            const std::vector<std::string> target_candidates =
+                new_element_target_candidates(app.model_);
+            check("blank_map_is_reference_candidate", target_candidates.size() == 1);
+            if (target_candidates.empty()) {
+                throw std::runtime_error("blank map has no editable reference target");
+            }
+            const std::string target_file_path = target_candidates.front();
+
+            for (const ResourceFile& resource : resources) {
+                const std::filesystem::path resource_path = map_path.parent_path() / resource.name;
+                const size_t pending_before = app.pending_edit_changes_.size();
+                app.request_new_file_create(
+                    {resource.kind, resource.name, directory, target_file_path});
+                app.process_pending_new_file_create();
+                check((std::string("created_") + resource.name).c_str(),
+                      std::filesystem::exists(resource_path) &&
+                          read_file_bytes(resource_path) == resource.header);
+                if (!std::filesystem::exists(resource_path)) {
+                    throw std::runtime_error("resource-list confirmation did not create " +
+                                             std::string(resource.name));
+                }
+                created_files.push_back(resource_path);
+                std::string overwrite_error;
+                check((std::string("overwrite_rejected_") + resource.name).c_str(),
+                      !create_utf8_bve_file_exclusive(
+                          resource_path, new_bve_file_header(resource.kind), overwrite_error) &&
+                          read_file_bytes(resource_path) == resource.header);
+                const auto staged = std::find_if(
+                    app.pending_edit_changes_.begin(), app.pending_edit_changes_.end(),
+                    [&](const auto& item) {
+                        const MapElementPendingChange& change = item.second;
+                        const auto kind = change.field_changes.find("resourceListKind");
+                        const auto path = change.field_changes.find("resourceListPath");
+                        return change.operation == "insert" &&
+                            change.row_kind == "resourceList.load" &&
+                            kind != change.field_changes.end() &&
+                            path != change.field_changes.end() &&
+                            kind->second == std::string(new_file_resource_list_kind(resource.kind)) &&
+                            path->second == resource.name;
+                    });
+                check((std::string("reference_staged_") + resource.name).c_str(),
+                      app.pending_edit_changes_.size() == pending_before + 1 &&
+                          staged != app.pending_edit_changes_.end() &&
+                          app.edit_memory_matches_pending_ledger_);
+            }
+            check("five_resource_references_pending", app.pending_edit_changes_.size() == resources.size());
+            check("save_commits_resource_references", app.save_pending_edits(false));
+
+            const std::string map_text = read_file_bytes(map_path);
+            size_t last_position = 0;
+            bool statement_order_matches =
+                map_text.rfind("BveTs Map 2.02:utf-8\r\n", 0) == 0;
+            for (const ResourceFile& resource : resources) {
+                const size_t position = map_text.find(resource.statement);
+                statement_order_matches = statement_order_matches &&
+                    position != std::string::npos && position >= last_position;
+                last_position = position == std::string::npos
+                    ? last_position
+                    : position + std::string_view(resource.statement).size();
+            }
+            check("saved_map_has_ordered_resource_references", statement_order_matches);
+
+            LoadResult reloaded = load_map_worker(
+                map_path_utf8, options.unit_distance, false, 0.0, 0.0,
+                options.unit_distance, edit_options);
+            bool reload_ok = reloaded.ok;
+            if (reloaded.ok) {
+                for (const ResourceFile& resource : resources) {
+                    const ResourceListSource& source = reloaded.model.resource_list_sources[
+                        static_cast<size_t>(resource.source_kind)];
+                    reload_ok = reload_ok && source.present &&
+                        source.evaluated_path == resource.name;
+                }
+                reload_ok = reload_ok && reloaded.model.structure_models.empty() &&
+                    reloaded.model.station_definition_rows.empty() &&
+                    reloaded.model.signal_aspects.empty() && reloaded.model.sound_list.empty() &&
+                    reloaded.model.sound_3d_list.empty();
+            }
+            check("reloaded_empty_resource_lists_match", reload_ok);
+            if (reloaded.handle) kv_free(reloaded.handle);
+        }
+        cleanup_created_files();
+        check("created_files_cleaned", std::all_of(
+            created_files.begin(), created_files.end(), [](const std::filesystem::path& path) {
+                std::error_code error;
+                return !std::filesystem::exists(path, error);
+            }));
+    } catch (const std::exception& e) {
+        cleanup_created_files();
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 22;
+}
 #endif

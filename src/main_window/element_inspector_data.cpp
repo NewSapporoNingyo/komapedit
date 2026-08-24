@@ -252,6 +252,187 @@ const EditSourceFileInfo* find_model_source_file(const MapModel& model, const st
     return nullptr;
 }
 
+std::optional<ResourceListKind> resource_list_kind_for_new_file(NewFileKind kind) {
+    switch (kind) {
+    case NewFileKind::Structure: return ResourceListKind::Structure;
+    case NewFileKind::Signal: return ResourceListKind::Signal;
+    case NewFileKind::Sound: return ResourceListKind::Sound;
+    case NewFileKind::Sound3D: return ResourceListKind::Sound3D;
+    case NewFileKind::Station: return ResourceListKind::Station;
+    case NewFileKind::Map: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+bool new_file_resource_list_is_already_referenced(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& changes,
+    NewFileKind kind) {
+    const std::optional<ResourceListKind> resource_kind = resource_list_kind_for_new_file(kind);
+    if (!resource_kind) return false;
+    const size_t index = static_cast<size_t>(*resource_kind);
+    if (index < model.resource_list_sources.size() && model.resource_list_sources[index].present) {
+        return true;
+    }
+    const std::string kind_name(new_file_resource_list_kind(kind));
+    return std::any_of(changes.begin(), changes.end(), [&](const auto& item) {
+        const MapElementPendingChange& change = item.second;
+        const auto field = change.field_changes.find("resourceListKind");
+        return change.operation == "insert" && change.row_kind == "resourceList.load" &&
+            field != change.field_changes.end() && field->second == kind_name;
+    });
+}
+
+bool new_file_name_is_safe(const std::string& file_name) {
+    if (file_name.empty() || file_name == "." || file_name == "..") return false;
+    for (const unsigned char ch : file_name) {
+        if (ch < 0x20 || ch == '<' || ch == '>' || ch == ':' || ch == '"' ||
+            ch == '/' || ch == '\\' || ch == '|' || ch == '?' || ch == '*') {
+            return false;
+        }
+    }
+    const std::filesystem::path path(utf8_to_wide(file_name));
+    return !path.empty() && path.filename() == path && !path.has_root_path();
+}
+
+bool App::stage_new_file_reference(NewFileKind kind,
+                                   const std::string& target_file_path,
+                                   const std::string& selected_file) {
+    if (!edit_actions_available() || !has_model_) {
+        set_program_status("status.new_file.reference_requires_edit");
+        return false;
+    }
+    if (!find_model_source_file(model_, target_file_path)) {
+        add_log("[warn]gui_kme.cpp: new-file reference target is not part of the loaded map: " +
+                target_file_path);
+        return false;
+    }
+    if (new_file_resource_list_is_already_referenced(model_, pending_edit_changes_, kind)) {
+        set_program_status("status.new_file.resource_list_already_loaded");
+        return false;
+    }
+
+    // Map references and resource-list Load paths both resolve from the entry
+    // map directory, so use the existing source-path helper for both.
+    const ListAssetSourcePathResult selected_path =
+        make_list_asset_source_path(model_.path, selected_file);
+    if (selected_path.source_path.empty()) {
+        add_log("[warn]gui_kme.cpp: failed to derive a new-file reference path: selected=\"" +
+                selected_path.resolved_path + "\"");
+        set_program_status("status.edit.required_field");
+        return false;
+    }
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    const std::string resource_kind(new_file_resource_list_kind(kind));
+    // The ledger is keyed by edit ID and therefore serializes in key order.
+    // Keep all wizard-created references in one zero-padded sequence so their
+    // generated source remains in creation order when the ledger is replayed.
+    static constexpr char k_id_prefix[] = "new-file-reference-";
+    std::string edit_id;
+    for (std::uint64_t suffix = 1;; ++suffix) {
+        std::ostringstream id;
+        id << k_id_prefix << std::setw(20) << std::setfill('0') << suffix;
+        edit_id = id.str();
+        const bool pending = candidate.find(edit_id) != candidate.end();
+        const bool loaded = std::any_of(
+            model_.edit_statements.begin(), model_.edit_statements.end(),
+            [&](const EditStatementInfo& statement) { return statement.edit_id == edit_id; });
+        if (!pending && !loaded) break;
+    }
+
+    MapElementPendingChange change;
+    change.change_id = edit_id;
+    change.edit_id = edit_id;
+    change.row_kind = resource_kind.empty() ? "include" : "resourceList.load";
+    change.operation = "insert";
+    change.target_file_path = target_file_path;
+    if (resource_kind.empty()) {
+        change.field_changes.emplace("includePath", selected_path.source_path);
+    } else {
+        change.field_changes.emplace("resourceListKind", resource_kind);
+        change.field_changes.emplace("resourceListPath", selected_path.source_path);
+    }
+    // Inserts deliberately leave expectedSourceHash empty: maploader compares
+    // the target with its authoritative disk baseline across Apply/Save cycles.
+    candidate[edit_id] = std::move(change);
+
+    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return false;
+    if (!selected_path.fallback_reason.empty()) {
+        add_log(LogSeverity::Warning,
+                "[warning]gui_kme.cpp: unable to create a relative new-file reference; "
+                "using absolute path: reason=\"" + selected_path.fallback_reason +
+                "\", selected=\"" + selected_path.resolved_path +
+                "\", map=\"" + model_.path + "\"");
+        set_program_status("status.edit.relative_path_fallback");
+    } else {
+        set_program_status("status.edit.pending");
+    }
+    return true;
+}
+
+void App::request_new_file_create(NewFileCreateRequest request) {
+    pending_new_file_create_request_ = std::move(request);
+}
+
+void App::process_pending_new_file_create() {
+    if (!pending_new_file_create_request_) return;
+    NewFileCreateRequest request = std::move(*pending_new_file_create_request_);
+    pending_new_file_create_request_.reset();
+    if (!new_file_name_is_safe(request.file_name)) {
+        set_program_status("status.new_file.invalid_path");
+        return;
+    }
+
+    const std::filesystem::path directory(utf8_to_wide(request.directory));
+    std::error_code ec;
+    if (directory.empty() || !std::filesystem::is_directory(directory, ec) || ec) {
+        set_program_status("status.new_file.invalid_path");
+        return;
+    }
+    const std::filesystem::path path = directory / std::filesystem::path(utf8_to_wide(request.file_name));
+    if (std::filesystem::exists(path, ec) || ec) {
+        add_log("[warn]gui_kme.cpp: new BVE file already exists: " + wide_to_utf8(path.wstring()));
+        set_program_status("status.new_file.create_failed");
+        return;
+    }
+
+    if (!request.target_file_path.empty()) {
+        if (!edit_actions_available() || !has_model_) {
+            set_program_status("status.new_file.reference_requires_edit");
+            return;
+        }
+        if (!find_model_source_file(model_, request.target_file_path)) {
+            add_log("[warn]gui_kme.cpp: new-file reference target is not part of the loaded map: " +
+                    request.target_file_path);
+            set_program_status("status.new_file.reference_failed");
+            return;
+        }
+        if (new_file_resource_list_is_already_referenced(model_, pending_edit_changes_, request.kind)) {
+            set_program_status("status.new_file.resource_list_already_loaded");
+            return;
+        }
+    }
+
+    std::string create_error;
+    if (!create_utf8_bve_file_exclusive(path, new_bve_file_header(request.kind), create_error)) {
+        add_log("[error]gui_kme.cpp: " + create_error + ": " + wide_to_utf8(path.wstring()));
+        set_program_status("status.new_file.create_failed");
+        return;
+    }
+
+    const std::string selected_file = wide_to_utf8(path.wstring());
+    if (!request.target_file_path.empty() &&
+        !stage_new_file_reference(request.kind, request.target_file_path, selected_file)) {
+        add_log("[warn]gui_kme.cpp: new BVE file was created without a staged reference: " +
+                selected_file);
+        set_program_status("status.new_file.reference_failed");
+        return;
+    }
+    new_file_wizard_.open = false;
+    if (request.target_file_path.empty()) set_program_status("status.new_file.created");
+}
+
 void App::process_pending_include_file_insert() {
     if (!pending_include_file_insert_request_) return;
     IncludeFileInsertRequest request =
@@ -281,50 +462,7 @@ void App::process_pending_include_file_insert() {
         }
     }
 
-    // Include arguments resolve against the entry map directory in the
-    // parser, so that directory is also the relative-path base here.
-    ListAssetSourcePathResult selected_path =
-        make_list_asset_source_path(model_.path, selected_file);
-    if (selected_path.source_path.empty()) {
-        add_log("[warn]gui_kme.cpp: failed to derive an include path for the selected file: selected=\"" +
-                selected_path.resolved_path + "\"");
-        set_program_status("status.edit.required_field");
-        return;
-    }
-
-    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
-    std::string edit_id;
-    for (std::uint64_t suffix = 1;; ++suffix) {
-        edit_id = "include-insert-" + std::to_string(suffix);
-        const bool pending = candidate.find(edit_id) != candidate.end();
-        const bool loaded = std::any_of(
-            model_.edit_statements.begin(), model_.edit_statements.end(),
-            [&](const EditStatementInfo& statement) { return statement.edit_id == edit_id; });
-        if (!pending && !loaded) break;
-    }
-    MapElementPendingChange change;
-    change.change_id = edit_id;
-    change.edit_id = edit_id;
-    change.row_kind = "include";
-    change.operation = "insert";
-    change.target_file_path = request.target_file_path;
-    change.field_changes.emplace("includePath", selected_path.source_path);
-    // Inserts deliberately leave expectedSourceHash empty: maploader compares
-    // the target with its authoritative disk baseline across Apply/Save cycles.
-    candidate[edit_id] = std::move(change);
-
-    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return;
-    if (!selected_path.fallback_reason.empty()) {
-        add_log(
-            LogSeverity::Warning,
-            "[warning]gui_kme.cpp: unable to create a relative include path; "
-            "using absolute path: reason=\"" + selected_path.fallback_reason +
-            "\", selected=\"" + selected_path.resolved_path +
-            "\", map=\"" + model_.path + "\"");
-        set_program_status("status.edit.relative_path_fallback");
-    } else {
-        set_program_status("status.edit.pending");
-    }
+    stage_new_file_reference(NewFileKind::Map, request.target_file_path, selected_file);
 }
 
 std::string expected_source_hash_for_edit_target(
