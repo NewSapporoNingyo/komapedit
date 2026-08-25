@@ -4333,6 +4333,9 @@ void empty_submap_insert_contract() {
 
     const std::filesystem::path nonempty_map_path = directory / "nonempty-map.txt";
     const std::filesystem::path nonempty_submap_path = directory / "nonempty-submap.txt";
+    const std::string nonempty_submap_before =
+        "BveTs Map 2.02:utf-8\r\n"
+        "$already=1;\r\n";
     {
         std::ofstream map(nonempty_map_path, std::ios::binary | std::ios::trunc);
         map << "BveTs Map 2.02:utf-8\r\n"
@@ -4341,9 +4344,9 @@ void empty_submap_insert_contract() {
     }
     {
         std::ofstream submap(nonempty_submap_path, std::ios::binary | std::ios::trunc);
-        submap << "BveTs Map 2.02:utf-8\r\n"
-               << "$already=1;\r\n";
+        submap << nonempty_submap_before;
     }
+    const std::string nonempty_disk_before = read_text(nonempty_submap_path);
     {
         MapHandle handle(kv_load_map_ex(nonempty_map_path.u8string().c_str(), 25.0,
                                         KV_LOAD_EDIT_METADATA));
@@ -4351,16 +4354,130 @@ void empty_submap_insert_contract() {
         if (handle.value) {
             SimpleInsertBatch insert(
                 nonempty_submap_path.u8string(), "nonempty-submap-no-anchor",
-                {{"rowKind", "cabIlluminance.change"}, {"distance", "100"},
+                 {{"rowKind", "cabIlluminance.change"}, {"distance", "100"},
                  {"method", "Set"}, {"value", "0.1"}});
-            KvEditReportSnapshot report{};
-            const bool ran = kv_edit_dry_run_typed(
-                handle.value, &insert.batch, &report, sizeof(report)) != 0;
-            check(ran && !report.ok && edit_report_has_error_containing(
-                      report, "insert target file contains no numeric distance statements"),
-                  "nonempty submap without a numeric distance keeps the existing rejection");
+            KvEditReportSnapshot dry_report{};
+            const bool dry_run = kv_edit_dry_run_typed(
+                handle.value, &insert.batch, &dry_report, sizeof(dry_report)) != 0;
+            check(dry_run && dry_report.ok && dry_report.insert_count == 1 &&
+                      dry_report.created_distance_block_count == 1 &&
+                      dry_report.full_reparse_ok &&
+                      dry_report.non_target_changed_count == 0,
+                  "nonempty submap without a numeric distance dry-runs through a tail block");
+
+            KvEditReportSnapshot apply_report{};
+            const bool applied = kv_edit_apply_to_memory_typed(
+                handle.value, &insert.batch, &apply_report, sizeof(apply_report)) != 0;
+            check(applied && apply_report.ok && apply_report.insert_count == 1 &&
+                      apply_report.created_distance_block_count == 1 &&
+                      apply_report.full_reparse_ok &&
+                      apply_report.non_target_changed_count == 0,
+                  "nonempty submap without a numeric distance applies through a tail block");
+            const char* source = applied
+                ? kv_get_source_text(handle.value, nonempty_submap_path.u8string().c_str())
+                : nullptr;
+            const std::string expected_source = nonempty_submap_before +
+                "100;\r\n"
+                "CabIlluminance.Set(0.1);\r\n";
+            check(source && std::string_view(source) == expected_source,
+                  "nonempty submap tail insert preserves prior statements and CRLF");
+            kv_free_string(source);
+
+            KvMapSnapshot applied_snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &applied_snapshot, sizeof(applied_snapshot)) != 0,
+                  "nonempty submap tail insert applied snapshot");
+            const bool stable_insert = applied_snapshot.cab_illuminance && std::any_of(
+                applied_snapshot.cab_illuminance,
+                applied_snapshot.cab_illuminance + applied_snapshot.cab_illuminance_count,
+                [&](const KvCabIlluminanceRow& row) {
+                    return map_string(applied_snapshot, row.metadata.edit_id) ==
+                               "nonempty-submap-no-anchor" &&
+                        map_string(applied_snapshot, row.file_path) ==
+                            nonempty_submap_path.u8string() &&
+                        nearly_equal(row.distance, 100.0) &&
+                        row.value.kind == KV_VALUE_NUMBER &&
+                        nearly_equal(row.value.number_value, 0.1);
+                });
+            check(stable_insert,
+                  "nonempty submap tail insert retains a stable target identity");
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "nonempty submap tail insert reset");
         }
     }
+    check(read_text(nonempty_submap_path) == nonempty_disk_before,
+          "nonempty submap tail insert reset leaves disk unchanged");
+
+    const std::filesystem::path single_anchor_map_path = directory / "single-anchor-map.txt";
+    const std::string single_anchor_before =
+        "BveTs Map 2.02:utf-8\r\n"
+        "$already=1;\r\n"
+        "0;\r\n";
+    {
+        std::ofstream map(single_anchor_map_path, std::ios::binary | std::ios::trunc);
+        map << single_anchor_before;
+    }
+    {
+        MapHandle handle(kv_load_map_ex(single_anchor_map_path.u8string().c_str(), 25.0,
+                                        KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "single-anchor map insert load");
+        if (handle.value) {
+            SimpleInsertBatch insert(
+                single_anchor_map_path.u8string(), "single-anchor-map-tail-insert",
+                {{"rowKind", "cabIlluminance.change"}, {"distance", "100"},
+                 {"method", "Set"}, {"value", "0.1"}});
+            KvEditReportSnapshot dry_report{};
+            const bool dry_run = kv_edit_dry_run_typed(
+                handle.value, &insert.batch, &dry_report, sizeof(dry_report)) != 0;
+            check(dry_run && dry_report.ok && dry_report.insert_count == 1 &&
+                      dry_report.created_distance_block_count == 1 &&
+                      dry_report.full_reparse_ok &&
+                      dry_report.non_target_changed_count == 0,
+                  "single-anchor map dry-runs through a tail block");
+
+            KvEditReportSnapshot apply_report{};
+            const bool applied = kv_edit_apply_to_memory_typed(
+                handle.value, &insert.batch, &apply_report, sizeof(apply_report)) != 0;
+            check(applied && apply_report.ok && apply_report.insert_count == 1 &&
+                      apply_report.created_distance_block_count == 1 &&
+                      apply_report.full_reparse_ok &&
+                      apply_report.non_target_changed_count == 0,
+                  "single-anchor map applies through a tail block");
+            const char* source = applied
+                ? kv_get_source_text(handle.value, single_anchor_map_path.u8string().c_str())
+                : nullptr;
+            const std::string expected_source = single_anchor_before +
+                "100;\r\n"
+                "CabIlluminance.Set(0.1);\r\n"
+                "0;\r\n";
+            check(source && std::string_view(source) == expected_source,
+                  "single-anchor root tail insert restores the final distance");
+            kv_free_string(source);
+
+            KvMapSnapshot applied_snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &applied_snapshot, sizeof(applied_snapshot)) != 0,
+                  "single-anchor map tail insert applied snapshot");
+            const bool stable_insert = applied_snapshot.cab_illuminance && std::any_of(
+                applied_snapshot.cab_illuminance,
+                applied_snapshot.cab_illuminance + applied_snapshot.cab_illuminance_count,
+                [&](const KvCabIlluminanceRow& row) {
+                    return map_string(applied_snapshot, row.metadata.edit_id) ==
+                               "single-anchor-map-tail-insert" &&
+                        map_string(applied_snapshot, row.file_path) ==
+                            single_anchor_map_path.u8string() &&
+                        nearly_equal(row.distance, 100.0) &&
+                        row.value.kind == KV_VALUE_NUMBER &&
+                        nearly_equal(row.value.number_value, 0.1);
+                });
+            check(stable_insert,
+                  "single-anchor map tail insert retains a stable target identity");
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "single-anchor map tail insert reset");
+        }
+    }
+    check(read_text(single_anchor_map_path) == single_anchor_before,
+          "single-anchor map tail insert reset leaves disk unchanged");
     std::error_code cleanup;
     std::filesystem::remove_all(directory, cleanup);
 }

@@ -441,7 +441,7 @@ After opening `Properties/Edit`, supported objects show an edit gizmo. Dragging 
 
 #### New Map Element Wizard
 
-Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters.
+Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters. Every loaded non-resource-list map source file, including a blank or distance-free one, is eligible; when the selected source has zero or one numeric distance statement, insertion appends a canonical distance block after its existing text instead of moving existing statements.
 
 The wizard provides the currently supported elements in these categories:
 
@@ -469,7 +469,7 @@ Open it from `File -> New...`. It can create six file types: `BveTs Map 2.02`, S
 
 1. Choose the file type, enter a file name, choose `.txt` or `.csv`, and select a directory.
 2. For a resource list, you can first click `Import File` to fill the form with an existing `.txt` or `.csv` file's name, directory, and suffix. You can still edit these fields.
-3. To make the current map reference the file, select a target source file under `Reference in`. This requires editing to be enabled. Every loaded non-resource-list map source file is a candidate; official BVE does not require a distance statement for `include` or `*.Load`, so distance-free blank maps are listed as well. (The separate New Map Element wizard still requires a distance statement in its target.)
+3. To make the current map reference the file, select a target source file under `Reference in`. This requires editing to be enabled. Every loaded non-resource-list map source file is a candidate; official BVE does not require a distance statement for `include` or `*.Load`, so distance-free blank maps are listed as well.
 4. Click `Confirm` to create or reuse the file. Only the map template provides `Confirm and Load`.
 
 The selected suffix is always appended to the entered name. If the target is an existing regular file, it is reused without changing its contents. Otherwise, the wizard creates it with the standard header. A reference is first applied only to the current map's in-memory preview: maps use `include`, and resource lists use the matching `*.Load`. Use toolbar `Save` to write the reference. A map can reference only one resource list of each type. If a reference already exists, the wizard disables another one and tells you to replace the file from the `Source path` context menu at the top of the matching table.

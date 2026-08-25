@@ -382,6 +382,18 @@ int main(int, char**) {
         return App::run_debug_headless_new_element_edit(new_element_edit);
     }
 
+    HeadlessSparseNewElementOptions sparse_new_element =
+        parse_headless_sparse_new_element_options(args);
+    if (sparse_new_element.requested) {
+        if (!sparse_new_element.error.empty()) {
+            std::cerr << sparse_new_element.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-sparse-new-element <map-path> "
+                         "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_sparse_new_element(sparse_new_element);
+    }
+
     HeadlessInsertEditOptions insert_edit = parse_headless_insert_edit_options(args);
     if (insert_edit.requested) {
         if (!insert_edit.error.empty()) {

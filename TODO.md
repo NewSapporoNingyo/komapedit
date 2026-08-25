@@ -41,8 +41,3 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
 - [ ] 根据曲线半径自动计算缓和曲线长度与超高
 - [ ] 根据坡度自动计算纵曲线长度
-
-### 问题修复
-
-- [ ] 占位项，不描述任何bug，只用于防止git diff时显示此文件没有更改
-- [ ] 地图中没有距离语句/只有1个距离时，新增地图元素时会跳出“无法确定语句移动位置”对话框，并且不可手动选择。直接导致新的语句无法插入地图。

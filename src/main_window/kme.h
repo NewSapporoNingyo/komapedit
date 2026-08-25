@@ -61,6 +61,7 @@ struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
+struct HeadlessSparseNewElementOptions;
 struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
 struct HeadlessNewFileWizardOptions;
@@ -1767,6 +1768,8 @@ public:
         const HeadlessOtherTrackKeyEditOptions& options);
     static int run_debug_headless_new_element_edit(
         const HeadlessNewElementEditOptions& options);
+    static int run_debug_headless_sparse_new_element(
+        const HeadlessSparseNewElementOptions& options);
     static int run_debug_headless_resource_list_replace(
         const HeadlessResourceListReplaceOptions& options);
     static int run_debug_headless_resource_list_insert(

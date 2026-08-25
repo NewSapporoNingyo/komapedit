@@ -737,13 +737,11 @@ bool new_element_target_is_resource_list(
 
 std::vector<std::string> new_element_target_candidates(const MapModel& model) {
     std::map<std::string, size_t> distance_counts;
-    std::set<std::string> files_with_statements;
     for (const EditStatementInfo& statement : model.edit_statements) {
         if (statement.source.file_path.empty() ||
             new_element_target_is_resource_list(model, statement.source.file_path)) {
             continue;
         }
-        files_with_statements.insert(statement.source.file_path);
         // Distance.Set is the parser's internal classification for a source
         // line whose expression sets the current BVE distance. It is not a
         // BVE source function and must never be emitted as source text.
@@ -758,11 +756,8 @@ std::vector<std::string> new_element_target_candidates(const MapModel& model) {
         if (file.file_path.empty() || new_element_target_is_resource_list(model, file.file_path)) {
             continue;
         }
-        if (count != distance_counts.end()) {
-            ranked.emplace_back(file.file_path, count->second);
-        } else if (files_with_statements.find(file.file_path) == files_with_statements.end()) {
-            ranked.emplace_back(file.file_path, 0);
-        }
+        ranked.emplace_back(file.file_path,
+                            count == distance_counts.end() ? 0 : count->second);
     }
     std::stable_sort(ranked.begin(), ranked.end(),
                      [](const auto& lhs, const auto& rhs) {
@@ -778,9 +773,9 @@ std::vector<std::string> new_element_target_candidates(const MapModel& model) {
 
 std::vector<std::string> new_file_reference_target_candidates(const MapModel& model) {
     // Official BVE treats Include and every *.Load directive as ordinary map
-    // statements: none of them depends on the current distance, so a target
-    // file does not have to own a distance statement. Keep this candidate list
-    // separate from the new-element wizard, which still requires one.
+    // statements: none of them depends on the current distance. The New Map
+    // Element wizard likewise accepts every editable map source and delegates
+    // sparse source placement to maploader's tail-distance-block path.
     std::vector<std::string> result;
     for (const EditSourceFileInfo& file : model.edit_files) {
         if (file.file_path.empty() ||

@@ -1539,6 +1539,207 @@ int App::run_debug_headless_new_element_edit(
     return failed_cases == 0 ? 0 : 20;
 }
 
+int App::run_debug_headless_sparse_new_element(
+    const HeadlessSparseNewElementOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-sparse-new-element\n"
+         << "path=" << options.path << "\n"
+         << "memory_apply_only=1\n"
+         << "stage=load-start\n";
+    out->flush();
+
+    LoadResult load = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, LoadModelOptions{true});
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        return 2;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* name, bool value) {
+        *out << name << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+    const auto source_hash_for_path = [](const MapModel& model,
+                                         const std::string& path) {
+        const auto found = std::find_if(
+            model.edit_files.begin(), model.edit_files.end(),
+            [&](const EditSourceFileInfo& file) {
+                return file.file_path == path;
+            });
+        return found == model.edit_files.end()
+            ? std::string{}
+            : found->source_hash;
+    };
+    const auto source_text = [](void* handle, const std::string& path) {
+        const char* text = kv_get_source_text(handle, path.c_str());
+        std::string result = text ? text : "";
+        kv_free_string(text);
+        return result;
+    };
+    std::error_code target_path_error;
+    const std::filesystem::path requested_target_path(utf8_to_wide(options.path));
+    const std::filesystem::path target_path =
+        std::filesystem::absolute(requested_target_path, target_path_error).lexically_normal();
+    const std::string target_file = target_path_error
+        ? options.path
+        : wide_to_utf8(target_path.wstring());
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = load.handle;
+        load.handle = nullptr;
+        app.model_ = std::move(load.model);
+        app.file_path_ = target_file;
+        app.has_model_ = true;
+        app.edit_mode_enabled_ = true;
+        app.edit_registry_loaded_ = true;
+        app.edit_memory_matches_pending_ledger_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.unit_distance_ = options.unit_distance;
+
+        const std::string baseline_hash = source_hash_for_path(app.model_, target_file);
+        const std::string baseline_source = source_text(app.handle_, target_file);
+        const size_t baseline_draw_distance_count = app.model_.draw_distances.size();
+        const std::vector<std::string> target_candidates =
+            new_element_target_candidates(app.model_);
+        const size_t distance_statement_count = static_cast<size_t>(std::count_if(
+            app.model_.edit_statements.begin(), app.model_.edit_statements.end(),
+            [&](const EditStatementInfo& statement) {
+                return statement.source.file_path == target_file &&
+                    statement.statement_kind == "Distance.Set";
+            }));
+        const bool target_candidate_present = std::find(
+            target_candidates.begin(), target_candidates.end(), target_file) !=
+            target_candidates.end();
+        const bool target_is_sparse = distance_statement_count <= 1;
+        *out << "target_source_hash_before=" << baseline_hash << "\n"
+             << "target_distance_statement_count=" << distance_statement_count << "\n";
+        check("target_source_hash_present", !baseline_hash.empty());
+        check("target_source_text_present", !baseline_source.empty());
+        check("target_candidate_present", target_candidate_present);
+        check("target_distance_statement_count_is_sparse", target_is_sparse);
+
+        const std::vector<NewElementTemplate>& templates = new_element_templates();
+        const auto template_it = std::find_if(
+            templates.begin(), templates.end(), [](const NewElementTemplate& tpl) {
+                return std::string_view(tpl.id) == "draw_distance.change";
+            });
+        const int template_index = template_it == templates.end()
+            ? -1
+            : static_cast<int>(std::distance(templates.begin(), template_it));
+        check("draw_distance_template_present", template_index >= 0);
+
+        bool fields_set = false;
+        if (template_index >= 0) {
+            app.new_element_wizard_ = NewElementWizardState{};
+            NewElementWizardState& wizard = app.new_element_wizard_;
+            wizard.open = true;
+            wizard.selected_template = template_index;
+            wizard.target_file_path = target_file;
+            wizard.target_candidates_built = true;
+            wizard.target_file_candidates = target_candidates;
+            app.rebuild_new_element_wizard_form();
+            const auto set_field = [](MapElementInspectorState& form,
+                                      const std::string& key,
+                                      const std::string& value) {
+                MapElementEditFieldState* field = find_inspector_field(form, key);
+                if (!field || field->read_only || field->disabled) return false;
+                set_edit_field_buffer(*field, value);
+                return true;
+            };
+            fields_set = set_field(wizard.form, "distance", "25") &&
+                set_field(wizard.form, "value", "500");
+        }
+        check("draw_distance_fields_set", fields_set);
+
+        const bool applied = target_candidate_present && target_is_sparse && fields_set &&
+            app.apply_new_element_insert();
+        check("wizard_apply_succeeds_without_resolution", applied);
+        check("distance_resolution_not_requested",
+              app.distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
+                  !app.distance_resolution_workflow_.retry_requested);
+        check("one_pending_insert_created", app.pending_edit_changes_.size() == 1 &&
+                  app.pending_edit_changes_.begin()->second.operation == "insert");
+        const bool created_row = app.model_.draw_distances.size() ==
+                baseline_draw_distance_count + 1 &&
+            std::any_of(app.model_.draw_distances.begin(), app.model_.draw_distances.end(),
+                        [&](const TableRow& row) {
+                            return row.source.file_path == target_file &&
+                                table_cell(row, "distance") == "25" &&
+                                table_cell(row, "value") == "500" &&
+                                !row.edit_id.empty();
+                        });
+        check("draw_distance_model_row_created", created_row);
+
+        const std::string applied_source = source_text(app.handle_, target_file);
+        const size_t appended_at = applied_source.find(
+            "25;", baseline_source.size());
+        const bool appended_tail_block = applied_source.size() > baseline_source.size() &&
+            applied_source.compare(0, baseline_source.size(), baseline_source) == 0 &&
+            appended_at != std::string::npos &&
+            applied_source.find("DrawDistance.Change(500);", appended_at) !=
+                std::string::npos;
+        check("canonical_tail_distance_block_created", appended_tail_block);
+
+        check("working_copy_reset_ok", kv_edit_reset_memory(app.handle_) != 0);
+        LoadResult disk_reload = load_map_worker(
+            options.path, options.unit_distance, false, 0.0, 0.0,
+            options.unit_distance, LoadModelOptions{true});
+        const std::string hash_after = disk_reload.ok
+            ? source_hash_for_path(disk_reload.model, target_file)
+            : std::string{};
+        *out << "target_source_hash_after=" << hash_after << "\n";
+        check("disk_reload_ok", disk_reload.ok);
+        check("disk_source_hash_unchanged",
+              disk_reload.ok && hash_after == baseline_hash);
+        if (disk_reload.handle) kv_free(disk_reload.handle);
+        *out << "stage=reset-and-disk-check-complete\n";
+
+        for (const LogLine& line : app.logs_) {
+            if (line.severity == LogSeverity::Error) {
+                *out << "app_error=" << line.text << "\n";
+            }
+        }
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (load.handle) kv_free(load.handle);
+
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 20;
+}
+
 int App::run_debug_headless_resource_list_replace(
     const HeadlessResourceListReplaceOptions& options) {
     std::ofstream output_file;
