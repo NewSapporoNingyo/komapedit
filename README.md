@@ -136,46 +136,341 @@ root-level INIs or DLLs: if either is present, they stop and require a clean
 
 ## Usage
 
-1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.txt` or `.csv` map file. A BVE Scenario file (`BveTs Scenario 2.00`) is first retained as a read-only document: `Map Info List -> Other -> Scenario File` shows its official fields, original relative Route/Vehicle paths, and weights. One valid Route candidate loads its map directly; multiple candidates open a fixed-width selection dialog. A missing Route, a missing Route target, or cancelling that dialog leaves the Scenario File preview available without a map. Opening any other map or Scenario starts a new document and clears that preview; direct map opens disable the menu item. Editing, saving, reloading, and recent-map history operate on the resolved map file; scenario weights are validated but never used for automatic selection.
-   - `File -> New...` can create an independent header-only map/list file or, for the five resource-list templates, import an existing `.txt`/`.csv`. Import fills the editable file name, path, and suffix fields. The selected suffix is always appended to the typed name; an existing regular target file is reused without modification, while a missing target is created with the standard header. Only the map template's `Confirm and Load` opens the selected map after confirmation. When a loaded map is selected as its reference target, Edit mode is required; its typed `include` or `*.Load` reference is preview-only until the normal `Save`.
-2. After the map loads, the main window shows the plan view, profile chart, and curve-radius chart.
-3. In the plan view:
-   - Drag with the left mouse button to pan.
-   - Use the mouse wheel to zoom.
-   - Hold `Shift` while using the mouse wheel to rotate, or drag with the right mouse button / `Ctrl + left mouse button`.
-   - Double-click the plan view to fit the map to the current viewport.
-4. Use `Station Jump` or `Jump to distance(m)` on the toolbar to jump to a station or numeric map distance.
-5. Use the `2D View` menu to show or hide the 2D view window, profile chart, curve-radius chart, gradient overlays, profile other-track display, and background-image controls. With Edit enabled, right-click paired curve/gradient change-point markers in the plan, profile, or curve-radius chart to open `Properties/Edit` or delete the source statements.
-6. Use the `Auxiliary Info` menu to toggle plan marker groups for stations, track geometry, signals, sounds, effects, and 3D scene helpers. Other-train paths are controlled from the `Other Train List` in `Map Info`. `Section Markers` is off by default and controls the green `S` markers and their signal-index parameter labels in both 2D and 3D. Under `Auxiliary Info -> Other`, open `File Structure Diagram` to inspect the entry map and its nested Include files; right-click a source-file node to open its read-only text preview. Missing or invalid Include targets remain as red nodes; their context menus disable preview/import/new-submap actions while retaining `Open in File Explorer`, `Change Included File...`, and `Unlink Include` (the latter two still require Edit mode). Explorer opens the target directory even when the file is absent, and reports an error when that directory is absent too. With Edit enabled, `Change Included File...` rewrites the parent map's Include statement to the selected .txt/.csv submap (relative path preferred with automatic absolute fallback; the preview refreshes immediately and the change is kept for the normal Save workflow), while `Unlink Include` removes that Include statement from its parent map through the normal Apply/Save workflow; edits are blocked when surviving statements still depend on the referenced file. Signal markers are controlled from the `Map Signal List` row `Show` checkboxes in `Map Info`.
-   - `Import Submap...` selects an existing BVE map and stages `include 'path';` after the last Include before the first local distance statement, before that first distance when no eligible Include exists, or at end of file when neither exists. `New Submap...` uses a save dialog, refuses to overwrite an existing file, writes `BveTs Map 2.02:utf-8` as UTF-8 without BOM using CRLF, then follows the same staged Include flow. The selected path is relative to the entry map when possible and absolute only as a fallback; normal Save commits the parent map.
-7. Switch `Mode` to `Measure`, then move near the track or double-click to view mileage, elevation, gradient, curve radius, and speed limit.
-8. Use the `Map Info` menu to open the data tables for stations, tracks, other trains, Structures, repeaters, signals, beacons, sounds, speed-limit points, irregularity/adhesion data, backgrounds, cab-illuminance, fog, and draw distance. Rows with plan positions can be located on the plan; model and sound file rows expose linked files.
-   - `Signal Aspect List`: view and find signal aspect definitions; with Edit enabled, right-click a main or glare cell to insert a six-field primary row above/below the whole aspect/glare block. A new primary has no glare until `Add Glare` is chosen; insertion never splits an existing main/glare pair, and adding aspect columns is not available.
-   - `Map Signal List`: view signal positions and use the row `Show` checkboxes to toggle markers on the plan; with Edit enabled, open `Properties/Edit` or delete an existing `Signal.Put` row.
-   - `Beacon List`: view and locate beacon positions; with Edit enabled, open `Properties/Edit` or delete existing `Beacon.Put` rows.
-   - `Sound File List` and `3D Sound File List`: view the loaded sound file entries, find matching keys, find unused entries, and open linked files. With Edit enabled, existing keys, paths, and buffer counts can be edited, reordered, cleared, or deleted; `Select File` writes a relative path where possible.
-   - `Map Sound List`, `Map 3D Sound List`, `Rolling Noise Change Point List`, `Flange Noise Change Point List`, and `Joint Noise Play Point List`: view and locate sound playback/change positions; with Edit enabled, open `Properties/Edit` or delete existing events.
-    - `Speed Limit Point List`, `Track Irregularity List`, `Adhesion Change Point List`, `Background Change Point List`, `Cab Illuminance Change Point List`, `Fog Change Point List`, and `Draw Distance Change Point List`: view and locate the corresponding change points; with Edit enabled, open `Properties/Edit` or delete supported rows. Speed-limit Begin and End points are independent; Begin exposes distance/speed while End exposes distance only.
-   - `Other Tracks`: toggle other-track display and adjust visible range and color. With Edit enabled, right-click a `Key` cell and choose `Rename` to change that `trackKey` on every same-key `Track[...]` statement across the map and its Includes. The change follows the normal Apply/Save workflow; dependent Structure, Signal, Repeater, and other map-element track references are not renamed.
-   - `Other Train List`: view other-train definitions and stop points, the unique read-only `Train.Enable` time for each stop group, toggle path visibility, and locate stop points on the plan.
-   - `Section List`: view `Section.Begin`/`BeginNew` and `Section.SetSpeedLimit`/`Signal.SpeedLimit` in separate dynamic-column tables, including explicit `null` arguments and source files. With Edit enabled, right-click a distance cell to open `Properties/Edit` or delete the row; the inspector edits distance and the variable-length parameters, with buttons to add or remove parameters.
-   - `Variable List`: view every assignment grouped by case-insensitive variable name; hover a value for the original expression and use the source-file context menu to open its directory.
-   - A map load is rejected when the entry map and its Includes contain more than one unkeyed Load of the same list type, or more than one case-insensitively matching `Train[].Enable`.
-    - `Station List`: view `Station.Put` position rows separately from `Station.Load` definitions. With Edit enabled, the source-path context menu can replace the loaded Station List file; position rows support `Properties/Edit` and deletion, while definition rows can be edited, reordered, cleared, deleted, or right-click inserted above/below with 13 empty CSV fields.
-   - `Map Structure List`: view `Structure.Put`, `Structure.Put0`, and `Structure.PutBetween` entries from the map, and locate rendered objects in the 3D scene preview when it is loaded.
-    - `Structure Model List`: view the structure keys and model files from the `Structure.Load` structure list. The Station, Structure Model, Signal Aspect, Sound File, and 3D Sound File lists show their original evaluated Load path at the top, with the raw expression/resolved path on hover and an Explorer context menu. When no map is loaded or the matching list is absent, the table area shows a `New or Import File` entry point that opens the matching New File Wizard template. A map can contain only one of each resource-list type; the wizard disables another reference and directs replacement to the top `Source path` context menu's `Change File...` action. With Edit enabled, that action replaces the matching `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, or `Sound3D.Load` path in the working copy and immediately refreshes its list cache; normal `Save` writes it to disk. The selected `.txt`/`.csv` is checked with the map loader's existing title/version rules: `BveTs Station List` 0.04+ under its existing compatibility rule, `BveTs Structure List` 1.00+, `BveTs Signal Aspects List` 2.00+, and `BveTs Sound List` 2.00+ for both Sound lists. Right-click any file-content cell to insert an empty row above/below (Structure 2 fields, Sound/Sound3D 3, Station 13, Signal primary 6). Inline-table `Apply` only submits file-content row drafts. If the target list has unapplied drafts or applied but unsaved old-content edits, replacement asks for confirmation and discards only those target-list changes; other pending edits remain. Right-click a structure key and choose `Preview Model` to open the 3D model preview; with Edit enabled, rows can be edited, reordered, cleared, or deleted.
-   - Resource-list CSV comments: documented `#` comments remain supported. For compatibility with existing BVE routes, an unquoted `//` starts a comment anywhere in Station, Structure, Signal Aspect, Sound, and 3D Sound list rows; `//` inside a double-quoted CSV field remains literal.
-   - `Repeater List`: inspect linked `Repeater.Begin`/`Begin0`/`End` segments, edit them through `Properties/Edit`, and locate generated repeaters in the 3D scene preview when it is loaded.
-     - In a Repeater `Properties/Edit` window, `Insert Change Point` opens the matching Begin/Begin0 wizard with Begin-only selected, both distance fields initialized from the current begin distance, and the current inspector draft parameters copied for editing. The existing confirmation and Apply/Save workflow remain in effect.
-          - Turn on `Enable Edit` to use `Properties/Edit` on supported placement, Repeater, Section, speed-limit, irregularity, beacon, sound/noise, background, adhesion, cab-illuminance, fog, and draw-distance rows from their tables or applicable 2D/3D markers. For `Structure.Put`/`Put0` and `Repeater.Begin`/`Begin0`, the buttons above the parameter fields add or remove all six coordinate offsets; removing nonzero offsets requires confirmation because their values are discarded. Use `New Map Element` to add the supported map/event/effect statement forms; the Apply and Edit button closes the wizard after a successful Apply and opens `Properties/Edit` on the primary created statement (the button is unavailable in wizards opened from a Repeater `Properties/Edit` window). Its Repeater forms can insert Begin/Begin0, End, or both in one Apply; paired End distance cannot precede Begin distance. A Begin-only insertion inside an active same-name interval requires change-point confirmation, paired intervals retain normal overlap rejection, and an extra End inside an already explicitly closed interval is blocked while isolated End statements remain valid. The Track Geometry category creates `Curve.Begin(radius)`, `Curve.Change(radius)`, `Curve.End()`, `Gradient.Begin(gradient)`, and `Gradient.End()`; `Curve.Begin(radius, cant)` is always inserted atomically after `Curve.BeginTransition()`, while Curve End and both Gradient forms can optionally add their transition start. Each paired transition start and consuming Curve/Gradient statement has its own distance field; the wizard preserves the required BVE source order and emits only current official forms. Legacy aliases and Interpolate forms remain creation-disabled. Numeric target distances use the same source-expression, boundary, and environment workflow as `Properties/Edit`. Resource rows from `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, and `Sound3D.Load` are edited in their inline tables. Right-click a content cell to insert an empty row above/below; Signal insertion targets the whole primary/glare block, creates a six-field primary without glare, and permits an explicit glare row. Apply each inline-table draft before saving; otherwise `Save` is blocked. `Apply` updates the in-memory preview; the toolbar `Save` or `Ctrl+S` writes pending changes to source files, `Revert` discards all pending in-memory changes, and `Reload` reads the map from disk again.
-          - The `Other Tracks` category creates all currently editable other-track change forms. Each method has one template; optional trailing arguments use checked-by-default `Include argument` checkboxes and must remain continuous (for example, `radiusV` requires `radiusH`). `trackKey` is free text: a new normalized key creates one other track, while later points with the same case-insensitive key reuse it; numeric and quoted-string keys stay distinct. The wizard emits only current official `Track.*` forms, never the legacy `Track.Gauge` or `Track.Cant` aliases.
-     The first enablement asks for confirmation because editing is an unstable, experimental feature that may make destructive changes. Back up map files or manage them with version control such as Git; selecting `Don't show again` and confirming suppresses later warnings.
-9. Use `2D View -> Background Image` to import a background image. You can adjust its position, size, rotation, and brightness manually, or align it using two stations.
-10. Use `3D View -> Structure Model Preview` to show or hide the Structure model preview window. In the preview, drag with the left mouse button to rotate the model and use the mouse wheel to zoom.
-11. Use `3D View -> 3D Scene Preview` to show the scene preview window. If `Options -> 3D Canvas Settings -> Automatically load scene preview when opening a map` is enabled (off by default), opening or reloading a map starts it automatically; otherwise click `Start 3D Scene Preview`. The scene preview can be reloaded or closed from that window; station and distance jumps also move the scene camera when a scene is loaded. The overlay shows current curve/cant, gradient, active `SpeedLimit.Begin`/`End` state, the signal speeds selected by the active `Section.Begin` indices from the current `Section.SetSpeedLimit`/`Signal.SpeedLimit` definition, and next-station information. `Options -> 3D Canvas Settings -> Fog effect` immediately toggles route fog in the scene preview and is enabled by default; the same settings also control map-driven draw distance, camera speed, and instance-performance warnings. In mileage-select mode, hovering the canvas highlights the nearest whole-metre position on the own-track plane with a translucent cross-track rectangle and a mouse-following mileage label. Right-click the highlighted position to open the New Map Element wizard with its distance filled in; the menu item is disabled until edit mode is enabled. In select mode, scene objects and supported map-element markers can be located back in their matching tables. With edit mode enabled, supported other-track changes appear as track-colored, selectable markers in the 2D plan and as track-colored signs in an already-started 3D scene; right-click them for `Properties/Edit` or deletion. Other supported scene markers use the same context path, while `Structure.Put`, `Signal.Put`, and `Repeater.Begin` coordinates can additionally be dragged with the X/Y/Z gizmo. A `Sound3D[soundKey].Put(x, y)` sign is a tag whose tip stays at its track-relative fixed source; in `Properties/Edit`, X/Y drag updates `x`/`y` to 0.001 m and Z drag updates `distance` in whole metres, with the tag and gizmo following the draft live. A `Structure.Put0` or `Repeater.Begin0` draft instead exposes a Z-only gizmo on its placement track that changes the placement/begin distance in whole-metre steps and updates the scene live; the Inspector coordinate-offset buttons switch between these gizmo modes. A Repeater segment with an explicit `End` also shows a Z-only gizmo on that EndDistance's track centerline; it snaps EndDistance to whole metres and updates the generated instances live, including on other tracks whose physical path is not parallel to own track. `Structure.PutBetween` Inspector drafts recalculate the deformed model vertices live; its Z-only gizmo snaps and writes `distance` to whole metres.
-12. Use `File -> Export CSV...` to choose an output folder and export own-track and other-track geometry CSV files.
-13. Press `F5` or use `File -> Reload` to reload the current map.
+This section follows the interface from top to bottom, then covers 2D, 3D, and finally the editing workflow. You do not need to enable `Enable Edit` just to view a map. Before changing files, read section 10 and back up the map.
 
+### 1. Main Window Components
+
+The main window contains these areas:
+
+- **Top menu**: Opens files, shows or hides windows, changes 2D/3D settings, and opens help pages.
+- **Toolbar**: Provides common actions such as Open, Reload, editing, Save, Station Jump, and mileage jump.
+- **Central workspace**: Shows the 2D View, File Structure Diagram, Text Preview, Structure Model Preview, and 3D Scene Preview. Windows can be stacked as tabs or dragged to other docking positions.
+- **Map information tables**: Usually docked on the right. They show stations, structures, signals, sounds, and other map elements.
+- **Console window**: Usually docked at the lower right. It shows detailed messages from map loading, model loading, editing, and saving.
+- **Bottom status bar**: Shows the current operation and the number of errors and warnings.
+
+If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or `Auxiliary Info`. Window visibility and docking layout are saved automatically.
+
+### 2. Top Menu Functions
+
+#### File
+
+- `New...`: Opens the New File Wizard. It can create a map or resource-list file. See section 10 for details.
+- `Open...`: Selects a `.txt` or `.csv` map or scenario file. The toolbar `Open` button does the same thing.
+- `Recent Maps`: Opens a recently used map. `Clear List` removes only the history entries; it does not delete map files.
+- `Reload`: Reads the current map again and reloads the current Structure Model Preview. The shortcut is `F5`. If there are unsaved changes, the program asks for confirmation first.
+- `Export CSV...`: Selects a directory and exports geometry data for the own track and every other track. See the appendix for the CSV fields.
+- `Exit`: Closes the program. If there are unsaved changes, you can save them, discard them, or cancel the exit.
+
+When you open a `BveTs Scenario 2.00` scenario file, the scenario itself remains available as a read-only document:
+
+- `Map Info List -> Other -> Scenario File` shows the scenario fields, the original Route/Vehicle paths, and their weights.
+- If there is one valid Route, its map loads directly. If there are several candidates, you choose one.
+- If Route is missing, its target does not exist, or you cancel the choice, you can still view the scenario file, but no map is loaded.
+- Editing, saving, reloading, and `Recent Maps` always use the resolved map file. Weights are validated but are not used to choose a Route automatically.
+
+#### Options
+
+- `UI Settings...`: Changes text size, UI component size, and the interface theme color.
+- `2D Canvas Settings -> Canvas Element Sizes`: Changes marker sizes, own-track and other-track line widths, chart marker lines, and grid lines.
+- `2D Canvas Settings -> Plot Range...`: Limits the mileage range currently shown.
+- `2D Canvas Settings -> Control Points...`: Changes the range and interval used to sample track geometry.
+- `3D Canvas Settings`: Changes scene draw distance, edit component size, camera speed, fog, map-driven draw distance, automatic loading, and performance warnings.
+
+#### Map Info List
+
+Opens tables grouped by stations, structures, track geometry, signals, sounds, effects, and other data. See section 6 for table details.
+
+#### 2D View
+
+- Shows or hides the whole 2D View window, Profile chart, and Curve Radius chart.
+- Shows or hides gradient change points, gradient values, and other tracks in the Profile chart.
+- Imports, shows, or adjusts a background image, or aligns it using two station positions. You can adjust its position, size, rotation, and brightness.
+
+#### 3D View
+
+- `Structure Model Preview`: Shows or hides the preview window for one model.
+- `3D Scene Preview`: Shows or hides the scene preview for the whole map.
+
+#### Auxiliary Info
+
+- Controls groups of station, track-geometry, signal, sound, and effect markers in 2D and 3D.
+- `Section Markers` is off by default. When enabled, green `S` markers and their signal-index parameters appear in 2D and 3D.
+- `Own Track Markers` and `Show Current Position on Plan` control helper displays shared by the 3D scene and 2D plan.
+- `Other -> File Structure Diagram`, `Text Preview`, and `Console` open the corresponding tool windows.
+
+Signal markers are also controlled by the `Show` checkbox in each `Map Signal List` row. Other-train paths are controlled one at a time in the `Other Train List`.
+
+#### Language and Help
+
+- `Language`: Switches between Simplified Chinese, English, and Japanese.
+- `Help`: Opens the online documentation, issue-reporting page, or About window.
+
+### 3. Toolbar Functions
+
+- **Open**: Selects and opens a map or scenario file.
+- **Reload**: Reads the map again and reloads the current single-model preview. It is the same as pressing `F5`.
+- **Reload Track Geometry**: Reads the map geometry again while keeping already loaded 3D scene models where possible. Use it after changing only route code.
+- **Enable Edit**: Turns editing on or off. A risk warning appears the first time you enable it.
+- **Add Map Element**: Opens the New Map Element Wizard. It is available only after editing is enabled and the edit metadata is ready.
+- **Save**: Writes changes already applied to the in-memory preview back to the source files. The shortcut is `Ctrl+S`. Save is blocked while a resource-list table still has an unapplied draft.
+- **Revert**: Discards all unsaved changes and restores the version on disk. The program asks for confirmation first.
+- **Station Jump**: Selects a station and moves the 2D View to it. If the 3D scene is running, its camera also moves.
+- **Jump to distance(m)**: Enter a number and click `Jump`, or press `Enter` in the input box. If the 3D scene is running, its camera also moves.
+
+The currently implemented global shortcuts are `F5` for Reload and `Ctrl+S` for Save. Mouse and keyboard controls for the 2D and 3D canvases are listed in sections 5 and 9.
+
+### 4. Bottom Status Bar and Console Functions
+
+#### Bottom Status Bar
+
+- `Err` and `Warn` on the left show the number of errors and warnings. Click this area to view a summary.
+- The status text on the right shows states such as Loading, Ready, Applying changes, and Saved. After a long operation finishes, it also shows the elapsed time.
+
+#### Console Window
+
+The Console shows complete loading, parsing, model, and editing logs. Check it first when a map does not open, a model is missing, or saving fails.
+
+- **Clear**: Removes all log messages and resets the error and warning counts.
+- **Copy**: Copies the full log to the clipboard for use in a bug report.
+- New messages scroll into view automatically only when the log is already at the bottom. If you scroll up, the Console does not force you back to the bottom.
+
+### 5. 2D Canvas Functions
+
+At the top of the 2D View, choose `Move` or `Measure` mode and set the grid to `Fixed`, `Movable`, or `None`. Use the vertical splitter to change the height of the plan and the charts below it. Use the horizontal splitter to change the widths of the Profile and Curve Radius charts.
+
+#### Plan: Move Mode
+
+| Action | Function |
+| --- | --- |
+| Drag with the left mouse button | Pan the plan |
+| Scroll the mouse wheel | Zoom the plan |
+| `Shift` + mouse wheel | Rotate the plan by 5° per step |
+| `Ctrl` + left-mouse drag | Rotate continuously around the canvas center |
+| Double-click the left mouse button | Fit the full map to the window |
+| Right-click a marker | Open its locate, find, or preview menu; `Properties/Edit` and `Delete` are also shown when editing is enabled |
+
+For touch input, drag with one finger to pan. Use two fingers to pan, zoom, and rotate at the same time. Long-pressing a marker is the same as right-clicking it.
+
+#### Plan and Charts: Measure Mode
+
+- Move the pointer near the track to see its mileage, elevation, gradient, curve radius, and current speed limit.
+- Double-click the Plan, Profile, or Curve Radius chart to move all three measurement positions to that mileage.
+- The mouse wheel on the Profile and Curve Radius charts changes only the horizontal mileage range.
+
+#### Markers, Navigation, and Editing
+
+- Use `Auxiliary Info` to choose which markers are visible. This avoids showing too much information at once on a large map.
+- Right-click a marker to locate its table row. Items with a 3D object can also be located in the 3D scene.
+- When editing is enabled, editable own-track curve and gradient change points and other-track change points are also shown. Right-click these markers to open `Properties/Edit` or delete them.
+- In the Profile and Curve Radius charts, only correctly paired curve or gradient change points have an edit menu.
+
+#### Background Image
+
+After importing an image from `2D View -> Background Image`, you can show it, adjust it manually, or choose `Align Background to Stations`. For station alignment, select two stations and double-click their matching positions on the image. The program calculates the image position, scale, and rotation.
+
+### 6. Table Functions
+
+#### Common Actions
+
+- Open the required table from `Map Info List`. Right-click a mileage cell that has a locate menu to move to that position in the Plan or a running 3D scene.
+- Right-click a source-file or resource-file path to open its directory. Hover over a path to see the original argument and resolved absolute path when available.
+- The Structure Model, Signal Aspect, Sound File, and 3D Sound File tables support partial or exact searches, previous and next results, and searches for unused entries.
+- In a map-placement row, right-click a resource key to jump to the matching Structure Model, Signal Aspect, or sound definition.
+- Without editing, tables provide only viewing, searching, navigation, and preview actions. With editing enabled, right-clicking an editable map element also shows `Properties/Edit` and `Delete`. Some tables also open `Properties/Edit` on double-click.
+
+#### Stations and Structures
+
+- **Station List**: The upper part shows `Station.Put` stop positions. The lower part shows station definitions loaded by `Station.Load`, including fields such as station name, stop time, and door side.
+- **Map Structure List**: Shows `Structure.Put` and `Structure.Put0`. You can locate an item in the Plan, the 3D scene, or its model definition.
+- **Map Structure List (PutBetween)**: Shows `Structure.PutBetween` structures deformed between two tracks.
+- **Structure Model List**: Shows each structureKey and model path. Right-click a key to preview the model or fill that key into an open New Map Element Wizard of a matching type.
+- **Repeater List**: Combines related `Repeater.Begin`/`Begin0`/`End` statements into intervals. You can jump to a start, end, or change point. If an interval has several Begin statements, the delete menu offers `Delete All`, `Delete Change Point`, `Trim to Change Point`, and `Start from Change Point`.
+- **Other Train List**: Shows other-train definitions, stop positions, and the read-only `Train.Enable` time. You can control each path separately and locate stop positions in the Plan.
+
+#### Track Geometry, Signals, and Sections
+
+- **Other Tracks**: Controls the visibility, mileage range, and color of each other track. With editing enabled, right-click `Key` to rename matching `Track[...]` statements. References to that track in Structure, Signal, and Repeater statements are not renamed automatically.
+- **Track Irregularity, Adhesion Change Point, and Speed Limit Point lists**: Show the corresponding positions and can locate them in 2D or 3D. Speed-limit Begin and End may exist independently; End edits only its mileage.
+- **Signal Aspect List**: Shows signal aspect definitions and their structure keys. You can jump from a structure key to its model.
+- **Map Signal List**: Shows `Signal.Put` positions and parameters. Each row's `Show` checkbox controls its Plan marker.
+- **Section List**: Shows `Section.Begin`/`BeginNew` separately from `Section.SetSpeedLimit`/`Signal.SpeedLimit`, including variable-length parameters and explicit `null` values.
+- **Beacon List**: Shows and locates `Beacon.Put` statements.
+- **Variable List**: Groups all assignments by case-insensitive variable name. Hover to see the original expression. This table is read-only.
+
+#### Sounds and Effects
+
+- **Sound File List and 3D Sound File List**: Show sound keys, file paths, and buffer counts. You can open a file's directory or fill its key into a matching New Map Element Wizard.
+- **Map Sound, Map 3D Sound, Rolling Noise Change Point, Flange Noise Change Point, and Joint Noise Play Point lists**: Show and locate playback or change positions.
+- **Background, Cab Illuminance, Fog, Legacy Fog, and Draw Distance Change Point lists**: Show and locate the corresponding effects.
+- **Scenario File**: Available only when a Scenario document is open. It shows every official scenario field and is read-only.
+
+#### Inline Editing in Resource Lists
+
+Station definitions, Structure Models, Signal Aspects, Sound Files, and 3D Sound Files use the same inline editing controls:
+
+- Double-click an editable cell to type, then press `Enter` to finish that cell. Right-click to select a file, insert a row above or below, move the whole row up or down, clear the cell, or delete the whole row.
+- `Select File` stores a relative path where possible and an absolute path otherwise.
+- A Signal primary row and its glare row form one block. A new primary row always has six fields and no glare; use `Add Glare` when needed.
+- `Apply` in a table submits only that table's drafts to the in-memory preview. The toolbar `Save` is available only after every resource-list draft has been applied.
+
+A map can load only one resource list of each type. If a list is not specified, the table shows `New or Import File`. To replace an existing list, right-click `Source path` at the top of its table and choose `Change File...`. If that list has unapplied or unsaved edits to the old file, the program asks for confirmation and discards only that list's old drafts.
+
+When importing or replacing a resource list, the program checks its header and version. Station List uses the existing 0.04+ compatibility rule, Structure List requires 1.00+, and Signal Aspects List and both Sound Lists require 2.00+. Resource lists support `#` comments. For compatibility with existing routes, unquoted `//` also starts a comment; `//` inside a double-quoted CSV field remains normal text.
+
+The map is rejected if the entry map and its Includes load the same unkeyed resource-list type more than once, or contain duplicate case-insensitive `Train[].Enable` statements. The reason is shown in the Console.
+
+### 7. File Structure Diagram Functions
+
+Open this window from `Auxiliary Info -> Other -> File Structure Diagram`. The entry map is on the left, and its included submaps are shown by level to the right. Hover over a node to see the Include argument and absolute path.
+
+#### Viewing Files
+
+- Right-click a valid node and choose `Preview Text` to view its source and line numbers in the read-only Text Preview.
+- `Open in File Explorer` opens the target file's directory. If the file is missing, it still tries to open the target directory. If that directory is also missing, an error is reported in the Console.
+- Missing or invalid Include targets are red. Text preview, submap import, and new-submap actions are disabled for them.
+
+#### Editing Includes
+
+The following actions require editing to be enabled:
+
+- **Change Included File...**: Selects a new `.txt` or `.csv` submap and rewrites the Include path in its parent file. A relative path is preferred; an absolute path is used if needed.
+- **Unlink Include**: Deletes the Include statement from its parent. The action is blocked if later statements still depend on data from that submap.
+- **Import Submap...**: Selects an existing BVE map and stages a new Include in the source file represented by the current node.
+- **New Submap...**: Creates a blank submap with the `BveTs Map 2.02:utf-8` header, UTF-8 without BOM, and CRLF line endings, then stages its Include. It does not overwrite an existing file.
+
+A new Include is placed after the last existing Include before the first local distance statement. If there is no suitable Include, it is placed before the first distance statement. If neither exists, it is appended to the file. These changes refresh the in-memory preview immediately, but only `Save` writes them to the parent map.
+
+### 8. 3D Model Preview Functions
+
+Open `3D View -> Structure Model Preview`, then right-click a structureKey in the Structure Model List and choose `Preview Model`.
+
+- **Model List**: Opens the Structure Model List.
+- **Reload**: Reads the current model, materials, and textures again.
+- **Clear**: Removes the current model from the preview.
+- **Background Color**: Selects any RGB color or uses the white, black, gray, blue, or green shortcut colors.
+- Drag with the left mouse button to rotate the model. Scroll the mouse wheel to zoom.
+
+If a model or texture cannot be loaded, the window remains usable and the detailed warning or error appears in the Console.
+
+### 9. 3D Scene Preview Functions
+
+Open `3D View -> 3D Scene Preview`, then click `Start 3D Scene Preview`. If `Options -> 3D Canvas Settings -> Automatically load scene preview when opening a map` is enabled, opening or reloading a map starts the preview automatically. This option is off by default.
+
+The top of the window has `Start 3D Scene Preview`, `Reload (Models)`, and `Close`:
+
+- `Reload (Models)` reads the scene models again while keeping the current map and camera position.
+- `Close` releases the current scene but can leave the preview window open.
+
+#### Move Mode and Shortcuts
+
+The following controls are available while the pointer is over the 3D canvas.
+
+Keyboard movement works in `Move`, `Select`, and `Mileage Select` modes. Dragging with the left mouse button to turn the view works only in `Move` mode.
+
+| Action | Function |
+| --- | --- |
+| Drag with the left mouse button | Turn the view in `Move` mode |
+| `W` / `S` | Move forward or backward along the route |
+| `A` / `D` | Move left or right |
+| `R` / `F` | Move up or down |
+| Hold `Ctrl` | Move faster with the keys above |
+| `X` | Reset the camera to its default pose above the own-track center at the current mileage |
+
+Set the camera speed in `3D Canvas Settings`. Toolbar station and mileage jumps also move the scene camera. If `Show Current Position on Plan` is enabled, the 2D Plan also shows the camera position.
+
+#### Select Mode
+
+- Move the pointer over a scene object or marker to highlight it.
+- Right-click an object or marker to locate its Map Info table. For a Repeater, you can also jump to the start or end/change position.
+- With editing enabled, the same menu also provides `Properties/Edit` and delete actions. See section 10 for edit gizmos.
+
+#### Mileage Select Mode
+
+- The nearest whole-metre cross-section on the own-track plane and its mileage label appear near the pointer.
+- With editing enabled, right-click this position and choose `Add Map Element at Current Mileage`. The wizard fills in `distance` automatically.
+
+#### Scene Overlay and Settings
+
+The canvas shows the camera offset, height, and mileage; current curve radius and cant; gradient; speed limit; section signal speed; and next-station information. The bottom also shows scene chunks, instances, loaded models, and frame rate.
+
+`3D Canvas Settings` can immediately toggle fog, map-driven draw distance, and performance warnings, and can change the normal draw distance. Related marker visibility stays synchronized with `Auxiliary Info`.
+
+### 10. Editing, the New Map Element/New File Wizards, Applying Changes, and Saving
+
+#### Before Editing
+
+Editing is still experimental. The first time you enable `Enable Edit` on the toolbar, a risk warning appears. Back up the map first, or keep a recoverable version with a version-control tool such as Git. Select `Don't show again` and confirm to hide future warnings.
+
+If you disable editing, open another document, reload, or exit while changes are unsaved, the program asks for confirmation. `Apply` and `Save` are different operations.
+
+#### Drafts, Apply, Save, and Revert
+
+Editing has three stages:
+
+1. **Window draft**: You have entered values in `Properties/Edit`, a resource-list table, or a wizard. The map may show only some live draft effects, and no source file has changed.
+2. **Apply to preview**: Click `Apply` in the window. The program validates and reparses its in-memory working copy, then refreshes the 2D View, tables, and 3D preview. Files on disk still have not changed.
+3. **Save to disk**: Click toolbar `Save` or press `Ctrl+S`. Only now are all applied changes written to their map, Include, or resource-list source files.
+
+Toolbar `Revert` discards every unsaved change and restores the disk version. `Reload` also reads the files from disk again, but first asks before discarding unsaved changes. If a resource list still has an unapplied draft, click `Apply` in that table before saving.
+
+Before saving, the program reparses all affected files and checks the intended result, file encoding, and outside changes to files on disk. If new text cannot be represented in the original encoding, or another program has changed a file, Save is blocked instead of silently changing the encoding or overwriting the outside change.
+
+#### Editing or Deleting Existing Map Elements
+
+1. Right-click an item in a table or a 2D/3D marker and choose `Properties/Edit`.
+2. Check the source file, source position, and raw statement in the window, then change the fields.
+3. Click `Apply` to refresh the in-memory preview.
+4. Check the 2D View, tables, and 3D result. If they are correct, use toolbar `Save`.
+
+Editable items include station, structure, signal, and beacon placements; Repeaters; Sections; speed limits; curves and gradients; other-track changes; track irregularity; map sounds and noises; backgrounds; adhesion; cab illuminance; fog; and draw distance. Deletion also enters the in-memory preview first and removes the statement from the source file only after Save.
+
+The `Properties/Edit` window for `Structure.Put`/`Put0` and `Repeater.Begin`/`Begin0` provides `Add Coordinate Offsets` and `Remove Coordinate Offsets`. Removing nonzero offsets discards all six offset values, so the program asks for confirmation. A short-form `Signal.Put` also asks for confirmation before it is converted to the full form needed to edit Z, rotation, tilt, or span.
+
+#### Live Adjustment in the 3D Scene
+
+After opening `Properties/Edit`, supported objects show an edit gizmo. Dragging changes only the current window draft. You must still click `Apply` and then `Save`.
+
+- `Structure.Put`, full-form `Signal.Put`, and `Repeater.Begin` use X/Y/Z axes to change coordinates.
+- For `Sound3D[soundKey].Put(x, y)`, X/Y change the relative position in 0.001 m steps, and Z changes `distance` in whole metres.
+- `Structure.Put0` and `Repeater.Begin0` show only a Z axis and change mileage in whole metres. Adding coordinate offsets in the Inspector switches to the full coordinate gizmo.
+- A Repeater with an explicit End also shows a Z axis at its end position and changes EndDistance in whole metres.
+- `Structure.PutBetween` uses a Z axis to change whole-metre mileage and recalculates the deformed model live.
+
+#### New Map Element Wizard
+
+Open the wizard from toolbar `Add Map Element`, or right-click the current mileage in the 3D scene's `Mileage Select` mode. First choose the target source file, then choose a template and enter its parameters.
+
+The wizard provides the currently supported elements in these categories:
+
+- **Structures**: `Structure.Put`, `Put0`, `PutBetween`, and `Repeater.Begin`/`Begin0`/`End`.
+- **Station**: `Station.Put`.
+- **Track Geometry**: Curves, gradients, track irregularity, and adhesion changes.
+- **Other Tracks**: Current `Track.*` forms for position, X/Y interpolation, and cant.
+- **Signal**: `Signal.Put`, speed-limit Begin/End, Section, signal speed, and `Beacon.Put`.
+- **Sound**: Map sounds, 3D sound sources, rolling noise, flange noise, and joint noise.
+- **Effects**: Background, cab illuminance, fog, and draw distance.
+
+`Apply` creates the element and refreshes the preview. `Apply and Edit` closes the wizard after a successful Apply and opens `Properties/Edit` for the primary new statement. A change-point wizard opened from a Repeater Inspector does not offer `Apply and Edit`.
+
+Important rules:
+
+- A Repeater can add Begin, End, or both at once. When both are added, End mileage cannot be less than Begin mileage. A change point can be inserted inside an active same-name interval only under the supported rules; normal intervals cannot overlap.
+- `Insert Change Point` in Repeater `Properties/Edit` copies the current draft parameters and fills both mileage fields with the current Begin mileage so you can adjust them.
+- The Curve wizard supports `Curve.Begin(radius)`, `Curve.Change(radius)`, and `Curve.End()`. The Gradient wizard supports `Gradient.Begin(gradient)` and `Gradient.End()`. An optional transition start and its statement are created together in the correct source order. Legacy aliases and Interpolate forms cannot be created.
+- Other-track templates generate only current `Track.*` forms. Optional trailing arguments must be enabled in order; for example, `radiusH` is required before `radiusV`. A new normalized trackKey creates another track. Numeric keys and quoted string keys remain distinct.
+- If the wizard cannot choose a safe source insertion point automatically, Text Preview highlights parser-approved boundaries for you to choose from.
+
+#### New File Wizard
+
+Open it from `File -> New...`. It can create six file types: `BveTs Map 2.02`, Structure List, Signal Aspects List, Sound List, the Sound List used by 3D Sound, and Station List.
+
+1. Choose the file type, enter a file name, choose `.txt` or `.csv`, and select a directory.
+2. For a resource list, you can first click `Import File` to fill the form with an existing `.txt` or `.csv` file's name, directory, and suffix. You can still edit these fields.
+3. To make the current map reference the file, select a target source file under `Reference in`. This requires editing to be enabled.
+4. Click `Confirm` to create or reuse the file. Only the map template provides `Confirm and Load`.
+
+The selected suffix is always appended to the entered name. If the target is an existing regular file, it is reused without changing its contents. Otherwise, the wizard creates it with the standard header. A reference is first applied only to the current map's in-memory preview: maps use `include`, and resource lists use the matching `*.Load`. Use toolbar `Save` to write the reference. A map can reference only one resource list of each type. If a reference already exists, the wizard disables another one and tells you to replace the file from the `Source path` context menu at the top of the matching table.
 
 ## Appendix: CSV Data Formats
 
