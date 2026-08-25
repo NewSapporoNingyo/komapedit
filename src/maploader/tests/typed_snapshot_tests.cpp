@@ -152,7 +152,7 @@ struct TempFixture {
                                std::ios::binary | std::ios::trunc);
         stations << "BveTs Station List 1.00:utf-8\n"
                  << "STA,Original,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0,"
-                    "legacy-a,legacy-b # keep station comment\n";
+                    "legacy-a,legacy-b // keep station comment\n";
         stations.close();
         std::ofstream signals(directory / "signals.csv",
                               std::ios::binary | std::ios::trunc);
@@ -5473,34 +5473,34 @@ void resource_list_content_insert_contract() {
             std::ofstream structures(directory / "structures.csv",
                                      std::ios::binary | std::ios::trunc);
             structures << "BveTs Structure List 1.00:utf-8\r\n"
-                       << "# keep structure comment\r\n"
-                       << "s1,s1.csv\r\n"
+                       << "\t// keep structure comment, ignored\r\n"
+                       << "s1,s1.csv // structure inline comment\r\n"
                        << "s2,s2.csv\r\n"
                        << "g1,g1.csv\r\n"
                        << "g2,g2.csv\r\n";
             std::ofstream sounds(directory / "sounds.csv",
                                  std::ios::binary | std::ios::trunc);
             sounds << "BveTs Sound List 2.00:utf-8\r\n"
-                   << "# keep sound comment\r\n"
-                   << "snd1,snd1.wav,1\r\n"
+                   << "\t// keep sound comment, ignored\r\n"
+                   << "snd1,snd1.wav,1 // sound inline comment\r\n"
                    << "snd2,snd2.wav,1\r\n";
             std::ofstream sounds3d(directory / "sounds3d.csv",
                                    std::ios::binary | std::ios::trunc);
             sounds3d << "BveTs Sound List 2.00:utf-8\r\n"
-                     << "# keep sound3d comment\r\n"
-                     << "snd3a,snd3a.wav,1\r\n"
+                     << "\t// keep sound3d comment, ignored\r\n"
+                     << "snd3a,snd3a.wav,1 // sound3d inline comment\r\n"
                      << "snd3b,snd3b.wav,1\r\n";
             std::ofstream stations(directory / "stations.csv",
                                    std::ios::binary | std::ios::trunc);
             stations << "BveTs Station List 1.00:utf-8\r\n"
-                     << "# keep station comment\r\n"
-                     << "sta1,Station 1,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0\r\n"
+                     << "\t// keep station comment, ignored\r\n"
+                     << "sta1,Station 1,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0 // station inline comment\r\n"
                      << "sta2,Station 2,10:00,10:01,30,15,1,20,100,arr.wav,dep.wav,1,0\r\n";
             std::ofstream signals(directory / "signals.csv",
                                   std::ios::binary | std::ios::trunc);
             signals << "BveTs Signal Aspects List 2.00:utf-8\r\n"
-                    << "# keep signal comment\r\n"
-                    << "sigA,s1,s2\r\n"
+                    << "\t// keep signal comment, ignored\r\n"
+                    << "sigA,s1,s2 // signal inline comment\r\n"
                     << ",g1,g2\r\n"
                     << "sigB,s1\r\n";
         }
@@ -5546,9 +5546,9 @@ void resource_list_content_insert_contract() {
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                               &baseline, sizeof(baseline)) != 0,
           "resource-list content insert baseline snapshot");
-    if (baseline.structure_model_count < 2 || baseline.station_list_count < 2 ||
-        baseline.signal_aspect_count < 2) {
-        check(false, "resource-list content insert baseline rows present");
+    if (baseline.structure_model_count != 4 || baseline.station_list_count != 2 ||
+        baseline.signal_aspect_count != 2 || baseline.sound_list_count != 4) {
+        check(false, "resource-list // comments do not create typed rows");
         return;
     }
 
@@ -5582,6 +5582,22 @@ void resource_list_content_insert_contract() {
     check(sounds.size() >= 2 && sounds3d.size() >= 2,
           "resource-list content insert sound rows present");
     if (sounds.size() < 2 || sounds3d.size() < 2) return;
+    const KvSignalAspectRow& signal_a = baseline.signal_aspects[0];
+    const bool signal_fields_are_clean =
+        baseline.string_refs && signal_a.structure_keys.count == 4 &&
+        span_valid(signal_a.structure_keys, baseline.string_ref_count) &&
+        map_string(baseline, baseline.string_refs[signal_a.structure_keys.offset]) == "s1" &&
+        map_string(baseline, baseline.string_refs[signal_a.structure_keys.offset + 1]) == "s2" &&
+        map_string(baseline, baseline.string_refs[signal_a.structure_keys.offset + 2]) == "g1" &&
+        map_string(baseline, baseline.string_refs[signal_a.structure_keys.offset + 3]) == "g2";
+    check(map_string(baseline, baseline.structure_models[0].file_path) == "s1.csv" &&
+              map_string(baseline, sounds[0]->file_path) == "snd1.wav" &&
+              sounds[0]->buffer_count == 1 &&
+              map_string(baseline, sounds3d[0]->file_path) == "snd3a.wav" &&
+              sounds3d[0]->buffer_count == 1 &&
+              map_string(baseline, baseline.station_list[0].fields[12]) == "0" &&
+              signal_fields_are_clean,
+          "resource-list inline // comments are excluded from fields");
 
     const ListTarget structure_target = target_for(
         baseline.structure_models[0].metadata, baseline.structure_models[1].metadata);
@@ -5779,11 +5795,11 @@ void resource_list_content_insert_contract() {
     const size_t station_above = station_source.find("ctStationAboveA,");
     const size_t signal_above = signal_source.find("ctSignalAboveA,");
     const size_t signal_glare = signal_source.find("\n,g1,,,,", signal_source.find("ctSignalAboveB,"));
-    check(structure_source.find("# keep structure comment\r\n") != std::string::npos &&
-              sound_source.find("# keep sound comment\r\n") != std::string::npos &&
-              sound3d_source.find("# keep sound3d comment\r\n") != std::string::npos &&
-              station_source.find("# keep station comment\r\n") != std::string::npos &&
-              signal_source.find("# keep signal comment\r\n") != std::string::npos &&
+    check(structure_source.find("\t// keep structure comment, ignored\r\n") != std::string::npos &&
+              sound_source.find("\t// keep sound comment, ignored\r\n") != std::string::npos &&
+              sound3d_source.find("\t// keep sound3d comment, ignored\r\n") != std::string::npos &&
+              station_source.find("\t// keep station comment, ignored\r\n") != std::string::npos &&
+              signal_source.find("\t// keep signal comment, ignored\r\n") != std::string::npos &&
               structure_above != std::string::npos && csv_count_at(structure_source, structure_above) == 2 &&
               sound_above != std::string::npos && csv_count_at(sound_source, sound_above) == 3 &&
               sound3d_above != std::string::npos && csv_count_at(sound3d_source, sound3d_above) == 3 &&
@@ -6115,7 +6131,7 @@ int edit_contract() {
                   "Station.List target maps to one editable element");
 
             UpdateBatch station_name_update(
-                station_edit_id, station_source_hash, "Edited", "stationName");
+                station_edit_id, station_source_hash, "Edited//Literal", "stationName");
             KvEditReportSnapshot station_name_report{};
             check(kv_edit_apply_to_memory_typed(
                       handle.value, &station_name_update.batch,
@@ -6130,14 +6146,14 @@ int edit_contract() {
             const KvStationListRow* edited_station =
                 find_station_list_row(station_name_snapshot, station_edit_id);
             check(edited_station &&
-                      map_string(station_name_snapshot, edited_station->fields[1]) == "Edited",
+                      map_string(station_name_snapshot, edited_station->fields[1]) == "Edited//Literal",
                   "Station.List name value");
             const char* station_source_text =
                 kv_get_source_text(handle.value, station_source_path.c_str());
             check(station_source_text &&
                       std::string_view(station_source_text).find(
-                          "STA,Edited,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0,"
-                          "legacy-a,legacy-b # keep station comment") !=
+                          "STA,\"Edited//Literal\",09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0,"
+                          "legacy-a,legacy-b // keep station comment") !=
                           std::string_view::npos,
                   "Station.List preserves trailing fields and inline comment");
             kv_free_string(station_source_text);
@@ -6190,7 +6206,7 @@ int edit_contract() {
                     find_station_list_row(station_reload_snapshot, station_edit_id);
                 check(reloaded_station &&
                           map_string(station_reload_snapshot,
-                                     reloaded_station->fields[1]) == "Edited",
+                                     reloaded_station->fields[1]) == "Edited//Literal",
                       "Station.List saved value and stable identity");
             }
         }

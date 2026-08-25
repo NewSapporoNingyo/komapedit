@@ -759,7 +759,8 @@ std::string track_key_field_as_bve_arg(const MapEditChange& change, const std::s
 }
 
 std::string csv_field(const std::string& text) {
-    if (text.find_first_of(",#\"\r\n") == std::string::npos) return text;
+    if (text.find_first_of(",#\"\r\n") == std::string::npos &&
+        text.find("//") == std::string::npos) return text;
     std::string out = "\"";
     for (char ch : text) {
         if (ch == '"') out += "\"\"";
@@ -804,7 +805,7 @@ CsvSourceLine split_csv_source_line(std::string_view line) {
             field_start = i + 1;
             continue;
         }
-        if (ch == '#') {
+        if (csv_comment_starts_at(line, i)) {
             size_t comment_start = i;
             while (comment_start > field_start &&
                    (line[comment_start - 1] == ' ' || line[comment_start - 1] == '\t')) {

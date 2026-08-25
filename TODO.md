@@ -39,6 +39,3 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
 - [ ] 根据曲线半径自动计算缓和曲线长度与超高
 - [ ] 根据坡度自动计算纵曲线长度
-
-## 问题修复
-- [ ] 资源列表文件中“//”开头的注释未被忽略。

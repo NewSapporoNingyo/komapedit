@@ -374,7 +374,8 @@ const Value& arg_or_null(const std::vector<Value>& values, size_t index) {
     return index < values.size() ? values[index] : null_value;
 }
 
-std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_hash) {
+std::vector<std::string> parse_comma_separated_fields(
+    const std::string& line, bool stop_on_inline_comment) {
     std::vector<std::string> fields;
     std::string field;
     bool quoted = false;
@@ -390,7 +391,8 @@ std::vector<std::string> parse_comma_separated_fields(const std::string& line, b
         } else if (ch == ',' && !quoted) {
             fields.push_back(trim_field_copy(field));
             field.clear();
-        } else if (ch == '#' && !quoted && stop_on_inline_hash) {
+        } else if (!quoted && stop_on_inline_comment && csv_comment_starts_at(line, i)) {
+            if (fields.empty() && trim_field_copy(field).empty()) return {};
             break;
         } else {
             field.push_back(ch);

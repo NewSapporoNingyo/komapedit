@@ -224,7 +224,11 @@ std::string key_text(const Value& value);
 std::string track_key_display_text(const Value& value);
 Value track_key_from_display_text(const std::string& text);
 const Value& arg_or_null(const std::vector<Value>& values, size_t index = 0);
-std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_hash);
+inline bool csv_comment_starts_at(std::string_view text, size_t index) {
+    return index < text.size() && (text[index] == '#' ||
+        (text[index] == '/' && index + 1 < text.size() && text[index + 1] == '/'));
+}
+std::vector<std::string> parse_comma_separated_fields(const std::string& line, bool stop_on_inline_comment);
 void trim_trailing_empty_fields(std::vector<std::string>& fields);
 std::string strip_ini_comment_copy(const std::string& line);
 std::string trim_matching_quotes(std::string text);
