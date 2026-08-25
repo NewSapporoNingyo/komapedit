@@ -230,6 +230,14 @@ struct HeadlessNewFileWizardOptions {
     std::string error;
 };
 
+struct HeadlessFreshResourceListWorkflowOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessNewElementEditOptions {
     bool requested = false;
     std::string path;
@@ -318,6 +326,9 @@ HeadlessResourceListReplaceOptions parse_headless_resource_list_replace_options(
 HeadlessResourceListInsertOptions parse_headless_resource_list_insert_options(
     const std::vector<std::string>& args);
 HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
+    const std::vector<std::string>& args);
+HeadlessFreshResourceListWorkflowOptions
+parse_headless_fresh_resource_list_workflow_options(
     const std::vector<std::string>& args);
 HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
     const std::vector<std::string>& args);

@@ -496,6 +496,15 @@ HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
         [](HeadlessNewFileWizardOptions&) {});
 }
 
+HeadlessFreshResourceListWorkflowOptions
+parse_headless_fresh_resource_list_workflow_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<
+        HeadlessFreshResourceListWorkflowOptions>(
+        args, "--debug-headless-fresh-resource-list-workflow",
+        [](HeadlessFreshResourceListWorkflowOptions&) {});
+}
+
 HeadlessLoadOptions parse_headless_load_options(const std::vector<std::string>& args) {
     HeadlessLoadOptions options;
     for (size_t i = 1; i < args.size(); ++i) {

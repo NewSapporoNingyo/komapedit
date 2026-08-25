@@ -2283,4 +2283,245 @@ int App::run_debug_headless_new_file_wizard(
     out->flush();
     return failed_cases == 0 ? 0 : 22;
 }
+
+int App::run_debug_headless_fresh_resource_list_workflow(
+    const HeadlessFreshResourceListWorkflowOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-fresh-resource-list-workflow\n"
+         << "map_path=" << options.path << "\n";
+
+    const auto read_file_bytes = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    };
+    std::error_code path_error;
+    const std::filesystem::path requested_path(utf8_to_wide(options.path));
+    const std::filesystem::path map_path =
+        std::filesystem::absolute(requested_path, path_error).lexically_normal();
+    if (path_error || requested_path.empty() || map_path.filename().empty() ||
+        !std::filesystem::is_regular_file(map_path, path_error) || path_error) {
+        *out << "error=fresh resource-list workflow requires an existing map file\n"
+             << "result=FAIL\n";
+        out->flush();
+        return 2;
+    }
+
+    // The entry rewrites the real route in place and restores its exact bytes
+    // afterwards; only files created by this run with the exclusive prefix are
+    // ever deleted.
+    constexpr const char* k_temp_prefix = "fresh-resource-workflow-";
+    const std::filesystem::path structures_path =
+        map_path.parent_path() / (std::string(k_temp_prefix) + "structures.csv");
+    const std::filesystem::path stations_path =
+        map_path.parent_path() / (std::string(k_temp_prefix) + "stations.csv");
+    const std::string original_map_bytes = read_file_bytes(map_path);
+    int failed_cases = 0;
+    auto check = [&](const char* label, bool value) {
+        *out << label << '=' << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+
+    // Reproduce the reported state: a distance-free blank map plus one
+    // header-only Structure List and a Station List with a single row.
+    const std::string blank_map_bytes = "BveTs Map 2.02:utf-8\r\n";
+    const std::string structure_list_bytes =
+        "BveTs Structure List 2.00:utf-8\r\n";
+    const std::string station_list_bytes =
+        "BveTs Station List 2.00:utf-8\r\n"
+        "sta1,Before,,,,,,,,,,,,\r\n";
+    {
+        std::ofstream map_file(map_path, std::ios::binary | std::ios::trunc);
+        map_file << blank_map_bytes;
+        std::ofstream structures(structures_path,
+                                 std::ios::binary | std::ios::trunc);
+        structures << structure_list_bytes;
+        std::ofstream stations(stations_path,
+                               std::ios::binary | std::ios::trunc);
+        stations << station_list_bytes;
+    }
+    const auto restore_route = [&]() noexcept {
+        std::error_code restore_error;
+        std::filesystem::remove(structures_path, restore_error);
+        std::filesystem::remove(stations_path, restore_error);
+        std::ofstream map_file(map_path, std::ios::binary | std::ios::trunc);
+        map_file << original_map_bytes;
+    };
+
+    try {
+        try {
+            LoadModelOptions edit_options;
+            edit_options.full_edit_registry = true;
+            edit_options.load_profile = "edit";
+            const std::string map_path_utf8 = wide_to_utf8(map_path.wstring());
+            LoadResult load = load_map_worker(
+                map_path_utf8, options.unit_distance, false, 0.0, 0.0,
+                options.unit_distance, edit_options);
+            if (!load.ok) {
+                if (load.handle) kv_free(load.handle);
+                throw std::runtime_error("blank-map load failed: " + load.error);
+            }
+            UserSettings settings;
+            settings.language = Language::En;
+            App app(nullptr, settings, 1.0f, false, false);
+            app.handle_ = load.handle;
+            load.handle = nullptr;
+            app.model_ = std::move(load.model);
+            app.file_path_ = map_path_utf8;
+            app.has_model_ = true;
+            app.edit_mode_enabled_ = true;
+            app.edit_registry_loaded_ = true;
+            app.edit_memory_matches_pending_ledger_ = true;
+            app.dmin_ = app.model_.default_min;
+            app.dmax_ = app.model_.default_max;
+            app.unit_distance_ = options.unit_distance;
+            *out << "stage=load-complete\n";
+
+            // Problem 1: the new-file reference candidates must include the
+            // distance-free map itself.
+            const std::vector<std::string> candidates =
+                new_file_reference_target_candidates(app.model_);
+            check("distance_free_map_is_reference_candidate",
+                  std::find(candidates.begin(), candidates.end(),
+                            map_path_utf8) != candidates.end());
+
+            // First reference on the blank map.
+            check("first_reference_staged",
+                  app.stage_new_file_reference(NewFileKind::Structure,
+                                               map_path_utf8,
+                                               wide_to_utf8(structures_path.wstring())));
+            // A second reference must still be possible after the first Load:
+            // candidates may not depend on distance statements.
+            check("second_reference_staged_after_first",
+                  app.stage_new_file_reference(NewFileKind::Station,
+                                               map_path_utf8,
+                                               wide_to_utf8(stations_path.wstring())));
+            check("two_references_pending",
+                  app.pending_edit_changes_.size() == 2);
+            const bool structure_source_present =
+                app.model_.resource_list_sources[static_cast<size_t>(
+                                                      ResourceListKind::Structure)]
+                    .present;
+            check("structure_list_connected_in_preview", structure_source_present);
+
+            // Problem 2: insert the first row into the header-only list.
+            app.ensure_table_cache();
+            EditableListEditState& structure_edit = app.structure_model_edit_;
+            check("empty_structure_drafts_initialized",
+                  app.initialize_editable_list_draft_rows(
+                      structure_edit, k_structure_model_edit_spec) &&
+                      structure_edit.visible_rows.empty());
+            check("empty_list_first_row_inserted",
+                  app.insert_editable_list_row(
+                      structure_edit, k_structure_model_edit_spec, -1, false) &&
+                      structure_edit.rows.size() == 1 &&
+                      structure_edit.rows.front().inserted);
+            if (!structure_edit.rows.empty()) {
+                EditableListDraftRow& row = structure_edit.rows.front();
+                const std::string structures_path_utf8 =
+                    wide_to_utf8(structures_path.wstring());
+                check("first_row_targets_resource_list_source",
+                      row.target_source_file == structures_path_utf8 &&
+                          !row.target_expected_source_hash.empty());
+                if (row.values.size() >= 2) {
+                    row.values[0] = "stNew";
+                    row.values[1] = "stNew.x";
+                }
+            }
+
+            // Problem 3: update an existing station row while the same ledger
+            // still holds both unsaved Load references. Planning must replay
+            // the Loads first instead of reporting an unknown editId.
+            EditableListEditState& station_edit = app.station_definition_edit_;
+            check("station_drafts_initialized_with_existing_row",
+                  app.initialize_editable_list_draft_rows(
+                      station_edit, k_station_definition_edit_spec) &&
+                      station_edit.visible_rows.size() == 1);
+            if (station_edit.rows.size() == 1) {
+                EditableListDraftRow& row = station_edit.rows.front();
+                if (row.values.size() > 1) row.values[1] = "After";
+            }
+
+            app.apply_editable_list_drafts(
+                structure_edit, k_structure_model_edit_spec);
+            app.apply_editable_list_drafts(
+                station_edit, k_station_definition_edit_spec);
+            bool unknown_id_seen = false;
+            for (const LogLine& line : app.logs_) {
+                if (line.text.find("unsupported or unknown editId") !=
+                    std::string::npos) {
+                    unknown_id_seen = true;
+                }
+            }
+            check("no_unknown_editid_errors", !unknown_id_seen);
+            check("list_apply_succeeded_without_unknown_ids",
+                  app.pending_edit_changes_.size() == 4 &&
+                      app.edit_memory_matches_pending_ledger_);
+
+            // Apply stays in memory: every physical file keeps its bytes.
+            check("apply_leaves_map_bytes_unchanged",
+                  read_file_bytes(map_path) == blank_map_bytes);
+            check("apply_leaves_structure_list_bytes_unchanged",
+                  read_file_bytes(structures_path) == structure_list_bytes);
+            check("apply_leaves_station_list_bytes_unchanged",
+                  read_file_bytes(stations_path) == station_list_bytes);
+
+            // The working copy must prove the staged result semantically.
+            size_t structure_key_rows = 0;
+            for (const TableRow& row : app.model_.structure_models) {
+                if (table_cell(row, "structureKey") == "stNew") ++structure_key_rows;
+            }
+            check("preview_shows_first_structure_row", structure_key_rows == 1);
+            bool station_name_updated = false;
+            for (const TableRow& row : app.model_.station_definition_rows) {
+                if (table_cell(row, "stationKey") == "sta1" &&
+                    table_cell(row, "stationName") == "After") {
+                    station_name_updated = true;
+                }
+            }
+            check("preview_shows_updated_station_name", station_name_updated);
+        } catch (...) {
+            restore_route();
+            throw;
+        }
+
+        restore_route();
+        check("route_bytes_restored",
+              read_file_bytes(map_path) == original_map_bytes);
+        check("temp_lists_removed",
+              !std::filesystem::exists(structures_path) &&
+                  !std::filesystem::exists(stations_path));
+    } catch (const std::exception& e) {
+        restore_route();
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 22;
+}
 #endif

@@ -199,6 +199,7 @@ build\komapedit.exe --debug-headless-include-replace <map-path> --new-path <file
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
 build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
 build\komapedit.exe --debug-headless-new-file-wizard <nonexistent-map-path-under-tests> --headless-output build\new-file-wizard.txt
+build\komapedit.exe --debug-headless-fresh-resource-list-workflow <map-path> --headless-output build\fresh-resource-list.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -213,6 +214,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 `--debug-headless-resource-list-insert <map-path> --kind structure|signal` is a non-interactive, memory-only proof of resource-list row insertion. `structure` requires an Include-loaded list and verifies above/below order, two-field source rows, hydration, Reset, and unchanged disk hashes. `signal` selects an existing primary/glare block, proves neither insertion splits it, then verifies a six-field primary without glare and a manually added six-field glare. `--commit` is rejected.
 
 `--debug-headless-new-file-wizard <nonexistent-map-path-under-tests>` requires a new file path below `tests/`. It creates and reloads a header-only map, verifies exclusive creation and reuse of existing resource-list files, stages and saves all five `*.Load` references in order, reloads the empty lists, and removes every file it created before reporting the result.
+
+`--debug-headless-fresh-resource-list-workflow <map-path>` reproduces the blank-route resource-list workflow on any existing real map. It backs up the entry file's exact bytes, rewrites it as a distance-free header-only map next to an exclusive header-only Structure List and a one-row Station List (both prefixed `fresh-resource-workflow-`), then drives the production GUI path: reference-target candidates include the distance-free map, the first `*.Load` stages and a second one still stages afterwards, the empty list takes its first draft row from its `ResourceListSource`, and applying both list drafts together with the unsaved Loads succeeds without any `unsupported or unknown editId` error while every disk byte stays untouched. It then restores the original route bytes and deletes only its own two temporary lists.
 
 Pass explicit map paths for portable runs. The Repeater-key and new-element-follow-up commands always require one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
 

@@ -147,6 +147,10 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Create all currently editable official other-track change forms from the New Map Element wizard, including normalized key-based automatic track creation/reuse; legacy `Track.Gauge` and `Track.Cant` aliases remain edit-only.
 - [x] Export own-track and other-track geometry to CSV.
 
+### Bug Fixes
+
+- [x] Fix the blank-map/new-reference workflow: `Include` and the five `*.Load` references may target any loaded non-resource-list map source file, including completely distance-free blank maps (the New Map Element wizard keeps its existing distance requirement); a header-only resource list takes its first row directly from an `Add Row` button or context-menu insertion, and maploader appends that row after the header with fixed CSV field counts; one ledger batch that mixes unsaved `*.Load` insertions with resource-list row edits is now planned in two stages so list-row editIds resolve against a working copy that already contains the new Loads, eliminating `unsupported or unknown editId` failures; and editable-list context-menu actions are deferred until after table rendering, fixing the crash when choosing `Insert Row Below`.
+
 ## 简体中文
 
 ### 地图读取与解析
@@ -289,3 +293,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在“新建地图元素向导”中将现有模板按可展开/折叠的“地图信息列表”式分类显示，并将布景置于最前
 - [x] 在“新建地图元素向导”中新增当前所有可编辑的官方他轨道变化形式；按规范 key 自动创建/复用他轨道，旧式 `Track.Gauge` 和 `Track.Cant` 别名仍仅支持编辑
 - [x] 将自轨道和他轨道几何导出为 CSV
+
+### 问题修复
+
+- [x] 修复空白地图/新建引用工作流：`Include` 与五种 `*.Load` 引用可选择任意已加载的非资源列表地图源文件，包括完全无距离语句的空白地图（“新建地图元素”向导仍保留距离语句要求）；仅有文件头的资源列表可通过“新增行”按钮或右键插入直接创建首行，maploader 将该行按固定 CSV 字段数追加到文件头之后；同一账本同时含有未保存 `*.Load` 插入与资源列表行编辑时改为两阶段规划，使列表行 editId 在已包含新 Load 的临时工作副本中解析，消除 `unsupported or unknown editId` 报错；资源列表右键菜单动作延迟到表格渲染结束后执行，修复点击“在下方新增行”时崩溃的问题。

@@ -474,7 +474,7 @@ KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
-        MapEditReport report = kme::maploader::detail::build_edit_report(*ctx, changes, false);
+        MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
         return 1;
     } catch (const std::exception& e) {
@@ -500,7 +500,7 @@ KV_API int kv_edit_apply_to_memory_typed(void* handle, const KvEditBatch* batch,
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
-        MapEditReport report = kme::maploader::detail::build_edit_report(*ctx, changes, false);
+        MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
         if (report.ok()) {
             try {
                 kme::maploader::detail::apply_edit_report_to_memory(*ctx, report);
@@ -550,7 +550,10 @@ KV_API int kv_edit_apply_typed(void* handle, const KvEditBatch* batch,
         ctx->edit_report_snapshot.reset();
         ctx->edit_target_snapshot.reset();
         std::vector<MapEditChange> changes = kme::maploader::detail::copy_edit_batch(*batch);
-        MapEditReport report = kme::maploader::detail::build_edit_report(*ctx, changes, true);
+        MapEditReport report = kme::maploader::detail::plan_staged_edit_batch(*ctx, changes);
+        if (report.ok()) {
+            kme::maploader::detail::finalize_direct_disk_apply(*ctx, report);
+        }
         *out_report = kme::maploader::detail::build_edit_report_snapshot(*ctx, report);
         return 1;
     } catch (const std::exception& e) {

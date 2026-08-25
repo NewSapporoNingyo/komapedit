@@ -11,6 +11,7 @@
 ## Source identity lessons
 
 - Source ordering must use explicit parser order. `Station.List` once regressed because map-key iteration replaced source order; `ordered_station_list_entries(ctx)` became the shared ordering path.
+- A ledger batch that both inserts a new `*.Load`/`include` reference and edits rows of the file it connects must be planned in two stages: row editIds of the newly connected list only exist after the inserted reference has been reparsed into a working copy. Plan the inserts first, reparse into a candidate context, then plan the remaining operations there and merge patched files, counters, and identity origins. Planning against the raw disk baseline (or relying on batch array order) yields `unsupported or unknown editId` for rows that exist only in preview. The same rule applies at the GUI layer: an empty list's first draft row takes its target file and disk-baseline hash from the corresponding `ResourceListSource`, not from an anchor row that does not exist yet.
 - `SourceSpan.byte_*` belongs to the original source/header encoding domain and must not slice decoded working-copy text. Resolve decoded offsets from cached line starts plus line/UTF-8 column coordinates.
 - Same-distance markers and duplicate keys require direct stable edit IDs attached during hydration/cache construction. Distance-only or lazy matching can select the wrong source row.
 - Edited-row reconnection must use the physical replacement identity, not an overly broad span. Signal glare deletion exposed this: glare content can be removed while a separator newline remains, so the surviving main row's identity range must exclude that newline without weakening global uniqueness checks.
@@ -27,6 +28,7 @@
 ## GUI lifecycle lessons
 
 - Defer Inspector/delete actions requested from an ImGui table or popup. Mutating Inspector/table/model state during rendering caused crashes; use the shared pending request path.
+- The same deferral applies to editable-list context menus: inserting, moving, erasing, or resizing draft rows invalidates the pointers the render loop is still using. Record such actions as frame-scoped requests (`pending_editable_list_actions_`) and run them only after `ImGui::EndTable()`.
 - Treat an uncommitted insert as the replay ledger's row-creation shell. Inspector Apply must merge changed fields into that shell while preserving untouched linked inserts and insert-only metadata; deleting the row cancels the insert instead of emitting a delete, and any ledger transition out of inserts must fully rehydrate the preview from the reset working copy.
 - Inline list editors maintain UI drafts separate from applied working-copy changes. Commit the active cell before Apply and block toolbar Save while unapplied list drafts remain.
 - Revert/Reload/exit must discard or resolve drafts and pending deletions through the shared ledger; search refresh must not silently erase pending deletions.

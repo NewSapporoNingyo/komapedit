@@ -457,6 +457,18 @@ int main(int, char**) {
         return App::run_debug_headless_new_file_wizard(new_file_wizard);
     }
 
+    HeadlessFreshResourceListWorkflowOptions fresh_resource_list =
+        parse_headless_fresh_resource_list_workflow_options(args);
+    if (fresh_resource_list.requested) {
+        if (!fresh_resource_list.error.empty()) {
+            std::cerr << fresh_resource_list.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-fresh-resource-list-workflow <map-path> "
+                         "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_fresh_resource_list_workflow(fresh_resource_list);
+    }
+
     HeadlessIncludeImportCreateOptions include_import_create =
         parse_headless_include_import_create_options(args);
     if (include_import_create.requested) {

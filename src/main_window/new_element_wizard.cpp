@@ -776,6 +776,23 @@ std::vector<std::string> new_element_target_candidates(const MapModel& model) {
     return result;
 }
 
+std::vector<std::string> new_file_reference_target_candidates(const MapModel& model) {
+    // Official BVE treats Include and every *.Load directive as ordinary map
+    // statements: none of them depends on the current distance, so a target
+    // file does not have to own a distance statement. Keep this candidate list
+    // separate from the new-element wizard, which still requires one.
+    std::vector<std::string> result;
+    for (const EditSourceFileInfo& file : model.edit_files) {
+        if (file.file_path.empty() ||
+            new_element_target_is_resource_list(model, file.file_path)) {
+            continue;
+        }
+        result.push_back(file.file_path);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 void update_repeater_wizard_field_enablement(NewElementWizardState& wizard) {
     if (wizard.form.row_kind != "repeater") return;
     for (MapElementEditFieldState& field : wizard.form.fields) {
@@ -1883,7 +1900,9 @@ void App::render_new_file_wizard() {
     if (!new_file_wizard_.open) return;
     NewFileWizardState& wizard = new_file_wizard_;
     if (!wizard.target_candidates_built) {
-        if (has_model_) wizard.target_file_candidates = new_element_target_candidates(model_);
+        if (has_model_) {
+            wizard.target_file_candidates = new_file_reference_target_candidates(model_);
+        }
         wizard.target_candidates_built = true;
         wizard.target_file_path = wizard.target_file_candidates.empty()
             ? std::string{}
@@ -1999,8 +2018,11 @@ void App::render_new_file_wizard() {
 
     ImGui::TextUnformatted(tr("label.new_file_reference").c_str());
     const std::string target_preview = wizard.target_file_path.empty()
-        ? tr("status.edit.no_distance_source")
+        ? tr("status.new_file.no_reference_target")
         : display_name_from_path(wizard.target_file_path);
+    if (wizard.target_file_candidates.empty()) {
+        ImGui::TextWrapped("%s", tr("status.new_file.no_reference_target").c_str());
+    }
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::BeginDisabled(wizard.target_file_candidates.empty() ||
                          resource_list_already_referenced);

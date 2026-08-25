@@ -2660,6 +2660,10 @@ void App::render_editable_list_table(
     const int path_column = spec.path_field < 0
         ? -1
         : static_cast<int>(spec.cache_column_offset) + spec.path_field;
+    if (logical_row_count == 0 && edit_actions_available() &&
+        ImGui::Button(tr("button.add_row").c_str())) {
+        insert_editable_list_row(edit, spec, -1, false);
+    }
     const ImVec2 table_size = is_station
         ? ImVec2(0.0f, scroll_x_table_height_for_rows(row_count))
         : ImVec2(0.0f, 0.0f);
@@ -2885,6 +2889,17 @@ void App::render_editable_list_table(
                     edit.selected_column == column;
 
                 const auto render_context_menu = [&]() {
+                    // Mutating draft vectors while the table/popup is rendering
+                    // invalidates pointers this render loop still uses. Record
+                    // the request and run it after ImGui::EndTable().
+                    const auto defer_action =
+                        [&](DeferredEditableListAction::Kind kind,
+                            int action_row, int action_column,
+                            bool select_secondary = false) {
+                            pending_editable_list_actions_.push_back(
+                                {&edit, &spec, kind, action_row, action_column,
+                                 select_secondary});
+                        };
                     if (column == path_column && ImGui::IsItemHovered() &&
                         !resolved_path.empty()) {
                         ImGui::SetTooltip("%s", resolved_path.c_str());
@@ -2934,8 +2949,9 @@ void App::render_editable_list_table(
                     if (column == path_column) {
                         ImGui::BeginDisabled(!row_editable);
                         if (ImGui::MenuItem(tr("menu.select_file").c_str())) {
-                            choose_editable_list_file(
-                                edit, spec, logical_row);
+                            defer_action(
+                                DeferredEditableListAction::Kind::ChooseFile,
+                                logical_row, -1);
                         }
                         ImGui::EndDisabled();
                         ImGui::BeginDisabled(blank_ascii(resolved_path));
@@ -2950,16 +2966,18 @@ void App::render_editable_list_table(
                     ImGui::BeginDisabled(!row_editable);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.insert_above").c_str())) {
-                        insert_editable_list_row(
-                            edit, spec, logical_row, true);
+                        defer_action(
+                            DeferredEditableListAction::Kind::InsertAbove,
+                            logical_row, -1);
                         ImGui::EndDisabled();
                         ImGui::EndPopup();
                         return;
                     }
                     if (ImGui::MenuItem(
                             tr("context.editable_list.insert_below").c_str())) {
-                        insert_editable_list_row(
-                            edit, spec, logical_row, false);
+                        defer_action(
+                            DeferredEditableListAction::Kind::InsertBelow,
+                            logical_row, -1);
                         ImGui::EndDisabled();
                         ImGui::EndPopup();
                         return;
@@ -2982,8 +3000,9 @@ void App::render_editable_list_table(
                     ImGui::BeginDisabled(!move_up_available);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.move_up").c_str())) {
-                        move_editable_list_row(
-                            edit, spec, logical_row, -1);
+                        defer_action(
+                            DeferredEditableListAction::Kind::MoveUp,
+                            logical_row, -1);
                         ImGui::EndDisabled();
                         ImGui::EndPopup();
                         return;
@@ -2992,8 +3011,9 @@ void App::render_editable_list_table(
                     ImGui::BeginDisabled(!move_down_available);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.move_down").c_str())) {
-                        move_editable_list_row(
-                            edit, spec, logical_row, 1);
+                        defer_action(
+                            DeferredEditableListAction::Kind::MoveDown,
+                            logical_row, -1);
                         ImGui::EndDisabled();
                         ImGui::EndPopup();
                         return;
@@ -3002,13 +3022,9 @@ void App::render_editable_list_table(
                     ImGui::BeginDisabled(!row_editable || !editable_cell);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.clear_cell").c_str())) {
-                        if (clear_editable_list_cell(
-                                edit, spec, logical_row,
-                                field_index)) {
-                            edit.selected_secondary_row =
-                                secondary_row;
-                            edit.selected_column = column;
-                        }
+                        defer_action(
+                            DeferredEditableListAction::Kind::ClearCell,
+                            logical_row, field_index, secondary_row);
                         ImGui::EndDisabled();
                         ImGui::EndPopup();
                         return;
@@ -3017,8 +3033,9 @@ void App::render_editable_list_table(
                     ImGui::BeginDisabled(!row_editable);
                     if (ImGui::MenuItem(
                             tr("context.editable_list.delete_row").c_str())) {
-                        delete_editable_list_row(
-                            edit, spec, logical_row);
+                        defer_action(
+                            DeferredEditableListAction::Kind::DeleteRow,
+                            logical_row, -1);
                         ImGui::EndDisabled();
                         ImGui::EndPopup();
                         return;
@@ -3042,8 +3059,9 @@ void App::render_editable_list_table(
                         if (ImGui::MenuItem(
                                 tr("context.signal_aspect.add_glare")
                                     .c_str())) {
-                            add_editable_list_secondary_row(
-                                edit, spec, logical_row);
+                            defer_action(
+                                DeferredEditableListAction::Kind::AddGlare,
+                                logical_row, -1);
                             ImGui::EndDisabled();
                             ImGui::EndPopup();
                             return;
@@ -3061,8 +3079,9 @@ void App::render_editable_list_table(
                         if (ImGui::MenuItem(
                                 tr("context.signal_aspect.delete_glare")
                                     .c_str())) {
-                            delete_editable_list_secondary_row(
-                                edit, spec, logical_row);
+                            defer_action(
+                                DeferredEditableListAction::Kind::DeleteGlare,
+                                logical_row, -1);
                             ImGui::EndDisabled();
                             ImGui::EndPopup();
                             return;
@@ -3114,6 +3133,7 @@ void App::render_editable_list_table(
         }
     }
     ImGui::EndTable();
+    run_pending_editable_list_actions();
 }
 
 void App::render_station_list_window() {
@@ -3230,6 +3250,11 @@ void App::render_station_list_window() {
             ? static_cast<int>(edit.visible_rows.size())
             : static_cast<int>(rows.size());
         const bool can_edit = edit_actions_available();
+        if (row_count == 0 && can_edit &&
+            ImGui::Button(tr("button.add_row").c_str())) {
+            insert_editable_list_row(
+                edit, k_station_definition_edit_spec, -1, false);
+        }
         ImVec2 table_size(0.0f, scroll_x_table_height_for_rows(row_count));
         if (ImGui::BeginTable("station_definitions", column_count,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -3262,6 +3287,15 @@ void App::render_station_list_window() {
             };
             const auto render_context_menu = [&](int visible_row, int column,
                                                  bool actions_available) {
+                // Mutating draft vectors mid-render invalidates the row
+                // pointers below; queue the action until after EndTable().
+                const auto defer_action =
+                    [&](DeferredEditableListAction::Kind kind, int action_row,
+                        int action_column) {
+                        pending_editable_list_actions_.push_back(
+                            {&edit, &k_station_definition_edit_spec, kind,
+                             action_row, action_column, false});
+                    };
                 const bool move_up_available = actions_available && visible_row > 0 &&
                     !edit_id_at(visible_row - 1).empty() &&
                     !row_deleted_at(visible_row - 1) &&
@@ -3275,16 +3309,18 @@ void App::render_station_list_window() {
                 ImGui::BeginDisabled(!actions_available);
                 if (ImGui::MenuItem(
                         tr("context.station_list.insert_above").c_str())) {
-                    insert_editable_list_row(
-                        edit, k_station_definition_edit_spec, visible_row, true);
+                    defer_action(
+                        DeferredEditableListAction::Kind::InsertAbove,
+                        visible_row, -1);
                     ImGui::EndDisabled();
                     ImGui::EndPopup();
                     return;
                 }
                 if (ImGui::MenuItem(
                         tr("context.station_list.insert_below").c_str())) {
-                    insert_editable_list_row(
-                        edit, k_station_definition_edit_spec, visible_row, false);
+                    defer_action(
+                        DeferredEditableListAction::Kind::InsertBelow,
+                        visible_row, -1);
                     ImGui::EndDisabled();
                     ImGui::EndPopup();
                     return;
@@ -3292,8 +3328,8 @@ void App::render_station_list_window() {
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!move_up_available);
                 if (ImGui::MenuItem(tr("context.station_list.move_up").c_str())) {
-                    move_editable_list_row(
-                        edit, k_station_definition_edit_spec, visible_row, -1);
+                    defer_action(DeferredEditableListAction::Kind::MoveUp,
+                                 visible_row, -1);
                     ImGui::EndDisabled();
                     ImGui::EndPopup();
                     return;
@@ -3301,8 +3337,8 @@ void App::render_station_list_window() {
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!move_down_available);
                 if (ImGui::MenuItem(tr("context.station_list.move_down").c_str())) {
-                    move_editable_list_row(
-                        edit, k_station_definition_edit_spec, visible_row, 1);
+                    defer_action(DeferredEditableListAction::Kind::MoveDown,
+                                 visible_row, -1);
                     ImGui::EndDisabled();
                     ImGui::EndPopup();
                     return;
@@ -3310,15 +3346,15 @@ void App::render_station_list_window() {
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!actions_available);
                 if (ImGui::MenuItem(tr("context.station_list.clear_cell").c_str())) {
-                    clear_editable_list_cell(
-                        edit, k_station_definition_edit_spec, visible_row, column);
+                    defer_action(DeferredEditableListAction::Kind::ClearCell,
+                                 visible_row, column);
                     ImGui::EndDisabled();
                     ImGui::EndPopup();
                     return;
                 }
                 if (ImGui::MenuItem(tr("context.station_list.delete_row").c_str())) {
-                    delete_editable_list_row(
-                        edit, k_station_definition_edit_spec, visible_row);
+                    defer_action(DeferredEditableListAction::Kind::DeleteRow,
+                                 visible_row, -1);
                     ImGui::EndDisabled();
                     ImGui::EndPopup();
                     return;
@@ -3413,6 +3449,7 @@ void App::render_station_list_window() {
                 }
             }
             ImGui::EndTable();
+            run_pending_editable_list_actions();
         }
     }
     ImGui::End();

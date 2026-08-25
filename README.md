@@ -26,7 +26,8 @@ Editing is source-backed but still experimental. Back up route files or keep the
 - Previews Structure models and a route scene in 3D.
 - Supports source-backed Apply, Save, Revert, and Reload for the statement families listed below, plus selected live X/Y/Z placement edits in the 3D scene.
 - With Edit enabled, the File Structure Diagram can import an existing submap or exclusively create a UTF-8 submap with the standard BVE header, then stage its Include in the selected physical source file.
-- `File -> New...` opens a New File Wizard for a header-only `BveTs Map 2.02` map or Structure, Signal, Sound, Sound3D, and Station list files. Resource-list templates offer `Import File`, which selects an existing `.txt`/`.csv` and fills its editable name, directory, and suffix fields. The wizard always appends its selected `.txt` (default) or `.csv` suffix to the raw name, so `route.csv` with `.txt` becomes `route.csv.txt`; an existing regular target file is reused without being written, otherwise a header-only file is created. Selecting a loaded map stages its `include` or matching `*.Load` reference in the working copy; normal Save writes that parent-map reference, while Revert leaves created files on disk. The Presets category is currently empty and the wizard does not add list rows or Scenario files.
+- `File -> New...` opens a New File Wizard for a header-only `BveTs Map 2.02` map or Structure, Signal, Sound, Sound3D, and Station list files. Resource-list templates offer `Import File`, which selects an existing `.txt`/`.csv` and fills its editable name, directory, and suffix fields. The wizard always appends its selected `.txt` (default) or `.csv` suffix to the raw name, so `route.csv` with `.txt` becomes `route.csv.txt`; an existing regular target file is reused without being written, otherwise a header-only file is created. Selecting any loaded non-resource-list map source file stages its `include` or matching `*.Load` reference in the working copy; official BVE does not require a distance statement in the target, so distance-free blank maps are valid reference targets too. Normal Save writes that parent-map reference, while Revert leaves created files on disk. The Presets category is currently empty and the wizard does not add list rows or Scenario files.
+- Resource lists that only carry their file header are valid starting points: the resource-list tables offer an `Add Row` button (and context-menu insertion) that creates the first row directly, without a comma placeholder line.
 - Exports calculated own-track and other-track geometry to CSV.
 - Offers Simplified Chinese, English, and Japanese UI languages.
 
@@ -310,6 +311,7 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 Station definitions, Structure Models, Signal Aspects, Sound Files, and 3D Sound Files use the same inline editing controls:
 
 - Double-click an editable cell to type, then press `Enter` to finish that cell. Right-click to select a file, insert a row above or below, move the whole row up or down, clear the cell, or delete the whole row.
+- A list that only carries its file header shows an `Add Row` button; inserting into it appends the first row after the header, so no comma placeholder line is needed.
 - `Select File` stores a relative path where possible and an absolute path otherwise.
 - A Signal primary row and its glare row form one block. A new primary row always has six fields and no glare; use `Add Glare` when needed.
 - `Apply` in a table submits only that table's drafts to the in-memory preview. The toolbar `Save` is available only after every resource-list draft has been applied.
@@ -467,7 +469,7 @@ Open it from `File -> New...`. It can create six file types: `BveTs Map 2.02`, S
 
 1. Choose the file type, enter a file name, choose `.txt` or `.csv`, and select a directory.
 2. For a resource list, you can first click `Import File` to fill the form with an existing `.txt` or `.csv` file's name, directory, and suffix. You can still edit these fields.
-3. To make the current map reference the file, select a target source file under `Reference in`. This requires editing to be enabled.
+3. To make the current map reference the file, select a target source file under `Reference in`. This requires editing to be enabled. Every loaded non-resource-list map source file is a candidate; official BVE does not require a distance statement for `include` or `*.Load`, so distance-free blank maps are listed as well. (The separate New Map Element wizard still requires a distance statement in its target.)
 4. Click `Confirm` to create or reuse the file. Only the map template provides `Confirm and Load`.
 
 The selected suffix is always appended to the entered name. If the target is an existing regular file, it is reused without changing its contents. Otherwise, the wizard creates it with the standard header. A reference is first applied only to the current map's in-memory preview: maps use `include`, and resource lists use the matching `*.Load`. Use toolbar `Save` to write the reference. A map can reference only one resource list of each type. If a reference already exists, the wizard disables another one and tells you to replace the file from the `Source path` context menu at the top of the matching table.

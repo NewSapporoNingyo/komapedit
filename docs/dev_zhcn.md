@@ -567,6 +567,7 @@ build\komapedit.exe --debug-headless-include-replace <map-path> --new-path <file
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
 build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
 build\komapedit.exe --debug-headless-new-file-wizard <tests目录下尚不存在的地图路径> --headless-output build\new-file-wizard.txt
+build\komapedit.exe --debug-headless-fresh-resource-list-workflow <地图路径> --headless-output build\fresh-resource-list.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -581,6 +582,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 `--debug-headless-resource-list-insert <map-path> --kind structure|signal` 是无界面、仅内存的资源列表新增行验证。`structure` 要求列表经 Include 加载，并验证上下新增顺序、2 字段源行、hydration、Reset 与磁盘哈希不变。`signal` 选择已有主行/glare 块，验证新增不会将其拆开，再验证一个无 glare 的 6 字段主行和一个手动新增的 6 字段 glare。`--commit` 会被拒绝。
 
 `--debug-headless-new-file-wizard <tests目录下尚不存在的地图路径>` 要求目标是 `tests/` 下尚不存在的文件。它会新建并重载仅含文件头的地图，验证排他新建与已有资源列表文件复用，依次暂存并保存五种 `*.Load` 引用，重新载入空列表，并在报告结果前删除自身创建的全部文件。
+
+`--debug-headless-fresh-resource-list-workflow <地图路径>` 在任意已有真实线路上复现空白线路的资源列表工作流。入口先备份线路文件的原始字节，将其临时改写为无距离的仅有文件头地图，并在旁边排他创建一个仅有文件头的 Structure List（`fresh-resource-workflow-structures.csv`）和一个单行 Station List（`fresh-resource-workflow-stations.csv`），随后驱动正式 GUI 路径：引用目标候选包含无距离地图、第一个 `*.Load` 暂存后仍能继续暂存第二个引用、空列表可从对应 `ResourceListSource` 取目标创建首行草稿；两份列表草稿与未保存 Load 同批应用时不会出现任何 `unsupported or unknown editId` 错误，且全程磁盘字节不变。结束后恢复原线路字节，并只删除本命令自建的两个临时列表。
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 

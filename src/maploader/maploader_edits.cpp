@@ -2054,8 +2054,14 @@ ResourceListContentInsertionPlan plan_resource_list_content_insertion(
         }
     }
     if (last_statement_index == k_no_source_ref) {
-        throw std::runtime_error(
-            "resource-list insert target contains no existing logical row");
+        // A list file that only carries its header is a valid official starting
+        // point. Append the first logical row after the final physical line and
+        // reuse the shared insertion text rules for newline/encoding fidelity.
+        ResourceListContentInsertionPlan plan;
+        plan.offset = patch.text.size();
+        plan.anchor_statement_index = k_no_source_ref;
+        plan.indent.clear();
+        return plan;
     }
 
     const ParsedStatement& last = ctx.parsed_statements[last_statement_index];
@@ -8002,50 +8008,162 @@ MapEditReport build_edit_report(MapContext& ctx,
     if (!report.ok()) return report;
 
     if (write_files) {
-        if (std::any_of(ctx.source_overrides.begin(), ctx.source_overrides.end(),
-                        [](const auto& entry) { return entry.second.dirty; })) {
-            report.blocking_errors.push_back(
-                "direct disk apply is blocked while working-copy edits are pending");
-            return report;
-        }
-        if (!report.validated_context) {
-            report.blocking_errors.push_back(
-                "direct disk apply has no validated full-reparse context");
-            return report;
-        }
-        std::vector<TransactionalWriteRequest> writes;
-        writes.reserve(report.patched_files.size());
-        for (const MapEditPatchedFile& file : report.patched_files) {
-            writes.push_back({path_from_utf8(file.file_path), file.bytes,
-                              file.base_hash, file.current_hash});
-        }
-        try {
-            TransactionalWriteOutcome outcome =
-                replace_files_transactionally(std::move(writes));
-            report.warnings.insert(report.warnings.end(),
-                                   outcome.warnings.begin(), outcome.warnings.end());
-        } catch (const std::exception& e) {
-            report.blocking_errors.push_back(e.what());
-            return report;
-        }
-
-        replace_context_and_advance_revisions(
-            ctx, std::move(*report.validated_context));
-        ctx.disk_native_element_edit_id_to_stable =
-            ctx.native_element_edit_id_to_stable;
-        ctx.disk_source_hashes_for_stable_ids.clear();
-        ctx.disk_source_hashes_for_stable_ids.reserve(ctx.source_files.size());
-        for (const SourceFileRecord& file : ctx.source_files) {
-            ctx.disk_source_hashes_for_stable_ids.emplace(
-                file.source_key, file.source_hash);
-        }
-        ctx.source_overrides.clear();
-        ctx.edit_validation_current = false;
-        ctx.edit_validation_fingerprint.clear();
+        finalize_direct_disk_apply(ctx, report);
     }
     return report;
 }
 
+void finalize_direct_disk_apply(MapContext& ctx, MapEditReport& report) {
+    if (std::any_of(ctx.source_overrides.begin(), ctx.source_overrides.end(),
+                    [](const auto& entry) { return entry.second.dirty; })) {
+        report.blocking_errors.push_back(
+            "direct disk apply is blocked while working-copy edits are pending");
+        return;
+    }
+    if (!report.validated_context) {
+        report.blocking_errors.push_back(
+            "direct disk apply has no validated full-reparse context");
+        return;
+    }
+    std::vector<TransactionalWriteRequest> writes;
+    writes.reserve(report.patched_files.size());
+    for (const MapEditPatchedFile& file : report.patched_files) {
+        writes.push_back({path_from_utf8(file.file_path), file.bytes,
+                          file.base_hash, file.current_hash});
+    }
+    try {
+        TransactionalWriteOutcome outcome =
+            replace_files_transactionally(std::move(writes));
+        report.warnings.insert(report.warnings.end(),
+                               outcome.warnings.begin(), outcome.warnings.end());
+    } catch (const std::exception& e) {
+        report.blocking_errors.push_back(e.what());
+        return;
+    }
+
+    replace_context_and_advance_revisions(
+        ctx, std::move(*report.validated_context));
+    ctx.disk_native_element_edit_id_to_stable =
+        ctx.native_element_edit_id_to_stable;
+    ctx.disk_source_hashes_for_stable_ids.clear();
+    ctx.disk_source_hashes_for_stable_ids.reserve(ctx.source_files.size());
+    for (const SourceFileRecord& file : ctx.source_files) {
+        ctx.disk_source_hashes_for_stable_ids.emplace(
+            file.source_key, file.source_hash);
+    }
+    ctx.source_overrides.clear();
+    ctx.edit_validation_current = false;
+    ctx.edit_validation_fingerprint.clear();
+}
+
+namespace {
+
+// Returns true when one batch both introduces a new resource-list Load
+// reference and edits resource-list rows. Rows of the newly connected file can
+// only be planned against a context that already contains the inserted Load
+// statement, so such a batch must be planned in two stages.
+bool batch_needs_staged_load_replay(const std::vector<MapEditChange>& changes) {
+    bool has_new_load = false;
+    bool has_list_row_change = false;
+    for (const MapEditChange& change : changes) {
+        const std::string operation = ascii_lower(
+            change.operation.empty() ? "update" : change.operation);
+        if (operation == "insert" && change.row_kind == "resourceList.load") {
+            has_new_load = true;
+        } else if (resource_list_edit_spec_for_content_row_kind(change.row_kind)) {
+            has_list_row_change = true;
+        }
+    }
+    return has_new_load && has_list_row_change;
+}
+
+} // namespace
+
+MapEditReport plan_staged_edit_batch(MapContext& ctx,
+                                     const std::vector<MapEditChange>& changes) {
+    if (!batch_needs_staged_load_replay(changes)) {
+        return build_edit_report(ctx, changes, false);
+    }
+
+    std::vector<MapEditChange> load_inserts;
+    std::vector<MapEditChange> remaining;
+    for (const MapEditChange& change : changes) {
+        const std::string operation = ascii_lower(
+            change.operation.empty() ? "update" : change.operation);
+        if (operation == "insert" && change.row_kind == "resourceList.load") {
+            load_inserts.push_back(change);
+        } else {
+            remaining.push_back(change);
+        }
+    }
+
+    // Stage 1: plan and fully reparse every new Load insert on the current
+    // working copy. build_edit_report leaves ctx untouched without write_files.
+    MapEditReport staged = build_edit_report(ctx, load_inserts, false);
+    if (!staged.ok() || !staged.full_reparse_ok || !staged.validated_context) {
+        return staged;
+    }
+
+    // Stage 2: plan the rest of the batch against the validated candidate
+    // context that already contains the inserted references, so list rows of
+    // the newly loaded files resolve their editIds. The candidate's source
+    // overrides already contain stage-1 patches, so its full reparse covers
+    // both stages when validating stage-2 edits.
+    MapContext& candidate_base = *staged.validated_context;
+    MapEditReport final = build_edit_report(candidate_base, remaining, false);
+
+    MapEditReport merged;
+    merged.warnings = staged.warnings;
+    merged.warnings.insert(merged.warnings.end(),
+                           final.warnings.begin(), final.warnings.end());
+    merged.blocking_errors = std::move(final.blocking_errors);
+    merged.resolution_requests = std::move(final.resolution_requests);
+    merged.update_count = final.update_count;
+    merged.delete_count = final.delete_count;
+    merged.insert_count = staged.insert_count + final.insert_count;
+    merged.created_distance_block_count = final.created_distance_block_count;
+    merged.reused_distance_block_count = final.reused_distance_block_count;
+    merged.distance_group_count = final.distance_group_count;
+    merged.target_distance_match_count = final.target_distance_match_count;
+    merged.non_target_changed_count = final.non_target_changed_count;
+    merged.changed_files = std::move(staged.changed_files);
+    for (const std::string& file_path : final.changed_files) {
+        if (std::find(merged.changed_files.begin(), merged.changed_files.end(),
+                      file_path) == merged.changed_files.end()) {
+            merged.changed_files.push_back(file_path);
+        }
+    }
+    merged.previews = std::move(staged.previews);
+    merged.previews.insert(merged.previews.end(),
+                           std::make_move_iterator(final.previews.begin()),
+                           std::make_move_iterator(final.previews.end()));
+    merged.patched_files = std::move(staged.patched_files);
+    for (const MapEditPatchedFile& file : final.patched_files) {
+        const bool conflicts = std::any_of(
+            merged.patched_files.begin(), merged.patched_files.end(),
+            [&](const MapEditPatchedFile& existing) {
+                return existing.source_key == file.source_key ||
+                    normalized_source_key(existing.file_path) ==
+                        normalized_source_key(file.file_path);
+            });
+        if (conflicts) {
+            merged.blocking_errors.push_back(
+                "two planning stages produced conflicting patches for: " +
+                file.file_path);
+            continue;
+        }
+        merged.patched_files.push_back(file);
+    }
+    merged.identity_origins = std::move(staged.identity_origins);
+    merged.identity_origins.insert(
+        merged.identity_origins.end(),
+        std::make_move_iterator(final.identity_origins.begin()),
+        std::make_move_iterator(final.identity_origins.end()));
+    merged.validation_fingerprint = final.validation_fingerprint;
+    merged.validated_context = std::move(final.validated_context);
+    merged.full_reparse_ok = final.full_reparse_ok;
+    return merged;
+}
 
 void apply_patched_files_to_overrides(SourceTextOverrides& overrides,
                                       const MapEditReport& report) {

@@ -6032,6 +6032,335 @@ void include_replace_variable_dependency_blocks_contract() {
     std::filesystem::remove_all(directory, cleanup);
 }
 
+// One batch that both inserts new *.Load references and edits resource-list
+// rows must plan in two stages: the row editIds of a newly connected list only
+// exist once the Load statements have been reparsed into the working copy.
+// Also proves that a header-only Structure List can take its first logical
+// row, that Apply leaves disk untouched, and that commit writes every patched
+// file with its original encoding and newline style.
+namespace {
+void staged_dump_blocking_errors(const char* label,
+                                 const KvEditReportSnapshot& report) {
+    if (report.ok) return;
+    for (std::uint64_t index = 0; index < report.blocking_error_count; ++index) {
+        std::string_view error = arena_view(
+            report.string_data, report.string_size,
+            report.blocking_errors[index]);
+        std::cerr << "  [" << label << "] blocking: " << error << "\n";
+    }
+}
+} // namespace
+
+void staged_resource_list_workflow_contract() {
+    struct Fixture {
+        std::filesystem::path directory;
+        std::filesystem::path map_path;
+        std::filesystem::path structures_path;
+        std::filesystem::path stations_path;
+        std::string map_bytes;
+        std::string structures_bytes;
+        std::string stations_bytes;
+
+        Fixture() {
+            directory = std::filesystem::temp_directory_path() /
+                ("komapedit-staged-resource-list-" + std::to_string(
+                    std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(directory);
+            map_path = directory / "map.txt";
+            structures_path = directory / "structures.csv";
+            stations_path = directory / "stations.csv";
+            // A distance-free header-only map: official *.Load statements do
+            // not require any preceding distance statement.
+            map_bytes = "BveTs Map 2.02:utf-8\r\n";
+            // A header-only Structure List is a valid official starting point.
+            structures_bytes = "BveTs Structure List 2.00:utf-8\r\n";
+            stations_bytes =
+                "BveTs Station List 2.00:utf-8\r\n"
+                "sta1,Station 1,,,,,,,,,,,,\r\n";
+            write_file(map_path, map_bytes);
+            write_file(structures_path, structures_bytes);
+            write_file(stations_path, stations_bytes);
+        }
+
+        static void write_file(const std::filesystem::path& path,
+                               const std::string& bytes) {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << bytes;
+        }
+
+        ~Fixture() {
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } fixture;
+
+    const auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+    };
+
+    MapHandle handle(kv_load_map_ex(
+        fixture.map_path.u8string().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "staged workflow loads a distance-free map");
+    if (!handle.value) return;
+
+    struct BatchStorage {
+        // utf8_view keeps raw pointers into these vectors, so every backing
+        // string must be stable for the lifetime of the batch: reserve once,
+        // never grow, and only store owned copies.
+        std::vector<std::string> strings;
+        std::vector<KvEditField> fields;
+        std::vector<KvEditChange> changes;
+        KvEditBatch batch{};
+
+        void init() {
+            strings.reserve(128);
+            fields.reserve(128);
+            changes.reserve(4);
+        }
+    };
+    const auto keep_stable = [&](BatchStorage& storage,
+                                 const std::string& value) {
+        storage.strings.push_back(value);
+        return utf8_view(storage.strings.back());
+    };
+    const auto add_load_insert = [&](BatchStorage& storage,
+                                     const std::string& id,
+                                     const char* kind,
+                                     const char* relative) {
+        if (storage.changes.empty()) storage.init();
+        KvEditChange change{};
+        change.change_id = keep_stable(storage, id);
+        change.edit_id = keep_stable(storage, id);
+        change.operation = KV_EDIT_INSERT;
+        change.target_file_path =
+            keep_stable(storage, fixture.map_path.u8string());
+        const size_t field_begin = storage.fields.size();
+        for (const auto& [name, value] :
+             {std::pair<const char*, const char*>{"rowKind", "resourceList.load"},
+              {"resourceListKind", kind},
+              {"resourceListPath", relative}}) {
+            storage.fields.push_back({keep_stable(storage, name),
+                                      keep_stable(storage, value)});
+        }
+        change.fields = KvSpan{static_cast<std::uint64_t>(field_begin), 3};
+        storage.changes.push_back(change);
+    };
+
+    // Stage A: two references on a distance-free blank map. Applying them to
+    // memory must expose the station rows and the (still empty) structure list
+    // exactly like the GUI preview does.
+    {
+        BatchStorage refs;
+        add_load_insert(refs, "stage-a-structure-ref", "structure", "structures.csv");
+        add_load_insert(refs, "stage-a-station-ref", "station", "stations.csv");
+        refs.batch = {refs.changes.data(),
+                      static_cast<std::uint64_t>(refs.changes.size()),
+                      refs.fields.data(),
+                      static_cast<std::uint64_t>(refs.fields.size())};
+        KvEditReportSnapshot dry_report{};
+        const bool dry_ok = kv_edit_dry_run_typed(
+            handle.value, &refs.batch, &dry_report, sizeof(dry_report)) != 0;
+        staged_dump_blocking_errors("stage-a-dry", dry_report);
+        check(dry_ok && dry_report.ok && dry_report.full_reparse_ok &&
+                  dry_report.insert_count == 2,
+              "staged workflow dry run adds two references without distances");
+        KvEditReportSnapshot apply_report{};
+        const bool apply_ok = kv_edit_apply_to_memory_typed(
+            handle.value, &refs.batch, &apply_report, sizeof(apply_report)) != 0;
+        staged_dump_blocking_errors("stage-a-apply", apply_report);
+        check(apply_ok && apply_report.ok && apply_report.full_reparse_ok &&
+                  apply_report.insert_count == 2,
+              "staged workflow applies reference batch to memory");
+    }
+
+    KvMapSnapshot connected{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &connected,
+                              sizeof(connected)) != 0,
+          "staged workflow connected snapshot");
+    check(connected.station_list_count == 1 && connected.structure_model_count == 0,
+          "staged workflow exposes existing rows after the memory apply");
+    if (connected.station_list_count != 1) return;
+    const std::string station_edit_id =
+        map_string(connected, connected.station_list[0].metadata.edit_id);
+    check(!station_edit_id.empty(), "staged workflow station editId present");
+    std::string structures_hash;
+    std::string stations_hash;
+    for (std::uint64_t index = 0; index < connected.source_file_count; ++index) {
+        const KvSourceFileRow& file = connected.source_files[index];
+        const std::string path = map_string(connected, file.file_path);
+        if (path == fixture.structures_path.u8string()) {
+            structures_hash = map_string(connected, file.source_hash);
+        } else if (path == fixture.stations_path.u8string()) {
+            stations_hash = map_string(connected, file.source_hash);
+        }
+    }
+    check(!structures_hash.empty() && !stations_hash.empty(),
+          "staged workflow collected disk baseline hashes");
+    if (structures_hash.empty() || stations_hash.empty()) return;
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "staged workflow reset restores disk baseline");
+    KvMapSnapshot reset_snapshot{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset_snapshot, sizeof(reset_snapshot)) != 0 &&
+              reset_snapshot.resource_list_load_count == 0 &&
+              reset_snapshot.station_list_count == 0,
+          "staged workflow reset drops unsaved references");
+
+    // Stage B: one ledger batch that mixes new Load references with list-row
+    // work. The station update intentionally precedes the inserts in the batch
+    // so planning cannot rely on array order: only the staged replay finds the
+    // row editIds. All strings live in one stable backing vector because
+    // utf8_view keeps raw pointers.
+    BatchStorage staged;
+    staged.init();
+    const auto keep = [&](const std::string& value) {
+        return keep_stable(staged, value);
+    };
+    const auto add_field = [&](const char* name, const char* value) {
+        staged.fields.push_back({keep(name), keep(value)});
+    };
+    staged.changes.resize(4);
+    // 0: update an existing station row loaded by a reference in this batch.
+    {
+        KvEditChange& change = staged.changes[0];
+        change.change_id = keep("stage-b-station-update");
+        change.edit_id = keep(station_edit_id);
+        change.operation = KV_EDIT_UPDATE;
+        change.expected_source_hash = keep(stations_hash);
+        const size_t field_begin = staged.fields.size();
+        add_field("stationName", "Updated Name");
+        change.fields = KvSpan{static_cast<std::uint64_t>(field_begin), 1};
+    }
+    // 1: first logical row of a header-only Structure List.
+    {
+        KvEditChange& change = staged.changes[1];
+        change.change_id = keep("stage-b-structure-first-row");
+        change.edit_id = keep("stage-b-structure-first-row");
+        change.operation = KV_EDIT_INSERT;
+        change.target_file_path = keep(fixture.structures_path.u8string());
+        change.expected_source_hash = keep(structures_hash);
+        const size_t field_begin = staged.fields.size();
+        add_field("rowKind", "structure.model");
+        add_field("structureKey", "stNew");
+        add_field("filePath", "stNew.x");
+        change.fields = KvSpan{static_cast<std::uint64_t>(field_begin), 3};
+    }
+    // 2 + 3: the two new Load references themselves.
+    {
+        KvEditChange& first = staged.changes[2];
+        first.change_id = keep("stage-b-structure-ref");
+        first.edit_id = keep("stage-b-structure-ref");
+        first.operation = KV_EDIT_INSERT;
+        first.target_file_path = keep(fixture.map_path.u8string());
+        size_t field_begin = staged.fields.size();
+        add_field("rowKind", "resourceList.load");
+        add_field("resourceListKind", "structure");
+        add_field("resourceListPath", "structures.csv");
+        first.fields = KvSpan{static_cast<std::uint64_t>(field_begin), 3};
+        KvEditChange& second = staged.changes[3];
+        second.change_id = keep("stage-b-station-ref");
+        second.edit_id = keep("stage-b-station-ref");
+        second.operation = KV_EDIT_INSERT;
+        second.target_file_path = keep(fixture.map_path.u8string());
+        field_begin = staged.fields.size();
+        add_field("rowKind", "resourceList.load");
+        add_field("resourceListKind", "station");
+        add_field("resourceListPath", "stations.csv");
+        second.fields = KvSpan{static_cast<std::uint64_t>(field_begin), 3};
+    }
+    KvEditBatch staged_batch{staged.changes.data(),
+                             static_cast<std::uint64_t>(staged.changes.size()),
+                             staged.fields.data(),
+                             static_cast<std::uint64_t>(staged.fields.size())};
+
+    KvEditReportSnapshot staged_dry{};
+    const bool staged_dry_ok = kv_edit_dry_run_typed(
+        handle.value, &staged_batch, &staged_dry, sizeof(staged_dry)) != 0;
+    staged_dump_blocking_errors("stage-b-dry", staged_dry);
+    check(staged_dry_ok && staged_dry.ok && staged_dry.full_reparse_ok &&
+              staged_dry.insert_count == 3 && staged_dry.update_count == 1 &&
+              staged_dry.non_target_changed_count == 0,
+          "staged workflow plans mixed Load-and-row batch in one dry run");
+
+    KvEditReportSnapshot staged_apply{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &staged_batch,
+                                        &staged_apply,
+                                        sizeof(staged_apply)) != 0 &&
+              staged_apply.ok && staged_apply.full_reparse_ok &&
+              staged_apply.insert_count == 3 && staged_apply.update_count == 1,
+          "staged workflow applies mixed Load-and-row batch to memory");
+
+    KvMapSnapshot applied{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &applied,
+                              sizeof(applied)) != 0,
+          "staged workflow applied snapshot");
+    bool applied_state_matches =
+        applied.structure_model_count == 1 &&
+        applied.station_list_count == 1 &&
+        applied.resource_list_load_count == 2;
+    if (applied.structure_model_count == 1) {
+        applied_state_matches = applied_state_matches &&
+            map_string(applied, applied.structure_models[0].file_path) == "stNew.x";
+    }
+    if (applied.station_list_count == 1) {
+        const KvStationListRow& row = applied.station_list[0];
+        applied_state_matches = applied_state_matches &&
+            map_string(applied, row.fields[0]) == "sta1" &&
+            map_string(applied, row.fields[1]) == "Updated Name" &&
+            map_string(applied, row.metadata.edit_id) == station_edit_id;
+    }
+    check(applied_state_matches,
+          "staged workflow proves target rows and stable editIds after apply");
+
+    // Apply must stay in memory: every touched file keeps its exact bytes.
+    check(read_bytes(fixture.map_path) == fixture.map_bytes &&
+              read_bytes(fixture.structures_path) == fixture.structures_bytes &&
+              read_bytes(fixture.stations_path) == fixture.stations_bytes,
+          "staged workflow apply leaves all disk files untouched");
+
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report,
+                               sizeof(commit_report)) != 0 &&
+              commit_report.ok,
+          "staged workflow commits the merged multi-file patch");
+    const std::string committed_map = read_bytes(fixture.map_path);
+    const std::string committed_structures = read_bytes(fixture.structures_path);
+    const std::string committed_stations = read_bytes(fixture.stations_path);
+    check(committed_map ==
+              std::string("BveTs Map 2.02:utf-8\r\n") +
+              "Structure.Load('structures.csv');\r\n" +
+              "Station.Load('stations.csv');\r\n",
+          "staged workflow commits both references in source order");
+    check(committed_structures ==
+              std::string("BveTs Structure List 2.00:utf-8\r\nstNew,stNew.x\r\n"),
+          "staged workflow appends the first structure row with fixed columns");
+    check(committed_stations ==
+              std::string("BveTs Station List 2.00:utf-8\r\n"
+                          "sta1,Updated Name,,,,,,,,,,,,\r\n"),
+          "staged workflow updates the station row preserving its field count");
+
+    MapHandle reloaded(kv_load_map_ex(fixture.map_path.u8string().c_str(), 25.0,
+                                      KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot reloaded_snapshot{};
+    bool reload_matches = reloaded.value != nullptr &&
+        kv_get_map_snapshot(reloaded.value, KV_MAP_SNAPSHOT_VERSION,
+                            &reloaded_snapshot, sizeof(reloaded_snapshot)) != 0 &&
+        reloaded_snapshot.structure_model_count == 1 &&
+        reloaded_snapshot.station_list_count == 1 &&
+        reloaded_snapshot.resource_list_load_count == 2;
+    if (reload_matches) {
+        reload_matches =
+            map_string(reloaded_snapshot,
+                       reloaded_snapshot.structure_models[0].file_path) == "stNew.x" &&
+            map_string(reloaded_snapshot,
+                       reloaded_snapshot.station_list[0].fields[1]) == "Updated Name";
+    }
+    check(reload_matches, "staged workflow reloads the committed state");
+}
+
 int edit_contract() {
     include_insert_contract();
     empty_submap_insert_contract();
@@ -6043,6 +6372,7 @@ int edit_contract() {
     resource_list_replace_contract();
     resource_list_insert_contract();
     resource_list_content_insert_contract();
+    staged_resource_list_workflow_contract();
     include_replace_variable_dependency_blocks_contract();
     line_ending_edit_contract();
     repeater_linkage_boundary_contract();

@@ -64,6 +64,7 @@ struct HeadlessNewElementEditOptions;
 struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
 struct HeadlessNewFileWizardOptions;
+struct HeadlessFreshResourceListWorkflowOptions;
 struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
 
@@ -1657,6 +1658,30 @@ struct EditableListEditState {
     std::vector<EditableListDisplayRow> display_rows;
 };
 
+// A context-menu action that changes editable-list draft structure. Actions are
+// recorded during table rendering and executed after EndTable() because
+// inserting/moving/erasing draft rows would invalidate pointers the render
+// loop is still using.
+struct DeferredEditableListAction {
+    enum class Kind {
+        InsertAbove,
+        InsertBelow,
+        MoveUp,
+        MoveDown,
+        ClearCell,
+        DeleteRow,
+        ChooseFile,
+        AddGlare,
+        DeleteGlare,
+    };
+    EditableListEditState* edit = nullptr;
+    const EditableListSpec* spec = nullptr;
+    Kind kind = Kind::InsertBelow;
+    int visible_row = -1;
+    int column = -1;
+    bool select_secondary = false;
+};
+
 bool editable_list_row_has_draft(const EditableListDraftRow& row);
 const std::string& editable_list_row_identity(const EditableListDraftRow& row);
 std::string editable_list_field_name(const EditableListSpec& spec,
@@ -1748,6 +1773,8 @@ public:
         const HeadlessResourceListInsertOptions& options);
     static int run_debug_headless_new_file_wizard(
         const HeadlessNewFileWizardOptions& options);
+    static int run_debug_headless_fresh_resource_list_workflow(
+        const HeadlessFreshResourceListWorkflowOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
 #endif
 
@@ -1835,6 +1862,10 @@ private:
         resource_list_file_change_confirmation_;
     std::optional<std::string> pending_other_track_rename_request_;
     OtherTrackRenameState other_track_rename_;
+    // Deferred editable-list context-menu actions: recorded while the ImGui
+    // table/popup is rendering, executed after EndTable() so draft vectors are
+    // never mutated mid-render.
+    std::vector<DeferredEditableListAction> pending_editable_list_actions_;
     NewElementWizardState new_element_wizard_;
     NewFileWizardState new_file_wizard_;
     EditableListEditState station_definition_edit_;
@@ -2384,6 +2415,9 @@ private:
     bool insert_editable_list_row(EditableListEditState& edit,
                                   const EditableListSpec& spec,
                                   int visible_row, bool above);
+    bool append_empty_list_row_draft(EditableListEditState& edit,
+                                     const EditableListSpec& spec);
+    void run_pending_editable_list_actions();
     bool clear_editable_list_cell(EditableListEditState& edit,
                                   const EditableListSpec& spec,
                                   int visible_row, int column);
@@ -2821,6 +2855,7 @@ bool set_optional_insertion_argument_enabled(
     MapElementInspectorState& inspector, std::string_view field_key, bool included);
 
 std::vector<std::string> new_element_target_candidates(const MapModel& model);
+std::vector<std::string> new_file_reference_target_candidates(const MapModel& model);
 void update_repeater_wizard_field_enablement(NewElementWizardState& wizard);
 std::string own_track_curve_method(const NewElementWizardState& wizard);
 void update_own_track_wizard_field_enablement(NewElementWizardState& wizard);

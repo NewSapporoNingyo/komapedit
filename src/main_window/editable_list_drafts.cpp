@@ -80,6 +80,24 @@ bool editable_list_row_has_draft(const EditableListDraftRow& row) {
         row.values != row.original_values;
 }
 
+std::optional<ResourceListKind> resource_list_kind_for_edit_spec(
+    const EditableListSpec& spec) {
+    if (std::string_view(spec.row_kind) == "station.list") {
+        return ResourceListKind::Station;
+    }
+    if (std::string_view(spec.row_kind) == "structure.model") {
+        return ResourceListKind::Structure;
+    }
+    if (std::string_view(spec.row_kind) == "signal.aspect") {
+        return ResourceListKind::Signal;
+    }
+    if (std::string_view(spec.row_kind) == "sound.list") return ResourceListKind::Sound;
+    if (std::string_view(spec.row_kind) == "sound3D.list") {
+        return ResourceListKind::Sound3D;
+    }
+    return std::nullopt;
+}
+
 const std::string& editable_list_row_identity(const EditableListDraftRow& row) {
     return row.target_edit_id.empty() ? row.local_draft_id : row.target_edit_id;
 }
@@ -563,6 +581,53 @@ void App::discard_all_editable_list_drafts() {
     sound_3d_list_edit_ = EditableListEditState{};
 }
 
+void App::run_pending_editable_list_actions() {
+    if (pending_editable_list_actions_.empty()) return;
+    // Take the queue so an action that triggers another deferred push (none
+    // today) can never recurse into itself while it is being consumed.
+    std::vector<DeferredEditableListAction> actions =
+        std::move(pending_editable_list_actions_);
+    pending_editable_list_actions_.clear();
+    for (const DeferredEditableListAction& action : actions) {
+        if (!action.edit || !action.spec) continue;
+        EditableListEditState& edit = *action.edit;
+        const EditableListSpec& spec = *action.spec;
+        switch (action.kind) {
+        case DeferredEditableListAction::Kind::InsertAbove:
+            insert_editable_list_row(edit, spec, action.visible_row, true);
+            break;
+        case DeferredEditableListAction::Kind::InsertBelow:
+            insert_editable_list_row(edit, spec, action.visible_row, false);
+            break;
+        case DeferredEditableListAction::Kind::MoveUp:
+            move_editable_list_row(edit, spec, action.visible_row, -1);
+            break;
+        case DeferredEditableListAction::Kind::MoveDown:
+            move_editable_list_row(edit, spec, action.visible_row, 1);
+            break;
+        case DeferredEditableListAction::Kind::ClearCell:
+            if (clear_editable_list_cell(edit, spec, action.visible_row,
+                                         action.column) &&
+                action.select_secondary) {
+                edit.selected_secondary_row = true;
+            }
+            break;
+        case DeferredEditableListAction::Kind::DeleteRow:
+            delete_editable_list_row(edit, spec, action.visible_row);
+            break;
+        case DeferredEditableListAction::Kind::ChooseFile:
+            choose_editable_list_file(edit, spec, action.visible_row);
+            break;
+        case DeferredEditableListAction::Kind::AddGlare:
+            add_editable_list_secondary_row(edit, spec, action.visible_row);
+            break;
+        case DeferredEditableListAction::Kind::DeleteGlare:
+            delete_editable_list_secondary_row(edit, spec, action.visible_row);
+            break;
+        }
+    }
+}
+
 bool App::move_editable_list_row(EditableListEditState& edit,
                                  const EditableListSpec& spec,
                                  int visible_row, int direction) {
@@ -577,12 +642,63 @@ bool App::move_editable_list_row(EditableListEditState& edit,
     return true;
 }
 
+bool App::append_empty_list_row_draft(EditableListEditState& edit,
+                                      const EditableListSpec& spec) {
+    // A list file that only carries its header has no existing row to anchor
+    // to. Take the target file and disk-baseline hash from the corresponding
+    // ResourceListSource so the first draft row can still be created.
+    const std::optional<ResourceListKind> kind =
+        resource_list_kind_for_edit_spec(spec);
+    if (!kind || !has_model_) return false;
+    const ResourceListSource& source =
+        model_.resource_list_sources[static_cast<size_t>(*kind)];
+    if (!source.present || source.resolved_path.empty()) return false;
+
+    EditableListDraftRow row;
+    const std::string local_prefix = std::string(spec.change_prefix) + "draft-";
+    do {
+        row.local_draft_id = local_prefix +
+            std::to_string(edit.next_local_draft_id++);
+    } while (pending_edit_changes_.find(row.local_draft_id) !=
+                 pending_edit_changes_.end() ||
+             std::any_of(edit.rows.begin(), edit.rows.end(),
+                         [&](const EditableListDraftRow& candidate) {
+                             return editable_list_row_identity(candidate) ==
+                                 row.local_draft_id;
+                         }));
+    row.target_source_file = source.resolved_path;
+    for (const EditSourceFileInfo& file : model_.edit_files) {
+        if (file.file_path == source.resolved_path) {
+            row.target_expected_source_hash = file.source_hash;
+            break;
+        }
+    }
+    row.inserted = true;
+    if (spec.numbered_structure_key_fields) {
+        row.values.assign(6, {});
+        row.primary_structure_field_count = 5;
+    } else {
+        row.values.assign(spec.field_count, {});
+    }
+    row.original_values = row.values;
+    edit.rows.push_back(std::move(row));
+    edit.visible_rows = editable_list_visible_row_indices(edit.rows);
+    edit.selected_row = static_cast<int>(edit.visible_rows.size()) - 1;
+    edit.selected_column = 0;
+    edit.selected_secondary_row = false;
+    rebuild_editable_list_display_rows(edit, spec);
+    return true;
+}
+
 bool App::insert_editable_list_row(EditableListEditState& edit,
                                    const EditableListSpec& spec,
                                    int visible_row, bool above) {
     commit_editable_list_active_edit(edit, spec);
-    if (!initialize_editable_list_draft_rows(edit, spec) ||
-        visible_row < 0 ||
+    if (!initialize_editable_list_draft_rows(edit, spec)) return false;
+    if (edit.visible_rows.empty()) {
+        return append_empty_list_row_draft(edit, spec);
+    }
+    if (visible_row < 0 ||
         visible_row >= static_cast<int>(edit.visible_rows.size())) {
         return false;
     }

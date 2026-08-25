@@ -1578,6 +1578,9 @@ const KvEditTargetSnapshot& build_edit_target_snapshot(MapContext& ctx,
 MapEditReport build_edit_report(MapContext& ctx,
                                 const std::vector<MapEditChange>& changes,
                                 bool write_files);
+MapEditReport plan_staged_edit_batch(MapContext& ctx,
+                                     const std::vector<MapEditChange>& changes);
+void finalize_direct_disk_apply(MapContext& ctx, MapEditReport& report);
 const KvEditReportSnapshot& build_edit_report_snapshot(MapContext& ctx,
                                                        const MapEditReport& report);
 void apply_patched_files_to_overrides(SourceTextOverrides& overrides,
