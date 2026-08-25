@@ -130,7 +130,7 @@ Use `docs/dev.md` for the detailed source map. Start with these owners:
 | 3D model/scene preview | `src/canvas3d/canvas3D.cpp`, `include/canvas3D.h` |
 | Tables/navigation | `src/table/` |
 | Shared marker/linkage rules | `include/map_marker_visuals.h`, linkage headers, corresponding sources |
-| Contract/headless validation | `src/maploader/tests/`, `src/main_window/debug_headless.*` |
+| Contract/headless validation | `src/maploader/tests/`, `src/main_window/debug_headless.*`, `src/main_window/headless_entrypoints.cpp` |
 
 ## Project skill index
 

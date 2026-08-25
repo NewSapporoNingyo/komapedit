@@ -95,10 +95,10 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 | Editing | `maploader_edits.cpp`: dry run, in-memory Apply, direct Apply, commit, reset, source patching, encoding-aware writeback, distance adjustment; Include statements support restricted path-argument updates validated by full reparse with old/new subtree masks |
 | Shared linkage | `include/repeater_linkage.h`, `include/own_track_transition_linkage.h`: Repeater chains and Curve/Gradient transition pairing |
 | Model loading | `src/model_loader/model_loader.cpp`, `include/model_loader.h`: Assimp isolation and model-loader API v2 |
-| Main window | `src/main_window/gui_kme.cpp`, `kme.h`, and focused `src/main_window/` modules: App-state coordination; Win32/D3D11 bootstrap; shared GUI utilities/backgrounds; snapshot hydration/loading; edit, distance, Inspector, list-draft, and new-element workflows; dialogs/UI; scene previews; headless entry points |
+| Main window | `src/main_window/gui_kme.cpp`, `kme.h`, and focused `src/main_window/` modules: App-state coordination; Win32/D3D11 bootstrap; shared GUI utilities/backgrounds; snapshot hydration/loading; edit, distance, Inspector, list-draft, new-file, and new-element workflows; dialogs/UI; scene previews; headless entry points |
 | Runtime/settings | `app_settings.cpp/.h`, `runtime_paths.cpp/.h`, `maploader_runtime.cpp`: INI persistence, executable-relative paths, DLL loading, exact API checks |
 | Source tools | `file_structure_diagram.cpp`, `text_preview.cpp`: Include graph, working-copy source preview, source actions (change included file, unlink Include), distance-boundary selection |
-| Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `touch_input.cpp/.h`: headless contracts, benchmarks, camera transfer, find, touch, and new-element checks |
+| Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `touch_input.cpp/.h`: headless contracts, benchmarks, camera transfer, find, touch, edit, and file-creation checks |
 | 2D views | `src/canvas2d/canvas2D.cpp`, `profile_plots.cpp`: plan, charts, transforms, markers, measurement, background images |
 | 3D views | `src/canvas3d/canvas3D.cpp`, `include/canvas3D.h`: model/scene rendering, camera, picking, markers, overlays, gizmos |
 | Tables/navigation | `src/table/datatable.cpp`, `table_navigation.cpp`: cached tables, inline editing, find, row/plan/scene navigation |
@@ -195,8 +195,10 @@ build\komapedit.exe --debug-headless-repeater-key-edit <map-path> [--commit] --h
 build\komapedit.exe --debug-headless-other-track-key-edit <map-path> [--commit] --headless-output build\other-track-key-edit.txt
 build\komapedit.exe --debug-headless-insert-edit [map-path] --repeater-only [--commit] --headless-output build\repeater-insert-edit.txt
 build\komapedit.exe --debug-headless-include-delete <map-path> [--index N] [--commit] --headless-output build\include-delete.txt
+build\komapedit.exe --debug-headless-include-replace <map-path> --new-path <file> [--index N] [--commit] --headless-output build\include-replace.txt
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
 build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
+build\komapedit.exe --debug-headless-new-file-wizard <nonexistent-map-path-under-tests> --headless-output build\new-file-wizard.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
@@ -209,6 +211,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 `--debug-headless-resource-list-replace` reproduces preview loading followed by edit-metadata loading and merge, then opens the production Win32 picker for `Structure.Load`. Manually select a different valid Structure List. It verifies the merged stable edit ID, memory Apply with complete reparse, refreshed structure-list cache, updated path, and unchanged hashes after a fresh disk reload. It never calls Save or Commit; cancelling, selecting the same file, or selecting an invalid list reports `FAIL`.
 
 `--debug-headless-resource-list-insert <map-path> --kind structure|signal` is a non-interactive, memory-only proof of resource-list row insertion. `structure` requires an Include-loaded list and verifies above/below order, two-field source rows, hydration, Reset, and unchanged disk hashes. `signal` selects an existing primary/glare block, proves neither insertion splits it, then verifies a six-field primary without glare and a manually added six-field glare. `--commit` is rejected.
+
+`--debug-headless-new-file-wizard <nonexistent-map-path-under-tests>` requires a new file path below `tests/`. It creates and reloads a header-only map, verifies exclusive creation and reuse of existing resource-list files, stages and saves all five `*.Load` references in order, reloads the empty lists, and removes every file it created before reporting the result.
 
 Pass explicit map paths for portable runs. The Repeater-key and new-element-follow-up commands always require one; the own-track, other-track, distance, Repeater-batch, Repeater-only insert, and Section tools otherwise fall back to a developer-machine route path. `--repeater-only` validates exactly one uniquely keyed `Repeater.Begin` and one `Begin0` through dry run, memory Apply/Reset, and, when requested, Commit/reload. Repeater-key and Repeater-only commit validation leave the authorized route edits in place for physical diff inspection.
 
