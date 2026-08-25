@@ -4441,6 +4441,89 @@ void App::render_variables_window() {
     ImGui::End();
 }
 
+void App::render_scenario_file_window() {
+    if (!show_scenario_file_window_ || !scenario_preview_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(
+        dock_right_id_, ImGuiCond_FirstUseEver);
+    if (focus_scenario_file_next_) ImGui::SetNextWindowFocus();
+    std::string title = tr("frame.scenario_file") + "###ScenarioFile";
+    if (!ImGui::Begin(title.c_str(), &show_scenario_file_window_)) {
+        focus_scenario_file_next_ = false;
+        ImGui::End();
+        return;
+    }
+
+    ScenarioPreview& preview = *scenario_preview_;
+    if (ImGui::BeginTable("scenario_file", 2,
+                          ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("field", ImGuiTableColumnFlags_WidthFixed, 106.0f);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+        const auto render_value = [](const char* field, std::string& value) {
+            ImGui::PushID(field);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(field);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText("##value", &value, ImGuiInputTextFlags_ReadOnly);
+            ImGui::PopID();
+        };
+        const auto render_paths = [&](const char* field,
+                                      std::vector<ScenarioPreviewPath>& paths) {
+            const bool show_weight = paths.size() > 1 || std::any_of(
+                paths.begin(), paths.end(), [](const ScenarioPreviewPath& path) {
+                    return path.has_explicit_weight;
+                });
+            if (paths.empty()) {
+                std::string empty;
+                render_value(field, empty);
+                return;
+            }
+            ImGui::PushID(field);
+            for (size_t index = 0; index < paths.size(); ++index) {
+                ScenarioPreviewPath& path = paths[index];
+                ImGui::PushID(static_cast<int>(index));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
+                if (index == 0) ImGui::TextUnformatted(field);
+                ImGui::TableSetColumnIndex(1);
+                if (!show_weight) {
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::InputText("##path", &path.path, ImGuiInputTextFlags_ReadOnly);
+                } else {
+                    const float weight_width = 72.0f;
+                    const float path_width = std::max(
+                        80.0f, ImGui::GetContentRegionAvail().x - weight_width -
+                                   ImGui::GetStyle().ItemSpacing.x);
+                    ImGui::SetNextItemWidth(path_width);
+                    ImGui::InputText("##path", &path.path, ImGuiInputTextFlags_ReadOnly);
+                    ImGui::SameLine();
+                    std::string weight = format_double(path.weight, 12);
+                    ImGui::SetNextItemWidth(weight_width);
+                    ImGui::InputText("##weight", &weight, ImGuiInputTextFlags_ReadOnly);
+                }
+                ImGui::PopID();
+            }
+            ImGui::PopID();
+        };
+
+        render_value("Title", preview.title);
+        render_paths("Route", preview.routes);
+        render_value("RouteTitle", preview.route_title);
+        render_paths("Vehicle", preview.vehicles);
+        render_value("VehicleTitle", preview.vehicle_title);
+        render_value("Author", preview.author);
+        render_value("Image", preview.image);
+        render_value("Comment", preview.comment);
+        ImGui::EndTable();
+    }
+    focus_scenario_file_next_ = false;
+    ImGui::End();
+}
+
 void App::render_beacons_window() {
     if (!show_beacons_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);

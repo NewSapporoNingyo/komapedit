@@ -17,6 +17,7 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 #include <new>
 
 namespace {
@@ -42,6 +43,89 @@ MapParseOptions parse_options_from_load_flags(unsigned flags) {
     const bool edit_metadata = (flags & KV_LOAD_EDIT_METADATA) != 0;
     options.collect_edit_metadata = edit_metadata || !preview;
     return options;
+}
+
+size_t checked_scenario_size_add(size_t left, size_t right) {
+    if (right > std::numeric_limits<size_t>::max() - left) throw std::bad_alloc();
+    return left + right;
+}
+
+size_t checked_scenario_size_mul(size_t left, size_t right) {
+    if (left != 0 && right > std::numeric_limits<size_t>::max() / left) {
+        throw std::bad_alloc();
+    }
+    return left * right;
+}
+
+const KvScenarioSnapshot* allocate_scenario_snapshot(
+    const kme::maploader::detail::ScenarioDocument& document) {
+    size_t string_bytes = 0;
+    auto add_string = [&](const std::string& value) {
+        string_bytes = checked_scenario_size_add(string_bytes, value.size());
+    };
+    add_string(document.title);
+    for (const auto& row : document.routes) add_string(row.path_text);
+    add_string(document.route_title);
+    for (const auto& row : document.vehicles) add_string(row.path_text);
+    add_string(document.vehicle_title);
+    add_string(document.author);
+    add_string(document.image);
+    add_string(document.comment);
+
+    const size_t route_bytes = checked_scenario_size_mul(
+        document.routes.size(), sizeof(KvScenarioPathWeightRow));
+    const size_t vehicle_bytes = checked_scenario_size_mul(
+        document.vehicles.size(), sizeof(KvScenarioPathWeightRow));
+    size_t allocation_bytes = checked_scenario_size_add(sizeof(KvScenarioSnapshot), route_bytes);
+    allocation_bytes = checked_scenario_size_add(allocation_bytes, vehicle_bytes);
+    allocation_bytes = checked_scenario_size_add(allocation_bytes, string_bytes);
+
+    char* block = static_cast<char*>(std::malloc(allocation_bytes));
+    if (!block) throw std::bad_alloc();
+    auto* snapshot = reinterpret_cast<KvScenarioSnapshot*>(block);
+    auto* route_rows = reinterpret_cast<KvScenarioPathWeightRow*>(
+        block + sizeof(KvScenarioSnapshot));
+    auto* vehicle_rows = reinterpret_cast<KvScenarioPathWeightRow*>(
+        block + sizeof(KvScenarioSnapshot) + route_bytes);
+    char* string_data = block + sizeof(KvScenarioSnapshot) + route_bytes + vehicle_bytes;
+    char* cursor = string_data;
+    const auto copy_string = [&](const std::string& value) {
+        KvStringRef reference{
+            static_cast<uint64_t>(cursor - string_data),
+            static_cast<uint64_t>(value.size())};
+        if (!value.empty()) std::memcpy(cursor, value.data(), value.size());
+        cursor += value.size();
+        return reference;
+    };
+
+    *snapshot = KvScenarioSnapshot{};
+    snapshot->version = KV_SCENARIO_SNAPSHOT_VERSION;
+    snapshot->structure_size = sizeof(KvScenarioSnapshot);
+    snapshot->string_data = string_data;
+    snapshot->string_size = string_bytes;
+    snapshot->title = copy_string(document.title);
+    snapshot->routes = document.routes.empty() ? nullptr : route_rows;
+    snapshot->route_count = document.routes.size();
+    for (size_t i = 0; i < document.routes.size(); ++i) {
+        route_rows[i].path = copy_string(document.routes[i].path_text);
+        route_rows[i].weight = document.routes[i].weight;
+        route_rows[i].has_explicit_weight = document.routes[i].has_explicit_weight ? 1u : 0u;
+        route_rows[i].reserved = 0;
+    }
+    snapshot->route_title = copy_string(document.route_title);
+    snapshot->vehicles = document.vehicles.empty() ? nullptr : vehicle_rows;
+    snapshot->vehicle_count = document.vehicles.size();
+    for (size_t i = 0; i < document.vehicles.size(); ++i) {
+        vehicle_rows[i].path = copy_string(document.vehicles[i].path_text);
+        vehicle_rows[i].weight = document.vehicles[i].weight;
+        vehicle_rows[i].has_explicit_weight = document.vehicles[i].has_explicit_weight ? 1u : 0u;
+        vehicle_rows[i].reserved = 0;
+    }
+    snapshot->vehicle_title = copy_string(document.vehicle_title);
+    snapshot->author = copy_string(document.author);
+    snapshot->image = copy_string(document.image);
+    snapshot->comment = copy_string(document.comment);
+    return snapshot;
 }
 
 } // namespace
@@ -352,6 +436,28 @@ KV_API const KvScenarioRouteCandidate* kv_resolve_scenario_routes(
 
 KV_API void kv_free_scenario_candidates(const KvScenarioRouteCandidate* candidates) {
     std::free(const_cast<KvScenarioRouteCandidate*>(candidates));
+}
+
+KV_API const KvScenarioSnapshot* kv_load_scenario_snapshot(
+    const char* scenario_path, uint32_t version) {
+    try {
+        if (!scenario_path) throw std::runtime_error("scenario path is null");
+        if (version != KV_SCENARIO_SNAPSHOT_VERSION) {
+            throw std::runtime_error("unsupported scenario snapshot version");
+        }
+        return allocate_scenario_snapshot(
+            kme::maploader::detail::load_scenario_document(path_from_utf8(scenario_path)));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return nullptr;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return nullptr;
+    }
+}
+
+KV_API void kv_free_scenario_snapshot(const KvScenarioSnapshot* snapshot) {
+    std::free(const_cast<KvScenarioSnapshot*>(snapshot));
 }
 
 KV_API int kv_edit_dry_run_typed(void* handle, const KvEditBatch* batch,

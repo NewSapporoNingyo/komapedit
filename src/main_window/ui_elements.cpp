@@ -186,6 +186,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("Signals", dock_right);
     ImGui::DockBuilderDockWindow("Sections", dock_right);
     ImGui::DockBuilderDockWindow("Variables", dock_right);
+    ImGui::DockBuilderDockWindow("ScenarioFile", dock_right);
     ImGui::DockBuilderDockWindow("Beacons", dock_right);
     ImGui::DockBuilderDockWindow("Irregularities", dock_right);
     ImGui::DockBuilderDockWindow("MapSounds", dock_right);
@@ -541,7 +542,7 @@ void App::render_menu() {
         if (ImGui::MenuItem(tr("menu.open").c_str(), "Ctrl+O", false,
                             !operation_pending)) {
             std::string p = open_map_dialog();
-            if (!p.empty()) begin_load(p, false, true);
+            if (!p.empty()) open_document(p, true);
         }
         if (ImGui::BeginMenu(tr("menu.recent_maps").c_str())) {
             if (recent_maps_.empty()) {
@@ -552,7 +553,7 @@ void App::render_menu() {
                     std::string label = display_name_from_path(entry.path) + "###recent_map_" + std::to_string(i);
                     if (ImGui::MenuItem(label.c_str(), nullptr, false,
                                         !operation_pending && !load_state_.running)) {
-                        begin_load(entry.path, false, true, entry.background);
+                        open_document(entry.path, true, entry.background);
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.path.c_str());
                 }
@@ -663,6 +664,14 @@ void App::render_menu() {
                 ImGui::MenuItem(tr(entry.label_key).c_str(), nullptr, false, false);
                 has_category = true;
                 continue;
+            }
+            if (std::string_view(entry.label_key) == "menu.map_info.variables") {
+                if (ImGui::MenuItem(tr("menu.map_info.scenario_file").c_str(), nullptr,
+                                    show_scenario_file_window_,
+                                    scenario_preview_.has_value())) {
+                    show_scenario_file_window_ = true;
+                    focus_scenario_file_next_ = true;
+                }
             }
             bool& window_visible = this->*entry.window_visible;
             ImGui::MenuItem(tr(entry.label_key).c_str(), nullptr, &window_visible);
@@ -824,7 +833,7 @@ void App::render_toolbar() {
         ImGui::BeginDisabled(operation_pending);
         if (ImGui::Button(tr("button.open").c_str())) {
             std::string p = open_map_dialog();
-            if (!p.empty()) begin_load(p, false, true);
+            if (!p.empty()) open_document(p, true);
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -1156,6 +1165,7 @@ void App::render() {
     render_signals_window();
     render_sections_window();
     render_variables_window();
+    render_scenario_file_window();
     render_beacons_window();
     render_irregularities_window();
     render_map_sounds_window();

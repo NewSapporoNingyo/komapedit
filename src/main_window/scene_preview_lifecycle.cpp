@@ -491,14 +491,14 @@ void App::reload_model_preview() {
 
 void App::perform_reload_current_map_and_model_preview() {
     if (has_model_ && !file_path_.empty()) {
-        begin_load(file_path_, true, false, std::nullopt, false, true);
+        begin_map_load(file_path_, true, false, std::nullopt, false, true);
     }
     reload_model_preview();
 }
 
 void App::perform_reload_current_map_geometry() {
     add_log("[info]gui_kme.cpp: reloading map geometry with existing 3D models preserved");
-    begin_load(file_path_, true, false, std::nullopt, true, true);
+    begin_map_load(file_path_, true, false, std::nullopt, true, true);
 }
 
 bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
@@ -511,14 +511,10 @@ bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
 void App::execute_pending_reload_action() {
     PendingReloadAction action = pending_reload_action_;
     pending_reload_action_ = PendingReloadAction::None;
-    std::string new_file_path = std::move(pending_new_file_load_path_);
-    pending_new_file_load_path_.clear();
     if (action == PendingReloadAction::MapAndModelPreview) {
         perform_reload_current_map_and_model_preview();
     } else if (action == PendingReloadAction::GeometryOnly) {
         perform_reload_current_map_geometry();
-    } else if (action == PendingReloadAction::NewFile) {
-        begin_load(std::move(new_file_path), false, true);
     }
 }
 

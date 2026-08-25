@@ -12,8 +12,9 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 8u
+#define KV_MAPLOADER_API_VERSION 9u
 #define KV_MAP_SNAPSHOT_VERSION 7u
+#define KV_SCENARIO_SNAPSHOT_VERSION 1u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
@@ -35,6 +36,38 @@ typedef struct KvSpan {
     uint64_t offset;
     uint64_t count;
 } KvSpan;
+
+/* One relative Route or Vehicle path written by a BVE Scenario file. The
+ * path is a UTF-8 reference into KvScenarioSnapshot::string_data. Weight is
+ * 1 when omitted; has_explicit_weight distinguishes that default from a
+ * source term that explicitly wrote "* 1". */
+typedef struct KvScenarioPathWeightRow {
+    KvStringRef path;
+    double weight;
+    uint32_t has_explicit_weight;
+    uint32_t reserved;
+} KvScenarioPathWeightRow;
+
+/* Caller-owned immutable Scenario document snapshot. All string references
+ * and path-row arrays remain valid until kv_free_scenario_snapshot() is
+ * called for this snapshot. */
+typedef struct KvScenarioSnapshot {
+    uint32_t version;
+    uint32_t reserved;
+    uint64_t structure_size;
+    const char* string_data;
+    uint64_t string_size;
+    KvStringRef title;
+    const KvScenarioPathWeightRow* routes;
+    uint64_t route_count;
+    KvStringRef route_title;
+    const KvScenarioPathWeightRow* vehicles;
+    uint64_t vehicle_count;
+    KvStringRef vehicle_title;
+    KvStringRef author;
+    KvStringRef image;
+    KvStringRef comment;
+} KvScenarioSnapshot;
 
 typedef struct KvDoubleBuffer {
     const double* data;

@@ -456,14 +456,7 @@ void App::process_pending_new_file_create() {
     }
     new_file_wizard_.open = false;
     if (request.load_after_create && request.kind == NewFileKind::Map) {
-        if (has_model_ && has_unsaved_edit_state()) {
-            pending_new_file_load_path_ = selected_file;
-            pending_reload_action_ = PendingReloadAction::NewFile;
-            popups_.reload_unsaved_confirm = true;
-            wake_main_window();
-            return;
-        }
-        begin_load(selected_file, false, true);
+        open_document(selected_file, true);
         return;
     }
     if (request.target_file_path.empty()) {

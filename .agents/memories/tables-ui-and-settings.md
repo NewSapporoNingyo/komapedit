@@ -28,4 +28,5 @@
 - `settings/imgui.ini` stores docking, layout, and window geometry.
 - Saved state and code defaults are different. A new default must not overwrite an existing user's preference unless an explicit migration requires it.
 - Bind menu checkmarks to the real runtime visibility boolean and reuse the existing load/apply/dirty-save flow. Do not invent a second toggle state.
+- Document-scoped preview state belongs neither to settings/history nor to saved window visibility. Clear it before every top-level document open; map-only Reload operations retain it.
 - Headless modes should set ImGui persistence off so validation does not create or modify `imgui.ini`.

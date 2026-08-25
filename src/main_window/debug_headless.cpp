@@ -1126,6 +1126,90 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
         return fail("header probe did not identify a BVE Scenario file");
     }
 
+    const KvScenarioSnapshot* scenario_snapshot = kv_load_scenario_snapshot(
+        options.path.c_str(), KV_SCENARIO_SNAPSHOT_VERSION);
+    if (!scenario_snapshot) {
+        const char* error = kv_get_last_error();
+        return fail(std::string("scenario preview snapshot failed: ") +
+                    (error && *error ? error : "maploader failed"));
+    }
+    const auto snapshot_fail = [&](const std::string& message) {
+        kv_free_scenario_snapshot(scenario_snapshot);
+        return fail(message);
+    };
+    if (scenario_snapshot->version != KV_SCENARIO_SNAPSHOT_VERSION ||
+        scenario_snapshot->structure_size < sizeof(KvScenarioSnapshot) ||
+        scenario_snapshot->string_size >
+            static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+        return snapshot_fail("scenario preview snapshot version or size is invalid");
+    }
+
+    const auto copy_string = [&](KvStringRef reference, std::string& value) {
+        if (reference.offset > scenario_snapshot->string_size ||
+            reference.length > scenario_snapshot->string_size - reference.offset ||
+            (reference.length != 0 && !scenario_snapshot->string_data)) {
+            return false;
+        }
+        value.assign(scenario_snapshot->string_data
+                         ? scenario_snapshot->string_data + static_cast<size_t>(reference.offset)
+                         : "",
+                     static_cast<size_t>(reference.length));
+        return true;
+    };
+    const auto copy_paths = [&](const KvScenarioPathWeightRow* rows, uint64_t count,
+                                std::vector<ScenarioPreviewPath>& paths) {
+        if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+            (count != 0 && !rows)) {
+            return false;
+        }
+        paths.reserve(static_cast<size_t>(count));
+        for (uint64_t i = 0; i < count; ++i) {
+            std::string path;
+            if (!copy_string(rows[i].path, path) || !std::isfinite(rows[i].weight) ||
+                rows[i].weight <= 0.0 || rows[i].has_explicit_weight > 1u) {
+                return false;
+            }
+            paths.push_back({std::move(path), rows[i].weight,
+                             rows[i].has_explicit_weight != 0});
+        }
+        return true;
+    };
+
+    ScenarioPreview preview;
+    if (!copy_string(scenario_snapshot->title, preview.title) ||
+        !copy_paths(scenario_snapshot->routes, scenario_snapshot->route_count, preview.routes) ||
+        !copy_string(scenario_snapshot->route_title, preview.route_title) ||
+        !copy_paths(scenario_snapshot->vehicles, scenario_snapshot->vehicle_count, preview.vehicles) ||
+        !copy_string(scenario_snapshot->vehicle_title, preview.vehicle_title) ||
+        !copy_string(scenario_snapshot->author, preview.author) ||
+        !copy_string(scenario_snapshot->image, preview.image) ||
+        !copy_string(scenario_snapshot->comment, preview.comment)) {
+        return snapshot_fail("scenario preview snapshot contains invalid field data");
+    }
+    kv_free_scenario_snapshot(scenario_snapshot);
+
+    const auto print_paths = [&](const char* field,
+                                 const std::vector<ScenarioPreviewPath>& paths) {
+        *out << "scenario." << field << "_count=" << paths.size() << "\n";
+        for (size_t i = 0; i < paths.size(); ++i) {
+            *out << "scenario." << field << "[" << i << "] path="
+                 << '"' << paths[i].path << '"'
+                 << " weight=" << format_double(paths[i].weight, 6)
+                 << " explicit_weight=" << (paths[i].has_explicit_weight ? 1 : 0)
+                 << "\n";
+        }
+    };
+    *out << "scenario_preview=loaded\n"
+         << "scenario_preview_field_count=8\n"
+         << "scenario.Title=\"" << preview.title << "\"\n";
+    print_paths("Route", preview.routes);
+    *out << "scenario.RouteTitle=\"" << preview.route_title << "\"\n";
+    print_paths("Vehicle", preview.vehicles);
+    *out << "scenario.VehicleTitle=\"" << preview.vehicle_title << "\"\n"
+         << "scenario.Author=\"" << preview.author << "\"\n"
+         << "scenario.Image=\"" << preview.image << "\"\n"
+         << "scenario.Comment=\"" << preview.comment << "\"\n";
+
     uint64_t candidate_count = 0;
     const KvScenarioRouteCandidate* candidates =
         kv_resolve_scenario_routes(options.path.c_str(), &candidate_count);

@@ -1114,6 +1114,32 @@ void App::render_popups() {
         ImGui::EndPopup();
     }
 
+    if (popups_.open_document_unsaved_confirm) {
+        ImGui::OpenPopup(tr("dialog.open_document_unsaved_title").c_str());
+        popups_.open_document_unsaved_confirm = false;
+    }
+    if (ImGui::BeginPopupModal(tr("dialog.open_document_unsaved_title").c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
+        ImGui::TextUnformatted(tr("dialog.open_document_unsaved_message").c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+        if (ImGui::Button(tr("button.open").c_str())) {
+            if (pending_document_open_) {
+                PendingDocumentOpen request = std::move(*pending_document_open_);
+                pending_document_open_.reset();
+                perform_open_document(std::move(request));
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("button.cancel").c_str())) {
+            pending_document_open_.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     if (popups_.reload_unsaved_confirm) {
         ImGui::OpenPopup(tr("dialog.reload_unsaved_title").c_str());
         popups_.reload_unsaved_confirm = false;
@@ -1130,7 +1156,6 @@ void App::render_popups() {
         ImGui::SameLine();
         if (ImGui::Button(tr("button.cancel").c_str())) {
             pending_reload_action_ = PendingReloadAction::None;
-            pending_new_file_load_path_.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1278,7 +1303,7 @@ void App::render_scenario_route_pick_popup() {
                 scenario_route_pick_.selected)];
         scenario_route_pick_ = ScenarioRoutePickState{};
         ImGui::CloseCurrentPopup();
-        begin_load(chosen.resolved_path, false, true);
+        begin_map_load(chosen.resolved_path, false, true);
     }
     ImGui::EndPopup();
 }

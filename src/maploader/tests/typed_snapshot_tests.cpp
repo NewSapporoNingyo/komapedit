@@ -90,6 +90,11 @@ std::string map_string(const KvMapSnapshot& snapshot, KvStringRef ref) {
     return std::string(value.data(), value.size());
 }
 
+std::string scenario_string(const KvScenarioSnapshot& snapshot, KvStringRef ref) {
+    const std::string_view value = arena_view(snapshot.string_data, snapshot.string_size, ref);
+    return std::string(value.data(), value.size());
+}
+
 struct TempFixture {
     std::filesystem::path directory;
     std::filesystem::path map_path;
@@ -437,7 +442,7 @@ void validate_map(const KvMapSnapshot& snapshot, bool edit_metadata) {
 int scenario_route_contract();
 
 int snapshot_contract() {
-    static_assert(KV_MAPLOADER_API_VERSION == 8u, "maploader API contract version");
+    static_assert(KV_MAPLOADER_API_VERSION == 9u, "maploader API contract version");
     TempFixture fixture(true);
     check(kv_api_version() == KV_MAPLOADER_API_VERSION, "API version");
 #if defined(_WIN32)
@@ -931,6 +936,10 @@ int scenario_route_contract() {
               "kv_resolve_scenario_routes export present");
         check(GetProcAddress(module, "kv_free_scenario_candidates") != nullptr,
               "kv_free_scenario_candidates export present");
+        check(GetProcAddress(module, "kv_load_scenario_snapshot") != nullptr,
+              "kv_load_scenario_snapshot export present");
+        check(GetProcAddress(module, "kv_free_scenario_snapshot") != nullptr,
+              "kv_free_scenario_snapshot export present");
     }
 #endif
 
@@ -961,6 +970,10 @@ int scenario_route_contract() {
             kv_resolve_scenario_routes(path.u8string().c_str(), &count);
         return std::pair<const KvScenarioRouteCandidate*, uint64_t>(candidates,
                                                                     count);
+    };
+    auto load_snapshot = [&](const std::filesystem::path& path) {
+        return kv_load_scenario_snapshot(path.u8string().c_str(),
+                                         KV_SCENARIO_SNAPSHOT_VERSION);
     };
 
     std::filesystem::create_directories(directory / "maps");
@@ -1002,6 +1015,59 @@ int scenario_route_contract() {
         kv_free_scenario_candidates(candidates);
     }
     kv_free_scenario_candidates(nullptr);
+
+    // The full snapshot preserves every official field, source-relative
+    // paths, source order, explicit weights, and implicit default weights.
+    write_bytes(directory / "preview.txt",
+                "BveTs Scenario 2.00:utf-8\n"
+                "Title = Scenario Preview\n"
+                "Route = maps\\missing.txt * 2.5 | maps\\map-a.txt\n"
+                "RouteTitle = Preview Route\n"
+                "Vehicle = trains\\train-a.txt * 3 | trains\\train-b.txt\n"
+                "VehicleTitle = Preview Vehicle\n"
+                "Author = Scenario Author\n"
+                "Image = images\\cover.png\n"
+                "Comment = Scenario Comment\n");
+    {
+        const KvScenarioSnapshot* snapshot = load_snapshot(directory / "preview.txt");
+        check(snapshot != nullptr, "scenario snapshot loads without existing Route target");
+        if (snapshot) {
+            check(snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
+                      snapshot->structure_size == sizeof(KvScenarioSnapshot),
+                  "scenario snapshot version and size");
+            check(scenario_string(*snapshot, snapshot->title) == "Scenario Preview" &&
+                      scenario_string(*snapshot, snapshot->route_title) == "Preview Route" &&
+                      scenario_string(*snapshot, snapshot->vehicle_title) == "Preview Vehicle" &&
+                      scenario_string(*snapshot, snapshot->author) == "Scenario Author" &&
+                      scenario_string(*snapshot, snapshot->image) == "images\\cover.png" &&
+                      scenario_string(*snapshot, snapshot->comment) == "Scenario Comment",
+                  "scenario snapshot stores scalar official fields");
+            check(snapshot->route_count == 2 && snapshot->routes &&
+                      scenario_string(*snapshot, snapshot->routes[0].path) == "maps\\missing.txt" &&
+                      nearly_equal(snapshot->routes[0].weight, 2.5) &&
+                      snapshot->routes[0].has_explicit_weight != 0 &&
+                      scenario_string(*snapshot, snapshot->routes[1].path) == "maps\\map-a.txt" &&
+                      nearly_equal(snapshot->routes[1].weight, 1.0) &&
+                      snapshot->routes[1].has_explicit_weight == 0,
+                  "scenario snapshot keeps Route relative paths and weights");
+            check(snapshot->vehicle_count == 2 && snapshot->vehicles &&
+                      scenario_string(*snapshot, snapshot->vehicles[0].path) == "trains\\train-a.txt" &&
+                      nearly_equal(snapshot->vehicles[0].weight, 3.0) &&
+                      snapshot->vehicles[0].has_explicit_weight != 0 &&
+                      scenario_string(*snapshot, snapshot->vehicles[1].path) == "trains\\train-b.txt" &&
+                      nearly_equal(snapshot->vehicles[1].weight, 1.0) &&
+                      snapshot->vehicles[1].has_explicit_weight == 0,
+                  "scenario snapshot keeps Vehicle relative paths and weights");
+        }
+        kv_free_scenario_snapshot(snapshot);
+    }
+    kv_free_scenario_snapshot(nullptr);
+    {
+        auto [candidates, count] = resolve(directory / "preview.txt");
+        check(candidates == nullptr && count == 0,
+              "route resolver still rejects nonexistent Route target");
+        kv_free_scenario_candidates(candidates);
+    }
 
     // Omitted encoding defaults to UTF-8; weighted multi-candidate syntax.
     write_bytes(directory / "multi.txt",
@@ -1068,6 +1134,15 @@ int scenario_route_contract() {
                   (std::string(label) + " diagnostic").c_str());
         }
     };
+    write_bytes(directory / "noroute.txt",
+                "BveTs Scenario 2.00\nTitle = No Route Here\n");
+    {
+        const KvScenarioSnapshot* snapshot = load_snapshot(directory / "noroute.txt");
+        check(snapshot != nullptr && snapshot->route_count == 0 &&
+                  scenario_string(*snapshot, snapshot->title) == "No Route Here",
+              "scenario snapshot permits a missing Route");
+        kv_free_scenario_snapshot(snapshot);
+    }
     expect_failure("noroute.txt",
                    "BveTs Scenario 2.00\nTitle = No Route Here\n",
                    "no Route entry", "missing Route rejected");

@@ -28,6 +28,30 @@ struct ScenarioRouteCandidate {
     std::string resolved_path;
 };
 
+struct ScenarioPathWeight {
+    std::string path_text;
+    double weight = 1.0;
+    bool has_explicit_weight = false;
+};
+
+struct ScenarioDocument {
+    std::filesystem::path root;
+    std::string title;
+    std::vector<ScenarioPathWeight> routes;
+    std::string route_title;
+    std::vector<ScenarioPathWeight> vehicles;
+    std::string vehicle_title;
+    std::string author;
+    std::string image;
+    std::string comment;
+};
+
+/* Parses all official BVE Scenario fields. The snapshot keeps the relative
+   Route and Vehicle text in source form and intentionally does not resolve or
+   require Route targets. Repeated fields retain the existing last-entry-wins
+   compatibility behavior. */
+ScenarioDocument load_scenario_document(const std::filesystem::path& scenario_path);
+
 /* Parses every Route candidate of one BVE Scenario file per the official
    Scenario schema: "BveTs Scenario 2.00:<encoding>" header, '#' or ';'
    comments, top-level key = value rows, and Route values of the form

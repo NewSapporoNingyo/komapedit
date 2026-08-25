@@ -85,11 +85,11 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 
 | Area | Primary files and responsibility |
 | --- | --- |
-| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v8 functions, fixed-width POD snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
+| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v9 functions, fixed-width POD snapshots, Scenario snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
 | Map lifecycle | `src/maploader/maploader.cpp`: C ABI entry points, handles, regeneration, dispatch, source retrieval, and boundary error handling |
 | Map state | `src/maploader/maploader_internal.h`: `MapContext`, parsed rows, source spans, include stacks, edit references, reports, and timing |
 | Parsing | `maploader_core.cpp`, `maploader_parser.cpp`, `text_decoder.cpp/.h`: statements, values, includes, variables, encodings, source anchors, uniqueness checks |
-| Scenario resolution | `scenario_route.cpp/.h`: BVE file-kind probe and official Scenario `Route` candidate parsing/resolution for open-from-scenario |
+| Scenario parsing | `scenario_route.cpp/.h`: BVE file-kind probe, full official Scenario snapshot parsing, and `Route` candidate resolution for open-from-scenario |
 | Geometry | `maploader_geometry.cpp`: own/other-track geometry, relocation, curves, gradients, placement buffers, scene control points |
 | Identity and snapshots | `maploader_identity.cpp`, `maploader_snapshot.cpp`, `maploader_semantic.cpp`: stable IDs, typed snapshots, revisions, comparisons, fingerprints |
 | Editing | `maploader_edits.cpp`: dry run, in-memory Apply, direct Apply, commit, reset, source patching, encoding-aware writeback, distance adjustment; Include statements support restricted path-argument updates validated by full reparse with old/new subtree masks |
@@ -116,7 +116,7 @@ Use existing boundaries and shared helpers. Do not duplicate source ownership, l
 - Preserve `UNICODE`, `_UNICODE`, `NOMINMAX`, and `WIN32_LEAN_AND_MEAN` assumptions.
 - Never let exceptions, STL types, C++ classes, or ownership-ambiguous pointers cross a public C ABI.
 - Memory allocated by a DLL and returned through the ABI must have a matching free function.
-- The bundled EXE requires exact maploader API v8 and model-loader API v2 matches. `kv_load_map_ex()` is the only map-loading entry point; map, scene, edit-target, and edit-report snapshot versions and structure sizes remain independently versioned and unchanged by the API v8 transition.
+- The bundled EXE requires exact maploader API v9 and model-loader API v2 matches. `kv_load_map_ex()` is the only map-loading entry point; `KvScenarioSnapshot` v1 is independently allocated and released with `kv_free_scenario_snapshot()`, while map, scene, edit-target, and edit-report snapshot versions and structure sizes remain independently versioned.
 - Treat typed ABI inputs as call-scoped views. Nested snapshot storage is handle-owned and is invalidated according to its documented regular-geometry, scene-geometry, edit-operation, reset, reparse, and free rules.
 - Any public ABI change requires an explicit version/structure-size decision, synchronized EXE/DLL changes, updated callers, and documented ownership and validity.
 
@@ -124,7 +124,7 @@ Use existing boundaries and shared helpers. Do not duplicate source ownership, l
 
 Preserve BVE Map 2.0+, supported legacy syntax, `Include`, variables, predefined `distance`, math functions, comments, and UTF-8/BOM, UTF-16LE/BE, and CP932/Shift_JIS-related input.
 
-Scenario files are read only through `scenario_route.cpp/.h` per the official Scenario schema: `kv_probe_file_kind()` reads just the first bytes to classify Map/Scenario/unknown files, and `kv_resolve_scenario_routes()` validates the `BveTs Scenario 2.00` header with declared-encoding decoding, strips `#`/`;` comments, parses single or weighted `Route` candidates relative to the scenario directory, requires every target to exist, and returns one malloc block that the caller releases with `kv_free_scenario_candidates()`. Scenario editing, creation, and writeback are not implemented.
+Scenario files are read only through `scenario_route.cpp/.h` per the official Scenario schema. `kv_load_scenario_snapshot()` validates the `BveTs Scenario 2.00` header with declared-encoding decoding, strips `#`/`;` comments, retains the last value for each of `Title`, `Route`, `RouteTitle`, `Vehicle`, `VehicleTitle`, `Author`, `Image`, and `Comment`, and returns source-relative Route/Vehicle path rows with explicit or default weight values; it does not require a Route or its target to exist and its allocated snapshot is released with `kv_free_scenario_snapshot()`. `kv_resolve_scenario_routes()` reuses that parse, requires Route candidates and existing targets, and returns one malloc block released with `kv_free_scenario_candidates()`. Scenario editing, creation, and writeback are not implemented.
 
 Implement general rules matching official BVE syntax; do not add private route syntax or special-case one route. Presets must emit ordinary BVE map/list statements.
 

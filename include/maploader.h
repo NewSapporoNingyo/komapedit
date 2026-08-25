@@ -69,6 +69,18 @@ KV_API const KvScenarioRouteCandidate* kv_resolve_scenario_routes(
    allowed. */
 KV_API void kv_free_scenario_candidates(const KvScenarioRouteCandidate* candidates);
 
+/* Parses a BVE Scenario file into an immutable, independently owned typed
+   snapshot. Route and Vehicle paths retain their original relative UTF-8
+   source text; this call validates Scenario syntax but does not require Route
+   targets to exist. Pass KV_SCENARIO_SNAPSHOT_VERSION and release a non-NULL
+   result exactly once with kv_free_scenario_snapshot(). */
+KV_API const KvScenarioSnapshot* kv_load_scenario_snapshot(
+    const char* scenario_path, uint32_t version);
+
+/* Releases a snapshot returned by kv_load_scenario_snapshot(). Passing NULL
+   is allowed. */
+KV_API void kv_free_scenario_snapshot(const KvScenarioSnapshot* snapshot);
+
 /* Returns an opaque map handle owned by the caller. Release it exactly once
    with kv_free(). KV_LOAD_PREVIEW skips source/edit metadata when
    KV_LOAD_EDIT_METADATA is not also set. */

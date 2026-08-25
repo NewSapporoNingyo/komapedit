@@ -1500,6 +1500,25 @@ struct ScenarioRoutePickState {
     int selected = 0;
 };
 
+struct ScenarioPreviewPath {
+    std::string path;
+    double weight = 1.0;
+    bool has_explicit_weight = false;
+};
+
+// App-owned copy of a maploader Scenario snapshot. It remains independent of
+// the map handle so a Scenario with no usable Route can still be previewed.
+struct ScenarioPreview {
+    std::string title;
+    std::vector<ScenarioPreviewPath> routes;
+    std::string route_title;
+    std::vector<ScenarioPreviewPath> vehicles;
+    std::string vehicle_title;
+    std::string author;
+    std::string image;
+    std::string comment;
+};
+
 bool map_element_inspector_field_forced_read_only(
     std::string_view row_kind, std::string_view field_key) noexcept;
 
@@ -1877,6 +1896,11 @@ private:
         bool full_edit_registry = false;
         std::string load_profile = "preview";
     };
+    struct PendingDocumentOpen {
+        std::string path;
+        bool record_history = false;
+        std::optional<BackgroundHistory> background_to_restore;
+    };
     struct AsyncLoadState {
         std::thread worker;
         std::atomic<bool> running{false};
@@ -1982,6 +2006,7 @@ private:
     bool show_legacy_fogs_window_ = false;
     bool show_draw_distances_window_ = false;
     bool show_speed_limits_window_ = false;
+    bool show_scenario_file_window_ = false;
     bool show_file_structure_window_ = false;
     bool show_console_window_ = true;
     bool show_plots_window_ = true;
@@ -2008,6 +2033,7 @@ private:
     bool focus_legacy_fogs_next_ = false;
     bool focus_draw_distances_next_ = false;
     bool focus_speed_limits_next_ = false;
+    bool focus_scenario_file_next_ = false;
     bool focus_file_structure_next_ = false;
     bool focus_model_preview_next_ = false;
     bool focus_scene_preview_next_ = false;
@@ -2022,17 +2048,19 @@ private:
         bool canvas_element_sizes = false;
         bool canvas_3d_settings = false;
         bool reload_unsaved_confirm = false;
+        bool open_document_unsaved_confirm = false;
         bool close_unsaved_confirm = false;
         bool revert_all_edits_confirm = false;
         bool edit_mode_warning = false;
         bool resource_list_file_change_confirm = false;
     };
-    enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly, NewFile };
+    enum class PendingReloadAction { None, MapAndModelPreview, GeometryOnly };
     enum class PendingCloseAction { None, DisableEditMode, ExitApplication };
     PopupState popups_;
     ScenarioRoutePickState scenario_route_pick_;
+    std::optional<ScenarioPreview> scenario_preview_;
+    std::optional<PendingDocumentOpen> pending_document_open_;
     PendingReloadAction pending_reload_action_ = PendingReloadAction::None;
-    std::string pending_new_file_load_path_;
     PendingCloseAction pending_close_action_ = PendingCloseAction::None;
     bool has_saved_layout_ = false;
     bool initial_dockspace_done_ = false;
@@ -2247,10 +2275,14 @@ private:
     void process_pending_edit_ui_operation();
     void finish_pending_load_timing(std::chrono::steady_clock::time_point finished_at);
     void finish_pending_load_timing_after_plan_data_ready();
-    void begin_load(std::string path, bool preserve_settings, bool record_history = false,
-                    std::optional<BackgroundHistory> background_to_restore = std::nullopt,
-                    bool preserve_scene_preview_models = false,
-                    bool preserve_scene_preview_camera = false);
+    void open_document(std::string path, bool record_history = false,
+                       std::optional<BackgroundHistory> background_to_restore = std::nullopt);
+    void perform_open_document(PendingDocumentOpen request);
+    void reset_document_for_open();
+    void begin_map_load(std::string path, bool preserve_settings, bool record_history = false,
+                        std::optional<BackgroundHistory> background_to_restore = std::nullopt,
+                        bool preserve_scene_preview_models = false,
+                        bool preserve_scene_preview_camera = false);
     void apply_load_result(LoadResult result);
     void begin_edit_metadata_load();
     void apply_edit_metadata_result(LoadResult result);
@@ -2452,6 +2484,7 @@ private:
     void render_signals_window();
     void render_sections_window();
     void render_variables_window();
+    void render_scenario_file_window();
     void render_beacons_window();
     void render_irregularities_window();
     void render_map_sounds_window();

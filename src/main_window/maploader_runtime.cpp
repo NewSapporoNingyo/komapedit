@@ -18,6 +18,8 @@ namespace {
     X(probe_file_kind, kv_probe_file_kind) \
     X(resolve_scenario_routes, kv_resolve_scenario_routes) \
     X(free_scenario_candidates, kv_free_scenario_candidates) \
+    X(load_scenario_snapshot, kv_load_scenario_snapshot) \
+    X(free_scenario_snapshot, kv_free_scenario_snapshot) \
     X(generate_geometry, kv_generate_geometry) \
     X(generate_scene_geometry, kv_generate_scene_geometry) \
     X(get_map_snapshot, kv_get_map_snapshot) \
@@ -144,6 +146,20 @@ void kv_free_scenario_candidates(const KvScenarioRouteCandidate* candidates) {
     if (!candidates) return;
     MaploaderRuntime& runtime = maploader_runtime();
     if (runtime.available()) runtime.free_scenario_candidates(candidates);
+}
+
+const KvScenarioSnapshot* kv_load_scenario_snapshot(
+    const char* scenario_path, uint32_t version) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available()
+        ? runtime.load_scenario_snapshot(scenario_path, version)
+        : nullptr;
+}
+
+void kv_free_scenario_snapshot(const KvScenarioSnapshot* snapshot) {
+    if (!snapshot) return;
+    MaploaderRuntime& runtime = maploader_runtime();
+    if (runtime.available()) runtime.free_scenario_snapshot(snapshot);
 }
 
 int kv_generate_geometry(

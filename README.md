@@ -20,7 +20,7 @@ Editing is source-backed but still experimental. Back up route files or keep the
 ## Features
 
 - Opens BVE Trainsim 2.0+ map files in UTF-8, UTF-16, CP932/Shift_JIS-related encodings, including nested `Include` files; missing or invalid included maps are skipped with a warning so remaining elements can load.
-- Opens maps through BVE Scenario files (`BveTs Scenario 2.00`) by resolving the official `Route` entry relative to the scenario directory; multiple weighted candidates are chosen in a selection dialog.
+- Opens maps through BVE Scenario files (`BveTs Scenario 2.00`) by resolving the official `Route` entry relative to the scenario directory; multiple weighted candidates are chosen in a selection dialog. `Map Info List -> Other -> Scenario File` provides a read-only view of all eight official fields, preserving source-relative Route and Vehicle paths and their weights.
 - Displays plan, elevation/profile, curve-radius, station, speed-limit, other-track, marker, and measurement information.
 - Provides searchable tables for stations, tracks, Structures, repeaters, signals, beacons, sounds, trains, and environmental effects.
 - Previews Structure models and a route scene in 3D.
@@ -128,7 +128,7 @@ section, and loose value forms are ignored and use defaults. Loading an existing
 partial or obsolete file does not rewrite it; an explicit settings save writes a
 complete current-format file.
 
-The bundled executable requires maploader API v8 and loads maps only through
+The bundled executable requires maploader API v9 and loads maps only through
 `kv_load_map_ex()`. Earlier DLLs are rejected by the exact API-version check.
 Build and distribution-cleanup scripts do not migrate or delete obsolete
 root-level INIs or DLLs: if either is present, they stop and require a clean
@@ -136,7 +136,7 @@ root-level INIs or DLLs: if either is present, they stop and require a clean
 
 ## Usage
 
-1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.txt` or `.csv` map file. A BVE Scenario file (`BveTs Scenario 2.00`) is resolved through its `Route` entry: with one candidate the referenced map loads directly, and with multiple weighted candidates a fixed-width dialog lists the original relative paths for selection. Editing, saving, reloading, and recent-map history always operate on the resolved map file; scenario weights are validated but never used for automatic selection.
+1. Use `File -> Open...` or the `Open` button on the toolbar to select a `.txt` or `.csv` map file. A BVE Scenario file (`BveTs Scenario 2.00`) is first retained as a read-only document: `Map Info List -> Other -> Scenario File` shows its official fields, original relative Route/Vehicle paths, and weights. One valid Route candidate loads its map directly; multiple candidates open a fixed-width selection dialog. A missing Route, a missing Route target, or cancelling that dialog leaves the Scenario File preview available without a map. Opening any other map or Scenario starts a new document and clears that preview; direct map opens disable the menu item. Editing, saving, reloading, and recent-map history operate on the resolved map file; scenario weights are validated but never used for automatic selection.
    - `File -> New...` can create an independent header-only map/list file or, for the five resource-list templates, import an existing `.txt`/`.csv`. Import fills the editable file name, path, and suffix fields. The selected suffix is always appended to the typed name; an existing regular target file is reused without modification, while a missing target is created with the standard header. Only the map template's `Confirm and Load` opens the selected map after confirmation. When a loaded map is selected as its reference target, Edit mode is required; its typed `include` or `*.Load` reference is preview-only until the normal `Save`.
 2. After the map loads, the main window shows the plan view, profile chart, and curve-radius chart.
 3. In the plan view:

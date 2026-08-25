@@ -73,6 +73,58 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+namespace {
+
+bool scenario_snapshot_ref_valid(const KvScenarioSnapshot& snapshot,
+                                 KvStringRef reference) {
+    return reference.offset <= snapshot.string_size &&
+        reference.length <= snapshot.string_size - reference.offset &&
+        (reference.length == 0 || snapshot.string_data != nullptr);
+}
+
+std::string scenario_snapshot_string(const KvScenarioSnapshot& snapshot,
+                                     KvStringRef reference) {
+    if (!scenario_snapshot_ref_valid(snapshot, reference)) {
+        throw std::runtime_error("scenario snapshot contains an invalid string reference");
+    }
+    return std::string(snapshot.string_data ? snapshot.string_data + reference.offset : "",
+                       static_cast<size_t>(reference.length));
+}
+
+ScenarioPreview copy_scenario_snapshot(const KvScenarioSnapshot& snapshot) {
+    if (snapshot.version != KV_SCENARIO_SNAPSHOT_VERSION ||
+        snapshot.structure_size < sizeof(KvScenarioSnapshot)) {
+        throw std::runtime_error("scenario snapshot version or size is invalid");
+    }
+    const auto copy_paths = [&](const KvScenarioPathWeightRow* rows, uint64_t count) {
+        if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+            (count != 0 && !rows)) {
+            throw std::runtime_error("scenario snapshot contains an invalid path row array");
+        }
+        std::vector<ScenarioPreviewPath> paths;
+        paths.reserve(static_cast<size_t>(count));
+        for (uint64_t i = 0; i < count; ++i) {
+            paths.push_back(ScenarioPreviewPath{scenario_snapshot_string(snapshot, rows[i].path),
+                                                rows[i].weight,
+                                                rows[i].has_explicit_weight != 0});
+        }
+        return paths;
+    };
+
+    ScenarioPreview preview;
+    preview.title = scenario_snapshot_string(snapshot, snapshot.title);
+    preview.routes = copy_paths(snapshot.routes, snapshot.route_count);
+    preview.route_title = scenario_snapshot_string(snapshot, snapshot.route_title);
+    preview.vehicles = copy_paths(snapshot.vehicles, snapshot.vehicle_count);
+    preview.vehicle_title = scenario_snapshot_string(snapshot, snapshot.vehicle_title);
+    preview.author = scenario_snapshot_string(snapshot, snapshot.author);
+    preview.image = scenario_snapshot_string(snapshot, snapshot.image);
+    preview.comment = scenario_snapshot_string(snapshot, snapshot.comment);
+    return preview;
+}
+
+} // namespace
+
 void App::stop_loader() {
     if (load_state_.worker.joinable()) load_state_.worker.join();
 }
@@ -106,10 +158,154 @@ bool App::on_frame_presented() {
     return true;
 }
 
-void App::begin_load(std::string path, bool preserve_settings, bool record_history,
-                     std::optional<BackgroundHistory> background_to_restore,
-                     bool preserve_scene_preview_models,
-                     bool preserve_scene_preview_camera) {
+void App::open_document(std::string path, bool record_history,
+                        std::optional<BackgroundHistory> background_to_restore) {
+    if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
+    PendingDocumentOpen request{std::move(path), record_history,
+                                std::move(background_to_restore)};
+    if (has_unsaved_edit_state()) {
+        pending_document_open_ = std::move(request);
+        popups_.open_document_unsaved_confirm = true;
+        wake_main_window();
+        return;
+    }
+    perform_open_document(std::move(request));
+}
+
+void App::reset_document_for_open() {
+    stop_loader();
+    std::optional<LoadResult> stale_result;
+    {
+        std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+        stale_result = std::move(load_state_.pending_result);
+        load_state_.pending_result.reset();
+    }
+    if (stale_result && stale_result->handle) kv_free(stale_result->handle);
+    if (handle_) {
+        kv_free(handle_);
+        handle_ = nullptr;
+    }
+    model_ = MapModel{};
+    has_model_ = false;
+    file_path_.clear();
+    edit_registry_loaded_ = false;
+    clear_pending_edit_state();
+    pending_include_file_change_request_.reset();
+    pending_include_file_insert_request_.reset();
+    pending_new_file_create_request_.reset();
+    pending_resource_list_file_change_request_.reset();
+    resource_list_file_change_confirmation_.reset();
+    new_file_wizard_ = NewFileWizardState{};
+    pending_document_open_.reset();
+    popups_.resource_list_file_change_confirm = false;
+    scenario_route_pick_ = ScenarioRoutePickState{};
+    scenario_preview_.reset();
+    show_scenario_file_window_ = false;
+    focus_scenario_file_next_ = false;
+    invalidate_table_cache();
+    file_structure_layout_cache_ = FileStructureDiagramLayoutCache{};
+    file_structure_include_edit_ids_.clear();
+    file_structure_include_ids_revision_ = 0;
+    file_structure_include_ids_handle_ = nullptr;
+    file_structure_include_ids_current_ = false;
+    text_preview_ = TextPreviewState{};
+    rebuild_marker_overlay_cache();
+    reset_marker_visibility();
+    dmin_ = dmax_ = plot_min_ = plot_max_ = 0.0;
+    cp_start_ = cp_end_ = 0.0;
+    cp_interval_ = 25.0;
+    plan_view_.fitted = false;
+    clear_measure();
+    reset_plot_axes();
+    clear_background_image();
+    scene_preview_dirty_ = true;
+    scene_preview_preserve_models_on_rebuild_ = false;
+    scene_preview_preserve_camera_on_rebuild_ = false;
+    pending_scene_preview_started_at_.reset();
+    if (scene_preview_canvas_) scene_preview_canvas_->clear_scene();
+    {
+        std::lock_guard<std::mutex> lock(log_mutex_);
+        logs_.clear();
+        ++log_revision_;
+        error_count_.store(0, std::memory_order_relaxed);
+        warn_count_.store(0, std::memory_order_relaxed);
+    }
+    set_program_status("status.ready");
+}
+
+void App::perform_open_document(PendingDocumentOpen request) {
+    if (request.path.empty() || load_state_.running || edit_ui_operation_pending()) return;
+    reset_document_for_open();
+
+    if (kv_probe_file_kind(request.path.c_str()) != KV_FILE_KIND_SCENARIO) {
+        begin_map_load(std::move(request.path), false, request.record_history,
+                       std::move(request.background_to_restore));
+        return;
+    }
+
+    const KvScenarioSnapshot* snapshot = kv_load_scenario_snapshot(
+        request.path.c_str(), KV_SCENARIO_SNAPSHOT_VERSION);
+    if (!snapshot) {
+        const char* error = kv_get_last_error();
+        set_program_status("status.map_load_failed");
+        add_log(LogSeverity::Error,
+                std::string("Failed to load scenario preview: ") +
+                    (error && *error ? error : "maploader failed"));
+        return;
+    }
+    try {
+        scenario_preview_ = copy_scenario_snapshot(*snapshot);
+    } catch (const std::exception& e) {
+        kv_free_scenario_snapshot(snapshot);
+        set_program_status("status.map_load_failed");
+        add_log(LogSeverity::Error,
+                std::string("Failed to read scenario preview: ") + e.what());
+        return;
+    }
+    kv_free_scenario_snapshot(snapshot);
+
+    uint64_t candidate_count = 0;
+    const KvScenarioRouteCandidate* candidates =
+        kv_resolve_scenario_routes(request.path.c_str(), &candidate_count);
+    if (!candidates || candidate_count == 0 ||
+        candidate_count > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+        const char* error = kv_get_last_error();
+        set_program_status("status.map_load_failed");
+        add_log(LogSeverity::Error,
+                std::string("Failed to resolve scenario route: ") +
+                    (error && *error ? error : "maploader failed"));
+        kv_free_scenario_candidates(candidates);
+        return;
+    }
+
+    std::vector<ScenarioRoutePickItem> items;
+    items.reserve(static_cast<size_t>(candidate_count));
+    for (uint64_t i = 0; i < candidate_count; ++i) {
+        items.push_back(ScenarioRoutePickItem{candidates[i].route_text,
+                                              candidates[i].resolved_path});
+    }
+    kv_free_scenario_candidates(candidates);
+    if (items.size() == 1) {
+        const ScenarioRoutePickItem& item = items.front();
+        begin_map_load(item.resolved_path, false, request.record_history,
+                       std::move(request.background_to_restore));
+        add_log("Opened via scenario: " + request.path);
+        add_log("Resolved route: " + item.route_text + " -> " + item.resolved_path);
+        return;
+    }
+
+    scenario_route_pick_.popup_requested = true;
+    scenario_route_pick_.scenario_path = request.path;
+    scenario_route_pick_.items = std::move(items);
+    scenario_route_pick_.selected = 0;
+    add_log("Opened scenario: " + request.path);
+    wake_main_window();
+}
+
+void App::begin_map_load(std::string path, bool preserve_settings, bool record_history,
+                         std::optional<BackgroundHistory> background_to_restore,
+                         bool preserve_scene_preview_models,
+                         bool preserve_scene_preview_camera) {
     if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
@@ -125,43 +321,6 @@ void App::begin_load(std::string path, bool preserve_settings, bool record_histo
         ++log_revision_;
         error_count_.store(0, std::memory_order_relaxed);
         warn_count_.store(0, std::memory_order_relaxed);
-    }
-
-    // Open-from-scenario support: a BVE Scenario file resolves to the map file
-    // its Route entry points at. Everything downstream (window title, history,
-    // Save/Reload targets) keeps operating on the resolved map path.
-    if (kv_probe_file_kind(path.c_str()) == KV_FILE_KIND_SCENARIO) {
-        uint64_t candidate_count = 0;
-        const KvScenarioRouteCandidate* candidates =
-            kv_resolve_scenario_routes(path.c_str(), &candidate_count);
-        if (!candidates || candidate_count == 0) {
-            const char* error = kv_get_last_error();
-            set_program_status("status.map_load_failed");
-            add_log(LogSeverity::Error,
-                    std::string("Failed to resolve scenario route: ") +
-                        (error && *error ? error : "maploader failed"));
-            return;
-        }
-        std::vector<ScenarioRoutePickItem> items;
-        items.reserve(static_cast<size_t>(candidate_count));
-        for (uint64_t i = 0; i < candidate_count; ++i) {
-            items.push_back(ScenarioRoutePickItem{candidates[i].route_text,
-                                                  candidates[i].resolved_path});
-        }
-        kv_free_scenario_candidates(candidates);
-        if (items.size() == 1) {
-            add_log("Opened via scenario: " + path);
-            add_log("Resolved route: " + items.front().route_text + " -> " +
-                    items.front().resolved_path);
-            path = items.front().resolved_path;
-        } else {
-            scenario_route_pick_.popup_requested = true;
-            scenario_route_pick_.scenario_path = path;
-            scenario_route_pick_.items = std::move(items);
-            scenario_route_pick_.selected = 0;
-            wake_main_window();
-            return;
-        }
     }
 
     load_state_.running = true;
