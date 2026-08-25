@@ -112,6 +112,7 @@ std::optional<TrackPoint> sample_matrix_track_point_at_lower_bound(
 struct TrackSource {
     const Matrix* points = nullptr;
     bool has_theta_column = false;
+    size_t track_index = std::numeric_limits<size_t>::max();
 };
 
 TrackPoint offset_track_point(TrackPoint base, double lateral, double forward) {
@@ -393,8 +394,14 @@ void App::rebuild_marker_overlay_cache() {
     };
     append_own_track_edit_markers(model_.curve_rows, false);
     append_own_track_edit_markers(model_.gradient_rows, true);
-    for (const auto& track : model_.other_tracks) {
-        track_sources[normalize_track_lookup_key(track.key)] = TrackSource{&track.points, false};
+    for (size_t track_index = 0; track_index < model_.other_tracks.size(); ++track_index) {
+        const OtherTrack& track = model_.other_tracks[track_index];
+        TrackSource& source = track_sources[normalize_track_lookup_key(track.key)];
+        source.points = &track.points;
+        source.has_theta_column = false;
+        if (source.track_index == std::numeric_limits<size_t>::max()) {
+            source.track_index = track_index;
+        }
     }
 
     other_track_change_marker_cache_.reserve(model_.other_track_changes.size());
@@ -403,18 +410,17 @@ void App::rebuild_marker_overlay_cache() {
         if (row.edit_id.empty()) continue;
         const std::string normalized_key =
             normalize_track_lookup_key(table_cell(row, "trackKey"));
-        const auto track_it = std::find_if(
-            model_.other_tracks.begin(), model_.other_tracks.end(),
-            [&](const OtherTrack& track) {
-                return normalize_track_lookup_key(track.key) == normalized_key;
-            });
-        if (track_it == model_.other_tracks.end()) continue;
-        const size_t track_index = static_cast<size_t>(
-            track_it - model_.other_tracks.begin());
+        const auto source_it = track_sources.find(normalized_key);
+        if (source_it == track_sources.end() ||
+            source_it->second.track_index >= model_.other_tracks.size()) {
+            continue;
+        }
+        const size_t track_index = source_it->second.track_index;
+        const OtherTrack& track = model_.other_tracks[track_index];
         const double distance = table_cell_number(row, "distance");
-        if (distance < track_it->range_min || distance > track_it->range_max) continue;
+        if (distance < track.range_min || distance > track.range_max) continue;
         const std::optional<TrackPoint> point =
-            sample_matrix_track_point(track_it->points, distance, false);
+            sample_matrix_track_point(track.points, distance, false);
         if (!point) continue;
         OtherTrackChangeMarker marker;
         marker.d = distance;

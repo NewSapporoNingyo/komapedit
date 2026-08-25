@@ -2412,6 +2412,7 @@ private:
     void render_station_jump_combo();
     void render_distance_jump_control();
     void render_console();
+    void reset_plot_axes();
     void render_plots();
     void render_plan_canvas(ImVec2 size);
     void render_profile_plot(const ProfileData& data, ImVec2 size);

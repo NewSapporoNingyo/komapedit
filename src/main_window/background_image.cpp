@@ -246,6 +246,13 @@ HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
 
     const int int_min = std::numeric_limits<int>::lowest();
     const int int_max = std::numeric_limits<int>::max();
+    const bool thousandths_truncation =
+        std::abs(truncate_gui_thousandths(1.2349) - 1.234) < 1e-12 &&
+        std::abs(truncate_gui_thousandths(-1.2349) + 1.234) < 1e-12 &&
+        truncate_gui_thousandths(-0.0004) == 0.0 &&
+        !std::signbit(truncate_gui_thousandths(-0.0004)) &&
+        std::isnan(truncate_gui_thousandths(
+            std::numeric_limits<double>::quiet_NaN()));
     result.numeric_conversion =
         kme::truncating_int_or_zero(42.875) == 42 &&
         kme::truncating_int_or_zero(-42.875) == -42 &&
@@ -255,7 +262,8 @@ HeadlessResourceSafetyContractResult run_debug_resource_safety_contract(
         kme::truncating_int_or_zero(static_cast<double>(int_min) - 1.0) == 0 &&
         kme::truncating_int_or_zero(std::numeric_limits<double>::quiet_NaN()) == 0 &&
         kme::truncating_int_or_zero(std::numeric_limits<double>::infinity()) == 0 &&
-        kme::truncating_int_or_zero(-std::numeric_limits<double>::infinity()) == 0;
+        kme::truncating_int_or_zero(-std::numeric_limits<double>::infinity()) == 0 &&
+        thousandths_truncation;
     return result;
 }
 #endif

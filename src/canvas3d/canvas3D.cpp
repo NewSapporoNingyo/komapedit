@@ -9053,15 +9053,6 @@ fail:
         return Canvas3DSceneDragAxis::None;
     }
 
-    static double truncate_scene_millimeter(double value) {
-        if (!std::isfinite(value)) return value;
-        double scaled = value * 1000.0;
-        const double nearest = std::round(scaled);
-        if (std::abs(scaled - nearest) < 1e-9) scaled = nearest;
-        double result = std::trunc(scaled) / 1000.0;
-        return result == 0.0 ? 0.0 : result;
-    }
-
     static bool scene_ray_triangle_intersection(DVec3 ray_origin,
                                                 DVec3 ray_direction,
                                                 DVec3 a,
@@ -9493,7 +9484,7 @@ fail:
             placement_distance_drag || sound3d_distance_drag;
         const double candidate = distance_drag
             ? std::round(scene_structure_edit.drag_start_value + delta)
-            : truncate_scene_millimeter(scene_structure_edit.drag_start_value + delta);
+            : truncate_gui_thousandths(scene_structure_edit.drag_start_value + delta);
         const int axis_index = structure_drag_axis_index(scene_structure_edit.dragging_axis);
         double* current_value = repeater_end_distance_drag
             ? &scene_structure_edit.current.repeater_end_distance

@@ -995,13 +995,7 @@ void App::render_popups() {
             dmin_ = plot_min_;
             dmax_ = plot_max_;
             keep_plan_view_ = false;
-            reset_profile_axes_next_ = true;
-            reset_radius_axes_next_ = true;
-            profile_x_span_ = 0.0;
-            radius_x_span_ = 0.0;
-            profile_x_zoom_pending_ = false;
-            profile_y_zoom_pending_ = false;
-            radius_x_zoom_pending_ = false;
+            reset_plot_axes();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();

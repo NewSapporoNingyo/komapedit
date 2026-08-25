@@ -288,6 +288,16 @@ static double preserved_plot_span(double current_span, double fallback_min, doub
 
 } // namespace
 
+void App::reset_plot_axes() {
+    reset_profile_axes_next_ = true;
+    reset_radius_axes_next_ = true;
+    profile_x_span_ = 0.0;
+    radius_x_span_ = 0.0;
+    profile_x_zoom_pending_ = false;
+    profile_y_zoom_pending_ = false;
+    radius_x_zoom_pending_ = false;
+}
+
 void App::render_profile_plot(const ProfileData& data, ImVec2 size) {
     if (!show_profile_graph_) return;
     ScopedImPlotFitButton disable_fit(mode_ == Mode::Measure);
