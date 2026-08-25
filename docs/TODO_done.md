@@ -123,6 +123,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 ### User Interface and Utilities
 
 - [x] Add `File -> New...` and a trilingual New File Wizard that creates header-only `BveTs Map 2.02` maps or Structure, Signal, Sound, Sound3D, and Station list files without overwriting existing files. A selected loaded map receives a preview-only typed `include`/`*.Load` reference that normal Save commits; Revert keeps the created file. Presets remain empty, and the wizard does not create Scenario files or list rows.
+- [x] Add existing resource-list import/reuse to the five New File Wizard list templates and empty-state `New or Import File` entry points to their tables. Import fills editable path/name/suffix fields, existing regular files are referenced without modification, duplicate list references are disabled, and replacement remains the top-path `Change File...` action.
 - [x] Dear ImGui docking-based multi-window layout.
 - [x] UI language switching between Simplified Chinese, English, and Japanese.
 - [x] Prefill the current New Map Element wizard template's matching key from the Structure Model, Sound File, or 3D Sound File List context menu while preserving its other draft fields and target source file.
@@ -262,6 +263,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 ### 用户界面与辅助功能
 
 - [x] 新增 `文件 -> 新建...` 及三语“新建文件向导”，可在不覆盖已有文件的前提下新建仅含文件头的 `BveTs Map 2.02` 地图或 Structure、Signal、Sound、Sound3D、Station 列表文件。选择已加载地图时，会暂存类型化 `include`/`*.Load` 引用，正常“保存”才提交；“撤销”会保留已创建文件。预设仍为空，向导不新建场景文件或列表行。
+- [x] 为五种资源列表“新建文件向导”模板加入已有文件导入/复用，并在对应表格空态加入“新建或导入文件”入口。导入会填入仍可编辑的路径/文件名/后缀，已有普通文件只会被引用而不修改，重复资源列表引用会禁用，替换仍通过顶部路径的“更换文件...”。
 - [x] Dear ImGui Docking 多窗口布局
 - [x] 简体中文、英文、日文界面语言切换
 - [x] 通过布景模型、音效文件或 3D 音效文件列表的右键菜单，将当前资源 key 预填入“新建地图元素向导”的匹配字段，并保留其他草稿字段和目标源文件

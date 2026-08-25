@@ -264,6 +264,18 @@ std::optional<ResourceListKind> resource_list_kind_for_new_file(NewFileKind kind
     return std::nullopt;
 }
 
+const char* resource_list_name_translation_key(ResourceListKind kind) {
+    switch (kind) {
+    case ResourceListKind::Station: return "resource_list.name.station";
+    case ResourceListKind::Structure: return "resource_list.name.structure";
+    case ResourceListKind::Signal: return "resource_list.name.signal";
+    case ResourceListKind::Sound: return "resource_list.name.sound";
+    case ResourceListKind::Sound3D: return "resource_list.name.sound3d";
+    case ResourceListKind::Count: return "";
+    }
+    return "";
+}
+
 bool new_file_resource_list_is_already_referenced(
     const MapModel& model,
     const std::map<std::string, MapElementPendingChange>& changes,
@@ -393,11 +405,6 @@ void App::process_pending_new_file_create() {
     std::filesystem::path file_name(utf8_to_wide(request.file_name));
     file_name += request.use_csv_extension ? L".csv" : L".txt";
     const std::filesystem::path path = directory / file_name;
-    if (std::filesystem::exists(path, ec) || ec) {
-        add_log("[warn]gui_kme.cpp: new BVE file already exists: " + wide_to_utf8(path.wstring()));
-        set_program_status("status.new_file.create_failed");
-        return;
-    }
 
     if (!request.target_file_path.empty()) {
         if (!edit_actions_available() || !has_model_) {
@@ -416,17 +423,33 @@ void App::process_pending_new_file_create() {
         }
     }
 
-    std::string create_error;
-    if (!create_utf8_bve_file_exclusive(path, new_bve_file_header(request.kind), create_error)) {
-        add_log("[error]gui_kme.cpp: " + create_error + ": " + wide_to_utf8(path.wstring()));
+    const bool existing_file = std::filesystem::exists(path, ec);
+    if (ec) {
+        add_log("[error]gui_kme.cpp: failed to inspect new BVE file path: " +
+                wide_to_utf8(path.wstring()));
         set_program_status("status.new_file.create_failed");
         return;
+    }
+    if (existing_file && (!std::filesystem::is_regular_file(path, ec) || ec)) {
+        add_log("[warn]gui_kme.cpp: new BVE file path is not a regular file: " +
+                wide_to_utf8(path.wstring()));
+        set_program_status("status.new_file.create_failed");
+        return;
+    }
+    if (!existing_file) {
+        std::string create_error;
+        if (!create_utf8_bve_file_exclusive(path, new_bve_file_header(request.kind), create_error)) {
+            add_log("[error]gui_kme.cpp: " + create_error + ": " +
+                    wide_to_utf8(path.wstring()));
+            set_program_status("status.new_file.create_failed");
+            return;
+        }
     }
 
     const std::string selected_file = wide_to_utf8(path.wstring());
     if (!request.target_file_path.empty() &&
         !stage_new_file_reference(request.kind, request.target_file_path, selected_file)) {
-        add_log("[warn]gui_kme.cpp: new BVE file was created without a staged reference: " +
+        add_log("[warn]gui_kme.cpp: new BVE file was not staged as a reference: " +
                 selected_file);
         set_program_status("status.new_file.reference_failed");
         return;
@@ -443,7 +466,9 @@ void App::process_pending_new_file_create() {
         begin_load(selected_file, false, true);
         return;
     }
-    if (request.target_file_path.empty()) set_program_status("status.new_file.created");
+    if (request.target_file_path.empty()) {
+        set_program_status(existing_file ? "status.new_file.reused" : "status.new_file.created");
+    }
 }
 
 void App::process_pending_include_file_insert() {

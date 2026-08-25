@@ -118,6 +118,43 @@ bool render_resource_list_source(const ResourceListSource& source,
         change_label, change_enabled);
 }
 
+std::string resource_list_unavailable_message(bool has_model,
+                                              const std::string& no_map_message,
+                                              std::string message,
+                                              const std::string& resource_list_name) {
+    if (!has_model) return no_map_message;
+    constexpr std::string_view placeholder = "{resource_list}";
+    const size_t placeholder_position = message.find(placeholder);
+    if (placeholder_position != std::string::npos) {
+        message.replace(placeholder_position, placeholder.size(), resource_list_name);
+    }
+    return message;
+}
+
+bool render_resource_list_empty_overlay(const std::string& message,
+                                        const std::string& button_label) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                          ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+    ImGui::BeginChild("##ResourceListEmptyOverlay", ImVec2(0.0f, 0.0f), false,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const ImVec2 message_size = ImGui::CalcTextSize(message.c_str());
+    const float button_width = ImGui::CalcTextSize(button_label.c_str()).x +
+        style.FramePadding.x * 2.0f;
+    const float group_height = message_size.y + style.ItemSpacing.y +
+        ImGui::GetFrameHeight();
+    ImGui::SetCursorPos(ImVec2(
+        std::max(0.0f, (available.x - message_size.x) * 0.5f),
+        std::max(0.0f, (available.y - group_height) * 0.5f)));
+    ImGui::TextUnformatted(message.c_str());
+    ImGui::SetCursorPosX(std::max(0.0f, (available.x - button_width) * 0.5f));
+    const bool clicked = ImGui::Button(button_label.c_str());
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    return clicked;
+}
+
 bool begin_text_cell_context_popup(const std::string& display_text, const char* item_id,
                                    const char* popup_id, bool* item_hovered = nullptr) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -3087,8 +3124,18 @@ void App::render_station_list_window() {
         ImGui::End();
         return;
     }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
+    const ResourceListKind resource_kind = ResourceListKind::Station;
+    const bool resource_list_present = has_model_ &&
+        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
+    if (!resource_list_present) {
+        const std::string message = resource_list_unavailable_message(
+            has_model_, tr("status.resource_list_no_map"),
+            tr("status.resource_list_not_specified"),
+            tr(resource_list_name_translation_key(resource_kind)));
+        if (render_resource_list_empty_overlay(
+                message, tr("button.new_or_import_file"))) {
+            open_new_file_wizard(NewFileKind::Station);
+        }
         ImGui::End();
         return;
     }
@@ -3549,8 +3596,23 @@ void App::render_structure_models_window() {
         ImGui::End();
         return;
     }
+    const ResourceListKind resource_kind = ResourceListKind::Structure;
+    const bool resource_list_present = has_model_ &&
+        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
+    if (!resource_list_present) {
+        const std::string message = resource_list_unavailable_message(
+            has_model_, tr("status.resource_list_no_map"),
+            tr("status.resource_list_not_specified"),
+            tr(resource_list_name_translation_key(resource_kind)));
+        if (render_resource_list_empty_overlay(
+                message, tr("button.new_or_import_file"))) {
+            open_new_file_wizard(NewFileKind::Structure);
+        }
+        ImGui::End();
+        return;
+    }
     if (render_resource_list_source(
-        model_.resource_list_sources[static_cast<size_t>(ResourceListKind::Structure)],
+        model_.resource_list_sources[static_cast<size_t>(resource_kind)],
         tr("label.source_path"), tr("menu.open_in_explorer"),
         tr("menu.change_file"), edit_actions_available())) {
         request_resource_list_file_change(ResourceListKind::Structure);
@@ -3790,8 +3852,18 @@ void App::render_sound_list_window() {
         ImGui::End();
         return;
     }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
+    const ResourceListKind resource_kind = ResourceListKind::Sound;
+    const bool resource_list_present = has_model_ &&
+        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
+    if (!resource_list_present) {
+        const std::string message = resource_list_unavailable_message(
+            has_model_, tr("status.resource_list_no_map"),
+            tr("status.resource_list_not_specified"),
+            tr(resource_list_name_translation_key(resource_kind)));
+        if (render_resource_list_empty_overlay(
+                message, tr("button.new_or_import_file"))) {
+            open_new_file_wizard(NewFileKind::Sound);
+        }
         ImGui::End();
         return;
     }
@@ -3826,8 +3898,18 @@ void App::render_sound_3d_list_window() {
         ImGui::End();
         return;
     }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
+    const ResourceListKind resource_kind = ResourceListKind::Sound3D;
+    const bool resource_list_present = has_model_ &&
+        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
+    if (!resource_list_present) {
+        const std::string message = resource_list_unavailable_message(
+            has_model_, tr("status.resource_list_no_map"),
+            tr("status.resource_list_not_specified"),
+            tr(resource_list_name_translation_key(resource_kind)));
+        if (render_resource_list_empty_overlay(
+                message, tr("button.new_or_import_file"))) {
+            open_new_file_wizard(NewFileKind::Sound3D);
+        }
         ImGui::End();
         return;
     }
@@ -3993,8 +4075,18 @@ void App::render_signal_aspects_window() {
         ImGui::End();
         return;
     }
-    if (!has_model_) {
-        ImGui::TextDisabled("-");
+    const ResourceListKind resource_kind = ResourceListKind::Signal;
+    const bool resource_list_present = has_model_ &&
+        model_.resource_list_sources[static_cast<size_t>(resource_kind)].present;
+    if (!resource_list_present) {
+        const std::string message = resource_list_unavailable_message(
+            has_model_, tr("status.resource_list_no_map"),
+            tr("status.resource_list_not_specified"),
+            tr(resource_list_name_translation_key(resource_kind)));
+        if (render_resource_list_empty_overlay(
+                message, tr("button.new_or_import_file"))) {
+            open_new_file_wizard(NewFileKind::Signal);
+        }
         focus_signal_aspects_next_ = false;
         ImGui::End();
         return;

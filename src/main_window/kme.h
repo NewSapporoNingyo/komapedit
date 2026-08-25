@@ -2391,7 +2391,7 @@ private:
     void render_new_element_wizard();
     void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);
     void render_new_file_wizard();
-    void open_new_file_wizard();
+    void open_new_file_wizard(std::optional<NewFileKind> template_kind = std::nullopt);
     bool can_use_resource_key_in_new_element_wizard(
         MapElementKeySource key_source) const;
     bool use_resource_key_in_new_element_wizard(
@@ -2698,6 +2698,12 @@ bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
                                         std::string& error);
 std::string_view new_bve_file_header(NewFileKind kind);
 std::string_view new_file_resource_list_kind(NewFileKind kind);
+std::optional<ResourceListKind> resource_list_kind_for_new_file(NewFileKind kind);
+bool new_file_resource_list_is_already_referenced(
+    const MapModel& model,
+    const std::map<std::string, MapElementPendingChange>& changes,
+    NewFileKind kind);
+const char* resource_list_name_translation_key(ResourceListKind kind);
 std::vector<TableRow> hydrate_signal_aspect_rows(const KvMapSnapshot& snapshot);
 void bind_station_position_edit_ids(MapModel& model);
 void rebuild_speed_limit_runtime_cache(MapModel& model);

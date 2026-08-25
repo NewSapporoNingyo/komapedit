@@ -1865,8 +1865,17 @@ void App::render_new_element_wizard() {
     ImGui::End();
 }
 
-void App::open_new_file_wizard() {
+void App::open_new_file_wizard(std::optional<NewFileKind> template_kind) {
     new_file_wizard_ = NewFileWizardState{};
+    if (template_kind) {
+        const auto it = std::find_if(
+            k_new_file_templates.begin(), k_new_file_templates.end(),
+            [&](const NewFileTemplate& tpl) { return tpl.kind == *template_kind; });
+        if (it != k_new_file_templates.end()) {
+            new_file_wizard_.selected_template = static_cast<int>(
+                std::distance(k_new_file_templates.begin(), it));
+        }
+    }
     new_file_wizard_.open = true;
 }
 
@@ -1928,6 +1937,37 @@ void App::render_new_file_wizard() {
     const NewFileTemplate& tpl =
         k_new_file_templates[static_cast<size_t>(wizard.selected_template)];
     const ImGuiStyle& style = ImGui::GetStyle();
+    const std::optional<ResourceListKind> resource_list_kind =
+        resource_list_kind_for_new_file(tpl.kind);
+    const bool resource_list_already_referenced =
+        resource_list_kind && has_model_ &&
+        new_file_resource_list_is_already_referenced(
+            model_, pending_edit_changes_, tpl.kind);
+    if (resource_list_kind && ImGui::Button(tr("button.import_file").c_str())) {
+        const std::string initial_directory = !wizard.directory.empty()
+            ? wizard.directory
+            : has_model_
+                ? list_asset_picker_initial_directory({}, model_.path)
+                : std::string{};
+        const std::string selected_file = open_include_file_dialog(
+            initial_directory, "dialog.select_resource_list_file",
+            "dialog.filter.resource_list_files");
+        if (!selected_file.empty()) {
+            const std::filesystem::path imported_path(utf8_to_wide(selected_file));
+            std::string extension = wide_to_utf8(imported_path.extension().wstring());
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                           [](unsigned char ch) {
+                               return static_cast<char>(std::tolower(ch));
+                           });
+            if (extension != ".txt" && extension != ".csv") {
+                set_program_status("status.new_file.invalid_path");
+            } else {
+                wizard.file_name = wide_to_utf8(imported_path.stem().wstring());
+                wizard.directory = wide_to_utf8(imported_path.parent_path().wstring());
+                wizard.use_csv_extension = extension == ".csv";
+            }
+        }
+    }
     ImGui::TextUnformatted(tr("label.new_file_name").c_str());
     const float extension_control_width = ImGui::GetFrameHeight() * 2.0f +
         ImGui::CalcTextSize(".txt").x + ImGui::CalcTextSize(".csv").x +
@@ -1962,7 +2002,8 @@ void App::render_new_file_wizard() {
         ? tr("status.edit.no_distance_source")
         : display_name_from_path(wizard.target_file_path);
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::BeginDisabled(wizard.target_file_candidates.empty());
+    ImGui::BeginDisabled(wizard.target_file_candidates.empty() ||
+                         resource_list_already_referenced);
     if (ImGui::BeginCombo("##NewFileTargetFile", target_preview.c_str())) {
         for (const std::string& file_path : wizard.target_file_candidates) {
             const bool selected = file_path == wizard.target_file_path;
@@ -1980,7 +2021,8 @@ void App::render_new_file_wizard() {
         ImGui::TextWrapped("%s", tr("status.new_file.reference_requires_edit").c_str());
     }
     ImGui::Separator();
-    const bool create_disabled = reference_requested && !edit_actions_available();
+    const bool create_disabled =
+        (reference_requested && !edit_actions_available()) || resource_list_already_referenced;
     ImGui::BeginDisabled(create_disabled);
     if (ImGui::Button(tr("button.confirm").c_str())) {
         request_new_file_create(NewFileCreateRequest{
@@ -2000,6 +2042,16 @@ void App::render_new_file_wizard() {
     }
     ImGui::SameLine();
     if (ImGui::Button(tr("button.close").c_str())) wizard.open = false;
+    if (resource_list_already_referenced) {
+        std::string message = tr("status.new_file.resource_list_already_present");
+        constexpr std::string_view placeholder = "{resource_list}";
+        const size_t placeholder_position = message.find(placeholder);
+        if (placeholder_position != std::string::npos) {
+            message.replace(placeholder_position, placeholder.size(),
+                            tr(resource_list_name_translation_key(*resource_list_kind)));
+        }
+        ImGui::TextWrapped("%s", message.c_str());
+    }
     ImGui::EndChild();
     ImGui::End();
 }

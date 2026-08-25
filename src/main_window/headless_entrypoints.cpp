@@ -2068,23 +2068,24 @@ int App::run_debug_headless_new_file_wizard(
         const char* name;
         const char* header;
         const char* statement;
+        bool reuse_existing;
     };
     const std::array<ResourceFile, 5> resources = {{
         {NewFileKind::Structure, ResourceListKind::Structure, "new-structure.csv",
          "BveTs Structure List 2.00:utf-8\r\n",
-         "Structure.Load('new-structure.csv');\r\n"},
+         "Structure.Load('new-structure.csv');\r\n", true},
         {NewFileKind::Signal, ResourceListKind::Signal, "new-signal.csv",
          "BveTs Signal Aspects List 2.00:utf-8\r\n",
-         "Signal.Load('new-signal.csv');\r\n"},
+         "Signal.Load('new-signal.csv');\r\n", false},
         {NewFileKind::Sound, ResourceListKind::Sound, "new-sound.csv",
          "BveTs Sound List 2.00:utf-8\r\n",
-         "Sound.Load('new-sound.csv');\r\n"},
+         "Sound.Load('new-sound.csv');\r\n", false},
         {NewFileKind::Sound3D, ResourceListKind::Sound3D, "new-sound3d.csv",
          "BveTs Sound List 2.00:utf-8\r\n",
-         "Sound3D.Load('new-sound3d.csv');\r\n"},
+         "Sound3D.Load('new-sound3d.csv');\r\n", false},
         {NewFileKind::Station, ResourceListKind::Station, "new-station.csv",
          "BveTs Station List 2.00:utf-8\r\n",
-         "Station.Load('new-station.csv');\r\n"},
+         "Station.Load('new-station.csv');\r\n", false},
     }};
 
     int failed_cases = 0;
@@ -2116,8 +2117,10 @@ int App::run_debug_headless_new_file_wizard(
             settings.language = Language::En;
             App app(nullptr, settings, 1.0f, false, false);
             const std::string directory = wide_to_utf8(map_path.parent_path().wstring());
-            const std::string map_name = wide_to_utf8(map_path.filename().wstring());
-            app.request_new_file_create({NewFileKind::Map, map_name, directory, {}});
+            const std::string map_name = wide_to_utf8(map_path.stem().wstring());
+            const bool map_uses_csv_extension = map_path.extension() == L".csv";
+            app.request_new_file_create(
+                {NewFileKind::Map, map_name, directory, {}, map_uses_csv_extension});
             app.process_pending_new_file_create();
             check("blank_map_created",
                   std::filesystem::exists(map_path) &&
@@ -2164,23 +2167,50 @@ int App::run_debug_headless_new_file_wizard(
 
             for (const ResourceFile& resource : resources) {
                 const std::filesystem::path resource_path = map_path.parent_path() / resource.name;
+                std::string expected_bytes(resource.header);
+                if (resource.reuse_existing) {
+                    std::string create_error;
+                    const bool prepared = create_utf8_bve_file_exclusive(
+                        resource_path, resource.header, create_error);
+                    check((std::string("existing_resource_prepared_") + resource.name).c_str(),
+                          prepared);
+                    if (!prepared) {
+                        throw std::runtime_error("could not prepare existing resource list " +
+                                                 std::string(resource.name));
+                    }
+                    {
+                        std::ofstream existing_file(
+                            resource_path, std::ios::binary | std::ios::app);
+                        existing_file << "\r\n";
+                        if (!existing_file) {
+                            throw std::runtime_error("could not extend existing resource list " +
+                                                     std::string(resource.name));
+                        }
+                    }
+                    expected_bytes += "\r\n";
+                    created_files.push_back(resource_path);
+                }
                 const size_t pending_before = app.pending_edit_changes_.size();
                 app.request_new_file_create(
-                    {resource.kind, resource.name, directory, target_file_path});
+                    {resource.kind,
+                     std::filesystem::path(resource.name).stem().string(),
+                     directory, target_file_path, true});
                 app.process_pending_new_file_create();
-                check((std::string("created_") + resource.name).c_str(),
+                check((std::string(resource.reuse_existing
+                                       ? "reused_content_unchanged_"
+                                       : "created_") + resource.name).c_str(),
                       std::filesystem::exists(resource_path) &&
-                          read_file_bytes(resource_path) == resource.header);
+                          read_file_bytes(resource_path) == expected_bytes);
                 if (!std::filesystem::exists(resource_path)) {
-                    throw std::runtime_error("resource-list confirmation did not create " +
+                    throw std::runtime_error("resource-list confirmation did not make available " +
                                              std::string(resource.name));
                 }
-                created_files.push_back(resource_path);
+                if (!resource.reuse_existing) created_files.push_back(resource_path);
                 std::string overwrite_error;
                 check((std::string("overwrite_rejected_") + resource.name).c_str(),
                       !create_utf8_bve_file_exclusive(
                           resource_path, new_bve_file_header(resource.kind), overwrite_error) &&
-                          read_file_bytes(resource_path) == resource.header);
+                          read_file_bytes(resource_path) == expected_bytes);
                 const auto staged = std::find_if(
                     app.pending_edit_changes_.begin(), app.pending_edit_changes_.end(),
                     [&](const auto& item) {

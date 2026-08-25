@@ -20,7 +20,6 @@ This file is the active project progress and contains unfinished items only. Com
 ### 用户界面与辅助功能
 
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
-- [ ] 资源列表界面中的导入/新建文件入口
 - [ ] 信号现示列表可新增/删除列
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途
 - [ ] 通过在地图中插入被BVE忽略但本项目可读的”//--kme--“开头的注释，标记特定地图元素
@@ -40,3 +39,6 @@ This file is the active project progress and contains unfinished items only. Com
 - [ ] 3D 场景预览应用 Legacy.Fog 线性雾效果
 - [ ] 根据曲线半径自动计算缓和曲线长度与超高
 - [ ] 根据坡度自动计算纵曲线长度
+
+## 问题修复
+- [ ] 资源列表文件中“//”开头的注释未被忽略。
