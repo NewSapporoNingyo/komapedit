@@ -30,8 +30,9 @@ You should read the following notes related to your current agent. If a note app
 ### Opencode
 - In Opencode, the plan/build modes are switched manually by the user. Once a plan is finalized, it should be paused and await user review. Do not use a confirmation dialog to ask the user “Should the plan be executed? Select a option below!” as this will prevent the user from switching to build mode.
 ### Codex
-- If the `apply_patch` tool is rejected while modifying a file, immediately stop the current task and report the issue. **Never use alternative methods (such as patches in Git) to modify the file, as this could lead to serious incidents, such as “the entire source code file being wiped.”**
+- If the `apply_patch` tool is rejected multiple times while modifying a file, you may retry up to three times. If it is rejected a fourth time, stop the current task immediately and report the issue. **Never use alternative methods (such as patches in Git) to modify the file, as this could lead to serious incidents, such as “the entire source code file being wiped.”**
 - The Codex UI can escape `_` in a user-entered Windows path as `\_`. If a literal path is missing, verify the candidate with that escape removed; if interpretation remains ambiguous, ask the user instead of treating the escape as a directory separator.
+
 ## Non-negotiable project constraints
 
 ### Platform and architecture

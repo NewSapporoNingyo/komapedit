@@ -28,15 +28,18 @@ description: Audit and repair evidence-backed maintainability, correctness, safe
 - Async/thread paths that can exhaust resources, deadlock, or leave inconsistent state.
 - Logic whose names or structure conceal the real invariant.
 - Overdesign and over-engineering, such as “significantly increasing code complexity for a boundary case that occurs only one in a thousand times.”
+- Module boundaries are unclear; for example, “a function that places a model on 3D canvas is located in a source file related to the main window.”
+- Overly fragmented logic, such as “the implementation required to draw a particular graphic is scattered across more than a dozen source files.”
 
 ## Repair conservatively
 
 1. Verify every finding against the current tree immediately before editing.
-2. Do not apply many patches directly to problematic code, as this leads to an accumulation of patch code, increased complexity, and reduced code readability. Instead, use a correct and efficient implementation to directly replace the problematic section.
+2. Do not add many patches directly to problematic code, as this leads to an accumulation of patch code, increased complexity, and reduced code readability. Instead, use a correct and efficient implementation to directly replace the problematic section.
 3. Preserve user interaction, BVE compatibility, ABI layout/version, source writeback, cache outputs, and rendering behavior.
 4. Never claim improvement from deleted comments, combined lines, renamed whitespace, or moved code alone.
 5. Count self-owned production code before and after. Exclude tests, documentation, generated files, and third-party trees. Explain any increase with measured correctness or performance value.
 6. Keep behavior-changing proposals out of a slop-fix pass unless the user separately approves them.
+7. Do not abandon a fix for a particular section simply because “the issue discovered is too severe.”
 
 ## Validate rigorously
 
