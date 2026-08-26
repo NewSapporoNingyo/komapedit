@@ -259,9 +259,9 @@ ctest --test-dir build --output-on-failure
 - **逐类语句生成器**：`build_structure_model/sound_list/station_list/signal_aspect_statement()` 负责列表行；`build_station_put/structure_put/signal_put/repeater_statement()` 处理显式方法/参数形状转换，其中 Structure 与 Repeater 支持普通形式和零偏移形式双向转换；其余 `build_*` 覆盖曲线、坡度、他轨道、Section、限速、应答器、声音/噪声和环境效果，维持原方法与参数形状。
 - **目标发现与编辑目标快照**：模板化 `match_edit_ref()`、`find_simple_target()` 和 `find_editable_target()` 在 MapContext 强类型行中定位 edit id；`build_edit_target_snapshot()` 输出字段、原值、raw arg、约束、sourceHash 和 expectedSourceHash。
 - **插入验证**：`validate_insert_field_names()`、`validate_insert_method()`、`validate_insert_change()` 限定向导支持的 row kind、方法和字段；`build_insert_statement()` 只生成普通 BVE 语句，不接受任意 replacement 文本。
-- **距离块规划**：`DistanceSectionAnalysis/PlanningIndex` 建立同文件、Include invocation 和距离段索引；boundary 函数寻找可复用距离块、锚点后空隙或 EOF；变量引用与环境比较函数判断移动语句是否改变求值环境；`append_resolution_request()` 把无法自动决定的位置暴露给 GUI。
+- **距离块规划**：`DistanceSectionAnalysis/PlanningIndex` 建立同文件、Include invocation 和距离段索引；boundary 函数寻找可复用距离块或锚点后空隙。物理 Map 源内按源码顺序非递减且目标严格越过最后锚点时，直接使用 EOF；其余歧义由 `append_resolution_request()` 暴露给 GUI。变量引用与环境比较函数继续保护变量绑定。
 - **报告与事务写盘**：`build_edit_report_snapshot()` 投影补丁、消歧和提交信息；hash/临时文件函数创建同目录暂存文件；`replace_files_transactionally()` 按阶段替换并在失败时回滚，`TransactionalWriteError` 保留主错误与回滚错误。
-- **完整语义验证**：`parse_report_candidate()` 用补丁覆盖重解析；`validate_non_target_derived_state()`、`own_track_transition_state()`、`validate_edit_report()` 比较非目标元素、变量/距离终态、车站所有权、过渡配对和每个目标的期望语义。
+- **完整语义验证**：`parse_report_candidate()` 用补丁覆盖重解析；`validate_non_target_derived_state()`、`own_track_transition_state()`、`validate_edit_report()` 比较非目标元素、最终变量绑定、车站所有权、过渡配对和每个目标的期望语义；合法编辑可改变最终当前 `distance`。
 - **批次主流程**：`build_edit_report()` 预处理目标、按物理上下文和目标距离分组，解决 boundary，生成替换/删除/插入，检测重叠补丁，重解析并验证。它是 dry-run、内存 Apply 和直接 Apply 的共同核心。
 - **工作副本与提交**：`apply_patched_files_to_overrides()`、`reparse_context_with_overrides()`、`apply_edit_report_to_memory()` 更新内存覆盖且保留磁盘基线；`reset_memory_edits()` 回到磁盘；`populate_committed_edit_state()` 记录落盘身份；`commit_memory_edits()` 重新检查并事务写入所有覆盖文件。
 
@@ -509,7 +509,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - “应用”不得写磁盘；“保存”不得隐式重载；“撤销”和“重新加载”保持现有确认与磁盘语义。
 - `sourceHash` 标识工作副本；多次内存编辑期间 `expectedSourceHash` 始终是磁盘并发基线。
 - 按源文件、Include 上下文/区段和目标距离规划批量移动；保持语句顺序及用户注释或空距离结构。
-- 应用或保存前完整重解析，证明目标语义值，并拒绝非目标元素或最终变量/距离环境的意外变化。
+- 应用或保存前完整重解析，证明目标语义值，并拒绝非目标元素或最终变量绑定的意外变化；合法编辑可改变最终当前 `distance`。
 - 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
 - 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程。编辑模式右键可在上下新增行，固定 BVE CSV 字段数为 Structure 2、Sound/Sound3D 3、Station 13、Signal 主行 6；Signal 主行/glare 成对作为一个插入块，glare 需显式新增。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
@@ -592,7 +592,7 @@ plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
-`--debug-headless-sparse-new-element` 要求显式传入目标源文件中只有零或一条数值距离语句的地图路径。它直接驱动正式的 `DrawDistance.Change(500)` 向导表单并使用里程 `25`，验证目标仍可选择、插入不会请求距离解析、规范尾部距离块和 typed 行均会创建，随后 Reset 并确认磁盘哈希不变。该命令仅执行内存 Apply，传入 `--commit` 会被拒绝。
+`--debug-headless-sparse-new-element` 要求显式传入地图路径：目标源文件中可有零或一条数值距离语句，或者数值距离锚点按源码顺序非递减且最后锚点小于 `866`。它直接驱动正式的 `DrawDistance.Change(500)` 向导表单；稀疏源使用里程 `25`，单调尾部情形使用 `866`。该命令验证目标仍可选择、插入不会请求距离解析、规范 EOF 距离块以新 typed 行结束，随后 Reset 并确认磁盘哈希不变。该命令仅执行内存 Apply，传入 `--commit` 会被拒绝。
 
 `--debug-headless-other-track-key-edit` 要求显式传入地图路径。它会选择至少含两条语句的字符串键他轨道，验证整轨原子性与全地图重名保护，再执行 dry-run、内存 Apply、Reset、再次 Apply 和 Reload。`--commit` 会写入已验证工作副本，并按授权保留线路修改以检查物理 diff；报告包含原键/新键、全部目标、变更文件、依赖引用保持情况和源哈希。
 

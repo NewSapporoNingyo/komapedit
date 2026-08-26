@@ -6,7 +6,7 @@
 - `sourceHash` identifies the current working copy; `expectedSourceHash` remains the disk-baseline concurrency guard. Repeated Apply/Delete must not replace the disk baseline with an in-memory hash.
 - The complete lifecycle matters: parser row and source ref, stable identity, typed snapshot, target lookup/count, semantic writer, source patch, full reparse/reconnection, committed metadata, GUI refresh, and regression proof. A row added to only one stage will fail later or lose identity.
 - Preserve physical source path, Include stack, parse order, source span, raw expressions, method/argument shape, encoding, BOM, line ending, and unknown fields. Do not reconstruct source ownership from GUI display text.
-- Full reparse must prove the target reached the requested semantic value without unexpected changes to non-target rows or the final variable/distance environment.
+- Full reparse must prove the target reached the requested semantic value without unexpected changes to non-target rows or final variable bindings. A valid edit may change the final current `distance`.
 
 ## Source identity lessons
 

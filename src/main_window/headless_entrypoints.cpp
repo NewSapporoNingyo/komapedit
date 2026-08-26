@@ -1628,22 +1628,59 @@ int App::run_debug_headless_sparse_new_element(
         const size_t baseline_draw_distance_count = app.model_.draw_distances.size();
         const std::vector<std::string> target_candidates =
             new_element_target_candidates(app.model_);
-        const size_t distance_statement_count = static_cast<size_t>(std::count_if(
-            app.model_.edit_statements.begin(), app.model_.edit_statements.end(),
-            [&](const EditStatementInfo& statement) {
-                return statement.source.file_path == target_file &&
-                    statement.statement_kind == "Distance.Set";
-            }));
+        std::vector<const EditStatementInfo*> target_distance_statements;
+        for (const EditStatementInfo& statement : app.model_.edit_statements) {
+            if (statement.source.file_path == target_file &&
+                statement.statement_kind == "Distance.Set") {
+                target_distance_statements.push_back(&statement);
+            }
+        }
+        std::stable_sort(target_distance_statements.begin(),
+                         target_distance_statements.end(),
+                         [](const EditStatementInfo* left,
+                            const EditStatementInfo* right) {
+                             if (left->source.line != right->source.line) {
+                                 return left->source.line < right->source.line;
+                             }
+                             if (left->source.column != right->source.column) {
+                                 return left->source.column < right->source.column;
+                             }
+                             return left->global_order < right->global_order;
+                         });
+        std::vector<double> target_distance_values;
+        int previous_line = 0;
+        int previous_column = 0;
+        for (const EditStatementInfo* statement : target_distance_statements) {
+            if (!target_distance_values.empty() &&
+                statement->source.line == previous_line &&
+                statement->source.column == previous_column) {
+                continue;
+            }
+            target_distance_values.push_back(statement->distance_value);
+            previous_line = statement->source.line;
+            previous_column = statement->source.column;
+        }
+        const size_t distance_statement_count = target_distance_values.size();
         const bool target_candidate_present = std::find(
             target_candidates.begin(), target_candidates.end(), target_file) !=
             target_candidates.end();
         const bool target_is_sparse = distance_statement_count <= 1;
+        const bool target_is_monotonic_tail = distance_statement_count > 1 &&
+            std::is_sorted(target_distance_values.begin(), target_distance_values.end()) &&
+            target_distance_values.back() < 866.0;
+        const bool target_profile_supported =
+            target_is_sparse || target_is_monotonic_tail;
+        const std::string target_distance = target_is_monotonic_tail ? "866" : "25";
         *out << "target_source_hash_before=" << baseline_hash << "\n"
-             << "target_distance_statement_count=" << distance_statement_count << "\n";
+             << "target_distance_statement_count=" << distance_statement_count << "\n"
+             << "target_distance_profile="
+             << (target_is_sparse ? "sparse" :
+                 (target_is_monotonic_tail ? "monotonic-tail" : "unsupported")) << "\n"
+             << "target_insert_distance=" << target_distance << "\n";
         check("target_source_hash_present", !baseline_hash.empty());
         check("target_source_text_present", !baseline_source.empty());
         check("target_candidate_present", target_candidate_present);
-        check("target_distance_statement_count_is_sparse", target_is_sparse);
+        check("target_distance_profile_supported", target_profile_supported);
 
         const std::vector<NewElementTemplate>& templates = new_element_templates();
         const auto template_it = std::find_if(
@@ -1673,12 +1710,12 @@ int App::run_debug_headless_sparse_new_element(
                 set_edit_field_buffer(*field, value);
                 return true;
             };
-            fields_set = set_field(wizard.form, "distance", "25") &&
+            fields_set = set_field(wizard.form, "distance", target_distance) &&
                 set_field(wizard.form, "value", "500");
         }
         check("draw_distance_fields_set", fields_set);
 
-        const bool applied = target_candidate_present && target_is_sparse && fields_set &&
+        const bool applied = target_candidate_present && target_profile_supported && fields_set &&
             app.apply_new_element_insert();
         check("wizard_apply_succeeds_without_resolution", applied);
         check("distance_resolution_not_requested",
@@ -1691,20 +1728,24 @@ int App::run_debug_headless_sparse_new_element(
             std::any_of(app.model_.draw_distances.begin(), app.model_.draw_distances.end(),
                         [&](const TableRow& row) {
                             return row.source.file_path == target_file &&
-                                table_cell(row, "distance") == "25" &&
+                                table_cell(row, "distance") == target_distance &&
                                 table_cell(row, "value") == "500" &&
                                 !row.edit_id.empty();
                         });
         check("draw_distance_model_row_created", created_row);
 
         const std::string applied_source = source_text(app.handle_, target_file);
-        const size_t appended_at = applied_source.find(
-            "25;", baseline_source.size());
+        const std::string newline = baseline_source.find("\r\n") != std::string::npos
+            ? "\r\n"
+            : "\n";
+        const bool baseline_ends_with_newline = !baseline_source.empty() &&
+            (baseline_source.back() == '\r' || baseline_source.back() == '\n');
+        const std::string expected_tail =
+            (baseline_ends_with_newline ? "" : newline) + target_distance + ";" + newline +
+            "DrawDistance.Change(500);" + newline;
         const bool appended_tail_block = applied_source.size() > baseline_source.size() &&
             applied_source.compare(0, baseline_source.size(), baseline_source) == 0 &&
-            appended_at != std::string::npos &&
-            applied_source.find("DrawDistance.Change(500);", appended_at) !=
-                std::string::npos;
+            applied_source.substr(baseline_source.size()) == expected_tail;
         check("canonical_tail_distance_block_created", appended_tail_block);
 
         check("working_copy_reset_ok", kv_edit_reset_memory(app.handle_) != 0);

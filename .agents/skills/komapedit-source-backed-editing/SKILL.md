@@ -25,7 +25,7 @@ Map every requested operation through parse → source identity → typed snapsh
 2. Keep `sourceHash` as working-copy identity and `expectedSourceHash` as the disk-baseline concurrency guard across repeated Apply/Delete cycles.
 3. Preserve source file, Include stack, source span, raw argument text, evaluated values, parse order, stable edit ID, encoding, BOM, and line endings.
 4. Reject writes that cannot be represented in the original encoding. Do not silently convert files to UTF-8.
-5. Fully reparse the patched source set and prove target semantics without changing non-target elements or the final variable/distance environment unexpectedly.
+5. Fully reparse the patched source set and prove target semantics without changing non-target elements or final variable bindings unexpectedly. A valid edit may change the final current `distance`.
 6. Keep typed input views call-scoped and snapshot/report ownership within the documented DLL lifetime.
 
 ## Extend a row end to end

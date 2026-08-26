@@ -69,7 +69,7 @@ You should read the following notes related to your current agent. If a note app
 - Properties/Edit `Apply` must not write disk. Toolbar/Ctrl+S `Save` commits. `Revert` discards pending in-memory changes. `Reload` rereads disk after unsaved-change confirmation.
 - Pending inline-list drafts must be applied in their table before Save is allowed.
 - `sourceHash` identifies the working copy. `expectedSourceHash` remains the disk-baseline concurrency guard across repeated Apply/Delete operations.
-- Before Apply or Save succeeds, fully reparse the patched sources, prove each target semantic value, and reject unexpected non-target or variable/distance-environment changes.
+- Before Apply or Save succeeds, fully reparse the patched sources, prove each target semantic value, and reject unexpected non-target or final-variable-binding changes. A valid edit may change the final current `distance`.
 - Preserve stable statement order and source structure. Use shared linkage helpers for Repeater and own-track transition chains.
 - Insertions must use structured fields and the same distance/environment/full-reparse validation as updates; do not accept arbitrary replacement source as an insertion shortcut.
 

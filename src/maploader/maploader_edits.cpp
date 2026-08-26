@@ -4673,9 +4673,9 @@ TransactionalWriteOutcome replace_files_transactionally(
     return outcome;
 }
 
-bool variable_environment_equal(const VariableEnvironment& a, double a_distance,
-                                const VariableEnvironment& b, double b_distance) {
-    if (a_distance != b_distance || a.size() != b.size()) return false;
+bool variable_bindings_equal(const VariableEnvironment& a,
+                             const VariableEnvironment& b) {
+    if (a.size() != b.size()) return false;
     for (const auto& entry : a) {
         auto found = b.find(entry.first);
         if (found == b.end() || !value_equal(entry.second, found->second)) return false;
@@ -5362,34 +5362,8 @@ bool final_environment_matches_include_deletions(
         }
     }
 
-    int best_order = std::numeric_limits<int>::min();
-    bool best_removed = false;
-    int last_surviving_order = std::numeric_limits<int>::min();
-    double surviving_distance = 0.0;
-    bool has_surviving_distance = false;
-    for (size_t i = 0; i < baseline.parsed_statements.size(); ++i) {
-        const ParsedStatement& statement = baseline.parsed_statements[i];
-        if (!is_distance_statement(statement)) continue;
-        const bool removed = i < removed_statements.size() && removed_statements[i];
-        if (statement.global_order > best_order) {
-            best_order = statement.global_order;
-            best_removed = removed;
-        }
-        if (!removed && statement.global_order > last_surviving_order) {
-            last_surviving_order = statement.global_order;
-            surviving_distance = statement.distance_value;
-            has_surviving_distance = true;
-        }
-    }
-    double expected_distance = baseline.distance;
-    if (best_removed) {
-        expected_distance = has_surviving_distance ? surviving_distance : 0.0;
-    }
-    if (candidate.distance != expected_distance) {
-        error = "full reparse changed the final distance outside the deleted "
-                "Include subtree";
-        return false;
-    }
+    // The final current distance may change for every edit operation. Variable
+    // bindings remain protected above unless the deleted subtree owns them.
     return true;
 }
 
@@ -6362,12 +6336,11 @@ void validate_edit_report(MapContext& baseline,
     bool final_environment_ok = false;
     std::string environment_error;
     if (include_removed_statements.empty() && bound_include_added_statements.empty()) {
-        final_environment_ok = variable_environment_equal(
-            baseline.variables, baseline.distance,
-            candidate->variables, candidate->distance);
+        final_environment_ok = variable_bindings_equal(
+            baseline.variables, candidate->variables);
         if (!final_environment_ok) {
             environment_error =
-                "full reparse changed the final variable or distance environment";
+                "full reparse changed the final variable bindings";
         }
     } else if (bound_include_added_statements.empty()) {
         final_environment_ok = final_environment_matches_include_deletions(
@@ -6854,16 +6827,32 @@ MapEditReport build_edit_report(MapContext& ctx,
             map_source_keys.insert(normalized_source_key(record.absolute_path));
         }
     }
-    std::map<size_t, std::set<std::pair<size_t, size_t>>>
-        physical_distance_anchors_by_file;
-    for (const ParsedStatement& statement : ctx.parsed_statements) {
+    std::map<size_t, std::map<std::pair<size_t, size_t>, size_t>>
+        physical_distance_anchor_indices_by_file;
+    for (size_t statement_index = 0;
+         statement_index < ctx.parsed_statements.size(); ++statement_index) {
+        const ParsedStatement& statement = ctx.parsed_statements[statement_index];
         if (!is_distance_statement(statement)) continue;
-        physical_distance_anchors_by_file[statement.source.source_file_index].insert(
-            {statement.source.byte_start, statement.source.byte_end});
+        physical_distance_anchor_indices_by_file[statement.source.source_file_index].emplace(
+            std::make_pair(statement.source.byte_start, statement.source.byte_end),
+            statement_index);
     }
-    const size_t entry_source_file_index = ctx.entry_file_path.empty()
-        ? k_no_source_ref
-        : find_source_file_index(ctx, ctx.entry_file_path);
+    const auto has_monotonic_tail_insert_position = [&](size_t file_index,
+                                                        double target_distance) {
+        const auto anchors = physical_distance_anchor_indices_by_file.find(file_index);
+        if (anchors == physical_distance_anchor_indices_by_file.end() ||
+            anchors->second.empty()) {
+            return false;
+        }
+        auto anchor = anchors->second.begin();
+        double previous = ctx.parsed_statements[anchor->second].distance_value;
+        for (++anchor; anchor != anchors->second.end(); ++anchor) {
+            const double current = ctx.parsed_statements[anchor->second].distance_value;
+            if (current < previous) return false;
+            previous = current;
+        }
+        return previous < target_distance;
+    };
 
     auto change_signature = [](const MapEditChange& change) {
         std::ostringstream out;
@@ -7093,12 +7082,14 @@ MapEditReport build_edit_report(MapContext& ctx,
                         throw std::runtime_error("invalid numeric edit value: " + target_text);
                     }
                     const auto anchor_it =
-                        physical_distance_anchors_by_file.find(target_file_index);
+                        physical_distance_anchor_indices_by_file.find(target_file_index);
                     const size_t physical_distance_anchor_count = anchor_it ==
-                        physical_distance_anchors_by_file.end()
+                        physical_distance_anchor_indices_by_file.end()
                         ? 0
                         : anchor_it->second.size();
-                    if (physical_distance_anchor_count <= 1 &&
+                    if ((physical_distance_anchor_count <= 1 ||
+                         has_monotonic_tail_insert_position(
+                             target_file_index, target_distance)) &&
                         map_source_keys.find(file.source_key) != map_source_keys.end()) {
                         PreparedEdit edit;
                         edit.change = &change;
@@ -7118,12 +7109,13 @@ MapEditReport build_edit_report(MapContext& ctx,
                             throw std::runtime_error("insert produced an empty statement");
                         }
                         edit.target_distance = target_distance;
-                        // A source with no, or just one, physical numeric
-                        // distance statement cannot supply an unambiguous
-                        // insertion boundary. Append a canonical distance
-                        // block after its existing text instead, preserving
-                        // all preceding source placement and leaving the full
-                        // reparse/non-target checks as the safety gate.
+                        // A source with no or one physical numeric anchor, or
+                        // a source-order nondecreasing anchor sequence whose
+                        // target lies strictly beyond its tail, has an
+                        // unambiguous EOF placement. Append a canonical
+                        // distance block, preserving preceding source text and
+                        // leaving the full reparse/non-target checks as the
+                        // safety gate.
                         edit.tail_distance_block_insert = true;
                         ++report.insert_count;
                         prepared.push_back(std::move(edit));
@@ -7908,11 +7900,6 @@ MapEditReport build_edit_report(MapContext& ctx,
             }
             distance_begin = distance_end;
         }
-        if (file_index == entry_source_file_index &&
-            !exact_distance_value(inserts.back()->target_distance, ctx.distance)) {
-            insertion_body += nl + canonical_number(ctx.distance) + ";";
-        }
-
         TextReplacement insertion;
         insertion.begin = patch.text.size();
         insertion.end = patch.text.size();

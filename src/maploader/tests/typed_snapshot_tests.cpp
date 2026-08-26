@@ -4448,10 +4448,9 @@ void empty_submap_insert_contract() {
                 : nullptr;
             const std::string expected_source = single_anchor_before +
                 "100;\r\n"
-                "CabIlluminance.Set(0.1);\r\n"
-                "0;\r\n";
+                "CabIlluminance.Set(0.1);\r\n";
             check(source && std::string_view(source) == expected_source,
-                  "single-anchor root tail insert restores the final distance");
+                  "single-anchor root tail insert preserves monotonic source order");
             kv_free_string(source);
 
             KvMapSnapshot applied_snapshot{};
@@ -4478,6 +4477,83 @@ void empty_submap_insert_contract() {
     }
     check(read_text(single_anchor_map_path) == single_anchor_before,
           "single-anchor map tail insert reset leaves disk unchanged");
+
+    const std::filesystem::path monotonic_tail_map_path =
+        directory / "monotonic-tail-map.txt";
+    const std::string monotonic_tail_before =
+        "BveTs Map 2.02:utf-8\r\n"
+        "0;\r\n"
+        "45;\r\n"
+        "541;\r\n"
+        "718;\r\n";
+    {
+        std::ofstream map(monotonic_tail_map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << monotonic_tail_before;
+    }
+    {
+        MapHandle handle(kv_load_map_ex(monotonic_tail_map_path.u8string().c_str(),
+                                        25.0, KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "monotonic-tail map insert load");
+        if (handle.value) {
+            SimpleInsertBatch insert(
+                monotonic_tail_map_path.u8string(), "monotonic-tail-map-insert",
+                {{"rowKind", "drawDistance.change"}, {"distance", "866"},
+                 {"value", "500"}});
+            KvEditReportSnapshot dry_report{};
+            const bool dry_run = kv_edit_dry_run_typed(
+                handle.value, &insert.batch, &dry_report, sizeof(dry_report)) != 0;
+            check(dry_run && dry_report.ok && dry_report.insert_count == 1 &&
+                      dry_report.created_distance_block_count == 1 &&
+                      dry_report.resolution_request_count == 0 &&
+                      dry_report.full_reparse_ok &&
+                      dry_report.non_target_changed_count == 0,
+                  "monotonic-tail map dry-runs through an EOF distance block");
+
+            KvEditReportSnapshot apply_report{};
+            const bool applied = kv_edit_apply_to_memory_typed(
+                handle.value, &insert.batch, &apply_report, sizeof(apply_report)) != 0;
+            check(applied && apply_report.ok && apply_report.insert_count == 1 &&
+                      apply_report.created_distance_block_count == 1 &&
+                      apply_report.resolution_request_count == 0 &&
+                      apply_report.full_reparse_ok &&
+                      apply_report.non_target_changed_count == 0,
+                  "monotonic-tail map applies through an EOF distance block");
+            const char* source = applied
+                ? kv_get_source_text(handle.value, monotonic_tail_map_path.u8string().c_str())
+                : nullptr;
+            const std::string expected_source = monotonic_tail_before +
+                "866;\r\n"
+                "DrawDistance.Change(500);\r\n";
+            check(source && std::string_view(source) == expected_source,
+                  "monotonic-tail map appends a canonical block without restoring 718");
+            kv_free_string(source);
+
+            KvMapSnapshot applied_snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &applied_snapshot, sizeof(applied_snapshot)) != 0,
+                  "monotonic-tail map applied snapshot");
+            const bool stable_insert = applied_snapshot.draw_distances &&
+                applied_snapshot.draw_distance_count == 1 &&
+                std::any_of(applied_snapshot.draw_distances,
+                            applied_snapshot.draw_distances +
+                                applied_snapshot.draw_distance_count,
+                            [&](const KvDrawDistanceRow& row) {
+                                return map_string(applied_snapshot, row.metadata.edit_id) ==
+                                           "monotonic-tail-map-insert" &&
+                                    map_string(applied_snapshot, row.file_path) ==
+                                        monotonic_tail_map_path.u8string() &&
+                                    nearly_equal(row.distance, 866.0) &&
+                                    nearly_equal(row.value, 500.0);
+                            });
+            check(stable_insert,
+                  "monotonic-tail map retains the inserted draw-distance identity");
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "monotonic-tail map insert reset");
+        }
+    }
+    check(read_text(monotonic_tail_map_path) == monotonic_tail_before,
+          "monotonic-tail map insert reset leaves disk unchanged");
     std::error_code cleanup;
     std::filesystem::remove_all(directory, cleanup);
 }
