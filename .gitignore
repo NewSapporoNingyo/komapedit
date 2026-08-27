@@ -14,3 +14,4 @@ pi-agent-here(local).bat
 /.agents/memories/rollout-summaries/
 
 /testmap
+.commandcode/taste/taste.md
