@@ -85,7 +85,7 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 
 | Area | Primary files and responsibility |
 | --- | --- |
-| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v9 functions, fixed-width POD snapshots, Scenario snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
+| Public map ABI | `include/maploader.h`, `include/maploader_snapshot.h`: API v10 / map snapshot v8 functions, fixed-width POD snapshots, Scenario snapshots, edit batches, reports, spans, ownership, versions, and structure sizes |
 | Map lifecycle | `src/maploader/maploader.cpp`: C ABI entry points, handles, regeneration, dispatch, source retrieval, and boundary error handling |
 | Map state | `src/maploader/maploader_internal.h`: `MapContext`, parsed rows, source spans, include stacks, edit references, reports, and timing |
 | Parsing | `maploader_core.cpp`, `maploader_parser.cpp`, `text_decoder.cpp/.h`: statements, values, includes, variables, encodings, source anchors, uniqueness checks |
@@ -116,7 +116,7 @@ Use existing boundaries and shared helpers. Do not duplicate source ownership, l
 - Preserve `UNICODE`, `_UNICODE`, `NOMINMAX`, and `WIN32_LEAN_AND_MEAN` assumptions.
 - Never let exceptions, STL types, C++ classes, or ownership-ambiguous pointers cross a public C ABI.
 - Memory allocated by a DLL and returned through the ABI must have a matching free function.
-- The bundled EXE requires exact maploader API v9 and model-loader API v2 matches. `kv_load_map_ex()` is the only map-loading entry point; `KvScenarioSnapshot` v1 is independently allocated and released with `kv_free_scenario_snapshot()`, while map, scene, edit-target, and edit-report snapshot versions and structure sizes remain independently versioned.
+- The bundled EXE requires exact maploader API v10, map snapshot v8, and model-loader API v2 matches. `kv_load_map_ex()` is the only map-loading entry point; `KvScenarioSnapshot` v1 is independently allocated and released with `kv_free_scenario_snapshot()`, while map, scene, edit-target, and edit-report snapshot versions and structure sizes remain independently versioned.
 - Treat typed ABI inputs as call-scoped views. Nested snapshot storage is handle-owned and is invalidated according to its documented regular-geometry, scene-geometry, edit-operation, reset, reparse, and free rules.
 - Any public ABI change requires an explicit version/structure-size decision, synchronized EXE/DLL changes, updated callers, and documented ownership and validity.
 
@@ -127,6 +127,8 @@ Preserve BVE Map 2.0+, supported legacy syntax, `Include`, variables, predefined
 Scenario files are read only through `scenario_route.cpp/.h` per the official Scenario schema. `kv_load_scenario_snapshot()` validates the `BveTs Scenario 2.00` header with declared-encoding decoding, strips `#`/`;` comments, retains the last value for each of `Title`, `Route`, `RouteTitle`, `Vehicle`, `VehicleTitle`, `Author`, `Image`, and `Comment`, and returns source-relative Route/Vehicle path rows with explicit or default weight values; it does not require a Route or its target to exist and its allocated snapshot is released with `kv_free_scenario_snapshot()`. `kv_resolve_scenario_routes()` reuses that parse, requires Route candidates and existing targets, and returns one malloc block released with `kv_free_scenario_candidates()`. Scenario editing, creation, and writeback are not implemented.
 
 Implement general rules matching official BVE syntax; do not add private route syntax or special-case one route. Presets must emit ordinary BVE map/list statements.
+
+`Light.Ambient`, `Light.Diffuse`, and `Light.Direction` are non-editable preview rows. After the root map and all Includes are merged, each kind may have one syntactically valid declaration: duplicate kinds invalidate every conflicting row and emit one English warning containing every physical source location. Ambient/Diffuse RGB values must be in `[0, 1]`, Direction must be declared at route distance `0`, and invalid rows are omitted from the typed snapshot. `KvLightColorRow` and `KvLightDirectionRow` preserve file/order/source metadata for the read-only UI; they do not register edit targets or affect 2D/3D rendering.
 
 When an AI coding tool changes or adds BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback, it must invoke [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md) in addition to the matching scenario/subsystem skill. Recheck the affected live official page and complete the skill's compliance matrix before implementation.
 

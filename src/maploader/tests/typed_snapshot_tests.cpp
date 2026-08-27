@@ -356,6 +356,9 @@ void validate_arrays(const KvMapSnapshot& snapshot) {
     CHECK_ARRAY(cab_illuminance, cab_illuminance_count);
     CHECK_ARRAY(fogs, fog_count);
     CHECK_ARRAY(legacy_fogs, legacy_fog_count);
+    CHECK_ARRAY(light_ambient, light_ambient_count);
+    CHECK_ARRAY(light_diffuse, light_diffuse_count);
+    CHECK_ARRAY(light_direction, light_direction_count);
     CHECK_ARRAY(draw_distances, draw_distance_count);
     CHECK_ARRAY(speed_limits, speed_limit_count);
     CHECK_ARRAY(variable_assignments, variable_assignment_count);
@@ -440,9 +443,10 @@ void validate_map(const KvMapSnapshot& snapshot, bool edit_metadata) {
 }
 
 int scenario_route_contract();
+void light_contract();
 
 int snapshot_contract() {
-    static_assert(KV_MAPLOADER_API_VERSION == 9u, "maploader API contract version");
+    static_assert(KV_MAPLOADER_API_VERSION == 10u, "maploader API contract version");
     TempFixture fixture(true);
     check(kv_api_version() == KV_MAPLOADER_API_VERSION, "API version");
 #if defined(_WIN32)
@@ -7278,6 +7282,231 @@ void clear_diagnostics() {
     diagnostic_logs.clear();
 }
 
+void light_contract() {
+    kv_set_log_callback(diagnostic_log_callback);
+    TempFixture fixture;
+    const std::filesystem::path child_path = fixture.directory / "light-child.txt";
+    const auto write_map = [](const std::filesystem::path& path,
+                              const std::string& text) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output << text;
+        return static_cast<bool>(output);
+    };
+
+    check(write_map(
+              fixture.map_path,
+              "BveTs Map 2.02:utf-8\n"
+              "0;\n"
+              "Light.Ambient(0.1, 0.2, 0.3);\n"
+              "Include 'light-child.txt';\n"
+              "Light.Direction(1.25, -0.5);\n"),
+          "light valid root fixture write");
+    check(write_map(
+              child_path,
+              "BveTs Map 2.02:utf-8\n"
+              "Light.Diffuse(0.4, 0.5, 0.6);\n"),
+          "light valid include fixture write");
+    clear_diagnostics();
+    {
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(handle.value != nullptr, "light valid preview load");
+        if (handle.value) {
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0,
+                  "light valid preview snapshot");
+            validate_map(snapshot, false);
+            check(snapshot.light_ambient_count == 1 &&
+                      snapshot.light_diffuse_count == 1 &&
+                      snapshot.light_direction_count == 1,
+                  "light valid preview rows");
+            if (snapshot.light_ambient_count == 1 &&
+                snapshot.light_diffuse_count == 1 &&
+                snapshot.light_direction_count == 1) {
+                check(nearly_equal(snapshot.light_ambient[0].red, 0.1) &&
+                          nearly_equal(snapshot.light_ambient[0].green, 0.2) &&
+                          nearly_equal(snapshot.light_ambient[0].blue, 0.3),
+                      "light ambient values");
+                check(nearly_equal(snapshot.light_diffuse[0].red, 0.4) &&
+                          nearly_equal(snapshot.light_diffuse[0].green, 0.5) &&
+                          nearly_equal(snapshot.light_diffuse[0].blue, 0.6),
+                      "light diffuse values");
+                check(nearly_equal(snapshot.light_direction[0].pitch, 1.25) &&
+                          nearly_equal(snapshot.light_direction[0].yaw, -0.5),
+                      "light direction values");
+            }
+        }
+    }
+    check(!diagnostics_contain("Light.Ambient declarations are invalid"),
+          "light valid emits no duplicate warning");
+    {
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, "light valid edit-profile load");
+        if (handle.value) {
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0,
+                  "light valid edit-profile snapshot");
+            validate_arrays(snapshot);
+            check(snapshot.version == KV_MAP_SNAPSHOT_VERSION &&
+                      (snapshot.capabilities & KV_MAP_CAP_EDIT_METADATA) != 0 &&
+                      snapshot.light_ambient_count == 1 &&
+                      snapshot.light_ambient[0].metadata.line == 3 &&
+                      snapshot.light_ambient[0].metadata.source_file_index <
+                          snapshot.source_file_count,
+                  "light row source metadata");
+            bool no_edit_target = true;
+            for (std::uint64_t index = 0; index < snapshot.element_count; ++index) {
+                const std::string kind = map_string(snapshot, snapshot.elements[index].row_kind);
+                no_edit_target = no_edit_target &&
+                    kind != "light.ambient" && kind != "light.diffuse" &&
+                    kind != "light.direction";
+            }
+            check(no_edit_target, "light rows have no editable target");
+        }
+    }
+
+    check(write_map(
+              fixture.map_path,
+              "BveTs Map 2.02:utf-8\n"
+              "0;\n"
+              "Light.Ambient(0.1, 0.2, 0.3);\n"
+              "Light.Ambient(0.4, 0.5, 0.6);\n"
+              "Light.Diffuse(0.4, 0.5, 0.6);\n"
+              "Light.Direction(1, 2);\n"),
+          "light root duplicate fixture write");
+    clear_diagnostics();
+    {
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(handle.value != nullptr, "light root duplicate load");
+        if (handle.value) {
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0,
+                  "light root duplicate snapshot");
+            check(snapshot.light_ambient_count == 0 &&
+                      snapshot.light_diffuse_count == 1 &&
+                      snapshot.light_direction_count == 1,
+                  "light root duplicate invalidates only its statement family");
+        }
+    }
+    check(diagnostics_contain(
+              "Multiple Light.Ambient declarations are invalid in one logical map:"),
+          "light root duplicate warning");
+    check(diagnostics_contain("map.txt:3:1") && diagnostics_contain("map.txt:4:1"),
+          "light root duplicate locations");
+
+    check(write_map(
+              fixture.map_path,
+              "BveTs Map 2.02:utf-8\n"
+              "0;\n"
+              "Light.Diffuse(0.1, 0.2, 0.3);\n"
+              "Include 'light-child.txt';\n"),
+          "light include duplicate root fixture write");
+    check(write_map(
+              child_path,
+              "BveTs Map 2.02:utf-8\n"
+              "Light.Diffuse(0.4, 0.5, 0.6);\n"),
+          "light include duplicate child fixture write");
+    clear_diagnostics();
+    {
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(handle.value != nullptr, "light include duplicate load");
+        if (handle.value) {
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0,
+                  "light include duplicate snapshot");
+            check(snapshot.light_diffuse_count == 0,
+                  "light include duplicate invalidates diffuse");
+        }
+    }
+    check(diagnostics_contain(
+              "Multiple Light.Diffuse declarations are invalid in one logical map:"),
+          "light include duplicate warning");
+    check(diagnostics_contain("map.txt:3:1") &&
+              diagnostics_contain("light-child.txt:2:1"),
+          "light include duplicate locations");
+
+    check(write_map(
+              fixture.map_path,
+              "BveTs Map 2.02:utf-8\n"
+              "0;\n"
+              "Light.Ambient(-0.1, 0.2, 0.3);\n"),
+          "light RGB range fixture write");
+    clear_diagnostics();
+    {
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(handle.value != nullptr, "light RGB range load");
+        if (handle.value) {
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0,
+                  "light RGB range snapshot");
+            check(snapshot.light_ambient_count == 0,
+                  "light RGB range invalidates ambient");
+        }
+    }
+    check(diagnostics_contain("Light.Ambient RGB values must be between 0 and 1."),
+          "light RGB range warning");
+
+    check(write_map(
+              fixture.map_path,
+              "BveTs Map 2.02:utf-8\n"
+              "0;\n"
+              "10;\n"
+              "Light.Direction(1, 2);\n"),
+          "light direction distance fixture write");
+    clear_diagnostics();
+    {
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(handle.value != nullptr, "light direction distance load");
+        if (handle.value) {
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0,
+                  "light direction distance snapshot");
+            check(snapshot.light_direction_count == 0,
+                  "light direction distance invalidates direction");
+        }
+    }
+    check(diagnostics_contain("Light.Direction must be declared at route distance 0."),
+          "light direction distance warning");
+
+    check(write_map(
+              fixture.map_path,
+              "BveTs Map 2.02:utf-8\n"
+              "0;\n"
+              "Light.Ambient(0.1, 0.2);\n"
+              "Light.Ambient(0.1, 0.2, 0.3);\n"),
+          "light basic syntax fixture write");
+    clear_diagnostics();
+    {
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+        check(handle.value != nullptr, "light basic syntax load");
+        if (handle.value) {
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0,
+                  "light basic syntax snapshot");
+            check(snapshot.light_ambient_count == 1,
+                  "light invalid syntax does not join duplicate grouping");
+        }
+    }
+    check(diagnostics_contain("Parameter count error"), "light basic syntax warning");
+    check(!diagnostics_contain("Multiple Light.Ambient declarations"),
+          "light invalid syntax avoids duplicate warning");
+    kv_set_log_callback(nullptr);
+}
+
 int diagnostics_contract(const std::filesystem::path& fixture_root) {
     kv_set_log_callback(diagnostic_log_callback);
     auto fixture_path = [&](const char* name) {
@@ -7552,7 +7781,11 @@ int main(int argc, char** argv) {
         return 2;
     }
     const std::string mode = argv[1];
-    if (mode == "snapshot") return snapshot_contract() == 0 ? 0 : 1;
+    if (mode == "snapshot") {
+        snapshot_contract();
+        light_contract();
+        return failures == 0 ? 0 : 1;
+    }
     if (mode == "geometry") return geometry_projection_contract() == 0 ? 0 : 1;
     if (mode == "edit") return edit_contract() == 0 ? 0 : 1;
     if (mode == "diagnostics" && argc == 3) {

@@ -85,7 +85,7 @@ ctest --test-dir build --output-on-failure
 
 | 区域 | 主要文件与职责 |
 | --- | --- |
-| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v9 函数、定宽 POD 快照、场景快照、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
+| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v10 / 地图快照 v8 函数、定宽 POD 快照、场景快照、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
@@ -485,7 +485,7 @@ App / MapModel
 - 保持 `UNICODE`、`_UNICODE`、`NOMINMAX` 和 `WIN32_LEAN_AND_MEAN` 假设。
 - 异常、STL 类型、C++ 类或所有权不明确的指针不得跨越公共 C ABI。
 - DLL 通过 ABI 返回的已分配内存必须有配对释放函数。
-- 随附 EXE 要求 maploader API v9 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v1 独立分配并由 `kv_free_scenario_snapshot()` 释放，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
+- 随附 EXE 要求 maploader API v10、地图快照 v8 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v1 独立分配并由 `kv_free_scenario_snapshot()` 释放，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
 - 强类型 ABI 输入视为调用期视图；嵌套快照存储由句柄持有，并按已记录的几何重建、编辑操作、重置、重解析和释放规则失效。
 - 公共 ABI 变更必须明确决定版本/结构尺寸，同步修改 EXE、DLL 和调用方，并记录所有权与有效期。
 
@@ -496,6 +496,8 @@ App / MapModel
 场景文件只通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取 `Title`、`Route`、`RouteTitle`、`Vehicle`、`VehicleTitle`、`Author`、`Image`、`Comment` 的最后一项，返回保留相对路径原文及显式/默认权重的 Route/Vehicle 行；它不要求存在 Route 或有效 Route 目标，分配的快照由调用方以 `kv_free_scenario_snapshot()` 释放。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在，并返回由 `kv_free_scenario_candidates()` 释放的 malloc 内存块。Scenario 的编辑、新建与写回尚未实现。
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
+
+`Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 是不可编辑的预览行。根地图及全部 Include 合并后，每类只能保留一条基础语法正确的语句：同类重复会使所有冲突行无效，并输出一条含所有物理源码位置的英文警告。Ambient/Diffuse 的 RGB 必须在 `[0, 1]`，Direction 必须在里程 `0` 声明；无效行不会进入类型化快照。`KvLightColorRow` 与 `KvLightDirectionRow` 保留供只读界面使用的文件/顺序/源码元数据，但不注册编辑目标，也不影响 2D/3D 渲染。
 
 AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑时，除匹配的场景/子系统技能外，还必须调用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。实现前必须重新核对受影响的在线官方页面，并完成该技能要求的合规矩阵。
 

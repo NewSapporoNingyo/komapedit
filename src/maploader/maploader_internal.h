@@ -681,6 +681,26 @@ struct LegacyFogChange {
     EditSourceRef edit_ref;
 };
 
+struct LightColor {
+    double red = 0.0;
+    double green = 0.0;
+    double blue = 0.0;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
+    MapDiagnostic source;
+};
+
+struct LightDirection {
+    double distance = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+    std::string file_path;
+    int order = 0;
+    EditSourceRef edit_ref;
+    MapDiagnostic source;
+};
+
 struct DrawDistanceChange {
     double distance = 0.0;
     double value = 0.0;
@@ -849,6 +869,9 @@ struct MapSnapshotStorage {
     std::vector<KvCabIlluminanceRow> cab_illuminance;
     std::vector<KvFogRow> fogs;
     std::vector<KvLegacyFogRow> legacy_fogs;
+    std::vector<KvLightColorRow> light_ambient;
+    std::vector<KvLightColorRow> light_diffuse;
+    std::vector<KvLightDirectionRow> light_direction;
     std::vector<KvDrawDistanceRow> draw_distances;
     std::vector<KvSpeedLimitRow> speed_limits;
     std::vector<KvVariableAssignmentRow> variable_assignments;
@@ -949,6 +972,9 @@ struct MapContext {
     std::vector<CabIlluminanceChange> cab_illuminance;
     std::vector<FogChange> fogs;
     std::vector<LegacyFogChange> legacy_fogs;
+    std::vector<LightColor> light_ambient;
+    std::vector<LightColor> light_diffuse;
+    std::vector<LightDirection> light_direction;
     std::vector<DrawDistanceChange> draw_distances;
     std::vector<SpeedLimitEvent> speedlimits;
     Matrix owntrack_buffer;

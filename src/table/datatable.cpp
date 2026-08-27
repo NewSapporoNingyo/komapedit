@@ -5324,6 +5324,71 @@ void App::render_legacy_fogs_window() {
     ImGui::End();
 }
 
+void App::render_lighting_window() {
+    if (!show_lighting_window_) return;
+    if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
+    std::string title = tr("frame.lighting") + "###Lighting";
+    if (!ImGui::Begin(title.c_str(), &show_lighting_window_)) {
+        ImGui::End();
+        return;
+    }
+    if (!has_model_) {
+        ImGui::TextDisabled("-");
+        ImGui::End();
+        return;
+    }
+
+    static constexpr std::array<const char*, 3> k_color_parameter_labels = {
+        "red", "green", "blue",
+    };
+    static constexpr std::array<const char*, 2> k_direction_parameter_labels = {
+        "pitch", "yaw",
+    };
+    const auto render_group = [this](const char* statement,
+                                     const auto& parameter_labels,
+                                     auto* values) {
+        ImGui::TextUnformatted(statement);
+        const ImVec2 parameter_min = ImGui::GetCursorScreenPos();
+        ImVec2 parameter_max = parameter_min;
+        for (size_t index = 0; index < parameter_labels.size(); ++index) {
+            ImGui::PushID(statement);
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(parameter_labels[index]);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1.0f);
+            std::string missing_value;
+            std::string& value = values ? (*values)[index] : missing_value;
+            ImGui::InputText("##value", &value, ImGuiInputTextFlags_ReadOnly);
+            parameter_max.x = std::max(parameter_max.x, ImGui::GetItemRectMax().x);
+            parameter_max.y = ImGui::GetItemRectMax().y;
+            ImGui::PopID();
+            ImGui::PopID();
+        }
+        if (!values) {
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            draw_list->AddRectFilled(
+                parameter_min, parameter_max, ImGui::GetColorU32(ImGuiCol_WindowBg));
+            const std::string& missing_message = tr("label.light_statement_missing");
+            const ImVec2 text_size = ImGui::CalcTextSize(missing_message.c_str());
+            draw_list->AddText(
+                ImVec2(parameter_min.x + (parameter_max.x - parameter_min.x - text_size.x) * 0.5f,
+                       parameter_min.y + (parameter_max.y - parameter_min.y - text_size.y) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Text), missing_message.c_str());
+        }
+    };
+
+    render_group("Light.Ambient", k_color_parameter_labels,
+                 model_.light_ambient ? &model_.light_ambient->channels : nullptr);
+    ImGui::Separator();
+    render_group("Light.Diffuse", k_color_parameter_labels,
+                 model_.light_diffuse ? &model_.light_diffuse->channels : nullptr);
+    ImGui::Separator();
+    render_group("Light.Direction", k_direction_parameter_labels,
+                 model_.light_direction ? &model_.light_direction->angles : nullptr);
+    ImGui::End();
+}
+
 void App::render_draw_distances_window() {
     if (!show_draw_distances_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);

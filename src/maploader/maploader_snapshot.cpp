@@ -40,6 +40,8 @@ public:
             ctx_.irregularities.size() + ctx_.backgrounds.size() +
             ctx_.adhesions.size() + ctx_.cab_illuminance.size() +
             ctx_.fogs.size() + ctx_.legacy_fogs.size() +
+            ctx_.light_ambient.size() + ctx_.light_diffuse.size() +
+            ctx_.light_direction.size() +
             ctx_.draw_distances.size() + ctx_.speedlimits.size();
         const size_t preview_row_count =
             ctx_.variable_assignments.size() + ctx_.resource_list_loads.size();
@@ -601,6 +603,38 @@ private:
             row.metadata = metadata(input.edit_ref, "legacyFog.change");
             storage_.legacy_fogs.push_back(row);
         }
+        storage_.light_ambient.reserve(ctx_.light_ambient.size());
+        for (const LightColor& input : ctx_.light_ambient) {
+            KvLightColorRow row{};
+            row.red = input.red;
+            row.green = input.green;
+            row.blue = input.blue;
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "light.ambient");
+            storage_.light_ambient.push_back(row);
+        }
+        storage_.light_diffuse.reserve(ctx_.light_diffuse.size());
+        for (const LightColor& input : ctx_.light_diffuse) {
+            KvLightColorRow row{};
+            row.red = input.red;
+            row.green = input.green;
+            row.blue = input.blue;
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "light.diffuse");
+            storage_.light_diffuse.push_back(row);
+        }
+        storage_.light_direction.reserve(ctx_.light_direction.size());
+        for (const LightDirection& input : ctx_.light_direction) {
+            KvLightDirectionRow row{};
+            row.pitch = input.pitch;
+            row.yaw = input.yaw;
+            row.file_path = string_ref(input.file_path);
+            row.order = input.order;
+            row.metadata = metadata(input.edit_ref, "light.direction");
+            storage_.light_direction.push_back(row);
+        }
         storage_.draw_distances.reserve(ctx_.draw_distances.size());
         for (const DrawDistanceChange& input : ctx_.draw_distances) {
             KvDrawDistanceRow row{};
@@ -816,6 +850,9 @@ private:
         bind(storage_.cab_illuminance, view.cab_illuminance, view.cab_illuminance_count);
         bind(storage_.fogs, view.fogs, view.fog_count);
         bind(storage_.legacy_fogs, view.legacy_fogs, view.legacy_fog_count);
+        bind(storage_.light_ambient, view.light_ambient, view.light_ambient_count);
+        bind(storage_.light_diffuse, view.light_diffuse, view.light_diffuse_count);
+        bind(storage_.light_direction, view.light_direction, view.light_direction_count);
         bind(storage_.draw_distances, view.draw_distances, view.draw_distance_count);
         bind(storage_.speed_limits, view.speed_limits, view.speed_limit_count);
         bind(storage_.variable_assignments, view.variable_assignments,

@@ -594,6 +594,9 @@ private:
         offset_row_edit_refs(child.cab_illuminance, statement_index_base);
         offset_row_edit_refs(child.fogs, statement_index_base);
         offset_row_edit_refs(child.legacy_fogs, statement_index_base);
+        offset_row_edit_refs(child.light_ambient, statement_index_base);
+        offset_row_edit_refs(child.light_diffuse, statement_index_base);
+        offset_row_edit_refs(child.light_direction, statement_index_base);
         offset_row_edit_refs(child.draw_distances, statement_index_base);
         offset_row_edit_refs(child.speedlimits, statement_index_base);
         auto remap_source_file_index = [&](size_t& index) {
@@ -640,6 +643,9 @@ private:
         for (auto& row : child.cab_illuminance) offset_order(row.order);
         for (auto& row : child.fogs) offset_order(row.order);
         for (auto& row : child.legacy_fogs) offset_order(row.order);
+        for (auto& row : child.light_ambient) offset_order(row.order);
+        for (auto& row : child.light_diffuse) offset_order(row.order);
+        for (auto& row : child.light_direction) offset_order(row.order);
         for (auto& row : child.draw_distances) offset_order(row.order);
         for (auto& row : child.speedlimits) offset_order(row.order);
         for (auto& row : child.variable_assignments) offset_order(row.order);
@@ -710,6 +716,9 @@ private:
         for (auto& row : child.cab_illuminance) ctx_.cab_illuminance.push_back(std::move(row));
         for (auto& row : child.fogs) ctx_.fogs.push_back(std::move(row));
         for (auto& row : child.legacy_fogs) ctx_.legacy_fogs.push_back(std::move(row));
+        for (auto& row : child.light_ambient) ctx_.light_ambient.push_back(std::move(row));
+        for (auto& row : child.light_diffuse) ctx_.light_diffuse.push_back(std::move(row));
+        for (auto& row : child.light_direction) ctx_.light_direction.push_back(std::move(row));
         for (auto& row : child.draw_distances) ctx_.draw_distances.push_back(std::move(row));
         for (auto& row : child.speedlimits) ctx_.speedlimits.push_back(std::move(row));
         for (auto& row : child.variable_assignments) {
@@ -1409,6 +1418,8 @@ private:
             dispatch_cab_illuminance(fn, function.args);
         } else if (first == "fog") {
             dispatch_fog(fn, function.args);
+        } else if (first == "light") {
+            dispatch_light(fn, function.args);
         } else if (first == "drawdistance") {
             dispatch_draw_distance(fn, function.args);
         }
@@ -2246,6 +2257,36 @@ private:
         ctx_.fogs.push_back(std::move(row));
     }
 
+    void dispatch_light(const std::string& fn, const std::vector<Value>& a) {
+        if (fn == "ambient" || fn == "diffuse") {
+            LightColor row;
+            row.red = as_number(a[0]);
+            row.green = as_number(a[1]);
+            row.blue = as_number(a[2]);
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            row.source = diagnostic_source(
+                current_statement_start_,
+                fn == "ambient" ? "light.ambient" : "light.diffuse");
+            attach_active_noneditable_ref(ctx_, row);
+            if (fn == "ambient") {
+                ctx_.light_ambient.push_back(std::move(row));
+            } else {
+                ctx_.light_diffuse.push_back(std::move(row));
+            }
+        } else if (fn == "direction") {
+            LightDirection row;
+            row.distance = ctx_.distance;
+            row.pitch = as_number(a[0]);
+            row.yaw = as_number(a[1]);
+            row.file_path = ctx_.current_file_path;
+            row.order = ctx_.next_parse_order();
+            row.source = diagnostic_source(current_statement_start_, "light.direction");
+            attach_active_noneditable_ref(ctx_, row);
+            ctx_.light_direction.push_back(std::move(row));
+        }
+    }
+
     void dispatch_draw_distance(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "change" || a.empty() || a[0].is_null()) return;
         note_distance_use(ctx_);
@@ -2308,6 +2349,58 @@ const char* resource_list_statement_name(ResourceListLoadKind kind) {
                          "; first declaration is at " +
                          diagnostic_location(first) + ".";
     throw std::runtime_error(format_diagnostic(diagnostic));
+}
+
+template <typename Row>
+void invalidate_duplicate_light_declarations(MapContext& ctx, std::vector<Row>& rows,
+                                             const char* statement) {
+    if (rows.size() < 2) return;
+    std::stable_sort(rows.begin(), rows.end(),
+                     [](const Row& left, const Row& right) {
+                         return left.order < right.order;
+                     });
+    MapDiagnostic diagnostic = rows.front().source;
+    std::ostringstream locations;
+    for (size_t index = 0; index < rows.size(); ++index) {
+        if (index != 0) locations << ", ";
+        locations << diagnostic_location(rows[index].source);
+    }
+    diagnostic.message = "Multiple " + std::string(statement) +
+                         " declarations are invalid in one logical map: " +
+                         locations.str() + ".";
+    ctx.diagnostics.push_back(std::move(diagnostic));
+    rows.clear();
+}
+
+bool light_rgb_is_valid(const LightColor& row) {
+    return row.red >= 0.0 && row.red <= 1.0 &&
+           row.green >= 0.0 && row.green <= 1.0 &&
+           row.blue >= 0.0 && row.blue <= 1.0;
+}
+
+void validate_light_statements(MapContext& ctx) {
+    invalidate_duplicate_light_declarations(ctx, ctx.light_ambient, "Light.Ambient");
+    invalidate_duplicate_light_declarations(ctx, ctx.light_diffuse, "Light.Diffuse");
+    invalidate_duplicate_light_declarations(ctx, ctx.light_direction, "Light.Direction");
+
+    const auto validate_color = [&ctx](std::vector<LightColor>& rows,
+                                       const char* statement) {
+        if (rows.empty() || light_rgb_is_valid(rows.front())) return;
+        MapDiagnostic diagnostic = rows.front().source;
+        diagnostic.message = std::string(statement) +
+                             " RGB values must be between 0 and 1.";
+        ctx.diagnostics.push_back(std::move(diagnostic));
+        rows.clear();
+    };
+    validate_color(ctx.light_ambient, "Light.Ambient");
+    validate_color(ctx.light_diffuse, "Light.Diffuse");
+
+    if (!ctx.light_direction.empty() && ctx.light_direction.front().distance != 0.0) {
+        MapDiagnostic diagnostic = ctx.light_direction.front().source;
+        diagnostic.message = "Light.Direction must be declared at route distance 0.";
+        ctx.diagnostics.push_back(std::move(diagnostic));
+        ctx.light_direction.clear();
+    }
 }
 
 void validate_unique_preview_statements(const MapContext& ctx) {
@@ -2478,6 +2571,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
         ScopedTimer timer(&ctx->timing.parse_seconds);
         Parser parser(*ctx, std::move(loaded));
         parser.parse();
+        validate_light_statements(*ctx);
         validate_unique_preview_statements(*ctx);
     } catch (...) {
         emit_diagnostics(*ctx);

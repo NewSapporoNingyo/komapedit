@@ -12,8 +12,8 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 9u
-#define KV_MAP_SNAPSHOT_VERSION 7u
+#define KV_MAPLOADER_API_VERSION 10u
+#define KV_MAP_SNAPSHOT_VERSION 8u
 #define KV_SCENARIO_SNAPSHOT_VERSION 1u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
@@ -498,6 +498,29 @@ typedef struct KvLegacyFogRow {
     KvRowMetadata metadata;
 } KvLegacyFogRow;
 
+/* One validated Light.Ambient or Light.Diffuse declaration. The row remains
+ * valid until the owning map handle is freed or reparsed. */
+typedef struct KvLightColorRow {
+    double red;
+    double green;
+    double blue;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved;
+    KvRowMetadata metadata;
+} KvLightColorRow;
+
+/* One validated Light.Direction declaration. The statement is only valid at
+ * route distance zero; pitch and yaw use the evaluated source values. */
+typedef struct KvLightDirectionRow {
+    double pitch;
+    double yaw;
+    KvStringRef file_path;
+    int32_t order;
+    uint32_t reserved;
+    KvRowMetadata metadata;
+} KvLightDirectionRow;
+
 typedef struct KvDrawDistanceRow {
     double distance;
     double value;
@@ -666,6 +689,12 @@ typedef struct KvMapSnapshot {
     uint64_t fog_count;
     const KvLegacyFogRow* legacy_fogs;
     uint64_t legacy_fog_count;
+    const KvLightColorRow* light_ambient;
+    uint64_t light_ambient_count;
+    const KvLightColorRow* light_diffuse;
+    uint64_t light_diffuse_count;
+    const KvLightDirectionRow* light_direction;
+    uint64_t light_direction_count;
     const KvDrawDistanceRow* draw_distances;
     uint64_t draw_distance_count;
     const KvSpeedLimitRow* speed_limits;

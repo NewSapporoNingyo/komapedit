@@ -199,6 +199,7 @@ void App::setup_initial_dockspace(ImGuiID dockspace_id) {
     ImGui::DockBuilderDockWindow("CabIlluminance", dock_right);
     ImGui::DockBuilderDockWindow("Fogs", dock_right);
     ImGui::DockBuilderDockWindow("LegacyFogs", dock_right);
+    ImGui::DockBuilderDockWindow("Lighting", dock_right);
     ImGui::DockBuilderDockWindow("DrawDistances", dock_right);
     ImGui::DockBuilderDockWindow("Console", dock_console);
     ImGui::DockBuilderDockWindow("FileStructureDiagram", dock_main);
@@ -240,6 +241,7 @@ WindowVisibilitySettings App::current_window_visibility() const {
     visibility.show_cab_illuminance_window = show_cab_illuminance_window_;
     visibility.show_fogs_window = show_fogs_window_;
     visibility.show_legacy_fogs_window = show_legacy_fogs_window_;
+    visibility.show_lighting_window = show_lighting_window_;
     visibility.show_draw_distances_window = show_draw_distances_window_;
     visibility.show_speed_limits_window = show_speed_limits_window_;
     visibility.show_file_structure_window = show_file_structure_window_;
@@ -276,6 +278,7 @@ void App::apply_window_visibility_settings(const WindowVisibilitySettings& visib
     show_cab_illuminance_window_ = visibility.show_cab_illuminance_window;
     show_fogs_window_ = visibility.show_fogs_window;
     show_legacy_fogs_window_ = visibility.show_legacy_fogs_window;
+    show_lighting_window_ = visibility.show_lighting_window;
     show_draw_distances_window_ = visibility.show_draw_distances_window;
     show_speed_limits_window_ = visibility.show_speed_limits_window;
     show_file_structure_window_ = visibility.show_file_structure_window;
@@ -621,7 +624,7 @@ void App::render_menu() {
             const char* label_key;
             bool App::*window_visible;
         };
-        static constexpr std::array<MapInfoMenuEntry, 34> k_map_info_menu_entries = {{
+        static constexpr std::array<MapInfoMenuEntry, 35> k_map_info_menu_entries = {{
             {"aux.station", nullptr},
             {"menu.map_info.station", &App::show_station_list_window_},
             {"aux.scenery", nullptr},
@@ -653,6 +656,7 @@ void App::render_menu() {
             {"menu.map_info.cab_illuminance", &App::show_cab_illuminance_window_},
             {"menu.map_info.fogs", &App::show_fogs_window_},
             {"menu.map_info.legacy_fogs", &App::show_legacy_fogs_window_},
+            {"menu.map_info.lighting", &App::show_lighting_window_},
             {"menu.map_info.draw_distances", &App::show_draw_distances_window_},
             {"aux.other", nullptr},
             {"menu.map_info.variables", &App::show_variables_window_},
@@ -1178,6 +1182,7 @@ void App::render() {
     render_cab_illuminance_window();
     render_fogs_window();
     render_legacy_fogs_window();
+    render_lighting_window();
     render_draw_distances_window();
     render_speed_limits_window();
     process_pending_element_delete();

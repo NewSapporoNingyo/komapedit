@@ -586,6 +586,14 @@ std::string join_table_values(const std::vector<std::string>& values,
 struct MapModel;
 void annotate_scene_track_key_warnings(MapModel& model);
 
+struct LightColorValues {
+    std::array<std::string, 3> channels;
+};
+
+struct LightDirectionValues {
+    std::array<std::string, 2> angles;
+};
+
 struct MapModel {
     std::string path;
     std::vector<FileStructureNode> file_structure;
@@ -636,6 +644,9 @@ struct MapModel {
     std::vector<TableRow> cab_illuminance;
     std::vector<TableRow> fogs;
     std::vector<TableRow> legacy_fogs;
+    std::optional<LightColorValues> light_ambient;
+    std::optional<LightColorValues> light_diffuse;
+    std::optional<LightDirectionValues> light_direction;
     std::vector<TableRow> draw_distances;
     std::vector<TableRow> variable_assignments;
     std::array<ResourceListSource,
@@ -1028,6 +1039,7 @@ struct WindowVisibilitySettings {
     bool show_cab_illuminance_window = false;
     bool show_fogs_window = false;
     bool show_legacy_fogs_window = false;
+    bool show_lighting_window = false;
     bool show_draw_distances_window = false;
     bool show_speed_limits_window = false;
     bool show_file_structure_window = false;
@@ -1062,6 +1074,7 @@ struct WindowVisibilitySettings {
             show_cab_illuminance_window == other.show_cab_illuminance_window &&
             show_fogs_window == other.show_fogs_window &&
             show_legacy_fogs_window == other.show_legacy_fogs_window &&
+            show_lighting_window == other.show_lighting_window &&
             show_draw_distances_window == other.show_draw_distances_window &&
             show_speed_limits_window == other.show_speed_limits_window &&
             show_file_structure_window == other.show_file_structure_window &&
@@ -2038,6 +2051,7 @@ private:
     bool show_cab_illuminance_window_ = false;
     bool show_fogs_window_ = false;
     bool show_legacy_fogs_window_ = false;
+    bool show_lighting_window_ = false;
     bool show_draw_distances_window_ = false;
     bool show_speed_limits_window_ = false;
     bool show_scenario_file_window_ = false;
@@ -2534,6 +2548,7 @@ private:
     void render_cab_illuminance_window();
     void render_fogs_window();
     void render_legacy_fogs_window();
+    void render_lighting_window();
     void render_draw_distances_window();
     void render_speed_limits_window();
     void render_file_structure_window();

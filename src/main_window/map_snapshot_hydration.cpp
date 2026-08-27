@@ -1117,6 +1117,28 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.legacy_fogs.push_back(std::move(row));
     }
+    const auto hydrate_light_color = [](const KvLightColorRow* rows,
+                                        std::uint64_t count)
+        -> std::optional<LightColorValues> {
+        if (!rows || count != 1) return std::nullopt;
+        const KvLightColorRow& input = rows[0];
+        return LightColorValues{{
+            format_double(input.red, 6),
+            format_double(input.green, 6),
+            format_double(input.blue, 6),
+        }};
+    };
+    model.light_ambient =
+        hydrate_light_color(snapshot.light_ambient, snapshot.light_ambient_count);
+    model.light_diffuse =
+        hydrate_light_color(snapshot.light_diffuse, snapshot.light_diffuse_count);
+    if (snapshot.light_direction && snapshot.light_direction_count == 1) {
+        const KvLightDirectionRow& input = snapshot.light_direction[0];
+        model.light_direction = LightDirectionValues{{
+            format_double(input.pitch, 6),
+            format_double(input.yaw, 6),
+        }};
+    }
     model.draw_distances.reserve(static_cast<size_t>(snapshot.draw_distance_count));
     for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {
         const KvDrawDistanceRow& input = snapshot.draw_distances[i];
