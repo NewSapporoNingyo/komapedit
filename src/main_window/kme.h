@@ -1746,8 +1746,10 @@ public:
     ~App();
 
     void render();
-    void add_log(std::string text);
-    void add_log(LogSeverity severity, std::string text);
+    void add_log_at(std::string_view source_path, std::string text);
+    void add_log_at(std::string_view source_path, LogSeverity severity, std::string text);
+    void add_forwarded_log(std::string text);
+    void append_log(LogSeverity severity, std::string text);
     void refresh_diagnostics_snapshot();
     void request_exit();
     bool on_frame_presented();
@@ -2884,3 +2886,7 @@ int distance_jump_input_filter(ImGuiInputTextCallbackData* data);
 bool parse_distance_jump_input(const char* text, double& distance);
 
 const std::vector<NewElementTemplate>& new_element_templates();
+
+// C++17 has no standard source-location facility. Keep direct App logging at
+// the call site so the Console always receives the current implementation file.
+#define KME_ADD_LOG(...) add_log_at(__FILE__, __VA_ARGS__)

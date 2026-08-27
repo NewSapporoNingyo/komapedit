@@ -134,5 +134,5 @@ App::~App() {
 }
 
 void App::log_callback(const char* message) {
-    if (g_app && message) g_app->add_log(message);
+    if (g_app && message) g_app->add_forwarded_log(message);
 }

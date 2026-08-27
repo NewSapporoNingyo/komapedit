@@ -28,6 +28,27 @@ void emit_log(const std::string& line) noexcept {
     }
 }
 
+std::string_view source_file_name(std::string_view source_path) noexcept {
+    const size_t separator = source_path.find_last_of("\\/");
+    return separator == std::string_view::npos ? source_path : source_path.substr(separator + 1);
+}
+
+void emit_log_at(std::string_view severity, std::string_view source_path,
+                 const std::string& message) noexcept {
+    try {
+        std::string_view source_name = source_file_name(source_path);
+        if (source_name.empty()) source_name = "unknown";
+        std::string line;
+        line.reserve(severity.size() + source_name.size() + 2 + message.size());
+        line.append(severity.data(), severity.size());
+        line.append(source_name.data(), source_name.size());
+        line.append(": ");
+        line.append(message);
+        emit_log(line);
+    } catch (...) {
+    }
+}
+
 } // namespace
 
 void set_log_callback(KvLogCallback callback) noexcept {
@@ -49,16 +70,16 @@ const char* last_error_c_str() noexcept {
     return g_last_error_fallback ? g_last_error_fallback : g_last_error.c_str();
 }
 
-void log_info(const std::string& message) noexcept {
-    try { emit_log("[INFO]maploader.cpp: " + message); } catch (...) {}
+void log_info_at(std::string_view source_path, const std::string& message) noexcept {
+    emit_log_at("[INFO]", source_path, message);
 }
 
-void log_warn(const std::string& message) noexcept {
-    try { emit_log("[WARN]maploader.cpp: " + message); } catch (...) {}
+void log_warn_at(std::string_view source_path, const std::string& message) noexcept {
+    emit_log_at("[WARN]", source_path, message);
 }
 
-void log_error(const std::string& message) noexcept {
-    try { emit_log("[ERROR]maploader.cpp: " + message); } catch (...) {}
+void log_error_at(std::string_view source_path, const std::string& message) noexcept {
+    emit_log_at("[ERROR]", source_path, message);
 }
 
 } // namespace kme::maploader

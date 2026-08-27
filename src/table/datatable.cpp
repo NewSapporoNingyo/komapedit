@@ -2240,7 +2240,7 @@ void App::run_unused_structure_model_search() {
     commit_editable_list_active_edit(
         structure_model_edit_, k_structure_model_edit_spec);
     ensure_table_cache();
-    add_log("[INFO]datatable.cpp: Searching unused models...");
+    KME_ADD_LOG("[INFO]Searching unused models...");
 
     run_unused_key_search(
         structure_model_find_,
@@ -2314,14 +2314,14 @@ void App::run_unused_structure_model_search() {
             }
         },
         [this](const std::string& key) {
-            add_log("[WARN]datatable.cpp: Found undefined structureKey:\"" +
+            KME_ADD_LOG("[WARN]Found undefined structureKey:\"" +
                     key + "\"");
         });
 
     if (structure_model_find_.unused_count == 0) {
-        add_log("[INFO]datatable.cpp: No unused models found");
+        KME_ADD_LOG("[INFO]No unused models found");
     } else {
-        add_log("[INFO]datatable.cpp: Found unused models (" +
+        KME_ADD_LOG("[INFO]Found unused models (" +
                 std::to_string(structure_model_find_.unused_count) + "/" +
                 std::to_string(structure_model_find_.unused_total) + ")");
     }
@@ -2367,7 +2367,7 @@ void App::run_unused_signal_aspect_search() {
     commit_editable_list_active_edit(
         signal_aspect_edit_, k_signal_aspect_edit_spec);
     ensure_table_cache();
-    add_log("[INFO]datatable.cpp: Searching unused signal aspects...");
+    KME_ADD_LOG("[INFO]Searching unused signal aspects...");
 
     run_unused_key_search(
         signal_aspect_find_,
@@ -2384,13 +2384,13 @@ void App::run_unused_signal_aspect_search() {
             }
         },
         [this](const std::string& key) {
-            add_log("[WARN]datatable.cpp: Found undefined signalAspectKey:\"" + key + "\"");
+            KME_ADD_LOG("[WARN]Found undefined signalAspectKey:\"" + key + "\"");
         });
 
     if (signal_aspect_find_.unused_count == 0) {
-        add_log("[INFO]datatable.cpp: No unused signal aspects found");
+        KME_ADD_LOG("[INFO]No unused signal aspects found");
     } else {
-        add_log("[INFO]datatable.cpp: Found unused signal aspects (" +
+        KME_ADD_LOG("[INFO]Found unused signal aspects (" +
                 std::to_string(signal_aspect_find_.unused_count) + "/" +
                 std::to_string(signal_aspect_find_.unused_total) + ")");
     }
@@ -2446,9 +2446,9 @@ void App::run_unused_sound_file_search(bool is_3d) {
         is_3d ? k_sound_3d_list_edit_spec : k_sound_list_edit_spec;
     commit_editable_list_active_edit(edit, spec);
     ensure_table_cache();
-    add_log(is_3d
-        ? "[INFO]datatable.cpp: Searching unused 3D sounds..."
-        : "[INFO]datatable.cpp: Searching unused sounds...");
+    KME_ADD_LOG(is_3d
+        ? "[INFO]Searching unused 3D sounds..."
+        : "[INFO]Searching unused sounds...");
 
     TableFindState& state = is_3d ? sound_3d_file_find_ : sound_file_find_;
     const std::vector<CachedTableRow>& file_rows = is_3d
@@ -2475,16 +2475,16 @@ void App::run_unused_sound_file_search(bool is_3d) {
             }
         },
         [this, is_3d](const std::string& key) {
-            add_log(std::string("[WARN]datatable.cpp: Found undefined ") +
+            KME_ADD_LOG(std::string("[WARN]Found undefined ") +
                     (is_3d ? "3D " : "") + "soundKey:\"" + key + "\"");
         });
 
     if (state.unused_count == 0) {
-        add_log(is_3d
-            ? "[INFO]datatable.cpp: No unused 3D sounds found"
-            : "[INFO]datatable.cpp: No unused sounds found");
+        KME_ADD_LOG(is_3d
+            ? "[INFO]No unused 3D sounds found"
+            : "[INFO]No unused sounds found");
     } else {
-        add_log(std::string("[INFO]datatable.cpp: Found unused ") +
+        KME_ADD_LOG(std::string("[INFO]Found unused ") +
                 (is_3d ? "3D sounds (" : "sounds (") +
                 std::to_string(state.unused_count) + "/" +
                 std::to_string(state.unused_total) + ")");

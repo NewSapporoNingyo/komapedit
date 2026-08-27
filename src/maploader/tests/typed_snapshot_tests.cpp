@@ -7569,6 +7569,16 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
         check(snapshot.speed_limit_count == 1,
               "valid statement after syntax errors reaches IR");
     }
+    check(diagnostics_contain("[WARN]maploader_parser.cpp:"),
+          "map diagnostics identify maploader_parser.cpp");
+    check(diagnostics_contain("[INFO]maploader_parser.cpp: loading map "),
+          "map parser progress identifies maploader_parser.cpp");
+    check(diagnostics_contain("[INFO]maploader_geometry.cpp: calculating track geometry"),
+          "geometry progress identifies maploader_geometry.cpp");
+    check(diagnostics_contain("[INFO]maploader_core.cpp: load timing:"),
+          "load timing identifies maploader_core.cpp");
+    check(diagnostics_contain("[INFO]maploader.cpp: "),
+          "C ABI load completion identifies maploader.cpp");
 
     TempFixture invalid_cant_cant;
     {

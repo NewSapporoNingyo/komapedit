@@ -275,7 +275,7 @@ void TextureImage::release() {
 }
 void App::save_history() {
     if (!save_history_entries(history_path_, recent_maps_)) {
-        add_log("[WARN] Failed to save history.ini");
+        KME_ADD_LOG("[WARN] Failed to save history.ini");
     }
 }
 
@@ -369,7 +369,7 @@ bool App::apply_background_history(const BackgroundHistory& background) {
     if (ec || !exists) {
         clear_background_image();
         std::string message = "[WARN] Background image not found: " + background.image_path;
-        add_log(message);
+        KME_ADD_LOG(message);
         std::cerr << message << std::endl;
         return false;
     }
@@ -398,7 +398,7 @@ bool App::load_background_image(const std::string& path, bool reset_parameters) 
         bg_image_.release();
         const std::string message =
             "[ERROR] Failed to load background image: " + path + ": " + reason;
-        add_log(message);
+        KME_ADD_LOG(message);
         std::cerr << message << std::endl;
         return false;
     };
@@ -442,7 +442,7 @@ bool App::rebuild_background_texture() {
             static_cast<UINT>(bg_image_.height),
             row_stride, pixel_bytes, layout_error) ||
         pixel_bytes != bg_image_.pixels_rgba.size()) {
-        add_log("[ERROR] Failed to rebuild background image texture: " +
+        KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: " +
                 (layout_error.empty() ? std::string("pixel buffer size is inconsistent")
                                       : layout_error));
         return false;
@@ -475,7 +475,7 @@ bool App::rebuild_background_texture() {
         ID3D11Texture2D* texture = nullptr;
         HRESULT hr = device_->CreateTexture2D(&desc, &sub, &texture);
         if (FAILED(hr)) {
-            add_log("[ERROR] Failed to rebuild background image texture: "
+            KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: "
                     "Direct3D texture creation failed");
             return false;
         }
@@ -489,7 +489,7 @@ bool App::rebuild_background_texture() {
         texture->Release();
         if (FAILED(hr)) {
             release_com(new_srv);
-            add_log("[ERROR] Failed to rebuild background image texture: "
+            KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: "
                     "Direct3D shader-resource-view creation failed");
             return false;
         }
@@ -498,11 +498,11 @@ bool App::rebuild_background_texture() {
         bg_image_.brightness = bg_brightness_;
         return true;
     } catch (const std::exception& error) {
-        add_log("[ERROR] Failed to rebuild background image texture: " +
+        KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: " +
                 std::string(error.what()));
         return false;
     } catch (...) {
-        add_log("[ERROR] Failed to rebuild background image texture: unknown error");
+        KME_ADD_LOG("[ERROR] Failed to rebuild background image texture: unknown error");
         return false;
     }
 }

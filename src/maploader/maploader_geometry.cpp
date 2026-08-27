@@ -13,7 +13,6 @@
 
 namespace kme::maploader::detail {
 
-using kme::maploader::log_info;
 
 struct LastPos {
     double x = 0.0;
@@ -1268,7 +1267,7 @@ void generate_geometry(MapContext& ctx, double unitdist,
                        bool has_arb, double arb_start, double arb_end, double arb_step,
                        const std::vector<double>* extra_controlpoints,
                        bool generate_auxiliary_buffers) {
-    log_info("calculating track geometry");
+    KME_MAPLOADER_LOG_INFO("calculating track geometry");
     ctx.scene_geometry_valid = false;
     ctx.unit_distance = unitdist;
     ctx.cp_arbdistribution_explicit = has_arb;

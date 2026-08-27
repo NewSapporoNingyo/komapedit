@@ -12,8 +12,6 @@
 
 namespace kme::maploader::detail {
 
-using kme::maploader::log_info;
-using kme::maploader::log_warn;
 using kme::maploader::path_to_utf8;
 
 constexpr size_t k_max_include_depth = 64;
@@ -458,7 +456,7 @@ private:
                 "Include depth exceeds the supported limit of " +
                 std::to_string(k_max_include_depth) + ": " + child_path);
         }
-        log_info("including " + path_to_utf8(child));
+        KME_MAPLOADER_LOG_INFO("including " + path_to_utf8(child));
         const size_t byte_start = loaded_.body_offset + body_start;
         const size_t byte_end = loaded_.body_offset + body_end;
         std::string callsite_key = make_include_invocation_key(
@@ -2539,7 +2537,7 @@ void emit_diagnostics(MapContext& ctx) {
             return left.column < right.column;
         });
     for (const MapDiagnostic& diagnostic : ctx.diagnostics) {
-        log_warn(format_diagnostic(diagnostic));
+        KME_MAPLOADER_LOG_WARN(format_diagnostic(diagnostic));
     }
 }
 
@@ -2556,7 +2554,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     ctx->source_overrides = std::move(overrides);
     ctx->parse_options = options;
     ActiveTimingScope active(ctx->timing);
-    log_info("loading map " + path_to_utf8(map_path));
+    KME_MAPLOADER_LOG_INFO("loading map " + path_to_utf8(map_path));
     LoadedText loaded = load_header_text(*ctx, map_path, "BveTs Map ", 2.0);
     register_source_file(*ctx, loaded);
     ctx->rootpath = loaded.root;
@@ -2566,7 +2564,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     ctx->include_stack.push_back(ctx->current_file_path);
     ctx->file_structure.push_back({k_no_source_ref, {}, ctx->entry_file_path});
 
-    log_info("parsing syntax tree");
+    KME_MAPLOADER_LOG_INFO("parsing syntax tree");
     try {
         ScopedTimer timer(&ctx->timing.parse_seconds);
         Parser parser(*ctx, std::move(loaded));
@@ -2581,7 +2579,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
     append_deferred_key_diagnostics(*ctx);
     emit_diagnostics(*ctx);
 
-    log_info("sorting parsed IR");
+    KME_MAPLOADER_LOG_INFO("sorting parsed IR");
     {
         ScopedTimer timer(&ctx->timing.relocate_seconds);
         relocate(*ctx);

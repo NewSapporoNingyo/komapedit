@@ -9960,7 +9960,7 @@ int App::run_debug_headless_diagnostics_popup_benchmark(
                 : index % 3 == 1 ? LogSeverity::Warning : LogSeverity::Error;
             const char* prefix = severity == LogSeverity::Info
                 ? "[info]" : severity == LogSeverity::Warning ? "[warn]" : "[error]";
-            app.add_log(severity, std::string(prefix) +
+            app.add_log_at(__FILE__, severity, std::string(prefix) +
                                       " diagnostics contract line " +
                                       std::to_string(index));
             if ((index + 1) % 10000 == 0) {
@@ -9997,7 +9997,7 @@ int App::run_debug_headless_diagnostics_popup_benchmark(
                 for (int index = 0; index < 200; ++index) {
                     const LogSeverity severity = index % 2 == 0
                         ? LogSeverity::Warning : LogSeverity::Error;
-                    app.add_log(severity,
+                    app.add_log_at(__FILE__, severity,
                                 std::string(severity == LogSeverity::Warning
                                                 ? "[warn]" : "[error]") +
                                     " concurrent diagnostics writer " +

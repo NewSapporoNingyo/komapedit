@@ -73,12 +73,77 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-void App::add_log(std::string text) {
-    const LogSeverity severity = classify_log_severity(text);
-    add_log(severity, std::move(text));
+namespace {
+
+std::string_view source_file_name(std::string_view source_path) noexcept {
+    const size_t separator = source_path.find_last_of("\\/");
+    return separator == std::string_view::npos ? source_path : source_path.substr(separator + 1);
 }
 
-void App::add_log(LogSeverity severity, std::string text) {
+bool ends_with_cpp(std::string_view text) noexcept {
+    constexpr std::string_view suffix = ".cpp";
+    return text.size() >= suffix.size() && text.substr(text.size() - suffix.size()) == suffix;
+}
+
+std::string format_console_log(std::string_view source_path, LogSeverity severity,
+                               std::string text) {
+    std::string_view source_name = source_file_name(source_path);
+    if (source_name.empty()) source_name = "unknown";
+
+    const size_t closing_bracket = text.find(']');
+    if (closing_bracket == std::string::npos) {
+        const char* severity_prefix = severity == LogSeverity::Warning ? "[WARN]"
+            : severity == LogSeverity::Error ? "[ERROR]" : "[INFO]";
+        std::string formatted(severity_prefix);
+        formatted.reserve(formatted.size() + source_name.size() + 2 + text.size());
+        formatted.append(source_name.data(), source_name.size());
+        formatted.append(": ");
+        formatted.append(text);
+        return formatted;
+    }
+
+    size_t payload_begin = closing_bracket + 1;
+    while (payload_begin < text.size() &&
+           (text[payload_begin] == ' ' || text[payload_begin] == '\t')) {
+        ++payload_begin;
+    }
+    const size_t colon = text.find(':', payload_begin);
+    const size_t whitespace = text.find_first_of(" \t\r\n", payload_begin);
+    if (colon != std::string::npos &&
+        (whitespace == std::string::npos || colon < whitespace) &&
+        ends_with_cpp(std::string_view(text).substr(payload_begin, colon - payload_begin))) {
+        payload_begin = colon + 1;
+        while (payload_begin < text.size() &&
+               (text[payload_begin] == ' ' || text[payload_begin] == '\t')) {
+            ++payload_begin;
+        }
+    }
+
+    std::string formatted;
+    formatted.reserve(closing_bracket + 1 + source_name.size() + 2 + text.size() - payload_begin);
+    formatted.append(text.data(), closing_bracket + 1);
+    formatted.append(source_name.data(), source_name.size());
+    formatted.append(": ");
+    formatted.append(text.data() + payload_begin, text.size() - payload_begin);
+    return formatted;
+}
+
+} // namespace
+
+void App::add_log_at(std::string_view source_path, std::string text) {
+    const LogSeverity severity = classify_log_severity(text);
+    add_log_at(source_path, severity, std::move(text));
+}
+
+void App::add_log_at(std::string_view source_path, LogSeverity severity, std::string text) {
+    append_log(severity, format_console_log(source_path, severity, std::move(text)));
+}
+
+void App::add_forwarded_log(std::string text) {
+    append_log(classify_log_severity(text), std::move(text));
+}
+
+void App::append_log(LogSeverity severity, std::string text) {
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
         if (logs_.size() >= k_max_console_log_lines) {
@@ -155,7 +220,7 @@ void App::export_csv() {
     std::string folder = choose_folder_dialog();
     if (folder.empty()) return;
     export_csv_to_directory(std::filesystem::path(utf8_to_wide(folder)));
-    add_log("CSV exported: " + folder);
+    KME_ADD_LOG("CSV exported: " + folder);
 }
 
 void App::setup_initial_dockspace(ImGuiID dockspace_id) {

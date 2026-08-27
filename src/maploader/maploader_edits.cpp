@@ -15,7 +15,6 @@
 namespace kme::maploader::detail {
 
 using kme::maploader::encode_text_for_writeback;
-using kme::maploader::log_warn;
 using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
 using kme::maploader::read_binary_file;

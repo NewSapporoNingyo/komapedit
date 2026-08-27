@@ -484,7 +484,7 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
     rows.reserve(cached_rows->size());
     for (const CachedTableRow& cached : *cached_rows) {
         if (cached.edit_id.empty()) {
-            add_log("[error]gui_kme.cpp: " + std::string(spec.row_kind) +
+            KME_ADD_LOG("[error]" + std::string(spec.row_kind) +
                     " draft row has no edit ID");
             return false;
         }
@@ -493,7 +493,7 @@ bool App::initialize_editable_list_draft_rows(EditableListEditState& edit,
             resolve_inspector_target_metadata(handle_, cached.edit_id, spec.row_kind,
                                               &metadata_error);
         if (!metadata) {
-            add_log("[error]gui_kme.cpp: " + std::string(spec.row_kind) +
+            KME_ADD_LOG("[error]" + std::string(spec.row_kind) +
                     " draft initialization failed: " +
                     (metadata_error.empty() ? std::string("metadata unavailable")
                                             : metadata_error));
@@ -786,9 +786,9 @@ bool App::choose_editable_list_file(EditableListEditState& edit,
         static_cast<int>(spec.cache_column_offset) + spec.path_field;
 
     if (!selected_path.fallback_reason.empty()) {
-        add_log(
+        KME_ADD_LOG(
             LogSeverity::Warning,
-            "[warning]gui_kme.cpp: unable to create a relative resource path; "
+            "[warning]unable to create a relative resource path; "
             "using absolute path: reason=\"" + selected_path.fallback_reason +
             "\", selected=\"" + selected_path.resolved_path +
             "\", list=\"" + row.target_source_file + "\"");
@@ -940,7 +940,7 @@ void App::rebind_other_editable_list_drafts(
             row.payload_edit_id = payload->edit_id;
         }
         if (!rebound) {
-            add_log("[error]gui_kme.cpp: discarded stale " +
+            KME_ADD_LOG("[error]discarded stale " +
                     std::string(binding.spec->row_kind) +
                     " drafts after source rows could not be rebound");
             *binding.edit = EditableListEditState{};
@@ -958,7 +958,7 @@ void App::apply_editable_list_drafts(EditableListEditState& edit,
     std::string error;
     if (!build_editable_list_pending_changes(
             spec, edit.rows, pending_edit_changes_, candidate, error)) {
-        add_log("[error]gui_kme.cpp: " + std::string(spec.row_kind) +
+        KME_ADD_LOG("[error]" + std::string(spec.row_kind) +
                 " apply blocked: " + error);
         set_program_status("status.edit.pending");
         return;

@@ -136,8 +136,8 @@ ScenarioDocument load_scenario_document(const std::filesystem::path& scenario_pa
     std::array<std::string, k_field_names.size()> values;
     auto set_field = [&](size_t index, const std::string& value, auto& target, auto parsed) {
         if (seen[index] && values[index] != value) {
-            log_warn(path_to_utf8(scenario_path.filename()) + " declares multiple " +
-                     k_field_names[index] + " entries; the last one wins.");
+            KME_MAPLOADER_LOG_WARN(path_to_utf8(scenario_path.filename()) + " declares multiple " +
+                                    k_field_names[index] + " entries; the last one wins.");
         }
         target = std::move(parsed);
         values[index] = value;

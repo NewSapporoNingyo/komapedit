@@ -24,8 +24,6 @@ namespace {
 
 using kme::maploader::copy_c_string;
 using kme::maploader::last_error_c_str;
-using kme::maploader::log_error;
-using kme::maploader::log_info;
 using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
 using kme::maploader::set_last_error;
@@ -147,12 +145,12 @@ KV_API void* kv_load_map_ex(const char* path, double unit_distance, unsigned fla
         MapParseOptions options = parse_options_from_load_flags(flags);
         auto ctx = kme::maploader::detail::parse_map_context(
             map_path, unit_distance, SourceTextOverrides{}, false, {0.0, 0.0, 0.0}, options);
-        log_info(path_to_utf8(map_path.filename()) +
-                 (options.collect_edit_metadata ? " loaded (edit)" : " loaded (preview)"));
+        KME_MAPLOADER_LOG_INFO(path_to_utf8(map_path.filename()) +
+                               (options.collect_edit_metadata ? " loaded (edit)" : " loaded (preview)"));
         return ctx.release();
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        log_error(e.what());
+        KME_MAPLOADER_LOG_ERROR(e.what());
         return nullptr;
     } catch (...) {
         set_last_error("unknown maploader error");
@@ -179,7 +177,7 @@ KV_API int kv_generate_geometry(void* handle, double unit_distance,
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        log_error(e.what());
+        KME_MAPLOADER_LOG_ERROR(e.what());
         return 0;
     } catch (...) {
         set_last_error("unknown maploader error");
@@ -269,7 +267,7 @@ KV_API int kv_generate_scene_geometry(void* handle, double unit_distance,
         return 1;
     } catch (const std::exception& e) {
         set_last_error(e.what());
-        log_error(e.what());
+        KME_MAPLOADER_LOG_ERROR(e.what());
         return 0;
     } catch (...) {
         set_last_error("unknown maploader error");

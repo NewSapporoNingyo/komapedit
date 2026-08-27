@@ -20,11 +20,9 @@ using kme::maploader::decode_utf16;
 using kme::maploader::encode_text_for_writeback;
 using kme::maploader::first_line_ascii;
 using kme::maploader::has_utf8_bom;
-using kme::maploader::log_info;
 using kme::maploader::path_from_utf8;
 using kme::maploader::path_to_utf8;
 using kme::maploader::read_binary_file;
-using kme::maploader::log_warn;
 
 namespace {
 
@@ -274,8 +272,8 @@ LoadedText load_header_text(const std::filesystem::path& path,
             }
         } catch (...) {
             std::string retry = ascii_lower(encoding) == "utf-8" ? "cp932" : "utf-8";
-            log_warn(path_to_utf8(path.filename()) + " cannot be decoded with " + encoding +
-                     ". Kobushi tries to decode with " + retry + ".");
+            KME_MAPLOADER_LOG_WARN(path_to_utf8(path.filename()) + " cannot be decoded with " + encoding +
+                                    ". Kobushi tries to decode with " + retry + ".");
             encoding = retry;
             if (retry == "cp932") {
                 text = decode_codepage(bytes, 932, false);
@@ -925,13 +923,13 @@ std::string format_seconds(double seconds) {
 }
 
 void log_load_timing(const MapContext& ctx) {
-    log_info("load timing: read/decode=" + format_seconds(ctx.timing.read_decode_seconds) +
-             ", parse=" + format_seconds(ctx.timing.parse_seconds) +
-             ", relocate=" + format_seconds(ctx.timing.relocate_seconds) +
-             ", owntrack=" + format_seconds(ctx.timing.owntrack_seconds) +
-             ", snapshot=" + format_seconds(ctx.timing.snapshot_seconds));
+    KME_MAPLOADER_LOG_INFO("load timing: read/decode=" + format_seconds(ctx.timing.read_decode_seconds) +
+                            ", parse=" + format_seconds(ctx.timing.parse_seconds) +
+                            ", relocate=" + format_seconds(ctx.timing.relocate_seconds) +
+                            ", owntrack=" + format_seconds(ctx.timing.owntrack_seconds) +
+                            ", snapshot=" + format_seconds(ctx.timing.snapshot_seconds));
     for (const auto& item : ctx.timing.othertrack_seconds) {
-        log_info("load timing: othertrack[" + item.first + "]=" + format_seconds(item.second));
+        KME_MAPLOADER_LOG_INFO("load timing: othertrack[" + item.first + "]=" + format_seconds(item.second));
     }
 }
 

@@ -76,7 +76,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 void App::request_element_inspector(const std::string& edit_id, const std::string& row_kind) {
     if (!edit_actions_available()) {
         if (edit_mode_enabled_ && !edit_registry_loaded_) {
-            add_log("[info]gui_kme.cpp: edit metadata is still loading");
+            KME_ADD_LOG("[info]edit metadata is still loading");
         }
         return;
     }
@@ -182,7 +182,7 @@ void App::process_pending_include_file_change() {
     ListAssetSourcePathResult selected_path =
         make_list_asset_source_path(model_.path, selected_file);
     if (selected_path.source_path.empty()) {
-        add_log("[warn]gui_kme.cpp: failed to derive an include path for the selected file: selected=\"" +
+        KME_ADD_LOG("[warn]failed to derive an include path for the selected file: selected=\"" +
                 selected_path.resolved_path + "\"");
         set_program_status("status.edit.required_field");
         return;
@@ -211,9 +211,9 @@ void App::process_pending_include_file_change() {
 
     if (!apply_edit_ledger_to_preview(candidate, std::nullopt, true)) return;
     if (!selected_path.fallback_reason.empty()) {
-        add_log(
+        KME_ADD_LOG(
             LogSeverity::Warning,
-            "[warning]gui_kme.cpp: unable to create a relative include path; "
+            "[warning]unable to create a relative include path; "
             "using absolute path: reason=\"" + selected_path.fallback_reason +
             "\", selected=\"" + selected_path.resolved_path +
             "\", map=\"" + model_.path + "\"");
@@ -315,7 +315,7 @@ bool App::stage_new_file_reference(NewFileKind kind,
         return false;
     }
     if (!find_model_source_file(model_, target_file_path)) {
-        add_log("[warn]gui_kme.cpp: new-file reference target is not part of the loaded map: " +
+        KME_ADD_LOG("[warn]new-file reference target is not part of the loaded map: " +
                 target_file_path);
         return false;
     }
@@ -329,7 +329,7 @@ bool App::stage_new_file_reference(NewFileKind kind,
     const ListAssetSourcePathResult selected_path =
         make_list_asset_source_path(model_.path, selected_file);
     if (selected_path.source_path.empty()) {
-        add_log("[warn]gui_kme.cpp: failed to derive a new-file reference path: selected=\"" +
+        KME_ADD_LOG("[warn]failed to derive a new-file reference path: selected=\"" +
                 selected_path.resolved_path + "\"");
         set_program_status("status.edit.required_field");
         return false;
@@ -371,8 +371,8 @@ bool App::stage_new_file_reference(NewFileKind kind,
 
     if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return false;
     if (!selected_path.fallback_reason.empty()) {
-        add_log(LogSeverity::Warning,
-                "[warning]gui_kme.cpp: unable to create a relative new-file reference; "
+        KME_ADD_LOG(LogSeverity::Warning,
+                "[warning]unable to create a relative new-file reference; "
                 "using absolute path: reason=\"" + selected_path.fallback_reason +
                 "\", selected=\"" + selected_path.resolved_path +
                 "\", map=\"" + model_.path + "\"");
@@ -412,7 +412,7 @@ void App::process_pending_new_file_create() {
             return;
         }
         if (!find_model_source_file(model_, request.target_file_path)) {
-            add_log("[warn]gui_kme.cpp: new-file reference target is not part of the loaded map: " +
+            KME_ADD_LOG("[warn]new-file reference target is not part of the loaded map: " +
                     request.target_file_path);
             set_program_status("status.new_file.reference_failed");
             return;
@@ -425,13 +425,13 @@ void App::process_pending_new_file_create() {
 
     const bool existing_file = std::filesystem::exists(path, ec);
     if (ec) {
-        add_log("[error]gui_kme.cpp: failed to inspect new BVE file path: " +
+        KME_ADD_LOG("[error]failed to inspect new BVE file path: " +
                 wide_to_utf8(path.wstring()));
         set_program_status("status.new_file.create_failed");
         return;
     }
     if (existing_file && (!std::filesystem::is_regular_file(path, ec) || ec)) {
-        add_log("[warn]gui_kme.cpp: new BVE file path is not a regular file: " +
+        KME_ADD_LOG("[warn]new BVE file path is not a regular file: " +
                 wide_to_utf8(path.wstring()));
         set_program_status("status.new_file.create_failed");
         return;
@@ -439,7 +439,7 @@ void App::process_pending_new_file_create() {
     if (!existing_file) {
         std::string create_error;
         if (!create_utf8_bve_file_exclusive(path, new_bve_file_header(request.kind), create_error)) {
-            add_log("[error]gui_kme.cpp: " + create_error + ": " +
+            KME_ADD_LOG("[error]" + create_error + ": " +
                     wide_to_utf8(path.wstring()));
             set_program_status("status.new_file.create_failed");
             return;
@@ -449,7 +449,7 @@ void App::process_pending_new_file_create() {
     const std::string selected_file = wide_to_utf8(path.wstring());
     if (!request.target_file_path.empty() &&
         !stage_new_file_reference(request.kind, request.target_file_path, selected_file)) {
-        add_log("[warn]gui_kme.cpp: new BVE file was not staged as a reference: " +
+        KME_ADD_LOG("[warn]new BVE file was not staged as a reference: " +
                 selected_file);
         set_program_status("status.new_file.reference_failed");
         return;
@@ -472,7 +472,7 @@ void App::process_pending_include_file_insert() {
     if (!edit_actions_available() || !has_model_) return;
 
     if (!find_model_source_file(model_, request.target_file_path)) {
-        add_log("[warn]gui_kme.cpp: Include insert target is not part of the loaded map: " +
+        KME_ADD_LOG("[warn]Include insert target is not part of the loaded map: " +
                 request.target_file_path);
         return;
     }
@@ -487,7 +487,7 @@ void App::process_pending_include_file_insert() {
         std::string create_error;
         if (!create_utf8_bve_map_file_exclusive(
                 std::filesystem::path(utf8_to_wide(selected_file)), create_error)) {
-            add_log("[error]gui_kme.cpp: " + create_error + ": " + selected_file);
+            KME_ADD_LOG("[error]" + create_error + ": " + selected_file);
             set_program_status("status.edit.include_create_failed");
             return;
         }
@@ -578,7 +578,7 @@ void App::process_pending_resource_list_file_change() {
         ListAssetSourcePathResult selected_path = make_list_asset_source_path(
             model_.path, selected_file);
         if (selected_path.source_path.empty()) {
-            add_log("[warn]gui_kme.cpp: failed to derive a resource-list path for the selected file: selected=\"" +
+            KME_ADD_LOG("[warn]failed to derive a resource-list path for the selected file: selected=\"" +
                     selected_path.resolved_path + "\"");
             set_program_status("status.edit.required_field");
             return;
@@ -661,9 +661,9 @@ void App::process_pending_resource_list_file_change() {
         reset_editable_list_find_results(*target_spec);
     }
     if (!request.fallback_reason.empty()) {
-        add_log(
+        KME_ADD_LOG(
             LogSeverity::Warning,
-            "[warning]gui_kme.cpp: unable to create a relative resource-list path; "
+            "[warning]unable to create a relative resource-list path; "
             "using absolute path: reason=\"" + request.fallback_reason +
             "\", selected=\"" + request.selected_resolved_path +
             "\", map=\"" + model_.path + "\"");
@@ -719,7 +719,7 @@ bool App::apply_other_track_rename() {
             continue;
         } else if (change.operation != "update" ||
                    change.row_kind != "otherTrack.change") {
-            add_log("[error]gui_kme.cpp: other-track rename conflicts with pending edit: " +
+            KME_ADD_LOG("[error]other-track rename conflicts with pending edit: " +
                     row.edit_id);
             set_program_status("status.edit.pending");
             return false;
@@ -751,7 +751,7 @@ bool App::apply_other_track_rename() {
         }
     }
     if (target_edit_ids.empty()) {
-        add_log("[error]gui_kme.cpp: other-track rename found no editable Track statements");
+        KME_ADD_LOG("[error]other-track rename found no editable Track statements");
         set_program_status("status.edit.pending");
         return false;
     }
@@ -1237,7 +1237,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     const TableRow* row = find_model_row_for_inspector_request(
         model_, request, edit_id, model_row_index);
     if (!row) {
-        add_log("[warn]gui_kme.cpp: edit target row not found: " + request.edit_id);
+        KME_ADD_LOG("[warn]edit target row not found: " + request.edit_id);
         return false;
     }
     clear_scene_placement_edit_target();
@@ -1261,7 +1261,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
     std::optional<InspectorTargetMetadata> target_info =
         resolve_inspector_target_metadata(handle_, edit_id, request.row_kind, &info_error);
     if (!target_info && !info_error.empty()) {
-        add_log("[warn]gui_kme.cpp: edit target metadata fallback: " + info_error);
+        KME_ADD_LOG("[warn]edit target metadata fallback: " + info_error);
     }
 
     EditSourceInfo source = target_info ? target_info->source : row->source;
@@ -1437,7 +1437,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         const bool transition = method == (curve ? "curve.begintransition"
                                                   : "gradient.begintransition");
         if (transition) {
-            add_log("[warn]gui_kme.cpp: BeginTransition must be edited through its paired Begin/End");
+            KME_ADD_LOG("[warn]BeginTransition must be edited through its paired Begin/End");
             return false;
         }
         const bool transition_capable = curve
@@ -1465,7 +1465,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                                                       request.row_kind,
                                                       &transition_info_error);
                 if (!transition_info && !transition_info_error.empty()) {
-                    add_log("[warn]gui_kme.cpp: BeginTransition metadata fallback: " +
+                    KME_ADD_LOG("[warn]BeginTransition metadata fallback: " +
                             transition_info_error);
                 }
                 const EditSourceInfo transition_source = transition_info
@@ -1575,7 +1575,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
             });
         if (linked == repeater_linkage.segments.end() ||
             linked->chain_index >= repeater_linkage.chains.size()) {
-            add_log("[warn]gui_kme.cpp: Repeater inspector target is not a Begin statement: " +
+            KME_ADD_LOG("[warn]Repeater inspector target is not a Begin statement: " +
                     edit_id);
             return false;
         }
@@ -1587,7 +1587,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         for (size_t source_index : repeater_chain.begin_source_indices) {
             if (source_index >= model_.repeaters.size() ||
                 model_.repeaters[source_index].edit_id.empty()) {
-                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable Begin metadata");
+                KME_ADD_LOG("[warn]Repeater chain is missing editable Begin metadata");
                 return false;
             }
             next.repeater_chain_edit_ids.push_back(
@@ -1596,7 +1596,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         if (repeater_chain.end_source_index) {
             if (*repeater_chain.end_source_index >= model_.repeaters.size() ||
                 model_.repeaters[*repeater_chain.end_source_index].edit_id.empty()) {
-                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable End metadata");
+                KME_ADD_LOG("[warn]Repeater chain is missing editable End metadata");
                 return false;
             }
             next.repeater_chain_edit_ids.push_back(
@@ -1664,7 +1664,7 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
                 resolve_inspector_target_metadata(handle_, end_row.edit_id, "repeater",
                                                   &end_info_error);
             if (!end_info && !end_info_error.empty()) {
-                add_log("[warn]gui_kme.cpp: Repeater End metadata fallback: " + end_info_error);
+                KME_ADD_LOG("[warn]Repeater End metadata fallback: " + end_info_error);
             }
             EditSourceInfo end_source = end_info ? end_info->source : end_row.source;
             if (end_source.file_path.empty()) end_source = end_row.source;
@@ -2260,7 +2260,7 @@ void App::apply_inspector_changes() {
          repeater_chain_has_pending_key);
     if (repeater_key_sync_requested) {
         if (inspector_.repeater_chain_edit_ids.empty()) {
-            add_log("[error]gui_kme.cpp: Repeater key edit has no linked chain metadata");
+            KME_ADD_LOG("[error]Repeater key edit has no linked chain metadata");
             set_program_status("status.edit.pending");
             return;
         }
@@ -2279,7 +2279,7 @@ void App::apply_inspector_changes() {
             size_t row_index = 0;
             if (!find_row_index_by_edit_id(
                     model_.repeaters, chain_edit_id, row_index)) {
-                add_log("[error]gui_kme.cpp: Repeater key edit lost a linked chain row: " +
+                KME_ADD_LOG("[error]Repeater key edit lost a linked chain row: " +
                         chain_edit_id);
                 set_program_status("status.edit.pending");
                 return;
@@ -2293,7 +2293,7 @@ void App::apply_inspector_changes() {
                 change.operation = "update";
             }
             if (change.operation != "update" && change.operation != "insert") {
-                add_log("[error]gui_kme.cpp: Repeater key edit conflicts with a linked "
+                KME_ADD_LOG("[error]Repeater key edit conflicts with a linked "
                         "non-update/insert operation: " + chain_edit_id);
                 set_program_status("status.edit.pending");
                 return;

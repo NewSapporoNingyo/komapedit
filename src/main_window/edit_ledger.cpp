@@ -230,12 +230,12 @@ void App::apply_edit_mode_enabled(bool enabled) {
         discard_all_editable_list_drafts();
         edit_memory_matches_pending_ledger_ = pending_edit_changes_.empty();
         set_program_status("status.edit.mode_disabled");
-        add_log("[info]gui_kme.cpp: edit mode disabled");
+        KME_ADD_LOG("[info]edit mode disabled");
         return;
     }
 
     set_program_status("status.edit.mode_enabled");
-    add_log("[info]gui_kme.cpp: edit mode enabled");
+    KME_ADD_LOG("[info]edit mode enabled");
     if (has_model_ && !file_path_.empty() && !edit_registry_loaded_ && !load_state_.running) {
         begin_edit_metadata_load();
     }
@@ -468,7 +468,7 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
         scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_map_content(model_, map_refresh, error)) {
-            add_log("[warn]gui_kme.cpp: 3D scene marker refresh failed, scheduling full rebuild: " +
+            KME_ADD_LOG("[warn]3D scene marker refresh failed, scheduling full rebuild: " +
                     (error.empty() ? std::string("unknown error") : error));
             scene_preview_dirty_ = true;
             scene_preview_preserve_models_on_rebuild_ = true;
@@ -514,7 +514,7 @@ void App::refresh_local_preview_after_edit(const std::string& row_kind,
     if (affects_scene_dynamic && scene_preview_started_ && scene_preview_canvas_) {
         std::string error;
         if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, error)) {
-            add_log("[warn]gui_kme.cpp: 3D scene dynamic refresh failed, scheduling full rebuild: " +
+            KME_ADD_LOG("[warn]3D scene dynamic refresh failed, scheduling full rebuild: " +
                     (error.empty() ? std::string("unknown error") : error));
             scene_preview_dirty_ = true;
             scene_preview_preserve_models_on_rebuild_ = true;
@@ -674,7 +674,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         change.expected_source_hash = delete_expected_source_hash(
             model_, pending_edit_changes_, handle_, target_request, &metadata_error);
         if (!metadata_error.empty()) {
-            add_log("[warn]gui_kme.cpp: delete target metadata fallback: " + metadata_error);
+            KME_ADD_LOG("[warn]delete target metadata fallback: " + metadata_error);
         }
         return change;
     };
@@ -704,7 +704,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
             primary = &rows[selected_index];
         } else if (ascii_lower(table_cell(*primary, "method")).find("begintransition") !=
                    std::string::npos) {
-            add_log("[warn]gui_kme.cpp: unpaired BeginTransition cannot be deleted");
+            KME_ADD_LOG("[warn]unpaired BeginTransition cannot be deleted");
             return false;
         }
         related_delete_ids.insert(primary->edit_id);
@@ -719,19 +719,19 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
             repeater_delete_chain_for_edit_id(model_.repeaters, request.edit_id);
         if (!chain || chain->begin_source_indices.empty() ||
             chain->selected_begin_index >= chain->begin_source_indices.size()) {
-            add_log("[warn]gui_kme.cpp: Repeater delete target is not a linked Begin statement: " +
+            KME_ADD_LOG("[warn]Repeater delete target is not a linked Begin statement: " +
                     request.edit_id);
             return false;
         }
         if (chain->begin_source_indices.size() == 1 &&
             request.repeater_mode != RepeaterDeleteMode::EntireChain) {
-            add_log("[warn]gui_kme.cpp: Repeater change-point delete requires multiple Begins");
+            KME_ADD_LOG("[warn]Repeater change-point delete requires multiple Begins");
             return false;
         }
         if (chain->selected_begin_index == 0 &&
             (request.repeater_mode == RepeaterDeleteMode::TrimToChangePoint ||
              request.repeater_mode == RepeaterDeleteMode::StartFromChangePoint)) {
-            add_log("[warn]gui_kme.cpp: Repeater delete mode is unavailable for the first Begin");
+            KME_ADD_LOG("[warn]Repeater delete mode is unavailable for the first Begin");
             return false;
         }
 
@@ -740,7 +740,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         for (size_t source_index : chain->begin_source_indices) {
             if (source_index >= model_.repeaters.size() ||
                 model_.repeaters[source_index].edit_id.empty()) {
-                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable Begin metadata");
+                KME_ADD_LOG("[warn]Repeater chain is missing editable Begin metadata");
                 return false;
             }
             const std::string& edit_id = model_.repeaters[source_index].edit_id;
@@ -751,7 +751,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
         if (chain->end_source_index) {
             if (*chain->end_source_index >= model_.repeaters.size() ||
                 model_.repeaters[*chain->end_source_index].edit_id.empty()) {
-                add_log("[warn]gui_kme.cpp: Repeater chain is missing editable End metadata");
+                KME_ADD_LOG("[warn]Repeater chain is missing editable End metadata");
                 return false;
             }
             end_edit_id = model_.repeaters[*chain->end_source_index].edit_id;
@@ -801,7 +801,7 @@ bool App::delete_element_target(const MapElementDeleteRequest& request) {
                     change.expected_source_hash = delete_expected_source_hash(
                         model_, pending_edit_changes_, handle_, target_request, &metadata_error);
                     if (!metadata_error.empty()) {
-                        add_log("[warn]gui_kme.cpp: Repeater trim metadata fallback: " + metadata_error);
+                        KME_ADD_LOG("[warn]Repeater trim metadata fallback: " + metadata_error);
                     }
                     candidate[change.edit_id] = std::move(change);
                 }
@@ -970,7 +970,7 @@ bool App::validate_resource_list_file_change_candidate(
     KvEditReportSnapshot report{};
     if (!kv_edit_dry_run_typed(handle_, &batch, &report, sizeof(report))) {
         const char* error = kv_get_last_error();
-        add_log(std::string("[error]gui_kme.cpp: resource-list replacement dry run failed: ") +
+        KME_ADD_LOG(std::string("[error]resource-list replacement dry run failed: ") +
                 (error && *error ? error : "unknown error"));
         return false;
     }
@@ -1216,7 +1216,7 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
     if (resolution_requests) resolution_requests->clear();
     if (report.version != KV_EDIT_REPORT_SNAPSHOT_VERSION ||
         report.structure_size < sizeof(KvEditReportSnapshot)) {
-        add_log("[error]gui_kme.cpp: edit report version or size mismatch");
+        KME_ADD_LOG("[error]edit report version or size mismatch");
         return false;
     }
     if (resolution_requests && report.resolution_request_count != 0 &&
@@ -1230,7 +1230,7 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
     }
     if (report.warnings) {
         for (std::uint64_t i = 0; i < report.warning_count; ++i) {
-            add_log("[warn]gui_kme.cpp: " + edit_report_string(report, report.warnings[i]));
+            KME_ADD_LOG("[warn]" + edit_report_string(report, report.warnings[i]));
         }
     }
     bool repeater_key_conflict = false;
@@ -1244,7 +1244,7 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
                     "Repeater key overlaps another Repeater interval", 0) == 0;
             other_track_key_conflict = other_track_key_conflict ||
                 message.rfind("Other-track key already exists in map", 0) == 0;
-            add_log("[error]gui_kme.cpp: " + message);
+            KME_ADD_LOG("[error]" + message);
         }
     }
     const int updates = report.update_count;
@@ -1263,7 +1263,7 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
     if (ok) {
         std::string committed_state_error;
         if (!apply_committed_edit_state(model_, report, committed_state_error)) {
-            add_log("[error]gui_kme.cpp: saved edit metadata refresh failed; Reload is required: " +
+            KME_ADD_LOG("[error]saved edit metadata refresh failed; Reload is required: " +
                     committed_state_error);
             clear_pending_edit_state();
             edit_registry_loaded_ = false;
@@ -1271,7 +1271,7 @@ bool App::parse_and_log_edit_report(const KvEditReportSnapshot& report,
         }
     }
     if (ok && !success_prefix.empty()) {
-        add_log(success_prefix + ": updates=" + std::to_string(updates) +
+        KME_ADD_LOG(success_prefix + ": updates=" + std::to_string(updates) +
                 ", deletes=" + std::to_string(deletes) +
                 ", files=" + std::to_string(files));
     }
@@ -1288,13 +1288,13 @@ bool App::sync_edit_memory_with_ledger(
     if (!kv_edit_reset_memory(handle_)) {
         edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
-        add_log(std::string("[error]gui_kme.cpp: edit memory reset failed: ") +
+        KME_ADD_LOG(std::string("[error]edit memory reset failed: ") +
                 (err ? err : "unknown error"));
         return false;
     }
     edit_memory_matches_pending_ledger_ = changes.empty();
     if (changes.empty()) {
-        add_log("[info]gui_kme.cpp: edit memory reset to disk baseline");
+        KME_ADD_LOG("[info]edit memory reset to disk baseline");
         return true;
     }
 
@@ -1304,12 +1304,12 @@ bool App::sync_edit_memory_with_ledger(
     if (!kv_edit_apply_to_memory_typed(handle_, &batch, &report, sizeof(report))) {
         edit_memory_matches_pending_ledger_ = false;
         const char* err = kv_get_last_error();
-        add_log(std::string("[error]gui_kme.cpp: edit memory apply failed: ") +
+        KME_ADD_LOG(std::string("[error]edit memory apply failed: ") +
                 (err ? err : "unknown error"));
         return false;
     }
 
-    if (!parse_and_log_edit_report(report, "[info]gui_kme.cpp: edit memory updated",
+    if (!parse_and_log_edit_report(report, "[info]edit memory updated",
                                    nullptr, nullptr, nullptr, resolution_requests)) {
         edit_memory_matches_pending_ledger_ = false;
         return false;
@@ -1378,7 +1378,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
 
         edit_memory_matches_pending_ledger_ = false;
         if (!sync_edit_memory_with_ledger(pending_edit_changes_)) {
-            add_log("[error]gui_kme.cpp: failed to restore maploader working copy after "
+            KME_ADD_LOG("[error]failed to restore maploader working copy after "
                     "a local preview error; Save is blocked");
         }
         refresh_text_preview_from_working_copy();
@@ -1432,8 +1432,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
               (snapshot.other_track_change_count != 0 &&
                !snapshot.other_track_changes)))) {
             const char* error = kv_get_last_error();
-            add_log(
-                "[error]gui_kme.cpp: failed to refresh typed rows from the "
+            KME_ADD_LOG(
+                "[error]failed to refresh typed rows from the "
                 "validated working copy" +
                 std::string(error && *error
                     ? ": " + std::string(error)
@@ -1495,8 +1495,8 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             snapshot.version != KV_MAP_SNAPSHOT_VERSION ||
             snapshot.structure_size < sizeof(KvMapSnapshot)) {
             const char* error = kv_get_last_error();
-            add_log(
-                "[error]gui_kme.cpp: failed to refresh the model after element "
+            KME_ADD_LOG(
+                "[error]failed to refresh the model after element "
                 "insertion" +
                 std::string(error && *error
                     ? ": " + std::string(error)
@@ -1555,7 +1555,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             continue;
         }
         if (!restore_local_preview_change(kv.first, kv.second.row_kind, false)) {
-            add_log("[error]gui_kme.cpp: failed to restore local edit preview: " + kv.first);
+            KME_ADD_LOG("[error]failed to restore local edit preview: " + kv.first);
             return rollback_local_preview();
         }
         const bool force_full_refresh = kv.second.operation == "delete" ||
@@ -1576,7 +1576,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             continue;
         }
         if (!apply_local_preview_change(kv.second, false)) {
-            add_log("[error]gui_kme.cpp: failed to apply local edit preview: " + kv.first);
+            KME_ADD_LOG("[error]failed to apply local edit preview: " + kv.first);
             return rollback_local_preview();
         }
         const bool force_full_refresh = kv.second.operation == "delete" ||
@@ -1627,7 +1627,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     if (!edit_actions_available()) return false;
     if (load_state_.running) return false;
     if (has_unapplied_editable_list_drafts()) {
-        add_log("[warning]gui_kme.cpp: Save blocked by unapplied editable-list drafts");
+        KME_ADD_LOG("[warning]Save blocked by unapplied editable-list drafts");
         set_program_status("status.edit.apply_list_before_save");
         return false;
     }
@@ -1636,7 +1636,7 @@ bool App::save_pending_edits(bool refresh_inspector) {
     if (!edit_memory_matches_pending_ledger_) {
         std::vector<DistanceResolutionRequest> replay_requests;
         if (!sync_edit_memory_with_ledger(pending_edit_changes_, &replay_requests)) {
-            add_log("[error]gui_kme.cpp: edit save blocked because the pending ledger "
+            KME_ADD_LOG("[error]edit save blocked because the pending ledger "
                     "could not be restored to the maploader working copy");
             return false;
         }
@@ -1654,18 +1654,18 @@ bool App::save_pending_edits(bool refresh_inspector) {
     KvEditReportSnapshot report{};
     if (!kv_edit_commit_typed(handle_, &report, sizeof(report))) {
         const char* err = kv_get_last_error();
-        add_log(std::string("[error]gui_kme.cpp: edit save failed: ") + (err ? err : "unknown error"));
+        KME_ADD_LOG(std::string("[error]edit save failed: ") + (err ? err : "unknown error"));
         return false;
     }
 
     int committed_file_count = 0;
-    if (!parse_and_log_edit_report(report, "[info]gui_kme.cpp: edit save committed",
+    if (!parse_and_log_edit_report(report, "[info]edit save committed",
                                    nullptr, nullptr, &committed_file_count)) {
         return false;
     }
     if (committed_file_count <= 0) {
         edit_memory_matches_pending_ledger_ = false;
-        add_log("[error]gui_kme.cpp: edit save returned no committed source files; "
+        KME_ADD_LOG("[error]edit save returned no committed source files; "
                 "the pending ledger was retained");
         return false;
     }

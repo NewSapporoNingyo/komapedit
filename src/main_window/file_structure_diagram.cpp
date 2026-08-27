@@ -261,7 +261,7 @@ void App::render_source_file_context_menu(const char* popup_id,
         std::string error;
         open_parent_directory_in_explorer(file_path, &error);
         if (!error.empty()) {
-            add_log(LogSeverity::Error, std::move(error));
+            KME_ADD_LOG(LogSeverity::Error, std::move(error));
         }
     }
     ImGui::EndDisabled();

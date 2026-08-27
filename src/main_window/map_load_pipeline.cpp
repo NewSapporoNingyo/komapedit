@@ -133,8 +133,8 @@ void App::handle_loader_start_failure(const std::string& error) {
     load_state_.running = false;
     load_state_.pending_started_at.reset();
     set_program_status("status.map_load_failed");
-    add_log(LogSeverity::Error,
-            "[ERROR]gui_kme.cpp: failed to start map loader: " + error);
+    KME_ADD_LOG(LogSeverity::Error,
+            "[ERROR]failed to start map loader: " + error);
 }
 
 void App::poll_loader() {
@@ -248,7 +248,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
     if (!snapshot) {
         const char* error = kv_get_last_error();
         set_program_status("status.map_load_failed");
-        add_log(LogSeverity::Error,
+        KME_ADD_LOG(LogSeverity::Error,
                 std::string("Failed to load scenario preview: ") +
                     (error && *error ? error : "maploader failed"));
         return;
@@ -258,7 +258,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
     } catch (const std::exception& e) {
         kv_free_scenario_snapshot(snapshot);
         set_program_status("status.map_load_failed");
-        add_log(LogSeverity::Error,
+        KME_ADD_LOG(LogSeverity::Error,
                 std::string("Failed to read scenario preview: ") + e.what());
         return;
     }
@@ -271,7 +271,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
         candidate_count > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
         const char* error = kv_get_last_error();
         set_program_status("status.map_load_failed");
-        add_log(LogSeverity::Error,
+        KME_ADD_LOG(LogSeverity::Error,
                 std::string("Failed to resolve scenario route: ") +
                     (error && *error ? error : "maploader failed"));
         kv_free_scenario_candidates(candidates);
@@ -289,8 +289,8 @@ void App::perform_open_document(PendingDocumentOpen request) {
         const ScenarioRoutePickItem& item = items.front();
         begin_map_load(item.resolved_path, false, request.record_history,
                        std::move(request.background_to_restore));
-        add_log("Opened via scenario: " + request.path);
-        add_log("Resolved route: " + item.route_text + " -> " + item.resolved_path);
+        KME_ADD_LOG("Opened via scenario: " + request.path);
+        KME_ADD_LOG("Resolved route: " + item.route_text + " -> " + item.resolved_path);
         return;
     }
 
@@ -298,7 +298,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
     scenario_route_pick_.scenario_path = request.path;
     scenario_route_pick_.items = std::move(items);
     scenario_route_pick_.selected = 0;
-    add_log("Opened scenario: " + request.path);
+    KME_ADD_LOG("Opened scenario: " + request.path);
     wake_main_window();
 }
 
@@ -326,7 +326,7 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
     load_state_.running = true;
     load_state_.pending_started_at.reset();
     set_program_status("status.map_loading");
-    add_log(std::string("Start loading file: ") + path);
+    KME_ADD_LOG(std::string("Start loading file: ") + path);
 
     bool has_cp = preserve_settings && has_model_ && model_.has_cp_arb;
     double cp0 = has_cp ? model_.cp_arb[0] : 0.0;
@@ -383,7 +383,7 @@ void App::begin_edit_metadata_load() {
     load_state_.running = true;
     load_state_.pending_started_at.reset();
     set_program_status("status.edit.loading_metadata");
-    add_log("[info]gui_kme.cpp: loading edit metadata");
+    KME_ADD_LOG("[info]loading edit metadata");
 
     LoadModelOptions load_options;
     load_options.full_edit_registry = true;
@@ -416,7 +416,7 @@ void App::apply_load_result(LoadResult result) {
         load_state_.pending_started_at.reset();
         pending_scene_preview_started_at_.reset();
         set_program_status("status.map_load_failed");
-        add_log(LogSeverity::Error, "Error during loading: " + result.error);
+        KME_ADD_LOG(LogSeverity::Error, "Error during loading: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
     }
@@ -470,9 +470,9 @@ void App::apply_load_result(LoadResult result) {
            << ", snapshot_build=" << model_.snapshot_build_seconds << "s"
            << ", snapshot_hydrate=" << model_.snapshot_hydrate_seconds << "s"
            << ", buffer copy=" << model_.buffer_copy_seconds << "s";
-    add_log("Load timing: " + timing.str());
-    for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
-    add_log("Map loaded: " + result.path);
+    KME_ADD_LOG("Load timing: " + timing.str());
+    for (const std::string& warning : model_.scene_track_key_warnings) add_forwarded_log(warning);
+    KME_ADD_LOG("Map loaded: " + result.path);
     set_program_status("status.map_loaded");
     if (result.background_to_restore) {
         apply_background_history(*result.background_to_restore);
@@ -625,7 +625,7 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
 void App::apply_edit_metadata_result(LoadResult result) {
     if (!result.ok) {
         set_program_status("status.map_loaded");
-        add_log("[error]gui_kme.cpp: edit metadata load failed: " + result.error);
+        KME_ADD_LOG("[error]edit metadata load failed: " + result.error);
         if (result.handle) kv_free(result.handle);
         return;
     }
@@ -639,8 +639,8 @@ void App::apply_edit_metadata_result(LoadResult result) {
     }
     if (!error.empty()) {
         set_program_status("status.map_loaded");
-        add_log("[warn]gui_kme.cpp: edit metadata discarded: " + error);
-        add_log("[warn]gui_kme.cpp: reload from disk before editing this map");
+        KME_ADD_LOG("[warn]edit metadata discarded: " + error);
+        KME_ADD_LOG("[warn]reload from disk before editing this map");
         if (result.handle) kv_free(result.handle);
         return;
     }
@@ -660,20 +660,20 @@ void App::apply_edit_metadata_result(LoadResult result) {
     if (scene_preview_started_ && scene_preview_canvas_) {
         std::string scene_error;
         if (!scene_preview_canvas_->refresh_scene_dynamic_content(model_, station_jump_index_, scene_error)) {
-            add_log("[warn]gui_kme.cpp: 3D scene dynamic metadata refresh failed, scheduling full rebuild: " +
+            KME_ADD_LOG("[warn]3D scene dynamic metadata refresh failed, scheduling full rebuild: " +
                     (scene_error.empty() ? std::string("unknown error") : scene_error));
             scene_preview_dirty_ = true;
             scene_preview_preserve_models_on_rebuild_ = true;
             scene_preview_preserve_camera_on_rebuild_ = true;
         } else if (!scene_preview_canvas_->refresh_scene_route_stations(model_, scene_error)) {
-            add_log("[warn]gui_kme.cpp: 3D scene marker metadata refresh failed, scheduling full rebuild: " +
+            KME_ADD_LOG("[warn]3D scene marker metadata refresh failed, scheduling full rebuild: " +
                     (scene_error.empty() ? std::string("unknown error") : scene_error));
             scene_preview_dirty_ = true;
             scene_preview_preserve_models_on_rebuild_ = true;
             scene_preview_preserve_camera_on_rebuild_ = true;
         }
     }
-    add_log("[info]gui_kme.cpp: edit metadata loaded");
+    KME_ADD_LOG("[info]edit metadata loaded");
     set_program_status(edit_mode_enabled_ ? "status.edit.mode_enabled" : "status.map_loaded");
 }
 
@@ -685,7 +685,7 @@ void App::finish_pending_load_timing(std::chrono::steady_clock::time_point finis
     load_state_.pending_started_at.reset();
 
     const std::string elapsed = format_elapsed_seconds_value(elapsed_seconds);
-    add_log("Map loaded in " + elapsed + "s");
+    KME_ADD_LOG("Map loaded in " + elapsed + "s");
     set_program_status("status.map_loaded", elapsed);
 }
 
@@ -693,7 +693,7 @@ void App::regenerate_geometry() {
     if (!handle_ || load_state_.running) return;
     if (!kv_generate_geometry(handle_, unit_distance_, 1, cp_start_, cp_end_, cp_interval_)) {
         const char* err = kv_get_last_error();
-        add_log(std::string("[ERROR]") + (err ? err : "geometry failed"));
+        KME_ADD_LOG(std::string("[ERROR]") + (err ? err : "geometry failed"));
         return;
     }
     std::map<std::string, OtherTrack> old_other;
@@ -724,10 +724,10 @@ void App::regenerate_geometry() {
         dmin_ = plot_min_;
         dmax_ = plot_max_;
         reset_plot_axes();
-        for (const std::string& warning : model_.scene_track_key_warnings) add_log(warning);
-        add_log("Geometry regenerated by maploader");
+        for (const std::string& warning : model_.scene_track_key_warnings) add_forwarded_log(warning);
+        KME_ADD_LOG("Geometry regenerated by maploader");
     } catch (const std::exception& e) {
-        add_log(std::string("[ERROR]") + e.what());
+        KME_ADD_LOG(std::string("[ERROR]") + e.what());
     }
 }
 

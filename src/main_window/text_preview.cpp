@@ -219,7 +219,7 @@ bool App::load_text_preview_content(TextPreviewState& preview) {
         return true;
     } catch (const std::exception& e) {
         preview.error = e.what();
-        add_log(LogSeverity::Error, "Text preview failed: " + preview.error);
+        KME_ADD_LOG(LogSeverity::Error, "Text preview failed: " + preview.error);
         return false;
     }
 }
@@ -255,7 +255,7 @@ void App::open_text_preview_for_distance_resolution(const DistanceResolutionRequ
     open_text_preview(request.source_file, true);
     if (!text_preview_.open || text_preview_.file_path != request.source_file ||
         !text_preview_.error.empty()) {
-        add_log("[error]text_preview.cpp: unable to open the requested distance "
+        KME_ADD_LOG("[error]unable to open the requested distance "
                 "source file for boundary selection: " + request.source_file);
         cancel_distance_resolution_workflow();
         return;

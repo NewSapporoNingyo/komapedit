@@ -960,7 +960,7 @@ bool App::prepare_repeater_wizard_from_inspector(std::string& repeater_key) {
 
     size_t row_index = 0;
     if (!find_row_index_by_edit_id(model_.repeaters, inspector_.edit_id, row_index)) {
-        add_log("[warn]gui_kme.cpp: Repeater wizard lost its source row: " +
+        KME_ADD_LOG("[warn]Repeater wizard lost its source row: " +
                 inspector_.edit_id);
         return false;
     }
@@ -970,7 +970,7 @@ bool App::prepare_repeater_wizard_from_inspector(std::string& repeater_key) {
         : inspector_.source_file;
     repeater_key = table_cell(repeater_row, "repeaterKey");
     if (source_file.empty() || repeater_key.empty()) {
-        add_log("[warn]gui_kme.cpp: Repeater wizard is missing source metadata");
+        KME_ADD_LOG("[warn]Repeater wizard is missing source metadata");
         return false;
     }
 
@@ -982,7 +982,7 @@ bool App::prepare_repeater_wizard_from_inspector(std::string& repeater_key) {
         templates.begin(), templates.end(),
         [&](const NewElementTemplate& tpl) { return tpl.id == std::string_view(template_id); });
     if (selected == templates.end()) {
-        add_log("[error]gui_kme.cpp: Repeater wizard template is unavailable");
+        KME_ADD_LOG("[error]Repeater wizard template is unavailable");
         return false;
     }
 
@@ -1010,7 +1010,7 @@ bool App::prepare_repeater_wizard_from_inspector(std::string& repeater_key) {
     if (!find_inspector_field(wizard.form, "distance") ||
         !find_inspector_field(wizard.form, "endDistance") ||
         !find_inspector_field(wizard.form, "repeaterKey")) {
-        add_log("[error]gui_kme.cpp: Repeater wizard fields are unavailable");
+        KME_ADD_LOG("[error]Repeater wizard fields are unavailable");
         wizard.open = false;
         wizard.return_inspector_request.reset();
         wizard.close_after_successful_apply = false;
@@ -1040,7 +1040,7 @@ void App::open_repeater_end_wizard_from_inspector() {
     MapElementEditFieldState* end_distance_field =
         find_inspector_field(wizard.form, "endDistance");
     if (!key_field || !end_distance_field) {
-        add_log("[error]gui_kme.cpp: Repeater End wizard fields are unavailable");
+        KME_ADD_LOG("[error]Repeater End wizard fields are unavailable");
         wizard.open = false;
         wizard.return_inspector_request.reset();
         wizard.close_after_successful_apply = false;
@@ -1069,7 +1069,7 @@ void App::open_repeater_change_point_wizard_from_inspector() {
     MapElementEditFieldState* end_distance =
         find_inspector_field(wizard.form, "endDistance");
     if (!source_distance || !begin_distance || !end_distance) {
-        add_log("[error]gui_kme.cpp: Repeater change-point wizard distance field is unavailable");
+        KME_ADD_LOG("[error]Repeater change-point wizard distance field is unavailable");
         wizard.open = false;
         wizard.return_inspector_request.reset();
         wizard.close_after_successful_apply = false;
@@ -1417,7 +1417,7 @@ bool App::apply_new_element_insert() {
     }
 
     if (!find_model_source_file(model_, wizard.target_file_path)) {
-        add_log("[warn]gui_kme.cpp: insert target file is not part of the loaded map: " +
+        KME_ADD_LOG("[warn]insert target file is not part of the loaded map: " +
                 wizard.target_file_path);
         return false;
     }
