@@ -170,6 +170,7 @@ void App::clear_pending_edit_state() {
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     text_preview_.placement = TextPreviewPlacementState{};
     inspector_ = MapElementInspectorState{};
+    lighting_edit_ = LightingEditState{};
     pending_inspector_request_.reset();
     pending_delete_request_.reset();
     pending_other_track_rename_request_.reset();
@@ -1111,14 +1112,15 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 27> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 30> k_committed_row_kinds = {
         "curve", "gradient", "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
         "signal.aspect", "irregularity.change",
         "beacon.put", "mapSound.play", "mapSound3D.put",
         "rollingNoise.change", "flangeNoise.change", "jointNoise.play",
         "background.change", "adhesion.change", "cabIlluminance.change",
-        "fog.change", "drawDistance.change", "speedlimit",
+        "fog.change", "light.ambient", "light.diffuse", "light.direction",
+        "drawDistance.change", "speedlimit",
         "section.begin", "section.speedLimit",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>

@@ -61,6 +61,7 @@ struct HeadlessOwnTrackEditOptions;
 struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
+struct HeadlessLightEditOptions;
 struct HeadlessSparseNewElementOptions;
 struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
@@ -586,14 +587,6 @@ std::string join_table_values(const std::vector<std::string>& values,
 struct MapModel;
 void annotate_scene_track_key_warnings(MapModel& model);
 
-struct LightColorValues {
-    std::array<std::string, 3> channels;
-};
-
-struct LightDirectionValues {
-    std::array<std::string, 2> angles;
-};
-
 struct MapModel {
     std::string path;
     std::vector<FileStructureNode> file_structure;
@@ -644,9 +637,9 @@ struct MapModel {
     std::vector<TableRow> cab_illuminance;
     std::vector<TableRow> fogs;
     std::vector<TableRow> legacy_fogs;
-    std::optional<LightColorValues> light_ambient;
-    std::optional<LightColorValues> light_diffuse;
-    std::optional<LightDirectionValues> light_direction;
+    std::vector<TableRow> light_ambient;
+    std::vector<TableRow> light_diffuse;
+    std::vector<TableRow> light_direction;
     std::vector<TableRow> draw_distances;
     std::vector<TableRow> variable_assignments;
     std::array<ResourceListSource,
@@ -688,6 +681,9 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
     if (row_kind == "adhesion.change") return &model.adhesions;
     if (row_kind == "cabIlluminance.change") return &model.cab_illuminance;
     if (row_kind == "fog.change") return &model.fogs;
+    if (row_kind == "light.ambient") return &model.light_ambient;
+    if (row_kind == "light.diffuse") return &model.light_diffuse;
+    if (row_kind == "light.direction") return &model.light_direction;
     if (row_kind == "drawDistance.change") return &model.draw_distances;
     if (row_kind == "speedlimit") return &model.speed_limit_rows;
     if (row_kind == "section.begin") return &model.section_begins;
@@ -1268,6 +1264,7 @@ struct NewElementTemplate {
     const char* usage_key;
     bool section_values = false;
     std::vector<NewElementFieldSpec> fields;
+    bool fixed_distance_zero = false;
 };
 
 enum class MapElementKeySource {
@@ -1297,6 +1294,19 @@ struct MapElementEditFieldState {
     // optional without introducing a second form-state model.
     bool optional_insertion_argument = false;
     bool requires_signal_full_form = false;
+};
+
+struct LightingStatementEditState {
+    std::string edit_id;
+    std::string row_kind;
+    std::string expected_source_hash;
+    std::vector<MapElementEditFieldState> fields;
+};
+
+struct LightingEditState {
+    LightingStatementEditState ambient;
+    LightingStatementEditState diffuse;
+    LightingStatementEditState direction;
 };
 
 struct MapElementPendingChange {
@@ -1783,6 +1793,8 @@ public:
         const HeadlessOtherTrackKeyEditOptions& options);
     static int run_debug_headless_new_element_edit(
         const HeadlessNewElementEditOptions& options);
+    static int run_debug_headless_light_edit(
+        const HeadlessLightEditOptions& options);
     static int run_debug_headless_sparse_new_element(
         const HeadlessSparseNewElementOptions& options);
     static int run_debug_headless_resource_list_replace(
@@ -1869,6 +1881,7 @@ private:
     std::map<std::string, DistanceResolutionChoice> distance_resolution_choices_;
     DistanceResolutionWorkflowState distance_resolution_workflow_;
     MapElementInspectorState inspector_;
+    LightingEditState lighting_edit_;
     std::optional<MapElementInspectorRequest> pending_inspector_request_;
     std::optional<MapElementDeleteRequest> pending_delete_request_;
     std::optional<IncludeFileChangeRequest> pending_include_file_change_request_;
@@ -2419,6 +2432,8 @@ private:
     bool discard_pending_edits();
     bool revert_all_pending_edits();
     void apply_inspector_changes();
+    bool apply_lighting_changes();
+    void sync_lighting_edit_state();
     bool has_unsaved_edit_state() const;
     bool has_unapplied_editable_list_drafts() const;
     bool has_editable_list_drafts(const EditableListEditState& edit,
@@ -2475,6 +2490,7 @@ private:
     void render_section_values_edit_ui(MapElementInspectorState& inspector);
     void render_new_element_wizard();
     void open_new_element_wizard(std::optional<double> distance_prefill = std::nullopt);
+    bool open_new_element_wizard_for_template(std::string_view template_id);
     void render_new_file_wizard();
     void open_new_file_wizard(std::optional<NewFileKind> template_kind = std::nullopt);
     bool can_use_resource_key_in_new_element_wizard(

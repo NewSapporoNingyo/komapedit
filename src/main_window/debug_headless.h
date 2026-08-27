@@ -247,6 +247,14 @@ struct HeadlessNewElementEditOptions {
     std::string error;
 };
 
+struct HeadlessLightEditOptions {
+    bool requested = false;
+    std::string path;
+    std::string output_path;
+    double unit_distance = 25.0;
+    std::string error;
+};
+
 struct HeadlessSparseNewElementOptions {
     bool requested = false;
     std::string path;
@@ -339,6 +347,8 @@ HeadlessFreshResourceListWorkflowOptions
 parse_headless_fresh_resource_list_workflow_options(
     const std::vector<std::string>& args);
 HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
+    const std::vector<std::string>& args);
+HeadlessLightEditOptions parse_headless_light_edit_options(
     const std::vector<std::string>& args);
 HeadlessSparseNewElementOptions parse_headless_sparse_new_element_options(
     const std::vector<std::string>& args);

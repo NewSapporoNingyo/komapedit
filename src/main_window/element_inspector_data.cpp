@@ -101,6 +101,8 @@ bool row_kind_supports_delete(const std::string& row_kind) {
         row_kind == "flangeNoise.change" || row_kind == "jointNoise.play" ||
         row_kind == "background.change" || row_kind == "adhesion.change" ||
         row_kind == "cabIlluminance.change" || row_kind == "fog.change" ||
+        row_kind == "light.ambient" || row_kind == "light.diffuse" ||
+        row_kind == "light.direction" ||
         row_kind == "drawDistance.change" || row_kind == "speedlimit" ||
         row_kind == "section.begin" || row_kind == "section.speedLimit" ||
         row_kind == "curve" || row_kind == "gradient" ||

@@ -456,6 +456,23 @@ void write_fog(SemanticWriter& out, const KvMapSnapshot& snapshot,
     field(out, "filePath", text(snapshot, row.file_path));
 }
 
+void write_light_color(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                       const KvLightColorRow& row,
+                       const MapEditChange* change = nullptr) {
+    field(out, "red", changed_number(change, "red", row.red));
+    field(out, "green", changed_number(change, "green", row.green));
+    field(out, "blue", changed_number(change, "blue", row.blue));
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
+void write_light_direction(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                           const KvLightDirectionRow& row,
+                           const MapEditChange* change = nullptr) {
+    field(out, "pitch", changed_number(change, "pitch", row.pitch));
+    field(out, "yaw", changed_number(change, "yaw", row.yaw));
+    field(out, "filePath", text(snapshot, row.file_path));
+}
+
 void write_draw_distance(SemanticWriter& out, const KvMapSnapshot& snapshot,
                          const KvDrawDistanceRow& row,
                          const MapEditChange* change = nullptr) {
@@ -750,6 +767,11 @@ void reject_unknown_target_fields(const SemanticElementSnapshot& target,
         allowed = {"distance", "value"};
     } else if (target.row_kind == "fog.change") {
         allowed = {"distance", "density", "red", "green", "blue"};
+    } else if (target.row_kind == "light.ambient" ||
+               target.row_kind == "light.diffuse") {
+        allowed = {"red", "green", "blue"};
+    } else if (target.row_kind == "light.direction") {
+        allowed = {"pitch", "yaw"};
     } else if (target.row_kind == "drawDistance.change") {
         allowed = {"distance", "value"};
     } else if (target.row_kind == "speedlimit") {
@@ -1197,6 +1219,27 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
             write_fog(out, snapshot, row);
         });
     }
+    for (std::uint64_t i = 0; i < snapshot.light_ambient_count; ++i) {
+        const KvLightColorRow& row = snapshot.light_ambient[i];
+        emit_element(output, full, snapshot, row.metadata, "light.ambient", "light.ambient",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            write_light_color(out, snapshot, row);
+        });
+    }
+    for (std::uint64_t i = 0; i < snapshot.light_diffuse_count; ++i) {
+        const KvLightColorRow& row = snapshot.light_diffuse[i];
+        emit_element(output, full, snapshot, row.metadata, "light.diffuse", "light.diffuse",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            write_light_color(out, snapshot, row);
+        });
+    }
+    for (std::uint64_t i = 0; i < snapshot.light_direction_count; ++i) {
+        const KvLightDirectionRow& row = snapshot.light_direction[i];
+        emit_element(output, full, snapshot, row.metadata, "light.direction", "light.direction",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            write_light_direction(out, snapshot, row);
+        });
+    }
     for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {
         const KvDrawDistanceRow& row = snapshot.draw_distances[i];
         emit_element(output, full, snapshot, row.metadata,
@@ -1356,6 +1399,25 @@ std::string expected_target_semantic(MapContext& ctx,
             throw std::runtime_error("fog.change target row is out of bounds");
         }
         write_fog(out, snapshot, snapshot.fogs[target.row_index], &change);
+    } else if (target.row_kind == "light.ambient" ||
+               target.row_kind == "light.diffuse") {
+        const KvLightColorRow* rows = target.row_kind == "light.ambient"
+            ? snapshot.light_ambient
+            : snapshot.light_diffuse;
+        const std::uint64_t count = target.row_kind == "light.ambient"
+            ? snapshot.light_ambient_count
+            : snapshot.light_diffuse_count;
+        if (target.row_index >= count || !rows) {
+            throw std::runtime_error(target.row_kind + " target row is out of bounds");
+        }
+        write_light_color(out, snapshot, rows[target.row_index], &change);
+    } else if (target.row_kind == "light.direction") {
+        if (target.row_index >= snapshot.light_direction_count ||
+            !snapshot.light_direction) {
+            throw std::runtime_error("light.direction target row is out of bounds");
+        }
+        write_light_direction(
+            out, snapshot, snapshot.light_direction[target.row_index], &change);
     } else if (target.row_kind == "drawDistance.change") {
         if (target.row_index >= snapshot.draw_distance_count || !snapshot.draw_distances) {
             throw std::runtime_error("drawDistance.change target row is out of bounds");
@@ -1450,6 +1512,9 @@ std::string insert_semantic_container(const std::string& row_kind) {
     if (row_kind == "adhesion.change") return "adhesion";
     if (row_kind == "cabIlluminance.change") return "cabIlluminance";
     if (row_kind == "fog.change") return "fog";
+    if (row_kind == "light.ambient") return "light.ambient";
+    if (row_kind == "light.diffuse") return "light.diffuse";
+    if (row_kind == "light.direction") return "light.direction";
     if (row_kind == "drawDistance.change") return "drawDistance";
     if (row_kind == "speedlimit") return "speedlimit";
     if (row_kind == "section.begin") return "section.begin";
@@ -1679,6 +1744,14 @@ std::string expected_insert_semantic(MapContext& ctx,
         KvFogRow row{};
         path_row(row);
         write_fog(out, fake.snapshot, row, &change);
+    } else if (row_kind == "light.ambient" || row_kind == "light.diffuse") {
+        KvLightColorRow row{};
+        path_row(row);
+        write_light_color(out, fake.snapshot, row, &change);
+    } else if (row_kind == "light.direction") {
+        KvLightDirectionRow row{};
+        path_row(row);
+        write_light_direction(out, fake.snapshot, row, &change);
     } else if (row_kind == "drawDistance.change") {
         KvDrawDistanceRow row{};
         path_row(row);

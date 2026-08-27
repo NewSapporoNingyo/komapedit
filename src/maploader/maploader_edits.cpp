@@ -1421,6 +1421,40 @@ std::string build_fog_statement(const MapEditChange& change,
     return "Fog." + method + "(" + build_fog_arguments(method, values) + ");";
 }
 
+std::string build_light_color_statement(const MapEditChange& change,
+                                        const ParsedStatement& statement,
+                                        const LightColor& row,
+                                        const char* statement_name) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    return std::string(statement_name) + "(" +
+        numeric_field(change, "red", row.red, raw_arg_at(args, 0)) + "," +
+        numeric_field(change, "green", row.green, raw_arg_at(args, 1)) + "," +
+        numeric_field(change, "blue", row.blue, raw_arg_at(args, 2)) + ");";
+}
+
+std::string build_light_ambient_statement(const MapEditChange& change,
+                                          const ParsedStatement& statement,
+                                          const LightColor& row) {
+    return build_light_color_statement(change, statement, row, "Light.Ambient");
+}
+
+std::string build_light_diffuse_statement(const MapEditChange& change,
+                                          const ParsedStatement& statement,
+                                          const LightColor& row) {
+    return build_light_color_statement(change, statement, row, "Light.Diffuse");
+}
+
+std::string build_light_direction_statement(const MapEditChange& change,
+                                            const ParsedStatement& statement,
+                                            const LightDirection& row) {
+    if (!has_non_distance_field_change(change)) return statement.raw_text;
+    const std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
+    return "Light.Direction(" +
+        numeric_field(change, "pitch", row.pitch, raw_arg_at(args, 0)) + "," +
+        numeric_field(change, "yaw", row.yaw, raw_arg_at(args, 1)) + ");";
+}
+
 std::string build_draw_distance_statement(const MapEditChange& change,
                                           const ParsedStatement& statement,
                                           const DrawDistanceChange& row) {
@@ -2259,6 +2293,12 @@ EditableTarget find_editable_target(MapContext& ctx, const std::string& edit_id)
             ctx, ctx.cab_illuminance, "cabIlluminance.change", edit_id, target) ||
         find_simple_target<decltype(ctx.fogs), build_fog_statement>(
             ctx, ctx.fogs, "fog.change", edit_id, target) ||
+        find_simple_target<decltype(ctx.light_ambient), build_light_ambient_statement>(
+            ctx, ctx.light_ambient, "light.ambient", edit_id, target) ||
+        find_simple_target<decltype(ctx.light_diffuse), build_light_diffuse_statement>(
+            ctx, ctx.light_diffuse, "light.diffuse", edit_id, target) ||
+        find_simple_target<decltype(ctx.light_direction), build_light_direction_statement>(
+            ctx, ctx.light_direction, "light.direction", edit_id, target) ||
         find_simple_target<decltype(ctx.draw_distances), build_draw_distance_statement>(
             ctx, ctx.draw_distances, "drawDistance.change", edit_id, target) ||
         find_simple_target<decltype(ctx.speedlimits), build_speed_limit_statement>(
@@ -2841,6 +2881,15 @@ void validate_own_track_insert_change(const MapEditChange& change) {
     (void)required_numeric_value_field(change, "gradient", Value::null());
 }
 
+void validate_light_insert_distance(const MapEditChange& change) {
+    const auto distance = change.field_changes.find("distance");
+    double value = 0.0;
+    if (distance == change.field_changes.end() ||
+        !parse_edit_number(distance->second, value) || value != 0.0) {
+        throw std::runtime_error("Light insert requires distance 0");
+    }
+}
+
 void validate_insert_change(const MapEditChange& change) {
     if (change.row_kind.empty()) {
         throw std::runtime_error("insert edit is missing its row kind");
@@ -2942,6 +2991,12 @@ void validate_insert_change(const MapEditChange& change) {
         validate_insert_field_names(change,
                                     {"distance", "method", "density", "red", "green", "blue"});
         validate_insert_method(change, "Set", {"Set", "Interpolate"});
+    } else if (row_kind == "light.ambient" || row_kind == "light.diffuse") {
+        validate_insert_field_names(change, {"distance", "red", "green", "blue"});
+        validate_light_insert_distance(change);
+    } else if (row_kind == "light.direction") {
+        validate_insert_field_names(change, {"distance", "pitch", "yaw"});
+        validate_light_insert_distance(change);
     } else if (row_kind == "drawDistance.change") {
         validate_insert_field_names(change, {"distance", "value"});
     } else if (row_kind == "speedlimit") {
@@ -3268,6 +3323,20 @@ std::string build_insert_statement(const MapEditChange& change,
             optional_numeric_value_field(change, "blue", Value::null()),
         };
         return "Fog." + method + "(" + build_fog_arguments(method, values) + ");";
+    }
+    if (row_kind == "light.ambient" || row_kind == "light.diffuse") {
+        const char* statement_name = row_kind == "light.ambient"
+            ? "Light.Ambient"
+            : "Light.Diffuse";
+        return std::string(statement_name) + "(" +
+            insert_required_number(change, "red") + "," +
+            insert_required_number(change, "green") + "," +
+            insert_required_number(change, "blue") + ");";
+    }
+    if (row_kind == "light.direction") {
+        return "Light.Direction(" +
+            insert_required_number(change, "pitch") + "," +
+            insert_required_number(change, "yaw") + ");";
     }
     if (row_kind == "drawDistance.change") {
         return "DrawDistance.Change(" + insert_required_number(change, "value") + ");";
@@ -3825,6 +3894,9 @@ void collect_subtree_element_ids(
     exclude_rows(baseline.adhesions, "adhesion.change");
     exclude_rows(baseline.cab_illuminance, "cabIlluminance.change");
     exclude_rows(baseline.fogs, "fog.change");
+    exclude_rows(baseline.light_ambient, "light.ambient");
+    exclude_rows(baseline.light_diffuse, "light.diffuse");
+    exclude_rows(baseline.light_direction, "light.direction");
     exclude_rows(baseline.legacy_fogs, "legacyFog.change");
     exclude_rows(baseline.draw_distances, "drawDistance.change");
     exclude_rows(baseline.speedlimits, "speedlimit");
@@ -5826,6 +5898,9 @@ void validate_edit_report(MapContext& baseline,
         collect_candidate_rows(candidate->adhesions, "adhesion.change");
         collect_candidate_rows(candidate->cab_illuminance, "cabIlluminance.change");
         collect_candidate_rows(candidate->fogs, "fog.change");
+        collect_candidate_rows(candidate->light_ambient, "light.ambient");
+        collect_candidate_rows(candidate->light_diffuse, "light.diffuse");
+        collect_candidate_rows(candidate->light_direction, "light.direction");
         collect_candidate_rows(candidate->draw_distances, "drawDistance.change");
         collect_candidate_rows(candidate->speedlimits, "speedlimit");
     } catch (const std::exception& e) {
@@ -7073,6 +7148,38 @@ MapEditReport build_edit_report(MapContext& ctx,
                     }
                     continue;
                 }
+                if (change.row_kind == "light.ambient" ||
+                    change.row_kind == "light.diffuse" ||
+                    change.row_kind == "light.direction") {
+                    try {
+                        validate_light_insert_distance(change);
+                        const std::string inserted_statement = build_insert_statement(change);
+                        const ReferenceInsertionPlan insertion = plan_reference_insertion(
+                            ctx, target_file_index, target_patch, inserted_statement);
+                        PreparedEdit edit;
+                        edit.change = &change;
+                        edit.input_ordinal = input_ordinal;
+                        edit.operation = "insert";
+                        edit.target.statement_index = insertion.anchor_statement_index;
+                        edit.target.row_kind = change.row_kind;
+                        edit.target.element_index = 0;
+                        edit.target.elements_for_statement = 1;
+                        edit.source_file_index = target_file_index;
+                        edit.source_range = {insertion.offset, insertion.offset};
+                        edit.removal_range = {};
+                        edit.replacement_statement = insertion.statement;
+                        edit.has_custom_identity_range = true;
+                        edit.identity_range_begin = insertion.identity_begin;
+                        edit.identity_range_end = insertion.identity_end;
+                        ++report.insert_count;
+                        prepared.push_back(std::move(edit));
+                    } catch (const std::exception& e) {
+                        report.blocking_errors.push_back(
+                            std::string("edit change failed for ") +
+                            change.edit_id + ": " + e.what());
+                    }
+                    continue;
+                }
                 try {
                     const std::string target_text = normalized_number_arg(
                         field_text_or(change, "distance", ""));
@@ -7504,11 +7611,18 @@ MapEditReport build_edit_report(MapContext& ctx,
         patches[file_index].replacements.push_back(std::move(replacement));
     };
 
+    // Light statements are reference-anchored at the file's zero-distance
+    // point; several of them in one batch share that single source offset, so
+    // they are grouped like other direct source inserts instead of conflicting
+    // as overlapping physical replacements.
     const auto is_direct_source_insert = [](const PreparedEdit& edit) {
         return edit.operation == "insert" &&
             (edit.target.row_kind == "include" ||
              edit.target.row_kind == "resourceList.load" ||
-             resource_list_edit_spec_for_content_row_kind(edit.target.row_kind));
+             resource_list_edit_spec_for_content_row_kind(edit.target.row_kind) ||
+             edit.target.row_kind == "light.ambient" ||
+             edit.target.row_kind == "light.diffuse" ||
+             edit.target.row_kind == "light.direction");
     };
     std::map<std::pair<size_t, size_t>, std::vector<const PreparedEdit*>>
         direct_source_inserts;
@@ -8306,6 +8420,9 @@ void populate_committed_edit_state(MapContext& ctx, MapEditReport& report) {
     append_committed_rows(ctx, report, "adhesion.change", ctx.adhesions);
     append_committed_rows(ctx, report, "cabIlluminance.change", ctx.cab_illuminance);
     append_committed_rows(ctx, report, "fog.change", ctx.fogs);
+    append_committed_rows(ctx, report, "light.ambient", ctx.light_ambient);
+    append_committed_rows(ctx, report, "light.diffuse", ctx.light_diffuse);
+    append_committed_rows(ctx, report, "light.direction", ctx.light_direction);
     append_committed_rows(ctx, report, "drawDistance.change", ctx.draw_distances);
     append_committed_rows(ctx, report, "speedlimit", ctx.speedlimits);
     size_t sound_index = 0;

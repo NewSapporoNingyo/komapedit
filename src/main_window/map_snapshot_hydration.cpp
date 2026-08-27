@@ -1117,27 +1117,29 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         apply_map_row_metadata(row, snapshot, input.metadata);
         model.legacy_fogs.push_back(std::move(row));
     }
-    const auto hydrate_light_color = [](const KvLightColorRow* rows,
-                                        std::uint64_t count)
-        -> std::optional<LightColorValues> {
-        if (!rows || count != 1) return std::nullopt;
+    const auto hydrate_light_color = [&](const KvLightColorRow* rows,
+                                         std::uint64_t count,
+                                         std::vector<TableRow>& output) {
+        if (!rows || count != 1) return;
         const KvLightColorRow& input = rows[0];
-        return LightColorValues{{
-            format_double(input.red, 6),
-            format_double(input.green, 6),
-            format_double(input.blue, 6),
-        }};
+        TableRow row;
+        row.cells["red"] = format_double(input.red, 6);
+        row.cells["green"] = format_double(input.green, 6);
+        row.cells["blue"] = format_double(input.blue, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        output.push_back(std::move(row));
     };
-    model.light_ambient =
-        hydrate_light_color(snapshot.light_ambient, snapshot.light_ambient_count);
-    model.light_diffuse =
-        hydrate_light_color(snapshot.light_diffuse, snapshot.light_diffuse_count);
+    hydrate_light_color(snapshot.light_ambient, snapshot.light_ambient_count,
+                        model.light_ambient);
+    hydrate_light_color(snapshot.light_diffuse, snapshot.light_diffuse_count,
+                        model.light_diffuse);
     if (snapshot.light_direction && snapshot.light_direction_count == 1) {
         const KvLightDirectionRow& input = snapshot.light_direction[0];
-        model.light_direction = LightDirectionValues{{
-            format_double(input.pitch, 6),
-            format_double(input.yaw, 6),
-        }};
+        TableRow row;
+        row.cells["pitch"] = format_double(input.pitch, 6);
+        row.cells["yaw"] = format_double(input.yaw, 6);
+        apply_map_row_metadata(row, snapshot, input.metadata);
+        model.light_direction.push_back(std::move(row));
     }
     model.draw_distances.reserve(static_cast<size_t>(snapshot.draw_distance_count));
     for (std::uint64_t i = 0; i < snapshot.draw_distance_count; ++i) {

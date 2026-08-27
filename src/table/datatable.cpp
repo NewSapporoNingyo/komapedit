@@ -5324,6 +5324,136 @@ void App::render_legacy_fogs_window() {
     ImGui::End();
 }
 
+void App::sync_lighting_edit_state() {
+    const auto bind = [this](LightingStatementEditState& state,
+                             const std::vector<TableRow>& rows,
+                             const char* row_kind,
+                             std::initializer_list<const char*> field_keys) {
+        if (rows.size() != 1 || rows.front().edit_id.empty()) {
+            state = LightingStatementEditState{};
+            return;
+        }
+
+        const TableRow& row = rows.front();
+        const TableRow* original_row = &row;
+        const auto original = original_edit_rows_.find(row.edit_id);
+        if (original != original_edit_rows_.end() &&
+            original->second.row_kind == row_kind) {
+            original_row = &original->second.row;
+        }
+
+        bool rebuild = state.edit_id != row.edit_id || state.row_kind != row_kind ||
+            state.fields.size() != field_keys.size();
+        if (!rebuild) {
+            size_t index = 0;
+            for (const char* key : field_keys) {
+                if (state.fields[index].original_value != table_cell(*original_row, key)) {
+                    rebuild = true;
+                    break;
+                }
+                ++index;
+            }
+        }
+        if (!rebuild) return;
+
+        LightingStatementEditState next;
+        next.edit_id = row.edit_id;
+        next.row_kind = row_kind;
+        const EditSourceFileInfo* source_file =
+            find_model_source_file(model_, row.source.file_path);
+        next.expected_source_hash = expected_source_hash_for_edit_target(
+            model_, pending_edit_changes_, row.edit_id,
+            source_file ? source_file->source_hash : std::string{},
+            row.source.file_path);
+        for (const char* key : field_keys) {
+            MapElementEditFieldState field;
+            field.key = key;
+            field.backend_key = key;
+            field.target_edit_id = row.edit_id;
+            field.expected_source_hash = next.expected_source_hash;
+            field.label = key;
+            field.original_value = table_cell(*original_row, key);
+            field.numeric_constraint = MapElementNumericConstraint::Finite;
+            field.required = true;
+            set_edit_field_buffer(field, table_cell(row, key));
+            next.fields.push_back(std::move(field));
+        }
+        state = std::move(next);
+    };
+
+    bind(lighting_edit_.ambient, model_.light_ambient, "light.ambient",
+         {"red", "green", "blue"});
+    bind(lighting_edit_.diffuse, model_.light_diffuse, "light.diffuse",
+         {"red", "green", "blue"});
+    bind(lighting_edit_.direction, model_.light_direction, "light.direction",
+         {"pitch", "yaw"});
+}
+
+bool App::apply_lighting_changes() {
+    if (!edit_actions_available()) return false;
+    sync_lighting_edit_state();
+
+    std::map<std::string, MapElementPendingChange> candidate = pending_edit_changes_;
+    const auto apply_statement = [this, &candidate](LightingStatementEditState& state) {
+        if (state.edit_id.empty() || state.row_kind.empty()) return true;
+
+        MapElementPendingChange update;
+        update.change_id = "change-" + state.edit_id;
+        update.edit_id = state.edit_id;
+        update.row_kind = state.row_kind;
+        update.operation = "update";
+        update.expected_source_hash = expected_source_hash_for_edit_target(
+            model_, pending_edit_changes_, state.edit_id, state.expected_source_hash, {});
+
+        for (MapElementEditFieldState& field : state.fields) {
+            std::string value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+            if (field.required && value.empty()) {
+                set_program_status("status.edit.required_field");
+                return false;
+            }
+            const bool changed = value != field.original_value;
+            if (!validate_and_canonicalize_edit_field(field, changed)) {
+                set_program_status("status.edit.invalid_number");
+                return false;
+            }
+            value = trim_gui_ascii_copy(edit_field_buffer_text(field));
+            if (value != field.original_value) {
+                update.field_changes[field.backend_key.empty() ? field.key : field.backend_key] = value;
+            }
+        }
+
+        const auto existing = pending_edit_changes_.find(state.edit_id);
+        if (existing != pending_edit_changes_.end() &&
+            existing->second.operation == "insert") {
+            if (!update.field_changes.empty()) {
+                MapElementPendingChange merged = existing->second;
+                for (const auto& field : update.field_changes) {
+                    merged.field_changes[field.first] = field.second;
+                }
+                candidate[state.edit_id] = std::move(merged);
+            }
+            return true;
+        }
+
+        candidate.erase(state.edit_id);
+        if (!update.field_changes.empty()) {
+            candidate[state.edit_id] = std::move(update);
+        }
+        return true;
+    };
+
+    if (!apply_statement(lighting_edit_.ambient) ||
+        !apply_statement(lighting_edit_.diffuse) ||
+        !apply_statement(lighting_edit_.direction)) {
+        return false;
+    }
+    if (!apply_edit_ledger_to_preview(candidate, std::nullopt, false)) return false;
+
+    lighting_edit_ = LightingEditState{};
+    set_program_status("status.edit.applied_to_preview");
+    return true;
+}
+
 void App::render_lighting_window() {
     if (!show_lighting_window_) return;
     if (dock_right_id_) ImGui::SetNextWindowDockID(dock_right_id_, ImGuiCond_FirstUseEver);
@@ -5338,54 +5468,100 @@ void App::render_lighting_window() {
         return;
     }
 
+    sync_lighting_edit_state();
+    const auto has_form_changes = [this](const LightingStatementEditState& state) {
+        if (std::any_of(state.fields.begin(), state.fields.end(),
+                        [](const MapElementEditFieldState& field) {
+                            return edit_field_buffer_text(field) != field.original_value;
+                        })) {
+            return true;
+        }
+        const auto pending = pending_edit_changes_.find(state.edit_id);
+        return pending != pending_edit_changes_.end() &&
+            pending->second.operation == "update";
+    };
+    const bool has_changes = has_form_changes(lighting_edit_.ambient) ||
+        has_form_changes(lighting_edit_.diffuse) || has_form_changes(lighting_edit_.direction);
+    ImGui::BeginDisabled(!edit_actions_available() || !has_changes);
+    if (ImGui::Button(tr("button.apply").c_str())) {
+        apply_lighting_changes();
+    }
+    ImGui::EndDisabled();
+    ImGui::Separator();
+
     static constexpr std::array<const char*, 3> k_color_parameter_labels = {
         "red", "green", "blue",
     };
     static constexpr std::array<const char*, 2> k_direction_parameter_labels = {
         "pitch", "yaw",
     };
-    const auto render_group = [this](const char* statement,
+    const auto render_group = [this](const char* statement, const char* template_id,
                                      const auto& parameter_labels,
-                                     auto* values) {
+                                     const std::vector<TableRow>& rows,
+                                     LightingStatementEditState& state) {
+        const TableRow* row = rows.size() == 1 ? &rows.front() : nullptr;
+        const bool editable_row = row && !row->edit_id.empty() &&
+            state.edit_id == row->edit_id && state.fields.size() == parameter_labels.size();
+
+        ImGui::PushID(statement);
         ImGui::TextUnformatted(statement);
-        const ImVec2 parameter_min = ImGui::GetCursorScreenPos();
-        ImVec2 parameter_max = parameter_min;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!edit_actions_available() || !row || row->edit_id.empty());
+        if (ImGui::SmallButton(tr("button.delete").c_str())) {
+            request_element_delete(row->edit_id, template_id);
+        }
+        ImGui::EndDisabled();
+
         for (size_t index = 0; index < parameter_labels.size(); ++index) {
-            ImGui::PushID(statement);
             ImGui::PushID(static_cast<int>(index));
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(parameter_labels[index]);
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(-1.0f);
-            std::string missing_value;
-            std::string& value = values ? (*values)[index] : missing_value;
-            ImGui::InputText("##value", &value, ImGuiInputTextFlags_ReadOnly);
-            parameter_max.x = std::max(parameter_max.x, ImGui::GetItemRectMax().x);
-            parameter_max.y = ImGui::GetItemRectMax().y;
-            ImGui::PopID();
+            if (editable_row) {
+                MapElementEditFieldState& field = state.fields[index];
+                const bool changed = edit_field_buffer_text(field) != field.original_value;
+                if (changed) {
+                    ImGui::PushStyleColor(
+                        ImGuiCol_FrameBg, ImVec4(0.28f, 0.23f, 0.08f, 1.0f));
+                }
+                ImGui::BeginDisabled(!edit_actions_available());
+                render_map_element_field_control(
+                    field, std::max(160.0f, ImGui::GetContentRegionAvail().x));
+                ImGui::EndDisabled();
+                if (ImGui::IsItemDeactivatedAfterEdit() &&
+                    !validate_and_canonicalize_edit_field(field, true)) {
+                    set_program_status("status.edit.invalid_number");
+                }
+                if (changed) ImGui::PopStyleColor();
+            } else {
+                std::string value = row ? table_cell(*row, parameter_labels[index]) : std::string{};
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::BeginDisabled();
+                ImGui::InputText("##value", &value);
+                ImGui::EndDisabled();
+            }
             ImGui::PopID();
         }
-        if (!values) {
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-            draw_list->AddRectFilled(
-                parameter_min, parameter_max, ImGui::GetColorU32(ImGuiCol_WindowBg));
-            const std::string& missing_message = tr("label.light_statement_missing");
-            const ImVec2 text_size = ImGui::CalcTextSize(missing_message.c_str());
-            draw_list->AddText(
-                ImVec2(parameter_min.x + (parameter_max.x - parameter_min.x - text_size.x) * 0.5f,
-                       parameter_min.y + (parameter_max.y - parameter_min.y - text_size.y) * 0.5f),
-                ImGui::GetColorU32(ImGuiCol_Text), missing_message.c_str());
+
+        if (!row) {
+            ImGui::TextDisabled("%s", tr("label.light_statement_missing").c_str());
+            ImGui::BeginDisabled(!edit_actions_available());
+            if (ImGui::Button(tr("button.new").c_str())) {
+                open_new_element_wizard_for_template(template_id);
+            }
+            ImGui::EndDisabled();
         }
+        ImGui::PopID();
     };
 
-    render_group("Light.Ambient", k_color_parameter_labels,
-                 model_.light_ambient ? &model_.light_ambient->channels : nullptr);
+    render_group("Light.Ambient", "light.ambient", k_color_parameter_labels,
+                 model_.light_ambient, lighting_edit_.ambient);
     ImGui::Separator();
-    render_group("Light.Diffuse", k_color_parameter_labels,
-                 model_.light_diffuse ? &model_.light_diffuse->channels : nullptr);
+    render_group("Light.Diffuse", "light.diffuse", k_color_parameter_labels,
+                 model_.light_diffuse, lighting_edit_.diffuse);
     ImGui::Separator();
-    render_group("Light.Direction", k_direction_parameter_labels,
-                 model_.light_direction ? &model_.light_direction->angles : nullptr);
+    render_group("Light.Direction", "light.direction", k_direction_parameter_labels,
+                 model_.light_direction, lighting_edit_.direction);
     ImGui::End();
 }
 

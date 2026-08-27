@@ -4718,6 +4718,219 @@ struct SimpleEditBatch {
     }
 };
 
+void light_edit_contract() {
+    TempFixture fixture;
+    const std::string source_before =
+        "BveTs Map 2.02:utf-8\n"
+        "$ambientRed=0.1;\n"
+        "$diffuseBlue=0.6;\n"
+        "0;\n"
+        "Light.Ambient($ambientRed, 0.2, 0.3);\n"
+        "Light.Diffuse(0.4, 0.5, $diffuseBlue);\n"
+        "Light.Direction(1.25, -0.5);\n";
+    {
+        std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << source_before;
+    }
+
+    const auto read_disk = [&]() {
+        std::ifstream input(fixture.map_path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+    const auto source_hash = [](const KvMapSnapshot& snapshot,
+                                const KvRowMetadata& metadata) {
+        return metadata.source_file_index < snapshot.source_file_count
+            ? map_string(snapshot,
+                         snapshot.source_files[metadata.source_file_index].source_hash)
+            : std::string{};
+    };
+
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "light edit fixture load");
+    if (!handle.value) return;
+
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0,
+          "light edit baseline snapshot");
+    if (baseline.light_ambient_count != 1 ||
+        baseline.light_diffuse_count != 1 ||
+        baseline.light_direction_count != 1) {
+        check(false, "light edit baseline rows");
+        return;
+    }
+    const std::string ambient_id =
+        map_string(baseline, baseline.light_ambient[0].metadata.edit_id);
+    const std::string diffuse_id =
+        map_string(baseline, baseline.light_diffuse[0].metadata.edit_id);
+    const std::string direction_id =
+        map_string(baseline, baseline.light_direction[0].metadata.edit_id);
+    const std::string baseline_hash =
+        source_hash(baseline, baseline.light_ambient[0].metadata);
+    check(!ambient_id.empty() && !diffuse_id.empty() && !direction_id.empty() &&
+              !baseline_hash.empty(),
+          "light edit targets expose source identity");
+    if (ambient_id.empty() || diffuse_id.empty() || direction_id.empty() ||
+        baseline_hash.empty()) {
+        return;
+    }
+
+    const auto apply_update = [&](const char* label,
+                                  const std::string& edit_id,
+                                  std::vector<std::pair<std::string, std::string>> fields) {
+        MultiFieldUpdateBatch update(
+            std::string("typed-light-update-") + label,
+            edit_id, baseline_hash, std::move(fields));
+        KvEditReportSnapshot report{};
+        const bool applied = kv_edit_apply_to_memory_typed(
+            handle.value, &update.batch, &report, sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok &&
+            report.non_target_changed_count == 0;
+        check(applied, (std::string("light ") + label + " update applies").c_str());
+        return applied;
+    };
+    apply_update("ambient", ambient_id, {{"green", "0.25"}});
+    apply_update("diffuse", diffuse_id, {{"red", "0.45"}});
+    apply_update("direction", direction_id, {{"yaw", "-0.75"}});
+
+    const auto memory_source = [&]() {
+        const char* raw = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+        std::string text = raw ? raw : "";
+        if (raw) kv_free_string(raw);
+        return text;
+    };
+    const std::string updated_memory = memory_source();
+    check(updated_memory.find("Light.Ambient($ambientRed,0.25,0.3);") !=
+              std::string::npos &&
+              updated_memory.find("Light.Diffuse(0.45,0.5,$diffuseBlue);") !=
+                  std::string::npos &&
+              updated_memory.find("Light.Direction(1.25,-0.75);") !=
+                  std::string::npos,
+          "light updates preserve untouched source expressions");
+    check(read_disk() == source_before,
+          "light Apply keeps the map file unchanged before Save");
+
+    KvEditReportSnapshot save_report{};
+    check(kv_edit_commit_typed(handle.value, &save_report, sizeof(save_report)) != 0 &&
+              save_report.ok && save_report.full_reparse_ok,
+          "light Save commits typed updates");
+    const std::string committed_source = read_disk();
+    check(committed_source == updated_memory,
+          "light Save preserves the validated source writeback");
+
+    KvMapSnapshot committed{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &committed, sizeof(committed)) != 0 &&
+              committed.light_ambient_count == 1 &&
+              committed.light_diffuse_count == 1 &&
+              committed.light_direction_count == 1 &&
+              nearly_equal(committed.light_ambient[0].green, 0.25) &&
+              nearly_equal(committed.light_diffuse[0].red, 0.45) &&
+              nearly_equal(committed.light_direction[0].yaw, -0.75),
+          "light Save reloads semantic values");
+    if (committed.light_ambient_count != 1 ||
+        committed.light_diffuse_count != 1 ||
+        committed.light_direction_count != 1) {
+        return;
+    }
+    const std::string committed_hash =
+        source_hash(committed, committed.light_ambient[0].metadata);
+    check(!committed_hash.empty(), "light committed source hash");
+    if (committed_hash.empty()) return;
+
+    const auto delete_light = [&](const char* label, const std::string& edit_id) {
+        SimpleEditBatch remove(edit_id, KV_EDIT_DELETE, committed_hash);
+        KvEditReportSnapshot report{};
+        const bool deleted = kv_edit_apply_to_memory_typed(
+            handle.value, &remove.batch, &report, sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok && report.delete_count == 1 &&
+            report.non_target_changed_count == 0;
+        check(deleted, (std::string("light ") + label + " delete applies").c_str());
+        return deleted;
+    };
+    delete_light("ambient", ambient_id);
+    delete_light("diffuse", diffuse_id);
+    delete_light("direction", direction_id);
+
+    KvMapSnapshot deleted{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &deleted, sizeof(deleted)) != 0 &&
+              deleted.light_ambient_count == 0 &&
+              deleted.light_diffuse_count == 0 &&
+              deleted.light_direction_count == 0,
+          "light deletes refresh the preview snapshot");
+    check(read_disk() == committed_source,
+          "light Delete keeps the map file unchanged before Save");
+
+    const auto reject_insert = [&](const char* label,
+                                   std::string id,
+                                   std::vector<std::pair<std::string, std::string>> fields) {
+        SimpleInsertBatch insert(fixture.path_utf8(), std::move(id), std::move(fields));
+        KvEditReportSnapshot report{};
+        const bool rejected = kv_edit_dry_run_typed(
+            handle.value, &insert.batch, &report, sizeof(report)) != 0 && !report.ok;
+        check(rejected, (std::string("light ") + label + " insert is rejected").c_str());
+        return rejected;
+    };
+    reject_insert("out-of-range RGB", "typed-light-invalid-rgb",
+                  {{"rowKind", "light.ambient"}, {"distance", "0"},
+                   {"red", "1.1"}, {"green", "0"}, {"blue", "0"}});
+    reject_insert("nonzero direction distance", "typed-light-invalid-direction-distance",
+                  {{"rowKind", "light.direction"}, {"distance", "1"},
+                   {"pitch", "1"}, {"yaw", "2"}});
+
+    const auto insert_light = [&](const char* label,
+                                  std::string id,
+                                  std::vector<std::pair<std::string, std::string>> fields) {
+        SimpleInsertBatch insert(fixture.path_utf8(), std::move(id), std::move(fields));
+        KvEditReportSnapshot report{};
+        const bool inserted = kv_edit_apply_to_memory_typed(
+            handle.value, &insert.batch, &report, sizeof(report)) != 0 &&
+            report.ok && report.full_reparse_ok && report.insert_count == 1 &&
+            report.non_target_changed_count == 0;
+        check(inserted, (std::string("light ") + label + " insert applies").c_str());
+        return inserted;
+    };
+    insert_light("ambient", "typed-light-insert-ambient",
+                 {{"rowKind", "light.ambient"}, {"distance", "0"},
+                  {"red", "0.11"}, {"green", "0.22"}, {"blue", "0.33"}});
+    insert_light("diffuse", "typed-light-insert-diffuse",
+                 {{"rowKind", "light.diffuse"}, {"distance", "0"},
+                  {"red", "0.44"}, {"green", "0.55"}, {"blue", "0.66"}});
+    insert_light("direction", "typed-light-insert-direction",
+                 {{"rowKind", "light.direction"}, {"distance", "0"},
+                  {"pitch", "1.5"}, {"yaw", "-0.25"}});
+    reject_insert("duplicate", "typed-light-insert-duplicate",
+                  {{"rowKind", "light.ambient"}, {"distance", "0"},
+                   {"red", "0"}, {"green", "0"}, {"blue", "0"}});
+
+    KvMapSnapshot inserted{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &inserted, sizeof(inserted)) != 0 &&
+              inserted.light_ambient_count == 1 &&
+              inserted.light_diffuse_count == 1 &&
+              inserted.light_direction_count == 1 &&
+              nearly_equal(inserted.light_ambient[0].red, 0.11) &&
+              nearly_equal(inserted.light_diffuse[0].blue, 0.66) &&
+              nearly_equal(inserted.light_direction[0].pitch, 1.5),
+          "light inserts use the typed semantic rows");
+    const std::string inserted_source = memory_source();
+    check(inserted_source.find("Light.Ambient(0.11,0.22,0.33);") !=
+              std::string::npos &&
+              inserted_source.find("Light.Diffuse(0.44,0.55,0.66);") !=
+                  std::string::npos &&
+              inserted_source.find("Light.Direction(1.5,-0.25);") !=
+                  std::string::npos,
+          "light inserts emit only the official statement forms");
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "light reset discards delete and insert preview changes");
+    check(read_disk() == committed_source,
+          "light reset leaves the saved baseline unchanged");
+}
+
 void include_delete_contract() {
     IncludeDeleteFixture fixture;
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
@@ -6580,6 +6793,7 @@ int edit_contract() {
     other_track_insert_contract();
     environment_argument_shape_edit_contract();
     sound3d_edit_contract();
+    light_edit_contract();
     TempFixture fixture;
     check_coordinate_offset_method_conversions(fixture.path_utf8());
     MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
@@ -7358,14 +7572,29 @@ void light_contract() {
                       snapshot.light_ambient[0].metadata.source_file_index <
                           snapshot.source_file_count,
                   "light row source metadata");
-            bool no_edit_target = true;
+            std::set<std::string> light_edit_kinds;
             for (std::uint64_t index = 0; index < snapshot.element_count; ++index) {
-                const std::string kind = map_string(snapshot, snapshot.elements[index].row_kind);
-                no_edit_target = no_edit_target &&
-                    kind != "light.ambient" && kind != "light.diffuse" &&
-                    kind != "light.direction";
+                const KvElementRow& element = snapshot.elements[index];
+                const std::string kind = map_string(snapshot, element.row_kind);
+                if (kind != "light.ambient" && kind != "light.diffuse" &&
+                    kind != "light.direction") {
+                    continue;
+                }
+                const std::string edit_id = map_string(snapshot, element.edit_id);
+                KvEditTargetSnapshot target{};
+                check(!edit_id.empty() &&
+                          kv_get_edit_target_typed(handle.value, utf8_view(edit_id),
+                                                   &target, sizeof(target)) != 0 &&
+                          arena_view(target.string_data, target.string_size,
+                                     target.row_kind) == kind &&
+                          target.elements_for_statement == 1,
+                      "light rows have editable targets");
+                light_edit_kinds.insert(kind);
             }
-            check(no_edit_target, "light rows have no editable target");
+            check(light_edit_kinds ==
+                      std::set<std::string>{"light.ambient", "light.diffuse",
+                                            "light.direction"},
+                  "light rows have stable typed edit identities");
         }
     }
 

@@ -893,6 +893,15 @@ HeadlessNewElementEditOptions parse_headless_new_element_edit_options(
         [](HeadlessNewElementEditOptions& options) { options.commit = true; });
 }
 
+HeadlessLightEditOptions parse_headless_light_edit_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessLightEditOptions>(
+        args, "--debug-headless-light-edit",
+        [](HeadlessLightEditOptions& options) {
+            options.error = "--debug-headless-light-edit is memory-apply only";
+        });
+}
+
 HeadlessSparseNewElementOptions parse_headless_sparse_new_element_options(
     const std::vector<std::string>& args) {
     return parse_headless_required_map_edit_options<HeadlessSparseNewElementOptions>(

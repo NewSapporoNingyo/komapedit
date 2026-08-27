@@ -121,7 +121,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Edit or delete existing cab-illuminance setting positions.
 - [x] Edit or delete existing fog effects.
 - [x] Parse the read-only legacy linear-fog statement `Legacy.Fog(start, end, red, green, blue)` into typed snapshot rows and show them in a dedicated table list plus plan/scene markers with their source values; editing, creation, and the 3D fog effect are not implemented.
-- [x] Parse `Light.Ambient`, `Light.Diffuse`, and `Light.Direction` into read-only typed snapshot rows and show their evaluated values in the trilingual Lighting Effects tab. One syntactically valid declaration of each kind is permitted across the root map and all Includes; duplicate, out-of-range RGB, or nonzero-distance Direction declarations are invalidated with English diagnostics. Editing, creation, markers, and 3D lighting simulation are not implemented.
+- [x] Add source-backed edit and deferred deletion for `Light.Ambient`, `Light.Diffuse`, and `Light.Direction`, and add fixed-distance-0 Effects wizard templates in the trilingual Lighting Effects UI. Each kind remains unique across the root map and all Includes; RGB bounds, Direction distance, full reparse/semantic proof, expression preservation, and memory Apply/Save/Revert behavior remain enforced. Markers and 3D lighting simulation are not implemented.
 
 ### User Interface and Utilities
 
@@ -269,7 +269,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 编辑或删除已有驾驶台亮度设定位置
 - [x] 编辑或删除已有雾效果
 - [x] 将只读旧式线性雾语句 `Legacy.Fog(start, end, red, green, blue)` 解析为类型化快照行，并在独立列表及平面图/3D 标牌中按源值显示；编辑、新建与 3D 雾效果未实现
-- [x] 将 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 解析为只读类型化快照行，并在三语“光照效果”标签页显示求值结果。根地图及全部 Include 中每类仅允许一条基础语法正确的语句；重复、RGB 越界或非零里程的 Direction 会无效并输出英文诊断。不实现编辑、新建、标记或 3D 光照模拟
+- [x] 为 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 加入基于源码的编辑和延迟删除，并在三语“光照效果”界面加入固定里程 `0` 的“效果”向导模板。根地图及全部 Include 中每类仍只允许一条基础语法正确的语句；RGB 范围、Direction 里程、完整重解析/语义证明、原始表达式保持及内存 Apply/Save/Revert 行为均继续校验。不实现标记或 3D 光照模拟
 
 ### 用户界面与辅助功能
 

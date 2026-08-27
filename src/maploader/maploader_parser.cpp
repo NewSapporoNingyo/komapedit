@@ -2266,7 +2266,7 @@ private:
             row.source = diagnostic_source(
                 current_statement_start_,
                 fn == "ambient" ? "light.ambient" : "light.diffuse");
-            attach_active_noneditable_ref(ctx_, row);
+            attach_active_edit_ref(ctx_, row);
             if (fn == "ambient") {
                 ctx_.light_ambient.push_back(std::move(row));
             } else {
@@ -2280,7 +2280,7 @@ private:
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
             row.source = diagnostic_source(current_statement_start_, "light.direction");
-            attach_active_noneditable_ref(ctx_, row);
+            attach_active_edit_ref(ctx_, row);
             ctx_.light_direction.push_back(std::move(row));
         }
     }

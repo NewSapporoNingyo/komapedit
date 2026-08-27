@@ -497,7 +497,7 @@ App / MapModel
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 
-`Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 是不可编辑的预览行。根地图及全部 Include 合并后，每类只能保留一条基础语法正确的语句：同类重复会使所有冲突行无效，并输出一条含所有物理源码位置的英文警告。Ambient/Diffuse 的 RGB 必须在 `[0, 1]`，Direction 必须在里程 `0` 声明；无效行不会进入类型化快照。`KvLightColorRow` 与 `KvLightDirectionRow` 保留供只读界面使用的文件/顺序/源码元数据，但不注册编辑目标，也不影响 2D/3D 渲染。
+`Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 是带稳定 `light.ambient`、`light.diffuse`、`light.direction` 编辑目标的源码关联可编辑行。“光照效果”标签页始终显示三组参数表单；编辑模式只会禁用“应用”“删除”“新建”，不会隐藏控件。“应用”把已改表单合并进正常的仅内存编辑账本，“删除”使用正常的延迟删除路径，“效果”向导会在用户选定的可编辑源文件中固定于里程 `0` 创建官方语句且不显示里程字段。根地图及全部 Include 合并后，每类只能保留一条基础语法正确的语句：同类重复会使所有冲突行无效，并输出一条含所有物理源码位置的英文警告。Ambient/Diffuse 的 RGB 必须在 `[0, 1]`，Direction 必须在里程 `0` 声明；无效行不会进入类型化快照。更新会保留未改参数的原始表达式，完整重解析/语义证明会保护 Apply 与 Save。`KvLightColorRow` 与 `KvLightDirectionRow` 保留文件/顺序/源码元数据，且不影响 2D/3D 渲染。
 
 AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑时，除匹配的场景/子系统技能外，还必须调用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。实现前必须重新核对受影响的在线官方页面，并完成该技能要求的合规矩阵。
 
@@ -572,6 +572,7 @@ build\komapedit.exe --debug-headless-new-file-wizard <tests目录下尚不存在
 build\komapedit.exe --debug-headless-fresh-resource-list-workflow <地图路径> --headless-output build\fresh-resource-list.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
+build\komapedit.exe --debug-headless-light-edit <map-path> --headless-output build\headless-light-edit.txt
 build\komapedit.exe --debug-headless-sparse-new-element <map-path> --headless-output build\sparse-new-element.txt
 build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --headless-output build\section-edit-batch.txt
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
@@ -593,6 +594,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
+
+`--debug-headless-light-edit` 要求显式传入地图，例如 `tests\\light_valid.txt`。它不模拟 ImGui 点击，而是直接调用正式的“光照效果”表单 Apply、延迟删除和三种“效果”向导模板：修改三类语句，通过共享延迟路径删除，再在所选源文件的固定里程 `0` 重新创建，检查求值预览和官方源码形式，最后 Revert。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并证明地图字节未改变。
 
 `--debug-headless-sparse-new-element` 要求显式传入地图路径：目标源文件中可有零或一条数值距离语句，或者数值距离锚点按源码顺序非递减且最后锚点小于 `866`。它直接驱动正式的 `DrawDistance.Change(500)` 向导表单；稀疏源使用里程 `25`，单调尾部情形使用 `866`。该命令验证目标仍可选择、插入不会请求距离解析、规范 EOF 距离块以新 typed 行结束，随后 Reset 并确认磁盘哈希不变。该命令仅执行内存 Apply，传入 `--commit` 会被拒绝。
 

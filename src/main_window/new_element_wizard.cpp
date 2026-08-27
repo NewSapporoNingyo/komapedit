@@ -590,7 +590,42 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
-            "draw_distance.change", NewElementTemplateCategory::Effects, 5,
+            "light.ambient", NewElementTemplateCategory::Effects, 5,
+            "light.ambient", "",
+            "Light.Ambient(red, green, blue);",
+            "new_element.usage.light.ambient", false,
+            {
+                {"red", "red", MapElementNumericConstraint::Finite, true, "0"},
+                {"green", "green", MapElementNumericConstraint::Finite, true, "0"},
+                {"blue", "blue", MapElementNumericConstraint::Finite, true, "0"},
+            },
+            true,
+        },
+        {
+            "light.diffuse", NewElementTemplateCategory::Effects, 6,
+            "light.diffuse", "",
+            "Light.Diffuse(red, green, blue);",
+            "new_element.usage.light.diffuse", false,
+            {
+                {"red", "red", MapElementNumericConstraint::Finite, true, "0"},
+                {"green", "green", MapElementNumericConstraint::Finite, true, "0"},
+                {"blue", "blue", MapElementNumericConstraint::Finite, true, "0"},
+            },
+            true,
+        },
+        {
+            "light.direction", NewElementTemplateCategory::Effects, 7,
+            "light.direction", "",
+            "Light.Direction(pitch, yaw);",
+            "new_element.usage.light.direction", false,
+            {
+                {"pitch", "pitch", MapElementNumericConstraint::Finite, true, "0"},
+                {"yaw", "yaw", MapElementNumericConstraint::Finite, true, "0"},
+            },
+            true,
+        },
+        {
+            "draw_distance.change", NewElementTemplateCategory::Effects, 8,
             "drawDistance.change", "",
             "DrawDistance.Change(value);",
             "new_element.usage.draw_distance.change", false,
@@ -951,6 +986,27 @@ void App::open_new_element_wizard(std::optional<double> distance_prefill) {
     if (!initialize && distance_prefill) {
         apply_new_element_wizard_distance_prefill();
     }
+}
+
+bool App::open_new_element_wizard_for_template(std::string_view template_id) {
+    const std::vector<NewElementTemplate>& templates = new_element_templates();
+    const auto selected = std::find_if(
+        templates.begin(), templates.end(),
+        [template_id](const NewElementTemplate& tpl) { return tpl.id == template_id; });
+    if (selected == templates.end()) {
+        KME_ADD_LOG("[error]new-element template is unavailable: " +
+                    std::string(template_id));
+        return false;
+    }
+
+    open_new_element_wizard();
+    NewElementWizardState& wizard = new_element_wizard_;
+    wizard.selected_template = static_cast<int>(std::distance(templates.begin(), selected));
+    wizard.distance_prefill = 0.0;
+    wizard.built_template = -1;
+    wizard.built_target_file.clear();
+    rebuild_new_element_wizard_form();
+    return true;
 }
 
 bool App::prepare_repeater_wizard_from_inspector(std::string& repeater_key) {
@@ -1539,6 +1595,9 @@ bool App::apply_new_element_insert() {
                 field.backend_key.empty() ? field.key : field.backend_key;
             change.field_changes[backend_key] =
                 trim_gui_ascii_copy(edit_field_buffer_text(field));
+        }
+        if (tpl.fixed_distance_zero) {
+            change.field_changes["distance"] = "0";
         }
         if (!tpl.method.empty()) {
             change.field_changes["method"] = std::string(tpl.method);

@@ -770,6 +770,9 @@ private:
         add_elements("adhesion.change", ctx_.adhesions);
         add_elements("cabIlluminance.change", ctx_.cab_illuminance);
         add_elements("fog.change", ctx_.fogs);
+        add_elements("light.ambient", ctx_.light_ambient);
+        add_elements("light.diffuse", ctx_.light_diffuse);
+        add_elements("light.direction", ctx_.light_direction);
         add_elements("legacyFog.change", ctx_.legacy_fogs);
         add_elements("drawDistance.change", ctx_.draw_distances);
         add_elements("speedlimit", ctx_.speedlimits);

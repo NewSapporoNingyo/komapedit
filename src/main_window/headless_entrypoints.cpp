@@ -74,6 +74,247 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 #ifndef NDEBUG
+int App::run_debug_headless_light_edit(
+    const HeadlessLightEditOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-light-edit\n"
+         << "path=" << options.path << "\n"
+         << "memory_apply_only=1\n"
+         << "stage=load-start\n";
+    out->flush();
+
+    LoadResult load = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, LoadModelOptions{true});
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        return 2;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* name, bool value) {
+        *out << name << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        const std::filesystem::path disk_path(utf8_to_wide(options.path));
+        const auto read_disk = [&]() {
+            std::ifstream input(disk_path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input),
+                               std::istreambuf_iterator<char>());
+        };
+        const std::string disk_before = read_disk();
+
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = load.handle;
+        load.handle = nullptr;
+        app.model_ = std::move(load.model);
+        app.file_path_ = options.path;
+        app.has_model_ = true;
+        app.edit_mode_enabled_ = true;
+        app.edit_registry_loaded_ = true;
+        app.edit_memory_matches_pending_ledger_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.unit_distance_ = options.unit_distance;
+        *out << "stage=load-complete\n";
+
+        const std::vector<std::string> target_candidates =
+            new_element_target_candidates(app.model_);
+        const auto preferred_target = std::find(
+            target_candidates.begin(), target_candidates.end(), app.model_.path);
+        const std::string target_file = preferred_target != target_candidates.end()
+            ? *preferred_target
+            : target_candidates.empty() ? std::string{} : target_candidates.front();
+        *out << "target_file=" << target_file << "\n";
+
+        const auto has_single_editable_row = [](const std::vector<TableRow>& rows) {
+            return rows.size() == 1 && !rows.front().edit_id.empty();
+        };
+        check("target_file_available", !target_file.empty());
+        check("baseline_light_rows_editable",
+              has_single_editable_row(app.model_.light_ambient) &&
+                  has_single_editable_row(app.model_.light_diffuse) &&
+                  has_single_editable_row(app.model_.light_direction));
+
+        app.sync_lighting_edit_state();
+        const auto set_lighting_field = [](LightingStatementEditState& state,
+                                           std::string_view key,
+                                           std::string_view value) {
+            const auto found = std::find_if(
+                state.fields.begin(), state.fields.end(),
+                [key](const MapElementEditFieldState& field) {
+                    return field.key == key;
+                });
+            if (found == state.fields.end() || found->read_only || found->disabled) {
+                return false;
+            }
+            set_edit_field_buffer(*found, std::string(value));
+            return true;
+        };
+        check("lighting_form_drafts_initialized",
+              app.lighting_edit_.ambient.fields.size() == 3 &&
+                  app.lighting_edit_.diffuse.fields.size() == 3 &&
+                  app.lighting_edit_.direction.fields.size() == 2);
+        const bool fields_set =
+            set_lighting_field(app.lighting_edit_.ambient, "red", "0.15") &&
+            set_lighting_field(app.lighting_edit_.diffuse, "green", "0.55") &&
+            set_lighting_field(app.lighting_edit_.direction, "yaw", "-0.75");
+        check("lighting_form_fields_set", fields_set);
+        check("lighting_form_apply", fields_set && app.apply_lighting_changes());
+
+        const auto numeric_cell = [](const TableRow& row,
+                                     std::string_view key, double expected) {
+            const std::string text = table_cell(row, std::string(key));
+            char* end = nullptr;
+            const double actual = std::strtod(text.c_str(), &end);
+            return end && *end == '\0' && std::isfinite(actual) &&
+                std::abs(actual - expected) <= 1e-9;
+        };
+        check("lighting_form_apply_updates_preview",
+              has_single_editable_row(app.model_.light_ambient) &&
+                  has_single_editable_row(app.model_.light_diffuse) &&
+                  has_single_editable_row(app.model_.light_direction) &&
+                  numeric_cell(app.model_.light_ambient.front(), "red", 0.15) &&
+                  numeric_cell(app.model_.light_diffuse.front(), "green", 0.55) &&
+                  numeric_cell(app.model_.light_direction.front(), "yaw", -0.75));
+        check("lighting_apply_does_not_save", read_disk() == disk_before);
+
+        const std::string ambient_id = app.model_.light_ambient.empty()
+            ? std::string{} : app.model_.light_ambient.front().edit_id;
+        const std::string diffuse_id = app.model_.light_diffuse.empty()
+            ? std::string{} : app.model_.light_diffuse.front().edit_id;
+        const std::string direction_id = app.model_.light_direction.empty()
+            ? std::string{} : app.model_.light_direction.front().edit_id;
+        const auto delete_light = [&](const char* label,
+                                      const std::string& edit_id,
+                                      const char* row_kind) {
+            app.request_element_delete(edit_id, row_kind);
+            const bool queued = app.pending_delete_request_.has_value();
+            app.process_pending_element_delete();
+            return check(label, queued);
+        };
+        delete_light("deferred_delete_ambient", ambient_id, "light.ambient");
+        delete_light("deferred_delete_diffuse", diffuse_id, "light.diffuse");
+        delete_light("deferred_delete_direction", direction_id, "light.direction");
+        check("deferred_deletes_refresh_preview",
+              app.model_.light_ambient.empty() && app.model_.light_diffuse.empty() &&
+                  app.model_.light_direction.empty());
+        check("lighting_delete_does_not_save", read_disk() == disk_before);
+
+        const auto create_light = [&](const char* template_id,
+                                      std::initializer_list<std::pair<const char*, const char*>> fields) {
+            const bool opened = app.open_new_element_wizard_for_template(template_id);
+            NewElementWizardState& wizard = app.new_element_wizard_;
+            wizard.target_file_path = target_file;
+            wizard.target_file_candidates = {target_file};
+            wizard.target_candidates_built = true;
+            wizard.built_template = -1;
+            wizard.built_target_file.clear();
+            app.rebuild_new_element_wizard_form();
+            const auto& templates = new_element_templates();
+            const bool selected = opened && wizard.selected_template >= 0 &&
+                wizard.selected_template < static_cast<int>(templates.size()) &&
+                std::string_view(templates[static_cast<size_t>(wizard.selected_template)].id) ==
+                    template_id &&
+                find_inspector_field(wizard.form, "distance") == nullptr;
+            bool form_values_set = selected;
+            for (const auto& field : fields) {
+                MapElementEditFieldState* target =
+                    find_inspector_field(wizard.form, field.first);
+                if (!target || target->read_only || target->disabled) {
+                    form_values_set = false;
+                    break;
+                }
+                set_edit_field_buffer(*target, field.second);
+            }
+            const bool applied = form_values_set && app.apply_new_element_insert();
+            const auto inserted = std::find_if(
+                app.pending_edit_changes_.begin(), app.pending_edit_changes_.end(),
+                [template_id, &target_file](const auto& entry) {
+                    const MapElementPendingChange& change = entry.second;
+                    const auto distance = change.field_changes.find("distance");
+                    return change.operation == "insert" &&
+                        change.row_kind == template_id &&
+                        change.target_file_path == target_file &&
+                        distance != change.field_changes.end() && distance->second == "0";
+                });
+            return opened && selected && form_values_set && applied &&
+                inserted != app.pending_edit_changes_.end();
+        };
+        check("wizard_creates_light_ambient",
+              create_light("light.ambient", {{"red", "0.11"}, {"green", "0.22"},
+                                               {"blue", "0.33"}}));
+        check("wizard_creates_light_diffuse",
+              create_light("light.diffuse", {{"red", "0.44"}, {"green", "0.55"},
+                                               {"blue", "0.66"}}));
+        check("wizard_creates_light_direction",
+              create_light("light.direction", {{"pitch", "1.5"}, {"yaw", "-0.25"}}));
+        check("wizard_insert_preview_has_all_lights",
+              has_single_editable_row(app.model_.light_ambient) &&
+                  has_single_editable_row(app.model_.light_diffuse) &&
+                  has_single_editable_row(app.model_.light_direction) &&
+                  numeric_cell(app.model_.light_ambient.front(), "blue", 0.33) &&
+                  numeric_cell(app.model_.light_diffuse.front(), "red", 0.44) &&
+                  numeric_cell(app.model_.light_direction.front(), "pitch", 1.5));
+        const char* preview_text =
+            target_file.empty() ? nullptr : kv_get_source_text(app.handle_, target_file.c_str());
+        const std::string preview_source = preview_text ? preview_text : "";
+        if (preview_text) kv_free_string(preview_text);
+        check("wizard_insert_uses_official_forms",
+              preview_source.find("Light.Ambient(0.11,0.22,0.33);") != std::string::npos &&
+                  preview_source.find("Light.Diffuse(0.44,0.55,0.66);") != std::string::npos &&
+                  preview_source.find("Light.Direction(1.5,-0.25);") != std::string::npos);
+        check("wizard_insert_does_not_save", read_disk() == disk_before);
+
+        check("revert_restores_light_baseline", app.revert_all_pending_edits());
+        check("revert_restores_original_rows",
+              has_single_editable_row(app.model_.light_ambient) &&
+                  has_single_editable_row(app.model_.light_diffuse) &&
+                  has_single_editable_row(app.model_.light_direction) &&
+                  numeric_cell(app.model_.light_ambient.front(), "red", 0.1) &&
+                  numeric_cell(app.model_.light_diffuse.front(), "green", 0.5) &&
+                  numeric_cell(app.model_.light_direction.front(), "yaw", -0.5));
+        check("revert_keeps_disk_baseline", read_disk() == disk_before);
+        *out << "stage=revert-complete\n";
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (load.handle) kv_free(load.handle);
+
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 20;
+}
+
 int App::run_debug_headless_new_element_edit(
     const HeadlessNewElementEditOptions& options) {
     std::ofstream output_file;
