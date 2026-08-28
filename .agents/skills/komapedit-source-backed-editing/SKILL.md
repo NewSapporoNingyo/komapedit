@@ -28,6 +28,15 @@ Map every requested operation through parse → source identity → typed snapsh
 5. Fully reparse the patched source set and prove target semantics without changing non-target elements or final variable bindings unexpectedly. A valid edit may change the final current `distance`.
 6. Keep typed input views call-scoped and snapshot/report ownership within the documented DLL lifetime.
 
+## Merge preview and edit metadata as one contract
+
+When edit mode first displays a preview snapshot and later applies a full edit registry:
+
+1. Describe every source-editable `TableRow` collection once, preferably with a private member-pointer descriptor table.
+2. Drive both preview/full row-count compatibility checks and `edit_id`/`EditSourceInfo` copying from that same descriptor. Do not maintain separate hand-written lists that can drift.
+3. Preserve any existing post-merge linkage rebuild and edit-ID binding order.
+4. Extend the two-stage headless path to prove each pre-existing relevant row is writable, can memory-Apply and use deferred deletion, and Revert restores the baseline without writing disk. For optional singleton rows, also cover a valid map that omits one or more row kinds.
+
 ## Extend a row end to end
 
 1. Add or verify parser-owned row data and `EditSourceRef` metadata.

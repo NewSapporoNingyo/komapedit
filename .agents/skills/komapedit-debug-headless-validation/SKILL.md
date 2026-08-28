@@ -36,6 +36,7 @@ Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is conf
 - Source metadata: `--debug-headless-source-anchors`.
 - General edit lifecycle: `--debug-headless-edit-roundtrip`.
 - Own/other track, grouped distance, Station list, Repeater, Section, or insertion edits: use the matching `--debug-headless-*-edit*` mode.
+- Lighting Effects source editability: `--debug-headless-light-edit`; it must exercise the production preview-to-edit-metadata merge, every statement already present, and the create path for any missing optional light kind.
 - Cached table search: `--debug-headless-table-find`.
 - Touch state machine: `--debug-headless-touch-input`.
 - Canonical settings/history persistence: `--debug-headless-settings-persistence`.
