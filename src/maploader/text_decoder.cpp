@@ -250,11 +250,15 @@ std::string decode_utf16(const std::string& bytes, bool little_endian) {
     return out;
 }
 
+std::string ascii_lower_in_place(std::string text) {
+    for (char& ch : text) {
+        if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+    }
+    return text;
+}
+
 std::string decode_text_bytes(const std::string& bytes, const std::string& encoding) {
-    std::string lower = encoding;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    const std::string lower = ascii_lower_in_place(encoding);
     if (lower == "utf-16le") return decode_utf16(bytes, true);
     if (lower == "utf-16be") return decode_utf16(bytes, false);
     if (lower == "cp932" || lower == "shift_jis" || lower == "sjis") {
@@ -328,10 +332,7 @@ std::string append_utf16_bytes(const std::wstring& wide, bool little_endian) {
 std::string encode_text_for_writeback(const std::string& utf8_text,
                                       const std::string& encoding,
                                       bool utf8_bom) {
-    std::string lower = encoding;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    const std::string lower = ascii_lower_in_place(encoding);
     if (lower == "utf-8" || lower == "utf8" || lower.empty()) {
         return utf8_bom ? std::string("\xef\xbb\xbf") + utf8_text : utf8_text;
     }

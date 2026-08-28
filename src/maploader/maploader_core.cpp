@@ -62,7 +62,7 @@ ActiveTimingScope::~ActiveTimingScope() {
 
 std::string ascii_lower(std::string s) {
     for (char& ch : s) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
     }
     return s;
 }

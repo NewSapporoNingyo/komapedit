@@ -36,12 +36,7 @@
 namespace {
 
 std::string normalize_train_lookup_key(const std::string& key) {
-    std::string normalized = trim_gui_ascii_copy(key);
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                   [](unsigned char ch) {
-                       return static_cast<char>(std::tolower(ch));
-                   });
-    return normalized;
+    return ascii_lower(trim_gui_ascii_copy(key));
 }
 
 float scroll_x_table_height_for_rows(int row_count) {
@@ -363,9 +358,6 @@ std::string render_text_cell_with_submenu(const std::string& display_text, const
     return selected;
 }
 
-char ascii_fold(char c) {
-    return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
-}
 
 bool contains_ascii_case_insensitive(const std::string& text, const std::string& query) {
     if (query.empty() || query.size() > text.size()) return false;
@@ -373,7 +365,8 @@ bool contains_ascii_case_insensitive(const std::string& text, const std::string&
     for (size_t start = 0; start <= last_start; ++start) {
         bool match = true;
         for (size_t i = 0; i < query.size(); ++i) {
-            if (ascii_fold(text[start + i]) != ascii_fold(query[i])) {
+            if (ascii_lower(static_cast<unsigned char>(text[start + i])) !=
+                    ascii_lower(static_cast<unsigned char>(query[i]))) {
                 match = false;
                 break;
             }
@@ -386,15 +379,14 @@ bool contains_ascii_case_insensitive(const std::string& text, const std::string&
 bool equals_ascii_case_insensitive(const std::string& text, const std::string& query) {
     if (query.empty() || text.size() != query.size()) return false;
     for (size_t i = 0; i < text.size(); ++i) {
-        if (ascii_fold(text[i]) != ascii_fold(query[i])) return false;
+        if (ascii_lower(static_cast<unsigned char>(text[i])) !=
+                ascii_lower(static_cast<unsigned char>(query[i]))) return false;
     }
     return true;
 }
 
 std::string ascii_case_key(const std::string& text) {
-    std::string out = text;
-    for (char& ch : out) ch = ascii_fold(ch);
-    return out;
+    return ascii_lower(text);
 }
 
 bool matches_find_query(const std::string& text, const std::string& query, bool exact_match) {

@@ -26,7 +26,12 @@ std::string hex64(std::uint64_t value) {
 std::string edit_kind_token(std::string kind) {
     for (char& ch : kind) {
         const unsigned char value = static_cast<unsigned char>(ch);
-        ch = std::isalnum(value) ? static_cast<char>(std::tolower(value)) : '_';
+        if (std::isalnum(value)) {
+            ch = value >= 'A' && value <= 'Z'
+                ? static_cast<char>(value - 'A' + 'a') : static_cast<char>(value);
+        } else {
+            ch = '_';
+        }
     }
     while (!kind.empty() && kind.back() == '_') kind.pop_back();
     return kind.empty() ? "row" : kind;

@@ -139,7 +139,9 @@ inline std::string trim_ascii(const std::string& text) {
 }
 
 inline std::string ascii_lower(std::string text) {
-    for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    for (char& ch : text) {
+        if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+    }
     return text;
 }
 

@@ -2032,11 +2032,8 @@ void App::render_new_file_wizard() {
             "dialog.filter.resource_list_files");
         if (!selected_file.empty()) {
             const std::filesystem::path imported_path(utf8_to_wide(selected_file));
-            std::string extension = wide_to_utf8(imported_path.extension().wstring());
-            std::transform(extension.begin(), extension.end(), extension.begin(),
-                           [](unsigned char ch) {
-                               return static_cast<char>(std::tolower(ch));
-                           });
+            const std::string extension =
+                ascii_lower(wide_to_utf8(imported_path.extension().wstring()));
             if (extension != ".txt" && extension != ".csv") {
                 set_program_status("status.new_file.invalid_path");
             } else {

@@ -31,9 +31,12 @@ bool ascii_suffix_equal(const std::string& text, const char* suffix) {
     if (text.size() < suffix_size) return false;
     const size_t offset = text.size() - suffix_size;
     for (size_t i = 0; i < suffix_size; ++i) {
-        const unsigned char left = static_cast<unsigned char>(text[offset + i]);
-        const unsigned char right = static_cast<unsigned char>(suffix[i]);
-        if (std::tolower(left) != std::tolower(right)) return false;
+        const auto fold = [](unsigned char ch) noexcept {
+            return ch >= 'A' && ch <= 'Z'
+                ? static_cast<unsigned char>(ch - 'A' + 'a') : ch;
+        };
+        if (fold(static_cast<unsigned char>(text[offset + i])) !=
+                fold(static_cast<unsigned char>(suffix[i]))) return false;
     }
     return true;
 }

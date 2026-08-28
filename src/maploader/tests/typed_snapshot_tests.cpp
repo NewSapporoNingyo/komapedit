@@ -7412,12 +7412,12 @@ int edit_contract() {
                          utf8_view(m_hash), utf8_view(""), utf8_view(""), utf8_view("")},
                     };
                     const KvEditBatch batch = {changes, 1, fields, 1};
-                    KvEditReportSnapshot report{};
-                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &report, sizeof(report)) != 0,
+                    KvEditReportSnapshot dry_run_report{};
+                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &dry_run_report, sizeof(dry_run_report)) != 0,
                           "station margin1=0 update dry-run call");
-                    check(!report.ok && report.blocking_error_count >= 1,
+                    check(!dry_run_report.ok && dry_run_report.blocking_error_count >= 1,
                           "station margin1=0 update dry-run blocked");
-                    check(edit_report_has_error_containing(report, "margin1 must be a negative value"),
+                    check(edit_report_has_error_containing(dry_run_report, "margin1 must be a negative value"),
                           "station margin1=0 update reports margin1 error");
                 }
 
@@ -7437,12 +7437,12 @@ int edit_contract() {
                          utf8_view(m_hash), utf8_view(""), utf8_view(""), utf8_view("")},
                     };
                     const KvEditBatch batch = {changes, 1, fields, 1};
-                    KvEditReportSnapshot report{};
-                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &report, sizeof(report)) != 0,
+                    KvEditReportSnapshot dry_run_report{};
+                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &dry_run_report, sizeof(dry_run_report)) != 0,
                           "station margin2=-1 update dry-run call");
-                    check(!report.ok && report.blocking_error_count >= 1,
+                    check(!dry_run_report.ok && dry_run_report.blocking_error_count >= 1,
                           "station margin2=-1 update dry-run blocked");
-                    check(edit_report_has_error_containing(report, "margin2 must be a positive value"),
+                    check(edit_report_has_error_containing(dry_run_report, "margin2 must be a positive value"),
                           "station margin2=-1 update reports margin2 error");
                 }
 
@@ -7465,15 +7465,15 @@ int edit_contract() {
                          utf8_view(m_hash), utf8_view(""), utf8_view(""), utf8_view("")},
                     };
                     const KvEditBatch batch = {changes, 1, fields, 2};
-                    KvEditReportSnapshot report{};
-                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &report, sizeof(report)) != 0,
+                    KvEditReportSnapshot dry_run_report{};
+                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &dry_run_report, sizeof(dry_run_report)) != 0,
                           "station valid margin update dry-run call");
-                    check(report.ok && report.blocking_error_count == 0,
+                    check(dry_run_report.ok && dry_run_report.blocking_error_count == 0,
                           "station valid margin update dry-run succeeds");
-                    KvEditReportSnapshot applied{};
-                    check(kv_edit_apply_to_memory_typed(st_handle.value, &batch, &applied, sizeof(applied)) != 0,
+                    KvEditReportSnapshot margin_update_applied{};
+                    check(kv_edit_apply_to_memory_typed(st_handle.value, &batch, &margin_update_applied, sizeof(margin_update_applied)) != 0,
                           "station valid margin apply-to-memory call");
-                    check(applied.ok, "station valid margin apply succeeds");
+                    check(margin_update_applied.ok, "station valid margin apply succeeds");
                     check(kv_edit_reset_memory(st_handle.value) != 0,
                           "station valid margin update reset");
                 }
@@ -7485,15 +7485,15 @@ int edit_contract() {
                         {{"rowKind", "station.put"}, {"distance", "50"},
                          {"stationKey", "STA"}, {"door", "1"},
                          {"margin1", "0"}, {"margin2", "4"}});
-                    KvEditReportSnapshot report{};
+                    KvEditReportSnapshot dry_run_report{};
                     check(kv_edit_dry_run_typed(
-                              st_handle.value, &invalid_insert.batch, &report,
-                              sizeof(report)) != 0,
+                              st_handle.value, &invalid_insert.batch, &dry_run_report,
+                              sizeof(dry_run_report)) != 0,
                           "station invalid margin insert dry-run call");
-                    check(!report.ok && report.blocking_error_count >= 1,
+                    check(!dry_run_report.ok && dry_run_report.blocking_error_count >= 1,
                           "station margin1=0 insert dry-run blocked");
                     check(edit_report_has_error_containing(
-                              report, "margin1 must be a negative value"),
+                              dry_run_report, "margin1 must be a negative value"),
                           "station margin1=0 insert reports margin1 error");
                 }
                 {
@@ -7512,12 +7512,12 @@ int edit_contract() {
                               dry_report.full_reparse_ok &&
                               dry_report.non_target_changed_count == 0,
                           "station valid margin insert dry-run succeeds");
-                    KvEditReportSnapshot applied{};
+                    KvEditReportSnapshot margin_insert_applied{};
                     check(kv_edit_apply_to_memory_typed(
-                              st_handle.value, &valid_insert.batch, &applied,
-                              sizeof(applied)) != 0,
+                              st_handle.value, &valid_insert.batch, &margin_insert_applied,
+                              sizeof(margin_insert_applied)) != 0,
                           "station valid margin insert apply-to-memory call");
-                    check(applied.ok && applied.insert_count == 1,
+                    check(margin_insert_applied.ok && margin_insert_applied.insert_count == 1,
                           "station valid margin insert apply succeeds");
                     KvMapSnapshot inserted_snapshot{};
                     check(kv_get_map_snapshot(
@@ -7529,13 +7529,13 @@ int edit_contract() {
                             inserted_snapshot.station_puts,
                             inserted_snapshot.station_puts +
                                 inserted_snapshot.station_put_count,
-                            [&](const KvStationPutRow& row) {
-                                return map_string(inserted_snapshot, row.metadata.edit_id) ==
+                            [&](const KvStationPutRow& station_row) {
+                                return map_string(inserted_snapshot, station_row.metadata.edit_id) ==
                                            insert_id &&
-                                    row.margin1.kind == KV_VALUE_NUMBER &&
-                                    nearly_equal(row.margin1.number_value, -4.0) &&
-                                    row.margin2.kind == KV_VALUE_NUMBER &&
-                                    nearly_equal(row.margin2.number_value, 4.0);
+                                    station_row.margin1.kind == KV_VALUE_NUMBER &&
+                                    nearly_equal(station_row.margin1.number_value, -4.0) &&
+                                    station_row.margin2.kind == KV_VALUE_NUMBER &&
+                                    nearly_equal(station_row.margin2.number_value, 4.0);
                             });
                     check(inserted_row,
                           "station valid margin insert retains semantic values");
