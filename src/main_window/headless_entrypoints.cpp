@@ -90,16 +90,31 @@ int App::run_debug_headless_light_edit(
     *out << "command=debug-headless-light-edit\n"
          << "path=" << options.path << "\n"
          << "memory_apply_only=1\n"
-         << "stage=load-start\n";
+         << "stage=preview-load-start\n";
     out->flush();
 
-    LoadResult load = load_map_worker(
+    LoadModelOptions preview_options;
+    preview_options.load_profile = "preview";
+    LoadResult preview = load_map_worker(
         options.path, options.unit_distance, false, 0.0, 0.0,
-        options.unit_distance, LoadModelOptions{true});
-    if (!load.ok) {
-        *out << "load_error=" << load.error << "\nresult=FAIL\n";
-        if (load.handle) kv_free(load.handle);
+        options.unit_distance, preview_options);
+    if (!preview.ok) {
+        *out << "preview_load_error=" << preview.error << "\nresult=FAIL\n";
+        if (preview.handle) kv_free(preview.handle);
         return 2;
+    }
+
+    LoadModelOptions edit_options;
+    edit_options.full_edit_registry = true;
+    edit_options.load_profile = "edit";
+    LoadResult edit_metadata = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, edit_options);
+    if (!edit_metadata.ok) {
+        *out << "edit_metadata_load_error=" << edit_metadata.error << "\nresult=FAIL\n";
+        if (preview.handle) kv_free(preview.handle);
+        if (edit_metadata.handle) kv_free(edit_metadata.handle);
+        return 3;
     }
 
     int failed_cases = 0;
@@ -108,6 +123,18 @@ int App::run_debug_headless_light_edit(
         if (!value) ++failed_cases;
         return value;
     };
+    const auto single_light_edit_id = [](const std::vector<TableRow>& rows) {
+        return rows.size() == 1 ? rows.front().edit_id : std::string{};
+    };
+    const size_t expected_ambient_row_count = edit_metadata.model.light_ambient.size();
+    const size_t expected_diffuse_row_count = edit_metadata.model.light_diffuse.size();
+    const size_t expected_direction_row_count = edit_metadata.model.light_direction.size();
+    const std::string expected_ambient_edit_id =
+        single_light_edit_id(edit_metadata.model.light_ambient);
+    const std::string expected_diffuse_edit_id =
+        single_light_edit_id(edit_metadata.model.light_diffuse);
+    const std::string expected_direction_edit_id =
+        single_light_edit_id(edit_metadata.model.light_direction);
 
     ImGui::CreateContext();
     ImPlot::CreateContext();
@@ -130,18 +157,46 @@ int App::run_debug_headless_light_edit(
         UserSettings settings;
         settings.language = Language::En;
         App app(nullptr, settings, 1.0f, false, false);
-        app.handle_ = load.handle;
-        load.handle = nullptr;
-        app.model_ = std::move(load.model);
+        app.handle_ = preview.handle;
+        preview.handle = nullptr;
+        app.model_ = std::move(preview.model);
         app.file_path_ = options.path;
         app.has_model_ = true;
         app.edit_mode_enabled_ = true;
-        app.edit_registry_loaded_ = true;
         app.edit_memory_matches_pending_ledger_ = true;
         app.dmin_ = app.model_.default_min;
         app.dmax_ = app.model_.default_max;
         app.unit_distance_ = options.unit_distance;
-        *out << "stage=load-complete\n";
+        *out << "stage=preview-load-complete\n";
+        app.apply_edit_metadata_result(std::move(edit_metadata));
+        edit_metadata.handle = nullptr;
+        *out << "stage=edit-metadata-merge-complete\n";
+
+        const auto merged_light_row_matches = [](const std::vector<TableRow>& rows,
+                                                  size_t expected_count,
+                                                  const std::string& expected_edit_id) {
+            return rows.size() == expected_count &&
+                (expected_count == 0 ||
+                 (expected_count == 1 && !expected_edit_id.empty() &&
+                  rows.front().edit_id == expected_edit_id));
+        };
+        check("edit_metadata_merge_completed", app.edit_registry_loaded_);
+        check("light_ambient_edit_metadata_merged",
+              merged_light_row_matches(app.model_.light_ambient,
+                                       expected_ambient_row_count,
+                                       expected_ambient_edit_id));
+        check("light_diffuse_edit_metadata_merged",
+              merged_light_row_matches(app.model_.light_diffuse,
+                                       expected_diffuse_row_count,
+                                       expected_diffuse_edit_id));
+        check("light_direction_edit_metadata_merged",
+              merged_light_row_matches(app.model_.light_direction,
+                                       expected_direction_row_count,
+                                       expected_direction_edit_id));
+
+        const std::vector<TableRow> baseline_ambient = app.model_.light_ambient;
+        const std::vector<TableRow> baseline_diffuse = app.model_.light_diffuse;
+        const std::vector<TableRow> baseline_direction = app.model_.light_direction;
 
         const std::vector<std::string> target_candidates =
             new_element_target_candidates(app.model_);
@@ -152,16 +207,27 @@ int App::run_debug_headless_light_edit(
             : target_candidates.empty() ? std::string{} : target_candidates.front();
         *out << "target_file=" << target_file << "\n";
 
+        check("target_file_available", !target_file.empty());
+        check("baseline_light_rows_editable",
+              (baseline_ambient.empty() || !baseline_ambient.front().edit_id.empty()) &&
+                  (baseline_diffuse.empty() || !baseline_diffuse.front().edit_id.empty()) &&
+                  (baseline_direction.empty() || !baseline_direction.front().edit_id.empty()));
+
+        app.sync_lighting_edit_state();
         const auto has_single_editable_row = [](const std::vector<TableRow>& rows) {
             return rows.size() == 1 && !rows.front().edit_id.empty();
         };
-        check("target_file_available", !target_file.empty());
-        check("baseline_light_rows_editable",
-              has_single_editable_row(app.model_.light_ambient) &&
-                  has_single_editable_row(app.model_.light_diffuse) &&
-                  has_single_editable_row(app.model_.light_direction));
-
-        app.sync_lighting_edit_state();
+        const auto lighting_form_matches_rows = [](const LightingStatementEditState& state,
+                                                   const std::vector<TableRow>& rows,
+                                                   size_t field_count) {
+            if (rows.empty()) return state.edit_id.empty() && state.fields.empty();
+            return rows.size() == 1 && state.edit_id == rows.front().edit_id &&
+                state.fields.size() == field_count &&
+                std::all_of(state.fields.begin(), state.fields.end(),
+                            [](const MapElementEditFieldState& field) {
+                                return !field.read_only && !field.disabled;
+                            });
+        };
         const auto set_lighting_field = [](LightingStatementEditState& state,
                                            std::string_view key,
                                            std::string_view value) {
@@ -177,13 +243,19 @@ int App::run_debug_headless_light_edit(
             return true;
         };
         check("lighting_form_drafts_initialized",
-              app.lighting_edit_.ambient.fields.size() == 3 &&
-                  app.lighting_edit_.diffuse.fields.size() == 3 &&
-                  app.lighting_edit_.direction.fields.size() == 2);
-        const bool fields_set =
-            set_lighting_field(app.lighting_edit_.ambient, "red", "0.15") &&
-            set_lighting_field(app.lighting_edit_.diffuse, "green", "0.55") &&
-            set_lighting_field(app.lighting_edit_.direction, "yaw", "-0.75");
+              lighting_form_matches_rows(app.lighting_edit_.ambient, baseline_ambient, 3) &&
+                  lighting_form_matches_rows(app.lighting_edit_.diffuse, baseline_diffuse, 3) &&
+                  lighting_form_matches_rows(app.lighting_edit_.direction, baseline_direction, 2));
+        bool fields_set = true;
+        if (!baseline_ambient.empty()) {
+            fields_set = set_lighting_field(app.lighting_edit_.ambient, "red", "0.15");
+        }
+        if (fields_set && !baseline_diffuse.empty()) {
+            fields_set = set_lighting_field(app.lighting_edit_.diffuse, "green", "0.55");
+        }
+        if (fields_set && !baseline_direction.empty()) {
+            fields_set = set_lighting_field(app.lighting_edit_.direction, "yaw", "-0.75");
+        }
         check("lighting_form_fields_set", fields_set);
         check("lighting_form_apply", fields_set && app.apply_lighting_changes());
 
@@ -195,21 +267,22 @@ int App::run_debug_headless_light_edit(
             return end && *end == '\0' && std::isfinite(actual) &&
                 std::abs(actual - expected) <= 1e-9;
         };
+        const auto applied_light_matches_baseline = [&](const std::vector<TableRow>& rows,
+                                                        const std::vector<TableRow>& baseline,
+                                                        std::string_view key, double expected) {
+            return baseline.empty()
+                ? rows.empty()
+                : has_single_editable_row(rows) && numeric_cell(rows.front(), key, expected);
+        };
         check("lighting_form_apply_updates_preview",
-              has_single_editable_row(app.model_.light_ambient) &&
-                  has_single_editable_row(app.model_.light_diffuse) &&
-                  has_single_editable_row(app.model_.light_direction) &&
-                  numeric_cell(app.model_.light_ambient.front(), "red", 0.15) &&
-                  numeric_cell(app.model_.light_diffuse.front(), "green", 0.55) &&
-                  numeric_cell(app.model_.light_direction.front(), "yaw", -0.75));
+              applied_light_matches_baseline(app.model_.light_ambient, baseline_ambient,
+                                             "red", 0.15) &&
+                  applied_light_matches_baseline(app.model_.light_diffuse, baseline_diffuse,
+                                                 "green", 0.55) &&
+                  applied_light_matches_baseline(app.model_.light_direction, baseline_direction,
+                                                 "yaw", -0.75));
         check("lighting_apply_does_not_save", read_disk() == disk_before);
 
-        const std::string ambient_id = app.model_.light_ambient.empty()
-            ? std::string{} : app.model_.light_ambient.front().edit_id;
-        const std::string diffuse_id = app.model_.light_diffuse.empty()
-            ? std::string{} : app.model_.light_diffuse.front().edit_id;
-        const std::string direction_id = app.model_.light_direction.empty()
-            ? std::string{} : app.model_.light_direction.front().edit_id;
         const auto delete_light = [&](const char* label,
                                       const std::string& edit_id,
                                       const char* row_kind) {
@@ -218,9 +291,24 @@ int App::run_debug_headless_light_edit(
             app.process_pending_element_delete();
             return check(label, queued);
         };
-        delete_light("deferred_delete_ambient", ambient_id, "light.ambient");
-        delete_light("deferred_delete_diffuse", diffuse_id, "light.diffuse");
-        delete_light("deferred_delete_direction", direction_id, "light.direction");
+        if (!app.model_.light_ambient.empty()) {
+            delete_light("deferred_delete_ambient", app.model_.light_ambient.front().edit_id,
+                         "light.ambient");
+        } else {
+            check("deferred_delete_ambient_not_present", true);
+        }
+        if (!app.model_.light_diffuse.empty()) {
+            delete_light("deferred_delete_diffuse", app.model_.light_diffuse.front().edit_id,
+                         "light.diffuse");
+        } else {
+            check("deferred_delete_diffuse_not_present", true);
+        }
+        if (!app.model_.light_direction.empty()) {
+            delete_light("deferred_delete_direction", app.model_.light_direction.front().edit_id,
+                         "light.direction");
+        } else {
+            check("deferred_delete_direction_not_present", true);
+        }
         check("deferred_deletes_refresh_preview",
               app.model_.light_ambient.empty() && app.model_.light_diffuse.empty() &&
                   app.model_.light_direction.empty());
@@ -292,13 +380,26 @@ int App::run_debug_headless_light_edit(
         check("wizard_insert_does_not_save", read_disk() == disk_before);
 
         check("revert_restores_light_baseline", app.revert_all_pending_edits());
+        const auto same_light_rows = [](const std::vector<TableRow>& current,
+                                        const std::vector<TableRow>& baseline) {
+            if (current.size() != baseline.size()) return false;
+            for (size_t i = 0; i < current.size(); ++i) {
+                const TableRow& actual = current[i];
+                const TableRow& expected = baseline[i];
+                if (actual.cells != expected.cells || actual.edit_id != expected.edit_id ||
+                    actual.source.file_path != expected.source.file_path ||
+                    actual.source.line != expected.source.line ||
+                    actual.source.column != expected.source.column ||
+                    actual.source.raw_text_preview != expected.source.raw_text_preview) {
+                    return false;
+                }
+            }
+            return true;
+        };
         check("revert_restores_original_rows",
-              has_single_editable_row(app.model_.light_ambient) &&
-                  has_single_editable_row(app.model_.light_diffuse) &&
-                  has_single_editable_row(app.model_.light_direction) &&
-                  numeric_cell(app.model_.light_ambient.front(), "red", 0.1) &&
-                  numeric_cell(app.model_.light_diffuse.front(), "green", 0.5) &&
-                  numeric_cell(app.model_.light_direction.front(), "yaw", -0.5));
+              same_light_rows(app.model_.light_ambient, baseline_ambient) &&
+                  same_light_rows(app.model_.light_diffuse, baseline_diffuse) &&
+                  same_light_rows(app.model_.light_direction, baseline_direction));
         check("revert_keeps_disk_baseline", read_disk() == disk_before);
         *out << "stage=revert-complete\n";
     } catch (const std::exception& e) {
@@ -308,7 +409,8 @@ int App::run_debug_headless_light_edit(
     ImGui::EndFrame();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
-    if (load.handle) kv_free(load.handle);
+    if (preview.handle) kv_free(preview.handle);
+    if (edit_metadata.handle) kv_free(edit_metadata.handle);
 
     *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
     out->flush();

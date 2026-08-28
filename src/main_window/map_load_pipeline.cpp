@@ -522,47 +522,61 @@ bool table_row_count_matches(const char* label,
     return false;
 }
 
+struct EditMetadataTableRows {
+    const char* label;
+    std::vector<TableRow> MapModel::* member;
+};
+
+constexpr std::array<EditMetadataTableRows, 36> k_edit_metadata_table_rows = {{
+    {"curve", &MapModel::curve_rows},
+    {"gradient", &MapModel::gradient_rows},
+    {"otherTrack.change", &MapModel::other_track_changes},
+    {"station.put", &MapModel::station_list_rows},
+    {"station.list", &MapModel::station_definition_rows},
+    {"structure.put", &MapModel::structures},
+    {"structure.between", &MapModel::structures_between},
+    {"structure.model", &MapModel::structure_models},
+    {"otherTrain.definition", &MapModel::other_trains},
+    {"otherTrain.stop", &MapModel::other_train_stops},
+    {"otherTrain.structureKey", &MapModel::other_train_structure_keys},
+    {"otherTrain.sound3DKey", &MapModel::other_train_sound_3d_keys},
+    {"signal.aspect", &MapModel::signal_aspects},
+    {"signal.put", &MapModel::signals},
+    {"beacon.put", &MapModel::beacons},
+    {"preTrain.pass", &MapModel::pretrains},
+    {"sound.list", &MapModel::sound_list},
+    {"sound3D.list", &MapModel::sound_3d_list},
+    {"repeater", &MapModel::repeaters},
+    {"irregularity.change", &MapModel::irregularities},
+    {"mapSound.play", &MapModel::map_sounds},
+    {"mapSound3D.put", &MapModel::map_sound_3d},
+    {"rollingNoise.change", &MapModel::rolling_noises},
+    {"flangeNoise.change", &MapModel::flange_noises},
+    {"jointNoise.play", &MapModel::joint_noises},
+    {"background.change", &MapModel::backgrounds},
+    {"adhesion.change", &MapModel::adhesions},
+    {"cabIlluminance.change", &MapModel::cab_illuminance},
+    {"fog.change", &MapModel::fogs},
+    {"light.ambient", &MapModel::light_ambient},
+    {"light.diffuse", &MapModel::light_diffuse},
+    {"light.direction", &MapModel::light_direction},
+    {"drawDistance.change", &MapModel::draw_distances},
+    {"speedlimit", &MapModel::speed_limit_rows},
+    {"section.begin", &MapModel::section_begins},
+    {"section.speedLimit", &MapModel::section_speed_limits},
+}};
+
+constexpr size_t k_own_track_edit_metadata_row_count = 3;
+
 bool edit_metadata_row_counts_match(const MapModel& current, const MapModel& edit_model,
                                     std::string& error) {
-    return table_row_count_matches("curve", current.curve_rows, edit_model.curve_rows, error) &&
-        table_row_count_matches("gradient", current.gradient_rows, edit_model.gradient_rows, error) &&
-        table_row_count_matches("otherTrack.change", current.other_track_changes,
-                                edit_model.other_track_changes, error) &&
-        table_row_count_matches("station.put", current.station_list_rows, edit_model.station_list_rows, error) &&
-        table_row_count_matches("station.list", current.station_definition_rows, edit_model.station_definition_rows, error) &&
-        table_row_count_matches("structure.put", current.structures, edit_model.structures, error) &&
-        table_row_count_matches("structure.between", current.structures_between, edit_model.structures_between, error) &&
-        table_row_count_matches("structure.model", current.structure_models, edit_model.structure_models, error) &&
-        table_row_count_matches("otherTrain.definition", current.other_trains, edit_model.other_trains, error) &&
-        table_row_count_matches("otherTrain.stop", current.other_train_stops, edit_model.other_train_stops, error) &&
-        table_row_count_matches("otherTrain.structureKey", current.other_train_structure_keys, edit_model.other_train_structure_keys, error) &&
-        table_row_count_matches("otherTrain.sound3DKey", current.other_train_sound_3d_keys, edit_model.other_train_sound_3d_keys, error) &&
-        table_row_count_matches("signal.aspect", current.signal_aspects, edit_model.signal_aspects, error) &&
-        table_row_count_matches("signal.put", current.signals, edit_model.signals, error) &&
-        table_row_count_matches("beacon.put", current.beacons, edit_model.beacons, error) &&
-        table_row_count_matches("preTrain.pass", current.pretrains, edit_model.pretrains, error) &&
-        table_row_count_matches("sound.list", current.sound_list, edit_model.sound_list, error) &&
-        table_row_count_matches("sound3D.list", current.sound_3d_list,
-                                edit_model.sound_3d_list, error) &&
-        table_row_count_matches("repeater", current.repeaters, edit_model.repeaters, error) &&
-        table_row_count_matches("irregularity.change", current.irregularities, edit_model.irregularities, error) &&
-        table_row_count_matches("mapSound.play", current.map_sounds, edit_model.map_sounds, error) &&
-        table_row_count_matches("mapSound3D.put", current.map_sound_3d, edit_model.map_sound_3d, error) &&
-        table_row_count_matches("rollingNoise.change", current.rolling_noises, edit_model.rolling_noises, error) &&
-        table_row_count_matches("flangeNoise.change", current.flange_noises, edit_model.flange_noises, error) &&
-        table_row_count_matches("jointNoise.play", current.joint_noises, edit_model.joint_noises, error) &&
-        table_row_count_matches("background.change", current.backgrounds, edit_model.backgrounds, error) &&
-        table_row_count_matches("adhesion.change", current.adhesions, edit_model.adhesions, error) &&
-        table_row_count_matches("cabIlluminance.change", current.cab_illuminance, edit_model.cab_illuminance, error) &&
-        table_row_count_matches("fog.change", current.fogs, edit_model.fogs, error) &&
-        table_row_count_matches("drawDistance.change", current.draw_distances,
-                                edit_model.draw_distances, error) &&
-        table_row_count_matches("speedlimit", current.speed_limit_rows,
-                                edit_model.speed_limit_rows, error) &&
-        table_row_count_matches("section.begin", current.section_begins,
-                                edit_model.section_begins, error) &&
-        table_row_count_matches("section.speedLimit", current.section_speed_limits,
-                                edit_model.section_speed_limits, error);
+    for (const EditMetadataTableRows& rows : k_edit_metadata_table_rows) {
+        if (!table_row_count_matches(rows.label, current.*(rows.member),
+                                     edit_model.*(rows.member), error)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void merge_table_row_edit_metadata(std::vector<TableRow>& current,
@@ -581,44 +595,13 @@ void merge_edit_metadata(MapModel& current, MapModel&& edit_model) {
         current.resource_list_sources[i].edit_id =
             edit_model.resource_list_sources[i].edit_id;
     }
-    merge_table_row_edit_metadata(current.curve_rows, edit_model.curve_rows);
-    merge_table_row_edit_metadata(current.gradient_rows, edit_model.gradient_rows);
-    merge_table_row_edit_metadata(current.other_track_changes,
-                                  edit_model.other_track_changes);
-    annotate_own_track_transition_links(current);
-    merge_table_row_edit_metadata(current.station_list_rows, edit_model.station_list_rows);
-    merge_table_row_edit_metadata(current.station_definition_rows, edit_model.station_definition_rows);
-    merge_table_row_edit_metadata(current.structures, edit_model.structures);
-    merge_table_row_edit_metadata(current.structures_between, edit_model.structures_between);
-    merge_table_row_edit_metadata(current.structure_models, edit_model.structure_models);
-    merge_table_row_edit_metadata(current.other_trains, edit_model.other_trains);
-    merge_table_row_edit_metadata(current.other_train_stops, edit_model.other_train_stops);
-    merge_table_row_edit_metadata(current.other_train_structure_keys, edit_model.other_train_structure_keys);
-    merge_table_row_edit_metadata(current.other_train_sound_3d_keys, edit_model.other_train_sound_3d_keys);
-    merge_table_row_edit_metadata(
-        current.signal_aspects, edit_model.signal_aspects);
-    merge_table_row_edit_metadata(current.signals, edit_model.signals);
-    merge_table_row_edit_metadata(current.beacons, edit_model.beacons);
-    merge_table_row_edit_metadata(current.pretrains, edit_model.pretrains);
-    merge_table_row_edit_metadata(current.sound_list, edit_model.sound_list);
-    merge_table_row_edit_metadata(current.sound_3d_list, edit_model.sound_3d_list);
-    merge_table_row_edit_metadata(current.repeaters, edit_model.repeaters);
-    merge_table_row_edit_metadata(current.irregularities, edit_model.irregularities);
-    merge_table_row_edit_metadata(current.map_sounds, edit_model.map_sounds);
-    merge_table_row_edit_metadata(current.map_sound_3d, edit_model.map_sound_3d);
-    merge_table_row_edit_metadata(current.rolling_noises, edit_model.rolling_noises);
-    merge_table_row_edit_metadata(current.flange_noises, edit_model.flange_noises);
-    merge_table_row_edit_metadata(current.joint_noises, edit_model.joint_noises);
-    merge_table_row_edit_metadata(current.backgrounds, edit_model.backgrounds);
-    merge_table_row_edit_metadata(current.adhesions, edit_model.adhesions);
-    merge_table_row_edit_metadata(current.cab_illuminance, edit_model.cab_illuminance);
-    merge_table_row_edit_metadata(current.fogs, edit_model.fogs);
-    merge_table_row_edit_metadata(current.draw_distances, edit_model.draw_distances);
-    merge_table_row_edit_metadata(current.speed_limit_rows,
-                                  edit_model.speed_limit_rows);
-    merge_table_row_edit_metadata(current.section_begins, edit_model.section_begins);
-    merge_table_row_edit_metadata(current.section_speed_limits,
-                                  edit_model.section_speed_limits);
+    for (size_t i = 0; i < k_edit_metadata_table_rows.size(); ++i) {
+        const EditMetadataTableRows& rows = k_edit_metadata_table_rows[i];
+        merge_table_row_edit_metadata(current.*(rows.member), edit_model.*(rows.member));
+        if (i + 1 == k_own_track_edit_metadata_row_count) {
+            annotate_own_track_transition_links(current);
+        }
+    }
     bind_station_position_edit_ids(current);
 }
 

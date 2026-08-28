@@ -596,7 +596,7 @@ plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
-`--debug-headless-light-edit` 要求显式传入地图，例如 `tests\\light_valid.txt`。它不模拟 ImGui 点击，而是直接调用正式的“光照效果”表单 Apply、延迟删除和三种“效果”向导模板：修改三类语句，通过共享延迟路径删除，再在所选源文件的固定里程 `0` 重新创建，检查求值预览和官方源码形式，最后 Revert。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并证明地图字节未改变。
+`--debug-headless-light-edit` 要求显式传入地图，例如 `tests\\light_valid.txt`。它先按正式路径完成预览模型到编辑元数据的合并，再不模拟 ImGui 点击而直接调用“光照效果”表单 Apply、延迟删除和三种“效果”向导模板。合并后，地图中每条既有光照语句都必须可进行源码编辑；既有语句经共享延迟路径修改、删除，向导再在所选源文件的固定里程 `0` 创建全部三种形式。该命令支持仅含任意有效子集的三类光照语句的地图，检查求值预览和官方源码形式，最后 Revert 回原始子集。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并证明地图字节未改变。
 
 `--debug-headless-station-put-margin-edit` 要求地图在里程 `0` 含有可编辑的 `Station.Put`。它不模拟 ImGui 点击，检查 Inspector 对零值/错误符号停车容差的拒绝、新建地图元素默认值（`margin1=-5`、`margin2=5`）、向导对非法值的拒绝、合法内存新建和 Revert 清理。该命令仅进行内存 Apply。
 
