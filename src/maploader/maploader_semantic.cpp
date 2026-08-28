@@ -617,9 +617,11 @@ void write_station_list(SemanticWriter& out, const KvMapSnapshot& snapshot,
                         const MapEditChange* change = nullptr) {
     for (size_t i = 0; i < k_station_list_field_names.size(); ++i) {
         const std::string* edited = changed_field(change, k_station_list_field_names[i]);
-        const std::string value = edited
-            ? normalized_station_list_edit_value(*edited, i)
+        const std::string raw_value = edited
+            ? *edited
             : text(snapshot, row.fields[i]);
+        const std::string value =
+            normalized_station_list_edit_value(raw_value, i);
         out.label("field");
         out.string(value);
     }

@@ -3319,13 +3319,28 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             }
             check("preview_shows_first_structure_row", structure_key_rows == 1);
             bool station_name_updated = false;
+            bool station_preview_defaults_normalized = false;
             for (const TableRow& row : app.model_.station_definition_rows) {
                 if (table_cell(row, "stationKey") == "sta1" &&
                     table_cell(row, "stationName") == "After") {
                     station_name_updated = true;
+                    station_preview_defaults_normalized =
+                        table_cell(row, "arrivalTime").empty() &&
+                        table_cell(row, "depertureTime").empty() &&
+                        table_cell(row, "stoppageTime") == "0" &&
+                        table_cell(row, "defaultTime").empty() &&
+                        table_cell(row, "signalFlag") == "0" &&
+                        table_cell(row, "alightingTime") == "0" &&
+                        table_cell(row, "passengers") == "0" &&
+                        table_cell(row, "arrivalSoundKey").empty() &&
+                        table_cell(row, "depertureSoundKey").empty() &&
+                        table_cell(row, "doorReopen") == "0" &&
+                        table_cell(row, "stuckInDoor") == "0";
                 }
             }
             check("preview_shows_updated_station_name", station_name_updated);
+            check("preview_normalizes_empty_station_numeric_fields",
+                  station_preview_defaults_normalized);
         } catch (...) {
             restore_route();
             throw;

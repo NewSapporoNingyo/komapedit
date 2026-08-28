@@ -6289,9 +6289,12 @@ void resource_list_content_insert_contract() {
               sound_above != std::string::npos && csv_count_at(sound_source, sound_above) == 3 &&
               sound3d_above != std::string::npos && csv_count_at(sound3d_source, sound3d_above) == 3 &&
               station_above != std::string::npos && csv_count_at(station_source, station_above) == 13 &&
+              station_source.find(
+                  "ctStationAboveA,,,,0,,0,0,0,,,0,0\r\n") !=
+                  std::string::npos &&
               signal_above != std::string::npos && csv_count_at(signal_source, signal_above) == 6 &&
               signal_glare != std::string::npos && csv_count_at(signal_source, signal_glare + 1) == 6,
-          "resource-list content insert emits exact CSV fields and preserves CRLF/comments");
+          "resource-list content insert normalizes Station.List numeric defaults and preserves CSV shape/comments");
 
     KvMapSnapshot applied{};
     check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
@@ -6509,6 +6512,23 @@ void staged_resource_list_workflow_contract() {
         return std::string((std::istreambuf_iterator<char>(input)),
                            std::istreambuf_iterator<char>());
     };
+    const auto has_normalized_station_defaults = [](
+        const KvMapSnapshot& snapshot, const KvStationListRow& row,
+        const std::string& station_name) {
+        return map_string(snapshot, row.fields[0]) == "sta1" &&
+            map_string(snapshot, row.fields[1]) == station_name &&
+            map_string(snapshot, row.fields[2]).empty() &&
+            map_string(snapshot, row.fields[3]).empty() &&
+            map_string(snapshot, row.fields[4]) == "0" &&
+            map_string(snapshot, row.fields[5]).empty() &&
+            map_string(snapshot, row.fields[6]) == "0" &&
+            map_string(snapshot, row.fields[7]) == "0" &&
+            map_string(snapshot, row.fields[8]) == "0" &&
+            map_string(snapshot, row.fields[9]).empty() &&
+            map_string(snapshot, row.fields[10]).empty() &&
+            map_string(snapshot, row.fields[11]) == "0" &&
+            map_string(snapshot, row.fields[12]) == "0";
+    };
 
     MapHandle handle(kv_load_map_ex(
         fixture.map_path.u8string().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
@@ -6718,8 +6738,7 @@ void staged_resource_list_workflow_contract() {
     if (applied.station_list_count == 1) {
         const KvStationListRow& row = applied.station_list[0];
         applied_state_matches = applied_state_matches &&
-            map_string(applied, row.fields[0]) == "sta1" &&
-            map_string(applied, row.fields[1]) == "Updated Name" &&
+            has_normalized_station_defaults(applied, row, "Updated Name") &&
             map_string(applied, row.metadata.edit_id) == station_edit_id;
     }
     check(applied_state_matches,
@@ -6749,8 +6768,8 @@ void staged_resource_list_workflow_contract() {
           "staged workflow appends the first structure row with fixed columns");
     check(committed_stations ==
               std::string("BveTs Station List 2.00:utf-8\r\n"
-                          "sta1,Updated Name,,,,,,,,,,,,\r\n"),
-          "staged workflow updates the station row preserving its field count");
+                          "sta1,Updated Name,,,0,,0,0,0,,,0,0,\r\n"),
+          "staged workflow normalizes blank Station.List numeric fields and preserves trailing columns on save");
 
     MapHandle reloaded(kv_load_map_ex(fixture.map_path.u8string().c_str(), 25.0,
                                       KV_LOAD_EDIT_METADATA));
@@ -6765,8 +6784,9 @@ void staged_resource_list_workflow_contract() {
         reload_matches =
             map_string(reloaded_snapshot,
                        reloaded_snapshot.structure_models[0].file_path) == "stNew.x" &&
-            map_string(reloaded_snapshot,
-                       reloaded_snapshot.station_list[0].fields[1]) == "Updated Name";
+            has_normalized_station_defaults(
+                reloaded_snapshot, reloaded_snapshot.station_list[0],
+                "Updated Name");
     }
     check(reload_matches, "staged workflow reloads the committed state");
 }
@@ -6975,6 +6995,101 @@ int edit_contract() {
             kv_free_string(station_source_text);
             check(kv_edit_reset_memory(handle.value) != 0,
                   "Station.List name reset");
+
+            MultiFieldUpdateBatch station_numeric_clear(
+                "typed-contract-station-numeric-defaults", station_edit_id,
+                station_source_hash,
+                {{"stoppageTime", ""}, {"signalFlag", ""},
+                 {"alightingTime", ""}, {"passengers", ""},
+                 {"doorReopen", ""}, {"stuckInDoor", ""}});
+            KvEditReportSnapshot station_numeric_report{};
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &station_numeric_clear.batch,
+                      &station_numeric_report,
+                      sizeof(station_numeric_report)) != 0 &&
+                      station_numeric_report.ok &&
+                      station_numeric_report.full_reparse_ok &&
+                      station_numeric_report.non_target_changed_count == 0,
+                  "Station.List numeric clear apply-to-memory");
+            KvMapSnapshot station_numeric_snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &station_numeric_snapshot,
+                                      sizeof(station_numeric_snapshot)) != 0,
+                  "Station.List numeric clear snapshot");
+            const KvStationListRow* numeric_default_station =
+                find_station_list_row(station_numeric_snapshot, station_edit_id);
+            check(numeric_default_station &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[0]) == "STA" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[1]) == "Original" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[2]) == "09:00" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[3]) == "09:01" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[4]) == "0" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[5]) == "15" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[6]) == "0" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[7]) == "0" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[8]) == "0" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[9]) == "arr.wav" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[10]) == "dep.wav" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[11]) == "0" &&
+                      map_string(station_numeric_snapshot,
+                                 numeric_default_station->fields[12]) == "0",
+                  "Station.List numeric clear keeps non-target fields and normalizes all defaults");
+            const char* numeric_source_text =
+                kv_get_source_text(handle.value, station_source_path.c_str());
+            check(numeric_source_text &&
+                      std::string_view(numeric_source_text).find(
+                          "STA,Original,09:00,09:01,0,15,0,0,0,arr.wav,dep.wav,0,0,"
+                          "legacy-a,legacy-b // keep station comment") !=
+                          std::string_view::npos,
+                  "Station.List numeric clear preserves trailing fields and inline comment");
+            kv_free_string(numeric_source_text);
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "Station.List numeric clear reset");
+
+            const std::string station_move_template =
+                "STA,Move,09:00,09:01,,15,,,,arr.wav,dep.wav,,";
+            MultiFieldUpdateBatch station_move_template_update(
+                "typed-contract-station-move-defaults", station_edit_id,
+                station_source_hash,
+                {{"stationKey", "STA"}, {"stationName", "Move"},
+                 {"arrivalTime", "09:00"}, {"depertureTime", "09:01"},
+                 {"stoppageTime", ""}, {"defaultTime", "15"},
+                 {"signalFlag", ""}, {"alightingTime", ""},
+                 {"passengers", ""}, {"arrivalSoundKey", "arr.wav"},
+                 {"depertureSoundKey", "dep.wav"}, {"doorReopen", ""},
+                 {"stuckInDoor", ""}});
+            station_move_template_update.change.replacement_statement =
+                utf8_view(station_move_template);
+            KvEditReportSnapshot station_move_report{};
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, &station_move_template_update.batch,
+                      &station_move_report, sizeof(station_move_report)) != 0 &&
+                      station_move_report.ok &&
+                      station_move_report.full_reparse_ok &&
+                      station_move_report.non_target_changed_count == 0,
+                  "Station.List move template apply-to-memory");
+            const char* move_template_source =
+                kv_get_source_text(handle.value, station_source_path.c_str());
+            check(move_template_source &&
+                      std::string_view(move_template_source).find(
+                          "STA,Move,09:00,09:01,0,15,0,0,0,arr.wav,dep.wav,0,0") !=
+                          std::string_view::npos,
+                  "Station.List move template normalizes blank numeric fields");
+            kv_free_string(move_template_source);
+            check(kv_edit_reset_memory(handle.value) != 0,
+                  "Station.List move template reset");
 
             UpdateBatch station_key_update(
                 station_edit_id, station_source_hash, "STB", "stationKey");

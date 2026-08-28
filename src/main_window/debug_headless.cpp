@@ -5838,6 +5838,7 @@ struct Facts {
     size_t baseline_target_row_count = 0;
     size_t baseline_physical_line_count = 0;
     size_t committed_physical_line_count = 0;
+    size_t selected_row_count = 0;
     int selected_first_line = 0;
     int selected_last_line = 0;
     std::array<std::string, 6> selected_edit_ids{};
@@ -5847,6 +5848,7 @@ struct Facts {
     bool opposite_moves_equivalent = false;
     bool full_row_templates_swapped = false;
     bool clear_normal_cell_draft_ok = false;
+    bool clear_numeric_cell_draft_ok = false;
     bool clear_key_draft_ok = false;
     bool delete_row_draft_ok = false;
     bool dry_run_ok = false;
@@ -5875,7 +5877,8 @@ struct Facts {
     bool passed() const {
         const bool memory = first_move_up_disabled && last_move_down_disabled &&
             opposite_moves_equivalent && full_row_templates_swapped &&
-            clear_normal_cell_draft_ok && clear_key_draft_ok &&
+            clear_normal_cell_draft_ok && clear_numeric_cell_draft_ok &&
+            clear_key_draft_ok &&
             delete_row_draft_ok && dry_run_ok && dry_run_disk_unchanged &&
             apply_memory_ok && apply_memory_snapshot_ok &&
             apply_memory_disk_unchanged && empty_key_row_persisted &&
@@ -6096,16 +6099,17 @@ std::map<std::string, MapElementPendingChange> build_pending(
     return result;
 }
 
-size_t select_consecutive_run(const std::vector<StationRow>& rows) {
+std::optional<size_t> select_consecutive_run(const std::vector<StationRow>& rows,
+                                             size_t required_count) {
     std::map<std::string, int> key_counts;
     for (const StationRow& row : rows) {
         const std::string key = ascii_lower(row.values[0]);
         if (!key.empty()) ++key_counts[key];
     }
-    for (size_t begin = 0; begin + 6 <= rows.size(); ++begin) {
+    for (size_t begin = 0; begin + required_count <= rows.size(); ++begin) {
         bool valid = !rows[begin + 2].values[1].empty();
         std::set<std::string> keys;
-        for (size_t offset = 0; valid && offset < 6; ++offset) {
+        for (size_t offset = 0; valid && offset < required_count; ++offset) {
             const StationRow& row = rows[begin + offset];
             const std::string key = ascii_lower(row.values[0]);
             valid = !key.empty() && key_counts[key] == 1 && keys.insert(key).second;
@@ -6116,8 +6120,7 @@ size_t select_consecutive_run(const std::vector<StationRow>& rows) {
         }
         if (valid) return begin;
     }
-    throw std::runtime_error(
-        "no six consecutive unique Station.List definitions were found");
+    return std::nullopt;
 }
 
 const StationRow* find_edit_id(const std::vector<StationRow>& rows,
@@ -6127,6 +6130,28 @@ const StationRow* find_edit_id(const std::vector<StationRow>& rows,
                                         return row.edit_id == edit_id;
                                     });
     return found == rows.end() ? nullptr : &*found;
+}
+
+bool station_numeric_field_defaults_to_zero(size_t field) {
+    return field == 4 || field == 6 || field == 7 || field == 8 ||
+        field == 11 || field == 12;
+}
+
+std::string station_serialized_value(const std::string& baseline, size_t field) {
+    return station_numeric_field_defaults_to_zero(field) && baseline.empty()
+        ? "0"
+        : baseline;
+}
+
+bool station_values_match_serialized(
+    const std::array<std::string, 13>& actual,
+    const std::array<std::string, 13>& baseline) {
+    for (size_t field = 0; field < actual.size(); ++field) {
+        if (actual[field] != station_serialized_value(baseline[field], field)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool station_name_key_absent(void* handle, const std::string& key) {
@@ -6143,7 +6168,7 @@ bool station_name_key_absent(void* handle, const std::string& key) {
 bool snapshot_matches_edits(
     void* handle, const std::string& target_file,
     const std::vector<StationRow>& baseline, size_t run,
-    size_t baseline_global_count, bool& empty_row_persisted,
+    size_t baseline_global_count, bool has_sentinel, bool& empty_row_persisted,
     bool& empty_key_not_registered, bool& stable_ids) {
     const KvMapSnapshot snapshot =
         distance_batch_headless::current_map_snapshot(handle);
@@ -6157,23 +6182,32 @@ bool snapshot_matches_edits(
     const StationRow* cleared_normal = find_edit_id(target, baseline[run + 2].edit_id);
     const StationRow* cleared_key = find_edit_id(target, baseline[run + 3].edit_id);
     const StationRow* deleted = find_edit_id(target, baseline[run + 4].edit_id);
-    const StationRow* sentinel = find_edit_id(target, baseline[run + 5].edit_id);
-    stable_ids = first && second && cleared_normal && cleared_key && !deleted && sentinel;
+    const StationRow* sentinel = has_sentinel
+        ? find_edit_id(target, baseline[run + 5].edit_id)
+        : nullptr;
+    stable_ids = first && second && cleared_normal && cleared_key && !deleted &&
+        (!has_sentinel || sentinel);
     if (!stable_ids || snapshot.station_list_count + 1 != baseline_global_count ||
         target.size() + 1 != baseline.size()) {
         return false;
     }
-    const bool first_swapped = first->values == baseline[run + 1].values;
-    const bool second_swapped = second->values == baseline[run].values;
-    bool normal_only = cleared_normal->values[1].empty();
+    const bool first_swapped = station_values_match_serialized(
+        first->values, baseline[run + 1].values);
+    const bool second_swapped = station_values_match_serialized(
+        second->values, baseline[run].values);
+    bool normal_only = cleared_normal->values[1].empty() &&
+        cleared_normal->values[4] == "0";
     for (size_t field = 0; field < cleared_normal->values.size(); ++field) {
-        if (field != 1 && cleared_normal->values[field] != baseline[run + 2].values[field]) {
+        if (field != 1 && field != 4 &&
+            cleared_normal->values[field] !=
+                station_serialized_value(baseline[run + 2].values[field], field)) {
             normal_only = false;
         }
     }
     bool key_only = cleared_key->values[0].empty();
     for (size_t field = 1; field < cleared_key->values.size(); ++field) {
-        if (cleared_key->values[field] != baseline[run + 3].values[field]) {
+        if (cleared_key->values[field] !=
+            station_serialized_value(baseline[run + 3].values[field], field)) {
             key_only = false;
         }
     }
@@ -6183,13 +6217,14 @@ bool snapshot_matches_edits(
         station_name_key_absent(handle, baseline[run + 3].values[0]) &&
         station_name_key_absent(handle, baseline[run + 4].values[0]);
     return first_swapped && second_swapped && normal_only && key_only &&
-        sentinel->values == baseline[run + 5].values;
+        (!has_sentinel || station_values_match_serialized(
+            sentinel->values, baseline[run + 5].values));
 }
 
 bool persisted_snapshot_matches(
     void* handle, const std::string& target_file,
     const std::vector<StationRow>& baseline, size_t run,
-    size_t baseline_global_count, bool& empty_row_persisted,
+    size_t baseline_global_count, bool has_sentinel, bool& empty_row_persisted,
     bool& empty_key_not_registered) {
     const KvMapSnapshot snapshot =
         distance_batch_headless::current_map_snapshot(handle);
@@ -6199,19 +6234,23 @@ bool persisted_snapshot_matches(
         if (same_path(row.source_file, target_file)) target.push_back(std::move(row));
     }
     if (snapshot.station_list_count + 1 != baseline_global_count ||
-        target.size() + 1 != baseline.size() || run + 4 >= target.size()) {
+        target.size() + 1 != baseline.size() || run + 3 >= target.size() ||
+        (has_sentinel && run + 4 >= target.size())) {
         return false;
     }
-    bool normal_only = target[run + 2].values[1].empty();
+    bool normal_only = target[run + 2].values[1].empty() &&
+        target[run + 2].values[4] == "0";
     for (size_t field = 0; field < target[run + 2].values.size(); ++field) {
-        if (field != 1 &&
-            target[run + 2].values[field] != baseline[run + 2].values[field]) {
+        if (field != 1 && field != 4 &&
+            target[run + 2].values[field] !=
+                station_serialized_value(baseline[run + 2].values[field], field)) {
             normal_only = false;
         }
     }
     bool key_only = target[run + 3].values[0].empty();
     for (size_t field = 1; field < target[run + 3].values.size(); ++field) {
-        if (target[run + 3].values[field] != baseline[run + 3].values[field]) {
+        if (target[run + 3].values[field] !=
+            station_serialized_value(baseline[run + 3].values[field], field)) {
             key_only = false;
         }
     }
@@ -6220,10 +6259,11 @@ bool persisted_snapshot_matches(
         station_name_key_absent(handle, "") &&
         station_name_key_absent(handle, baseline[run + 3].values[0]) &&
         station_name_key_absent(handle, baseline[run + 4].values[0]);
-    return target[run].values == baseline[run + 1].values &&
-        target[run + 1].values == baseline[run].values &&
+    return station_values_match_serialized(target[run].values, baseline[run + 1].values) &&
+        station_values_match_serialized(target[run + 1].values, baseline[run].values) &&
         normal_only && key_only &&
-        target[run + 4].values == baseline[run + 5].values;
+        (!has_sentinel || station_values_match_serialized(
+            target[run + 4].values, baseline[run + 5].values));
 }
 
 bool apply_report_ok(const EditReport& report) {
@@ -6257,6 +6297,7 @@ void write_facts(std::ostream& out, const Facts& facts) {
     out << "baseline_target_row_count=" << facts.baseline_target_row_count << "\n";
     out << "baseline_physical_line_count=" << facts.baseline_physical_line_count << "\n";
     out << "committed_physical_line_count=" << facts.committed_physical_line_count << "\n";
+    out << "selected_row_count=" << facts.selected_row_count << "\n";
     out << "selected_first_line=" << facts.selected_first_line << "\n";
     out << "selected_last_line=" << facts.selected_last_line << "\n";
     for (size_t index = 0; index < facts.selected_edit_ids.size(); ++index) {
@@ -6267,6 +6308,7 @@ void write_facts(std::ostream& out, const Facts& facts) {
     flag("opposite_moves_equivalent", facts.opposite_moves_equivalent);
     flag("full_row_templates_swapped", facts.full_row_templates_swapped);
     flag("clear_normal_cell_draft_ok", facts.clear_normal_cell_draft_ok);
+    flag("clear_numeric_cell_draft_ok", facts.clear_numeric_cell_draft_ok);
     flag("clear_key_draft_ok", facts.clear_key_draft_ok);
     flag("delete_row_draft_ok", facts.delete_row_draft_ok);
     flag("dry_run_ok", facts.dry_run_ok);
@@ -6350,17 +6392,29 @@ int run_debug_headless_station_list_edit(
                   [](const auto& left, const auto& right) {
                       return left.second.size() < right.second.size();
                   });
-        if (selected_file == rows_by_file.end() || selected_file->second.size() < 6) {
+        if (selected_file == rows_by_file.end() || selected_file->second.size() < 5) {
             throw std::runtime_error(
-                "no Station.List source file contains at least six definitions");
+                "no Station.List source file contains at least five definitions");
         }
         const std::vector<StationRow>& baseline = selected_file->second;
         facts.target_file = selected_file->first;
         facts.baseline_target_row_count = baseline.size();
-        const size_t run = select_consecutive_run(baseline);
+        const std::optional<size_t> sentinel_run =
+            select_consecutive_run(baseline, 6);
+        const std::optional<size_t> five_row_run = sentinel_run
+            ? sentinel_run
+            : select_consecutive_run(baseline, 5);
+        if (!five_row_run) {
+            throw std::runtime_error(
+                "no five consecutive unique Station.List definitions were found");
+        }
+        const size_t run = *five_row_run;
+        facts.selected_row_count = sentinel_run ? 6 : 5;
+        const bool has_sentinel = facts.selected_row_count == 6;
         facts.selected_first_line = baseline[run].source_line;
-        facts.selected_last_line = baseline[run + 5].source_line;
-        for (size_t index = 0; index < 6; ++index) {
+        facts.selected_last_line =
+            baseline[run + facts.selected_row_count - 1].source_line;
+        for (size_t index = 0; index < facts.selected_row_count; ++index) {
             facts.selected_edit_ids[index] = baseline[run + index].edit_id;
         }
 
@@ -6426,6 +6480,8 @@ int run_debug_headless_station_list_edit(
             !clear_editable_list_draft_cell(
                 drafts, visible, static_cast<int>(run + 2), 1) ||
             !clear_editable_list_draft_cell(
+                drafts, visible, static_cast<int>(run + 2), 4) ||
+            !clear_editable_list_draft_cell(
                 drafts, visible, static_cast<int>(run + 3), 0) ||
             !delete_editable_list_draft_row(
                 drafts, visible, static_cast<int>(run + 4))) {
@@ -6433,6 +6489,8 @@ int run_debug_headless_station_list_edit(
         }
         facts.clear_normal_cell_draft_ok =
             drafts[run + 2].values[1].empty();
+        facts.clear_numeric_cell_draft_ok =
+            drafts[run + 2].values[4].empty();
         facts.clear_key_draft_ok = drafts[run + 3].values[0].empty();
         facts.delete_row_draft_ok = drafts[run + 4].deleted;
 
@@ -6455,7 +6513,8 @@ int run_debug_headless_station_list_edit(
         bool applied_stable_ids = false;
         facts.apply_memory_snapshot_ok = snapshot_matches_edits(
             handle.value, facts.target_file, baseline, run,
-            facts.baseline_station_count, facts.empty_key_row_persisted,
+            facts.baseline_station_count, has_sentinel,
+            facts.empty_key_row_persisted,
             facts.empty_key_not_registered, applied_stable_ids);
         facts.apply_memory_disk_unchanged =
             distance_batch_headless::read_fixture_file(target_path) == baseline_bytes &&
@@ -6470,7 +6529,7 @@ int run_debug_headless_station_list_edit(
             distance_batch_headless::source_snapshot_fingerprint(handle.value);
         const std::vector<StationRow> reset_all = collect_station_rows(handle.value);
         bool reset_rows_match = true;
-        for (size_t index = 0; index < 6; ++index) {
+        for (size_t index = 0; index < facts.selected_row_count; ++index) {
             const StationRow* row =
                 find_edit_id(reset_all, baseline[run + index].edit_id);
             reset_rows_match = reset_rows_match && row &&
@@ -6510,7 +6569,8 @@ int run_debug_headless_station_list_edit(
                 committed_station_ids.count(baseline[run + 2].edit_id) != 0 &&
                 committed_station_ids.count(baseline[run + 3].edit_id) != 0 &&
                 committed_station_ids.count(baseline[run + 4].edit_id) == 0 &&
-                committed_station_ids.count(baseline[run + 5].edit_id) != 0;
+                (!has_sentinel ||
+                 committed_station_ids.count(baseline[run + 5].edit_id) != 0);
             if (!facts.commit_ok) {
                 throw std::runtime_error(committed.blocking_errors.empty()
                     ? "Station.List commit assertions failed"
@@ -6543,7 +6603,7 @@ int run_debug_headless_station_list_edit(
             bool reopened_empty_lookup = false;
             facts.committed_snapshot_ok = persisted_snapshot_matches(
                 reopened.value, facts.target_file, baseline, run,
-                facts.baseline_station_count, reopened_empty_row,
+                facts.baseline_station_count, has_sentinel, reopened_empty_row,
                 reopened_empty_lookup);
             facts.committed_snapshot_ok = facts.committed_snapshot_ok &&
                 reopened_empty_row && reopened_empty_lookup;
@@ -6553,8 +6613,8 @@ int run_debug_headless_station_list_edit(
             const size_t delete_line_index =
                 static_cast<size_t>(baseline[run + 4].source_line - 1);
             const bool physical_range_ok =
-                first_line_index + 5 < baseline_lines.size() &&
-                delete_line_index < committed_lines.size();
+                first_line_index + facts.selected_row_count - 1 < baseline_lines.size() &&
+                first_line_index + 3 < committed_lines.size();
             if (physical_range_ok) {
                 facts.committed_full_rows_swapped =
                     committed_lines[first_line_index] ==
@@ -6567,6 +6627,7 @@ int run_debug_headless_station_list_edit(
                     csv_values(committed_lines[first_line_index + 3]);
                 facts.committed_clear_cells_persisted =
                     normal_values.size() >= 13 && normal_values[1].empty() &&
+                    normal_values[4] == "0" &&
                     key_values.size() >= 13 && key_values[0].empty() &&
                     !committed_lines[first_line_index + 3].empty() &&
                     committed_lines[first_line_index + 3].front() == ',';
@@ -6585,8 +6646,10 @@ int run_debug_headless_station_list_edit(
                 }
                 facts.committed_sentinel_and_suffix_preserved =
                     prefix_ok && suffix_ok &&
-                    committed_lines[delete_line_index] ==
-                        baseline[run + 5].raw_statement;
+                    (!has_sentinel ||
+                     (delete_line_index < committed_lines.size() &&
+                      committed_lines[delete_line_index] ==
+                          baseline[run + 5].raw_statement));
             }
             const auto baseline_newlines = newline_counts(baseline_bytes);
             const auto committed_newlines = newline_counts(committed_bytes);

@@ -851,7 +851,9 @@ std::string build_editable_csv_list_statement(
                     (std::string_view(field_names[i]) == "bufferCount"
                         ? editable_csv_list_values_equivalent(
                             field_names[i], normalized, source_values[i])
-                        : normalized == normalize(source_values[i], i));
+                        : normalized == normalize(source_values[i], i)) &&
+                    (normalized.empty() ||
+                     !trim_field_copy(source_values[i]).empty());
                 if (preserves_source) {
                     out << source.fields[i];
                 } else {
@@ -903,8 +905,36 @@ std::string build_sound_list_statement(const MapEditChange& change,
 std::string build_station_list_statement(const MapEditChange& change,
                                          const ParsedStatement& statement,
                                          const StationListEntry& row) {
+    // Existing source rows keep their original text unless this operation
+    // serializes them. Once a Station.List row is serialized, BVE requires
+    // the numeric/enumerated slots to be concrete values rather than blanks.
+    // Use the operation's source template here so row moves normalize the row
+    // being moved, not the row previously at the destination.
+    MapEditChange effective_change = change;
+    const std::string& source_text = change.replacement_statement.empty()
+        ? statement.raw_arguments
+        : change.replacement_statement;
+    const std::vector<std::string> source_values =
+        parse_comma_separated_fields(source_text, true);
+    for (size_t field_index = 0;
+         field_index < k_station_list_field_names.size(); ++field_index) {
+        const char* field_name = k_station_list_field_names[field_index];
+        if (!station_list_empty_field_defaults_to_zero(field_index) ||
+            effective_change.field_changes.find(field_name) !=
+                effective_change.field_changes.end()) {
+            continue;
+        }
+        const bool source_is_blank =
+            field_index >= source_values.size() ||
+            trim_field_copy(source_values[field_index]).empty();
+        if (source_is_blank) {
+            effective_change.field_changes.emplace(
+                field_name,
+                normalized_station_list_edit_value({}, field_index));
+        }
+    }
     return build_editable_csv_list_statement(
-        change, statement, k_station_list_field_names, row.fields,
+        effective_change, statement, k_station_list_field_names, row.fields,
         [](const std::string& value, size_t field_index) {
             return normalized_station_list_edit_value(value, field_index);
         });

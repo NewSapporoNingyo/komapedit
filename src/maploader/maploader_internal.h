@@ -741,6 +741,21 @@ inline constexpr std::array<const char*, 13> k_station_list_field_names = {
     "depertureSoundKey", "doorReopen", "stuckInDoor"
 };
 
+inline constexpr bool station_list_empty_field_defaults_to_zero(
+    size_t field_index) {
+    switch (field_index) {
+    case 4:  // stoppageTime
+    case 6:  // signalFlag
+    case 7:  // alightingTime
+    case 8:  // passengers
+    case 11: // doorReopen
+    case 12: // stuckInDoor
+        return true;
+    default:
+        return false;
+    }
+}
+
 inline std::string normalized_station_list_edit_value(const std::string& input,
                                                       size_t field_index) {
     std::string value = trim_field_copy(input);
@@ -748,6 +763,9 @@ inline std::string normalized_station_list_edit_value(const std::string& input,
         throw std::runtime_error(
             std::string("Station.List field cannot contain a line break: ") +
             k_station_list_field_names[field_index]);
+    }
+    if (value.empty() && station_list_empty_field_defaults_to_zero(field_index)) {
+        return "0";
     }
     return value;
 }
