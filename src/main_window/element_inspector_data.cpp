@@ -1366,8 +1366,8 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         add_row_field("stationKey", "stationKey", MapElementNumericConstraint::None, true);
         add_row_field("door", "door", MapElementNumericConstraint::Door, false);
-        add_row_field("margin1", "back", MapElementNumericConstraint::Finite, false);
-        add_row_field("margin2", "front", MapElementNumericConstraint::Finite, false);
+        add_row_field("margin1", "back", MapElementNumericConstraint::Negative, false);
+        add_row_field("margin2", "front", MapElementNumericConstraint::Positive, false);
     } else if (request.row_kind == "irregularity.change") {
         add_row_field("distance", "distance", MapElementNumericConstraint::Finite, true);
         for (const char* key : {"x", "y", "r", "lx", "ly", "lr"}) {
@@ -1977,7 +1977,12 @@ void App::apply_inspector_changes() {
         }
         const bool field_changed = value != field.original_value;
         if (!validate_and_canonicalize_edit_field(field, field_changed)) {
-            set_program_status("status.edit.invalid_number");
+            if (inspector_.row_kind == "station.put" &&
+                (field.key == "margin1" || field.key == "margin2")) {
+                set_program_status("status.edit.station_margin_invalid");
+            } else {
+                set_program_status("status.edit.invalid_number");
+            }
             return;
         }
         value = trim_gui_ascii_copy(edit_field_buffer_text(field));

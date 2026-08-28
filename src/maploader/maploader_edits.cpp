@@ -1126,6 +1126,24 @@ std::string build_signal_aspect_statement(
     return out.str();
 }
 
+inline void validate_station_margin_value(const std::string& field_name,
+                                           const std::string& value_text) {
+    std::string trimmed = trim_field_copy(value_text);
+    if (trimmed.empty()) return;
+    double v = 0.0;
+    if (!parse_edit_number(trimmed, v)) {
+        throw std::runtime_error("invalid numeric edit value: " + value_text);
+    }
+    if (field_name == "margin1" && v >= 0.0) {
+        throw std::runtime_error("Station.Put margin1 must be a negative value (got " +
+                                 trimmed + ")");
+    }
+    if (field_name == "margin2" && v <= 0.0) {
+        throw std::runtime_error("Station.Put margin2 must be a positive value (got " +
+                                 trimmed + ")");
+    }
+}
+
 std::string build_station_put_statement(const MapEditChange& change,
                                         const ParsedStatement& statement,
                                         const StationPut& row) {
@@ -1134,6 +1152,12 @@ std::string build_station_put_statement(const MapEditChange& change,
     const bool parameter_change = has_field_change(change, "door") ||
         has_field_change(change, "margin1") || has_field_change(change, "margin2");
     if (parameter_change) {
+        if (has_field_change(change, "margin1")) {
+            validate_station_margin_value("margin1", field_text_or(change, "margin1", ""));
+        }
+        if (has_field_change(change, "margin2")) {
+            validate_station_margin_value("margin2", field_text_or(change, "margin2", ""));
+        }
         std::vector<std::string> args = parse_bve_argument_fields(statement.raw_arguments);
         if (args.size() < 3) args.resize(3);
         args[0] = optional_numeric_value_field(change, "door", row.door, raw_arg_at(args, 0));
@@ -2958,6 +2982,8 @@ void validate_insert_change(const MapEditChange& change) {
     } else if (row_kind == "station.put") {
         validate_insert_field_names(change,
                                     {"distance", "stationKey", "door", "margin1", "margin2"});
+        validate_station_margin_value("margin1", field_text_or(change, "margin1", ""));
+        validate_station_margin_value("margin2", field_text_or(change, "margin2", ""));
     } else if (row_kind == "signal.put") {
         validate_insert_field_names(change,
                                     {"distance", "signalAspectKey", "section", "trackKey",
@@ -3206,10 +3232,13 @@ std::string build_insert_statement(const MapEditChange& change,
             + insert_required_number(change, "flag") + ");";
     }
     if (row_kind == "station.put") {
+        const std::string door = insert_required_number(change, "door");
+        const std::string margin1 = insert_required_number(change, "margin1");
+        const std::string margin2 = insert_required_number(change, "margin2");
+        validate_station_margin_value("margin1", margin1);
+        validate_station_margin_value("margin2", margin2);
         return "Station[" + insert_required_key(change, "stationKey") + "].Put("
-            + insert_required_number(change, "door") + ","
-            + insert_required_number(change, "margin1") + ","
-            + insert_required_number(change, "margin2") + ");";
+            + door + "," + margin1 + "," + margin2 + ");";
     }
     if (row_kind == "signal.put") {
         const std::string aspect_key = insert_required_key(change, "signalAspectKey");

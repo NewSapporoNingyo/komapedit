@@ -244,6 +244,19 @@ void changed_value(SemanticWriter& out, const KvMapSnapshot& snapshot,
     }
 }
 
+void changed_station_key(SemanticWriter& out, const KvMapSnapshot& snapshot,
+                         const MapEditChange* change, const KvValue& fallback) {
+    out.label("stationKey");
+    const std::string* input = changed_field(change, "stationKey");
+    if (input) {
+        // Station key lookup and parsing use key_text(), which is ASCII
+        // case-insensitive. Match the reparser's canonical representation.
+        out.string_value(ascii_lower(trim_field_copy(*input)));
+    } else {
+        out.value(snapshot, fallback);
+    }
+}
+
 void changed_track_key(SemanticWriter& out, const KvMapSnapshot& snapshot,
                        const MapEditChange* change, const char* key,
                        const KvValue& fallback) {
@@ -347,7 +360,7 @@ void write_station_put(SemanticWriter& out, const KvMapSnapshot& snapshot,
                        const KvStationPutRow& row,
                        const MapEditChange* change = nullptr) {
     field(out, "distance", changed_number(change, "distance", row.distance));
-    changed_value(out, snapshot, change, "stationKey", row.station_key);
+    changed_station_key(out, snapshot, change, row.station_key);
     changed_optional_number(out, snapshot, change, "door", row.door);
     changed_optional_number(out, snapshot, change, "margin1", row.margin1);
     changed_optional_number(out, snapshot, change, "margin2", row.margin2);

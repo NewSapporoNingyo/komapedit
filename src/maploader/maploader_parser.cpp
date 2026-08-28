@@ -1568,6 +1568,7 @@ private:
             row.margin2 = arg_or_null(a, 3);
             row.file_path = ctx_.current_file_path;
             row.order = ctx_.next_parse_order();
+            row.source = diagnostic_source(current_statement_start_, "Station.Put");
             attach_active_edit_ref(ctx_, row);
             ctx_.station_puts.push_back(std::move(row));
         } else if (fn == "load" && !a.empty()) {
@@ -2376,6 +2377,52 @@ bool light_rgb_is_valid(const LightColor& row) {
            row.blue >= 0.0 && row.blue <= 1.0;
 }
 
+void validate_station_put_statements(MapContext& ctx) {
+    for (const StationPut& row : ctx.station_puts) {
+        if (row.margin1.kind == ValueKind::Number) {
+            if (row.margin1.number >= 0.0) {
+                MapDiagnostic diagnostic = row.source;
+                diagnostic.statement_kind = "Station.Put";
+                diagnostic.message =
+                    "Station.Put margin1 (rearward tolerance) must be a negative value (got " +
+                    as_text(row.margin1) + ").";
+                ctx.diagnostics.push_back(std::move(diagnostic));
+            }
+        } else if (row.margin1.kind == ValueKind::String) {
+            double v = 0.0;
+            if (parse_finite_number(row.margin1.text, v) && v >= 0.0) {
+                MapDiagnostic diagnostic = row.source;
+                diagnostic.statement_kind = "Station.Put";
+                diagnostic.message =
+                    "Station.Put margin1 (rearward tolerance) must be a negative value (got " +
+                    row.margin1.text + ").";
+                ctx.diagnostics.push_back(std::move(diagnostic));
+            }
+        }
+
+        if (row.margin2.kind == ValueKind::Number) {
+            if (row.margin2.number <= 0.0) {
+                MapDiagnostic diagnostic = row.source;
+                diagnostic.statement_kind = "Station.Put";
+                diagnostic.message =
+                    "Station.Put margin2 (forward tolerance) must be a positive value (got " +
+                    as_text(row.margin2) + ").";
+                ctx.diagnostics.push_back(std::move(diagnostic));
+            }
+        } else if (row.margin2.kind == ValueKind::String) {
+            double v = 0.0;
+            if (parse_finite_number(row.margin2.text, v) && v <= 0.0) {
+                MapDiagnostic diagnostic = row.source;
+                diagnostic.statement_kind = "Station.Put";
+                diagnostic.message =
+                    "Station.Put margin2 (forward tolerance) must be a positive value (got " +
+                    row.margin2.text + ").";
+                ctx.diagnostics.push_back(std::move(diagnostic));
+            }
+        }
+    }
+}
+
 void validate_light_statements(MapContext& ctx) {
     invalidate_duplicate_light_declarations(ctx, ctx.light_ambient, "Light.Ambient");
     invalidate_duplicate_light_declarations(ctx, ctx.light_diffuse, "Light.Diffuse");
@@ -2570,6 +2617,7 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
         Parser parser(*ctx, std::move(loaded));
         parser.parse();
         validate_light_statements(*ctx);
+        validate_station_put_statements(*ctx);
         validate_unique_preview_statements(*ctx);
     } catch (...) {
         emit_diagnostics(*ctx);

@@ -556,6 +556,7 @@ build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output b
 build\komapedit.exe --debug-headless-scene-camera-transfer <map-path> --headless-output build\scene-camera-transfer.txt
 build\komapedit.exe --debug-headless-source-anchors <map-path> --headless-output build\source-anchors.txt
 build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-output build\station-list-edit.txt
+build\komapedit.exe --debug-headless-station-put-margin-edit <map-path> --headless-output build\station-put-margin-edit.txt
 build\komapedit.exe --debug-headless-edit-roundtrip <map-path> --headless-output build\edit-roundtrip.txt
 build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output build\own-track-edit.txt
 build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
@@ -596,6 +597,8 @@ plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
 `--debug-headless-light-edit` 要求显式传入地图，例如 `tests\\light_valid.txt`。它不模拟 ImGui 点击，而是直接调用正式的“光照效果”表单 Apply、延迟删除和三种“效果”向导模板：修改三类语句，通过共享延迟路径删除，再在所选源文件的固定里程 `0` 重新创建，检查求值预览和官方源码形式，最后 Revert。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并证明地图字节未改变。
+
+`--debug-headless-station-put-margin-edit` 要求地图在里程 `0` 含有可编辑的 `Station.Put`。它不模拟 ImGui 点击，检查 Inspector 对零值/错误符号停车容差的拒绝、新建地图元素默认值（`margin1=-5`、`margin2=5`）、向导对非法值的拒绝、合法内存新建和 Revert 清理。该命令仅进行内存 Apply。
 
 `--debug-headless-sparse-new-element` 要求显式传入地图路径：目标源文件中可有零或一条数值距离语句，或者数值距离锚点按源码顺序非递减且最后锚点小于 `866`。它直接驱动正式的 `DrawDistance.Change(500)` 向导表单；稀疏源使用里程 `25`，单调尾部情形使用 `866`。该命令验证目标仍可选择、插入不会请求距离解析、规范 EOF 距离块以新 typed 行结束，随后 Reset 并确认磁盘哈希不变。该命令仅执行内存 Apply，传入 `--commit` 会被拒绝。
 

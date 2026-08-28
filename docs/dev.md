@@ -188,6 +188,7 @@ build\komapedit.exe --debug-headless-diagnostics-popup-bench --headless-output b
 build\komapedit.exe --debug-headless-scene-camera-transfer <map-path> --headless-output build\scene-camera-transfer.txt
 build\komapedit.exe --debug-headless-source-anchors <map-path> --headless-output build\source-anchors.txt
 build\komapedit.exe --debug-headless-station-list-edit <map-path> --headless-output build\station-list-edit.txt
+build\komapedit.exe --debug-headless-station-put-margin-edit <map-path> --headless-output build\station-put-margin-edit.txt
 build\komapedit.exe --debug-headless-edit-roundtrip <map-path> --headless-output build\edit-roundtrip.txt
 build\komapedit.exe --debug-headless-own-track-edit [map-path] --headless-output build\own-track-edit.txt
 build\komapedit.exe --debug-headless-other-track-edit [map-path] [--commit] --headless-output build\other-track-edit.txt
@@ -230,6 +231,8 @@ The plan benchmark defaults to `--interaction pan`. The two measurement interact
 `--debug-headless-new-element-edit` drives the production New Map Element wizard, Inspector Apply, and delete/cancel paths. Alongside its existing resource, Repeater, Structure, and other-track sequences, it checks the consolidated `Curve.*`/`Gradient.*` templates, their start/end and transition/cant enablement, transition-distance rejection, combined source order, target-file provenance, Inspector follow-up, and cancellation. Without `--commit`, it resets and reloads the working copy, confirming disk hashes are unchanged. With `--commit`, it follows the normal Save boundary to write one paired curve and one paired gradient set to the selected source, then reports the committed target, hashes, and a fresh reload validation; authorized route changes remain for physical diff inspection.
 
 `--debug-headless-light-edit` requires an explicit map such as `tests\\light_valid.txt`. It directly invokes the production Lighting Effects form Apply, deferred deletion, and each Effects wizard template without simulating ImGui clicks. It edits all three statement families, deletes them through the shared deferred path, recreates them in the selected source at fixed distance `0`, checks the evaluated preview and official source forms, then Reverts. The command is memory-Apply only, rejects `--commit`, and proves the map bytes are unchanged.
+
+`--debug-headless-station-put-margin-edit` requires a map with an editable `Station.Put` at distance `0`. Without simulating ImGui clicks, it checks Inspector rejection of zero/wrong-sign stop tolerances, the New Map Element defaults (`margin1=-5`, `margin2=5`), wizard rejection of invalid values, valid memory insertion, and Revert cleanup. It is memory-Apply only.
 
 `--debug-headless-sparse-new-element` requires an explicit map path whose target source has zero or one numeric distance statement, or a source-order nondecreasing numeric sequence whose final anchor is below `866`. It directly drives the production `DrawDistance.Change(500)` wizard form at `25` for sparse sources and `866` for the monotonic-tail case, verifies the target remains selectable, the insertion does not request distance resolution, and the canonical EOF distance block ends at the new typed row. It then resets and proves the disk hash is unchanged. It is memory-Apply only and rejects `--commit`.
 

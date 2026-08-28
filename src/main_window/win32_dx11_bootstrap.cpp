@@ -393,6 +393,18 @@ int main(int, char**) {
         return App::run_debug_headless_light_edit(light_edit);
     }
 
+    HeadlessStationPutMarginEditOptions station_put_margin_edit =
+        parse_headless_station_put_margin_edit_options(args);
+    if (station_put_margin_edit.requested) {
+        if (!station_put_margin_edit.error.empty()) {
+            std::cerr << station_put_margin_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-station-put-margin-edit <map-path> "
+                         "[--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_station_put_margin_edit(station_put_margin_edit);
+    }
+
     HeadlessSparseNewElementOptions sparse_new_element =
         parse_headless_sparse_new_element_options(args);
     if (sparse_new_element.requested) {

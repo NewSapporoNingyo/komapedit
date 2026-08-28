@@ -7246,6 +7246,191 @@ int edit_contract() {
         check(reload_row && std::abs(reload_row->x - 8.0) < 1e-9,
               "save/reload identity and value");
     }
+
+    // Station.Put margin tolerance edit blocking and apply contract
+    {
+        TempFixture station_edit_fixture;
+        {
+            std::ofstream map(station_edit_fixture.map_path, std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\n"
+                << "0;\n"
+                << "Station.Load('stations.csv');\n"
+                << "100;\n"
+                << "Station['STA'].Put(1, -2.5, 2.5);\n";
+        }
+        std::ofstream stations(station_edit_fixture.directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 1.00:utf-8\n"
+                 << "STA,Alpha,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0\n";
+        stations.close();
+
+        MapHandle st_handle(kv_load_map_ex(
+            station_edit_fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(st_handle.value != nullptr, "station edit map load");
+        if (st_handle.value) {
+            KvMapSnapshot st_snapshot{};
+            check(kv_get_map_snapshot(st_handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &st_snapshot, sizeof(st_snapshot)) != 0,
+                  "station edit map snapshot");
+            check(st_snapshot.station_put_count == 1, "station put count 1");
+            if (st_snapshot.station_put_count >= 1) {
+                const KvStationPutRow& st_row = st_snapshot.station_puts[0];
+                const std::string st_edit_id = map_string(st_snapshot, st_row.metadata.edit_id);
+                const std::string st_hash = map_string(
+                    st_snapshot,
+                    st_snapshot.source_files[st_row.metadata.source_file_index].source_hash);
+
+                // Update with invalid margin1 (>= 0)
+                {
+                    const std::string m_id = st_edit_id;
+                    const std::string m_hash = st_hash;
+                    const std::string m_name = "margin1";
+                    const std::string m_val = "0";
+                    const KvEditField fields[] = {
+                        {utf8_view(m_name), utf8_view(m_val)},
+                    };
+                    const KvEditChange changes[] = {
+                        {utf8_view(m_id), utf8_view(m_id), KV_EDIT_UPDATE, 0,
+                         {0, 1},
+                         utf8_view(""), utf8_view(""), utf8_view(""),
+                         utf8_view(m_hash), utf8_view(""), utf8_view(""), utf8_view("")},
+                    };
+                    const KvEditBatch batch = {changes, 1, fields, 1};
+                    KvEditReportSnapshot report{};
+                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &report, sizeof(report)) != 0,
+                          "station margin1=0 update dry-run call");
+                    check(!report.ok && report.blocking_error_count >= 1,
+                          "station margin1=0 update dry-run blocked");
+                    check(edit_report_has_error_containing(report, "margin1 must be a negative value"),
+                          "station margin1=0 update reports margin1 error");
+                }
+
+                // Update with invalid margin2 (<= 0)
+                {
+                    const std::string m_id = st_edit_id;
+                    const std::string m_hash = st_hash;
+                    const std::string m_name = "margin2";
+                    const std::string m_val = "-1";
+                    const KvEditField fields[] = {
+                        {utf8_view(m_name), utf8_view(m_val)},
+                    };
+                    const KvEditChange changes[] = {
+                        {utf8_view(m_id), utf8_view(m_id), KV_EDIT_UPDATE, 0,
+                         {0, 1},
+                         utf8_view(""), utf8_view(""), utf8_view(""),
+                         utf8_view(m_hash), utf8_view(""), utf8_view(""), utf8_view("")},
+                    };
+                    const KvEditBatch batch = {changes, 1, fields, 1};
+                    KvEditReportSnapshot report{};
+                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &report, sizeof(report)) != 0,
+                          "station margin2=-1 update dry-run call");
+                    check(!report.ok && report.blocking_error_count >= 1,
+                          "station margin2=-1 update dry-run blocked");
+                    check(edit_report_has_error_containing(report, "margin2 must be a positive value"),
+                          "station margin2=-1 update reports margin2 error");
+                }
+
+                // Valid update to margin1 = -3.5, margin2 = 4.0
+                {
+                    const std::string m_id = st_edit_id;
+                    const std::string m_hash = st_hash;
+                    const std::string m1_name = "margin1";
+                    const std::string m1_val = "-3.5";
+                    const std::string m2_name = "margin2";
+                    const std::string m2_val = "4.0";
+                    const KvEditField fields[] = {
+                        {utf8_view(m1_name), utf8_view(m1_val)},
+                        {utf8_view(m2_name), utf8_view(m2_val)},
+                    };
+                    const KvEditChange changes[] = {
+                        {utf8_view(m_id), utf8_view(m_id), KV_EDIT_UPDATE, 0,
+                         {0, 2},
+                         utf8_view(""), utf8_view(""), utf8_view(""),
+                         utf8_view(m_hash), utf8_view(""), utf8_view(""), utf8_view("")},
+                    };
+                    const KvEditBatch batch = {changes, 1, fields, 2};
+                    KvEditReportSnapshot report{};
+                    check(kv_edit_dry_run_typed(st_handle.value, &batch, &report, sizeof(report)) != 0,
+                          "station valid margin update dry-run call");
+                    check(report.ok && report.blocking_error_count == 0,
+                          "station valid margin update dry-run succeeds");
+                    KvEditReportSnapshot applied{};
+                    check(kv_edit_apply_to_memory_typed(st_handle.value, &batch, &applied, sizeof(applied)) != 0,
+                          "station valid margin apply-to-memory call");
+                    check(applied.ok, "station valid margin apply succeeds");
+                    check(kv_edit_reset_memory(st_handle.value) != 0,
+                          "station valid margin update reset");
+                }
+
+                // Inserts must receive the same backend validation as updates.
+                {
+                    SimpleInsertBatch invalid_insert(
+                        station_edit_fixture.path_utf8(), "station-margin-invalid-insert",
+                        {{"rowKind", "station.put"}, {"distance", "50"},
+                         {"stationKey", "STA"}, {"door", "1"},
+                         {"margin1", "0"}, {"margin2", "4"}});
+                    KvEditReportSnapshot report{};
+                    check(kv_edit_dry_run_typed(
+                              st_handle.value, &invalid_insert.batch, &report,
+                              sizeof(report)) != 0,
+                          "station invalid margin insert dry-run call");
+                    check(!report.ok && report.blocking_error_count >= 1,
+                          "station margin1=0 insert dry-run blocked");
+                    check(edit_report_has_error_containing(
+                              report, "margin1 must be a negative value"),
+                          "station margin1=0 insert reports margin1 error");
+                }
+                {
+                    constexpr const char* insert_id = "station-margin-valid-insert";
+                    SimpleInsertBatch valid_insert(
+                        station_edit_fixture.path_utf8(), insert_id,
+                        {{"rowKind", "station.put"}, {"distance", "50"},
+                         {"stationKey", "STA"}, {"door", "1"},
+                         {"margin1", "-4"}, {"margin2", "4"}});
+                    KvEditReportSnapshot dry_report{};
+                    check(kv_edit_dry_run_typed(
+                              st_handle.value, &valid_insert.batch, &dry_report,
+                              sizeof(dry_report)) != 0,
+                          "station valid margin insert dry-run call");
+                    check(dry_report.ok && dry_report.insert_count == 1 &&
+                              dry_report.full_reparse_ok &&
+                              dry_report.non_target_changed_count == 0,
+                          "station valid margin insert dry-run succeeds");
+                    KvEditReportSnapshot applied{};
+                    check(kv_edit_apply_to_memory_typed(
+                              st_handle.value, &valid_insert.batch, &applied,
+                              sizeof(applied)) != 0,
+                          "station valid margin insert apply-to-memory call");
+                    check(applied.ok && applied.insert_count == 1,
+                          "station valid margin insert apply succeeds");
+                    KvMapSnapshot inserted_snapshot{};
+                    check(kv_get_map_snapshot(
+                              st_handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &inserted_snapshot, sizeof(inserted_snapshot)) != 0,
+                          "station valid margin insert snapshot");
+                    const bool inserted_row = inserted_snapshot.station_puts &&
+                        std::any_of(
+                            inserted_snapshot.station_puts,
+                            inserted_snapshot.station_puts +
+                                inserted_snapshot.station_put_count,
+                            [&](const KvStationPutRow& row) {
+                                return map_string(inserted_snapshot, row.metadata.edit_id) ==
+                                           insert_id &&
+                                    row.margin1.kind == KV_VALUE_NUMBER &&
+                                    nearly_equal(row.margin1.number_value, -4.0) &&
+                                    row.margin2.kind == KV_VALUE_NUMBER &&
+                                    nearly_equal(row.margin2.number_value, 4.0);
+                            });
+                    check(inserted_row,
+                          "station valid margin insert retains semantic values");
+                    check(kv_edit_reset_memory(st_handle.value) != 0,
+                          "station valid margin insert reset");
+                }
+            }
+        }
+    }
+
     std::cout << "typed edit contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures;
 }
@@ -7733,6 +7918,70 @@ void light_contract() {
     check(diagnostics_contain("Parameter count error"), "light basic syntax warning");
     check(!diagnostics_contain("Multiple Light.Ambient declarations"),
           "light invalid syntax avoids duplicate warning");
+
+    // Station.Put margin tolerance diagnostics contract
+    {
+        TempFixture station_margin_fixture;
+        const auto write_station_map = [](const std::filesystem::path& path,
+                                          const std::string& text) {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << text;
+            return static_cast<bool>(output);
+        };
+        check(write_station_map(
+                  station_margin_fixture.map_path,
+                  "BveTs Map 2.02:utf-8\n"
+                  "0;\n"
+                  "Station.Load('stations.csv');\n"
+                  "Station['STA'].Put(1, -2.5, 2.5);\n"
+                  "50;\n"
+                  "Station['STA'].Put(1);\n"),
+              "station margin valid fixture write");
+        std::ofstream stations(station_margin_fixture.directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 1.00:utf-8\n"
+                 << "STA,Alpha,09:00,09:01,30,15,1,20,100,arr.wav,dep.wav,1,0\n";
+        stations.close();
+
+        clear_diagnostics();
+        {
+            MapHandle handle(kv_load_map_ex(
+                station_margin_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+            check(handle.value != nullptr, "station margin valid load");
+        }
+        check(!diagnostics_contain("Station.Put margin1 (rearward tolerance) must be a negative value"),
+              "station margin valid emits no margin1 warning");
+        check(!diagnostics_contain("Station.Put margin2 (forward tolerance) must be a positive value"),
+              "station margin valid emits no margin2 warning");
+
+        // Invalid margin1 >= 0 and invalid margin2 <= 0
+        check(write_station_map(
+                  station_margin_fixture.map_path,
+                  "BveTs Map 2.02:utf-8\n"
+                  "0;\n"
+                  "Station.Load('stations.csv');\n"
+                  "Station['STA'].Put(1, 0, 0);\n"
+                  "100;\n"
+                  "Station['STA'].Put(1, 2.5, -1.5);\n"),
+              "station margin invalid fixture write");
+        clear_diagnostics();
+        {
+            MapHandle handle(kv_load_map_ex(
+                station_margin_fixture.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+            check(handle.value != nullptr, "station margin invalid load succeeds (nonfatal)");
+        }
+        check(diagnostics_contain("Station.Put margin1 (rearward tolerance) must be a negative value (got 0)."),
+              "station margin1=0 emits warning");
+        check(diagnostics_contain("Station.Put margin2 (forward tolerance) must be a positive value (got 0)."),
+              "station margin2=0 emits warning");
+        check(diagnostics_contain("Station.Put margin1 (rearward tolerance) must be a negative value (got 2.5)."),
+              "station margin1=2.5 emits warning");
+        check(diagnostics_contain("Station.Put margin2 (forward tolerance) must be a positive value (got -1.5)."),
+              "station margin2=-1.5 emits warning");
+        check(diagnostics_contain("map.txt:4:") && diagnostics_contain("map.txt:6:"),
+              "station margin warnings report file and line locations");
+    }
+
     kv_set_log_callback(nullptr);
 }
 

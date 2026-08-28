@@ -84,6 +84,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Provide shared find and unused-entry search panels for Structure models, signal aspects, and sound lists.
 - [x] Edit, clear, reorder, or delete existing Structure model-list keys and file paths through the source-backed inline table editor; selecting a file writes a relative path where possible.
 - [x] Edit or delete existing `Station.Put` rows, including distance, `stationKey`, door side, and stop margins.
+- [x] Validate `Station.Put` stop tolerances: loading warns with a source location when `margin1` is not negative or `margin2` is not positive; source-backed edits and creation block zero and wrong-sign values.
 - [x] Edit, clear, reorder, or delete station-definition rows loaded through `Station.Load`.
 - [x] Display `Signal Aspect List`, `Map Signal List`, and `Beacon List`.
 - [x] Display `Speed Limit Point List`, `Track Irregularity List`, `Adhesion Change Point List`, rolling-noise, flange-noise, and joint-noise tables.
@@ -232,6 +233,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 为布景模型、信号现示和音效列表提供共享查找和未使用条目搜索面板
 - [x] 通过源文件关联行内表格编辑器编辑、清空、调整顺序或删除已有的布景模型列表 key 和文件路径；选择文件时会尽可能写入相对路径
 - [x] 编辑或删除已有 `Station.Put` 行，包括 distance、`stationKey`、车门侧和停车余量
+- [x] 校验 `Station.Put` 停车位置容差：`margin1` 非负或 `margin2` 非正时，加载会给出含源码位置的警告；基于源码的编辑与新建会阻止零值和错误符号的值
 - [x] 编辑、清空、调整顺序或删除由 `Station.Load` 载入的车站定义行
 - [x] 显示 `信号现示列表`、`地图信号列表` 和 `应答器列表`
 - [x] 显示 `限速点列表`、`轨道变位列表`、`粘着特性变化点列表`、走行音、轮缘摩擦音效和道岔音效相关表格

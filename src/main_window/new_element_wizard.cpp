@@ -214,8 +214,8 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
                 {"stationKey", "stationKey", MapElementNumericConstraint::None, true, ""},
                 {"door", "door", MapElementNumericConstraint::Door, true, "0"},
-                {"margin1", "back", MapElementNumericConstraint::Finite, true, "0"},
-                {"margin2", "front", MapElementNumericConstraint::Finite, true, "0"},
+                {"margin1", "back", MapElementNumericConstraint::Negative, true, "-5"},
+                {"margin2", "front", MapElementNumericConstraint::Positive, true, "5"},
             },
         },
         {
@@ -1349,7 +1349,12 @@ bool App::apply_new_element_insert() {
             return false;
         }
         if (!validate_and_canonicalize_edit_field(field, true)) {
-            set_program_status("status.edit.invalid_number");
+            if (tpl.row_kind == "station.put" &&
+                (field.key == "margin1" || field.key == "margin2")) {
+                set_program_status("status.edit.station_margin_invalid");
+            } else {
+                set_program_status("status.edit.invalid_number");
+            }
             return false;
         }
         if (is_repeater_structure_key_field(field)) {

@@ -726,6 +726,7 @@ struct StationPut {
     std::string file_path;
     int order = 0;
     EditSourceRef edit_ref;
+    MapDiagnostic source;
 };
 
 struct StationListEntry {

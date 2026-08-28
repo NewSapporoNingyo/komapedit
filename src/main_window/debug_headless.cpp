@@ -902,6 +902,16 @@ HeadlessLightEditOptions parse_headless_light_edit_options(
         });
 }
 
+HeadlessStationPutMarginEditOptions parse_headless_station_put_margin_edit_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessStationPutMarginEditOptions>(
+        args, "--debug-headless-station-put-margin-edit",
+        [](HeadlessStationPutMarginEditOptions& options) {
+            options.error =
+                "--debug-headless-station-put-margin-edit is memory-apply only";
+        });
+}
+
 HeadlessSparseNewElementOptions parse_headless_sparse_new_element_options(
     const std::vector<std::string>& args) {
     return parse_headless_required_map_edit_options<HeadlessSparseNewElementOptions>(
@@ -8822,7 +8832,7 @@ int run_debug_headless_insert_edit(const HeadlessInsertEditOptions& options) {
                                 {"flag", "0"}}),
             make_insert_change("headless-insert-station", "station.put",
                                {distance_field(distance_text), {"stationKey", station_key},
-                                {"door", "0"}, {"margin1", "0"}, {"margin2", "0"}}),
+                                {"door", "0"}, {"margin1", "-5"}, {"margin2", "5"}}),
             make_insert_change("headless-insert-signal", "signal.put",
                                {distance_field(distance_text),
                                 {"signalAspectKey", signal_aspect_key}, {"section", "1"},

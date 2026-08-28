@@ -62,6 +62,7 @@ struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 struct HeadlessLightEditOptions;
+struct HeadlessStationPutMarginEditOptions;
 struct HeadlessSparseNewElementOptions;
 struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
@@ -1223,6 +1224,8 @@ enum class MapElementNumericConstraint {
     Tilt,
     Door,
     Truncate3,
+    Negative,
+    Positive,
 };
 
 struct MapElementNumericChoice {
@@ -1795,6 +1798,8 @@ public:
         const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_light_edit(
         const HeadlessLightEditOptions& options);
+    static int run_debug_headless_station_put_margin_edit(
+        const HeadlessStationPutMarginEditOptions& options);
     static int run_debug_headless_sparse_new_element(
         const HeadlessSparseNewElementOptions& options);
     static int run_debug_headless_resource_list_replace(

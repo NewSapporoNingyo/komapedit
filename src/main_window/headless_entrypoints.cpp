@@ -315,6 +315,246 @@ int App::run_debug_headless_light_edit(
     return failed_cases == 0 ? 0 : 20;
 }
 
+int App::run_debug_headless_station_put_margin_edit(
+    const HeadlessStationPutMarginEditOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-station-put-margin-edit\n"
+         << "path=" << options.path << "\n"
+         << "memory_apply_only=1\n"
+         << "stage=load-start\n";
+    out->flush();
+
+    LoadResult load = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, LoadModelOptions{true});
+    if (!load.ok) {
+        *out << "load_error=" << load.error << "\nresult=FAIL\n";
+        if (load.handle) kv_free(load.handle);
+        return 2;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* name, bool value) {
+        *out << name << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+
+    try {
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = load.handle;
+        load.handle = nullptr;
+        app.model_ = std::move(load.model);
+        app.file_path_ = options.path;
+        app.has_model_ = true;
+        app.edit_mode_enabled_ = true;
+        app.edit_registry_loaded_ = true;
+        app.edit_memory_matches_pending_ledger_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.unit_distance_ = options.unit_distance;
+
+        std::string target_edit_id;
+        for (const TableRow& row : app.model_.station_list_rows) {
+            if (!row.edit_id.empty() &&
+                std::abs(table_cell_number(row, "_distance") - 0.0) < 1e-9) {
+                target_edit_id = row.edit_id;
+                break;
+            }
+        }
+        check("found_target_station_put", !target_edit_id.empty());
+
+        if (!target_edit_id.empty()) {
+            // Inspector update with invalid margin1 >= 0
+            app.request_element_inspector(target_edit_id, "station.put");
+            app.process_pending_element_inspector();
+            check("inspector_opened", app.inspector_.open);
+
+            MapElementEditFieldState* m1 = find_inspector_field(app.inspector_, "margin1");
+            MapElementEditFieldState* m2 = find_inspector_field(app.inspector_, "margin2");
+            check("found_margin_fields", m1 != nullptr && m2 != nullptr);
+
+            if (m1 && m2) {
+                // Try applying margin1 = 0
+                set_edit_field_buffer(*m1, "0");
+                app.apply_inspector_changes();
+                check("margin1_zero_blocked",
+                      std::string(app.program_status_key_) == "status.edit.station_margin_invalid");
+
+                // Try applying margin1 = 1.5
+                set_edit_field_buffer(*m1, "1.5");
+                app.apply_inspector_changes();
+                check("margin1_positive_blocked",
+                      std::string(app.program_status_key_) == "status.edit.station_margin_invalid");
+
+                // Restore m1, try applying margin2 = 0
+                set_edit_field_buffer(*m1, "-2.5");
+                set_edit_field_buffer(*m2, "0");
+                app.apply_inspector_changes();
+                check("margin2_zero_blocked",
+                      std::string(app.program_status_key_) == "status.edit.station_margin_invalid");
+
+                // Try applying margin2 = -1.0
+                set_edit_field_buffer(*m2, "-1.0");
+                app.apply_inspector_changes();
+                check("margin2_negative_blocked",
+                      std::string(app.program_status_key_) == "status.edit.station_margin_invalid");
+
+                // Apply valid values: margin1 = -3.0, margin2 = 3.5
+                set_edit_field_buffer(*m1, "-3.0");
+                set_edit_field_buffer(*m2, "3.5");
+                app.apply_inspector_changes();
+                check("valid_margins_applied",
+                      app.pending_edit_changes_.find(target_edit_id) !=
+                          app.pending_edit_changes_.end());
+
+                // Reset
+                app.revert_all_pending_edits();
+                check("revert_clears_pending", app.pending_edit_changes_.empty());
+            }
+        }
+
+        // Use the same prepared state as the production wizard after its
+        // first render has selected an editable target source.
+        const std::vector<std::string> target_candidates =
+            new_element_target_candidates(app.model_);
+        const auto preferred_target = std::find(
+            target_candidates.begin(), target_candidates.end(), app.model_.path);
+        const std::string target_file = preferred_target != target_candidates.end()
+            ? *preferred_target
+            : target_candidates.empty() ? std::string{} : target_candidates.front();
+        const std::vector<NewElementTemplate>& templates = new_element_templates();
+        const auto station_template = std::find_if(
+            templates.begin(), templates.end(), [](const NewElementTemplate& tpl) {
+                return std::string_view(tpl.id) == "station.put";
+            });
+        check("station_wizard_template_available", station_template != templates.end());
+        check("wizard_target_available", !target_file.empty());
+
+        app.new_element_wizard_ = NewElementWizardState{};
+        NewElementWizardState& wizard = app.new_element_wizard_;
+        if (station_template != templates.end() && !target_file.empty()) {
+            wizard.open = true;
+            wizard.selected_template = static_cast<int>(
+                std::distance(templates.begin(), station_template));
+            wizard.target_file_path = target_file;
+            wizard.target_file_candidates = {target_file};
+            wizard.target_candidates_built = true;
+            app.rebuild_new_element_wizard_form();
+        }
+        check("wizard_opened", wizard.open);
+        MapElementEditFieldState* wiz_m1 =
+            find_inspector_field(wizard.form, "margin1");
+        MapElementEditFieldState* wiz_m2 =
+            find_inspector_field(wizard.form, "margin2");
+        MapElementEditFieldState* wiz_key =
+            find_inspector_field(wizard.form, "stationKey");
+        MapElementEditFieldState* wiz_distance =
+            find_inspector_field(wizard.form, "distance");
+        check("wizard_has_margin_fields", wiz_m1 != nullptr && wiz_m2 != nullptr);
+        check("wizard_has_required_fields", wiz_key != nullptr && wiz_distance != nullptr);
+        if (wiz_m1 && wiz_m2 && wiz_key && wiz_distance) {
+            check("wizard_default_margin1_negative",
+                  edit_field_buffer_text(*wiz_m1) == "-5");
+            check("wizard_default_margin2_positive",
+                  edit_field_buffer_text(*wiz_m2) == "5");
+
+            // Fill the unrelated required key first so validation reaches margin1.
+            set_edit_field_buffer(*wiz_key, "a");
+
+            // Try wizard insert with invalid margin1 = 0.
+            set_edit_field_buffer(*wiz_m1, "0");
+            const bool wiz_zero_m1_applied = app.apply_new_element_insert();
+            *out << "wizard_margin1_zero_apply_result="
+                 << (wiz_zero_m1_applied ? 1 : 0) << "\n"
+                 << "wizard_margin1_zero_status=" << app.program_status_key_ << "\n";
+            check("wizard_margin1_zero_blocked", !wiz_zero_m1_applied &&
+                  std::string(app.program_status_key_) ==
+                      "status.edit.station_margin_invalid");
+
+            // Use a unique bracketed distance and let the production distance
+            // resolution workflow settle if source placement needs a choice.
+            set_edit_field_buffer(*wiz_distance, "1");
+            set_edit_field_buffer(*wiz_key, "a");
+            set_edit_field_buffer(*wiz_m1, "-4.0");
+            set_edit_field_buffer(*wiz_m2, "4.0");
+            const auto settle_distance_resolution = [&]() {
+                for (int attempt = 0; attempt < 8; ++attempt) {
+                    if (app.distance_resolution_workflow_.phase !=
+                        DistanceResolutionPhase::None) {
+                        const DistanceResolutionRequest& request =
+                            app.distance_resolution_workflow_.request;
+                        DistanceResolutionChoice choice;
+                        if (!request.suggested_expression.empty()) {
+                            choice.distance_expression = request.suggested_expression;
+                        } else if (!request.allowed_boundaries.empty()) {
+                            choice.boundary_token = request.allowed_boundaries.front().token;
+                        } else if (request.can_confirm_reuse) {
+                            choice.confirm_environment_mismatch = true;
+                        } else {
+                            return false;
+                        }
+                        app.apply_distance_resolution_choice(choice);
+                    }
+                    if (app.distance_resolution_workflow_.retry_requested) {
+                        app.process_distance_resolution_retry();
+                        continue;
+                    }
+                    return app.distance_resolution_workflow_.phase ==
+                        DistanceResolutionPhase::None;
+                }
+                return false;
+            };
+            const bool wizard_applied_immediately = app.apply_new_element_insert();
+            const bool wiz_valid_applied =
+                (wizard_applied_immediately ||
+                 app.distance_resolution_workflow_.phase !=
+                     DistanceResolutionPhase::None ||
+                 app.distance_resolution_workflow_.retry_requested) &&
+                settle_distance_resolution();
+            check("wizard_valid_insert_applied", wiz_valid_applied);
+
+            // Revert all.
+            app.revert_all_pending_edits();
+            check("wizard_insert_reverted", app.pending_edit_changes_.empty());
+        }
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (load.handle) kv_free(load.handle);
+
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 20;
+}
+
 int App::run_debug_headless_new_element_edit(
     const HeadlessNewElementEditOptions& options) {
     std::ofstream output_file;

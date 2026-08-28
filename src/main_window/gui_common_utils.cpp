@@ -313,6 +313,12 @@ bool validate_and_canonicalize_edit_field(MapElementEditFieldState& field,
     }
     double value = 0.0;
     if (!parse_gui_edit_number(edit_field_buffer_text(field), &value)) return false;
+    if (field.numeric_constraint == MapElementNumericConstraint::Negative && value >= 0.0) {
+        return false;
+    }
+    if (field.numeric_constraint == MapElementNumericConstraint::Positive && value <= 0.0) {
+        return false;
+    }
     const MapElementNumericChoiceSet options =
         map_element_numeric_choices(field.numeric_constraint);
     if (options.count != 0 &&
