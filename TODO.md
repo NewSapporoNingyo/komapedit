@@ -19,6 +19,7 @@ This file is the active project progress and contains unfinished items only. Com
 
 ### 用户界面与辅助功能
 
+- [ ] 场景文件地图、列车路径缺失或无效时不中断加载
 - [ ] 场景文件编辑
 - [ ] 场景文件新建
 - [ ] 资源列表加载语句顺序检查：车站列表中有arrivalSoundKey,depertureSoundKey时，Sound.Load语句在地图中的位置必须在Station.Load语句之前。否则在BVE中会找不到对应的key。
