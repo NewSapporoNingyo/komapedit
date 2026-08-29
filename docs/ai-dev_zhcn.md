@@ -93,6 +93,14 @@ AI 工具应自行阅读 [`AGENTS.md`](../AGENTS.md)。可重复执行的工作�
 
 文档内容必须来自当前源码/测试。最后使用 [`komapedit-doc-sync-validation`](../.agents/skills/komapedit-doc-sync-validation/SKILL.md) 检查范围、双语一致性、编码、链接与表格。
 
+## 显式调用 Pi Agent 协作
+
+[`collaborate-with-pi`](../.agents/skills/collaborate-with-pi/SKILL.md) 是只能显式触发的工作流。仅当当前用户明确要求“调用pi agent”（大小写和空格不敏感），或为此显式调用 `$collaborate-with-pi` 时才可使用。不得因为任务困难、仓库中存在 Pi 相关文件或只是讨论该技能而自动触发。当前请求没有这种明确授权时，当前智能体必须自行完成工作，不得启动 Pi。
+
+此技能只能由 Pi Agent 以外的编程智能体使用，禁止在 Pi 中再调用另一个 Pi。上级智能体负责调研当前工作树、确定验收标准、把完整任务说明写入 `pi-prompts_local.txt`、在用户可见的 Windows Terminal 中启动 `pi-agent-here(local).bat`，并继续负责范围、产品决策、独立审查和返修轮次。Pi 负责主要实现、针对性测试、归属正确的文档同步和证据报告。Pi 工作期间，上级智能体只需约每 5 分钟检查一次状态，不得并行修改重叠文件或启动并发构建。
+
+Pi 退出后，上级智能体必须审查实际差异，并独立重跑最小且有决定性的验证。若确认存在缺陷，应写入范围明确的返修提示词并再次启动可见的 Pi 轮次；不得把 Pi 的报告直接当成证明，也不得转移最终责任。
+
 ## 审查结果
 
 即使差异很小，也应检查适用的项目风险：

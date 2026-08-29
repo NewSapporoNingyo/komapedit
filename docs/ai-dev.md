@@ -93,6 +93,14 @@ Keep the task documentation-only unless implementation discrepancies must only b
 
 Documentation must be derived from current source/tests. Use [`komapedit-doc-sync-validation`](../.agents/skills/komapedit-doc-sync-validation/SKILL.md) for the final scope, parity, encoding, link, and table checks.
 
+## Explicit Pi Agent collaboration
+
+[`collaborate-with-pi`](../.agents/skills/collaborate-with-pi/SKILL.md) is an explicit-only workflow. Use it only when the current user explicitly asks to “调用pi agent” (case and spacing variants are equivalent) or invokes `$collaborate-with-pi` for that purpose. Do not activate it because a task is difficult, because Pi-related files exist, or from a mere discussion of the skill. Without that current explicit request, the active agent must complete the work itself and must not launch Pi.
+
+This skill may be used only by a programming agent other than Pi Agent; invoking another Pi from inside Pi is prohibited. The supervising agent researches the current tree, defines acceptance criteria, writes the complete `pi-prompts_local.txt` brief, launches `pi-agent-here(local).bat` in a visible Windows Terminal, and retains responsibility for scope, product decisions, independent review, and any correction round. Pi performs the main implementation, focused tests, owned documentation updates, and its evidence report. While Pi is working, the supervising agent checks state only about once every five minutes and does not make overlapping edits or start concurrent builds.
+
+After Pi exits, the supervising agent must inspect the actual diff and independently rerun the smallest decisive validation. If a defect is proven, it writes a narrow correction brief and starts another visible Pi round; it does not accept Pi's report as proof or silently transfer final responsibility.
+
 ## Review the result
 
 Even a small diff should be checked for the project risks that apply:

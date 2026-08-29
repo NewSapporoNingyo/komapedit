@@ -138,6 +138,7 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 
 | Skill | Use for |
 | --- | --- |
+| `collaborate-with-pi` | Explicit user-requested, non-nested collaboration in which a non-Pi agent plans and reviews while Pi performs the main implementation |
 | `komapedit-develop` | Everyday scoped feature/behavior development and workflow routing |
 | `komapedit-bve-format-compliance` | Mandatory official-syntax verification for BVE map/list/scenario/train reading, editing, creation, serialization, and writeback |
 | `komapedit-fix` | Evidence-led diagnosis and minimal repair of a concrete defect |

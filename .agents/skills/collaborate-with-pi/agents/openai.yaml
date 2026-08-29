@@ -1,0 +1,7 @@
+interface:
+  display_name: "Collaborate with Pi"
+  short_description: "Coordinate explicitly requested Pi Agent work"
+  default_prompt: "Use $collaborate-with-pi to call pi agent for the main implementation, monitor it every five minutes, and independently review the result."
+
+policy:
+  allow_implicit_invocation: false
