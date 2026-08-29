@@ -1102,6 +1102,85 @@ int scenario_route_contract() {
         kv_free_scenario_candidates(candidates);
     }
 
+    // A missing Vehicle entry keeps the rest of the document parseable and
+    // does not block the normal map load pipeline for the valid Route.
+    write_bytes(directory / "vehicle-missing.txt",
+                "BveTs Scenario 2.00\n"
+                "Route = maps\\map-a.txt\n");
+    {
+        const KvScenarioSnapshot* snapshot =
+            load_snapshot(directory / "vehicle-missing.txt");
+        check(snapshot != nullptr && snapshot->route_count == 1 &&
+                  snapshot->vehicle_count == 0,
+              "scenario snapshot loads without a Vehicle entry");
+        kv_free_scenario_snapshot(snapshot);
+        auto [candidates, count] = resolve(directory / "vehicle-missing.txt");
+        check(candidates != nullptr && count == 1,
+              "missing Vehicle still resolves the valid Route");
+        if (candidates && count == 1) {
+            MapHandle handle(kv_load_map_ex(
+                candidates[0].resolved_path, 25.0, KV_LOAD_PREVIEW));
+            check(handle.value != nullptr,
+                  "missing Vehicle does not block the map load");
+        }
+        kv_free_scenario_candidates(candidates);
+    }
+
+    // A Vehicle entry whose target does not exist is preview-only data; it
+    // must not block the map load either, and the snapshot keeps the path.
+    write_bytes(directory / "vehicle-missing-target.txt",
+                "BveTs Scenario 2.00\n"
+                "Route = maps\\map-a.txt\n"
+                "Vehicle = trains\\missing-train.txt\n");
+    {
+        const KvScenarioSnapshot* snapshot =
+            load_snapshot(directory / "vehicle-missing-target.txt");
+        check(snapshot != nullptr && snapshot->vehicle_count == 1 &&
+                  scenario_string(*snapshot, snapshot->vehicles[0].path) ==
+                      "trains\\missing-train.txt",
+              "scenario snapshot keeps a Vehicle path with a missing target");
+        kv_free_scenario_snapshot(snapshot);
+        auto [candidates, count] =
+            resolve(directory / "vehicle-missing-target.txt");
+        check(candidates != nullptr && count == 1,
+              "unusable Vehicle target still resolves the valid Route");
+        if (candidates && count == 1) {
+            MapHandle handle(kv_load_map_ex(
+                candidates[0].resolved_path, 25.0, KV_LOAD_PREVIEW));
+            check(handle.value != nullptr,
+                  "unusable Vehicle target does not block the map load");
+        }
+        kv_free_scenario_candidates(candidates);
+    }
+
+    // A Route target that exists but is not a valid BVE Map fails at the
+    // map-load stage with a deterministic diagnostic while the scenario
+    // document itself stays parseable for the read-only preview.
+    write_bytes(directory / "route-not-map.txt",
+                "BveTs Scenario 2.00\n"
+                "Route = plain.txt\n");
+    {
+        const KvScenarioSnapshot* snapshot =
+            load_snapshot(directory / "route-not-map.txt");
+        check(snapshot != nullptr && snapshot->route_count == 1,
+              "scenario snapshot loads with a non-Map Route target");
+        kv_free_scenario_snapshot(snapshot);
+        auto [candidates, count] = resolve(directory / "route-not-map.txt");
+        check(candidates != nullptr && count == 1,
+              "resolver accepts an existing non-Map Route target");
+        if (candidates && count == 1) {
+            MapHandle handle(kv_load_map_ex(
+                candidates[0].resolved_path, 25.0, KV_LOAD_PREVIEW));
+            check(handle.value == nullptr,
+                  "map load rejects a non-Map Route target");
+            const char* error = kv_get_last_error();
+            check(error && std::string_view(error).find("Invalid file header") !=
+                               std::string_view::npos,
+                  "non-Map Route target diagnostic");
+        }
+        kv_free_scenario_candidates(candidates);
+    }
+
     // shift_jis declaration decodes CP932 relative paths. The target lives in
     // a directory whose name only round-trips through the declared encoding.
     const std::wstring japanese_dir_name = L"\x5730\x56f3";

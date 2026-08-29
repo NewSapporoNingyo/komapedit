@@ -583,6 +583,8 @@ HeadlessLoadScenarioOptions parse_headless_load_scenario_options(
                 options.error = "--load-profile must be preview or edit";
                 return options;
             }
+        } else if (arg == "--expect-no-map") {
+            options.expect_no_map = true;
         } else if (arg == "--headless-output") {
             const std::string* value =
                 take_option_value(args, i, arg, "a path", options.error);
@@ -1251,6 +1253,19 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
     uint64_t candidate_count = 0;
     const KvScenarioRouteCandidate* candidates =
         kv_resolve_scenario_routes(options.path.c_str(), &candidate_count);
+    if ((!candidates || candidate_count == 0) && options.expect_no_map) {
+        // Expected degraded state: the scenario preview stays loaded and no
+        // map load is attempted, mirroring the GUI document lifecycle in
+        // App::perform_open_document() when route resolution is unavailable.
+        const char* error = kv_get_last_error();
+        kv_free_scenario_candidates(candidates);
+        *out << "map_load=not_attempted\n"
+             << "route_resolution=unavailable: "
+             << (error && *error ? error : "maploader failed") << "\n"
+             << "result=PASS\n";
+        out->flush();
+        return 0;
+    }
     if (!candidates || candidate_count == 0) {
         const char* error = kv_get_last_error();
         return fail(std::string("scenario route resolution failed: ") +
@@ -1291,8 +1306,25 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
     flush_logs();
     if (!handle) {
         const char* error = kv_get_last_error();
-        return fail(std::string("resolved map load failed: ") +
-                    (error && *error ? error : "maploader failed"));
+        const std::string detail = std::string("resolved map load failed: ") +
+            (error && *error ? error : "maploader failed");
+        if (options.expect_no_map) {
+            // Expected degraded state: the scenario preview stays loaded and
+            // the resolved target is not a loadable map.
+            *out << "map_load=failed\n"
+                 << detail << "\n"
+                 << "result=PASS\n";
+            out->flush();
+            return 0;
+        }
+        return fail(detail);
+    }
+    if (options.expect_no_map) {
+        // --expect-no-map promises the degraded no-map state. An unexpected
+        // successfully loaded map contradicts the expectation and must fail
+        // instead of reporting a false-positive PASS.
+        kv_free(handle);
+        return fail("expected no map load, but the resolved map loaded unexpectedly");
     }
 
     KvMapSnapshot snapshot{};

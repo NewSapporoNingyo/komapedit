@@ -23,6 +23,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Add an Apply and Edit button to the New Map Element wizard that applies, closes the wizard, and opens `Properties/Edit` on the primary created statement; the button is disabled in wizards opened from a Repeater `Properties/Edit` window.
 - [x] Open a map directly from a BVE Scenario file: the open dialog accepts `BveTs Scenario 2.00` files, resolves the official `Route` entry (single path or weighted candidates) relative to the scenario directory with declared-encoding decoding, loads the referenced map through the normal pipeline, and shows a fixed-width selection dialog when multiple candidates exist.
 - [x] Add a read-only `Map Info List -> Other -> Scenario File` tab for every Scenario document, showing all eight official fields and source-relative Route/Vehicle paths with weights; direct map opens disable it, while a missing/invalid Route target or a cancelled candidate choice retains the standalone Scenario preview.
+- [x] Keep Scenario loading resilient to unusable Route/Vehicle targets: a missing Vehicle entry or a Vehicle path whose target does not exist never blocks the normal map load of a valid Route (Vehicle data stays preview-only), while a missing Route, a nonexistent Route target, or a Route target that is not a valid BVE Map degrades to the Scenario-only read-only preview with all fields retained, an English diagnostic, and no loaded map as a result; invalid Scenario syntax such as empty candidates or non-positive weights still fails deterministically.
 
 ### Own-Track and Other-Track Geometry
 
@@ -173,6 +174,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在“新建地图元素”向导中新增“应用并编辑”按钮：应用成功后关闭向导，并直接打开本次新建主语句的“属性/编辑”窗口；从 Repeater“属性/编辑”窗口打开的向导中该按钮不可用
 - [x] 通过场景文件直接打开地图：打开对话框接受 `BveTs Scenario 2.00` 场景文件，按官方 `Route` 条目（单路径或多候选加权）以场景文件目录为基准、按声明编码解码解析出地图入口文件，经正常流程加载；存在多个候选时弹出固定宽度选择对话框
 - [x] 在“地图信息列表 -> 其它 -> 场景文件”新增只读标签页：每个场景文档均显示全部八个官方字段、源码中的相对 Route/Vehicle 路径及权重；直接打开地图时选项禁用，缺少/无效 Route 目标或取消候选选择时仍保留独立场景预览
+- [x] 场景加载对不可用的 Route/Vehicle 目标保持容错：Vehicle 条目缺失或目标文件不存在时不阻断有效 Route 地图的正常加载（Vehicle 数据仅用于预览）；Route 缺失、目标不存在或目标不是有效 BVE 地图时降级为仅场景只读预览并保留全部字段，记录英文诊断且不加载地图；空候选、非正权重等非法 Scenario 语法仍按确定性诊断失败
 
 ### 自轨道与他轨道几何
 

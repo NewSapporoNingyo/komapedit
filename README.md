@@ -167,7 +167,7 @@ When you open a `BveTs Scenario 2.00` scenario file, the scenario itself remains
 
 - `Map Info List -> Other -> Scenario File` shows the scenario fields, the original Route/Vehicle paths, and their weights.
 - If there is one valid Route, its map loads directly. If there are several candidates, you choose one.
-- If Route is missing, its target does not exist, or you cancel the choice, you can still view the scenario file, but no map is loaded.
+- If Route is missing, its target does not exist, or you cancel the choice, you can still view the scenario file, but no map is loaded. The same degradation applies when the Route target exists but is not a valid BVE map. A missing Vehicle entry or a Vehicle path whose target does not exist never blocks loading the map of a valid Route; Vehicle data is preview-only.
 - Editing, saving, reloading, and `Recent Maps` always use the resolved map file. Weights are validated but are not used to choose a Route automatically.
 
 #### Options

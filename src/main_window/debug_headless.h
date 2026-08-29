@@ -27,6 +27,10 @@ struct HeadlessLoadScenarioOptions {
     int scenario_index = 0;
     double unit_distance = 25.0;
     std::string load_profile = "preview";
+    // Expected degraded state: the scenario preview must load but no map may
+    // load, because Route resolution is unavailable or the resolved target is
+    // not a valid map. Marks the unavailable stage in the output.
+    bool expect_no_map = false;
     std::string error;
 };
 

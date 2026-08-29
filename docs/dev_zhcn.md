@@ -493,7 +493,7 @@ App / MapModel
 
 保持对 BVE Map 2.0+、当前支持的旧式语法、`Include`、变量、预定义 `distance`、数学函数、注释及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关输入的支持。
 
-场景文件只通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取 `Title`、`Route`、`RouteTitle`、`Vehicle`、`VehicleTitle`、`Author`、`Image`、`Comment` 的最后一项，返回保留相对路径原文及显式/默认权重的 Route/Vehicle 行；它不要求存在 Route 或有效 Route 目标，分配的快照由调用方以 `kv_free_scenario_snapshot()` 释放。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在，并返回由 `kv_free_scenario_candidates()` 释放的 malloc 内存块。Scenario 的编辑、新建与写回尚未实现。
+场景文件只通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取 `Title`、`Route`、`RouteTitle`、`Vehicle`、`VehicleTitle`、`Author`、`Image`、`Comment` 的最后一项，返回保留相对路径原文及显式/默认权重的 Route/Vehicle 行；它不要求存在 Route 或有效 Route 目标，分配的快照由调用方以 `kv_free_scenario_snapshot()` 释放。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在，并返回由 `kv_free_scenario_candidates()` 释放的 malloc 内存块。Scenario 的编辑、新建与写回尚未实现。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载（`map_load_pipeline.cpp` 中的 `App::perform_open_document()`）；Route 目标存在但不是有效 BVE 地图时会进入正常地图加载流程并在地图文件校验处失败，最终保留场景预览且没有已加载的地图；`--headless-load-scenario [--expect-no-map]` 通过 `scenario_preview=loaded`、`map_load=not_attempted` 或 `map_load=failed` 阶段标记及 `result=PASS` 断言该降级状态，若地图意外成功加载则以 `result=FAIL` 失败。
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 
@@ -547,7 +547,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ```bat
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
-build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] --headless-output build\headless-load-scenario.txt
+build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] [--expect-no-map] --headless-output build\headless-load-scenario.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt
