@@ -21,7 +21,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 - [ ] 场景文件编辑
 - [ ] 场景文件新建
-- [ ] 资源列表加载语句顺序检查：车站列表中有arrivalSoundKey,depertureSoundKey时，Sound.Load语句在地图中的位置必须在Station.Load语句之前。否则在BVE中会找不到对应的key。
 - [ ] 3种曲线参数语句显示、编辑、新建
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 信号现示列表可新增/删除列

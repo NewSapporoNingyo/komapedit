@@ -321,6 +321,9 @@ struct ResourceListLoad {
     std::string resolved_path;
     std::string file_path;
     int order = 0;
+    // Depth of the owning Map file in the Include stack (entry map = 0).
+    // Internal-only provenance for post-parse ordering rules; never serialized.
+    size_t include_depth = 0;
     MapDiagnostic source;
 };
 

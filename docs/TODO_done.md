@@ -18,6 +18,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Apply supported updates/deletions to an in-memory working copy and save them to source map/include/list files, preserving include structure, distance semantics, original encodings, and line endings where possible.
 - [x] Block writeback when an edited value cannot be represented in the source encoding; there is currently no Save-as-UTF-8 fallback.
 - [x] Reject ambiguous maps with multiple same-kind unkeyed resource-list `Load` statements or multiple case-insensitively matching `Train[].Enable` declarations.
+- [x] Warn when `Sound.Load` is not logically earlier than `Station.Load` while any Station List row uses a non-empty `arrivalSoundKey` or `depertureSoundKey`: the `[WARN]` carries the source location and states the rule, same-file statements order by source line/column with parse order as tie-breaker, statements in different Map files order by Include depth (closest to the entry file first) with global parse order only as an equal-depth tie-breaker, and the warning never blocks loading; wrong-order maps still return a handle and a typed snapshot.
 - [x] Insert supported map placement and event/effect statements through the New Map Element wizard; resource/list definition rows remain inline-table-only.
 - [x] Insert `Repeater.Begin`/`Begin0`, `Repeater.End`, or an atomic Begin+End pair through the New Map Element wizard; preserve half-open same-name interval protection, confirmed Begin-only change points, and isolated End statements while blocking extra End statements inside explicitly closed intervals.
 - [x] Add an Apply and Edit button to the New Map Element wizard that applies, closes the wizard, and opens `Properties/Edit` on the primary created statement; the button is disabled in wizards opened from a Repeater `Properties/Edit` window.
@@ -169,6 +170,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 将已支持的修改/删除先应用到内存工作副本，再保存到源 map/include/list 文件，并尽量保留 include 结构、距离语义、原始编码和换行
 - [x] 当修改后的值无法用源文件原编码表示时阻止回写；当前没有另存为 UTF-8 的替代路径
 - [x] 拒绝含有多个同种无 key 资源列表 `Load` 语句，或多个名称仅大小写不同的 `Train[].Enable` 声明的歧义地图
+- [x] 当车站列表任一行使用非空 `arrivalSoundKey` 或 `depertureSoundKey` 时，若 `Sound.Load` 在逻辑上不早于 `Station.Load` 则发出警告：`[WARN]` 携带源码位置并明确规则，同一文件按源码行/列排序（解析顺序为 tie-breaker），不同 Map 文件按 Include 深度排序（越靠近入口文件越早，仅同深度时以全局解析顺序为 tie-breaker），且警告绝不阻断加载；顺序错误的地图仍能返回 handle 和 typed snapshot
 - [x] 通过“新建地图元素”向导新增受支持的地图放置和事件/效果语句；资源/定义列表仍只能通过行内表格编辑
 - [x] 通过“新建地图元素”向导单独新增 `Repeater.Begin`/`Begin0`、`Repeater.End`，或原子新增 Begin+End；保留半开同名区间保护和经确认的 Begin-only 变化点，允许孤立 End，并阻止在已有显式 End 的有效区间内增加 End
 - [x] 在“新建地图元素”向导中新增“应用并编辑”按钮：应用成功后关闭向导，并直接打开本次新建主语句的“属性/编辑”窗口；从 Repeater“属性/编辑”窗口打开的向导中该按钮不可用

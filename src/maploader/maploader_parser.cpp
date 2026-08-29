@@ -1550,6 +1550,7 @@ private:
         row.resolved_path = path_to_utf8(resolved.lexically_normal());
         row.file_path = ctx_.current_file_path;
         row.order = ctx_.next_parse_order();
+        row.include_depth = ctx_.include_stack.size() - 1;
         row.source = diagnostic_source(current_statement_start_, statement_kind);
         ctx_.resource_list_loads.push_back(std::move(row));
     }
@@ -2448,7 +2449,13 @@ void validate_light_statements(MapContext& ctx) {
     }
 }
 
-void validate_unique_preview_statements(const MapContext& ctx) {
+// Resource loads indexed by kind; each entry is the first syntactically valid
+// Load of that kind in global parse order. Shared by the duplicate-Load
+// rejection above and post-parse resource ordering rules so there is exactly
+// one Load-collection/sorting owner.
+using FirstResourceListLoads = std::array<const ResourceListLoad*, 5>;
+
+FirstResourceListLoads validate_unique_preview_statements(const MapContext& ctx) {
     std::vector<const ResourceListLoad*> loads;
     loads.reserve(ctx.resource_list_loads.size());
     for (const ResourceListLoad& row : ctx.resource_list_loads) loads.push_back(&row);
@@ -2457,7 +2464,7 @@ void validate_unique_preview_statements(const MapContext& ctx) {
                         const ResourceListLoad* right) {
                          return left->order < right->order;
                      });
-    std::array<const ResourceListLoad*, 5> first_loads{};
+    FirstResourceListLoads first_loads{};
     for (const ResourceListLoad* row : loads) {
         const size_t index = static_cast<size_t>(row->kind);
         if (first_loads[index]) {
@@ -2487,6 +2494,54 @@ void validate_unique_preview_statements(const MapContext& ctx) {
                 "Train[" + key + "].Enable");
         }
     }
+    return first_loads;
+}
+
+// Warns when the Station List uses arrival/deperture sound keys but Sound.Load
+// is not strictly earlier than Station.Load in BVE's logical load order: same
+// physical Map file orders by source line/column (parse order as tie-breaker);
+// different Map files order by Include depth (entry map first), falling back
+// to global parse order only for equal depths. The warning is advisory and
+// never blocks loading.
+void append_station_sound_load_order_diagnostic(
+    MapContext& ctx, const FirstResourceListLoads& first_loads) {
+    const ResourceListLoad* station_load = first_loads[static_cast<size_t>(ResourceListLoadKind::Station)];
+    const ResourceListLoad* sound_load = first_loads[static_cast<size_t>(ResourceListLoadKind::Sound)];
+    if (!station_load || !sound_load) return;
+
+    const bool station_uses_sound_keys = std::any_of(
+        ctx.station_list.begin(), ctx.station_list.end(),
+        [](const StationListEntry& entry) {
+            return !trim_field_copy(entry.fields[9]).empty() ||
+                   !trim_field_copy(entry.fields[10]).empty();
+        });
+    if (!station_uses_sound_keys) return;
+
+    bool sound_is_earlier = false;
+    if (normalized_source_key(station_load->file_path) ==
+        normalized_source_key(sound_load->file_path)) {
+        if (station_load->source.line != sound_load->source.line) {
+            sound_is_earlier = sound_load->source.line < station_load->source.line;
+        } else if (station_load->source.column != sound_load->source.column) {
+            sound_is_earlier = sound_load->source.column < station_load->source.column;
+        } else {
+            sound_is_earlier = sound_load->order < station_load->order;
+        }
+    } else if (station_load->include_depth != sound_load->include_depth) {
+        sound_is_earlier = sound_load->include_depth < station_load->include_depth;
+    } else {
+        sound_is_earlier = sound_load->order < station_load->order;
+    }
+    if (sound_is_earlier) return;
+
+    MapDiagnostic diagnostic = station_load->source;
+    diagnostic.statement_kind = "Station.Load";
+    diagnostic.message =
+        "Sound.Load must appear before Station.Load when the Station List uses "
+        "arrivalSoundKey or depertureSoundKey: the sound key may not be found "
+        "in BVE. Sound.Load is at " +
+        diagnostic_location(sound_load->source) + ".";
+    ctx.diagnostics.push_back(std::move(diagnostic));
 }
 
 void append_transition_diagnostics(MapContext& ctx) {
@@ -2618,7 +2673,9 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
         parser.parse();
         validate_light_statements(*ctx);
         validate_station_put_statements(*ctx);
-        validate_unique_preview_statements(*ctx);
+        const FirstResourceListLoads first_loads =
+            validate_unique_preview_statements(*ctx);
+        append_station_sound_load_order_diagnostic(*ctx, first_loads);
     } catch (...) {
         emit_diagnostics(*ctx);
         throw;

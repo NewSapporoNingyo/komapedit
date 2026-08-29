@@ -8291,6 +8291,179 @@ int diagnostics_contract(const std::filesystem::path& fixture_root) {
     check(diagnostics_contain("Invalid file header"),
           "invalid resource list header warning");
 
+    // Station.List arrival/deperture sound keys require Sound.Load to precede
+    // Station.Load in BVE's logical load order. Same-file cases order strictly
+    // by source line/column; cross-file cases order by Include depth before
+    // any global parse order, so these cases also prove the depth rule is not
+    // a global-order comparison.
+    const char* station_sound_keys_warning =
+        "Sound.Load must appear before Station.Load when the Station List uses "
+        "arrivalSoundKey or depertureSoundKey";
+    const auto write_sound_list = [](const std::filesystem::path& path) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output << "BveTs Sound List 2.00:utf-8\n"
+               << "arr,arr.wav\n"
+               << "dep,dep.wav\n";
+    };
+
+    TempFixture station_sound_order_ok;
+    {
+        std::ofstream map(station_sound_order_ok.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Sound.Load('sounds.csv');\n"
+            << "Station.Load('stations.csv');\n";
+    }
+    write_sound_list(station_sound_order_ok.directory / "sounds.csv");
+    {
+        std::ofstream stations(station_sound_order_ok.directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 2.00:utf-8\n"
+                 << "STA,Station,09:00:00,09:01:00,30,09:00:00,1,20,100,arr,dep,1,0\n";
+    }
+    clear_diagnostics();
+    MapHandle station_sound_ok_handle(kv_load_map_ex(
+        station_sound_order_ok.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(station_sound_ok_handle.value != nullptr,
+          "correct same-file Sound.Load order returns a handle");
+    check(!diagnostics_contain(station_sound_keys_warning),
+          "correct same-file Sound.Load order has no order warning");
+    if (station_sound_ok_handle.value) {
+        KvMapSnapshot snapshot{};
+        check(kv_get_map_snapshot(station_sound_ok_handle.value,
+                                  KV_MAP_SNAPSHOT_VERSION, &snapshot,
+                                  sizeof(snapshot)) != 0,
+              "correct same-file order snapshot");
+        check(snapshot.station_list_count == 1,
+              "correct same-file order keeps station rows");
+    }
+
+    TempFixture station_sound_order_bad;
+    {
+        std::ofstream map(station_sound_order_bad.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Station.Load('stations.csv');\n"
+            << "Sound.Load('sounds.csv');\n";
+    }
+    write_sound_list(station_sound_order_bad.directory / "sounds.csv");
+    {
+        std::ofstream stations(station_sound_order_bad.directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 2.00:utf-8\n"
+                 << "STA,Station,09:00:00,09:01:00,30,09:00:00,1,20,100,arr,dep,1,0\n";
+    }
+    clear_diagnostics();
+    MapHandle station_sound_bad_handle(kv_load_map_ex(
+        station_sound_order_bad.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(station_sound_bad_handle.value != nullptr,
+          "wrong same-file Sound.Load order still returns a handle");
+    check(diagnostics_contain("[WARN]"),
+          "wrong same-file Sound.Load order uses warning severity");
+    check(!diagnostics_contain("[ERROR]"),
+          "wrong same-file Sound.Load order is not an error");
+    check(diagnostics_contain(station_sound_keys_warning),
+          "wrong same-file Sound.Load order emits the order warning");
+    check(diagnostics_contain("map.txt:3:1") &&
+              diagnostics_contain("map.txt:4:1"),
+          "order warning reports the Station.Load diagnostic location");
+    if (station_sound_bad_handle.value) {
+        KvMapSnapshot snapshot{};
+        check(kv_get_map_snapshot(station_sound_bad_handle.value,
+                                  KV_MAP_SNAPSHOT_VERSION, &snapshot,
+                                  sizeof(snapshot)) != 0,
+              "wrong same-file order snapshot");
+        check(snapshot.station_list_count == 1,
+              "wrong same-file order keeps station rows");
+    }
+
+    TempFixture station_sound_empty_keys;
+    {
+        std::ofstream map(station_sound_empty_keys.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Station.Load('stations.csv');\n"
+            << "Sound.Load('sounds.csv');\n";
+    }
+    write_sound_list(station_sound_empty_keys.directory / "sounds.csv");
+    {
+        std::ofstream stations(station_sound_empty_keys.directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 2.00:utf-8\n"
+                 << "STA,Station,09:00:00,09:01:00,30,09:00:00,1,20,100,,,1,0\n";
+    }
+    clear_diagnostics();
+    MapHandle station_sound_empty_handle(kv_load_map_ex(
+        station_sound_empty_keys.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(station_sound_empty_handle.value != nullptr,
+          "empty station sound keys map returns a handle");
+    check(!diagnostics_contain(station_sound_keys_warning),
+          "empty arrival/deperture sound keys do not warn");
+
+    // Cross-file depth cases: the entry map is depth 0 and the Include child
+    // is depth 1, so the depth rule must override the global parse order even
+    // when the entry statement's load is parsed after the child's.
+    TempFixture station_sound_depth_ok;
+    {
+        std::ofstream child(station_sound_depth_ok.directory / "child.txt",
+                            std::ios::binary | std::ios::trunc);
+        child << "BveTs Map 2.02:utf-8\n"
+              << "Station.Load('stations.csv');\n";
+        std::ofstream map(station_sound_depth_ok.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Include 'child.txt';\n"
+            << "Sound.Load('sounds.csv');\n";
+    }
+    write_sound_list(station_sound_depth_ok.directory / "sounds.csv");
+    {
+        std::ofstream stations(station_sound_depth_ok.directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 2.00:utf-8\n"
+                 << "STA,Station,09:00:00,09:01:00,30,09:00:00,1,20,100,arr,dep,1,0\n";
+    }
+    clear_diagnostics();
+    MapHandle station_sound_depth_ok_handle(kv_load_map_ex(
+        station_sound_depth_ok.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(station_sound_depth_ok_handle.value != nullptr,
+          "entry Sound.Load after child Station.Load returns a handle");
+    check(!diagnostics_contain(station_sound_keys_warning),
+          "entry file depth wins over global parse order (no warning)");
+
+    TempFixture station_sound_depth_bad;
+    {
+        std::ofstream child(station_sound_depth_bad.directory / "child.txt",
+                            std::ios::binary | std::ios::trunc);
+        child << "BveTs Map 2.02:utf-8\n"
+              << "Sound.Load('sounds.csv');\n";
+        std::ofstream map(station_sound_depth_bad.map_path,
+                          std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\n"
+            << "0;\n"
+            << "Include 'child.txt';\n"
+            << "Station.Load('stations.csv');\n";
+    }
+    write_sound_list(station_sound_depth_bad.directory / "sounds.csv");
+    {
+        std::ofstream stations(station_sound_depth_bad.directory / "stations.csv",
+                               std::ios::binary | std::ios::trunc);
+        stations << "BveTs Station List 2.00:utf-8\n"
+                 << "STA,Station,09:00:00,09:01:00,30,09:00:00,1,20,100,arr,dep,1,0\n";
+    }
+    clear_diagnostics();
+    MapHandle station_sound_depth_bad_handle(kv_load_map_ex(
+        station_sound_depth_bad.path_utf8().c_str(), 25.0, KV_LOAD_PREVIEW));
+    check(station_sound_depth_bad_handle.value != nullptr,
+          "entry Station.Load after child Sound.Load returns a handle");
+    check(diagnostics_contain(station_sound_keys_warning),
+          "entry Station.Load after deeper Sound.Load warns despite parse order");
+
     clear_diagnostics();
     MapHandle clean(kv_load_map_ex(
         fixture_path("map_errors_no_false_positive.txt").c_str(), 25.0,

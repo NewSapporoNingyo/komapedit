@@ -134,6 +134,8 @@ When an AI coding tool changes or adds BVE map-element reading, parsing, validat
 
 Editable rows must retain source path, include stack, source span, original statement and arguments, evaluated values, distance expression, parse order, and stable ID. Keep `KvMapSnapshot` exhaustive and strongly typed. Source writeback preserves original encoding and line endings where possible and blocks unrepresentable characters; there is no Save-as-UTF-8 fallback.
 
+When any Station List row uses a non-empty `arrivalSoundKey` or `depertureSoundKey`, the post-parse diagnostics require `Sound.Load` to be logically earlier than `Station.Load` and otherwise emit one English `[WARN]` without blocking the load. The rule reuses the shared `ResourceListLoad` records and their Include-depth provenance: same physical file orders by source line/column with parse order as tie-breaker, different Map files order by Include depth, and global parse order is only an equal-depth fallback. `validate_unique_preview_statements()` remains the single owner of Load collection/deduplication and returns the first-load set the ordering rule consumes.
+
 ### Editing model
 
 - Source ownership stays in maploader structures; never reconstruct anchors from GUI table text or create a parallel GUI document model.

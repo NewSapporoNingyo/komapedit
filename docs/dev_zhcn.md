@@ -215,7 +215,7 @@ ctest --test-dir build --output-on-failure
 - **自轨道与他轨道**：`dispatch_curve()`、`dispatch_gradient()`、`dispatch_legacy()` 记录曲线、坡度和旧式事件；`dispatch_track()`、`setposition_interpolate()`、`track_position()` 记录他轨道位置、插值、轨距、中心和超高事件。
 - **资源列表**：`load_resource_list()` 与 `record_resource_list_load()` 保存 Load 的原表达式、求值路径和源码身份；`parse_station_list()`、`parse_structure_list()`、`parse_signal_aspect_list()`、`parse_sound_list()` 把物理列表行转成强类型且可回写的记录；`parse_other_train_file()` 读取他列车文件。
 - **地图元素分派**：`dispatch_station/speedlimit/section/signal/beacon/pretrain/structure/sound/train/repeater/irregularity/background/adhesion/cab_illuminance/fog/draw_distance()` 及三个 noise 分派函数，检查方法形状、读取参数并追加对应行；`add_other_train_definition()` 统一 Train 定义登记。
-- **解析后诊断**：`validate_unique_preview_statements()` 拒绝歧义 Load/Enable；`append_transition_diagnostics()` 报告未配对过渡；`append_deferred_key_diagnostics()` 检查资源 key；`emit_diagnostics()` 输出并把错误升级为失败。
+- **解析后诊断**：`validate_unique_preview_statements()` 拒绝歧义 Load/Enable；`append_transition_diagnostics()` 报告未配对过渡；`append_deferred_key_diagnostics()` 检查资源 key；`append_station_sound_load_order_diagnostic()` 复用 `ResourceListLoad` 记录及其 Include 深度来源，在车站行使用非空到达/出发音效 key 且 `Sound.Load` 逻辑上不早于 `Station.Load` 时输出英文 `[WARN]`（同文件按源码行/列，不同文件按 Include 深度，全局解析顺序仅作同深度回退）且不阻断加载；`emit_diagnostics()` 输出并把错误升级为失败。
 - **模块入口**：`parse_map_context()` 创建 `MapContext`、装载主文件、运行 Parser、刷新环境/诊断并返回完整上下文，是所有加载和编辑后重解析的共同入口。
 
 #### `src/maploader/maploader_geometry.cpp`
