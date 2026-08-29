@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -124,24 +125,23 @@ std::filesystem::path join_utf8_path(const std::filesystem::path& root,
 
 std::string read_binary_file(const std::filesystem::path& path) {
 #if defined(_WIN32)
-    FILE* input = _wfopen(path.wstring().c_str(), L"rb");
+    std::unique_ptr<FILE, decltype(&std::fclose)> input(
+        _wfopen(path.wstring().c_str(), L"rb"), &std::fclose);
     if (!input) {
         throw std::runtime_error(file_open_failure_message(path));
     }
     std::string result;
     char buffer[8192];
     while (true) {
-        size_t n = std::fread(buffer, 1, sizeof(buffer), input);
+        size_t n = std::fread(buffer, 1, sizeof(buffer), input.get());
         if (n > 0) result.append(buffer, n);
         if (n < sizeof(buffer)) {
-            if (std::ferror(input)) {
-                std::fclose(input);
+            if (std::ferror(input.get())) {
                 throw std::runtime_error("File read error: " + path_to_utf8(path));
             }
             break;
         }
     }
-    std::fclose(input);
     return result;
 #else
     std::ifstream input(path, std::ios::binary);

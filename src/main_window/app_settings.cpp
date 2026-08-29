@@ -369,125 +369,22 @@ bool apply_bool_setting(
     return false;
 }
 
-bool save_user_settings(const UserSettings& settings) {
-    std::ofstream out(settings.path, std::ios::binary | std::ios::trunc);
-    if (!out) return false;
-    out << "[General]\n";
-    out << "language=" << language_to_string(settings.language) << "\n";
-    out << "font_size=" << std::fixed << std::setprecision(1) << clamp_font_size(settings.font_size) << "\n";
-    out << "ui_component_size=" << std::fixed << std::setprecision(1) << clamp_ui_component_size(settings.ui_component_size) << "\n";
-    out << "marker_size_percent=" << std::fixed << std::setprecision(1) << clamp_marker_size_percent(settings.marker_size_percent) << "\n";
-    CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(settings.canvas_line_widths);
-    out << "own_track_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.own_track_px << "\n";
-    out << "other_track_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.other_track_px << "\n";
-    out << "chart_marker_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.chart_marker_px << "\n";
-    out << "background_grid_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.background_grid_px << "\n";
-    out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
-    out << "edit_mode_enabled=" << bool_to_string(settings.edit_mode_enabled) << "\n";
-    out << "edit_mode_warning_suppressed=" << bool_to_string(settings.edit_mode_warning_suppressed) << "\n";
-    out << "\n[WindowVisibility]\n";
-    out << "show_othertracks_window=" << bool_to_string(settings.window_visibility.show_othertracks_window) << "\n";
-    out << "show_station_list_window=" << bool_to_string(settings.window_visibility.show_station_list_window) << "\n";
-    out << "show_structures_window=" << bool_to_string(settings.window_visibility.show_structures_window) << "\n";
-    out << "show_structures_between_window=" << bool_to_string(settings.window_visibility.show_structures_between_window) << "\n";
-    out << "show_structure_models_window=" << bool_to_string(settings.window_visibility.show_structure_models_window) << "\n";
-    out << "show_other_trains_window=" << bool_to_string(settings.window_visibility.show_other_trains_window) << "\n";
-    out << "show_sound_list_window=" << bool_to_string(settings.window_visibility.show_sound_list_window) << "\n";
-    out << "show_sound_3d_list_window=" << bool_to_string(settings.window_visibility.show_sound_3d_list_window) << "\n";
-    out << "show_repeaters_window=" << bool_to_string(settings.window_visibility.show_repeaters_window) << "\n";
-    out << "show_signal_aspects_window=" << bool_to_string(settings.window_visibility.show_signal_aspects_window) << "\n";
-    out << "show_signals_window=" << bool_to_string(settings.window_visibility.show_signals_window) << "\n";
-    out << "show_sections_window=" << bool_to_string(settings.window_visibility.show_sections_window) << "\n";
-    out << "show_variables_window=" << bool_to_string(settings.window_visibility.show_variables_window) << "\n";
-    out << "show_beacons_window=" << bool_to_string(settings.window_visibility.show_beacons_window) << "\n";
-    out << "show_irregularities_window=" << bool_to_string(settings.window_visibility.show_irregularities_window) << "\n";
-    out << "show_map_sounds_window=" << bool_to_string(settings.window_visibility.show_map_sounds_window) << "\n";
-    out << "show_map_sound_3d_window=" << bool_to_string(settings.window_visibility.show_map_sound_3d_window) << "\n";
-    out << "show_rolling_noises_window=" << bool_to_string(settings.window_visibility.show_rolling_noises_window) << "\n";
-    out << "show_flange_noises_window=" << bool_to_string(settings.window_visibility.show_flange_noises_window) << "\n";
-    out << "show_joint_noises_window=" << bool_to_string(settings.window_visibility.show_joint_noises_window) << "\n";
-    out << "show_backgrounds_window=" << bool_to_string(settings.window_visibility.show_backgrounds_window) << "\n";
-    out << "show_adhesions_window=" << bool_to_string(settings.window_visibility.show_adhesions_window) << "\n";
-    out << "show_cab_illuminance_window=" << bool_to_string(settings.window_visibility.show_cab_illuminance_window) << "\n";
-    out << "show_fogs_window=" << bool_to_string(settings.window_visibility.show_fogs_window) << "\n";
-    out << "show_legacy_fogs_window=" << bool_to_string(settings.window_visibility.show_legacy_fogs_window) << "\n";
-    out << "show_lighting_window=" << bool_to_string(settings.window_visibility.show_lighting_window) << "\n";
-    out << "show_draw_distances_window=" << bool_to_string(settings.window_visibility.show_draw_distances_window) << "\n";
-    out << "show_speed_limits_window=" << bool_to_string(settings.window_visibility.show_speed_limits_window) << "\n";
-    out << "show_file_structure_window=" << bool_to_string(settings.window_visibility.show_file_structure_window) << "\n";
-    out << "show_console_window=" << bool_to_string(settings.window_visibility.show_console_window) << "\n";
-    out << "show_plots_window=" << bool_to_string(settings.window_visibility.show_plots_window) << "\n";
-    out << "show_model_preview_window=" << bool_to_string(settings.window_visibility.show_model_preview_window) << "\n";
-    out << "show_scene_preview_window=" << bool_to_string(settings.window_visibility.show_scene_preview_window) << "\n";
-    out << "\n[View2D]\n";
-    out << "show_stations=" << bool_to_string(settings.view_2d.show_stations) << "\n";
-    out << "show_station_names=" << bool_to_string(settings.view_2d.show_station_names) << "\n";
-    out << "show_station_mileage=" << bool_to_string(settings.view_2d.show_station_mileage) << "\n";
-    out << "show_gradient_pos=" << bool_to_string(settings.view_2d.show_gradient_pos) << "\n";
-    out << "show_gradient_values=" << bool_to_string(settings.view_2d.show_gradient_values) << "\n";
-    out << "show_curve_values=" << bool_to_string(settings.view_2d.show_curve_values) << "\n";
-    out << "show_profile_other=" << bool_to_string(settings.view_2d.show_profile_other) << "\n";
-    out << "show_speedlimits=" << bool_to_string(settings.view_2d.show_speedlimits) << "\n";
-    out << "show_section_markers=" << bool_to_string(settings.view_2d.show_section_markers) << "\n";
-    out << "show_irregularity_markers=" << bool_to_string(settings.view_2d.show_irregularity_markers) << "\n";
-    out << "show_beacon_markers=" << bool_to_string(settings.view_2d.show_beacon_markers) << "\n";
-    out << "show_pretrain_markers=" << bool_to_string(settings.view_2d.show_pretrain_markers) << "\n";
-    out << "show_map_sound_markers=" << bool_to_string(settings.view_2d.show_map_sound_markers) << "\n";
-    out << "show_map_sound_3d_markers=" << bool_to_string(settings.view_2d.show_map_sound_3d_markers) << "\n";
-    out << "show_rolling_noise_markers=" << bool_to_string(settings.view_2d.show_rolling_noise_markers) << "\n";
-    out << "show_flange_noise_markers=" << bool_to_string(settings.view_2d.show_flange_noise_markers) << "\n";
-    out << "show_joint_noise_markers=" << bool_to_string(settings.view_2d.show_joint_noise_markers) << "\n";
-    out << "show_background_markers=" << bool_to_string(settings.view_2d.show_background_markers) << "\n";
-    out << "show_adhesion_markers=" << bool_to_string(settings.view_2d.show_adhesion_markers) << "\n";
-    out << "show_cab_illuminance_markers=" << bool_to_string(settings.view_2d.show_cab_illuminance_markers) << "\n";
-    out << "show_fog_markers=" << bool_to_string(settings.view_2d.show_fog_markers) << "\n";
-    out << "show_draw_distance_markers=" << bool_to_string(settings.view_2d.show_draw_distance_markers) << "\n";
-    out << "show_profile_graph=" << bool_to_string(settings.view_2d.show_profile_graph) << "\n";
-    out << "show_radius_graph=" << bool_to_string(settings.view_2d.show_radius_graph) << "\n";
-    out << "show_background_image=" << bool_to_string(settings.view_2d.show_background_image) << "\n";
-    out << "mode=" << view_2d_mode_to_string(settings.view_2d.mode) << "\n";
-    out << "grid_mode=" << grid_mode_to_string(settings.view_2d.grid_mode) << "\n";
-    out << "\n[View3D]\n";
-    out << "show_scene_owntrack_markers=" << bool_to_string(settings.view_3d.show_scene_owntrack_markers) << "\n";
-    out << "show_scene_current_position_on_plan=" << bool_to_string(settings.view_3d.show_scene_current_position_on_plan) << "\n";
-    out << "scene_fog_enabled=" << bool_to_string(settings.view_3d.scene_fog_enabled) << "\n";
-    out << "scene_map_draw_distance_enabled=" << bool_to_string(settings.view_3d.scene_map_draw_distance_enabled) << "\n";
-    out << "scene_auto_load_on_map_open=" << bool_to_string(settings.view_3d.scene_auto_load_on_map_open) << "\n";
-    out << "scene_draw_distance_m=" << clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m) << "\n";
-    out << "scene_edit_component_size_percent="
-        << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
-        << "\n";
-    out << "scene_camera_speed_percent=" << settings.view_3d.scene_camera_speed_percent << "\n";
-    int scene_instance_warning_threshold = settings.view_3d.scene_instance_warning_threshold;
-    int scene_instance_critical_warning_threshold =
-        settings.view_3d.scene_instance_critical_warning_threshold;
-    normalize_scene_instance_warning_thresholds(
-        scene_instance_warning_threshold, scene_instance_critical_warning_threshold);
-    out << "scene_performance_warning_enabled="
-        << bool_to_string(settings.view_3d.scene_performance_warning_enabled) << "\n";
-    out << "scene_instance_warning_threshold=" << scene_instance_warning_threshold << "\n";
-    out << "scene_instance_critical_warning_threshold="
-        << scene_instance_critical_warning_threshold << "\n";
-    return true;
+template <typename Owner, size_t Count>
+void write_bool_settings(
+    std::ostream& out,
+    const Owner& source,
+    const std::array<std::pair<std::string_view, bool Owner::*>, Count>& fields,
+    size_t begin = 0,
+    size_t end = Count) {
+    for (size_t index = begin; index < end; ++index) {
+        const auto& field = fields[index];
+        out << field.first << "=" << bool_to_string(source.*(field.second)) << "\n";
+    }
 }
 
-UserSettings load_user_settings(const std::filesystem::path& path) {
-    const UserSettings defaults;
-    UserSettings settings = defaults;
-    settings.path = path;
-
-    std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-    if (ec || !exists) {
-        save_user_settings(settings);
-        return settings;
-    }
-
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return settings;
-
-    static constexpr std::array<
-        std::pair<std::string_view, bool WindowVisibilitySettings::*>, 33> window_fields{{
+static constexpr std::array<
+    std::pair<std::string_view, bool WindowVisibilitySettings::*>, 33>
+    k_window_visibility_bool_fields{{
         {"show_othertracks_window", &WindowVisibilitySettings::show_othertracks_window},
         {"show_station_list_window", &WindowVisibilitySettings::show_station_list_window},
         {"show_structures_window", &WindowVisibilitySettings::show_structures_window},
@@ -522,8 +419,9 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
         {"show_model_preview_window", &WindowVisibilitySettings::show_model_preview_window},
         {"show_scene_preview_window", &WindowVisibilitySettings::show_scene_preview_window},
     }};
-    static constexpr std::array<
-        std::pair<std::string_view, bool View2DSettings::*>, 25> view_2d_fields{{
+
+static constexpr std::array<std::pair<std::string_view, bool View2DSettings::*>, 25>
+    k_view_2d_bool_fields{{
         {"show_stations", &View2DSettings::show_stations},
         {"show_station_names", &View2DSettings::show_station_names},
         {"show_station_mileage", &View2DSettings::show_station_mileage},
@@ -550,8 +448,9 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
         {"show_radius_graph", &View2DSettings::show_radius_graph},
         {"show_background_image", &View2DSettings::show_background_image},
     }};
-    static constexpr std::array<
-        std::pair<std::string_view, bool View3DSettings::*>, 6> view_3d_fields{{
+
+static constexpr std::array<std::pair<std::string_view, bool View3DSettings::*>, 6>
+    k_view_3d_bool_fields{{
         {"show_scene_owntrack_markers", &View3DSettings::show_scene_owntrack_markers},
         {"show_scene_current_position_on_plan", &View3DSettings::show_scene_current_position_on_plan},
         {"scene_fog_enabled", &View3DSettings::scene_fog_enabled},
@@ -559,6 +458,62 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
         {"scene_auto_load_on_map_open", &View3DSettings::scene_auto_load_on_map_open},
         {"scene_performance_warning_enabled", &View3DSettings::scene_performance_warning_enabled},
     }};
+
+bool save_user_settings(const UserSettings& settings) {
+    std::ofstream out(settings.path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << "[General]\n";
+    out << "language=" << language_to_string(settings.language) << "\n";
+    out << "font_size=" << std::fixed << std::setprecision(1) << clamp_font_size(settings.font_size) << "\n";
+    out << "ui_component_size=" << std::fixed << std::setprecision(1) << clamp_ui_component_size(settings.ui_component_size) << "\n";
+    out << "marker_size_percent=" << std::fixed << std::setprecision(1) << clamp_marker_size_percent(settings.marker_size_percent) << "\n";
+    CanvasLineWidthSettings line_widths = clamp_canvas_line_widths(settings.canvas_line_widths);
+    out << "own_track_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.own_track_px << "\n";
+    out << "other_track_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.other_track_px << "\n";
+    out << "chart_marker_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.chart_marker_px << "\n";
+    out << "background_grid_line_width_px=" << std::fixed << std::setprecision(1) << line_widths.background_grid_px << "\n";
+    out << "theme_color=" << theme_color_to_string(settings.theme_color) << "\n";
+    out << "edit_mode_enabled=" << bool_to_string(settings.edit_mode_enabled) << "\n";
+    out << "edit_mode_warning_suppressed=" << bool_to_string(settings.edit_mode_warning_suppressed) << "\n";
+    out << "\n[WindowVisibility]\n";
+    write_bool_settings(out, settings.window_visibility, k_window_visibility_bool_fields);
+    out << "\n[View2D]\n";
+    write_bool_settings(out, settings.view_2d, k_view_2d_bool_fields);
+    out << "mode=" << view_2d_mode_to_string(settings.view_2d.mode) << "\n";
+    out << "grid_mode=" << grid_mode_to_string(settings.view_2d.grid_mode) << "\n";
+    out << "\n[View3D]\n";
+    write_bool_settings(out, settings.view_3d, k_view_3d_bool_fields, 0, 5);
+    out << "scene_draw_distance_m=" << clamp_scene_draw_distance(settings.view_3d.scene_draw_distance_m) << "\n";
+    out << "scene_edit_component_size_percent="
+        << clamp_scene_edit_component_size_percent(settings.view_3d.scene_edit_component_size_percent)
+        << "\n";
+    out << "scene_camera_speed_percent=" << settings.view_3d.scene_camera_speed_percent << "\n";
+    int scene_instance_warning_threshold = settings.view_3d.scene_instance_warning_threshold;
+    int scene_instance_critical_warning_threshold =
+        settings.view_3d.scene_instance_critical_warning_threshold;
+    normalize_scene_instance_warning_thresholds(
+        scene_instance_warning_threshold, scene_instance_critical_warning_threshold);
+    write_bool_settings(out, settings.view_3d, k_view_3d_bool_fields, 5, 6);
+    out << "scene_instance_warning_threshold=" << scene_instance_warning_threshold << "\n";
+    out << "scene_instance_critical_warning_threshold="
+        << scene_instance_critical_warning_threshold << "\n";
+    return true;
+}
+
+UserSettings load_user_settings(const std::filesystem::path& path) {
+    const UserSettings defaults;
+    UserSettings settings = defaults;
+    settings.path = path;
+
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec || !exists) {
+        save_user_settings(settings);
+        return settings;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return settings;
 
     std::string section;
     std::string line;
@@ -635,10 +590,10 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
             }
         } else if (section == "WindowVisibility") {
             apply_bool_setting(key, value, settings.window_visibility,
-                               defaults.window_visibility, window_fields);
+                               defaults.window_visibility, k_window_visibility_bool_fields);
         } else if (section == "View2D") {
             if (!apply_bool_setting(
-                    key, value, settings.view_2d, defaults.view_2d, view_2d_fields)) {
+                    key, value, settings.view_2d, defaults.view_2d, k_view_2d_bool_fields)) {
                 if (key == "mode") {
                     settings.view_2d.mode =
                         view_2d_mode_from_string(value).value_or(defaults.view_2d.mode);
@@ -649,7 +604,7 @@ UserSettings load_user_settings(const std::filesystem::path& path) {
             }
         } else if (section == "View3D") {
             if (apply_bool_setting(
-                    key, value, settings.view_3d, defaults.view_3d, view_3d_fields)) {
+                    key, value, settings.view_3d, defaults.view_3d, k_view_3d_bool_fields)) {
                 continue;
             }
             auto parsed = parse_finite_number(value);

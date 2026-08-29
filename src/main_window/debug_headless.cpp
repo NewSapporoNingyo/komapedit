@@ -1519,6 +1519,12 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
                   {"1", "50", "100", "500", "128", "129", "130", "cache-source.map"},
                   "legacy-fog-cache-row", 50),
               "caches_legacy_fog_change_point_row");
+        app.legacy_fog_list_scroll_row_ = 4;
+        app.legacy_fog_list_highlight_row_ = 5;
+        app.invalidate_table_cache();
+        check(app.legacy_fog_list_scroll_row_ == -1 &&
+                  app.legacy_fog_list_highlight_row_ == -1,
+              "invalidates_legacy_fog_navigation_state");
     } catch (const std::exception& e) {
         *out << "exception=\"" << e.what() << "\"\n";
         exit_code = 3;
@@ -1701,18 +1707,34 @@ int run_debug_headless_scene_loader_contract(
              << "result=FAIL\n";
         return 2;
     }
-    Canvas3D canvas(nullptr);
-    const Canvas3DSceneLoaderContractResult contract =
-        canvas.debug_run_scene_loader_contract(model_path.u8string());
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
+    const char* driver = nullptr;
+    if (!create_headless_d3d_device(device, context, driver)) {
+        *out << "error=failed to create Direct3D device for scene loader contract\n"
+             << "result=FAIL\n";
+        return 2;
+    }
+    Canvas3DSceneLoaderContractResult contract;
+    {
+        Canvas3D canvas(device);
+        contract = canvas.debug_run_scene_loader_contract(
+            model_path.u8string(), image_path.u8string());
+    }
+    release_com(context);
+    release_com(device);
     const HeadlessResourceSafetyContractResult resource_safety =
         run_debug_resource_safety_contract(
             image_path.u8string(), (temp.path / "missing.bmp").u8string());
     const bool passed = contract.error.empty() && contract.normal_worker &&
         contract.copy_exception && contract.put_between_exception &&
         contract.subset_requeue && contract.removal_only_cancel &&
-        contract.release_balance && resource_safety.image_layout &&
+        contract.release_balance && contract.texture_allocation_cleanup &&
+        contract.texture_cache_reuse && contract.upload_failure_cleanup &&
+        resource_safety.image_layout &&
         resource_safety.image_decode && resource_safety.numeric_conversion;
     *out << "stage=worker-contract-complete\n"
+         << "d3d_driver=" << driver << "\n"
          << "normal_worker=" << (contract.normal_worker ? "PASS" : "FAIL") << "\n"
          << "copy_exception=" << (contract.copy_exception ? "PASS" : "FAIL") << "\n"
          << "put_between_exception="
@@ -1723,6 +1745,12 @@ int run_debug_headless_scene_loader_contract(
          << "release_balance=" << (contract.release_balance ? "PASS" : "FAIL")
          << " successful_loads=" << contract.successful_load_count
          << " frees=" << contract.free_count << "\n"
+         << "texture_allocation_cleanup="
+         << (contract.texture_allocation_cleanup ? "PASS" : "FAIL") << "\n"
+         << "texture_cache_reuse="
+         << (contract.texture_cache_reuse ? "PASS" : "FAIL") << "\n"
+         << "upload_failure_cleanup="
+         << (contract.upload_failure_cleanup ? "PASS" : "FAIL") << "\n"
          << "image_layout=" << (resource_safety.image_layout ? "PASS" : "FAIL") << "\n"
          << "image_decode=" << (resource_safety.image_decode ? "PASS" : "FAIL") << "\n"
          << "numeric_conversion="

@@ -287,6 +287,9 @@ struct Canvas3DSceneLoaderContractResult {
     bool subset_requeue = false;
     bool removal_only_cancel = false;
     bool release_balance = false;
+    bool texture_allocation_cleanup = false;
+    bool texture_cache_reuse = false;
+    bool upload_failure_cleanup = false;
     size_t successful_load_count = 0;
     size_t free_count = 0;
     std::string error;
@@ -512,7 +515,8 @@ public:
 #ifndef NDEBUG
     void set_debug_scene_loading_tuning(size_t worker_limit, bool texture_cache_enabled);
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
-        const std::string& valid_model_path);
+        const std::string& valid_model_path,
+        const std::string& valid_texture_path);
     Canvas3DSceneFogDebugState debug_scene_fog_state() const;
     bool debug_read_scene_render_pixels(std::vector<std::uint8_t>& rgba,
                                         int& width, int& height,

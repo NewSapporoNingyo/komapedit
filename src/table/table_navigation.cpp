@@ -49,6 +49,8 @@ void App::invalidate_table_cache() {
     cab_illuminance_list_highlight_row_ = -1;
     fog_list_scroll_row_ = -1;
     fog_list_highlight_row_ = -1;
+    legacy_fog_list_scroll_row_ = -1;
+    legacy_fog_list_highlight_row_ = -1;
     draw_distance_list_scroll_row_ = -1;
     draw_distance_list_highlight_row_ = -1;
     speed_limit_list_scroll_row_ = -1;

@@ -43,6 +43,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <mutex>
+#include <new>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -4846,88 +4847,114 @@ struct Canvas3D::Impl {
         if (!out_srv) return false;
         *out_srv = nullptr;
         if (out_has_alpha) *out_has_alpha = false;
-        IWICImagingFactory* factory = nullptr;
-        IWICBitmapDecoder* decoder = nullptr;
-        IWICBitmapFrameDecode* frame = nullptr;
-        IWICFormatConverter* converter = nullptr;
-        UINT width = 0;
-        UINT height = 0;
-        UINT row_stride = 0;
-        size_t pixel_bytes = 0;
-        std::vector<unsigned char> pixels;
+        struct TextureDecodeResources {
+            IWICImagingFactory* factory = nullptr;
+            IWICBitmapDecoder* decoder = nullptr;
+            IWICBitmapFrameDecode* frame = nullptr;
+            IWICFormatConverter* converter = nullptr;
+            ID3D11Texture2D* texture = nullptr;
 
-        HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-        if (FAILED(hr)) {
-            error = hresult_text("CoCreateInstance(WIC)", hr);
-            goto fail;
-        }
-        hr = factory->CreateDecoderFromFilename(utf8_to_wide(path).c_str(), nullptr, GENERIC_READ,
-                                                WICDecodeMetadataCacheOnLoad, &decoder);
-        if (FAILED(hr)) {
-            const auto failure =
-                kme::maploader::classify_file_open_failure(
-                    kme::maploader::path_from_utf8(path));
-            if (failure == kme::maploader::FileOpenFailureKind::Missing) {
-                error = "Texture file not found at specified path: " + path;
-            } else if (failure ==
-                       kme::maploader::FileOpenFailureKind::ExistsButCannotOpen) {
-                error = "Texture file exists but cannot be opened or decoded: " + path;
-            } else {
-                error = "Texture file status could not be determined: " + path;
+            ~TextureDecodeResources() {
+                release_com(texture);
+                release_com(converter);
+                release_com(frame);
+                release_com(decoder);
+                release_com(factory);
             }
-            goto fail;
-        }
-        hr = decoder->GetFrame(0, &frame);
-        if (FAILED(hr)) {
-            error = "Texture file exists but cannot be opened or decoded: " + path;
-            goto fail;
-        }
-        hr = factory->CreateFormatConverter(&converter);
-        if (FAILED(hr)) {
-            error = hresult_text("CreateFormatConverter", hr);
-            goto fail;
-        }
-        hr = converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone,
-                                   nullptr, 0.0, WICBitmapPaletteTypeCustom);
-        if (FAILED(hr)) {
-            error = "Texture file exists but cannot be opened or decoded: " + path;
-            goto fail;
-        }
-        hr = converter->GetSize(&width, &height);
-        if (FAILED(hr)) {
-            error = "failed to read texture dimensions: " + path;
-            goto fail;
-        }
-        if (width == 0 || height == 0) {
-            error = "texture has invalid size: " + path;
-            goto fail;
-        }
-        if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-            height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-            width > std::numeric_limits<UINT>::max() / 4) {
-            error = "texture dimensions exceed the Direct3D 11 limit: " + path;
-            goto fail;
-        }
-        row_stride = width * 4;
-        if (height > std::numeric_limits<size_t>::max() / row_stride) {
-            error = "texture byte size overflows the host address space: " + path;
-            goto fail;
-        }
-        pixel_bytes = static_cast<size_t>(row_stride) * height;
-        if (pixel_bytes > std::numeric_limits<UINT>::max()) {
-            error = "texture byte size exceeds the WIC copy limit: " + path;
-            goto fail;
-        }
-        pixels.resize(pixel_bytes);
-        hr = converter->CopyPixels(
-            nullptr, row_stride, static_cast<UINT>(pixel_bytes), pixels.data());
-        if (FAILED(hr)) {
-            error = "failed to copy texture pixels: " + path;
-            goto fail;
-        }
-        if (out_has_alpha) *out_has_alpha = texture_pixels_have_alpha(pixels);
+        } resources;
+        auto fail = [&]() noexcept {
+            release_com(*out_srv);
+            if (out_has_alpha) *out_has_alpha = false;
+            return false;
+        };
 
-        {
+        try {
+            HRESULT hr = CoCreateInstance(
+                CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&resources.factory));
+            if (FAILED(hr)) {
+                error = hresult_text("CoCreateInstance(WIC)", hr);
+                return fail();
+            }
+            hr = resources.factory->CreateDecoderFromFilename(
+                utf8_to_wide(path).c_str(), nullptr, GENERIC_READ,
+                WICDecodeMetadataCacheOnLoad, &resources.decoder);
+            if (FAILED(hr)) {
+                const auto failure = kme::maploader::classify_file_open_failure(
+                    kme::maploader::path_from_utf8(path));
+                if (failure == kme::maploader::FileOpenFailureKind::Missing) {
+                    error = "Texture file not found at specified path: " + path;
+                } else if (failure ==
+                           kme::maploader::FileOpenFailureKind::ExistsButCannotOpen) {
+                    error = "Texture file exists but cannot be opened or decoded: " + path;
+                } else {
+                    error = "Texture file status could not be determined: " + path;
+                }
+                return fail();
+            }
+            hr = resources.decoder->GetFrame(0, &resources.frame);
+            if (FAILED(hr)) {
+                error = "Texture file exists but cannot be opened or decoded: " + path;
+                return fail();
+            }
+            hr = resources.factory->CreateFormatConverter(&resources.converter);
+            if (FAILED(hr)) {
+                error = hresult_text("CreateFormatConverter", hr);
+                return fail();
+            }
+            hr = resources.converter->Initialize(
+                resources.frame, GUID_WICPixelFormat32bppRGBA,
+                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+            if (FAILED(hr)) {
+                error = "Texture file exists but cannot be opened or decoded: " + path;
+                return fail();
+            }
+
+            UINT width = 0;
+            UINT height = 0;
+            hr = resources.converter->GetSize(&width, &height);
+            if (FAILED(hr)) {
+                error = "failed to read texture dimensions: " + path;
+                return fail();
+            }
+            if (width == 0 || height == 0) {
+                error = "texture has invalid size: " + path;
+                return fail();
+            }
+            if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+                height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+                width > std::numeric_limits<UINT>::max() / 4) {
+                error = "texture dimensions exceed the Direct3D 11 limit: " + path;
+                return fail();
+            }
+            const UINT row_stride = width * 4;
+            if (height > std::numeric_limits<size_t>::max() / row_stride) {
+                error = "texture byte size overflows the host address space: " + path;
+                return fail();
+            }
+            const size_t pixel_bytes = static_cast<size_t>(row_stride) * height;
+            if (pixel_bytes > std::numeric_limits<UINT>::max()) {
+                error = "texture byte size exceeds the WIC copy limit: " + path;
+                return fail();
+            }
+#ifndef NDEBUG
+            int remaining =
+                debug_texture_allocation_throw_countdown.load(std::memory_order_relaxed);
+            while (remaining > 0 &&
+                   !debug_texture_allocation_throw_countdown.compare_exchange_weak(
+                       remaining, remaining - 1, std::memory_order_relaxed)) {
+            }
+            if (remaining == 1) throw std::bad_alloc();
+#endif
+            std::vector<unsigned char> pixels(pixel_bytes);
+            hr = resources.converter->CopyPixels(
+                nullptr, row_stride, static_cast<UINT>(pixel_bytes), pixels.data());
+            if (FAILED(hr)) {
+                error = "failed to copy texture pixels: " + path;
+                return fail();
+            }
+            if (out_has_alpha) *out_has_alpha = texture_pixels_have_alpha(pixels);
+
             D3D11_TEXTURE2D_DESC desc = {};
             desc.Width = width;
             desc.Height = height;
@@ -4940,38 +4967,25 @@ struct Canvas3D::Impl {
             D3D11_SUBRESOURCE_DATA sub = {};
             sub.pSysMem = pixels.data();
             sub.SysMemPitch = row_stride;
-            ID3D11Texture2D* texture = nullptr;
-            hr = device->CreateTexture2D(&desc, &sub, &texture);
+            hr = device->CreateTexture2D(&desc, &sub, &resources.texture);
             if (FAILED(hr)) {
                 error = hresult_text("CreateTexture2D(texture)", hr);
-                goto fail;
+                return fail();
             }
             D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
             srv_desc.Format = desc.Format;
             srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
             srv_desc.Texture2D.MipLevels = 1;
-            hr = device->CreateShaderResourceView(texture, &srv_desc, out_srv);
-            texture->Release();
+            hr = device->CreateShaderResourceView(resources.texture, &srv_desc, out_srv);
             if (FAILED(hr)) {
                 error = hresult_text("CreateShaderResourceView(texture)", hr);
-                goto fail;
+                return fail();
             }
+            return true;
+        } catch (const std::bad_alloc&) {
+            error = "out of memory";
+            return fail();
         }
-
-        release_com(converter);
-        release_com(frame);
-        release_com(decoder);
-        release_com(factory);
-        return true;
-
-fail:
-        release_com(*out_srv);
-        if (out_has_alpha) *out_has_alpha = false;
-        release_com(converter);
-        release_com(frame);
-        release_com(decoder);
-        release_com(factory);
-        return false;
     }
 
     bool load_scene_texture(const std::string& path,
@@ -5009,11 +5023,15 @@ fail:
             return false;
         }
 
-        SceneTextureCacheEntry entry;
-        entry.texture = *out_srv;
-        entry.has_alpha = has_alpha;
-        entry.texture->AddRef();
-        scene_texture_cache.emplace(key, entry);
+        auto [inserted, was_inserted] = scene_texture_cache.try_emplace(key);
+        if (!was_inserted) {
+            release_com(*out_srv);
+            error = "texture cache insertion conflict";
+            return false;
+        }
+        inserted->second.texture = *out_srv;
+        inserted->second.has_alpha = has_alpha;
+        inserted->second.texture->AddRef();
         if (out_has_alpha) *out_has_alpha = has_alpha;
         return true;
     }
@@ -5625,7 +5643,8 @@ fail:
 
 #ifndef NDEBUG
     Canvas3DSceneLoaderContractResult debug_run_scene_loader_contract(
-        const std::string& valid_model_path) {
+        const std::string& valid_model_path,
+        const std::string& valid_texture_path) {
         Canvas3DSceneLoaderContractResult result;
         result.release_balance = true;
         auto record_release_counts = [&]() {
@@ -5644,7 +5663,10 @@ fail:
             scene_worker_running.store(false);
             scene_model_worker_limit = 1;
             debug_copy_cpu_model_throw_countdown.store(0);
+            debug_texture_allocation_throw_countdown.store(0);
+            debug_scene_index_buffer_failure_countdown.store(0);
             g_debug_put_between_derive_throw_countdown.store(0);
+            release_scene_texture_cache();
         };
         auto pending_uploads = [&]() {
             std::lock_guard<std::mutex> lock(scene_upload_mutex);
@@ -5665,6 +5687,64 @@ fail:
                 normal_outputs.size() == 1 && normal_outputs[0].ok &&
                 normal_outputs[0].scene_key == "normal";
             record_release_counts();
+
+            std::string texture_error;
+            ID3D11ShaderResourceView* allocation_texture = nullptr;
+            debug_texture_allocation_throw_countdown.store(1);
+            const bool allocation_texture_loaded = load_texture(
+                valid_texture_path, &allocation_texture, texture_error);
+            result.texture_allocation_cleanup = !allocation_texture_loaded &&
+                !allocation_texture && !texture_error.empty();
+            release_com(allocation_texture);
+            debug_texture_allocation_throw_countdown.store(0);
+
+            release_scene_texture_cache();
+            scene_stats_value.texture_cache_hit_count = 0;
+            scene_stats_value.texture_cache_miss_count = 0;
+            ID3D11ShaderResourceView* first_texture = nullptr;
+            ID3D11ShaderResourceView* second_texture = nullptr;
+            bool first_has_alpha = false;
+            bool second_has_alpha = false;
+            std::string first_texture_error;
+            std::string second_texture_error;
+            const bool first_texture_loaded = load_scene_texture(
+                valid_texture_path, &first_texture, first_texture_error,
+                &first_has_alpha);
+            const bool second_texture_loaded = load_scene_texture(
+                valid_texture_path, &second_texture, second_texture_error,
+                &second_has_alpha);
+            result.texture_cache_reuse = first_texture_loaded &&
+                second_texture_loaded && first_texture &&
+                second_texture == first_texture &&
+                first_has_alpha == second_has_alpha &&
+                scene_texture_cache.size() == 1 &&
+                scene_stats_value.texture_cache_miss_count == 1 &&
+                scene_stats_value.texture_cache_hit_count == 1;
+            release_com(first_texture);
+            release_com(second_texture);
+            release_scene_texture_cache();
+
+            if (!normal_outputs.empty() && normal_outputs[0].ok) {
+                CpuModelData upload_failure = normal_outputs[0];
+                upload_failure.scene_key = "upload-failure";
+                upload_failure.shared_model_key.clear();
+                scene_models.try_emplace(upload_failure.scene_key);
+                debug_scene_index_buffer_failure_countdown.store(1);
+                std::string upload_error;
+                const bool upload_succeeded =
+                    upload_scene_model(upload_failure, upload_error);
+                const auto failed_model = scene_models.find(upload_failure.scene_key);
+                result.upload_failure_cleanup = !upload_succeeded &&
+                    failed_model != scene_models.end() &&
+                    failed_model->second.state == SceneModelGpu::State::Failed &&
+                    !failed_model->second.vertex_buffer &&
+                    !failed_model->second.index_buffer &&
+                    !failed_model->second.instance_buffer &&
+                    failed_model->second.parts.empty() &&
+                    failed_model->second.materials.empty() &&
+                    !failed_model->second.error.empty() && !upload_error.empty();
+                debug_scene_index_buffer_failure_countdown.store(0);
+            }
 
             reset_scene_worker_state();
             ModelLoaderClient::debug_reset_counts();
@@ -5813,6 +5893,14 @@ fail:
         if (it == scene_models.end()) return true;
         SceneModelGpu& model = it->second;
         release_scene_model(model);
+        auto fail_upload = [&](const std::string& message) {
+            release_scene_model(model);
+            model.state = SceneModelGpu::State::Failed;
+            model.error = message;
+            error = message;
+            return false;
+        };
+        try {
         if (!cpu.ok) {
             model.state = SceneModelGpu::State::Failed;
             model.error = cpu.error.empty() ? "model load failed" : cpu.error;
@@ -5846,8 +5934,7 @@ fail:
         vb_data.pSysMem = cpu.vertices.data();
         HRESULT hr = device->CreateBuffer(&vb_desc, &vb_data, &model.vertex_buffer);
         if (FAILED(hr)) {
-            error = hresult_text("CreateBuffer(scene vertex)", hr);
-            return false;
+            return fail_upload(hresult_text("CreateBuffer(scene vertex)", hr));
         }
 
         if (shared_model) {
@@ -5866,10 +5953,21 @@ fail:
             ib_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
             D3D11_SUBRESOURCE_DATA ib_data = {};
             ib_data.pSysMem = cpu.indices.data();
+#ifndef NDEBUG
+            int remaining =
+                debug_scene_index_buffer_failure_countdown.load(std::memory_order_relaxed);
+            while (remaining > 0 &&
+                   !debug_scene_index_buffer_failure_countdown.compare_exchange_weak(
+                       remaining, remaining - 1, std::memory_order_relaxed)) {
+            }
+            hr = remaining == 1
+                ? E_FAIL
+                : device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
+#else
             hr = device->CreateBuffer(&ib_desc, &ib_data, &model.index_buffer);
+#endif
             if (FAILED(hr)) {
-                error = hresult_text("CreateBuffer(scene index)", hr);
-                return false;
+                return fail_upload(hresult_text("CreateBuffer(scene index)", hr));
             }
 
             model.parts = cpu.parts;
@@ -5909,6 +6007,21 @@ fail:
         model.state = SceneModelGpu::State::Ready;
         model.error.clear();
         return true;
+        } catch (const std::exception& exception) {
+            release_scene_model(model);
+            model.state = SceneModelGpu::State::Failed;
+            try {
+                model.error = "scene model upload failed: " +
+                    std::string(exception.what());
+                error = model.error;
+            } catch (...) {
+                model.error = "scene model upload failed";
+                error = model.error;
+            }
+            return false;
+        } catch (...) {
+            return fail_upload("scene model upload failed: unknown error");
+        }
     }
 
     bool upload_scene_put_between_preview_model(
@@ -6048,13 +6161,6 @@ fail:
         for (const CpuModelData& cpu : pending) {
             std::string error;
             if (!upload_scene_model(cpu, error)) {
-                const std::string& scene_key = cpu.scene_key.empty() ? cpu.path : cpu.scene_key;
-                auto it = scene_models.find(scene_key);
-                if (it != scene_models.end()) {
-                    release_scene_model(it->second);
-                    it->second.state = SceneModelGpu::State::Failed;
-                    it->second.error = error;
-                }
                 if (!error.empty()) {
                     scene_last_error = error;
                     push_scene_load_log("[warn]canvas3D.cpp: failed to upload scene model: " +
@@ -10914,6 +11020,8 @@ fail:
     float scene_fps_value = 0.0f;
 #ifndef NDEBUG
     std::atomic<int> debug_copy_cpu_model_throw_countdown{0};
+    std::atomic<int> debug_texture_allocation_throw_countdown{0};
+    std::atomic<int> debug_scene_index_buffer_failure_countdown{0};
 #endif
     ModelLoaderClient loader;
     ModelLoaderClient scene_loader;
@@ -11052,8 +11160,10 @@ void Canvas3D::set_debug_scene_loading_tuning(size_t worker_limit, bool texture_
 }
 
 Canvas3DSceneLoaderContractResult Canvas3D::debug_run_scene_loader_contract(
-    const std::string& valid_model_path) {
-    return impl_->debug_run_scene_loader_contract(valid_model_path);
+    const std::string& valid_model_path,
+    const std::string& valid_texture_path) {
+    return impl_->debug_run_scene_loader_contract(
+        valid_model_path, valid_texture_path);
 }
 
 Canvas3DSceneFogDebugState Canvas3D::debug_scene_fog_state() const {
