@@ -393,6 +393,19 @@ int main(int, char**) {
         return App::run_debug_headless_light_edit(light_edit);
     }
 
+    HeadlessCurveParameterEditOptions curve_parameter_edit =
+        parse_headless_curve_parameter_edit_options(args);
+    if (curve_parameter_edit.requested) {
+        if (!curve_parameter_edit.error.empty()) {
+            std::cerr << curve_parameter_edit.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-curve-parameter-edit "
+                         "<map-path> [--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_curve_parameter_edit(
+            curve_parameter_edit);
+    }
+
     HeadlessStationPutMarginEditOptions station_put_margin_edit =
         parse_headless_station_put_margin_edit_options(args);
     if (station_put_margin_edit.requested) {

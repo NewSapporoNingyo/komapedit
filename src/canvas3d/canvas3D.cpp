@@ -1700,7 +1700,8 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                              std::string edit_id = {},
                              bool unpaired_transition = false,
                              double source_x = 0.0,
-                             double source_y = 0.0) {
+                             double source_y = 0.0,
+                             std::string secondary_label = {}) {
         if (!std::isfinite(distance)) return;
         std::optional<Canvas3DTrackPoint> point =
             scene_sample_track_path_points(*own_track, distance);
@@ -1713,6 +1714,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
             ? scene_sound3d_source_point(*point, source_x, source_y)
             : *point;
         marker.label = std::move(label);
+        marker.secondary_label = std::move(secondary_label);
         marker.row_kind = std::move(row_kind);
         marker.row_index = row_index;
         marker.edit_id = std::move(edit_id);
@@ -1731,6 +1733,22 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     for (size_t row_index = 0; row_index < model.curve_rows.size(); ++row_index) {
         const TableRow& row = model.curve_rows[row_index];
         const std::string method = ascii_lower(table_cell(row, "method"));
+        if (method == "curve.setgauge" || method == "curve.gauge" ||
+            method == "curve.setcenter" || method == "curve.setfunction") {
+            const MapMarkerVisualKind kind = method == "curve.setcenter"
+                ? MapMarkerVisualKind::CurveCenter
+                : method == "curve.setfunction"
+                    ? MapMarkerVisualKind::CurveFunction
+                    : MapMarkerVisualKind::CurveGauge;
+            const char* code = method == "curve.setcenter" ? "CC" :
+                method == "curve.setfunction" ? "CF" : "CG";
+            append_marker(kind, table_cell_number(row, "distance"), code,
+                          MapMarkerIconVariant::Default,
+                          Canvas3DSceneMarkerListKind::None, "curve", row_index,
+                          row.edit_id, false, 0.0, 0.0,
+                          table_cell(row, "radius"));
+            continue;
+        }
         const bool transition = method == "curve.begintransition";
         const double radius = table_cell_number(row, "radius");
         const bool end = method == "curve.end" ||
@@ -8287,6 +8305,10 @@ struct Canvas3D::Impl {
             center + up * static_cast<double>(content_vertical_offset);
         const bool is_other_track_change =
             marker.kind == MapMarkerVisualKind::OtherTrackChange;
+        const bool is_curve_parameter =
+            marker.kind == MapMarkerVisualKind::CurveGauge ||
+            marker.kind == MapMarkerVisualKind::CurveCenter ||
+            marker.kind == MapMarkerVisualKind::CurveFunction;
 
         const std::uint32_t marker_first =
             static_cast<std::uint32_t>(indices.size());
@@ -8311,7 +8333,7 @@ struct Canvas3D::Impl {
                 ImVec2(0.0f, -k_scene_marker_sound3d_tag_tip_height),
                 face_sign, board_color_u32);
         }
-        if (!is_other_track_change) {
+        if (!is_other_track_change && !is_curve_parameter) {
             append_scene_marker_icon(
                 vertices, indices, origin, content_center,
                 right, up, forward, baked, marker.kind,
@@ -8360,31 +8382,39 @@ struct Canvas3D::Impl {
                 ImGui::ColorConvertFloat4ToU32(
                     marker.has_theme_color ? marker.theme_color
                                            : map_marker_theme_color(marker.kind));
-            for (const ImVec2 offset : {
-                     ImVec2(-k_scene_marker_outline_width, 0.0f),
-                     ImVec2(k_scene_marker_outline_width, 0.0f),
-                     ImVec2(0.0f, -k_scene_marker_outline_width),
-                     ImVec2(0.0f, k_scene_marker_outline_width)}) {
-                const DVec3 shifted_center =
-                    content_center +
-                    right * static_cast<double>(offset.x) +
-                    up * static_cast<double>(offset.y);
+            auto append_outlined_label = [&](const std::string& text,
+                                             float center_y,
+                                             float height) {
+                if (text.empty()) return;
+                for (const ImVec2 offset : {
+                         ImVec2(-k_scene_marker_outline_width, 0.0f),
+                         ImVec2(k_scene_marker_outline_width, 0.0f),
+                         ImVec2(0.0f, -k_scene_marker_outline_width),
+                         ImVec2(0.0f, k_scene_marker_outline_width)}) {
+                    const DVec3 shifted_center =
+                        content_center +
+                        right * static_cast<double>(offset.x) +
+                        up * static_cast<double>(offset.y);
+                    append_scene_marker_text(
+                        vertices, indices, origin,
+                        shifted_center, right, up, forward,
+                        font, baked, font_size, text,
+                        face_sign, outline_color, height, center_y,
+                        k_scene_marker_label_max_width);
+                }
                 append_scene_marker_text(
-                    vertices, indices, origin,
-                    shifted_center, right, up, forward,
-                    font, baked, font_size, marker.label,
-                    face_sign, outline_color,
-                    k_scene_marker_label_height,
-                    label_center_y,
+                    vertices, indices, origin, content_center,
+                    right, up, forward, font, baked, font_size,
+                    text, face_sign, text_color, height, center_y,
                     k_scene_marker_label_max_width);
+            };
+            if (is_curve_parameter) {
+                append_outlined_label(marker.label, 0.72f, 0.22f);
+                append_outlined_label(marker.secondary_label, 0.28f, 0.18f);
+            } else {
+                append_outlined_label(marker.label, label_center_y,
+                                      k_scene_marker_label_height);
             }
-            append_scene_marker_text(
-                vertices, indices, origin, content_center,
-                right, up, forward, font, baked, font_size,
-                marker.label, face_sign, text_color,
-                k_scene_marker_label_height,
-                label_center_y,
-                k_scene_marker_label_max_width);
             ranges.push_back({
                 marker.kind,
                 marker_index,

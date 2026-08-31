@@ -361,6 +361,9 @@ View2DSettings App::current_view_2d_settings() const {
     view.show_gradient_pos = show_gradient_pos_;
     view.show_gradient_values = show_gradient_values_;
     view.show_curve_values = show_curve_values_;
+    view.show_curve_gauge_markers = show_curve_gauge_markers_;
+    view.show_curve_center_markers = show_curve_center_markers_;
+    view.show_curve_function_markers = show_curve_function_markers_;
     view.show_profile_other = show_profile_other_;
     view.show_speedlimits = show_speedlimits_;
     view.show_section_markers = show_section_markers_;
@@ -392,6 +395,9 @@ void App::apply_view_2d_settings(const View2DSettings& settings) {
     show_gradient_pos_ = settings.show_gradient_pos;
     show_gradient_values_ = settings.show_gradient_values;
     show_curve_values_ = settings.show_curve_values;
+    show_curve_gauge_markers_ = settings.show_curve_gauge_markers;
+    show_curve_center_markers_ = settings.show_curve_center_markers;
+    show_curve_function_markers_ = settings.show_curve_function_markers;
     show_profile_other_ = settings.show_profile_other;
     show_speedlimits_ = settings.show_speedlimits;
     show_section_markers_ = settings.show_section_markers;
@@ -757,6 +763,12 @@ void App::render_menu() {
         ImGui::MenuItem(tr("chk.gradient_pos").c_str(), nullptr, &show_gradient_pos_);
         ImGui::MenuItem(tr("chk.gradient_val").c_str(), nullptr, &show_gradient_values_);
         ImGui::MenuItem(tr("chk.curve_val").c_str(), nullptr, &show_curve_values_);
+        ImGui::MenuItem(tr("chk.curve_gauge_markers").c_str(), nullptr,
+                        &show_curve_gauge_markers_);
+        ImGui::MenuItem(tr("chk.curve_center_markers").c_str(), nullptr,
+                        &show_curve_center_markers_);
+        ImGui::MenuItem(tr("chk.curve_function_markers").c_str(), nullptr,
+                        &show_curve_function_markers_);
         ImGui::MenuItem(tr("chk.irregularity_markers").c_str(), nullptr, &show_irregularity_markers_);
         ImGui::MenuItem(tr("chk.adhesion_markers").c_str(), nullptr, &show_adhesion_markers_);
         ImGui::Separator();

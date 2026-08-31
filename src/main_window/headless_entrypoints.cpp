@@ -74,6 +74,347 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 #ifndef NDEBUG
+int App::run_debug_headless_curve_parameter_edit(
+    const HeadlessCurveParameterEditOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: "
+                      << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-curve-parameter-edit\n"
+         << "path=" << options.path << "\n"
+         << "memory_apply_only=1\n"
+         << "stage=preview-load-start\n";
+    out->flush();
+
+    LoadModelOptions preview_options;
+    preview_options.load_profile = "preview";
+    LoadResult preview = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, preview_options);
+    if (!preview.ok) {
+        *out << "preview_load_error=" << preview.error << "\nresult=FAIL\n";
+        if (preview.handle) kv_free(preview.handle);
+        return 2;
+    }
+    LoadModelOptions edit_options;
+    edit_options.full_edit_registry = true;
+    edit_options.load_profile = "edit";
+    LoadResult edit_metadata = load_map_worker(
+        options.path, options.unit_distance, false, 0.0, 0.0,
+        options.unit_distance, edit_options);
+    if (!edit_metadata.ok) {
+        *out << "edit_metadata_load_error=" << edit_metadata.error
+             << "\nresult=FAIL\n";
+        if (preview.handle) kv_free(preview.handle);
+        if (edit_metadata.handle) kv_free(edit_metadata.handle);
+        return 3;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* name, bool value) {
+        *out << name << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = preview.handle;
+        preview.handle = nullptr;
+        app.model_ = std::move(preview.model);
+        app.file_path_ = options.path;
+        app.has_model_ = true;
+        app.edit_mode_enabled_ = true;
+        app.edit_memory_matches_pending_ledger_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.unit_distance_ = options.unit_distance;
+        *out << "stage=preview-load-complete\n";
+        app.apply_edit_metadata_result(std::move(edit_metadata));
+        edit_metadata.handle = nullptr;
+        *out << "stage=edit-metadata-merge-complete\n";
+
+        const auto read_bytes = [](const std::string& path) {
+            std::ifstream input(std::filesystem::path(utf8_to_wide(path)),
+                                std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input),
+                               std::istreambuf_iterator<char>());
+        };
+        std::map<std::string, std::string> disk_baseline;
+        for (const EditSourceFileInfo& file : app.model_.edit_files) {
+            disk_baseline.emplace(file.file_path, read_bytes(file.file_path));
+        }
+        check("loaded_source_hash_set_nonempty", !disk_baseline.empty());
+
+        const auto parameter_method = [](const TableRow& row) {
+            const std::string method = ascii_lower(table_cell(row, "method"));
+            return method == "curve.setgauge" || method == "curve.gauge" ||
+                method == "curve.setcenter" || method == "curve.setfunction";
+        };
+        const auto find_method = [&](std::string_view method) -> const TableRow* {
+            const auto found = std::find_if(
+                app.model_.curve_rows.begin(), app.model_.curve_rows.end(),
+                [&](const TableRow& row) {
+                    return ascii_lower(table_cell(row, "method")) == method;
+                });
+            return found == app.model_.curve_rows.end() ? nullptr : &*found;
+        };
+        const size_t parameter_count = static_cast<size_t>(std::count_if(
+            app.model_.curve_rows.begin(), app.model_.curve_rows.end(),
+            parameter_method));
+        const TableRow* gauge = find_method("curve.setgauge");
+        const TableRow* center = find_method("curve.setcenter");
+        const TableRow* function = find_method("curve.setfunction");
+        check("baseline_three_curve_parameters", parameter_count >= 3 && gauge && center && function);
+        check("baseline_curve_parameters_have_stable_ids",
+              gauge && center && function && !gauge->edit_id.empty() &&
+                  !center->edit_id.empty() && !function->edit_id.empty() &&
+                  gauge->edit_id != center->edit_id && gauge->edit_id != function->edit_id &&
+                  center->edit_id != function->edit_id);
+        *out << "stage=baseline-rows-verified\n";
+
+        app.rebuild_marker_overlay_cache();
+        app.show_curve_gauge_markers_ = true;
+        app.show_curve_center_markers_ = false;
+        app.show_curve_function_markers_ = false;
+        const PlanData gauge_plan = app.current_plan_data();
+        app.show_curve_gauge_markers_ = false;
+        app.show_curve_center_markers_ = true;
+        const PlanData center_plan = app.current_plan_data();
+        app.show_curve_center_markers_ = false;
+        app.show_curve_function_markers_ = true;
+        const PlanData function_plan = app.current_plan_data();
+        check("plan_cg_rect_marker_independent",
+              !gauge_plan.curve_gauge_markers.empty() &&
+                  gauge_plan.curve_center_markers.empty() &&
+                  gauge_plan.curve_function_markers.empty() &&
+                  gauge_plan.curve_gauge_markers.front().label == "CG");
+        check("plan_cc_rect_marker_independent",
+              center_plan.curve_gauge_markers.empty() &&
+                  !center_plan.curve_center_markers.empty() &&
+                  center_plan.curve_function_markers.empty() &&
+                  center_plan.curve_center_markers.front().label == "CC");
+        check("plan_cf_rect_marker_independent",
+              function_plan.curve_gauge_markers.empty() &&
+                  function_plan.curve_center_markers.empty() &&
+                  !function_plan.curve_function_markers.empty() &&
+                  function_plan.curve_function_markers.front().label == "CF");
+
+        Canvas3DSceneBuildOptions scene_options;
+        scene_options.model = &app.model_;
+        scene_options.map_handle = app.handle_;
+        scene_options.unit_distance = options.unit_distance;
+        scene_options.control_point_interval = options.unit_distance;
+        Canvas3DSceneBuildResult scene = build_canvas3d_scene_preview(scene_options);
+        const auto scene_marker = [&](MapMarkerVisualKind kind) {
+            return std::find_if(scene.scene.markers.begin(), scene.scene.markers.end(),
+                                [kind](const Canvas3DSceneMarker& marker) {
+                                    return marker.kind == kind;
+                                });
+        };
+        const auto cg = scene_marker(MapMarkerVisualKind::CurveGauge);
+        const auto cc = scene_marker(MapMarkerVisualKind::CurveCenter);
+        const auto cf = scene_marker(MapMarkerVisualKind::CurveFunction);
+        const auto white_theme = [](MapMarkerVisualKind kind) {
+            const ImVec4 color = map_marker_theme_color(kind);
+            return color.x == 1.0f && color.y == 1.0f &&
+                color.z == 1.0f && color.w == 1.0f;
+        };
+        check("scene_curve_parameter_boards_present",
+              cg != scene.scene.markers.end() && cc != scene.scene.markers.end() &&
+                  cf != scene.scene.markers.end());
+        check("scene_curve_parameter_board_layout_data",
+              cg != scene.scene.markers.end() && cg->label == "CG" &&
+                  !cg->secondary_label.empty() &&
+                  cc != scene.scene.markers.end() && cc->label == "CC" &&
+                  !cc->secondary_label.empty() &&
+                  cf != scene.scene.markers.end() && cf->label == "CF" &&
+                  !cf->secondary_label.empty());
+        check("scene_curve_parameter_boards_white",
+              white_theme(MapMarkerVisualKind::CurveGauge) &&
+                  white_theme(MapMarkerVisualKind::CurveCenter) &&
+                  white_theme(MapMarkerVisualKind::CurveFunction));
+        app.show_curve_gauge_markers_ = true;
+        app.show_curve_center_markers_ = false;
+        app.show_curve_function_markers_ = false;
+        const Canvas3DSceneMarkerVisibility cg_visibility =
+            app.current_scene_marker_visibility();
+        app.show_curve_gauge_markers_ = false;
+        app.show_curve_center_markers_ = true;
+        const Canvas3DSceneMarkerVisibility cc_visibility =
+            app.current_scene_marker_visibility();
+        app.show_curve_center_markers_ = false;
+        app.show_curve_function_markers_ = true;
+        const Canvas3DSceneMarkerVisibility cf_visibility =
+            app.current_scene_marker_visibility();
+        check("scene_curve_parameter_masks_independent",
+              cg_visibility.marker_visible(MapMarkerVisualKind::CurveGauge) &&
+                  cg_visibility.label_visible(MapMarkerVisualKind::CurveGauge) &&
+                  !cg_visibility.marker_visible(MapMarkerVisualKind::CurveCenter) &&
+                  cc_visibility.marker_visible(MapMarkerVisualKind::CurveCenter) &&
+                  !cc_visibility.marker_visible(MapMarkerVisualKind::CurveFunction) &&
+                  cf_visibility.marker_visible(MapMarkerVisualKind::CurveFunction) &&
+                  !cf_visibility.marker_visible(MapMarkerVisualKind::CurveGauge));
+        *out << "stage=marker-contracts-verified\n";
+
+        const auto edit_parameter = [&](std::string_view method,
+                                        const char* distance,
+                                        const char* value,
+                                        bool expect_success) {
+            const TableRow* row = find_method(method);
+            if (!row) return false;
+            app.request_element_inspector(row->edit_id, "curve");
+            app.process_pending_element_inspector();
+            MapElementEditFieldState* distance_field =
+                find_inspector_field(app.inspector_, "distance");
+            MapElementEditFieldState* value_field =
+                find_inspector_field(app.inspector_, "radius");
+            MapElementEditFieldState* method_field =
+                find_inspector_field(app.inspector_, "method");
+            if (!distance_field || !value_field || !method_field ||
+                !method_field->read_only) return false;
+            set_edit_field_buffer(*distance_field, distance);
+            set_edit_field_buffer(*value_field, value);
+            app.apply_inspector_changes();
+            const TableRow* applied = find_method(method);
+            if (!expect_success) {
+                return applied && std::abs(table_cell_number(*applied, "radius") -
+                                            std::strtod(value, nullptr)) > 1e-9;
+            }
+            return applied &&
+                std::abs(table_cell_number(*applied, "distance") -
+                         std::strtod(distance, nullptr)) <= 1e-9 &&
+                std::abs(table_cell_number(*applied, "radius") -
+                         std::strtod(value, nullptr)) <= 1e-9;
+        };
+        check("inspector_updates_curve_setgauge",
+              edit_parameter("curve.setgauge", "1", "1.435", true));
+        check("inspector_updates_curve_setcenter",
+              edit_parameter("curve.setcenter", "2", "0.25", true));
+        check("inspector_rejects_curve_setfunction_2",
+              edit_parameter("curve.setfunction", "3", "2", false));
+        check("inspector_updates_curve_setfunction_1",
+              edit_parameter("curve.setfunction", "3", "1", true));
+        check("inspector_edits_do_not_save",
+              std::all_of(disk_baseline.begin(), disk_baseline.end(),
+                          [&](const auto& entry) {
+                              return read_bytes(entry.first) == entry.second;
+                          }));
+        *out << "stage=inspector-edits-complete\n";
+
+        bool deletes_ok = true;
+        for (const std::string_view method : {
+                 std::string_view("curve.setgauge"),
+                 std::string_view("curve.setcenter"),
+                 std::string_view("curve.setfunction")}) {
+            const TableRow* row = find_method(method);
+            if (!row) {
+                deletes_ok = false;
+                continue;
+            }
+            app.request_element_delete(row->edit_id, "curve");
+            deletes_ok = deletes_ok && app.pending_delete_request_.has_value();
+            app.process_pending_element_delete();
+            deletes_ok = deletes_ok && find_method(method) == nullptr;
+        }
+        check("deferred_delete_removes_three_curve_parameters", deletes_ok);
+        *out << "stage=deferred-deletes-complete\n";
+
+        const std::vector<std::string> target_candidates =
+            new_element_target_candidates(app.model_);
+        const std::string target_file = std::find(
+            target_candidates.begin(), target_candidates.end(), app.model_.path) !=
+                target_candidates.end()
+            ? app.model_.path
+            : target_candidates.empty() ? std::string{} : target_candidates.front();
+        const auto create_parameter = [&](const char* template_id,
+                                          const char* value) {
+            const bool opened = app.open_new_element_wizard_for_template(template_id);
+            NewElementWizardState& wizard = app.new_element_wizard_;
+            wizard.target_file_path = target_file;
+            wizard.target_file_candidates = {target_file};
+            wizard.target_candidates_built = true;
+            wizard.built_template = -1;
+            wizard.built_target_file.clear();
+            app.rebuild_new_element_wizard_form();
+            MapElementEditFieldState* distance =
+                find_inspector_field(wizard.form, "distance");
+            MapElementEditFieldState* parameter =
+                find_inspector_field(wizard.form, "radius");
+            if (!opened || !distance || !parameter) return false;
+            set_edit_field_buffer(*distance, "0");
+            set_edit_field_buffer(*parameter, value);
+            const bool function_choice = std::string_view(template_id) !=
+                    "curve.setfunction" ||
+                parameter->numeric_constraint ==
+                    MapElementNumericConstraint::CurveFunction;
+            return function_choice && app.apply_new_element_insert();
+        };
+        check("wizard_creates_curve_setgauge",
+              create_parameter("curve.setgauge", "1.067"));
+        check("wizard_creates_curve_setcenter",
+              create_parameter("curve.setcenter", "0"));
+        check("wizard_creates_curve_setfunction",
+              create_parameter("curve.setfunction", "0"));
+        gauge = find_method("curve.setgauge");
+        center = find_method("curve.setcenter");
+        function = find_method("curve.setfunction");
+        check("wizard_preview_contains_three_current_forms",
+              gauge && center && function && !gauge->edit_id.empty() &&
+                  !center->edit_id.empty() && !function->edit_id.empty());
+        const char* preview_text = target_file.empty()
+            ? nullptr : kv_get_source_text(app.handle_, target_file.c_str());
+        const std::string preview_source = preview_text ? preview_text : "";
+        if (preview_text) kv_free_string(preview_text);
+        check("wizard_source_uses_current_curve_parameter_syntax",
+              preview_source.find("Curve.SetGauge(1.067);") != std::string::npos &&
+                  preview_source.find("Curve.SetCenter(0);") != std::string::npos &&
+                  preview_source.find("Curve.SetFunction(0);") != std::string::npos);
+        *out << "stage=wizard-inserts-complete\n";
+
+        check("revert_restores_curve_parameter_baseline",
+              app.revert_all_pending_edits());
+        check("revert_restores_three_existing_rows",
+              find_method("curve.setgauge") && find_method("curve.setcenter") &&
+                  find_method("curve.setfunction"));
+        check("all_loaded_source_hashes_unchanged",
+              std::all_of(disk_baseline.begin(), disk_baseline.end(),
+                          [&](const auto& entry) {
+                              return read_bytes(entry.first) == entry.second;
+                          }));
+        *out << "stage=revert-reload-complete\n";
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    if (preview.handle) kv_free(preview.handle);
+    if (edit_metadata.handle) kv_free(edit_metadata.handle);
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 20;
+}
+
 int App::run_debug_headless_light_edit(
     const HeadlessLightEditOptions& options) {
     std::ofstream output_file;

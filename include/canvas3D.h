@@ -204,6 +204,7 @@ struct Canvas3DSceneMarker {
     MapMarkerIconVariant icon_variant = MapMarkerIconVariant::Default;
     Canvas3DTrackPoint track_point;
     std::string label;
+    std::string secondary_label;
     std::string row_kind;
     std::optional<size_t> row_index;
     std::string edit_id;

@@ -273,6 +273,9 @@ const char* plan_marker_type_label_key(PlanMarkerKind kind) {
         case PlanMarkerKind::SpeedLimit: return "chk.speedlimit";
         case PlanMarkerKind::Curve: return "chk.curve_val";
         case PlanMarkerKind::Gradient: return "chk.gradient_pos";
+        case PlanMarkerKind::CurveGauge: return "chk.curve_gauge_markers";
+        case PlanMarkerKind::CurveCenter: return "chk.curve_center_markers";
+        case PlanMarkerKind::CurveFunction: return "chk.curve_function_markers";
         case PlanMarkerKind::OtherTrackChange:
             return "context.plan_marker.other_track_change";
         case PlanMarkerKind::None:
@@ -342,6 +345,7 @@ void App::rebuild_marker_overlay_cache() {
     legacy_fog_marker_cache_.clear();
     draw_distance_marker_cache_.clear();
     speed_limit_marker_cache_.clear();
+    curve_parameter_marker_cache_.clear();
     own_track_edit_marker_cache_.clear();
     other_track_change_marker_cache_.clear();
     if (!has_model_ || model_.own.empty()) return;
@@ -361,6 +365,21 @@ void App::rebuild_marker_overlay_cache() {
                 sample_matrix_track_point(model_.own, distance, true);
             if (!point) continue;
             const std::string method = ascii_lower(table_cell(row, "method"));
+            if (!gradient &&
+                (method == "curve.setgauge" || method == "curve.gauge" ||
+                 method == "curve.setcenter" || method == "curve.setfunction")) {
+                PlanCurveParameterMarker marker;
+                marker.d = distance;
+                marker.x = point->x;
+                marker.y = point->y;
+                marker.label = method == "curve.setcenter" ? "CC" :
+                    method == "curve.setfunction" ? "CF" : "CG";
+                marker.value_label = table_cell(row, "radius");
+                marker.edit_id = row.edit_id;
+                marker.row_index = row_index;
+                curve_parameter_marker_cache_.push_back(std::move(marker));
+                continue;
+            }
             const bool transition = method == (gradient
                 ? "gradient.begintransition" : "curve.begintransition");
             std::string label;
@@ -1161,6 +1180,20 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     if (show_draw_distance_markers_) {
         append_markers(draw_distance_marker_cache_, out.draw_distance_markers);
     }
+    for (const PlanCurveParameterMarker& source : curve_parameter_marker_cache_) {
+        const bool visible = source.label == "CG" ? show_curve_gauge_markers_ :
+            source.label == "CC" ? show_curve_center_markers_ :
+            show_curve_function_markers_;
+        if (!visible || source.d < dmin_ || source.d > dmax_) continue;
+        PlanCurveParameterMarker marker = source;
+        const ImVec2 rotated = rotate_xy(marker.x, marker.y, angle);
+        marker.x = rotated.x;
+        marker.y = rotated.y;
+        if (marker.label == "CG") out.curve_gauge_markers.push_back(std::move(marker));
+        else if (marker.label == "CC") out.curve_center_markers.push_back(std::move(marker));
+        else out.curve_function_markers.push_back(std::move(marker));
+        append_marker_bounds(rotated.x, rotated.y);
+    }
     auto append_repeater_marker = [&](const PlanRepeaterMarker& source, size_t row_index) {
         if (source.d < dmin_ || source.d > dmax_) return;
         TrackPoint p;
@@ -1239,6 +1272,9 @@ const PlanData& App::current_plan_data() {
     include_visibility(show_fog_markers_, 11);
     include_visibility(show_draw_distance_markers_, 12);
     include_visibility(show_section_markers_, 13);
+    include_visibility(show_curve_gauge_markers_, 14);
+    include_visibility(show_curve_center_markers_, 15);
+    include_visibility(show_curve_function_markers_, 16);
 
     const bool cache_matches = plan_data_cache_.valid &&
         plan_data_cache_.source_revision == plan_data_source_revision_ &&
@@ -2565,6 +2601,12 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.curve_edit_markers, hit_transform);
     std::optional<MarkerHit> hovered_gradient_edit_hit =
         nearest_marker_hit(data.gradient_edit_markers, hit_transform);
+    std::optional<MarkerHit> hovered_curve_gauge_hit =
+        nearest_marker_hit(data.curve_gauge_markers, hit_transform);
+    std::optional<MarkerHit> hovered_curve_center_hit =
+        nearest_marker_hit(data.curve_center_markers, hit_transform);
+    std::optional<MarkerHit> hovered_curve_function_hit =
+        nearest_marker_hit(data.curve_function_markers, hit_transform);
     std::optional<MarkerHit> hovered_other_track_change_hit;
     if (hovered && mode_ == Mode::Pan && !picking_background_station &&
         edit_actions_available()) {
@@ -2682,6 +2724,9 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_speed_limit_hit, PlanMarkerKind::SpeedLimit);
         note(hovered_curve_edit_hit, PlanMarkerKind::Curve);
         note(hovered_gradient_edit_hit, PlanMarkerKind::Gradient);
+        note(hovered_curve_gauge_hit, PlanMarkerKind::CurveGauge);
+        note(hovered_curve_center_hit, PlanMarkerKind::CurveCenter);
+        note(hovered_curve_function_hit, PlanMarkerKind::CurveFunction);
         note(hovered_other_track_change_hit, PlanMarkerKind::OtherTrackChange);
         if (best) plan_marker_selection_ = *best;
     };
@@ -2702,6 +2747,9 @@ void App::render_plan_canvas(ImVec2 size) {
             case PlanMarkerKind::OtherTrackChange: return 0;
             case PlanMarkerKind::Curve:
             case PlanMarkerKind::Gradient: return 1;
+            case PlanMarkerKind::CurveGauge:
+            case PlanMarkerKind::CurveCenter:
+            case PlanMarkerKind::CurveFunction: return 1;
             case PlanMarkerKind::Station: return 2;
             case PlanMarkerKind::DrawDistance: return 3;
             case PlanMarkerKind::SpeedLimit: return 4;
@@ -2749,6 +2797,9 @@ void App::render_plan_canvas(ImVec2 size) {
             case PlanMarkerKind::SpeedLimit: return std::string("speedlimit");
             case PlanMarkerKind::Station: return std::string("station.put");
             case PlanMarkerKind::OtherTrackChange: return std::string("otherTrack.change");
+            case PlanMarkerKind::CurveGauge:
+            case PlanMarkerKind::CurveCenter:
+            case PlanMarkerKind::CurveFunction: return std::string("curve");
             default: return std::string{};
         }
     };
@@ -2807,6 +2858,9 @@ void App::render_plan_canvas(ImVec2 size) {
             add_candidate(PlanMarkerKind::Gradient, marker.row_index, marker.x, marker.y,
                           marker.edit_id, marker.row_kind, marker);
         }
+        add_plan_markers(data.curve_gauge_markers, PlanMarkerKind::CurveGauge);
+        add_plan_markers(data.curve_center_markers, PlanMarkerKind::CurveCenter);
+        add_plan_markers(data.curve_function_markers, PlanMarkerKind::CurveFunction);
         if (show_stations_) {
             for (const PlanStation& station : data.stations) {
                 add_candidate(PlanMarkerKind::Station, station.row_index, station.x, station.y,
@@ -3024,6 +3078,38 @@ void App::render_plan_canvas(ImVec2 size) {
     };
     draw_own_track_edit_markers(data.curve_edit_markers, PlanMarkerKind::Curve);
     draw_own_track_edit_markers(data.gradient_edit_markers, PlanMarkerKind::Gradient);
+    auto draw_curve_parameter_markers = [&](const std::vector<PlanCurveParameterMarker>& markers,
+                                            PlanMarkerKind kind,
+                                            const std::optional<MarkerHit>& hovered_hit) {
+        const ImU32 color = IM_COL32(255, 255, 255, 255);
+        for (const PlanCurveParameterMarker& marker : markers) {
+            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(point, origin, avail)) continue;
+            const bool hovered_marker = hovered_hit &&
+                hovered_hit->row_index == marker.row_index;
+            const bool active = marker_emphasized(kind, marker.row_index, hovered_marker);
+            draw_selected_marker_ring(point, kind, marker.row_index, color);
+            const float scale = marker_size_scale * (active ? 1.18f : 1.0f);
+            const ImVec2 text_size = ImGui::CalcTextSize(marker.label.c_str());
+            const ImVec2 half(std::max(10.0f, text_size.x * 0.5f + 3.0f) * scale,
+                              std::max(8.0f, text_size.y * 0.5f + 2.0f) * scale);
+            draw->AddRect(ImVec2(point.x - half.x, point.y - half.y),
+                          ImVec2(point.x + half.x, point.y + half.y), color,
+                          0.0f, 0, std::max(1.0f, 1.5f * scale));
+            draw->AddText(ImVec2(point.x - text_size.x * 0.5f,
+                                 point.y - text_size.y * 0.5f),
+                          color, marker.label.c_str());
+        }
+    };
+    draw_curve_parameter_markers(data.curve_gauge_markers,
+                                 PlanMarkerKind::CurveGauge,
+                                 hovered_curve_gauge_hit);
+    draw_curve_parameter_markers(data.curve_center_markers,
+                                 PlanMarkerKind::CurveCenter,
+                                 hovered_curve_center_hit);
+    draw_curve_parameter_markers(data.curve_function_markers,
+                                 PlanMarkerKind::CurveFunction,
+                                 hovered_curve_function_hit);
     for (const auto& t : model_.other_tracks) {
         if (!t.visible || t.points.empty()) continue;
         double rmin = std::max(dmin_, t.range_min);
@@ -3637,6 +3723,18 @@ void App::render_plan_marker_context_menu(
                 ImGui::EndDisabled();
                 break;
             }
+            case PlanMarkerKind::CurveGauge:
+            case PlanMarkerKind::CurveCenter:
+            case PlanMarkerKind::CurveFunction:
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
+                    request_element_inspector(entry.edit_id, "curve");
+                }
+                if (ImGui::MenuItem(tr("button.delete").c_str())) {
+                    request_element_delete(entry.edit_id, "curve");
+                }
+                ImGui::EndDisabled();
+                break;
             case PlanMarkerKind::OtherTrackChange:
                 ImGui::BeginDisabled(!can_edit);
                 if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {

@@ -1436,77 +1436,95 @@ bool App::open_element_inspector(const MapElementInspectorRequest& request) {
         const bool curve = request.row_kind == "curve";
         const std::string method = ascii_lower(table_cell(*row, "method"));
         const int argument_count = static_cast<int>(table_cell_number(*row, "argumentCount"));
-        const bool transition = method == (curve ? "curve.begintransition"
-                                                  : "gradient.begintransition");
-        if (transition) {
-            KME_ADD_LOG("[warn]BeginTransition must be edited through its paired Begin/End");
-            return false;
-        }
-        const bool transition_capable = curve
-            ? ((method == "curve.begin" && argument_count == 2) ||
-               method == "curve.begincircular" || method == "curve.end")
-            : (method == "gradient.begin" || method == "gradient.beginconst" ||
-               method == "gradient.end");
-        if (transition_capable) {
-            const std::string transition_edit_id = table_cell(*row, "_transitionEditId");
-            const std::vector<TableRow>& related_rows = curve
-                ? model_.curve_rows : model_.gradient_rows;
-            size_t transition_row_index = 0;
-            if (!transition_edit_id.empty() &&
-                find_row_index_by_edit_id(related_rows, transition_edit_id,
-                                          transition_row_index)) {
-                const TableRow& transition_row = related_rows[transition_row_index];
-                const TableRow* original_transition_row = &transition_row;
-                const auto original_transition = original_edit_rows_.find(transition_edit_id);
-                if (original_transition != original_edit_rows_.end()) {
-                    original_transition_row = &original_transition->second.row;
-                }
-                std::string transition_info_error;
-                const std::optional<InspectorTargetMetadata> transition_info =
-                    resolve_inspector_target_metadata(handle_, transition_edit_id,
-                                                      request.row_kind,
-                                                      &transition_info_error);
-                if (!transition_info && !transition_info_error.empty()) {
-                    KME_ADD_LOG("[warn]BeginTransition metadata fallback: " +
-                            transition_info_error);
-                }
-                const EditSourceInfo transition_source = transition_info
-                    ? transition_info->source : transition_row.source;
-                std::string transition_hash = transition_info
-                    ? transition_info->expected_source_hash : std::string{};
-                if (transition_hash.empty()) {
-                    const EditSourceFileInfo* file = find_model_source_file(
-                        model_, transition_source.file_path);
-                    if (file) transition_hash = file->source_hash;
-                }
-                next.owned_edit_ids.push_back(transition_edit_id);
-                add_related_field(
-                    "transitionStart", "distance", tr("label.transition_start"),
-                    inspector_row_field_value(transition_row, request.row_kind, "distance"),
-                    inspector_row_field_value(*original_transition_row,
-                                              request.row_kind, "distance"),
-                    MapElementNumericConstraint::Finite, true, transition_edit_id,
-                    transition_hash,
-                    transition_info ? transition_info->source_distance_string : std::string{});
-            } else {
-                add_field("transitionStart", tr("label.transition_start"),
-                          tr("value.none"), tr("value.none"),
-                          MapElementNumericConstraint::None, false);
-                next.fields.back().read_only = true;
-            }
-        }
-        add_row_field("distance", "Distance",
-                      MapElementNumericConstraint::Finite, true);
-        if (curve && argument_count > 0) {
-            add_row_field("radius", "Radius",
+        const bool curve_parameter = curve &&
+            (method == "curve.setgauge" || method == "curve.gauge" ||
+             method == "curve.setcenter" || method == "curve.setfunction");
+        if (curve_parameter) {
+            add_row_field("method", "method", MapElementNumericConstraint::None, true);
+            next.fields.back().read_only = true;
+            add_row_field("distance", "distance",
                           MapElementNumericConstraint::Finite, true);
-            if (argument_count == 2) {
-                add_row_field("cant", "Cant",
+            const char* label = method == "curve.setcenter" ? "x" :
+                method == "curve.setfunction" ? "id" : "gauge";
+            const MapElementNumericConstraint constraint =
+                method == "curve.setfunction"
+                    ? MapElementNumericConstraint::CurveFunction
+                    : MapElementNumericConstraint::Finite;
+            add_row_field("radius", label, constraint, true);
+            next.fields.back().backend_key = "radius";
+        } else {
+            const bool transition = method == (curve ? "curve.begintransition"
+                                                      : "gradient.begintransition");
+            if (transition) {
+                KME_ADD_LOG("[warn]BeginTransition must be edited through its paired Begin/End");
+                return false;
+            }
+            const bool transition_capable = curve
+                ? ((method == "curve.begin" && argument_count == 2) ||
+                   method == "curve.begincircular" || method == "curve.end")
+                : (method == "gradient.begin" || method == "gradient.beginconst" ||
+                   method == "gradient.end");
+            if (transition_capable) {
+                const std::string transition_edit_id = table_cell(*row, "_transitionEditId");
+                const std::vector<TableRow>& related_rows = curve
+                    ? model_.curve_rows : model_.gradient_rows;
+                size_t transition_row_index = 0;
+                if (!transition_edit_id.empty() &&
+                    find_row_index_by_edit_id(related_rows, transition_edit_id,
+                                              transition_row_index)) {
+                    const TableRow& transition_row = related_rows[transition_row_index];
+                    const TableRow* original_transition_row = &transition_row;
+                    const auto original_transition = original_edit_rows_.find(transition_edit_id);
+                    if (original_transition != original_edit_rows_.end()) {
+                        original_transition_row = &original_transition->second.row;
+                    }
+                    std::string transition_info_error;
+                    const std::optional<InspectorTargetMetadata> transition_info =
+                        resolve_inspector_target_metadata(handle_, transition_edit_id,
+                                                          request.row_kind,
+                                                          &transition_info_error);
+                    if (!transition_info && !transition_info_error.empty()) {
+                        KME_ADD_LOG("[warn]BeginTransition metadata fallback: " +
+                                transition_info_error);
+                    }
+                    const EditSourceInfo transition_source = transition_info
+                        ? transition_info->source : transition_row.source;
+                    std::string transition_hash = transition_info
+                        ? transition_info->expected_source_hash : std::string{};
+                    if (transition_hash.empty()) {
+                        const EditSourceFileInfo* file = find_model_source_file(
+                            model_, transition_source.file_path);
+                        if (file) transition_hash = file->source_hash;
+                    }
+                    next.owned_edit_ids.push_back(transition_edit_id);
+                    add_related_field(
+                        "transitionStart", "distance", tr("label.transition_start"),
+                        inspector_row_field_value(transition_row, request.row_kind, "distance"),
+                        inspector_row_field_value(*original_transition_row,
+                                                  request.row_kind, "distance"),
+                        MapElementNumericConstraint::Finite, true, transition_edit_id,
+                        transition_hash,
+                        transition_info ? transition_info->source_distance_string : std::string{});
+                } else {
+                    add_field("transitionStart", tr("label.transition_start"),
+                              tr("value.none"), tr("value.none"),
+                              MapElementNumericConstraint::None, false);
+                    next.fields.back().read_only = true;
+                }
+            }
+            add_row_field("distance", "Distance",
+                          MapElementNumericConstraint::Finite, true);
+            if (curve && argument_count > 0) {
+                add_row_field("radius", "Radius",
+                              MapElementNumericConstraint::Finite, true);
+                if (argument_count == 2) {
+                    add_row_field("cant", "Cant",
+                                  MapElementNumericConstraint::Finite, true);
+                }
+            } else if (!curve && argument_count > 0) {
+                add_row_field("gradient", "Gradient",
                               MapElementNumericConstraint::Finite, true);
             }
-        } else if (!curve && argument_count > 0) {
-            add_row_field("gradient", "Gradient",
-                          MapElementNumericConstraint::Finite, true);
         }
     } else if (request.row_kind == "otherTrack.change") {
         add_row_field("trackKey", "trackKey",

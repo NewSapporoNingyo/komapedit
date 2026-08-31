@@ -413,6 +413,9 @@ ImVec4 map_marker_theme_color(MapMarkerVisualKind kind) {
         case MapMarkerVisualKind::CurveTransitionStart:
         case MapMarkerVisualKind::CurveCircularStart:
         case MapMarkerVisualKind::CurveEnd:
+        case MapMarkerVisualKind::CurveGauge:
+        case MapMarkerVisualKind::CurveCenter:
+        case MapMarkerVisualKind::CurveFunction:
         case MapMarkerVisualKind::GradientTransitionStart:
         case MapMarkerVisualKind::GradientStart:
         case MapMarkerVisualKind::GradientEnd:
@@ -487,6 +490,10 @@ MapMarkerIconRecipe map_marker_icon_recipe(MapMarkerVisualKind kind,
             return curve_circular_recipe();
         case MapMarkerVisualKind::CurveEnd:
             return curve_end_recipe();
+        case MapMarkerVisualKind::CurveGauge:
+        case MapMarkerVisualKind::CurveCenter:
+        case MapMarkerVisualKind::CurveFunction:
+            return {};
         case MapMarkerVisualKind::GradientTransitionStart:
             return gradient_transition_recipe();
         case MapMarkerVisualKind::GradientStart:

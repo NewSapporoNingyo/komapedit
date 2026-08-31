@@ -904,6 +904,16 @@ HeadlessLightEditOptions parse_headless_light_edit_options(
         });
 }
 
+HeadlessCurveParameterEditOptions parse_headless_curve_parameter_edit_options(
+    const std::vector<std::string>& args) {
+    return parse_headless_required_map_edit_options<HeadlessCurveParameterEditOptions>(
+        args, "--debug-headless-curve-parameter-edit",
+        [](HeadlessCurveParameterEditOptions& options) {
+            options.error =
+                "--debug-headless-curve-parameter-edit is memory-apply only";
+        });
+}
+
 HeadlessStationPutMarginEditOptions parse_headless_station_put_margin_edit_options(
     const std::vector<std::string>& args) {
     return parse_headless_required_map_edit_options<HeadlessStationPutMarginEditOptions>(
@@ -1867,6 +1877,9 @@ int run_debug_headless_settings_persistence(
         canonical.window_visibility.show_console_window = false;
         canonical.view_2d.show_stations = false;
         canonical.view_2d.show_speedlimits = true;
+        canonical.view_2d.show_curve_gauge_markers = true;
+        canonical.view_2d.show_curve_center_markers = true;
+        canonical.view_2d.show_curve_function_markers = true;
         canonical.view_2d.mode = 1;
         canonical.view_2d.grid_mode = 1;
         canonical.view_3d.show_scene_owntrack_markers = true;
@@ -1881,8 +1894,15 @@ int run_debug_headless_settings_persistence(
         canonical.view_3d.scene_instance_critical_warning_threshold = 6200;
         check(save_user_settings(canonical), "canonical_save");
         const std::string canonical_text = read_text(canonical_path);
-        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 82,
-              "canonical_key_count_82");
+        check(std::count(canonical_text.begin(), canonical_text.end(), '=') == 85,
+              "canonical_key_count_85");
+        check(canonical_text.find("show_curve_gauge_markers=true\n") !=
+                  std::string::npos &&
+              canonical_text.find("show_curve_center_markers=true\n") !=
+                  std::string::npos &&
+              canonical_text.find("show_curve_function_markers=true\n") !=
+                  std::string::npos,
+              "canonical_curve_parameter_marker_keys");
         UserSettings canonical_loaded = load_user_settings(canonical_path);
         check(canonical_loaded.language == canonical.language, "canonical_language");
         check(canonical_loaded.font_size == canonical.font_size, "canonical_font_size");
@@ -1921,6 +1941,9 @@ int run_debug_headless_settings_persistence(
             "show_other_train_window=true\n"
             "[View2D]\n"
             "show_station_pos=false\n"
+            "show_curve_gauge_marker=true\n"
+            "show_cant_center_markers=true\n"
+            "show_transition_function_markers=true\n"
             "view_2d_mode=measure\n"
             "[View3D]\n"
             "scene_draw_distance=2400\n";
@@ -1935,7 +1958,13 @@ int run_debug_headless_settings_persistence(
                   defaults.window_visibility.show_other_trains_window,
               "legacy_window_alias_rejected");
         check(alias_loaded.view_2d.show_stations == defaults.view_2d.show_stations &&
-                  alias_loaded.view_2d.mode == defaults.view_2d.mode,
+                  alias_loaded.view_2d.mode == defaults.view_2d.mode &&
+                  alias_loaded.view_2d.show_curve_gauge_markers ==
+                      defaults.view_2d.show_curve_gauge_markers &&
+                  alias_loaded.view_2d.show_curve_center_markers ==
+                      defaults.view_2d.show_curve_center_markers &&
+                  alias_loaded.view_2d.show_curve_function_markers ==
+                      defaults.view_2d.show_curve_function_markers,
               "legacy_view_2d_aliases_rejected");
         check(alias_loaded.view_3d.scene_draw_distance_m ==
                   defaults.view_3d.scene_draw_distance_m,
@@ -1944,7 +1973,7 @@ int run_debug_headless_settings_persistence(
         check(save_user_settings(alias_loaded), "explicit_save_after_legacy_load");
         const std::string rewritten_alias_text = read_text(alias_path);
         check(std::count(
-                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 82 &&
+                  rewritten_alias_text.begin(), rewritten_alias_text.end(), '=') == 85 &&
                   rewritten_alias_text.find("lang=") == std::string::npos &&
                   rewritten_alias_text.find("enable_edit=") == std::string::npos,
               "explicit_save_writes_canonical_schema");

@@ -924,6 +924,81 @@ int snapshot_contract() {
         }
     }
 
+    {
+        TempFixture curve_parameter_fixture;
+        {
+            std::ofstream map(curve_parameter_fixture.map_path,
+                              std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\n"
+                << "$gauge=1+0.067;\n"
+                << "0;\n"
+                << "cUrVe.SeTgAuGe($gauge);\n"
+                << "10;\n"
+                << "Curve.SetCenter(0.125*2);\n"
+                << "20;\n"
+                << "CURVE.SETFUNCTION(1-1);\n"
+                << "30;\n"
+                << "Curve.Gauge(1.435);\n";
+        }
+        MapHandle curve_parameter_handle(kv_load_map_ex(
+            curve_parameter_fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot snapshot{};
+        check(curve_parameter_handle.value && kv_get_map_snapshot(
+                  curve_parameter_handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot,
+                  sizeof(snapshot)) != 0,
+              "Curve parameter syntax loads into the typed snapshot");
+        const std::array<const char*, 4> methods = {
+            "Curve.SetGauge", "Curve.SetCenter", "Curve.SetFunction", "Curve.Gauge"};
+        const std::array<double, 4> distances = {0.0, 10.0, 20.0, 30.0};
+        const std::array<double, 4> values = {1.067, 0.25, 0.0, 1.435};
+        bool rows_ok = snapshot.curve_count == methods.size();
+        std::vector<std::string> edit_ids;
+        for (size_t index = 0; rows_ok && index < methods.size(); ++index) {
+            const KvCurveRow& row = snapshot.curves[index];
+            const std::string edit_id = map_string(snapshot, row.metadata.edit_id);
+            rows_ok = map_string(snapshot, row.method) == methods[index] &&
+                nearly_equal(row.distance, distances[index]) &&
+                row.argument_count == 1 && row.radius.kind == KV_VALUE_NUMBER &&
+                nearly_equal(row.radius.number_value, values[index]) &&
+                map_string(snapshot, row.file_path) ==
+                    curve_parameter_fixture.path_utf8() &&
+                !edit_id.empty() && (index == 0 ||
+                    snapshot.curves[index - 1].order < row.order);
+            edit_ids.push_back(edit_id);
+        }
+        check(rows_ok, "Curve parameter rows retain method, value, source, order, and edit id");
+        MapHandle reload(kv_load_map_ex(
+            curve_parameter_fixture.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot reloaded{};
+        bool stable_ids = reload.value && kv_get_map_snapshot(
+            reload.value, KV_MAP_SNAPSHOT_VERSION, &reloaded,
+            sizeof(reloaded)) != 0 && reloaded.curve_count == edit_ids.size();
+        for (size_t index = 0; stable_ids && index < edit_ids.size(); ++index) {
+            stable_ids = map_string(reloaded,
+                reloaded.curves[index].metadata.edit_id) == edit_ids[index];
+        }
+        check(stable_ids, "Curve parameter edit ids are stable across reload");
+    }
+
+    for (const std::string& statement : {
+             std::string("Curve.SetFunction(2);"),
+             std::string("Curve.SetFunction();"),
+             std::string("Curve.SetFunction('linear');")}) {
+        TempFixture invalid_curve_parameter;
+        {
+            std::ofstream map(invalid_curve_parameter.map_path,
+                              std::ios::binary | std::ios::trunc);
+            map << "BveTs Map 2.02:utf-8\n0;\n" << statement << "\n";
+        }
+        MapHandle invalid(kv_load_map_ex(
+            invalid_curve_parameter.path_utf8().c_str(), 25.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        check(invalid.value == nullptr,
+              "invalid Curve.SetFunction syntax is rejected deterministically");
+    }
+
     scenario_route_contract();
     std::cout << "typed snapshot contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures;
@@ -2944,6 +3019,9 @@ void own_track_insert_contract() {
         {"typed-contract-own-gradient-end-b", "gradient", "Gradient.End", "11", "", "", ""},
         {"typed-contract-own-gradient-begin", "gradient", "Gradient.Begin", "12", "", "", "-8"},
         {"typed-contract-own-gradient-end", "gradient", "Gradient.End", "13", "", "", ""},
+        {"typed-contract-own-curve-setgauge", "curve", "Curve.SetGauge", "14", "1.067", "", ""},
+        {"typed-contract-own-curve-setcenter", "curve", "Curve.SetCenter", "15", "0.25", "", ""},
+        {"typed-contract-own-curve-setfunction", "curve", "Curve.SetFunction", "16", "1", "", ""},
     };
     const size_t curve_insert_count = static_cast<size_t>(std::count_if(
         valid_specs.begin(), valid_specs.end(), [](const OwnTrackInsertSpec& spec) {
@@ -2985,6 +3063,16 @@ void own_track_insert_contract() {
                         "typed-contract-own-bad-gradient-end", "gradient", "Gradient.End",
                         "10", "", "", "5",
                     });
+    rejected_insert("Curve.SetFunction rejects ids other than 0 or 1",
+                    "Curve.SetFunction insert requires id 0 or 1", {
+                        "typed-contract-own-bad-curve-function", "curve",
+                        "Curve.SetFunction", "17", "2", "", "",
+                    });
+    rejected_insert("Curve.SetGauge rejects a cant argument",
+                    "Curve.SetGauge insert accepts exactly one parameter", {
+                        "typed-contract-own-bad-curve-gauge", "curve",
+                        "Curve.SetGauge", "18", "1.435", "0.1", "",
+                    });
     {
         OwnTrackInsertBatch reverse_order(source_path, {
             {"typed-contract-own-reverse-transition", "curve", "Curve.BeginTransition",
@@ -3019,7 +3107,10 @@ void own_track_insert_contract() {
             const KvCurveRow* row = find_curve(applied, spec.change_id);
             const std::uint32_t argument_count = spec.method == "Curve.Begin"
                 ? (spec.cant.empty() ? 1U : 2U)
-                : spec.method == "Curve.Change" ? 1U : 0U;
+                : (spec.method == "Curve.Change" ||
+                   spec.method == "Curve.SetGauge" ||
+                   spec.method == "Curve.SetCenter" ||
+                   spec.method == "Curve.SetFunction") ? 1U : 0U;
             rows_match = rows_match && row &&
                 map_string(applied, row->method) == spec.method &&
                 nearly_equal(row->distance, std::stod(spec.distance)) &&
@@ -3117,7 +3208,10 @@ void own_track_insert_contract() {
     auto has_curve = [&](const OwnTrackInsertSpec& spec) {
         const std::uint32_t argument_count = spec.method == "Curve.Begin"
             ? (spec.cant.empty() ? 1U : 2U)
-            : spec.method == "Curve.Change" ? 1U : 0U;
+            : (spec.method == "Curve.Change" ||
+               spec.method == "Curve.SetGauge" ||
+               spec.method == "Curve.SetCenter" ||
+               spec.method == "Curve.SetFunction") ? 1U : 0U;
         return std::any_of(
             reloaded_snapshot.curves,
             reloaded_snapshot.curves + reloaded_snapshot.curve_count,
@@ -3169,6 +3263,9 @@ void own_track_insert_contract() {
         "Gradient.End();",
         "Gradient.Begin(-8);",
         "Gradient.End();",
+        "Curve.SetGauge(1.067);",
+        "Curve.SetCenter(0.25);",
+        "Curve.SetFunction(1);",
     };
     bool source_forms_ordered = true;
     size_t source_position = 0;
@@ -3183,6 +3280,152 @@ void own_track_insert_contract() {
     check(source_forms_ordered &&
               committed_text.find("Curve.BeginCircular(") == std::string::npos,
           "own-track insert source uses only current official forms in paired order");
+}
+
+void curve_parameter_edit_contract() {
+    TempFixture fixture;
+    const std::string source_before =
+        "BveTs Map 2.02:utf-8\r\n"
+        "$gauge=1+0.067;\r\n"
+        "0;\r\n"
+        "Curve.SetGauge($gauge);\r\n"
+        "10;\r\n"
+        "Curve.SetCenter(0.125*2);\r\n"
+        "20;\r\n"
+        "Curve.SetFunction(0);\r\n"
+        "30;\r\n"
+        "Curve.Gauge(1.435); # keep alias\r\n";
+    {
+        std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << source_before;
+    }
+    const auto read_source = [&]() {
+        std::ifstream input(fixture.map_path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "Curve parameter edit fixture load");
+    if (!handle.value) return;
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0 &&
+              baseline.curve_count == 4,
+          "Curve parameter edit baseline rows");
+    if (baseline.curve_count != 4 || !baseline.curves) return;
+    const std::string source_hash = map_string(
+        baseline,
+        baseline.source_files[baseline.curves[0].metadata.source_file_index].source_hash);
+    std::array<std::string, 4> edit_ids{};
+    for (size_t index = 0; index < edit_ids.size(); ++index) {
+        edit_ids[index] = map_string(baseline,
+            baseline.curves[index].metadata.edit_id);
+    }
+
+    MultiFieldUpdateBatch gauge_update(
+        "curve-parameter-update-gauge", edit_ids[0], source_hash,
+        {{"distance", "5"}, {"radius", "1.435"}});
+    KvEditReportSnapshot gauge_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &gauge_update.batch, &gauge_report,
+              sizeof(gauge_report)) != 0 && gauge_report.ok &&
+              gauge_report.full_reparse_ok,
+          "Curve.SetGauge distance and value update applies to memory");
+    check(read_source() == source_before,
+          "Curve parameter memory Apply does not write the source file");
+    KvMapSnapshot updated{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &updated, sizeof(updated)) != 0,
+          "Curve parameter updated snapshot");
+    const KvCurveRow* updated_gauge = find_curve(updated, edit_ids[0]);
+    check(updated_gauge && nearly_equal(updated_gauge->distance, 5.0) &&
+              updated_gauge->radius.kind == KV_VALUE_NUMBER &&
+              nearly_equal(updated_gauge->radius.number_value, 1.435),
+          "Curve.SetGauge update preserves identity and semantic value");
+
+    UpdateBatch invalid_function(edit_ids[2], source_hash, "2", "radius");
+    KvEditReportSnapshot invalid_report{};
+    check(kv_edit_dry_run_typed(handle.value, &invalid_function.batch,
+                                &invalid_report, sizeof(invalid_report)) != 0,
+          "invalid Curve.SetFunction update dry-run call");
+    validate_report(invalid_report);
+    check(!invalid_report.ok && edit_report_has_error_containing(
+              invalid_report, "Curve.SetFunction requires id 0 or 1"),
+          "invalid Curve.SetFunction update is rejected with a stable diagnostic");
+
+    UpdateBatch function_update(edit_ids[2], source_hash, "1", "radius");
+    KvEditReportSnapshot function_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &function_update.batch, &function_report,
+              sizeof(function_report)) != 0 && function_report.ok,
+          "Curve.SetFunction id 1 update applies");
+
+    const std::array<std::string, 3> delete_change_ids = {
+        "curve-parameter-delete-gauge", "curve-parameter-delete-center",
+        "curve-parameter-delete-function"};
+    std::array<KvEditChange, 3> delete_changes{};
+    for (size_t index = 0; index < delete_changes.size(); ++index) {
+        delete_changes[index].change_id = utf8_view(delete_change_ids[index]);
+        delete_changes[index].edit_id = utf8_view(edit_ids[index]);
+        delete_changes[index].operation = KV_EDIT_DELETE;
+        delete_changes[index].expected_source_hash = utf8_view(source_hash);
+    }
+    KvEditBatch delete_batch{delete_changes.data(), delete_changes.size(), nullptr, 0};
+    KvEditReportSnapshot delete_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &delete_batch, &delete_report,
+              sizeof(delete_report)) != 0 && delete_report.ok &&
+              delete_report.delete_count == 3,
+          "Curve parameter shared delete batch applies to memory");
+    KvMapSnapshot deleted{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &deleted, sizeof(deleted)) != 0 &&
+              deleted.curve_count == 1 &&
+              map_string(deleted, deleted.curves[0].method) == "Curve.Gauge",
+          "Curve parameter deletes remove only the selected statements");
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "Curve parameter Revert resets the memory working copy");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0 &&
+              reset.curve_count == 4 && read_source() == source_before,
+          "Curve parameter Revert restores the disk baseline");
+
+    UpdateBatch alias_update(edit_ids[3], source_hash, "1.067", "radius");
+    KvEditReportSnapshot alias_apply{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &alias_update.batch, &alias_apply,
+              sizeof(alias_apply)) != 0 && alias_apply.ok,
+          "legacy Curve.Gauge update applies before Save");
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report,
+                               sizeof(commit_report)) != 0 &&
+              commit_report.ok && commit_report.full_reparse_ok,
+          "Curve parameter Save commits the validated working copy");
+    const std::string committed = read_source();
+    check(committed.find("$gauge=1+0.067;\r\n") != std::string::npos &&
+              committed.find("Curve.SetGauge($gauge);\r\n") != std::string::npos &&
+              committed.find("Curve.SetCenter(0.125*2);\r\n") != std::string::npos &&
+              committed.find("Curve.Gauge(1.067); # keep alias\r\n") !=
+                  std::string::npos &&
+              committed.find('\n') != std::string::npos,
+          "Curve parameter Save preserves expressions, legacy method, comments, and CRLF");
+    MapHandle reloaded(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 25.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot reloaded_snapshot{};
+    check(reloaded.value && kv_get_map_snapshot(
+              reloaded.value, KV_MAP_SNAPSHOT_VERSION, &reloaded_snapshot,
+              sizeof(reloaded_snapshot)) != 0 &&
+              reloaded_snapshot.curve_count == 4 &&
+              map_string(reloaded_snapshot,
+                         reloaded_snapshot.curves[3].method) == "Curve.Gauge" &&
+              nearly_equal(reloaded_snapshot.curves[3].radius.number_value, 1.067),
+          "Curve parameter Save and Reload retain legacy method fidelity");
 }
 
 void other_track_insert_contract() {
@@ -6888,6 +7131,7 @@ int edit_contract() {
     other_track_key_edit_contract();
     repeater_key_edit_contract();
     repeater_insert_contract();
+    curve_parameter_edit_contract();
     own_track_insert_contract();
     other_track_insert_contract();
     environment_argument_shape_edit_contract();

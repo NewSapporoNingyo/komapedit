@@ -187,11 +187,18 @@ MapElementNumericChoiceSet map_element_numeric_choices(
         {0, "value.door.do_not_open"},
         {1, "value.door.open_right"},
     };
+    static constexpr MapElementNumericChoice k_curve_function_choices[] = {
+        {0, "value.curve_function.sine"},
+        {1, "value.curve_function.linear"},
+    };
     if (constraint == MapElementNumericConstraint::Tilt) {
         return {k_tilt_choices, std::size(k_tilt_choices)};
     }
     if (constraint == MapElementNumericConstraint::Door) {
         return {k_door_choices, std::size(k_door_choices)};
+    }
+    if (constraint == MapElementNumericConstraint::CurveFunction) {
+        return {k_curve_function_choices, std::size(k_curve_function_choices)};
     }
     return {};
 }

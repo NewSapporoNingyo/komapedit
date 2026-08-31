@@ -211,9 +211,7 @@ void App::sync_scene_preview_track_visibility() {
     }
 }
 
-void App::sync_scene_preview_marker_visibility() {
-    if (!scene_preview_canvas_ || !scene_preview_started_) return;
-
+Canvas3DSceneMarkerVisibility App::current_scene_marker_visibility() const {
     Canvas3DSceneMarkerVisibility visibility;
     auto set_marker = [&](MapMarkerVisualKind kind, bool visible) {
         if (visible) visibility.marker_mask |= map_marker_visual_bit(kind);
@@ -242,6 +240,12 @@ void App::sync_scene_preview_marker_visibility() {
              MapMarkerVisualKind::CurveEnd}) {
         set_label(kind, show_curve_values_);
     }
+    set_marker_and_label(MapMarkerVisualKind::CurveGauge,
+                         show_curve_gauge_markers_);
+    set_marker_and_label(MapMarkerVisualKind::CurveCenter,
+                         show_curve_center_markers_);
+    set_marker_and_label(MapMarkerVisualKind::CurveFunction,
+                         show_curve_function_markers_);
 
     for (MapMarkerVisualKind kind : {
              MapMarkerVisualKind::GradientTransitionStart,
@@ -273,6 +277,15 @@ void App::sync_scene_preview_marker_visibility() {
     set_marker_and_label(MapMarkerVisualKind::DrawDistance, show_draw_distance_markers_);
     set_marker_and_label(MapMarkerVisualKind::OtherTrackChange,
                          edit_actions_available());
+
+    return visibility;
+}
+
+void App::sync_scene_preview_marker_visibility() {
+    if (!scene_preview_canvas_ || !scene_preview_started_) return;
+
+    const Canvas3DSceneMarkerVisibility visibility =
+        current_scene_marker_visibility();
 
     std::string error;
     if (!scene_preview_canvas_->set_scene_marker_visibility(

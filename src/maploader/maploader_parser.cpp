@@ -1227,9 +1227,13 @@ private:
             } else {
                 expected << "at least " << rule.minimum_count;
             }
-            add_warning(current_statement_start_, rule_key,
-                        "Parameter count error: expected " + expected.str() +
-                            ", got " + std::to_string(count) + ".");
+            const std::string message =
+                "Parameter count error: expected " + expected.str() +
+                ", got " + std::to_string(count) + ".";
+            if (rule_key == "curve.setfunction") {
+                throw FatalParseError("Curve.SetFunction " + message);
+            }
+            add_warning(current_statement_start_, rule_key, message);
             return false;
         }
 
@@ -1243,11 +1247,15 @@ private:
                 (kind == RuleArgumentKind::Number && argument.is_number()) ||
                 (kind == RuleArgumentKind::Text && argument.is_string());
             if (!valid) {
-                add_warning(
-                    current_statement_start_, rule_key,
+                const std::string message =
                     "Parameter content error: argument " + std::to_string(i + 1) +
-                        (kind == RuleArgumentKind::Number ? " must be numeric." :
-                                                           " must be a quoted file path."));
+                    (kind == RuleArgumentKind::Number ? " must be numeric." :
+                                                       " must be a quoted file path.");
+                if (rule_key == "curve.setfunction") {
+                    throw FatalParseError("Curve.SetFunction " + message);
+                }
+                add_warning(
+                    current_statement_start_, rule_key, message);
                 return false;
             }
         }
@@ -1437,10 +1445,20 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.curves.push_back(std::move(row));
         };
-        if (fn == "setgauge" || fn == "gauge") put_own(ctx_, "gauge", arg_or_null(a));
-        else if (fn == "setcenter") put_own(ctx_, "center", arg_or_null(a));
-        else if (fn == "setfunction") put_own(ctx_, "interpolate_func", Value::str(as_number(arg_or_null(a)) == 0.0 ? "sin" : "line"));
-        else if (fn == "begintransition") {
+        if (fn == "setgauge" || fn == "gauge") {
+            add_edit_row(fn == "gauge" ? "Curve.Gauge" : "Curve.SetGauge");
+            put_own(ctx_, "gauge", arg_or_null(a));
+        } else if (fn == "setcenter") {
+            add_edit_row("Curve.SetCenter");
+            put_own(ctx_, "center", arg_or_null(a));
+        } else if (fn == "setfunction") {
+            const double id = as_number(arg_or_null(a));
+            if (id != 0.0 && id != 1.0) {
+                throw FatalParseError("Curve.SetFunction requires id 0 or 1");
+            }
+            add_edit_row("Curve.SetFunction");
+            put_own(ctx_, "interpolate_func", Value::str(id == 0.0 ? "sin" : "line"));
+        } else if (fn == "begintransition") {
             add_edit_row("Curve.BeginTransition");
             put_own(ctx_, "radius", Value::null(), "bt");
             put_own(ctx_, "cant", Value::null(), "bt");

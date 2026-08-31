@@ -420,7 +420,7 @@ static constexpr std::array<
         {"show_scene_preview_window", &WindowVisibilitySettings::show_scene_preview_window},
     }};
 
-static constexpr std::array<std::pair<std::string_view, bool View2DSettings::*>, 25>
+static constexpr std::array<std::pair<std::string_view, bool View2DSettings::*>, 28>
     k_view_2d_bool_fields{{
         {"show_stations", &View2DSettings::show_stations},
         {"show_station_names", &View2DSettings::show_station_names},
@@ -428,6 +428,9 @@ static constexpr std::array<std::pair<std::string_view, bool View2DSettings::*>,
         {"show_gradient_pos", &View2DSettings::show_gradient_pos},
         {"show_gradient_values", &View2DSettings::show_gradient_values},
         {"show_curve_values", &View2DSettings::show_curve_values},
+        {"show_curve_gauge_markers", &View2DSettings::show_curve_gauge_markers},
+        {"show_curve_center_markers", &View2DSettings::show_curve_center_markers},
+        {"show_curve_function_markers", &View2DSettings::show_curve_function_markers},
         {"show_profile_other", &View2DSettings::show_profile_other},
         {"show_speedlimits", &View2DSettings::show_speedlimits},
         {"show_section_markers", &View2DSettings::show_section_markers},

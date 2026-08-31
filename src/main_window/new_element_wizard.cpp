@@ -330,6 +330,36 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
             },
         },
         {
+            "curve.setgauge", NewElementTemplateCategory::TrackGeometry, 3,
+            "curve", "Curve.SetGauge",
+            "Curve.SetGauge(value);",
+            "new_element.usage.curve.setgauge", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"radius", "gauge", MapElementNumericConstraint::Finite, true, "1.067"},
+            },
+        },
+        {
+            "curve.setcenter", NewElementTemplateCategory::TrackGeometry, 4,
+            "curve", "Curve.SetCenter",
+            "Curve.SetCenter(x);",
+            "new_element.usage.curve.setcenter", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"radius", "x", MapElementNumericConstraint::Finite, true, "0"},
+            },
+        },
+        {
+            "curve.setfunction", NewElementTemplateCategory::TrackGeometry, 5,
+            "curve", "Curve.SetFunction",
+            "Curve.SetFunction(id);",
+            "new_element.usage.curve.setfunction", false,
+            {
+                {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},
+                {"radius", "id", MapElementNumericConstraint::CurveFunction, true, "0"},
+            },
+        },
+        {
             "irregularity.change", NewElementTemplateCategory::TrackGeometry, 2,
             "irregularity.change", "",
             "Irregularity.Change(x, y, r, lx, ly, lr);",
@@ -837,7 +867,13 @@ void update_repeater_wizard_field_enablement(NewElementWizardState& wizard) {
 }
 
 bool is_own_track_wizard(const NewElementWizardState& wizard) {
-    return wizard.form.row_kind == "curve" || wizard.form.row_kind == "gradient";
+    const auto& templates = new_element_templates_internal();
+    if (wizard.selected_template < 0 ||
+        static_cast<size_t>(wizard.selected_template) >= templates.size()) {
+        return false;
+    }
+    const std::string_view id = templates[static_cast<size_t>(wizard.selected_template)].id;
+    return id == "curve" || id == "gradient";
 }
 
 std::string own_track_curve_method(const NewElementWizardState& wizard) {
@@ -1225,7 +1261,8 @@ void App::rebuild_new_element_wizard_form() {
         return;
     }
     if (wizard.built_template != wizard.selected_template &&
-        (tpl.row_kind == "curve" || tpl.row_kind == "gradient")) {
+        (std::string_view(tpl.id) == "curve" ||
+         std::string_view(tpl.id) == "gradient")) {
         wizard.own_track_add_start = true;
         wizard.own_track_add_end = true;
         wizard.own_track_start_add_transition = true;

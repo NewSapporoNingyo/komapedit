@@ -550,8 +550,9 @@ void write_section_row(SemanticWriter& out, const KvMapSnapshot& snapshot,
 void write_curve(SemanticWriter& out, const KvMapSnapshot& snapshot,
                  const KvCurveRow& row,
                  const MapEditChange* change = nullptr) {
+    const std::string method = text(snapshot, row.method);
     field(out, "distance", changed_number(change, "distance", row.distance));
-    field(out, "method", text(snapshot, row.method));
+    field(out, "method", method);
     field(out, "argumentCount", static_cast<std::int64_t>(row.argument_count));
     if (row.argument_count == 0) {
         if (changed_field(change, "radius") || changed_field(change, "cant")) {
@@ -560,6 +561,13 @@ void write_curve(SemanticWriter& out, const KvMapSnapshot& snapshot,
         field(out, snapshot, "radius", row.radius);
         field(out, snapshot, "cant", row.cant);
     } else {
+        if (method == "Curve.SetFunction" && changed_field(change, "radius")) {
+            const double id = parse_changed_number(
+                change->field_changes.at("radius"), "id");
+            if (id != 0.0 && id != 1.0) {
+                throw std::runtime_error("Curve.SetFunction requires id 0 or 1");
+            }
+        }
         changed_required_number_value(out, snapshot, change, "radius", row.radius);
         if (row.argument_count == 2) {
             changed_required_number_value(out, snapshot, change, "cant", row.cant);
@@ -1694,7 +1702,10 @@ std::string expected_insert_semantic(MapContext& ctx,
                 semantic_change.field_changes.end() ? 1U : 2U;
             row.radius.kind = KV_VALUE_NUMBER;
             if (row.argument_count == 2) row.cant.kind = KV_VALUE_NUMBER;
-        } else if (own_track_method == "Curve.Change") {
+        } else if (own_track_method == "Curve.Change" ||
+                   own_track_method == "Curve.SetGauge" ||
+                   own_track_method == "Curve.SetCenter" ||
+                   own_track_method == "Curve.SetFunction") {
             row.argument_count = 1;
             row.radius.kind = KV_VALUE_NUMBER;
         }

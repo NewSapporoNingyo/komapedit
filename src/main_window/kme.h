@@ -41,6 +41,7 @@ class Canvas3D;
 enum class Canvas3DSceneMarkerListKind : std::uint8_t;
 struct Canvas3DPlacementDragUpdate;
 struct Canvas3DPlacementEditTarget;
+struct Canvas3DSceneMarkerVisibility;
 struct KvEditReportSnapshot;
 namespace repeater_linkage {
 struct Event;
@@ -62,6 +63,7 @@ struct HeadlessOtherTrackEditOptions;
 struct HeadlessOtherTrackKeyEditOptions;
 struct HeadlessNewElementEditOptions;
 struct HeadlessLightEditOptions;
+struct HeadlessCurveParameterEditOptions;
 struct HeadlessStationPutMarginEditOptions;
 struct HeadlessSparseNewElementOptions;
 struct HeadlessResourceListReplaceOptions;
@@ -797,6 +799,10 @@ struct PlanMarker {
     size_t row_index = 0;
 };
 
+struct PlanCurveParameterMarker : PlanMarker {
+    std::string value_label;
+};
+
 struct OtherTrackChangeMarker : PlanMarker {
     size_t track_index = 0;
 };
@@ -856,6 +862,9 @@ enum class PlanMarkerKind {
     SpeedLimit,
     Curve,
     Gradient,
+    CurveGauge,
+    CurveCenter,
+    CurveFunction,
     OtherTrackChange
 };
 
@@ -950,6 +959,9 @@ struct PlanData {
     std::vector<PlanFogMarker> fog_markers;
     std::vector<PlanLegacyFogMarker> legacy_fog_markers;
     std::vector<PlanDrawDistanceMarker> draw_distance_markers;
+    std::vector<PlanCurveParameterMarker> curve_gauge_markers;
+    std::vector<PlanCurveParameterMarker> curve_center_markers;
+    std::vector<PlanCurveParameterMarker> curve_function_markers;
     std::vector<OwnTrackEditMarker> curve_edit_markers;
     std::vector<OwnTrackEditMarker> gradient_edit_markers;
     std::vector<Section> curve_sections;
@@ -1098,6 +1110,9 @@ struct View2DSettings {
     bool show_gradient_pos = true;
     bool show_gradient_values = true;
     bool show_curve_values = k_default_non_station_aux_info_visible;
+    bool show_curve_gauge_markers = k_default_non_station_aux_info_visible;
+    bool show_curve_center_markers = k_default_non_station_aux_info_visible;
+    bool show_curve_function_markers = k_default_non_station_aux_info_visible;
     bool show_profile_other = false;
     bool show_speedlimits = k_default_non_station_aux_info_visible;
     bool show_section_markers = k_default_non_station_aux_info_visible;
@@ -1127,6 +1142,9 @@ struct View2DSettings {
             show_gradient_pos == other.show_gradient_pos &&
             show_gradient_values == other.show_gradient_values &&
             show_curve_values == other.show_curve_values &&
+            show_curve_gauge_markers == other.show_curve_gauge_markers &&
+            show_curve_center_markers == other.show_curve_center_markers &&
+            show_curve_function_markers == other.show_curve_function_markers &&
             show_profile_other == other.show_profile_other &&
             show_speedlimits == other.show_speedlimits &&
             show_section_markers == other.show_section_markers &&
@@ -1225,6 +1243,7 @@ enum class MapElementNumericConstraint {
     Finite,
     Tilt,
     Door,
+    CurveFunction,
     Truncate3,
     Negative,
     Positive,
@@ -1800,6 +1819,8 @@ public:
         const HeadlessNewElementEditOptions& options);
     static int run_debug_headless_light_edit(
         const HeadlessLightEditOptions& options);
+    static int run_debug_headless_curve_parameter_edit(
+        const HeadlessCurveParameterEditOptions& options);
     static int run_debug_headless_station_put_margin_edit(
         const HeadlessStationPutMarginEditOptions& options);
     static int run_debug_headless_sparse_new_element(
@@ -1994,6 +2015,9 @@ private:
     bool show_gradient_pos_ = true;
     bool show_gradient_values_ = true;
     bool show_curve_values_ = k_default_non_station_aux_info_visible;
+    bool show_curve_gauge_markers_ = k_default_non_station_aux_info_visible;
+    bool show_curve_center_markers_ = k_default_non_station_aux_info_visible;
+    bool show_curve_function_markers_ = k_default_non_station_aux_info_visible;
     bool show_profile_other_ = false;
     bool show_speedlimits_ = k_default_non_station_aux_info_visible;
     bool show_section_markers_ = k_default_non_station_aux_info_visible;
@@ -2168,6 +2192,7 @@ private:
     std::vector<std::optional<PlanFogMarker>> fog_marker_cache_;
     std::vector<std::optional<PlanLegacyFogMarker>> legacy_fog_marker_cache_;
     std::vector<std::optional<PlanDrawDistanceMarker>> draw_distance_marker_cache_;
+    std::vector<PlanCurveParameterMarker> curve_parameter_marker_cache_;
     std::vector<std::optional<PlanMarker>> speed_limit_marker_cache_;
     std::vector<OwnTrackEditMarker> own_track_edit_marker_cache_;
     std::vector<OtherTrackChangeMarker> other_track_change_marker_cache_;
@@ -2603,6 +2628,7 @@ private:
     void reload_scene_preview_models();
     void sync_scene_preview_track_visibility();
     void sync_scene_preview_marker_visibility();
+    Canvas3DSceneMarkerVisibility current_scene_marker_visibility() const;
     void perform_reload_current_map_and_model_preview();
     void perform_reload_current_map_geometry();
     bool confirm_reload_if_unsaved(PendingReloadAction action);

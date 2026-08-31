@@ -497,6 +497,8 @@ App / MapModel
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 
+`Curve.SetGauge(value)`、`Curve.SetCenter(x)` 和 `Curve.SetFunction(id)` 与曲线序列语句共用现有 `CurveEditRow` -> `KvCurveRow` -> `MapModel::curve_rows` 路径；旧式 `Curve.Gauge(value)` 别名也进入同一路径。解析行保留正常源码来源与稳定编辑身份，解析器同时继续生成既有自轨道几何状态事件，因此不引入 GUI 解析器或新的公开快照行族。`SetFunction` 恰好接受一个数值参数，且求值结果仅允许 `0` 或 `1`；源码载入、类型化更新和类型化新增共用该约束，不改变他轨道超高函数兼容行为。更新保留原语句方法，包括旧式 `Curve.Gauge`；三个向导模板仅输出当前 `SetGauge`、`SetCenter` 和 `SetFunction` 形式，默认值依次为 `1.067`、`0` 和 `0`。
+
 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 是带稳定 `light.ambient`、`light.diffuse`、`light.direction` 编辑目标的源码关联可编辑行。“光照效果”标签页始终显示三组参数表单；编辑模式只会禁用“应用”“删除”“新建”，不会隐藏控件。“应用”把已改表单合并进正常的仅内存编辑账本，“删除”使用正常的延迟删除路径，“效果”向导会在用户选定的可编辑源文件中固定于里程 `0` 创建官方语句且不显示里程字段。根地图及全部 Include 合并后，每类只能保留一条基础语法正确的语句：同类重复会使所有冲突行无效，并输出一条含所有物理源码位置的英文警告。Ambient/Diffuse 的 RGB 必须在 `[0, 1]`，Direction 必须在里程 `0` 声明；无效行不会进入类型化快照。更新会保留未改参数的原始表达式，完整重解析/语义证明会保护 Apply 与 Save。`KvLightColorRow` 与 `KvLightDirectionRow` 保留文件/顺序/源码元数据，且不影响 2D/3D 渲染。
 
 AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑时，除匹配的场景/子系统技能外，还必须调用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。实现前必须重新核对受影响的在线官方页面，并完成该技能要求的合规矩阵。
@@ -527,6 +529,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。
 - 设置与历史只接受保存端写出的精确节、键和值语法。未知项、旧项、错节项或格式错误项使用默认值；读取已有文件绝不自动重写，显式保存才输出完整规范格式。
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
+- hydration 将曲线参数行分类为带 row index 与 edit ID 的 `CurveGauge`、`CurveCenter` 和 `CurveFunction` 标记。平面图绘制独立白色矩形 `CG`/`CC`/`CF` 标记；场景绘制上方代码、下方求值参数的白色双行标牌。场景继续复用现有拾取与蓝色高亮样式。精确 `[View2D]` 键 `show_curve_gauge_markers`、`show_curve_center_markers` 和 `show_curve_function_markers` 默认关闭，分别更新标记可见性而不重建轨道或模型几何。
 - 缓存表格内容；保持 Section 动态参数与显式 `null`、变量列表顺序及行/平面/场景导航副作用。
 - 将 Assimp 隔离在 `model_loader.dll`；纹理缺失、文件无效和模型不支持时不得崩溃。
 - 保持场景相机传递、拾取/高亮、可见性同步、标记配方、线路叠加层和 X/Y/Z 操纵器同步。
@@ -579,6 +582,7 @@ build\komapedit.exe --debug-headless-section-edit-batch [map-path] [--commit] --
 build\komapedit.exe --debug-headless-table-find --headless-output build\headless-table-find.txt
 build\komapedit.exe --debug-headless-touch-input --headless-output build\headless-touch-input.txt
 build\komapedit.exe --debug-headless-settings-persistence --headless-output build\settings-persistence.txt
+build\komapedit.exe --debug-headless-curve-parameter-edit <map-path> --headless-output build\curve-parameter-edit.txt
 build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 ```
 
@@ -597,6 +601,8 @@ plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
 `--debug-headless-light-edit` 要求显式传入地图，例如 `tests\\light_valid.txt`。它先按正式路径完成预览模型到编辑元数据的合并，再不模拟 ImGui 点击而直接调用“光照效果”表单 Apply、延迟删除和三种“效果”向导模板。合并后，地图中每条既有光照语句都必须可进行源码编辑；既有语句经共享延迟路径修改、删除，向导再在所选源文件的固定里程 `0` 创建全部三种形式。该命令支持仅含任意有效子集的三类光照语句的地图，检查求值预览和官方源码形式，最后 Revert 回原始子集。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并证明地图字节未改变。
+
+`--debug-headless-curve-parameter-edit` 要求显式传入包含三种现行 Curve 参数语句的地图。它按生产路径完成预览/编辑元数据合并，检查稳定身份、相互独立的 `CG`/`CC`/`CF` 平面标记与场景标牌、白色标牌主题及独立可见掩码；通过 Inspector 编辑里程和参数并拒绝 `SetFunction(2)`；经延迟路径删除；再通过三个正式向导模板新建现行形式；最后 Revert 回基线。该命令仅进行内存 Apply，传入 `--commit` 会被拒绝，并验证每个已加载物理源文件的字节完全不变。
 
 `--debug-headless-station-put-margin-edit` 要求地图在里程 `0` 含有可编辑的 `Station.Put`。它不模拟 ImGui 点击，检查 Inspector 对零值/错误符号停车容差的拒绝、新建地图元素默认值（`margin1=-5`、`margin2=5`）、向导对非法值的拒绝、合法内存新建和 Revert 清理。该命令仅进行内存 Apply。
 

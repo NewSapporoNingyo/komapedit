@@ -1586,6 +1586,12 @@ std::string build_curve_statement(const MapEditChange& change,
         parse_bve_argument_fields(statement.raw_arguments);
     std::string arguments = required_numeric_value_field(
         change, "radius", row.radius, raw_arg_at(args, 0));
+    if (row.method == "Curve.SetFunction") {
+        double id = 0.0;
+        if (!parse_edit_number(arguments, id) || (id != 0.0 && id != 1.0)) {
+            throw std::runtime_error("Curve.SetFunction requires id 0 or 1");
+        }
+    }
     if (row.argument_count == 2) {
         arguments += "," + required_numeric_value_field(
             change, "cant", row.cant, raw_arg_at(args, 1));
@@ -2901,6 +2907,7 @@ void validate_own_track_insert_change(const MapEditChange& change) {
         validate_insert_field_names(change, {"distance", "method", "radius", "cant"});
         validate_insert_method(change, "", {
             "Curve.BeginTransition", "Curve.Begin", "Curve.Change", "Curve.End",
+            "Curve.SetGauge", "Curve.SetCenter", "Curve.SetFunction",
         });
         if (method == "Curve.BeginTransition" || method == "Curve.End") {
             if (change.field_changes.find("radius") != change.field_changes.end() ||
@@ -2910,6 +2917,21 @@ void validate_own_track_insert_change(const MapEditChange& change) {
             return;
         }
         (void)required_numeric_value_field(change, "radius", Value::null());
+        if (method == "Curve.SetGauge" || method == "Curve.SetCenter" ||
+            method == "Curve.SetFunction") {
+            if (change.field_changes.find("cant") != change.field_changes.end()) {
+                throw std::runtime_error(method + " insert accepts exactly one parameter");
+            }
+            if (method == "Curve.SetFunction") {
+                double id = 0.0;
+                const std::string value = change.field_changes.at("radius");
+                if (!parse_edit_number(value, id) || (id != 0.0 && id != 1.0)) {
+                    throw std::runtime_error(
+                        "Curve.SetFunction insert requires id 0 or 1");
+                }
+            }
+            return;
+        }
         if (method == "Curve.Change") {
             if (change.field_changes.find("cant") != change.field_changes.end()) {
                 throw std::runtime_error("Curve.Change insert accepts exactly one radius argument");
@@ -3290,6 +3312,10 @@ std::string build_insert_statement(const MapEditChange& change,
             return method + "();";
         }
         const std::string radius = insert_required_number(change, "radius");
+        if (method == "Curve.SetGauge" || method == "Curve.SetCenter" ||
+            method == "Curve.SetFunction") {
+            return method + "(" + radius + ");";
+        }
         if (method == "Curve.Change") {
             return "Curve.Change(" + radius + ");";
         }
