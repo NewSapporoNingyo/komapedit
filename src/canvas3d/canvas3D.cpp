@@ -13,6 +13,8 @@
 
 #include "repeater_linkage.h"
 
+#include "scene_track_sampling.h"
+
 #include "kme.h"
 #include "maploader.h"
 #include "model_loader.h"
@@ -1080,31 +1082,7 @@ std::vector<std::string> scene_split_key_list(const std::string& text) {
 
 std::optional<Canvas3DTrackPoint> scene_sample_track_path_points(const Canvas3DTrackPath& path,
                                                                  double distance) {
-    if (path.points.empty()) return std::nullopt;
-    if (distance <= path.points.front().distance) return path.points.front();
-    if (distance >= path.points.back().distance) return path.points.back();
-    size_t lo = 0;
-    size_t hi = path.points.size();
-    while (lo < hi) {
-        size_t mid = (lo + hi) / 2;
-        if (path.points[mid].distance < distance) lo = mid + 1;
-        else hi = mid;
-    }
-    size_t a_index = lo == 0 ? 0 : lo - 1;
-    size_t b_index = std::min(lo, path.points.size() - 1);
-    const Canvas3DTrackPoint& a = path.points[a_index];
-    const Canvas3DTrackPoint& b = path.points[b_index];
-    double span = b.distance - a.distance;
-    double t = std::abs(span) < 1e-9 ? 0.0 : std::clamp((distance - a.distance) / span, 0.0, 1.0);
-    Canvas3DTrackPoint out;
-    out.distance = distance;
-    out.x = a.x + (b.x - a.x) * t;
-    out.y = a.y + (b.y - a.y) * t;
-    out.z = a.z + (b.z - a.z) * t;
-    out.theta = angle_lerp(a.theta, b.theta, t);
-    out.gradient = a.gradient + (b.gradient - a.gradient) * t;
-    out.cant_angle = a.cant_angle + (b.cant_angle - a.cant_angle) * t;
-    return out;
+    return scene_track_sampling::sample_track_path_points(path, distance);
 }
 
 std::string normalized_texture_cache_key(const std::string& path) {
@@ -3120,14 +3098,14 @@ struct Canvas3D::Impl {
             scene_camera_pos = camera_state.pos;
             scene_camera_yaw = camera_state.yaw;
             scene_camera_pitch = camera_state.pitch;
-            scene_camera_distance = std::clamp(camera_state.distance, scene_data.min_distance, scene_data.max_distance);
+            scene_camera_distance = scene_track_sampling::clamp_camera_distance(scene_data, camera_state.distance);
             reset_scene_camera_tracking();
             scene_camera_pitch = camera_state.pitch;
         } else {
             scene_camera_pos = {scene_data.camera.x, scene_data.camera.y, scene_data.camera.z};
             scene_camera_yaw = static_cast<float>(scene_data.camera.yaw);
             scene_camera_pitch = static_cast<float>(scene_data.camera.pitch);
-            scene_camera_distance = std::clamp(scene_data.camera.distance, scene_data.min_distance, scene_data.max_distance);
+            scene_camera_distance = scene_track_sampling::clamp_camera_distance(scene_data, scene_data.camera.distance);
             reset_scene_camera_tracking();
         }
         scene_active = true;
@@ -4783,9 +4761,8 @@ struct Canvas3D::Impl {
     }
 
     bool set_scene_camera_for_target(double distance, DVec3 target_center) {
-        scene_camera_distance = std::clamp(distance - k_scene_object_jump_back_m,
-                                           scene_data.min_distance,
-                                           scene_data.max_distance);
+        scene_camera_distance = scene_track_sampling::clamp_camera_distance(
+            scene_data, distance - k_scene_object_jump_back_m);
         scene_camera_lateral_offset = 0.0;
         scene_camera_vertical_offset = k_default_scene_camera_height;
         scene_camera_yaw_offset = 0.0f;
@@ -4801,7 +4778,7 @@ struct Canvas3D::Impl {
             scene_camera_pitch = static_cast<float>(
                 std::clamp(std::asin(std::clamp(to_target.y / len, -1.0, 1.0)), -1.45, 1.45));
             Canvas3DTrackPoint point;
-            if (sample_own_track(scene_camera_distance, point)) {
+            if (sample_own_track_for_camera(scene_camera_distance, point)) {
                 scene_camera_yaw_offset = scene_camera_yaw - static_cast<float>(point.theta);
             }
         }
@@ -8926,6 +8903,20 @@ struct Canvas3D::Impl {
         return path && sample_track_path(*path, distance, out);
     }
 
+    // Camera-specific own-track sampling: identical to sample_own_track inside
+    // the real track range, but extrapolates the world position along the
+    // first point's heading/gradient for camera mileages before the track
+    // start. Ordinary placement/marker/rendering sampling must not use this.
+    bool sample_own_track_for_camera(double distance, Canvas3DTrackPoint& out) const {
+        const Canvas3DTrackPath* path = own_track_path();
+        if (!path) return false;
+        std::optional<Canvas3DTrackPoint> sample =
+            scene_track_sampling::camera_sample_track(*path, distance);
+        if (!sample) return false;
+        out = *sample;
+        return true;
+    }
+
     const Canvas3DTrackPath* placement_track_path_for_key(const std::string& key) const {
         return scene_placement_track_path_for_key(scene_data, key);
     }
@@ -9136,7 +9127,7 @@ struct Canvas3D::Impl {
 
     bool update_scene_camera_from_owntrack() {
         Canvas3DTrackPoint point;
-        if (!sample_own_track(scene_camera_distance, point)) return false;
+        if (!sample_own_track_for_camera(scene_camera_distance, point)) return false;
         DVec3 base{point.x, point.y, point.z};
         DVec3 right = right_from_theta_d(point.theta);
         scene_camera_pos = base + right * scene_camera_lateral_offset;
@@ -9147,7 +9138,7 @@ struct Canvas3D::Impl {
 
     bool reset_scene_camera_pose_at_distance(double distance) {
         if (!scene_active) return false;
-        scene_camera_distance = std::clamp(distance, scene_data.min_distance, scene_data.max_distance);
+        scene_camera_distance = scene_track_sampling::clamp_camera_distance(scene_data, distance);
         scene_camera_lateral_offset = 0.0;
         scene_camera_vertical_offset = k_default_scene_camera_height;
         scene_camera_yaw_offset = 0.0f;
@@ -9161,7 +9152,7 @@ struct Canvas3D::Impl {
         scene_camera_lateral_offset = 0.0;
         scene_camera_vertical_offset = k_default_scene_camera_height;
         scene_camera_yaw_offset = 0.0f;
-        if (!sample_own_track(scene_camera_distance, point)) return;
+        if (!sample_own_track_for_camera(scene_camera_distance, point)) return;
 
         DVec3 base{point.x, point.y, point.z};
         DVec3 current = scene_camera_pos;
@@ -9822,9 +9813,9 @@ struct Canvas3D::Impl {
         if (ImGui::IsKeyDown(ImGuiKey_F)) vertical_delta -= step;
 
         Canvas3DTrackPoint own_point;
-        if (sample_own_track(scene_camera_distance, own_point)) {
-            scene_camera_distance = std::clamp(scene_camera_distance + static_cast<double>(distance_delta),
-                                               scene_data.min_distance, scene_data.max_distance);
+        if (sample_own_track_for_camera(scene_camera_distance, own_point)) {
+            scene_camera_distance = scene_track_sampling::clamp_camera_distance(
+                scene_data, scene_camera_distance + static_cast<double>(distance_delta));
             scene_camera_lateral_offset += lateral_delta;
             scene_camera_vertical_offset += vertical_delta;
             update_scene_camera_from_owntrack();
@@ -9836,8 +9827,8 @@ struct Canvas3D::Impl {
             delta = delta + dvec3_from_vec3(right) * static_cast<double>(lateral_delta);
             delta.y += vertical_delta;
             scene_camera_pos = scene_camera_pos + delta;
-            scene_camera_distance = std::clamp(scene_camera_distance + static_cast<double>(distance_delta),
-                                               scene_data.min_distance, scene_data.max_distance);
+            scene_camera_distance = scene_track_sampling::clamp_camera_distance(
+                scene_data, scene_camera_distance + static_cast<double>(distance_delta));
         }
     }
 

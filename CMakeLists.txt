@@ -129,6 +129,21 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:typed_snapshot_tests> diagnostics
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
+
+    add_executable(canvas3d_camera_tests
+        src/canvas3d/tests/canvas3d_camera_tests.cpp
+        src/canvas3d/scene_track_sampling.cpp
+    )
+    target_compile_features(canvas3d_camera_tests PRIVATE cxx_std_17)
+    target_include_directories(canvas3d_camera_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/canvas3d
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/main_window
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+    )
+    add_test(NAME canvas3d_camera_contract
+        COMMAND $<TARGET_FILE:canvas3d_camera_tests>
+    )
 endif()
 
 find_package(assimp CONFIG REQUIRED)
@@ -254,6 +269,7 @@ add_executable(komapedit
     src/canvas2d/canvas2D.cpp
     src/canvas2d/profile_plots.cpp
     src/canvas3d/canvas3D.cpp
+    src/canvas3d/scene_track_sampling.cpp
     src/table/datatable.cpp
     src/table/table_navigation.cpp
 )
@@ -302,6 +318,7 @@ foreach(komapedit_owned_target IN ITEMS
         maploader
         model_loader
         typed_snapshot_tests
+        canvas3d_camera_tests
         komapedit)
     if(TARGET ${komapedit_owned_target})
         komapedit_enable_strict_warnings(${komapedit_owned_target})

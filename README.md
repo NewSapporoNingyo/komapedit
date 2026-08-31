@@ -380,7 +380,7 @@ Keyboard movement works in `Move`, `Select`, and `Mileage Select` modes. Draggin
 | Hold `Ctrl` | Move faster with the keys above |
 | `X` | Reset the camera to its default pose above the own-track center at the current mileage |
 
-Set the camera speed in `3D Canvas Settings`. Toolbar station and mileage jumps also move the scene camera. If `Show Current Position on Plan` is enabled, the 2D Plan also shows the camera position.
+Set the camera speed in `3D Canvas Settings`. Toolbar station and mileage jumps also move the scene camera. The camera can move up to 100 m behind the own-track start mileage; requests below that are clamped. If `Show Current Position on Plan` is enabled, the 2D Plan also shows the camera position.
 
 #### Select Mode
 
