@@ -115,11 +115,11 @@ constexpr std::array<NewFileTemplateCategoryInfo, 3>
 
 constexpr std::array<NewFileTemplate, 6> k_new_file_templates = {{
     {NewFileKind::Map, "map", "BveTs Map 2.02", "new_file.usage.map"},
-    {NewFileKind::Structure, "resource_lists", "Structure", "new_file.usage.structure"},
-    {NewFileKind::Signal, "resource_lists", "Signal", "new_file.usage.signal"},
-    {NewFileKind::Sound, "resource_lists", "Sound", "new_file.usage.sound"},
-    {NewFileKind::Sound3D, "resource_lists", "Sound3D", "new_file.usage.sound3d"},
-    {NewFileKind::Station, "resource_lists", "Station", "new_file.usage.station"},
+    {NewFileKind::Structure, "resource_lists", "Structure List", "new_file.usage.structure"},
+    {NewFileKind::Signal, "resource_lists", "Signal List", "new_file.usage.signal"},
+    {NewFileKind::Sound, "resource_lists", "Sound List", "new_file.usage.sound"},
+    {NewFileKind::Sound3D, "resource_lists", "Sound3D List", "new_file.usage.sound3d"},
+    {NewFileKind::Station, "resource_lists", "Station List", "new_file.usage.station"},
 }};
 
 const std::vector<NewElementTemplate>& new_element_templates_internal() {
@@ -2113,9 +2113,6 @@ void App::render_new_file_wizard() {
     const std::string target_preview = wizard.target_file_path.empty()
         ? tr("status.new_file.no_reference_target")
         : display_name_from_path(wizard.target_file_path);
-    if (wizard.target_file_candidates.empty()) {
-        ImGui::TextWrapped("%s", tr("status.new_file.no_reference_target").c_str());
-    }
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::BeginDisabled(wizard.target_file_candidates.empty() ||
                          resource_list_already_referenced);
