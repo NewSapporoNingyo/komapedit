@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -36,10 +37,33 @@ struct ScenarioPathWeight {
 
 struct ScenarioDocument {
     std::filesystem::path root;
+    std::string source_hash;
+    uint32_t present_fields = 0;
     std::string title;
     std::vector<ScenarioPathWeight> routes;
     std::string route_title;
     std::vector<ScenarioPathWeight> vehicles;
+    std::string vehicle_title;
+    std::string author;
+    std::string image;
+    std::string comment;
+};
+
+/* Applies a call-scoped Scenario draft to the current on-disk source. The
+   request is intentionally kept in the internal representation so the C ABI
+   boundary can validate pointer/size contracts before entering this routine. */
+struct ScenarioEditPath {
+    std::string path;
+    double weight = 1.0;
+    bool has_explicit_weight = false;
+};
+
+struct ScenarioEditRequest {
+    std::string expected_source_hash;
+    std::string title;
+    std::vector<ScenarioEditPath> routes;
+    std::string route_title;
+    std::vector<ScenarioEditPath> vehicles;
     std::string vehicle_title;
     std::string author;
     std::string image;
@@ -51,6 +75,9 @@ struct ScenarioDocument {
    require Route targets. Repeated fields retain the existing last-entry-wins
    compatibility behavior. */
 ScenarioDocument load_scenario_document(const std::filesystem::path& scenario_path);
+
+ScenarioDocument save_scenario_document(const std::filesystem::path& scenario_path,
+                                        const ScenarioEditRequest& request);
 
 /* Parses every Route candidate of one BVE Scenario file per the official
    Scenario schema: "BveTs Scenario 2.00:<encoding>" header, '#' or ';'

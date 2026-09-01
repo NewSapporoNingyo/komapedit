@@ -34,6 +34,8 @@ int failures = 0;
 std::mutex diagnostic_log_mutex;
 std::vector<std::string> diagnostic_logs;
 
+KvUtf8View utf8_view(const std::string& value);
+
 void diagnostic_log_callback(const char* message) {
     if (!message) return;
     std::lock_guard<std::mutex> lock(diagnostic_log_mutex);
@@ -446,7 +448,7 @@ int scenario_route_contract();
 void light_contract();
 
 int snapshot_contract() {
-    static_assert(KV_MAPLOADER_API_VERSION == 10u, "maploader API contract version");
+    static_assert(KV_MAPLOADER_API_VERSION == 11u, "maploader API contract version");
     TempFixture fixture(true);
     check(kv_api_version() == KV_MAPLOADER_API_VERSION, "API version");
 #if defined(_WIN32)
@@ -1019,6 +1021,8 @@ int scenario_route_contract() {
               "kv_load_scenario_snapshot export present");
         check(GetProcAddress(module, "kv_free_scenario_snapshot") != nullptr,
               "kv_free_scenario_snapshot export present");
+        check(GetProcAddress(module, "kv_save_scenario_document") != nullptr,
+              "kv_save_scenario_document export present");
     }
 #endif
 
@@ -1319,6 +1323,510 @@ int scenario_route_contract() {
     expect_failure("wrongheader.txt",
                    "BveTs Map 2.02:utf-8\n0;\n",
                    "Invalid file header", "map header rejected by resolver");
+
+    // Scenario source-backed editing writes only the requested draft, keeps
+    // duplicate/unknown/comment rows intact, and returns a fresh v2 snapshot.
+    write_bytes(directory / "editable.txt",
+                "BveTs Scenario 2.00:utf-8\r\n"
+                "; keep this comment\r\n"
+                "Unknown = untouched\r\n"
+                "Title = old title\r\n"
+                "Route = maps\\map-a.txt * 2 | maps\\map-b.txt\r\n"
+                "Route = maps\\map-a.txt * 2 | maps\\map-b.txt\r\n"
+                "Vehicle = train-a.txt | train-b.txt * 3\r\n"
+                "Comment = old comment\r\n");
+    {
+        const std::filesystem::path path = directory / "editable.txt";
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        check(baseline != nullptr && baseline->source_hash.length != 0 &&
+                  (baseline->present_fields & (1u << 0)) != 0 &&
+                  (baseline->present_fields & (1u << 1)) != 0,
+              "scenario snapshot exposes source hash and field presence");
+        if (baseline) {
+            std::string title = "new title";
+            std::string route0 = "maps\\map-a.txt";
+            std::string route1 = "maps\\map-b.txt";
+            std::string vehicle0 = "train-a.txt";
+            std::string vehicle1 = "train-c.txt";
+            std::string route_title;
+            std::string vehicle_title;
+            std::string author;
+            std::string image;
+            std::string comment = "new comment";
+            std::string hash = scenario_string(*baseline, baseline->source_hash);
+            std::vector<KvScenarioEditPathRow> routes{
+                {utf8_view(route0), 4.0, 1u, 0u},
+                {utf8_view(route1), 1.0, 0u, 0u}};
+            std::vector<KvScenarioEditPathRow> vehicles{
+                {utf8_view(vehicle0), 1.0, 0u, 0u},
+                {utf8_view(vehicle1), 2.0, 1u, 0u}};
+            KvScenarioEditDocument edit{};
+            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            edit.structure_size = sizeof(edit);
+            edit.expected_source_hash = utf8_view(hash);
+            edit.title = utf8_view(title);
+            edit.routes = routes.data();
+            edit.route_count = routes.size();
+            edit.route_title = utf8_view(route_title);
+            edit.vehicles = vehicles.data();
+            edit.vehicle_count = vehicles.size();
+            edit.vehicle_title = utf8_view(vehicle_title);
+            edit.author = utf8_view(author);
+            edit.image = utf8_view(image);
+            edit.comment = utf8_view(comment);
+            const KvScenarioSnapshot* saved = kv_save_scenario_document(
+                path.u8string().c_str(), &edit);
+            check(saved != nullptr, "scenario draft save succeeds");
+            if (saved) {
+                check(scenario_string(*saved, saved->title) == title &&
+                          saved->route_count == 2 &&
+                          scenario_string(*saved, saved->routes[0].path) == route0 &&
+                          nearly_equal(saved->routes[0].weight, 4.0) &&
+                          saved->routes[0].has_explicit_weight != 0 &&
+                          scenario_string(*saved, saved->vehicles[1].path) == vehicle1 &&
+                          nearly_equal(saved->vehicles[1].weight, 2.0) &&
+                          saved->vehicles[1].has_explicit_weight != 0,
+                      "saved scenario snapshot matches draft");
+                kv_free_scenario_snapshot(saved);
+            }
+            std::ifstream verify(path, std::ios::binary);
+            std::string verify_text((std::istreambuf_iterator<char>(verify)), {});
+            check(verify_text.find("Unknown = untouched") != std::string::npos &&
+                      verify_text.find("; keep this comment") != std::string::npos &&
+                      verify_text.find("Route = maps\\map-a.txt * 4") != std::string::npos,
+                  "scenario save preserves unknown rows/comments and updates candidates");
+            kv_free_scenario_snapshot(baseline);
+        }
+    }
+    {
+        const std::filesystem::path path = directory / "editable.txt";
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        if (baseline) {
+            std::string hash = scenario_string(*baseline, baseline->source_hash);
+            std::string title = scenario_string(*baseline, baseline->title);
+            KvScenarioEditDocument bad{};
+            bad.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            bad.structure_size = sizeof(bad);
+            bad.expected_source_hash = utf8_view(hash);
+            bad.title = utf8_view(title);
+            bad.route_count = baseline->route_count + 1;
+            bad.vehicle_count = baseline->vehicle_count;
+            std::string bad_route_path = "maps\\map-a.txt";
+            std::string bad_vehicle_path = "train-a.txt";
+            std::vector<KvScenarioEditPathRow> bad_routes(
+                static_cast<size_t>(bad.route_count),
+                KvScenarioEditPathRow{utf8_view(bad_route_path), 1.0, 0u, 0u});
+            std::vector<KvScenarioEditPathRow> bad_vehicles(
+                static_cast<size_t>(bad.vehicle_count),
+                KvScenarioEditPathRow{utf8_view(bad_vehicle_path), 1.0, 0u, 0u});
+            bad.routes = bad_routes.data();
+            bad.vehicles = bad_vehicles.data();
+            const KvScenarioSnapshot* rejected = kv_save_scenario_document(
+                path.u8string().c_str(), &bad);
+            check(rejected == nullptr, "scenario candidate count change rejected");
+            kv_free_scenario_snapshot(rejected);
+            kv_free_scenario_snapshot(baseline);
+        }
+    }
+
+    // Missing scalar fields are inserted only when the draft contains a
+    // non-empty value. Existing Route/Vehicle candidates remain the fixed
+    // source order; no candidate is synthesized by the save path.
+    {
+        const std::filesystem::path path = directory / "missing-scalars.txt";
+        write_bytes(path,
+                    "BveTs Scenario 2.00:utf-8\n"
+                    "Route = maps\\map-a.txt\n"
+                    "Vehicle = train.txt\n");
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        check(baseline != nullptr && baseline->route_count == 1 &&
+                  baseline->vehicle_count == 1 &&
+                  (baseline->present_fields & KV_SCENARIO_FIELD_TITLE) == 0 &&
+                  (baseline->present_fields & KV_SCENARIO_FIELD_IMAGE) == 0,
+              "scenario baseline records missing scalar fields");
+        if (baseline) {
+            std::string hash = scenario_string(*baseline, baseline->source_hash);
+            std::string title = "Inserted title";
+            std::string route_title = "Inserted route";
+            std::string vehicle_title = "Inserted vehicle";
+            std::string author = "Inserted author";
+            std::string image = "images\\inserted.png";
+            std::string comment = "Inserted comment";
+            std::string route = "maps\\map-a.txt";
+            std::string vehicle = "train.txt";
+            std::vector<KvScenarioEditPathRow> routes{
+                {utf8_view(route), 1.0, 0u, 0u}};
+            std::vector<KvScenarioEditPathRow> vehicles{
+                {utf8_view(vehicle), 1.0, 0u, 0u}};
+            KvScenarioEditDocument edit{};
+            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            edit.structure_size = sizeof(edit);
+            edit.expected_source_hash = utf8_view(hash);
+            edit.title = utf8_view(title);
+            edit.routes = routes.data();
+            edit.route_count = routes.size();
+            edit.route_title = utf8_view(route_title);
+            edit.vehicles = vehicles.data();
+            edit.vehicle_count = vehicles.size();
+            edit.vehicle_title = utf8_view(vehicle_title);
+            edit.author = utf8_view(author);
+            edit.image = utf8_view(image);
+            edit.comment = utf8_view(comment);
+            const KvScenarioSnapshot* saved = kv_save_scenario_document(
+                path.u8string().c_str(), &edit);
+            check(saved != nullptr, "missing scalar values save and insert");
+            if (saved) {
+                check(scenario_string(*saved, saved->title) == title &&
+                          scenario_string(*saved, saved->route_title) == route_title &&
+                          scenario_string(*saved, saved->vehicle_title) == vehicle_title &&
+                          scenario_string(*saved, saved->author) == author &&
+                          scenario_string(*saved, saved->image) == image &&
+                          scenario_string(*saved, saved->comment) == comment &&
+                          (saved->present_fields & KV_SCENARIO_FIELD_TITLE) != 0 &&
+                          (saved->present_fields & KV_SCENARIO_FIELD_COMMENT) != 0,
+                      "inserted scalar values round-trip in the v2 snapshot");
+                kv_free_scenario_snapshot(saved);
+            }
+            std::ifstream verify(path, std::ios::binary);
+            const std::string verify_text((std::istreambuf_iterator<char>(verify)), {});
+            check(verify_text.find("Title = Inserted title") != std::string::npos &&
+                      verify_text.find("Image = images\\inserted.png") != std::string::npos,
+                  "missing scalar insertion uses official key spelling");
+            kv_free_scenario_snapshot(baseline);
+        }
+    }
+
+    // The default weight is preserved as an omitted suffix. An explicitly
+    // edited weight becomes a visible suffix even when its value is 1.
+    {
+        const std::filesystem::path path = directory / "weight-representation.txt";
+        write_bytes(path,
+                    "BveTs Scenario 2.00:utf-8\n"
+                    "Route = maps\\map-a.txt | maps\\map-b.txt\n"
+                    "Vehicle = train-a.txt\n");
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        check(baseline != nullptr && baseline->route_count == 2 &&
+                  baseline->routes[0].has_explicit_weight == 0 &&
+                  baseline->routes[1].has_explicit_weight == 0,
+              "implicit scenario weights are identified");
+        if (baseline) {
+            std::string hash = scenario_string(*baseline, baseline->source_hash);
+            std::string title = scenario_string(*baseline, baseline->title);
+            std::string route0 = "maps\\map-a.txt";
+            std::string route1 = "maps\\map-b.txt";
+            std::string vehicle = "train-a.txt";
+            std::vector<KvScenarioEditPathRow> routes{
+                {utf8_view(route0), 1.0, 0u, 0u},
+                {utf8_view(route1), 1.0, 0u, 0u}};
+            std::vector<KvScenarioEditPathRow> vehicles{
+                {utf8_view(vehicle), 1.0, 0u, 0u}};
+            KvScenarioEditDocument edit{};
+            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            edit.structure_size = sizeof(edit);
+            edit.expected_source_hash = utf8_view(hash);
+            edit.title = utf8_view(title);
+            edit.routes = routes.data();
+            edit.route_count = routes.size();
+            edit.vehicles = vehicles.data();
+            edit.vehicle_count = vehicles.size();
+            const KvScenarioSnapshot* saved = kv_save_scenario_document(
+                path.u8string().c_str(), &edit);
+            check(saved != nullptr, "unchanged implicit weights save");
+            kv_free_scenario_snapshot(saved);
+            std::ifstream implicit_file(path, std::ios::binary);
+            const std::string implicit_text(
+                (std::istreambuf_iterator<char>(implicit_file)), {});
+            check(implicit_text.find("Route = maps\\map-a.txt | maps\\map-b.txt") !=
+                      std::string::npos,
+                  "unchanged implicit weights remain omitted");
+            kv_free_scenario_snapshot(baseline);
+        }
+
+        const KvScenarioSnapshot* explicit_baseline = load_snapshot(path);
+        if (explicit_baseline) {
+            std::string hash = scenario_string(*explicit_baseline,
+                                                explicit_baseline->source_hash);
+            std::string title = scenario_string(*explicit_baseline,
+                                                 explicit_baseline->title);
+            std::string route0 = "maps\\map-a.txt";
+            std::string route1 = "maps\\map-b.txt";
+            std::string vehicle = "train-a.txt";
+            std::vector<KvScenarioEditPathRow> routes{
+                {utf8_view(route0), 1.0, 1u, 0u},
+                {utf8_view(route1), 1.0, 0u, 0u}};
+            std::vector<KvScenarioEditPathRow> vehicles{
+                {utf8_view(vehicle), 1.0, 0u, 0u}};
+            KvScenarioEditDocument edit{};
+            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            edit.structure_size = sizeof(edit);
+            edit.expected_source_hash = utf8_view(hash);
+            edit.title = utf8_view(title);
+            edit.routes = routes.data();
+            edit.route_count = routes.size();
+            edit.vehicles = vehicles.data();
+            edit.vehicle_count = vehicles.size();
+            const KvScenarioSnapshot* saved = kv_save_scenario_document(
+                path.u8string().c_str(), &edit);
+            check(saved != nullptr, "implicit weight can become explicit one");
+            kv_free_scenario_snapshot(saved);
+            std::ifstream explicit_file(path, std::ios::binary);
+            const std::string explicit_text(
+                (std::istreambuf_iterator<char>(explicit_file)), {});
+            check(explicit_text.find("Route = maps\\map-a.txt * 1 | maps\\map-b.txt") !=
+                      std::string::npos,
+                  "explicitly edited default weight is serialized");
+            kv_free_scenario_snapshot(explicit_baseline);
+        }
+    }
+
+    auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(file)), {});
+    };
+    auto make_scenario_edit = [&](const KvScenarioSnapshot& baseline,
+                                  std::string& hash,
+                                  std::string& title,
+                                  std::string& route,
+                                  std::string& vehicle,
+                                  KvScenarioEditPathRow& route_row,
+                                  KvScenarioEditPathRow& vehicle_row) {
+        hash = scenario_string(baseline, baseline.source_hash);
+        title = scenario_string(baseline, baseline.title);
+        route = baseline.route_count == 0
+            ? std::string("maps\\map-a.txt")
+            : scenario_string(baseline, baseline.routes[0].path);
+        vehicle = baseline.vehicle_count == 0
+            ? std::string("train.txt")
+            : scenario_string(baseline, baseline.vehicles[0].path);
+        route_row = KvScenarioEditPathRow{utf8_view(route), 1.0, 0u, 0u};
+        vehicle_row = KvScenarioEditPathRow{utf8_view(vehicle), 1.0, 0u, 0u};
+    };
+
+    // Invalid path/weight values and semantic mismatches must leave the
+    // source bytes unchanged. These are checked independently so a later
+    // rejected draft still uses the same source hash baseline.
+    {
+        const std::filesystem::path path = directory / "invalid-edit.txt";
+        write_bytes(path,
+                    "BveTs Scenario 2.00:utf-8\n"
+                    "Title = Stable\n"
+                    "Route = maps\\map-a.txt\n"
+                    "Vehicle = train.txt\n");
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        check(baseline != nullptr, "invalid-edit baseline loads");
+        if (baseline) {
+            const std::string original = read_bytes(path);
+            auto expect_rejected = [&](const char* label,
+                                       std::string candidate_path,
+                                       double weight,
+                                       uint32_t explicit_weight,
+                                       std::string candidate_title = "Stable") {
+                const std::string requested_path = candidate_path;
+                std::string hash;
+                std::string title;
+                std::string vehicle;
+                KvScenarioEditPathRow route_row{};
+                KvScenarioEditPathRow vehicle_row{};
+                make_scenario_edit(*baseline, hash, title, candidate_path,
+                                   vehicle, route_row, vehicle_row);
+                candidate_path = requested_path;
+                route_row.path = utf8_view(candidate_path);
+                route_row.weight = weight;
+                route_row.has_explicit_weight = explicit_weight;
+                title = std::move(candidate_title);
+                KvScenarioEditDocument edit{};
+                edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+                edit.structure_size = sizeof(edit);
+                edit.expected_source_hash = utf8_view(hash);
+                edit.title = utf8_view(title);
+                edit.routes = &route_row;
+                edit.route_count = 1;
+                edit.vehicles = &vehicle_row;
+                edit.vehicle_count = 1;
+                const KvScenarioSnapshot* rejected = kv_save_scenario_document(
+                    path.u8string().c_str(), &edit);
+                check(rejected == nullptr, label);
+                kv_free_scenario_snapshot(rejected);
+                check(read_bytes(path) == original,
+                      (std::string(label) + " keeps source bytes").c_str());
+            };
+            expect_rejected("empty Route path rejected", "", 1.0, 0u);
+            expect_rejected("zero Route weight rejected", "maps\\map-a.txt", 0.0, 1u);
+            expect_rejected("negative Route weight rejected", "maps\\map-a.txt", -1.0, 1u);
+            expect_rejected("NaN Route weight rejected", "maps\\map-a.txt",
+                            std::numeric_limits<double>::quiet_NaN(), 1u);
+            expect_rejected("Infinity Route weight rejected", "maps\\map-a.txt",
+                            std::numeric_limits<double>::infinity(), 1u);
+            expect_rejected("changed omitted weight rejected", "maps\\map-a.txt", 2.0, 0u);
+            expect_rejected("reserved Route syntax rejected", "maps\\other|map.txt", 1.0, 0u);
+            expect_rejected("semantic scalar mismatch rejected", "maps\\map-a.txt", 1.0,
+                            0u, "bad # title");
+            kv_free_scenario_snapshot(baseline);
+        }
+    }
+
+    // The expected source hash is a disk concurrency guard. An external
+    // append between load and save rejects the draft without overwriting it.
+    {
+        const std::filesystem::path path = directory / "hash-conflict.txt";
+        write_bytes(path,
+                    "BveTs Scenario 2.00:utf-8\n"
+                    "Title = Before\n"
+                    "Route = maps\\map-a.txt\n"
+                    "Vehicle = train.txt\n");
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        if (baseline) {
+            const std::string hash = scenario_string(*baseline, baseline->source_hash);
+            std::string external = read_bytes(path);
+            external += "; external edit\n";
+            write_bytes(path, external);
+            std::string title = "After";
+            std::string route = "maps\\map-a.txt";
+            std::string vehicle = "train.txt";
+            KvScenarioEditPathRow route_row{utf8_view(route), 1.0, 0u, 0u};
+            KvScenarioEditPathRow vehicle_row{utf8_view(vehicle), 1.0, 0u, 0u};
+            KvScenarioEditDocument edit{};
+            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            edit.structure_size = sizeof(edit);
+            edit.expected_source_hash = utf8_view(hash);
+            edit.title = utf8_view(title);
+            edit.routes = &route_row;
+            edit.route_count = 1;
+            edit.vehicles = &vehicle_row;
+            edit.vehicle_count = 1;
+            const std::string conflicted = read_bytes(path);
+            const KvScenarioSnapshot* rejected = kv_save_scenario_document(
+                path.u8string().c_str(), &edit);
+            check(rejected == nullptr, "external Scenario hash conflict rejected");
+            kv_free_scenario_snapshot(rejected);
+            check(read_bytes(path) == conflicted,
+                  "external Scenario conflict leaves disk untouched");
+            kv_free_scenario_snapshot(baseline);
+        }
+    }
+
+    auto utf16_bytes = [](std::string_view text, bool little_endian) {
+        std::string bytes;
+        bytes.reserve(2 + text.size() * 2);
+        bytes.push_back(static_cast<char>(little_endian ? 0xff : 0xfe));
+        bytes.push_back(static_cast<char>(little_endian ? 0xfe : 0xff));
+        for (unsigned char ch : text) {
+            const uint16_t unit = static_cast<uint16_t>(ch);
+            if (little_endian) {
+                bytes.push_back(static_cast<char>(unit & 0xff));
+                bytes.push_back(static_cast<char>((unit >> 8) & 0xff));
+            } else {
+                bytes.push_back(static_cast<char>((unit >> 8) & 0xff));
+                bytes.push_back(static_cast<char>(unit & 0xff));
+            }
+        }
+        return bytes;
+    };
+
+    // Save preserves the source encoding/BOM and newline style for UTF-8
+    // BOM, UTF-16LE, UTF-16BE and CP932 documents.
+    struct EncodingCase {
+        const char* name;
+        std::string bytes;
+        std::string prefix;
+        std::string newline_bytes;
+    };
+    const std::string ascii_scenario_lf =
+        "BveTs Scenario 2.00:utf-8\n"
+        "Title = Before\n"
+        "Route = maps\\map-a.txt\n"
+        "Vehicle = train.txt\n";
+    const std::string ascii_scenario_crlf =
+        "BveTs Scenario 2.00:shift_jis\r\n"
+        "Title = Before\r\n"
+        "Route = maps\\map-a.txt\r\n"
+        "Vehicle = train.txt\r\n";
+    const std::array<EncodingCase, 4> encoding_cases{{
+        {"utf8-bom", std::string("\xef\xbb\xbf") + ascii_scenario_lf,
+         "\xef\xbb\xbf", "\n"},
+        {"utf16-le", utf16_bytes(
+             "BveTs Scenario 2.00:utf-16le\r\nTitle = Before\r\n"
+             "Route = maps\\map-a.txt\r\nVehicle = train.txt\r\n", true),
+         "\xff\xfe", "\x0d\x00\x0a\x00"},
+        {"utf16-be", utf16_bytes(
+             "BveTs Scenario 2.00:utf-16be\nTitle = Before\n"
+             "Route = maps\\map-a.txt\nVehicle = train.txt\n", false),
+         "\xfe\xff", "\x00\x0a\x00"},
+        {"cp932", ascii_scenario_crlf, "BveTs Scenario", "\r\n"},
+    }};
+    for (const EncodingCase& encoding_case : encoding_cases) {
+        const std::filesystem::path path = directory /
+            (std::string("encoding-") + encoding_case.name + ".txt");
+        write_bytes(path, encoding_case.bytes);
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        check(baseline != nullptr, (std::string(encoding_case.name) +
+                                    " baseline loads").c_str());
+        if (!baseline) continue;
+        std::string hash = scenario_string(*baseline, baseline->source_hash);
+        std::string title = std::string("After ") + encoding_case.name;
+        std::string route = "maps\\map-a.txt";
+        std::string vehicle = "train.txt";
+        KvScenarioEditPathRow route_row{utf8_view(route), 1.0, 0u, 0u};
+        KvScenarioEditPathRow vehicle_row{utf8_view(vehicle), 1.0, 0u, 0u};
+        KvScenarioEditDocument edit{};
+        edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+        edit.structure_size = sizeof(edit);
+        edit.expected_source_hash = utf8_view(hash);
+        edit.title = utf8_view(title);
+        edit.routes = &route_row;
+        edit.route_count = 1;
+        edit.vehicles = &vehicle_row;
+        edit.vehicle_count = 1;
+        const KvScenarioSnapshot* saved = kv_save_scenario_document(
+            path.u8string().c_str(), &edit);
+        check(saved != nullptr, (std::string(encoding_case.name) +
+                                " save preserves encoding").c_str());
+        if (saved) {
+            check(scenario_string(*saved, saved->title) == title,
+                  (std::string(encoding_case.name) + " title round-trips").c_str());
+            kv_free_scenario_snapshot(saved);
+        }
+        const std::string encoded = read_bytes(path);
+        check(encoded.rfind(encoding_case.prefix, 0) == 0,
+              (std::string(encoding_case.name) + " BOM/encoding prefix preserved").c_str());
+        check(encoded.find(encoding_case.newline_bytes) != std::string::npos,
+              (std::string(encoding_case.name) + " newline style preserved").c_str());
+        kv_free_scenario_snapshot(baseline);
+    }
+
+    // CP932 cannot represent arbitrary Unicode drafts; writeback rejects the
+    // change and keeps the original bytes. This is a Windows code-page
+    // contract and therefore only runs on the supported Windows build.
+    {
+        const std::filesystem::path path = directory / "encoding-cp932-reject.txt";
+        write_bytes(path, ascii_scenario_crlf);
+        const KvScenarioSnapshot* baseline = load_snapshot(path);
+        if (baseline) {
+            const std::string original = read_bytes(path);
+            std::string hash = scenario_string(*baseline, baseline->source_hash);
+            std::string title = "Unsupported \xF0\x9F\x9A\x82";
+            std::string route = "maps\\map-a.txt";
+            std::string vehicle = "train.txt";
+            KvScenarioEditPathRow route_row{utf8_view(route), 1.0, 0u, 0u};
+            KvScenarioEditPathRow vehicle_row{utf8_view(vehicle), 1.0, 0u, 0u};
+            KvScenarioEditDocument edit{};
+            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            edit.structure_size = sizeof(edit);
+            edit.expected_source_hash = utf8_view(hash);
+            edit.title = utf8_view(title);
+            edit.routes = &route_row;
+            edit.route_count = 1;
+            edit.vehicles = &vehicle_row;
+            edit.vehicle_count = 1;
+            const KvScenarioSnapshot* rejected = kv_save_scenario_document(
+                path.u8string().c_str(), &edit);
+            check(rejected == nullptr, "unrepresentable CP932 text rejected");
+            kv_free_scenario_snapshot(rejected);
+            check(read_bytes(path) == original,
+                  "unrepresentable CP932 text leaves disk unchanged");
+            kv_free_scenario_snapshot(baseline);
+        }
+    }
 
     std::cout << "scenario route contract " << (failures ? "FAIL" : "PASS")
               << '\n';

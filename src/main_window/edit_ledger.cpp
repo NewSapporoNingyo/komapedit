@@ -95,10 +95,9 @@ void App::request_edit_ui_operation(PendingEditUiOperation operation) {
         (other_track_rename_.source_key.empty() || other_track_rename_.apply_key.empty())) {
         return;
     }
+    const bool document_edit_available = edit_actions_available() || scenario_edit_actions_available();
     if (!apply_operation &&
-        (!edit_actions_available() || load_state_.running || !has_unsaved_edit_state())) {
-        return;
-    }
+        (!document_edit_available || load_state_.running || !has_unsaved_edit_state())) return;
 
     PendingEditUiOperationState pending;
     pending.operation = operation;
@@ -135,10 +134,10 @@ void App::process_pending_edit_ui_operation() {
         apply_other_track_rename();
         break;
     case PendingEditUiOperation::Save:
-        save_pending_edits();
+        save_pending_document_changes();
         break;
     case PendingEditUiOperation::SaveAndResolveClose:
-        if (save_pending_edits(false)) finish_pending_close_action();
+        if (save_pending_document_changes(false)) finish_pending_close_action();
         break;
     case PendingEditUiOperation::Revert:
         revert_all_pending_edits();
@@ -183,8 +182,76 @@ bool App::has_pending_edits() const {
     return !pending_edit_changes_.empty();
 }
 
+bool App::has_scenario_unsaved_changes() const {
+    if (!scenario_preview_ || !scenario_preview_baseline_) return false;
+    const ScenarioPreview& current = *scenario_preview_;
+    const ScenarioPreview& baseline = *scenario_preview_baseline_;
+    const auto paths_equal = [](const std::vector<ScenarioPreviewPath>& a,
+                                const std::vector<ScenarioPreviewPath>& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (a[i].path != b[i].path ||
+                a[i].has_explicit_weight != b[i].has_explicit_weight ||
+                a[i].weight != b[i].weight) return false;
+        }
+        return true;
+    };
+    return current.title != baseline.title ||
+        !paths_equal(current.routes, baseline.routes) ||
+        current.route_title != baseline.route_title ||
+        !paths_equal(current.vehicles, baseline.vehicles) ||
+        current.vehicle_title != baseline.vehicle_title ||
+        current.author != baseline.author || current.image != baseline.image ||
+        current.comment != baseline.comment;
+}
+
+bool App::scenario_edit_actions_available() const {
+    return edit_mode_enabled_ && !scenario_source_path_.empty() &&
+        scenario_preview_.has_value() && scenario_preview_baseline_.has_value() &&
+        !load_state_.running;
+}
+
+void App::update_scenario_route_warning() {
+    if (!scenario_preview_) return;
+    std::vector<std::string> signature;
+    signature.reserve(scenario_preview_->routes.size());
+    for (const ScenarioPreviewPath& row : scenario_preview_->routes) signature.push_back(row.path);
+    const bool changed = signature != scenario_loaded_route_signature_;
+    if (changed) {
+        if (!scenario_route_changed_ && !scenario_route_warning_logged_) {
+            KME_ADD_LOG(LogSeverity::Warning,
+                        "Warning: Scenario map path changed; reload to load the latest map.");
+            scenario_route_warning_logged_ = true;
+        }
+        set_program_status("status.scenario_route_changed");
+        scenario_route_changed_ = true;
+    } else if (scenario_route_warning_persistent_) {
+        // A saved Route change still describes the map currently loaded in
+        // memory. Keep the warning visible until the Scenario is reloaded,
+        // even if a later draft happens to restore the original signature.
+        scenario_route_changed_ = true;
+        set_program_status("status.scenario_route_changed");
+    } else {
+        if (scenario_route_changed_) {
+            set_program_status("status.edit.mode_enabled");
+        }
+        scenario_route_changed_ = false;
+        scenario_route_warning_logged_ = false;
+    }
+}
+
+void App::revert_scenario_draft() {
+    if (scenario_preview_baseline_) scenario_preview_ = *scenario_preview_baseline_;
+    update_scenario_route_warning();
+}
+
+std::string App::current_document_entry_path() const {
+    return scenario_source_path_.empty() ? file_path_ : scenario_source_path_;
+}
+
 bool App::has_unsaved_edit_state() const {
-    return has_pending_edits() || has_unapplied_editable_list_drafts();
+    return has_pending_edits() || has_unapplied_editable_list_drafts() ||
+        has_scenario_unsaved_changes();
 }
 
 bool App::row_has_pending_edit(const std::string& edit_id) const {
@@ -1687,12 +1754,143 @@ bool App::save_pending_edits(bool refresh_inspector) {
     return true;
 }
 
+bool App::save_pending_document_changes(bool refresh_inspector) {
+    if (load_state_.running || !(edit_actions_available() || scenario_edit_actions_available())) {
+        return false;
+    }
+    if (has_unapplied_editable_list_drafts()) {
+        KME_ADD_LOG("[warning]Save blocked by unapplied editable-list drafts");
+        set_program_status("status.edit.apply_list_before_save");
+        return false;
+    }
+    const bool map_dirty = has_pending_edits();
+    const bool scenario_dirty = has_scenario_unsaved_changes();
+    const bool scenario_route_warning_before_save = scenario_route_changed_;
+    if (!map_dirty && !scenario_dirty) return false;
+
+    if (map_dirty) {
+        if (!save_pending_edits(refresh_inspector)) return false;
+        if (scenario_dirty && scenario_route_changed_) {
+            KME_ADD_LOG(LogSeverity::Warning,
+                        "Scenario save deferred because its Route path changed after Map save.");
+            set_program_status("status.scenario_save_deferred");
+            return false;
+        }
+    }
+    if (!scenario_dirty) return true;
+    if (!scenario_edit_actions_available() || !scenario_preview_) return false;
+
+    ScenarioPreview& draft = *scenario_preview_;
+    std::vector<KvScenarioEditPathRow> routes;
+    routes.reserve(draft.routes.size());
+    for (const ScenarioPreviewPath& row : draft.routes) {
+        routes.push_back({KvUtf8View{row.path.data(), static_cast<uint64_t>(row.path.size())},
+                          row.weight, row.has_explicit_weight ? 1u : 0u, 0u});
+    }
+    std::vector<KvScenarioEditPathRow> vehicles;
+    vehicles.reserve(draft.vehicles.size());
+    for (const ScenarioPreviewPath& row : draft.vehicles) {
+        vehicles.push_back({KvUtf8View{row.path.data(), static_cast<uint64_t>(row.path.size())},
+                            row.weight, row.has_explicit_weight ? 1u : 0u, 0u});
+    }
+    const auto view = [](const std::string& value) {
+        return KvUtf8View{value.data(), static_cast<uint64_t>(value.size())};
+    };
+    KvScenarioEditDocument request{};
+    request.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+    request.structure_size = sizeof(request);
+    request.expected_source_hash = view(draft.source_hash);
+    request.title = view(draft.title);
+    request.routes = routes.empty() ? nullptr : routes.data();
+    request.route_count = routes.size();
+    request.route_title = view(draft.route_title);
+    request.vehicles = vehicles.empty() ? nullptr : vehicles.data();
+    request.vehicle_count = vehicles.size();
+    request.vehicle_title = view(draft.vehicle_title);
+    request.author = view(draft.author);
+    request.image = view(draft.image);
+    request.comment = view(draft.comment);
+
+    const KvScenarioSnapshot* snapshot = kv_save_scenario_document(
+        scenario_source_path_.c_str(), &request);
+    if (!snapshot) {
+        const char* error = kv_get_last_error();
+        KME_ADD_LOG(std::string("[error]Scenario save failed: ") +
+                    (error && *error ? error : "maploader failed"));
+        if (map_dirty) {
+            KME_ADD_LOG("[error]Map was saved, Scenario was not saved; Scenario draft retained.");
+            set_program_status("status.scenario_save_failed_after_map");
+        } else {
+            set_program_status("status.scenario_save_failed");
+        }
+        return false;
+    }
+    try {
+        if (snapshot->version != KV_SCENARIO_SNAPSHOT_VERSION ||
+            snapshot->structure_size < sizeof(KvScenarioSnapshot)) {
+            throw std::runtime_error("Scenario save returned an invalid snapshot version or size");
+        }
+        const auto snapshot_string = [&](KvStringRef ref) {
+            if (ref.offset > snapshot->string_size ||
+                ref.length > snapshot->string_size - ref.offset ||
+                (ref.length != 0 && !snapshot->string_data)) {
+                throw std::runtime_error("Scenario save returned an invalid string reference");
+            }
+            return std::string(snapshot->string_data ? snapshot->string_data + ref.offset : "",
+                               static_cast<size_t>(ref.length));
+        };
+        ScenarioPreview saved;
+        saved.source_hash = snapshot_string(snapshot->source_hash);
+        saved.present_fields = snapshot->present_fields;
+        saved.title = snapshot_string(snapshot->title);
+        saved.route_title = snapshot_string(snapshot->route_title);
+        saved.vehicle_title = snapshot_string(snapshot->vehicle_title);
+        saved.author = snapshot_string(snapshot->author);
+        saved.image = snapshot_string(snapshot->image);
+        saved.comment = snapshot_string(snapshot->comment);
+        const auto copy_paths = [&](const KvScenarioPathWeightRow* rows, uint64_t count) {
+            if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+                (count != 0 && !rows)) {
+                throw std::runtime_error("Scenario save returned an invalid path row array");
+            }
+            std::vector<ScenarioPreviewPath> values;
+            values.reserve(static_cast<size_t>(count));
+            for (uint64_t i = 0; i < count; ++i) {
+                values.push_back({snapshot_string(rows[i].path), rows[i].weight,
+                                  rows[i].has_explicit_weight != 0});
+            }
+            return values;
+        };
+        saved.routes = copy_paths(snapshot->routes, snapshot->route_count);
+        saved.vehicles = copy_paths(snapshot->vehicles, snapshot->vehicle_count);
+        kv_free_scenario_snapshot(snapshot);
+        snapshot = nullptr;
+        scenario_preview_ = saved;
+        scenario_preview_baseline_ = saved;
+        if (scenario_route_warning_before_save) {
+            scenario_route_warning_persistent_ = true;
+        }
+        update_scenario_route_warning();
+        KME_ADD_LOG("[info]Scenario saved: " + scenario_source_path_);
+        set_program_status(scenario_route_changed_
+                               ? "status.scenario_route_changed"
+                               : "status.scenario_saved");
+    } catch (const std::exception& e) {
+        if (snapshot) kv_free_scenario_snapshot(snapshot);
+        KME_ADD_LOG(std::string("[error]Scenario save snapshot was invalid: ") + e.what());
+        set_program_status("status.scenario_save_failed");
+        return false;
+    }
+    return true;
+}
+
 bool App::discard_pending_edits() {
     if (!has_pending_edits()) {
         distance_resolution_choices_.clear();
         distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
         text_preview_.placement = TextPreviewPlacementState{};
         discard_all_editable_list_drafts();
+        if (has_scenario_unsaved_changes()) revert_scenario_draft();
         return true;
     }
     if (!apply_edit_ledger_to_preview({}, std::nullopt, false)) return false;
@@ -1700,11 +1898,13 @@ bool App::discard_pending_edits() {
     distance_resolution_workflow_ = DistanceResolutionWorkflowState{};
     text_preview_.placement = TextPreviewPlacementState{};
     discard_all_editable_list_drafts();
+    if (has_scenario_unsaved_changes()) revert_scenario_draft();
     return true;
 }
 
 bool App::revert_all_pending_edits() {
-    if (!edit_actions_available() || !has_unsaved_edit_state()) return false;
+    if (!(edit_actions_available() || scenario_edit_actions_available()) ||
+        !has_unsaved_edit_state()) return false;
 
     std::optional<MapElementInspectorRequest> inspector_request;
     if (inspector_.open && !inspector_.edit_id.empty()) {
@@ -1718,7 +1918,9 @@ bool App::revert_all_pending_edits() {
     }
 
     clear_scene_placement_edit_target();
-    if (!discard_pending_edits()) return false;
+    if (has_pending_edits() && !discard_pending_edits()) return false;
+    if (has_scenario_unsaved_changes()) revert_scenario_draft();
+    discard_all_editable_list_drafts();
 
     if (inspector_request && !open_element_inspector(*inspector_request)) {
         inspector_ = MapElementInspectorState{};

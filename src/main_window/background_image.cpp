@@ -326,9 +326,10 @@ BackgroundHistory App::current_background_history() const {
 }
 
 void App::save_current_background_to_history() {
-    if (file_path_.empty()) return;
+    const std::string entry_path = current_document_entry_path();
+    if (entry_path.empty()) return;
     if (bg_image_.path.empty()) return;
-    upsert_recent_map(file_path_, current_background_history());
+    upsert_recent_map(entry_path, current_background_history());
 }
 
 void App::sync_pending_background_values() {

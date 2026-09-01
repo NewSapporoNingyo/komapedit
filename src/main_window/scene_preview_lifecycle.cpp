@@ -503,6 +503,18 @@ void App::reload_model_preview() {
 }
 
 void App::perform_reload_current_map_and_model_preview() {
+    if (!scenario_source_path_.empty()) {
+        PendingDocumentOpen request;
+        request.path = scenario_source_path_;
+        request.preserve_settings = true;
+        request.preserve_scene_preview_models = true;
+        request.preserve_scene_preview_camera = true;
+        BackgroundHistory background = current_background_history();
+        if (background.has_image) request.background_to_restore = std::move(background);
+        perform_open_document(std::move(request));
+        reload_model_preview();
+        return;
+    }
     if (has_model_ && !file_path_.empty()) {
         begin_map_load(file_path_, true, false, std::nullopt, false, true);
     }
@@ -510,12 +522,23 @@ void App::perform_reload_current_map_and_model_preview() {
 }
 
 void App::perform_reload_current_map_geometry() {
+    if (!scenario_source_path_.empty()) {
+        PendingDocumentOpen request;
+        request.path = scenario_source_path_;
+        request.preserve_settings = true;
+        request.preserve_scene_preview_models = true;
+        request.preserve_scene_preview_camera = true;
+        BackgroundHistory background = current_background_history();
+        if (background.has_image) request.background_to_restore = std::move(background);
+        perform_open_document(std::move(request));
+        return;
+    }
     KME_ADD_LOG("[info]reloading map geometry with existing 3D models preserved");
     begin_map_load(file_path_, true, false, std::nullopt, true, true);
 }
 
 bool App::confirm_reload_if_unsaved(PendingReloadAction action) {
-    if (!has_unsaved_edit_state() || !has_model_ || file_path_.empty()) return false;
+    if (!has_unsaved_edit_state() || current_document_entry_path().empty()) return false;
     pending_reload_action_ = action;
     popups_.reload_unsaved_confirm = true;
     return true;
@@ -538,7 +561,8 @@ void App::reload_current_map_and_model_preview() {
 }
 
 void App::reload_current_map_geometry() {
-    if (load_state_.running || !has_model_ || file_path_.empty()) return;
+    if (load_state_.running ||
+        (scenario_source_path_.empty() && (!has_model_ || file_path_.empty()))) return;
     if (confirm_reload_if_unsaved(PendingReloadAction::GeometryOnly)) return;
     perform_reload_current_map_geometry();
 }

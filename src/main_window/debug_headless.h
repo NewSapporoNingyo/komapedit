@@ -31,6 +31,7 @@ struct HeadlessLoadScenarioOptions {
     // load, because Route resolution is unavailable or the resolved target is
     // not a valid map. Marks the unavailable stage in the output.
     bool expect_no_map = false;
+    bool scenario_edit_roundtrip = false;
     std::string error;
 };
 

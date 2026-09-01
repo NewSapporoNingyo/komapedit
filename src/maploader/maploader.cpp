@@ -69,6 +69,7 @@ const KvScenarioSnapshot* allocate_scenario_snapshot(
     add_string(document.author);
     add_string(document.image);
     add_string(document.comment);
+    add_string(document.source_hash);
 
     const size_t route_bytes = checked_scenario_size_mul(
         document.routes.size(), sizeof(KvScenarioPathWeightRow));
@@ -123,6 +124,9 @@ const KvScenarioSnapshot* allocate_scenario_snapshot(
     snapshot->author = copy_string(document.author);
     snapshot->image = copy_string(document.image);
     snapshot->comment = copy_string(document.comment);
+    snapshot->source_hash = copy_string(document.source_hash);
+    snapshot->present_fields = document.present_fields;
+    snapshot->reserved2 = 0;
     return snapshot;
 }
 
@@ -447,6 +451,73 @@ KV_API const KvScenarioSnapshot* kv_load_scenario_snapshot(
             kme::maploader::detail::load_scenario_document(path_from_utf8(scenario_path)));
     } catch (const std::exception& e) {
         set_last_error(e.what());
+        return nullptr;
+    } catch (...) {
+        set_last_error("unknown maploader error");
+        return nullptr;
+    }
+}
+
+KV_API const KvScenarioSnapshot* kv_save_scenario_document(
+    const char* scenario_path, const KvScenarioEditDocument* input) {
+    try {
+        if (!scenario_path) throw std::runtime_error("scenario path is null");
+        if (!input) throw std::runtime_error("scenario edit document is null");
+        if (input->version != KV_SCENARIO_EDIT_DOCUMENT_VERSION ||
+            input->structure_size < sizeof(KvScenarioEditDocument)) {
+            throw std::runtime_error("unsupported scenario edit document version or size");
+        }
+        const auto copy_view = [](KvUtf8View view, const char* name) {
+            if (view.length != 0 && !view.data) {
+                throw std::runtime_error(std::string("scenario ") + name + " view is null");
+            }
+            if (view.length > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+                throw std::runtime_error(std::string("scenario ") + name + " view is too large");
+            }
+            return std::string(view.data ? view.data : "", static_cast<size_t>(view.length));
+        };
+        kme::maploader::detail::ScenarioEditRequest request;
+        request.expected_source_hash = copy_view(input->expected_source_hash, "expected hash");
+        request.title = copy_view(input->title, "Title");
+        request.route_title = copy_view(input->route_title, "RouteTitle");
+        request.vehicle_title = copy_view(input->vehicle_title, "VehicleTitle");
+        request.author = copy_view(input->author, "Author");
+        request.image = copy_view(input->image, "Image");
+        request.comment = copy_view(input->comment, "Comment");
+        if (input->route_count != 0 && !input->routes) {
+            throw std::runtime_error("scenario Route rows are null");
+        }
+        if (input->vehicle_count != 0 && !input->vehicles) {
+            throw std::runtime_error("scenario Vehicle rows are null");
+        }
+        if (input->route_count > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+            input->vehicle_count > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+            throw std::runtime_error("scenario candidate count is too large");
+        }
+        request.routes.reserve(static_cast<size_t>(input->route_count));
+        for (uint64_t i = 0; i < input->route_count; ++i) {
+            const KvScenarioEditPathRow& row = input->routes[i];
+            if (row.has_explicit_weight > 1u) {
+                throw std::runtime_error("scenario Route explicit-weight flag is invalid");
+            }
+            request.routes.push_back({copy_view(row.path, "Route path"), row.weight,
+                                      row.has_explicit_weight != 0});
+        }
+        request.vehicles.reserve(static_cast<size_t>(input->vehicle_count));
+        for (uint64_t i = 0; i < input->vehicle_count; ++i) {
+            const KvScenarioEditPathRow& row = input->vehicles[i];
+            if (row.has_explicit_weight > 1u) {
+                throw std::runtime_error("scenario Vehicle explicit-weight flag is invalid");
+            }
+            request.vehicles.push_back({copy_view(row.path, "Vehicle path"), row.weight,
+                                        row.has_explicit_weight != 0});
+        }
+        return allocate_scenario_snapshot(
+            kme::maploader::detail::save_scenario_document(
+                path_from_utf8(scenario_path), request));
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        KME_MAPLOADER_LOG_ERROR(e.what());
         return nullptr;
     } catch (...) {
         set_last_error("unknown maploader error");

@@ -1539,6 +1539,8 @@ struct ScenarioRoutePickItem {
     std::string resolved_path;
 };
 
+struct BackgroundHistory;
+
 // Pending multi-candidate Route choice for one opened BVE Scenario file.
 // The dialog shows each candidate's original relative-path text while the
 // load itself always uses the resolved absolute map path.
@@ -1547,6 +1549,11 @@ struct ScenarioRoutePickState {
     std::string scenario_path;
     std::vector<ScenarioRoutePickItem> items;
     int selected = 0;
+    bool preserve_settings = false;
+    bool record_history = false;
+    std::shared_ptr<BackgroundHistory> background_to_restore;
+    bool preserve_scene_preview_models = false;
+    bool preserve_scene_preview_camera = false;
 };
 
 struct ScenarioPreviewPath {
@@ -1558,6 +1565,8 @@ struct ScenarioPreviewPath {
 // App-owned copy of a maploader Scenario snapshot. It remains independent of
 // the map handle so a Scenario with no usable Route can still be previewed.
 struct ScenarioPreview {
+    std::string source_hash;
+    uint32_t present_fields = 0;
     std::string title;
     std::vector<ScenarioPreviewPath> routes;
     std::string route_title;
@@ -1990,6 +1999,9 @@ private:
         std::string path;
         bool record_history = false;
         std::optional<BackgroundHistory> background_to_restore;
+        bool preserve_settings = false;
+        bool preserve_scene_preview_models = false;
+        bool preserve_scene_preview_camera = false;
     };
     struct AsyncLoadState {
         std::thread worker;
@@ -2153,6 +2165,12 @@ private:
     PopupState popups_;
     ScenarioRoutePickState scenario_route_pick_;
     std::optional<ScenarioPreview> scenario_preview_;
+    std::optional<ScenarioPreview> scenario_preview_baseline_;
+    std::string scenario_source_path_;
+    std::vector<std::string> scenario_loaded_route_signature_;
+    bool scenario_route_changed_ = false;
+    bool scenario_route_warning_logged_ = false;
+    bool scenario_route_warning_persistent_ = false;
     std::optional<PendingDocumentOpen> pending_document_open_;
     PendingReloadAction pending_reload_action_ = PendingReloadAction::None;
     PendingCloseAction pending_close_action_ = PendingCloseAction::None;
@@ -2373,7 +2391,7 @@ private:
     void open_document(std::string path, bool record_history = false,
                        std::optional<BackgroundHistory> background_to_restore = std::nullopt);
     void perform_open_document(PendingDocumentOpen request);
-    void reset_document_for_open();
+    void reset_document_for_open(bool preserve_scene_preview = false);
     void begin_map_load(std::string path, bool preserve_settings, bool record_history = false,
                         std::optional<BackgroundHistory> background_to_restore = std::nullopt,
                         bool preserve_scene_preview_models = false,
@@ -2512,6 +2530,12 @@ private:
     bool update_scene_repeater_segment_from_model(const std::string& edit_id);
     void clear_scene_placement_edit_target();
     bool save_pending_edits(bool refresh_inspector = true);
+    bool save_pending_document_changes(bool refresh_inspector = true);
+    bool has_scenario_unsaved_changes() const;
+    bool scenario_edit_actions_available() const;
+    void update_scenario_route_warning();
+    void revert_scenario_draft();
+    std::string current_document_entry_path() const;
     void render_element_inspector();
     bool render_map_element_field_control(MapElementEditFieldState& field,
                                           float width);
@@ -2772,7 +2796,11 @@ private:
     void draw_background(ImDrawList* draw, const View2D& view, ImVec2 origin, ImVec2 size);
     void apply_background_alignment();
     std::string open_map_dialog();
+    std::string open_map_dialog(const std::string& initial_directory,
+                                const char* title_key = "dialog.select_scenario_file");
     std::string open_image_dialog();
+    std::string open_image_dialog(const std::string& initial_directory,
+                                  const char* title_key = "dialog.select_scenario_image");
     std::string open_editable_list_file_dialog(
         const EditableListSpec& spec,
         const std::string& initial_directory);

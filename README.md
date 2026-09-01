@@ -20,7 +20,7 @@ Editing is source-backed but still experimental. Back up route files or keep the
 ## Features
 
 - Opens BVE Trainsim 2.0+ map files in UTF-8, UTF-16, CP932/Shift_JIS-related encodings, including nested `Include` files; missing or invalid included maps are skipped with a warning so remaining elements can load.
-- Opens maps through BVE Scenario files (`BveTs Scenario 2.00`) by resolving the official `Route` entry relative to the scenario directory; multiple weighted candidates are chosen in a selection dialog. `Map Info List -> Other -> Scenario File` provides a read-only view of all eight official fields, preserving source-relative Route and Vehicle paths and their weights.
+- Opens maps through BVE Scenario files (`BveTs Scenario 2.00`) by resolving the official `Route` entry relative to the scenario directory; multiple weighted candidates are chosen in a selection dialog. `Map Info List -> Other -> Scenario File` shows all eight official fields and existing Route/Vehicle candidates. Enable Edit mode to edit those values; Scenario drafts are written directly by Save (there is no Apply-to-memory step), with source encoding, comments, unknown rows, duplicate-field compatibility, candidate order, and external-change protection preserved.
 - Displays plan, elevation/profile, curve-radius, station, speed-limit, other-track, marker, and measurement information.
 - Provides searchable tables for stations, tracks, Structures, repeaters, signals, beacons, sounds, trains, and environmental effects.
 - Previews Structure models and a route scene in 3D.
@@ -163,12 +163,13 @@ If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or 
 - `Export CSV...`: Selects a directory and exports geometry data for the own track and every other track. See the appendix for the CSV fields.
 - `Exit`: Closes the program. If there are unsaved changes, you can save them, discard them, or cancel the exit.
 
-When you open a `BveTs Scenario 2.00` scenario file, the scenario itself remains available as a read-only document:
+When you open a `BveTs Scenario 2.00` scenario file, the Scenario document remains available independently of whether its Route can be loaded:
 
-- `Map Info List -> Other -> Scenario File` shows the scenario fields, the original Route/Vehicle paths, and their weights.
+- `Map Info List -> Other -> Scenario File` shows the scenario fields, the original Route/Vehicle paths, and their weights. With Edit mode enabled, the existing rows are editable; right-click Route, Vehicle, or Image paths to select a file or open its directory in Explorer. Candidate rows cannot be added, deleted, or reordered.
 - If there is one valid Route, its map loads directly. If there are several candidates, you choose one.
 - If Route is missing, its target does not exist, or you cancel the choice, you can still view the scenario file, but no map is loaded. The same degradation applies when the Route target exists but is not a valid BVE map. A missing Vehicle entry or a Vehicle path whose target does not exist never blocks loading the map of a valid Route; Vehicle data is preview-only.
-- Editing, saving, reloading, and `Recent Maps` always use the resolved map file. Weights are validated but are not used to choose a Route automatically.
+- Scenario changes are saved directly with the toolbar `Save`/`Ctrl+S`; they are not part of the map Apply ledger. If map edits and Scenario edits are both pending, map changes are committed first. A changed Scenario Route path is warned in the console and status bar and can be saved on a subsequent click after map changes are clear. Weights are validated but are not used to choose a Route automatically.
+- `Recent Maps`, background alignment history, `Reload`, and geometry-only reload use the Scenario path as the document entry. Reload reparses the Scenario and shows the candidate selector again when needed, then refreshes the model preview; geometry-only reload keeps existing scene models/camera where possible. Opening a map file directly keeps the existing map-entry behavior.
 
 #### Options
 
@@ -305,7 +306,7 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 - **Sound File List and 3D Sound File List**: Show sound keys, file paths, and buffer counts. You can open a file's directory or fill its key into a matching New Map Element Wizard.
 - **Map Sound, Map 3D Sound, Rolling Noise Change Point, Flange Noise Change Point, and Joint Noise Play Point lists**: Show and locate playback or change positions.
 - **Background, Cab Illuminance, Fog, Legacy Fog, and Draw Distance Change Point lists**: Show and locate the corresponding effects.
-- **Scenario File**: Available only when a Scenario document is open. It shows every official scenario field and is read-only.
+- **Scenario File**: Available only when a Scenario document is open. It shows every official scenario field and existing candidates. The fields are read-only until Edit mode is enabled; Scenario Save writes the source file directly.
 
 #### Inline Editing in Resource Lists
 

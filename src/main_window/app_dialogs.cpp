@@ -100,6 +100,35 @@ std::string App::open_map_dialog() {
     return {};
 }
 
+std::string App::open_map_dialog(const std::string& initial_directory,
+                                 const char* title_key) {
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    std::wstring filter;
+    const auto append_filter = [&](const std::wstring& label, const wchar_t* value) {
+        filter += label;
+        filter.push_back(L'\0');
+        filter += value;
+        filter.push_back(L'\0');
+    };
+    append_filter(utf8_to_wide(tr("dialog.filter.map_files")), L"*.txt;*.csv");
+    append_filter(utf8_to_wide(tr("dialog.filter.all_files")), L"*.*");
+    filter.push_back(L'\0');
+    ofn.lpstrFilter = filter.c_str();
+    ofn.nFilterIndex = 1;
+    const std::wstring initial = utf8_to_wide(initial_directory);
+    ofn.lpstrInitialDir = initial.empty() ? nullptr : initial.c_str();
+    const std::wstring title = utf8_to_wide(tr(title_key));
+    ofn.lpstrTitle = title.c_str();
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
+    return {};
+}
+
 std::string App::open_image_dialog() {
     wchar_t file[MAX_PATH] = {};
     OPENFILENAMEW ofn = {};
@@ -108,6 +137,25 @@ std::string App::open_image_dialog() {
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrFilter = L"Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff\0All files\0*.*\0";
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
+    return {};
+}
+
+std::string App::open_image_dialog(const std::string& initial_directory,
+                                   const char* title_key) {
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFilter = L"Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff\0All files\0*.*\0\0";
+    ofn.nFilterIndex = 1;
+    const std::wstring initial = utf8_to_wide(initial_directory);
+    ofn.lpstrInitialDir = initial.empty() ? nullptr : initial.c_str();
+    const std::wstring title = utf8_to_wide(tr(title_key));
+    ofn.lpstrTitle = title.c_str();
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&ofn)) return wide_to_utf8(file);
     return {};
@@ -1301,9 +1349,18 @@ void App::render_scenario_route_pick_popup() {
         const ScenarioRoutePickItem chosen =
             scenario_route_pick_.items[static_cast<size_t>(
                 scenario_route_pick_.selected)];
+        const bool preserve_settings = scenario_route_pick_.preserve_settings;
+        const bool record_history = scenario_route_pick_.record_history;
+        const bool preserve_models = scenario_route_pick_.preserve_scene_preview_models;
+        const bool preserve_camera = scenario_route_pick_.preserve_scene_preview_camera;
+        std::optional<BackgroundHistory> background;
+        if (scenario_route_pick_.background_to_restore) {
+            background = *scenario_route_pick_.background_to_restore;
+        }
         scenario_route_pick_ = ScenarioRoutePickState{};
         ImGui::CloseCurrentPopup();
-        begin_map_load(chosen.resolved_path, false, true);
+        begin_map_load(chosen.resolved_path, preserve_settings, record_history,
+                       std::move(background), preserve_models, preserve_camera);
     }
     ImGui::EndPopup();
 }

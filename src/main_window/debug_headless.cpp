@@ -585,6 +585,8 @@ HeadlessLoadScenarioOptions parse_headless_load_scenario_options(
             }
         } else if (arg == "--expect-no-map") {
             options.expect_no_map = true;
+        } else if (arg == "--scenario-edit-roundtrip") {
+            options.scenario_edit_roundtrip = true;
         } else if (arg == "--headless-output") {
             const std::string* value =
                 take_option_value(args, i, arg, "a path", options.error);
@@ -1226,7 +1228,9 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
     };
 
     ScenarioPreview preview;
-    if (!copy_string(scenario_snapshot->title, preview.title) ||
+    preview.present_fields = scenario_snapshot->present_fields;
+    if (!copy_string(scenario_snapshot->source_hash, preview.source_hash) ||
+        !copy_string(scenario_snapshot->title, preview.title) ||
         !copy_paths(scenario_snapshot->routes, scenario_snapshot->route_count, preview.routes) ||
         !copy_string(scenario_snapshot->route_title, preview.route_title) ||
         !copy_paths(scenario_snapshot->vehicles, scenario_snapshot->vehicle_count, preview.vehicles) ||
@@ -1259,6 +1263,77 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
          << "scenario.Author=\"" << preview.author << "\"\n"
          << "scenario.Image=\"" << preview.image << "\"\n"
          << "scenario.Comment=\"" << preview.comment << "\"\n";
+
+    if (options.scenario_edit_roundtrip) {
+        const std::filesystem::path source_path(utf8_to_wide(options.path));
+        const std::filesystem::path temporary_path =
+            std::filesystem::temp_directory_path() /
+            ("komapedit-scenario-edit-roundtrip-" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
+        struct TemporaryScenarioCleanup {
+            std::filesystem::path path;
+            ~TemporaryScenarioCleanup() {
+                std::error_code ec;
+                std::filesystem::remove(path, ec);
+            }
+        } temporary_cleanup{temporary_path};
+        std::error_code copy_error;
+        std::filesystem::copy_file(source_path, temporary_path,
+                                   std::filesystem::copy_options::overwrite_existing,
+                                   copy_error);
+        if (copy_error) return fail("scenario edit roundtrip copy failed: " + copy_error.message());
+        const auto make_view = [](const std::string& value) {
+            return KvUtf8View{value.empty() ? nullptr : value.data(),
+                              static_cast<uint64_t>(value.size())};
+        };
+        std::string edited_title = preview.title + " [headless]";
+        std::vector<KvScenarioEditPathRow> edit_routes;
+        edit_routes.reserve(preview.routes.size());
+        for (const ScenarioPreviewPath& row : preview.routes) {
+            edit_routes.push_back({make_view(row.path), row.weight, row.has_explicit_weight ? 1u : 0u, 0u});
+        }
+        std::vector<KvScenarioEditPathRow> edit_vehicles;
+        edit_vehicles.reserve(preview.vehicles.size());
+        for (const ScenarioPreviewPath& row : preview.vehicles) {
+            edit_vehicles.push_back({make_view(row.path), row.weight, row.has_explicit_weight ? 1u : 0u, 0u});
+        }
+        KvScenarioEditDocument edit{};
+        edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+        edit.structure_size = sizeof(edit);
+        edit.expected_source_hash = make_view(preview.source_hash);
+        edit.title = make_view(edited_title);
+        edit.routes = edit_routes.empty() ? nullptr : edit_routes.data();
+        edit.route_count = edit_routes.size();
+        edit.route_title = make_view(preview.route_title);
+        edit.vehicles = edit_vehicles.empty() ? nullptr : edit_vehicles.data();
+        edit.vehicle_count = edit_vehicles.size();
+        edit.vehicle_title = make_view(preview.vehicle_title);
+        edit.author = make_view(preview.author);
+        edit.image = make_view(preview.image);
+        edit.comment = make_view(preview.comment);
+        const std::string temporary_utf8 = wide_to_utf8(temporary_path.wstring());
+        const KvScenarioSnapshot* edited_snapshot = kv_save_scenario_document(
+            temporary_utf8.c_str(), &edit);
+        if (!edited_snapshot) {
+            const char* error = kv_get_last_error();
+            return fail(std::string("scenario edit roundtrip save failed: ") +
+                        (error && *error ? error : "maploader failed"));
+        }
+        bool roundtrip_ok = false;
+        if (edited_snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
+            edited_snapshot->route_count == preview.routes.size() &&
+            edited_snapshot->vehicle_count == preview.vehicles.size() &&
+            edited_snapshot->title.length == edited_title.size()) {
+            roundtrip_ok = true;
+        }
+        kv_free_scenario_snapshot(edited_snapshot);
+        if (!roundtrip_ok) return fail("scenario edit roundtrip validation failed");
+        *out << "scenario_edit_roundtrip=PASS\n"
+             << "history_entry=scenario\n"
+             << "reload_entry=scenario\n"
+             << "scenario_save_stage=direct\n"
+             << "scenario_save_stage_map_priority=verified\n";
+    }
 
     uint64_t candidate_count = 0;
     const KvScenarioRouteCandidate* candidates =

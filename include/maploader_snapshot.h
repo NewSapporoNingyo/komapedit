@@ -12,15 +12,24 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 10u
+#define KV_MAPLOADER_API_VERSION 11u
 #define KV_MAP_SNAPSHOT_VERSION 8u
-#define KV_SCENARIO_SNAPSHOT_VERSION 1u
+#define KV_SCENARIO_SNAPSHOT_VERSION 2u
+#define KV_SCENARIO_EDIT_DOCUMENT_VERSION 1u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
 
 #define KV_INDEX_NONE UINT64_MAX
 #define KV_EDIT_TARGET_FLAG_SIGNAL_SHORT_FORM (1u << 0)
+#define KV_SCENARIO_FIELD_TITLE (1u << 0)
+#define KV_SCENARIO_FIELD_ROUTE (1u << 1)
+#define KV_SCENARIO_FIELD_ROUTE_TITLE (1u << 2)
+#define KV_SCENARIO_FIELD_VEHICLE (1u << 3)
+#define KV_SCENARIO_FIELD_VEHICLE_TITLE (1u << 4)
+#define KV_SCENARIO_FIELD_AUTHOR (1u << 5)
+#define KV_SCENARIO_FIELD_IMAGE (1u << 6)
+#define KV_SCENARIO_FIELD_COMMENT (1u << 7)
 
 typedef struct KvUtf8View {
     const char* data;
@@ -67,7 +76,42 @@ typedef struct KvScenarioSnapshot {
     KvStringRef author;
     KvStringRef image;
     KvStringRef comment;
+    /* v2 additions. source_hash is the hash of the on-disk source bytes and
+       present_fields uses bits 0..7 for Title, Route, RouteTitle, Vehicle,
+       VehicleTitle, Author, Image and Comment respectively. */
+    KvStringRef source_hash;
+    uint32_t present_fields;
+    uint32_t reserved2;
 } KvScenarioSnapshot;
+
+/* One Scenario path/weight value supplied to kv_save_scenario_document().
+   The path is UTF-8 and valid only for the duration of the call. */
+typedef struct KvScenarioEditPathRow {
+    KvUtf8View path;
+    double weight;
+    uint32_t has_explicit_weight;
+    uint32_t reserved;
+} KvScenarioEditPathRow;
+
+/* Call-scoped Scenario draft. The route and vehicle counts must remain equal
+   to the loaded document; Scenario files do not support candidate insertion,
+   deletion, or reordering through this API. */
+typedef struct KvScenarioEditDocument {
+    uint32_t version;
+    uint32_t reserved;
+    uint64_t structure_size;
+    KvUtf8View expected_source_hash;
+    KvUtf8View title;
+    const KvScenarioEditPathRow* routes;
+    uint64_t route_count;
+    KvUtf8View route_title;
+    const KvScenarioEditPathRow* vehicles;
+    uint64_t vehicle_count;
+    KvUtf8View vehicle_title;
+    KvUtf8View author;
+    KvUtf8View image;
+    KvUtf8View comment;
+} KvScenarioEditDocument;
 
 typedef struct KvDoubleBuffer {
     const double* data;

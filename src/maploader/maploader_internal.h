@@ -191,6 +191,14 @@ LoadedText load_header_text(const std::filesystem::path& path,
                             const SourceTextOverrides* overrides = nullptr,
                             bool collect_source_metadata = true);
 std::filesystem::path join_path(const std::filesystem::path& root, const std::string& file);
+
+/* Shared source-backed transaction primitive used by map and Scenario
+   writeback. It verifies expected_hash immediately before replacement and
+   validates the staged bytes against new_hash. */
+void transactional_write_file(const std::filesystem::path& path,
+                              const std::string& bytes,
+                              const std::string& expected_hash,
+                              const std::string& new_hash);
 enum class ValueKind {
     Null,
     Number,

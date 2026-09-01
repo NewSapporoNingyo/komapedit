@@ -4829,6 +4829,23 @@ TransactionalWriteOutcome replace_files_transactionally(
     return outcome;
 }
 
+void transactional_write_file(const std::filesystem::path& path,
+                              const std::string& bytes,
+                              const std::string& expected_hash,
+                              const std::string& new_hash) {
+    TransactionalWriteRequest request;
+    request.path = path;
+    request.bytes = bytes;
+    request.expected_hash = expected_hash;
+    request.new_hash = new_hash;
+    const TransactionalWriteOutcome outcome =
+        replace_files_transactionally(std::vector<TransactionalWriteRequest>{
+            std::move(request)});
+    for (const std::string& warning : outcome.warnings) {
+        KME_MAPLOADER_LOG_WARN(warning);
+    }
+}
+
 bool variable_bindings_equal(const VariableEnvironment& a,
                              const VariableEnvironment& b) {
     if (a.size() != b.size()) return false;

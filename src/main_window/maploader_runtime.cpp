@@ -20,6 +20,7 @@ namespace {
     X(free_scenario_candidates, kv_free_scenario_candidates) \
     X(load_scenario_snapshot, kv_load_scenario_snapshot) \
     X(free_scenario_snapshot, kv_free_scenario_snapshot) \
+    X(save_scenario_document, kv_save_scenario_document) \
     X(generate_geometry, kv_generate_geometry) \
     X(generate_scene_geometry, kv_generate_scene_geometry) \
     X(get_map_snapshot, kv_get_map_snapshot) \
@@ -160,6 +161,14 @@ void kv_free_scenario_snapshot(const KvScenarioSnapshot* snapshot) {
     if (!snapshot) return;
     MaploaderRuntime& runtime = maploader_runtime();
     if (runtime.available()) runtime.free_scenario_snapshot(snapshot);
+}
+
+const KvScenarioSnapshot* kv_save_scenario_document(
+    const char* scenario_path, const KvScenarioEditDocument* document) {
+    MaploaderRuntime& runtime = maploader_runtime();
+    return runtime.available()
+        ? runtime.save_scenario_document(scenario_path, document)
+        : nullptr;
 }
 
 int kv_generate_geometry(

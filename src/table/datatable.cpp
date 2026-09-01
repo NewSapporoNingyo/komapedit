@@ -13,6 +13,7 @@
 #include "touch_input.h"
 
 #include "canvas3D.h"
+#include "text_decoder.h"
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"
 #include "repeater_linkage.h"
@@ -27,6 +28,7 @@
 #include <initializer_list>
 #include <map>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -4483,12 +4485,70 @@ void App::render_scenario_file_window() {
     }
 
     ScenarioPreview& preview = *scenario_preview_;
+    const bool editable = edit_mode_enabled_ && !scenario_source_path_.empty();
+    const auto relative_scenario_path = [&](const std::string& path) {
+        if (scenario_source_path_.empty() || path.empty()) return std::string{};
+        return resolve_list_asset_path(scenario_source_path_, path);
+    };
+    const auto select_scenario_path = [&](std::string& path, bool image) {
+        if (!editable) return;
+        const std::string initial = list_asset_picker_initial_directory(
+            relative_scenario_path(path), scenario_source_path_);
+        const std::string selected = image
+            ? open_image_dialog(initial)
+            : open_map_dialog(initial);
+        if (selected.empty()) return;
+        ListAssetSourcePathResult result = make_list_asset_source_path(
+            scenario_source_path_, selected);
+        path = result.source_path;
+        if (!result.fallback_reason.empty()) {
+            KME_ADD_LOG(LogSeverity::Warning,
+                        "Scenario path kept absolute: " + result.fallback_reason);
+            set_program_status("status.scenario_path_absolute_fallback");
+        }
+        update_scenario_route_warning();
+    };
+    const auto open_scenario_path = [&](const std::string& path) {
+        const std::string resolved = relative_scenario_path(path);
+        std::string error;
+        std::error_code filesystem_error;
+        const std::filesystem::path resolved_path =
+            resolved.empty() ? std::filesystem::path{}
+                             : kme::maploader::path_from_utf8(resolved);
+        if (!resolved.empty() && std::filesystem::is_directory(
+                resolved_path.parent_path(), filesystem_error) && !filesystem_error) {
+            open_parent_directory_in_explorer(resolved, &error);
+        } else {
+            error = filesystem_error
+                ? "Scenario path parent directory check failed: " + filesystem_error.message()
+                : "Scenario path does not resolve to an existing file";
+        }
+        if (!error.empty()) KME_ADD_LOG(LogSeverity::Warning,
+                                        "Open in Explorer failed: " + error);
+    };
+    const auto render_context_menu = [&](const char* id, std::string& path, bool image) {
+        if (!ImGui::BeginPopupContextItem(id, ImGuiPopupFlags_MouseButtonRight)) return;
+        if (!editable) ImGui::BeginDisabled();
+        if (ImGui::MenuItem(tr("menu.select_file").c_str()) && editable) {
+            select_scenario_path(path, image);
+        }
+        if (!editable) ImGui::EndDisabled();
+        const bool can_open = !path.empty();
+        if (!can_open) ImGui::BeginDisabled();
+        if (ImGui::MenuItem(tr("menu.open_in_explorer").c_str())) {
+            open_scenario_path(path);
+        }
+        if (!can_open) ImGui::EndDisabled();
+        ImGui::EndPopup();
+    };
     if (ImGui::BeginTable("scenario_file", 2,
                           ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("field", ImGuiTableColumnFlags_WidthFixed, 106.0f);
         ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
-        const auto render_value = [](const char* field, std::string& value) {
+        const auto render_value = [&](const char* field, std::string& value,
+                                      bool path_context = false, bool image = false,
+                                      bool allow_edit = true) {
             ImGui::PushID(field);
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
@@ -4496,7 +4556,11 @@ void App::render_scenario_file_window() {
             ImGui::TextUnformatted(field);
             ImGui::TableSetColumnIndex(1);
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##value", &value, ImGuiInputTextFlags_ReadOnly);
+            ImGui::InputText("##value", &value,
+                             editable && allow_edit
+                                 ? ImGuiInputTextFlags_None
+                                 : ImGuiInputTextFlags_ReadOnly);
+            if (path_context) render_context_menu("##scenario_path_context", value, image);
             ImGui::PopID();
         };
         const auto render_paths = [&](const char* field,
@@ -4507,7 +4571,10 @@ void App::render_scenario_file_window() {
                 });
             if (paths.empty()) {
                 std::string empty;
-                render_value(field, empty);
+                // An absent Route/Vehicle entry is intentionally not an
+                // insertion surface: this editor only changes existing
+                // candidates, while missing scalar fields may be filled in.
+                render_value(field, empty, false, false, false);
                 return;
             }
             ImGui::PushID(field);
@@ -4521,18 +4588,33 @@ void App::render_scenario_file_window() {
                 ImGui::TableSetColumnIndex(1);
                 if (!show_weight) {
                     ImGui::SetNextItemWidth(-1.0f);
-                    ImGui::InputText("##path", &path.path, ImGuiInputTextFlags_ReadOnly);
+                    if (ImGui::InputText("##path", &path.path,
+                                         editable ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_ReadOnly)) {
+                        update_scenario_route_warning();
+                    }
+                    render_context_menu("##scenario_path_context", path.path, false);
                 } else {
                     const float weight_width = 72.0f;
                     const float path_width = std::max(
                         80.0f, ImGui::GetContentRegionAvail().x - weight_width -
                                    ImGui::GetStyle().ItemSpacing.x);
                     ImGui::SetNextItemWidth(path_width);
-                    ImGui::InputText("##path", &path.path, ImGuiInputTextFlags_ReadOnly);
+                    if (ImGui::InputText("##path", &path.path,
+                                         editable ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_ReadOnly)) {
+                        update_scenario_route_warning();
+                    }
+                    render_context_menu("##scenario_path_context", path.path, false);
                     ImGui::SameLine();
-                    std::string weight = format_double(path.weight, 12);
                     ImGui::SetNextItemWidth(weight_width);
-                    ImGui::InputText("##weight", &weight, ImGuiInputTextFlags_ReadOnly);
+                    double edited_weight = path.weight;
+                    if (ImGui::InputDouble("##weight", &edited_weight, 0.0, 0.0, "%.12g",
+                                           editable ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_ReadOnly)) {
+                        if (std::isfinite(edited_weight) && edited_weight > 0.0) {
+                            path.weight = edited_weight;
+                            path.has_explicit_weight = true;
+                            update_scenario_route_warning();
+                        }
+                    }
                 }
                 ImGui::PopID();
             }
@@ -4545,7 +4627,7 @@ void App::render_scenario_file_window() {
         render_paths("Vehicle", preview.vehicles);
         render_value("VehicleTitle", preview.vehicle_title);
         render_value("Author", preview.author);
-        render_value("Image", preview.image);
+        render_value("Image", preview.image, true, true);
         render_value("Comment", preview.comment);
         ImGui::EndTable();
     }

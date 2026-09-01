@@ -85,7 +85,7 @@ ctest --test-dir build --output-on-failure
 
 | 区域 | 主要文件与职责 |
 | --- | --- |
-| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v10 / 地图快照 v8 函数、定宽 POD 快照、场景快照、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
+| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v11 / 地图快照 v8 函数、定宽 POD 快照、Scenario v2 快照与直写草稿、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
@@ -116,7 +116,7 @@ ctest --test-dir build --output-on-failure
 #### `include/maploader.h`
 
 - **导出与日志接口**：`KV_API` 控制 DLL 导出/导入；`KvLogCallback` 与 `kv_set_log_callback()` 把 DLL 内的英文诊断交给宿主。`kv_api_version()` 返回 ABI 版本，EXE 必须精确匹配。
-- **场景文件接口**：`kv_probe_file_kind()` 轻量区分地图与 Scenario；`kv_resolve_scenario_routes()` 返回已解析且存在的 Route 候选并由 `kv_free_scenario_candidates()` 释放；`kv_load_scenario_snapshot()` 返回不要求 Route 目标存在的独立只读快照并由 `kv_free_scenario_snapshot()` 释放。
+- **场景文件接口**：`kv_probe_file_kind()` 轻量区分地图与 Scenario；`kv_resolve_scenario_routes()` 返回已解析且存在的 Route 候选并由 `kv_free_scenario_candidates()` 释放；`kv_load_scenario_snapshot()` 返回不要求 Route 目标存在的独立 v2 快照并由 `kv_free_scenario_snapshot()` 释放；`kv_save_scenario_document()` 校验源哈希、完整重解析后按原编码事务写回 Scenario 草稿。
 - **句柄创建与几何生成**：`kv_load_map_ex()` 是唯一地图加载入口，通过 `KV_LOAD_PREVIEW`、`KV_LOAD_EDIT_METADATA` 选择轻量预览或完整编辑元数据。`kv_generate_geometry()` 生成常规轨道数据，`kv_generate_scene_geometry()` 生成独立失效周期的场景几何；两者都在既有句柄上更新缓存和修订号。
 - **只读快照**：`kv_get_map_snapshot()`、`kv_get_scene_geometry_snapshot()` 校验请求版本与结构尺寸后返回句柄拥有的视图。调用方不得释放嵌套指针，并须在重解析或对应几何失效前完成复制。
 - **编辑与源码访问**：`kv_get_edit_target_typed()` 取得一个稳定 edit id 的字段和源码信息，`kv_get_source_text()` 返回当前磁盘或内存覆盖层中的解码文本。`kv_edit_dry_run_typed()`、`kv_edit_apply_to_memory_typed()`、`kv_edit_apply_typed()`、`kv_edit_commit_typed()`、`kv_edit_reset_memory()` 分别承担验证、应用到工作副本、直接写盘、提交工作副本和撤销覆盖层。
@@ -125,7 +125,7 @@ ctest --test-dir build --output-on-failure
 #### `include/maploader_snapshot.h`
 
 - **版本与通用视图块**：文件开头定义 API/快照版本、`KV_INDEX_NONE`、能力位和编辑标志。`KvUtf8View` 是调用期 UTF-8 输入，`KvStringRef`、`KvSpan` 和 `KvDoubleBuffer` 是指向快照 arena/数组的定宽视图。
-- **Scenario 快照块**：`KvScenarioPathWeightRow` 保留 Route/Vehicle 相对路径、权重及是否显式写出权重；调用方拥有的 `KvScenarioSnapshot` 保存八个官方字段，其字符串与路径行在 `kv_free_scenario_snapshot()` 前保持有效。
+- **Scenario 快照块**：`KvScenarioPathWeightRow` 保留 Route/Vehicle 相对路径、权重及是否显式写出权重；v2 `KvScenarioSnapshot` 追加源文件哈希与八字段存在位；`KvScenarioEditDocument`/`KvScenarioEditPathRow` 是仅在 `kv_save_scenario_document()` 调用期间有效的直写输入。
 - **值与源码身份块**：`KvValueKind`、`KvValue` 表示 null、数值、字符串和 continue；`KvSourceFileRow`、`KvSourceSpanRow`、`KvStatementRow`、`KvElementRow` 与 `KvRowMetadata` 保存物理文件、Include 栈、字节/行列范围、原始参数、解析顺序和稳定 edit id。
 - **强类型行块**：`KvTrack`、`KvStation*`、`KvStructure*`、`KvRepeater*`、`KvSignal*`、`KvSection*`、`KvSound*`、`KvOtherTrain*`、曲线/坡度/他轨道变化以及限速、应答器、噪声、背景、粘着、亮度、雾、绘制距离等 POD，逐类固定字段形状。可变参数通过 `KvSpan` 指向共享值数组，避免在 ABI 中暴露 STL。
 - **根快照**：`KvMapSnapshot` 汇总字符串 arena、通用值、各类行数组、几何矩阵、源码文件/语句/元素注册表、能力位及 content/geometry revision。`KvSceneGeometrySnapshot` 单独承载场景控制点与轨道矩阵，使场景重建不会错误延长常规快照寿命。
@@ -276,7 +276,8 @@ ctest --test-dir build --output-on-failure
 #### `src/maploader/scenario_route.h` 与 `src/maploader/scenario_route.cpp`
 
 - `probe_bve_file_kind()` 只读取文件开头，用于区分 Map、Scenario 和未知文件；不可读文件保留为 Unknown，交由正常加载流程报告详细错误。
-- `load_scenario_document()` 按声明编码解析 `BveTs Scenario 2.00`，处理 `#`/`;` 注释和重复字段的末项优先规则，保留八个官方字段以及 Route/Vehicle 的源码相对路径、权重与显式权重标记。
+- `load_scenario_document()` 按声明编码解析 `BveTs Scenario 2.00`，处理 `#`/`;` 注释和重复字段的末项优先规则，保留八个官方字段、源哈希/存在位以及 Route/Vehicle 的源码相对路径、权重与显式权重标记。
+- `save_scenario_document()` 重新读取磁盘并比较 expected source hash，对最后生效字段和值范围做最小补丁，拒绝候选增删、空路径和非正/非有限权重，完整重解析后调用共享事务写回。
 - `resolve_scenario_route_candidates()` 复用同一解析结果，以 Scenario 所在目录解析 Route 候选并要求目标存在；只读预览快照不执行这项存在性要求。
 
 #### `src/maploader/diagnostics.h` 与 `src/maploader/diagnostics.cpp`
@@ -305,7 +306,7 @@ ctest --test-dir build --output-on-failure
 - **地图模型**：`TrackEvent`、`OwnTrackEditMarker`、`OtherTrack`、Station/SpeedLimit/Section 和大量 `TableRow` 集合组成 `MapModel`。`MapModel` 同时保存 source files/statements/elements、resource-list 元数据、revision、能力位和常规/场景矩阵，但不拥有 DLL 的嵌套指针。
 - **二维数据**：`View2D` 保存平移、比例和旋转；`TrackPoint`、`PlanMarker` 及各别名、`PlanRepeaterSegment`、`OtherTrainPathOverlay`、`PlanData`、`ProfileData` 是画布缓存和 hit-test 输入。
 - **表格与源码工具状态**：`TableRow/ColumnDef`、`CachedTableRow`、`TableUiCache` 保存按 revision 构建的显示数据；File Structure、Text Preview、DistanceResolution 结构保存布局、选择和解析器确认的边界。
-- **设置与运行状态**：`TextureImage` 管理 D3D 背景纹理；日志、窗口可见性、2D/3D 视图、`UserSettings`、最近地图和背景历史结构对应 INI 持久化字段；`ScenarioRoutePickState` 与 `ScenarioPreview` 分别保存候选选择状态和独立只读场景文件预览。
+- **设置与运行状态**：`TextureImage` 管理 D3D 背景纹理；日志、窗口可见性、2D/3D 视图、`UserSettings`、最近地图和背景历史结构对应 INI 持久化字段；`ScenarioRoutePickState` 保存候选选择/入口选项，`ScenarioPreview` 与其磁盘基线保存可编辑 Scenario 草稿。
 - **编辑状态机**：字段约束、inspector session、pending change、preview snapshot、Repeater draft、NewElement template/wizard、delete mode、distance workflow 和 editable-list draft 结构，明确区分尚未 Apply 的 UI 草稿、已 Apply 工作副本和已保存磁盘状态。
 - **`App` 类**：声明窗口渲染、异步加载、快照转换、几何/场景重建、所有表格和导航、编辑/保存/重载、对话框、设置、背景图、2D/3D 交互及缓存成员。其成员布局是各 GUI `.cpp` 文件共享的应用状态契约。
 
@@ -333,7 +334,7 @@ ctest --test-dir build --output-on-failure
 - `gui_kme.cpp` 保留 `App` 构造/析构与日志回调；`kme.h` 保持共享状态契约和仅 EXE 内部的跨翻译单元声明，不参与 DLL ABI。
 - `win32_dx11_bootstrap.cpp` 拥有 D3D11 设备/渲染目标、`WndProc()`、窗口消息循环和 `main()`。
 - `gui_common_utils.cpp` 集中字体、主题/日志颜色、编码转换、数值格式、路径及里程跳转控件帮助函数；`background_image.cpp` 拥有 WIC 解码、背景纹理重建与 history 背景持久化。
-- `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联；`map_load_pipeline.cpp` 处理 Map/Scenario 探测、Scenario 快照与 Route 候选、异步地图加载、结果应用、元数据合并、加载计时和几何再生成。
+- `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联；`map_load_pipeline.cpp` 处理 Map/Scenario 探测、Scenario 快照/草稿基线与 Route 候选、异步地图加载、入口历史、结果应用、元数据合并、加载计时和几何再生成。
 - `edit_ledger.cpp` 处理 typed 批次/报告、账本同步、本地预览、删除、保存/撤销/关闭；`distance_resolution_workflow.cpp` 处理距离消歧请求与继续应用。
 - `element_inspector_data.cpp` 管理 Inspector 打开、定位、字段/场景编辑数据与 Apply；`element_inspector_render.cpp` 只渲染 Inspector 字段、可选插入参数和可变 Repeater/Section UI。
 - `editable_list_drafts.cpp` 管理资源列表草稿；`new_element_wizard.cpp` 拥有新元素模板、向导和结构化插入；`headless_entrypoints.cpp` 承载复用正式 App 工作流的新元素、资源列表替换/插入和新建文件向导契约。
@@ -416,7 +417,7 @@ ctest --test-dir build --output-on-failure
 - **模型到缓存**：`ensure_table_cache()` 以 model content revision 建立 Station、Structure、Repeater、Signal、Section、Train、Sound、变量和效果表；`merged_repeater_rows()` 使用共享 linkage 把 Begin/End/变化边界组合成显示行；Section 可变参数和 Signal 可变 key 列保持动态形状。
 - **语义标注**：track key 检查函数标记 3D 场景不存在/非法轨道引用；source path/range formatter 为双端 Repeater 和 Include 行生成显示与 tooltip；`refresh_speed_limit_table_cache()` 处理运行态有效限速。
 - **专用 find API**：Structure model、Signal aspect、Sound/Sound3D 的 reset/run/unused/find-for-key/step/status 函数组合，供表格内搜索及从放置行反查资源定义。
-- **窗口函数**：`render_othertracks_window()` 管理轨道可见性/颜色/范围；Station、Structure Put/Between、Structure Model、Other Train、Sound list/3D list、Repeater、Signal aspect/put、Section、Variable、Beacon、Irregularity、各 noise/sound/environment、SpeedLimit 和只读 Scenario File 的 `render_*_window()` 分别定义列、排序、行选择、定位、源码菜单和适用的编辑入口。
+- **窗口函数**：`render_othertracks_window()` 管理轨道可见性/颜色/范围；Station、Structure Put/Between、Structure Model、Other Train、Sound list/3D list、Repeater、Signal aspect/put、Section、Variable、Beacon、Irregularity、各 noise/sound/environment、SpeedLimit 和 Scenario File 的 `render_*_window()` 分别定义列、排序、行选择、定位、源码菜单和适用的编辑入口；Scenario 路径输入在编辑模式下提供右键文件选择，始终提供资源管理器入口。
 - 每个专用窗口只读取 `TableUiCache` 与轻量 visibility 状态；修改 draft、选择或导航时调用 App 的共享编辑/定位方法，不直接拼接源码或重建场景。
 
 #### `src/table/table_navigation.cpp`
@@ -436,7 +437,7 @@ ctest --test-dir build --output-on-failure
 #### `src/main_window/debug_headless.cpp`
 
 - **公共设施**：COM RAII、UTF 路径、输出文件、耗时统计、hash、快照 matrix 汇总、日志捕获和 fixture 查找函数为所有无界面模式提供确定输出。
-- **加载/几何/场景检查**：基础 Map load 验证 snapshot 结构和矩阵，Scenario load 验证只读快照、候选选择及解析后地图；plan/scene benchmark 重复构建缓存并输出分阶段时间、数量和 hash；camera-transfer 检查 rebuild 前后姿态；scene 调试读取像素与 fog 状态验证渲染结果。
+- **加载/几何/场景检查**：基础 Map load 验证 snapshot 结构和矩阵，Scenario load 验证 v2 快照、编辑 roundtrip、候选选择及解析后地图；plan/scene benchmark 重复构建缓存并输出分阶段时间、数量和 hash；camera-transfer 检查 rebuild 前后姿态；scene 调试读取像素与 fog 状态验证渲染结果。
 - **`typed_edit_headless`**：`Field/Change/Batch/Report` 是公共编辑 ABI 的 RAII 包装，负责字符串 view 生命周期、dry-run/apply/commit 报告复制和失败信息。
 - **距离/自轨道/他轨道批次**：`distance_batch_headless` 的 MapHandle、edit 选择、resolution choice 和 report facts 驱动多文件/Include/变量环境用例；own/other track 模式验证方法不转换、参数形状、Apply/Reset/Commit 和几何变化。
 - **列表与关联编辑**：`station_list_edit_headless` 创建临时 CSV fixture，验证编辑/清空/重排/删除及原编码；`repeater_batch_headless` 验证 chain 更新、trim 转换和原子删除；`section_edit_batch_headless` 验证动态参数增删、null/表达式保留和 commit。
@@ -485,7 +486,7 @@ App / MapModel
 - 保持 `UNICODE`、`_UNICODE`、`NOMINMAX` 和 `WIN32_LEAN_AND_MEAN` 假设。
 - 异常、STL 类型、C++ 类或所有权不明确的指针不得跨越公共 C ABI。
 - DLL 通过 ABI 返回的已分配内存必须有配对释放函数。
-- 随附 EXE 要求 maploader API v10、地图快照 v8 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v1 独立分配并由 `kv_free_scenario_snapshot()` 释放，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
+- 随附 EXE 要求 maploader API v11、地图快照 v8 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v2 独立分配并由 `kv_free_scenario_snapshot()` 释放，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
 - 强类型 ABI 输入视为调用期视图；嵌套快照存储由句柄持有，并按已记录的几何重建、编辑操作、重置、重解析和释放规则失效。
 - 公共 ABI 变更必须明确决定版本/结构尺寸，同步修改 EXE、DLL 和调用方，并记录所有权与有效期。
 
@@ -493,7 +494,7 @@ App / MapModel
 
 保持对 BVE Map 2.0+、当前支持的旧式语法、`Include`、变量、预定义 `distance`、数学函数、注释及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关输入的支持。
 
-场景文件只通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取 `Title`、`Route`、`RouteTitle`、`Vehicle`、`VehicleTitle`、`Author`、`Image`、`Comment` 的最后一项，返回保留相对路径原文及显式/默认权重的 Route/Vehicle 行；它不要求存在 Route 或有效 Route 目标，分配的快照由调用方以 `kv_free_scenario_snapshot()` 释放。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在，并返回由 `kv_free_scenario_candidates()` 释放的 malloc 内存块。Scenario 的编辑、新建与写回尚未实现。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载（`map_load_pipeline.cpp` 中的 `App::perform_open_document()`）；Route 目标存在但不是有效 BVE 地图时会进入正常地图加载流程并在地图文件校验处失败，最终保留场景预览且没有已加载的地图；`--headless-load-scenario [--expect-no-map]` 通过 `scenario_preview=loaded`、`map_load=not_attempted` 或 `map_load=failed` 阶段标记及 `result=PASS` 断言该降级状态，若地图意外成功加载则以 `result=FAIL` 失败。
+场景文件通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取和写回：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取八个官方字段的最后一项，返回相对路径、权重、源哈希和存在位；它不要求存在 Route 或有效 Route 目标。`kv_save_scenario_document()` 固定 Route/Vehicle 候选数量和顺序，只替换最后生效值（缺失标量仅在非空时追加），完整重解析并通过共享事务基础设施保留原编码/BOM/换行后写盘；Scenario 草稿不进入地图 Apply ledger。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载；`--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]` 通过 `scenario_preview=loaded`、`scenario_edit_roundtrip=PASS`、Scenario 历史/重载入口标记及 `result=PASS` 断言这些阶段。
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 
@@ -550,7 +551,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 
 ```bat
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
-build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] [--expect-no-map] --headless-output build\headless-load-scenario.txt
+build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] [--expect-no-map] [--scenario-edit-roundtrip] --headless-output build\headless-load-scenario.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt

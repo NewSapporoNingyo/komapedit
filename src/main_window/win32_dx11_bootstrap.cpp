@@ -613,6 +613,7 @@ int main(int, char**) {
             std::cerr << headless_scenario.error << "\n"
                       << "usage: komapedit.exe --headless-load-scenario <scenario-path> "
                       << "[--scenario-index N] [--unit-distance M] [--expect-no-map] "
+                         "[--scenario-edit-roundtrip] "
                       << "[--load-profile preview|edit] [--headless-output FILE]\n";
             return 1;
         }

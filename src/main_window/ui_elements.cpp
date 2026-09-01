@@ -641,7 +641,8 @@ void App::render_menu() {
         }
         if (ImGui::MenuItem(tr("menu.reload").c_str(), "F5", false,
                             !operation_pending && !load_state_.running &&
-                            ((has_model_ && !file_path_.empty()) ||
+                            ((!scenario_source_path_.empty()) ||
+                             (has_model_ && !file_path_.empty()) ||
                                           (model_preview_canvas_ && model_preview_canvas_->has_model())))) {
             reload_current_map_and_model_preview();
         }
@@ -920,15 +921,16 @@ void App::render_toolbar() {
         ImGui::SameLine();
 
         const bool can_reload = !operation_pending && !load_state_.running &&
-                                             ((has_model_ && !file_path_.empty()) ||
-                                             (model_preview_canvas_ && model_preview_canvas_->has_model()));
+            ((!scenario_source_path_.empty()) ||
+             (has_model_ && !file_path_.empty()) ||
+             (model_preview_canvas_ && model_preview_canvas_->has_model()));
         ImGui::BeginDisabled(!can_reload);
         if (ImGui::Button(tr("button.reload").c_str())) reload_current_map_and_model_preview();
         ImGui::EndDisabled();
 
         ImGui::SameLine();
         const bool can_reload_geometry = !operation_pending && !load_state_.running &&
-            has_model_ && !file_path_.empty();
+            ((!scenario_source_path_.empty()) || (has_model_ && !file_path_.empty()));
         ImGui::BeginDisabled(!can_reload_geometry);
         if (ImGui::Button(tr("button.reload_geometry").c_str())) reload_current_map_geometry();
         ImGui::EndDisabled();
@@ -949,7 +951,9 @@ void App::render_toolbar() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(operation_pending || !edit_actions_available() || !has_pending_edits() ||
+        ImGui::BeginDisabled(operation_pending ||
+                             !(edit_actions_available() || scenario_edit_actions_available()) ||
+                             !(has_pending_edits() || has_scenario_unsaved_changes()) ||
                              has_unapplied_editable_list_drafts());
         if (ImGui::Button(tr("button.save").c_str())) {
             request_edit_ui_operation(PendingEditUiOperation::Save);
@@ -957,7 +961,8 @@ void App::render_toolbar() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(operation_pending || !edit_actions_available() ||
+        ImGui::BeginDisabled(operation_pending ||
+                             !(edit_actions_available() || scenario_edit_actions_available()) ||
                              !has_unsaved_edit_state());
         if (ImGui::Button(tr("button.revert").c_str())) {
             popups_.revert_all_edits_confirm = true;
@@ -1032,7 +1037,12 @@ void App::render_status_bar() {
 
         ImGui::SameLine(0.0f, horizontal_padding);
         ImGui::SetCursorPosY((status_bar_height - status_font_size) * 0.5f);
-        ImGui::TextUnformatted(tr(program_status_key_).c_str());
+        // A Scenario Route edit describes a map that is no longer loaded in
+        // memory. Keep the warning visible until the Scenario entry is
+        // reloaded, even if another transient status was set meanwhile.
+        const char* displayed_status_key = scenario_route_changed_
+            ? "status.scenario_route_changed" : program_status_key_;
+        ImGui::TextUnformatted(tr(displayed_status_key).c_str());
         if (!program_status_elapsed_suffix_.empty()) {
             ImGui::SameLine(0.0f, 0.0f);
             ImGui::TextUnformatted(program_status_elapsed_suffix_.c_str());

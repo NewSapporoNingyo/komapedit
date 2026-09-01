@@ -112,6 +112,8 @@ ScenarioPreview copy_scenario_snapshot(const KvScenarioSnapshot& snapshot) {
     };
 
     ScenarioPreview preview;
+    preview.source_hash = scenario_snapshot_string(snapshot, snapshot.source_hash);
+    preview.present_fields = snapshot.present_fields;
     preview.title = scenario_snapshot_string(snapshot, snapshot.title);
     preview.routes = copy_paths(snapshot.routes, snapshot.route_count);
     preview.route_title = scenario_snapshot_string(snapshot, snapshot.route_title);
@@ -161,8 +163,10 @@ bool App::on_frame_presented() {
 void App::open_document(std::string path, bool record_history,
                         std::optional<BackgroundHistory> background_to_restore) {
     if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
-    PendingDocumentOpen request{std::move(path), record_history,
-                                std::move(background_to_restore)};
+    PendingDocumentOpen request;
+    request.path = std::move(path);
+    request.record_history = record_history;
+    request.background_to_restore = std::move(background_to_restore);
     if (has_unsaved_edit_state()) {
         pending_document_open_ = std::move(request);
         popups_.open_document_unsaved_confirm = true;
@@ -172,7 +176,7 @@ void App::open_document(std::string path, bool record_history,
     perform_open_document(std::move(request));
 }
 
-void App::reset_document_for_open() {
+void App::reset_document_for_open(bool preserve_scene_preview) {
     stop_loader();
     std::optional<LoadResult> stale_result;
     {
@@ -200,6 +204,12 @@ void App::reset_document_for_open() {
     popups_.resource_list_file_change_confirm = false;
     scenario_route_pick_ = ScenarioRoutePickState{};
     scenario_preview_.reset();
+    scenario_preview_baseline_.reset();
+    scenario_source_path_.clear();
+    scenario_loaded_route_signature_.clear();
+    scenario_route_changed_ = false;
+    scenario_route_warning_logged_ = false;
+    scenario_route_warning_persistent_ = false;
     show_scenario_file_window_ = false;
     focus_scenario_file_next_ = false;
     invalidate_table_cache();
@@ -222,7 +232,7 @@ void App::reset_document_for_open() {
     scene_preview_preserve_models_on_rebuild_ = false;
     scene_preview_preserve_camera_on_rebuild_ = false;
     pending_scene_preview_started_at_.reset();
-    if (scene_preview_canvas_) scene_preview_canvas_->clear_scene();
+    if (scene_preview_canvas_ && !preserve_scene_preview) scene_preview_canvas_->clear_scene();
     {
         std::lock_guard<std::mutex> lock(log_mutex_);
         logs_.clear();
@@ -235,11 +245,14 @@ void App::reset_document_for_open() {
 
 void App::perform_open_document(PendingDocumentOpen request) {
     if (request.path.empty() || load_state_.running || edit_ui_operation_pending()) return;
-    reset_document_for_open();
+    reset_document_for_open(request.preserve_scene_preview_models ||
+                            request.preserve_scene_preview_camera);
 
     if (kv_probe_file_kind(request.path.c_str()) != KV_FILE_KIND_SCENARIO) {
-        begin_map_load(std::move(request.path), false, request.record_history,
-                       std::move(request.background_to_restore));
+        begin_map_load(std::move(request.path), request.preserve_settings, request.record_history,
+                       std::move(request.background_to_restore),
+                       request.preserve_scene_preview_models,
+                       request.preserve_scene_preview_camera);
         return;
     }
 
@@ -255,6 +268,16 @@ void App::perform_open_document(PendingDocumentOpen request) {
     }
     try {
         scenario_preview_ = copy_scenario_snapshot(*snapshot);
+        scenario_preview_baseline_ = scenario_preview_;
+        scenario_source_path_ = request.path;
+        scenario_loaded_route_signature_.clear();
+        for (const ScenarioPreviewPath& row : scenario_preview_->routes) {
+            scenario_loaded_route_signature_.push_back(row.path);
+        }
+        scenario_route_changed_ = false;
+        scenario_route_warning_logged_ = false;
+        scenario_route_warning_persistent_ = false;
+        if (request.record_history) touch_recent_map(request.path);
     } catch (const std::exception& e) {
         kv_free_scenario_snapshot(snapshot);
         set_program_status("status.map_load_failed");
@@ -270,10 +293,11 @@ void App::perform_open_document(PendingDocumentOpen request) {
     if (!candidates || candidate_count == 0 ||
         candidate_count > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
         const char* error = kv_get_last_error();
-        set_program_status("status.map_load_failed");
-        KME_ADD_LOG(LogSeverity::Error,
-                std::string("Failed to resolve scenario route: ") +
-                    (error && *error ? error : "maploader failed"));
+        set_program_status("status.scenario_loaded");
+        KME_ADD_LOG(LogSeverity::Warning,
+                std::string("Scenario route is unavailable: ") +
+                    (error && *error ? error : "maploader failed") +
+                    "; Scenario-only editing remains available.");
         kv_free_scenario_candidates(candidates);
         return;
     }
@@ -287,8 +311,10 @@ void App::perform_open_document(PendingDocumentOpen request) {
     kv_free_scenario_candidates(candidates);
     if (items.size() == 1) {
         const ScenarioRoutePickItem& item = items.front();
-        begin_map_load(item.resolved_path, false, request.record_history,
-                       std::move(request.background_to_restore));
+        begin_map_load(item.resolved_path, request.preserve_settings, request.record_history,
+                       std::move(request.background_to_restore),
+                       request.preserve_scene_preview_models,
+                       request.preserve_scene_preview_camera);
         KME_ADD_LOG("Opened via scenario: " + request.path);
         KME_ADD_LOG("Resolved route: " + item.route_text + " -> " + item.resolved_path);
         return;
@@ -298,6 +324,14 @@ void App::perform_open_document(PendingDocumentOpen request) {
     scenario_route_pick_.scenario_path = request.path;
     scenario_route_pick_.items = std::move(items);
     scenario_route_pick_.selected = 0;
+    scenario_route_pick_.preserve_settings = request.preserve_settings;
+    scenario_route_pick_.record_history = request.record_history;
+    scenario_route_pick_.preserve_scene_preview_models = request.preserve_scene_preview_models;
+    scenario_route_pick_.preserve_scene_preview_camera = request.preserve_scene_preview_camera;
+    if (request.background_to_restore) {
+        scenario_route_pick_.background_to_restore =
+            std::make_shared<BackgroundHistory>(*request.background_to_restore);
+    }
     KME_ADD_LOG("Opened scenario: " + request.path);
     wake_main_window();
 }
@@ -479,7 +513,9 @@ void App::apply_load_result(LoadResult result) {
     } else if (!result.preserve_settings) {
         clear_background_image();
     }
-    if (result.record_history) touch_recent_map(result.path);
+    if (result.record_history) {
+        touch_recent_map(scenario_source_path_.empty() ? result.path : scenario_source_path_);
+    }
     if (scene_auto_load_on_map_open_ && !scene_preview_started_) {
         start_scene_preview();
     }
