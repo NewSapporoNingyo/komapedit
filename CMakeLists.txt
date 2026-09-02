@@ -105,6 +105,17 @@ set_target_properties(maploader PROPERTIES
 )
 
 if(BUILD_TESTING)
+    add_executable(multilanguage_tests
+        src/main_window/tests/multilanguage_tests.cpp
+    )
+    target_compile_features(multilanguage_tests PRIVATE cxx_std_17)
+    target_include_directories(multilanguage_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    add_test(NAME multilanguage_contract
+        COMMAND $<TARGET_FILE:multilanguage_tests>
+    )
+
     add_executable(typed_snapshot_tests
         src/maploader/tests/typed_snapshot_tests.cpp
     )

@@ -116,7 +116,7 @@ constexpr std::array<NewFileTemplateCategoryInfo, 3>
 constexpr std::array<NewFileTemplate, 6> k_new_file_templates = {{
     {NewFileKind::Map, "map", "BveTs Map 2.02", "new_file.usage.map"},
     {NewFileKind::Structure, "resource_lists", "Structure List", "new_file.usage.structure"},
-    {NewFileKind::Signal, "resource_lists", "Signal List", "new_file.usage.signal"},
+    {NewFileKind::Signal, "resource_lists", "Signal Aspects List", "new_file.usage.signal"},
     {NewFileKind::Sound, "resource_lists", "Sound List", "new_file.usage.sound"},
     {NewFileKind::Sound3D, "resource_lists", "Sound3D List", "new_file.usage.sound3d"},
     {NewFileKind::Station, "resource_lists", "Station List", "new_file.usage.station"},

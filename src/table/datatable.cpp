@@ -4544,8 +4544,8 @@ void App::render_scenario_file_window() {
     if (ImGui::BeginTable("scenario_file", 2,
                           ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("field", ImGuiTableColumnFlags_WidthFixed, 106.0f);
-        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(tr("column.field").c_str(), ImGuiTableColumnFlags_WidthFixed, 106.0f);
+        ImGui::TableSetupColumn(tr("column.value").c_str(), ImGuiTableColumnFlags_WidthStretch);
         const auto render_value = [&](const char* field, std::string& value,
                                       bool path_context = false, bool image = false,
                                       bool allow_edit = true) {

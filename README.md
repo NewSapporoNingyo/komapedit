@@ -90,7 +90,7 @@ The statement names and `[legacy]` aliases below follow the [official BVE map fi
 | `Beacon.Put(type, section, sendData)`                                                                                                                                                       |    √    |       √       |      √      |         ✕         | Distance and all arguments can be edited, created, or deleted                                                                                                                 |
 | `SpeedLimit.Begin(v)` / `SpeedLimit.End()`                                                                                                                                                  |    √    |       √       |      √      |         ✕         | Independent Begin/End points support edit, creation, and deletion without pairing or type conversion                                                                          |
 | `PreTrain.Pass(time)` / `PreTrain.Pass(second)`                                                                                                                                             |    √    |       ✕       |      ✕      |         ✕         | Feeds the read-only list and map markers; no source-backed edit or insertion                                                                                                  |
-| `Light.Ambient(...)`, `Light.Diffuse(...)`, `Light.Direction(...)`                                                                                                                          |    √    |       √       |      √      |         ✕         | The Lighting Effects tab supports source-backed RGB/pitch/yaw editing and deletion. The Effects wizard creates each official form in the selected source file at distance `0` (without a distance input). RGB must be in `[0, 1]`; Direction must be at distance `0`; duplicate declarations of one kind anywhere in the root map or Includes invalidate that kind and report every source location. No markers or 3D lighting simulation are implemented |
+| `Light.Ambient(...)`, `Light.Diffuse(...)`, `Light.Direction(...)`                                                                                                                          |    √    |       √       |      √      |         ✕         | The Light Sources tab supports source-backed RGB/pitch/yaw editing and deletion. The Effects wizard creates each official form in the selected source file at distance `0` (without a distance input). RGB must be in `[0, 1]`; Direction must be at distance `0`; duplicate declarations of one kind anywhere in the root map or Includes invalidate that kind and report every source location. No markers or 3D lighting simulation are implemented |
 | `Fog.Interpolate(density, red, green, blue)` / `Fog.Interpolate(density)` / `Fog.Interpolate()` / `[legacy] Fog.Set(density, red, green, blue)`                                             |    √    |       √       |      √      |         ✕         | All official 0/1/4-argument Interpolate forms and the legacy Set form support edit, creation, and deletion; 3D applies interpolated exponential fog                           |
 | `[legacy] Legacy.Fog(start, end, red, green, blue)`                                                                                                                                          |    √    |       ✕       |      ✕      |         ✕         | Legacy linear-fog statement still accepted by BVE; read-only rows appear in a dedicated list and plan/scene markers with their source values; editing, creation, and the 3D fog effect are not implemented |
 | `DrawDistance.Change(value)`                                                                                                                                                                |    √    |       √       |      √      |         ✕         | Distance/value support edit, creation, and deletion; the statement can optionally control scene draw distance                                                                 |
@@ -202,7 +202,7 @@ Opens tables grouped by stations, structures, track geometry, signals, sounds, e
 - `Own Track Markers` and `Show Current Position on Plan` control helper displays shared by the 3D scene and 2D plan.
 - `Other -> File Structure Diagram`, `Text Preview`, and `Console` open the corresponding tool windows.
 
-Signal markers are also controlled by the `Show` checkbox in each `Map Signal List` row. Other-train paths are controlled one at a time in the `Other Train List`.
+Signal markers are also controlled by the `Show` checkbox in each `Ground Signal List` row. Other-train paths are controlled one at a time in the `Other Train List`.
 
 #### Language and Help
 
@@ -278,8 +278,8 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 
 - Open the required table from `Map Info List`. Right-click a mileage cell that has a locate menu to move to that position in the Plan or a running 3D scene.
 - Right-click a source-file or resource-file path to open its directory. Hover over a path to see the original argument and resolved absolute path when available.
-- The Structure Model, Signal Aspect, Sound File, and 3D Sound File tables support partial or exact searches, previous and next results, and searches for unused entries.
-- In a map-placement row, right-click a resource key to jump to the matching Structure Model, Signal Aspect, or sound definition.
+- The Structure List, Signal Aspects List, Sound File List, and 3D Sound File List tables support partial or exact searches, previous and next results, and searches for unused entries.
+- In a map-placement row, right-click a resource key to jump to the matching Structure List, Signal Aspects List, or sound definition.
 - Without editing, tables provide only viewing, searching, navigation, and preview actions. With editing enabled, right-clicking an editable map element also shows `Properties/Edit` and `Delete`. Some tables also open `Properties/Edit` on double-click.
 
 #### Stations and Structures
@@ -287,7 +287,7 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 - **Station List**: The upper part shows `Station.Put` stop positions. The lower part shows station definitions loaded by `Station.Load`, including fields such as station name, stop time, and door side.
 - **Map Structure List**: Shows `Structure.Put` and `Structure.Put0`. You can locate an item in the Plan, the 3D scene, or its model definition.
 - **Map Structure List (PutBetween)**: Shows `Structure.PutBetween` structures deformed between two tracks.
-- **Structure Model List**: Shows each structureKey and model path. Right-click a key to preview the model or fill that key into an open New Map Element Wizard of a matching type.
+- **Structure List**: Shows each structureKey and model path. Right-click a key to preview the model or fill that key into an open New Map Element Wizard of a matching type.
 - **Repeater List**: Combines related `Repeater.Begin`/`Begin0`/`End` statements into intervals. You can jump to a start, end, or change point. If an interval has several Begin statements, the delete menu offers `Delete All`, `Delete Change Point`, `Trim to Change Point`, and `Start from Change Point`.
 - **Other Train List**: Shows other-train definitions, stop positions, and the read-only `Train.Enable` time. You can control each path separately and locate stop positions in the Plan.
 
@@ -295,8 +295,8 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 
 - **Other Tracks**: Controls the visibility, mileage range, and color of each other track. With editing enabled, right-click `Key` to rename matching `Track[...]` statements. References to that track in Structure, Signal, and Repeater statements are not renamed automatically.
 - **Track Irregularity, Adhesion Change Point, and Speed Limit Point lists**: Show the corresponding positions and can locate them in 2D or 3D. Speed-limit Begin and End may exist independently; End edits only its mileage.
-- **Signal Aspect List**: Shows signal aspect definitions and their structure keys. You can jump from a structure key to its model.
-- **Map Signal List**: Shows `Signal.Put` positions and parameters. Each row's `Show` checkbox controls its Plan marker.
+- **Signal Aspects List**: Shows signal aspect definitions and their structure keys. You can jump from a structure key to its model.
+- **Ground Signal List**: Shows `Signal.Put` positions and parameters. Each row's `Show` checkbox controls its Plan marker.
 - **Section List**: Shows `Section.Begin`/`BeginNew` separately from `Section.SetSpeedLimit`/`Signal.SpeedLimit`, including variable-length parameters and explicit `null` values.
 - **Beacon List**: Shows and locates `Beacon.Put` statements.
 - **Variable List**: Groups all assignments by case-insensitive variable name. Hover to see the original expression. This table is read-only.
@@ -304,13 +304,13 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 #### Sounds and Effects
 
 - **Sound File List and 3D Sound File List**: Show sound keys, file paths, and buffer counts. You can open a file's directory or fill its key into a matching New Map Element Wizard.
-- **Map Sound, Map 3D Sound, Rolling Noise Change Point, Flange Noise Change Point, and Joint Noise Play Point lists**: Show and locate playback or change positions.
-- **Background, Cab Illuminance, Fog, Legacy Fog, and Draw Distance Change Point lists**: Show and locate the corresponding effects.
+- **Sound Playback Point List, Fixed Sound Source List, Rolling Noise Change Point List, Flange Noise Change Point List, and Joint Noise Play Point List**: Show and locate playback or change positions.
+- **Background Change Point List, Cab Illuminance Change Point List, Fog Change Point List, Legacy Fog Change Point List, and Scenery Draw Distance Change Point List**: Show and locate the corresponding effects.
 - **Scenario File**: Available only when a Scenario document is open. It shows every official scenario field and existing candidates. The fields are read-only until Edit mode is enabled; Scenario Save writes the source file directly.
 
 #### Inline Editing in Resource Lists
 
-Station definitions, Structure Models, Signal Aspects, Sound Files, and 3D Sound Files use the same inline editing controls:
+Station definitions, Structure List, Signal Aspects List, Sound File List, and 3D Sound File List use the same inline editing controls:
 
 - Double-click an editable cell to type, then press `Enter` to finish that cell. Right-click to select a file, insert a row above or below, move the whole row up or down, clear the cell, or delete the whole row.
 - A list that only carries its file header shows an `Add Row` button; inserting into it appends the first row after the header, so no comma placeholder line is needed.
@@ -347,9 +347,9 @@ A new Include is placed after the last existing Include before the first local d
 
 ### 8. 3D Model Preview Functions
 
-Open `3D View -> Structure Model Preview`, then right-click a structureKey in the Structure Model List and choose `Preview Model`.
+Open `3D View -> Structure Model Preview`, then right-click a structureKey in the Structure List and choose `Preview Model`.
 
-- **Model List**: Opens the Structure Model List.
+- **Structure List**: Opens the Structure List.
 - **Reload**: Reads the current model, materials, and textures again.
 - **Clear**: Removes the current model from the preview.
 - **Background Color**: Selects any RGB color or uses the white, black, gray, blue, or green shortcut colors.
