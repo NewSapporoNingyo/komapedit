@@ -1321,7 +1321,7 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
             return kv_save_scenario_document(temporary_utf8.c_str(), &edit);
         };
         const auto added_snapshot_string = [](const KvScenarioSnapshot& snapshot,
-                                              KvStringRef value) {
+                                               KvStringRef value) {
             if (!snapshot.string_data || value.offset > snapshot.string_size ||
                 value.length > snapshot.string_size - value.offset) {
                 return std::string{};
@@ -1329,12 +1329,93 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
             return std::string(snapshot.string_data + value.offset,
                                static_cast<size_t>(value.length));
         };
+        const auto read_temporary_source = [&]() {
+            std::ifstream file(temporary_path, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(file)), {});
+        };
+        const auto trim_ascii = [](std::string value) {
+            const size_t first = value.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos) return std::string{};
+            const size_t last = value.find_last_not_of(" \t\r\n");
+            return value.substr(first, last - first + 1);
+        };
+        const auto effective_first_weight_text = [&](const std::string& source,
+                                                      const char* field) {
+            std::string result;
+            std::istringstream lines(source);
+            for (std::string line; std::getline(lines, line);) {
+                const size_t comment = line.find_first_of("#;");
+                if (comment != std::string::npos) line.resize(comment);
+                const size_t equals = line.find('=');
+                if (equals == std::string::npos ||
+                    trim_ascii(line.substr(0, equals)) != field) {
+                    continue;
+                }
+                std::string value = trim_ascii(line.substr(equals + 1));
+                const size_t pipe = value.find('|');
+                if (pipe != std::string::npos) value.resize(pipe);
+                const size_t star = value.rfind('*');
+                result = star == std::string::npos
+                    ? std::string{}
+                    : trim_ascii(value.substr(star + 1));
+            }
+            return result;
+        };
 
         const bool route_candidates_available = !preview.routes.empty();
         const bool vehicle_candidates_available = !preview.vehicles.empty();
         if (route_candidates_available || vehicle_candidates_available) {
-        std::vector<ScenarioPreviewPath> expanded_routes = preview.routes;
-        std::vector<ScenarioPreviewPath> expanded_vehicles = preview.vehicles;
+        std::vector<ScenarioPreviewPath> weighted_routes = preview.routes;
+        std::vector<ScenarioPreviewPath> weighted_vehicles = preview.vehicles;
+        if (route_candidates_available) {
+            weighted_routes.front().weight = 0.8;
+            weighted_routes.front().has_explicit_weight = true;
+        }
+        if (vehicle_candidates_available) {
+            weighted_vehicles.front().weight = 0.8;
+            weighted_vehicles.front().has_explicit_weight = true;
+        }
+        const KvScenarioSnapshot* weighted_snapshot = save_temporary_draft(
+            preview.source_hash, edited_title, weighted_routes, weighted_vehicles);
+        if (!weighted_snapshot) {
+            const char* error = kv_get_last_error();
+            return fail(std::string("scenario weight save failed: ") +
+                        (error && *error ? error : "maploader failed"));
+        }
+        bool weight_snapshot_ok =
+            weighted_snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
+            weighted_snapshot->route_count == weighted_routes.size() &&
+            weighted_snapshot->vehicle_count == weighted_vehicles.size();
+        if (route_candidates_available) {
+            weight_snapshot_ok = weight_snapshot_ok &&
+                std::abs(weighted_snapshot->routes[0].weight - 0.8) < 1e-12 &&
+                weighted_snapshot->routes[0].has_explicit_weight != 0;
+        }
+        if (vehicle_candidates_available) {
+            weight_snapshot_ok = weight_snapshot_ok &&
+                std::abs(weighted_snapshot->vehicles[0].weight - 0.8) < 1e-12 &&
+                weighted_snapshot->vehicles[0].has_explicit_weight != 0;
+        }
+        const std::string weighted_hash =
+            added_snapshot_string(*weighted_snapshot, weighted_snapshot->source_hash);
+        kv_free_scenario_snapshot(weighted_snapshot);
+        if (!weight_snapshot_ok) {
+            return fail("scenario weight snapshot validation failed");
+        }
+
+        const std::string weighted_source = read_temporary_source();
+        const bool route_weight_text_ok = !route_candidates_available ||
+            effective_first_weight_text(weighted_source, "Route") == "0.8";
+        const bool vehicle_weight_text_ok = !vehicle_candidates_available ||
+            effective_first_weight_text(weighted_source, "Vehicle") == "0.8";
+        const bool weight_artifact_absent =
+            weighted_source.find("0.80000000000000004") == std::string::npos;
+        if (!route_weight_text_ok) return fail("scenario Route weight text is not 0.8");
+        if (!vehicle_weight_text_ok) return fail("scenario Vehicle weight text is not 0.8");
+        if (!weight_artifact_absent) return fail("scenario weight text keeps a binary tail");
+
+        std::vector<ScenarioPreviewPath> expanded_routes = weighted_routes;
+        std::vector<ScenarioPreviewPath> expanded_vehicles = weighted_vehicles;
         if (route_candidates_available) {
             expanded_routes.push_back(
                 ScenarioPreviewPath{preview.routes.front().path, 2.5, true});
@@ -1344,7 +1425,7 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
                 ScenarioPreviewPath{preview.vehicles.front().path, 3.5, true});
         }
         const KvScenarioSnapshot* added_snapshot = save_temporary_draft(
-            preview.source_hash, edited_title, expanded_routes, expanded_vehicles);
+            weighted_hash, edited_title, expanded_routes, expanded_vehicles);
         if (!added_snapshot) {
             const char* error = kv_get_last_error();
             return fail(std::string("scenario candidate add save failed: ") +
@@ -1356,14 +1437,14 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
             added_snapshot->route_count == expanded_routes.size() &&
             added_snapshot->vehicle_count == expanded_vehicles.size();
         if (route_candidates_available) {
-            add_ok = add_ok && added_snapshot->route_count == preview.routes.size() + 1 &&
+            add_ok = add_ok && added_snapshot->route_count == weighted_routes.size() + 1 &&
                 added_snapshot_string(*added_snapshot, added_snapshot->routes[
                     added_snapshot->route_count - 1].path) == preview.routes.front().path &&
                 std::abs(added_snapshot->routes[added_snapshot->route_count - 1].weight - 2.5) < 1e-12 &&
                 added_snapshot->routes[added_snapshot->route_count - 1].has_explicit_weight != 0;
         }
         if (vehicle_candidates_available) {
-            add_ok = add_ok && added_snapshot->vehicle_count == preview.vehicles.size() + 1 &&
+            add_ok = add_ok && added_snapshot->vehicle_count == weighted_vehicles.size() + 1 &&
                 added_snapshot_string(*added_snapshot, added_snapshot->vehicles[
                     added_snapshot->vehicle_count - 1].path) == preview.vehicles.front().path &&
                 std::abs(added_snapshot->vehicles[added_snapshot->vehicle_count - 1].weight - 3.5) < 1e-12 &&
@@ -1388,25 +1469,30 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
                         (error && *error ? error : "maploader failed"));
         }
         bool delete_ok = deleted_snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
-            deleted_snapshot->route_count == preview.routes.size() &&
-            deleted_snapshot->vehicle_count == preview.vehicles.size();
-        for (size_t i = 0; delete_ok && i < preview.routes.size(); ++i) {
+            deleted_snapshot->route_count == weighted_routes.size() &&
+            deleted_snapshot->vehicle_count == weighted_vehicles.size();
+        for (size_t i = 0; delete_ok && i < weighted_routes.size(); ++i) {
             delete_ok = added_snapshot_string(*deleted_snapshot, deleted_snapshot->routes[i].path) ==
-                preview.routes[i].path &&
-                std::abs(deleted_snapshot->routes[i].weight - preview.routes[i].weight) < 1e-12 &&
+                weighted_routes[i].path &&
+                std::abs(deleted_snapshot->routes[i].weight - weighted_routes[i].weight) < 1e-12 &&
                 (deleted_snapshot->routes[i].has_explicit_weight != 0) ==
-                    preview.routes[i].has_explicit_weight;
+                    weighted_routes[i].has_explicit_weight;
         }
-        for (size_t i = 0; delete_ok && i < preview.vehicles.size(); ++i) {
+        for (size_t i = 0; delete_ok && i < weighted_vehicles.size(); ++i) {
             delete_ok = added_snapshot_string(*deleted_snapshot, deleted_snapshot->vehicles[i].path) ==
-                preview.vehicles[i].path &&
-                std::abs(deleted_snapshot->vehicles[i].weight - preview.vehicles[i].weight) < 1e-12 &&
+                weighted_vehicles[i].path &&
+                std::abs(deleted_snapshot->vehicles[i].weight - weighted_vehicles[i].weight) < 1e-12 &&
                 (deleted_snapshot->vehicles[i].has_explicit_weight != 0) ==
-                    preview.vehicles[i].has_explicit_weight;
+                    weighted_vehicles[i].has_explicit_weight;
         }
         if (deleted_snapshot) kv_free_scenario_snapshot(deleted_snapshot);
         if (!delete_ok) return fail("scenario candidate delete roundtrip validation failed");
-        *out << "scenario_candidate_add=PASS\n"
+        *out << "scenario_weight_route_text="
+             << (route_candidates_available ? "PASS" : "SKIP") << "\n"
+             << "scenario_weight_vehicle_text="
+             << (vehicle_candidates_available ? "PASS" : "SKIP") << "\n"
+             << "scenario_weight_artifact_absent=PASS\n"
+             << "scenario_candidate_add=PASS\n"
              << "scenario_candidate_delete=PASS\n"
              << "scenario_candidate_route_add_count=" << expanded_routes.size() << "\n"
              << "scenario_candidate_route_delete_count=" << reduced_routes.size() << "\n"

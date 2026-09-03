@@ -1626,86 +1626,116 @@ int scenario_route_contract() {
         }
     }
 
-    // The default weight is preserved as an omitted suffix. An explicitly
-    // edited weight becomes a visible suffix even when its value is 1.
+    // The default weight is preserved as an omitted suffix. Explicit edits
+    // use the same concise 12-significant-digit representation as the GUI.
     {
         const std::filesystem::path path = directory / "weight-representation.txt";
         write_bytes(path,
                     "BveTs Scenario 2.00:utf-8\n"
                     "Route = maps\\map-a.txt | maps\\map-b.txt\n"
-                    "Vehicle = train-a.txt\n");
-        const KvScenarioSnapshot* baseline = load_snapshot(path);
-        check(baseline != nullptr && baseline->route_count == 2 &&
-                  baseline->routes[0].has_explicit_weight == 0 &&
-                  baseline->routes[1].has_explicit_weight == 0,
+                    "Vehicle = train-a.txt * 1.1\n");
+        const KvScenarioSnapshot* current = load_snapshot(path);
+        check(current != nullptr && current->route_count == 2 &&
+                  current->routes[0].has_explicit_weight == 0 &&
+                  current->routes[1].has_explicit_weight == 0 &&
+                  current->vehicle_count == 1 &&
+                  current->vehicles[0].has_explicit_weight != 0 &&
+                  nearly_equal(current->vehicles[0].weight, 1.1),
               "implicit scenario weights are identified");
-        if (baseline) {
-            std::string hash = scenario_string(*baseline, baseline->source_hash);
-            std::string title = scenario_string(*baseline, baseline->title);
-            std::string route0 = "maps\\map-a.txt";
-            std::string route1 = "maps\\map-b.txt";
-            std::string vehicle = "train-a.txt";
-            std::vector<KvScenarioEditPathRow> routes{
-                {utf8_view(route0), 1.0, 0u, 0u},
-                {utf8_view(route1), 1.0, 0u, 0u}};
-            std::vector<KvScenarioEditPathRow> vehicles{
-                {utf8_view(vehicle), 1.0, 0u, 0u}};
-            KvScenarioEditDocument edit{};
-            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
-            edit.structure_size = sizeof(edit);
-            edit.expected_source_hash = utf8_view(hash);
-            edit.title = utf8_view(title);
-            edit.routes = routes.data();
-            edit.route_count = routes.size();
-            edit.vehicles = vehicles.data();
-            edit.vehicle_count = vehicles.size();
-            const KvScenarioSnapshot* saved = kv_save_scenario_document(
-                path.u8string().c_str(), &edit);
-            check(saved != nullptr, "unchanged implicit weights save");
-            kv_free_scenario_snapshot(saved);
-            std::ifstream implicit_file(path, std::ios::binary);
-            const std::string implicit_text(
-                (std::istreambuf_iterator<char>(implicit_file)), {});
+        if (current) {
+            const std::string route0 = "maps\\map-a.txt";
+            const std::string route1 = "maps\\map-b.txt";
+            const std::string vehicle = "train-a.txt";
+            const auto save_weights = [&](const KvScenarioSnapshot& source,
+                                          double route_weight,
+                                          bool route_explicit,
+                                          double vehicle_weight,
+                                          bool vehicle_explicit) {
+                std::string hash = scenario_string(source, source.source_hash);
+                std::string title = scenario_string(source, source.title);
+                std::vector<KvScenarioEditPathRow> routes{
+                    {utf8_view(route0), route_weight, route_explicit ? 1u : 0u, 0u},
+                    {utf8_view(route1), 1.0, 0u, 0u}};
+                std::vector<KvScenarioEditPathRow> vehicles{
+                    {utf8_view(vehicle), vehicle_weight,
+                     vehicle_explicit ? 1u : 0u, 0u}};
+                KvScenarioEditDocument edit{};
+                edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+                edit.structure_size = sizeof(edit);
+                edit.expected_source_hash = utf8_view(hash);
+                edit.title = utf8_view(title);
+                edit.routes = routes.data();
+                edit.route_count = routes.size();
+                edit.vehicles = vehicles.data();
+                edit.vehicle_count = vehicles.size();
+                return kv_save_scenario_document(path.u8string().c_str(), &edit);
+            };
+            const auto read_source = [&]() {
+                std::ifstream file(path, std::ios::binary);
+                return std::string((std::istreambuf_iterator<char>(file)), {});
+            };
+
+            const KvScenarioSnapshot* unchanged =
+                save_weights(*current, 1.0, false, 1.1, true);
+            check(unchanged != nullptr, "unchanged implicit weights save");
+            const std::string implicit_text = read_source();
             check(implicit_text.find("Route = maps\\map-a.txt | maps\\map-b.txt") !=
                       std::string::npos,
                   "unchanged implicit weights remain omitted");
-            kv_free_scenario_snapshot(baseline);
-        }
+            kv_free_scenario_snapshot(current);
+            current = unchanged;
 
-        const KvScenarioSnapshot* explicit_baseline = load_snapshot(path);
-        if (explicit_baseline) {
-            std::string hash = scenario_string(*explicit_baseline,
-                                                explicit_baseline->source_hash);
-            std::string title = scenario_string(*explicit_baseline,
-                                                 explicit_baseline->title);
-            std::string route0 = "maps\\map-a.txt";
-            std::string route1 = "maps\\map-b.txt";
-            std::string vehicle = "train-a.txt";
-            std::vector<KvScenarioEditPathRow> routes{
-                {utf8_view(route0), 1.0, 1u, 0u},
-                {utf8_view(route1), 1.0, 0u, 0u}};
-            std::vector<KvScenarioEditPathRow> vehicles{
-                {utf8_view(vehicle), 1.0, 0u, 0u}};
-            KvScenarioEditDocument edit{};
-            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
-            edit.structure_size = sizeof(edit);
-            edit.expected_source_hash = utf8_view(hash);
-            edit.title = utf8_view(title);
-            edit.routes = routes.data();
-            edit.route_count = routes.size();
-            edit.vehicles = vehicles.data();
-            edit.vehicle_count = vehicles.size();
-            const KvScenarioSnapshot* saved = kv_save_scenario_document(
-                path.u8string().c_str(), &edit);
-            check(saved != nullptr, "implicit weight can become explicit one");
-            kv_free_scenario_snapshot(saved);
-            std::ifstream explicit_file(path, std::ios::binary);
-            const std::string explicit_text(
-                (std::istreambuf_iterator<char>(explicit_file)), {});
-            check(explicit_text.find("Route = maps\\map-a.txt * 1 | maps\\map-b.txt") !=
-                      std::string::npos,
-                  "explicitly edited default weight is serialized");
-            kv_free_scenario_snapshot(explicit_baseline);
+            if (current) {
+                const KvScenarioSnapshot* decimal =
+                    save_weights(*current, 0.8, true, 0.8, true);
+                check(decimal != nullptr &&
+                          nearly_equal(decimal->routes[0].weight, 0.8) &&
+                          nearly_equal(decimal->vehicles[0].weight, 0.8),
+                      "scenario decimal weights save and reparse");
+                const std::string decimal_text = read_source();
+                check(decimal_text.find(
+                          "Route = maps\\map-a.txt * 0.8 | maps\\map-b.txt") !=
+                          std::string::npos &&
+                          decimal_text.find("Vehicle = train-a.txt * 0.8") !=
+                          std::string::npos &&
+                          decimal_text.find("0.80000000000000004") ==
+                          std::string::npos,
+                      "scenario decimal weights omit binary floating-point tails");
+                kv_free_scenario_snapshot(current);
+                current = decimal;
+            }
+
+            if (current) {
+                const KvScenarioSnapshot* explicit_one =
+                    save_weights(*current, 1.0, true, 0.8, true);
+                check(explicit_one != nullptr, "explicit default weight save");
+                const std::string explicit_text = read_source();
+                check(explicit_text.find(
+                          "Route = maps\\map-a.txt * 1 | maps\\map-b.txt") !=
+                          std::string::npos,
+                      "explicitly edited default weight is serialized");
+                kv_free_scenario_snapshot(current);
+                current = explicit_one;
+            }
+
+            if (current) {
+                constexpr double requested_weight = 1.234567890125;
+                constexpr double serialized_weight = 1.23456789012;
+                const KvScenarioSnapshot* precise = save_weights(
+                    *current, requested_weight, true, 0.8, true);
+                check(precise != nullptr &&
+                          nearly_equal(precise->routes[0].weight,
+                                       serialized_weight, 1e-14) &&
+                          precise->routes[0].weight != requested_weight,
+                      "scenario weights normalize to 12 significant digits");
+                const std::string precise_text = read_source();
+                check(precise_text.find("maps\\map-a.txt * 1.23456789012") !=
+                          std::string::npos,
+                      "scenario 12-significant-digit source text is stable");
+                kv_free_scenario_snapshot(current);
+                current = precise;
+            }
+            kv_free_scenario_snapshot(current);
         }
     }
 

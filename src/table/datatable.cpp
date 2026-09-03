@@ -4610,6 +4610,27 @@ void App::render_scenario_file_window() {
                           ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn(tr("column.field").c_str(), ImGuiTableColumnFlags_WidthFixed, 106.0f);
         ImGui::TableSetupColumn(tr("column.value").c_str(), ImGuiTableColumnFlags_WidthStretch);
+        ImVec4 hovered_path_frame = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
+        hovered_path_frame.x = clamp_color_component(hovered_path_frame.x * 1.15f);
+        hovered_path_frame.y = clamp_color_component(hovered_path_frame.y * 1.15f);
+        hovered_path_frame.z = clamp_color_component(hovered_path_frame.z * 1.15f);
+        const auto render_path_input = [&](const char* id, std::string& value,
+                                           float width, bool allow_edit = true) {
+            ImGui::SetNextItemWidth(width);
+            const ImVec2 input_min = ImGui::GetCursorScreenPos();
+            const ImVec2 input_max(input_min.x + ImGui::CalcItemWidth(),
+                                   input_min.y + ImGui::GetFrameHeight());
+            const bool hovered = ImGui::IsWindowHovered() &&
+                ImGui::IsMouseHoveringRect(input_min, input_max, true);
+            if (hovered) ImGui::PushStyleColor(ImGuiCol_FrameBg, hovered_path_frame);
+            const bool changed = ImGui::InputText(
+                id, &value,
+                editable && allow_edit
+                    ? ImGuiInputTextFlags_None
+                    : ImGuiInputTextFlags_ReadOnly);
+            if (hovered) ImGui::PopStyleColor();
+            return changed;
+        };
         const auto render_value = [&](const char* field, std::string& value,
                                       bool path_context = false, bool image = false,
                                       bool allow_edit = true) {
@@ -4619,11 +4640,15 @@ void App::render_scenario_file_window() {
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(field);
             ImGui::TableSetColumnIndex(1);
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##value", &value,
-                             editable && allow_edit
-                                 ? ImGuiInputTextFlags_None
-                                 : ImGuiInputTextFlags_ReadOnly);
+            if (path_context) {
+                render_path_input("##value", value, -1.0f, allow_edit);
+            } else {
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::InputText("##value", &value,
+                                 editable && allow_edit
+                                     ? ImGuiInputTextFlags_None
+                                     : ImGuiInputTextFlags_ReadOnly);
+            }
             if (path_context) {
                 render_context_menu("##scenario_path_context", value, image, nullptr, 0);
             }
@@ -4643,19 +4668,6 @@ void App::render_scenario_file_window() {
                 render_value(field, empty, false, false, false);
                 return;
             }
-            const auto render_path_input = [&](std::string& value, float width) {
-                ImVec4 hovered_frame = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
-                hovered_frame.x = clamp_color_component(hovered_frame.x * 1.15f);
-                hovered_frame.y = clamp_color_component(hovered_frame.y * 1.15f);
-                hovered_frame.z = clamp_color_component(hovered_frame.z * 1.15f);
-                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, hovered_frame);
-                ImGui::SetNextItemWidth(width);
-                const bool changed = ImGui::InputText(
-                    "##path", &value,
-                    editable ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_ReadOnly);
-                ImGui::PopStyleColor();
-                return changed;
-            };
             ImGui::PushID(field);
             for (size_t index = 0; index < paths.size(); ++index) {
                 ScenarioPreviewPath& path = paths[index];
@@ -4666,7 +4678,7 @@ void App::render_scenario_file_window() {
                 if (index == 0) ImGui::TextUnformatted(field);
                 ImGui::TableSetColumnIndex(1);
                 if (!show_weight) {
-                    if (render_path_input(path.path, -1.0f)) {
+                    if (render_path_input("##path", path.path, -1.0f)) {
                         update_scenario_route_warning();
                     }
                     render_context_menu("##scenario_path_context", path.path, false,
@@ -4676,7 +4688,7 @@ void App::render_scenario_file_window() {
                     const float path_width = std::max(
                         80.0f, ImGui::GetContentRegionAvail().x - weight_width -
                                    ImGui::GetStyle().ItemSpacing.x);
-                    if (render_path_input(path.path, path_width)) {
+                    if (render_path_input("##path", path.path, path_width)) {
                         update_scenario_route_warning();
                     }
                     render_context_menu("##scenario_path_context", path.path, false,

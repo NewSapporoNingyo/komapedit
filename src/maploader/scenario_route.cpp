@@ -13,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -286,7 +287,20 @@ std::string scenario_newline(const std::string& newline) {
 }
 
 std::string scenario_weight_text(double weight) {
-    return canonical_number(weight);
+    std::array<char, 64> buffer{};
+    const int written = std::snprintf(buffer.data(), buffer.size(), "%.12g", weight);
+    if (written <= 0 || static_cast<size_t>(written) >= buffer.size()) {
+        throw std::runtime_error("Scenario weight formatting failed");
+    }
+    return std::string(buffer.data(), static_cast<size_t>(written));
+}
+
+double serialized_scenario_weight(double weight) {
+    double serialized = 0.0;
+    if (!parse_finite_number(scenario_weight_text(weight), serialized)) {
+        throw std::runtime_error("Scenario serialized weight is invalid");
+    }
+    return serialized;
 }
 
 void validate_scenario_edit_path(const ScenarioEditPath& row, const char* field_name);
@@ -481,10 +495,17 @@ ScenarioDocument save_scenario_document(const std::filesystem::path& scenario_pa
                             const std::vector<ScenarioEditPath>& desired,
                             const char* field) {
         for (size_t i = 0; i < actual.size(); ++i) {
+            const double serialized_weight = desired[i].has_explicit_weight
+                ? serialized_scenario_weight(desired[i].weight)
+                : desired[i].weight;
+            const auto weight_matches = [&](double expected_weight) {
+                return std::abs(actual[i].weight - expected_weight) <=
+                    std::max(1e-12, std::abs(expected_weight) * 1e-12);
+            };
             if (actual[i].path_text != desired[i].path ||
                 actual[i].has_explicit_weight != desired[i].has_explicit_weight ||
-                std::abs(actual[i].weight - desired[i].weight) >
-                    std::max(1e-12, std::abs(desired[i].weight) * 1e-12)) {
+                (!weight_matches(desired[i].weight) &&
+                 !weight_matches(serialized_weight))) {
                 throw std::runtime_error(std::string("Scenario save validation did not match ") + field);
             }
         }
