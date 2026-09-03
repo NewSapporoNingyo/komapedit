@@ -85,7 +85,7 @@ ctest --test-dir build --output-on-failure
 
 | 区域 | 主要文件与职责 |
 | --- | --- |
-| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v11 / 地图快照 v8 函数、定宽 POD 快照、Scenario v2 快照与直写草稿、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
+| 地图公共 ABI | `include/maploader.h`、`include/maploader_snapshot.h`：API v12 / 地图快照 v8 函数、定宽 POD 快照、Scenario v2 快照与 v2 直写草稿、编辑批次、报告、跨度、所有权、版本与结构尺寸 |
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
@@ -116,7 +116,7 @@ ctest --test-dir build --output-on-failure
 #### `include/maploader.h`
 
 - **导出与日志接口**：`KV_API` 控制 DLL 导出/导入；`KvLogCallback` 与 `kv_set_log_callback()` 把 DLL 内的英文诊断交给宿主。`kv_api_version()` 返回 ABI 版本，EXE 必须精确匹配。
-- **场景文件接口**：`kv_probe_file_kind()` 轻量区分地图与 Scenario；`kv_resolve_scenario_routes()` 返回已解析且存在的 Route 候选并由 `kv_free_scenario_candidates()` 释放；`kv_load_scenario_snapshot()` 返回不要求 Route 目标存在的独立 v2 快照并由 `kv_free_scenario_snapshot()` 释放；`kv_save_scenario_document()` 校验源哈希、完整重解析后按原编码事务写回 Scenario 草稿。
+- **场景文件接口**：`kv_probe_file_kind()` 轻量区分地图与 Scenario；`kv_resolve_scenario_routes()` 返回已解析且存在的 Route 候选并由 `kv_free_scenario_candidates()` 释放；`kv_load_scenario_snapshot()` 返回不要求 Route 目标存在的独立 v2 快照并由 `kv_free_scenario_snapshot()` 释放；v2 `kv_save_scenario_document()` 校验源哈希、完整重解析后按原编码事务写回 Scenario 草稿，并允许修改现有 Route/Vehicle 候选数量和顺序。
 - **句柄创建与几何生成**：`kv_load_map_ex()` 是唯一地图加载入口，通过 `KV_LOAD_PREVIEW`、`KV_LOAD_EDIT_METADATA` 选择轻量预览或完整编辑元数据。`kv_generate_geometry()` 生成常规轨道数据，`kv_generate_scene_geometry()` 生成独立失效周期的场景几何；两者都在既有句柄上更新缓存和修订号。
 - **只读快照**：`kv_get_map_snapshot()`、`kv_get_scene_geometry_snapshot()` 校验请求版本与结构尺寸后返回句柄拥有的视图。调用方不得释放嵌套指针，并须在重解析或对应几何失效前完成复制。
 - **编辑与源码访问**：`kv_get_edit_target_typed()` 取得一个稳定 edit id 的字段和源码信息，`kv_get_source_text()` 返回当前磁盘或内存覆盖层中的解码文本。`kv_edit_dry_run_typed()`、`kv_edit_apply_to_memory_typed()`、`kv_edit_apply_typed()`、`kv_edit_commit_typed()`、`kv_edit_reset_memory()` 分别承担验证、应用到工作副本、直接写盘、提交工作副本和撤销覆盖层。
@@ -277,7 +277,7 @@ ctest --test-dir build --output-on-failure
 
 - `probe_bve_file_kind()` 只读取文件开头，用于区分 Map、Scenario 和未知文件；不可读文件保留为 Unknown，交由正常加载流程报告详细错误。
 - `load_scenario_document()` 按声明编码解析 `BveTs Scenario 2.00`，处理 `#`/`;` 注释和重复字段的末项优先规则，保留八个官方字段、源哈希/存在位以及 Route/Vehicle 的源码相对路径、权重与显式权重标记。
-- `save_scenario_document()` 重新读取磁盘并比较 expected source hash，对最后生效字段和值范围做最小补丁，拒绝候选增删、空路径和非正/非有限权重，完整重解析后调用共享事务写回。
+- `save_scenario_document()` 重新读取磁盘并比较 expected source hash；候选数量不变时对最后生效字段逐项做最小补丁，数量变化时仅重写该字段的完整候选值；拒绝空路径、保留语法字符和非正/非有限权重，要求每个已存在字段至少一个候选，完整重解析后调用共享事务写回。
 - `resolve_scenario_route_candidates()` 复用同一解析结果，以 Scenario 所在目录解析 Route 候选并要求目标存在；只读预览快照不执行这项存在性要求。
 
 #### `src/maploader/diagnostics.h` 与 `src/maploader/diagnostics.cpp`
@@ -486,7 +486,7 @@ App / MapModel
 - 保持 `UNICODE`、`_UNICODE`、`NOMINMAX` 和 `WIN32_LEAN_AND_MEAN` 假设。
 - 异常、STL 类型、C++ 类或所有权不明确的指针不得跨越公共 C ABI。
 - DLL 通过 ABI 返回的已分配内存必须有配对释放函数。
-- 随附 EXE 要求 maploader API v11、地图快照 v8 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v2 独立分配并由 `kv_free_scenario_snapshot()` 释放，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
+- 随附 EXE 要求 maploader API v12、地图快照 v8 和 model-loader API v2 精确匹配。`kv_load_map_ex()` 是唯一地图加载入口；`KvScenarioSnapshot` v2 独立分配并由 `kv_free_scenario_snapshot()` 释放，`KvScenarioEditDocument` 使用 v2 候选增删/换序语义，地图、场景几何、编辑目标和编辑报告各自的快照版本与结构尺寸仍独立管理。
 - 强类型 ABI 输入视为调用期视图；嵌套快照存储由句柄持有，并按已记录的几何重建、编辑操作、重置、重解析和释放规则失效。
 - 公共 ABI 变更必须明确决定版本/结构尺寸，同步修改 EXE、DLL 和调用方，并记录所有权与有效期。
 
@@ -494,7 +494,7 @@ App / MapModel
 
 保持对 BVE Map 2.0+、当前支持的旧式语法、`Include`、变量、预定义 `distance`、数学函数、注释及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关输入的支持。
 
-场景文件通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取和写回：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取八个官方字段的最后一项，返回相对路径、权重、源哈希和存在位；它不要求存在 Route 或有效 Route 目标。`kv_save_scenario_document()` 固定 Route/Vehicle 候选数量和顺序，只替换最后生效值（缺失标量仅在非空时追加），完整重解析并通过共享事务基础设施保留原编码/BOM/换行后写盘；Scenario 草稿不进入地图 Apply ledger。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载；`--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]` 通过 `scenario_preview=loaded`、`scenario_edit_roundtrip=PASS`、Scenario 历史/重载入口标记及 `result=PASS` 断言这些阶段。
+场景文件通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取和写回：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取八个官方字段的最后一项，返回相对路径、权重、源哈希和存在位；它不要求存在 Route 或有效 Route 目标。`kv_save_scenario_document()` 接受每个已存在 Route/Vehicle 字段的一个或多个候选并按调用方顺序写回；数量不变时逐候选最小补丁，数量变化时仅重写最后生效字段的完整候选值，要求至少一个候选，拒绝空路径、保留语法字符和非正/非有限权重，完整重解析并通过共享事务基础设施保留原编码/BOM/换行后写盘；Scenario 草稿不进入地图 Apply ledger。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载；`--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]` 通过 `scenario_preview=loaded`、候选增删标记、`scenario_edit_roundtrip=PASS`、Scenario 历史/重载入口标记及 `result=PASS` 断言这些阶段。
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 

@@ -289,6 +289,28 @@ std::string scenario_weight_text(double weight) {
     return canonical_number(weight);
 }
 
+void validate_scenario_edit_path(const ScenarioEditPath& row, const char* field_name);
+
+std::string serialize_scenario_path_value(
+    const std::vector<ScenarioEditPath>& desired, const char* field_name) {
+    if (desired.empty()) {
+        throw std::runtime_error(std::string("Scenario ") + field_name +
+                                 " must contain at least one candidate");
+    }
+    std::string result;
+    for (size_t i = 0; i < desired.size(); ++i) {
+        const ScenarioEditPath& row = desired[i];
+        validate_scenario_edit_path(row, field_name);
+        if (i != 0) result += " | ";
+        result += row.path;
+        if (row.has_explicit_weight) {
+            result += " * ";
+            result += scenario_weight_text(row.weight);
+        }
+    }
+    return result;
+}
+
 void validate_scenario_edit_path(const ScenarioEditPath& row, const char* field_name) {
     if (trim_field_copy(row.path).empty()) {
         throw std::runtime_error(std::string("Scenario ") + field_name + " path cannot be empty");
@@ -314,8 +336,9 @@ void patch_scenario_path_value(const std::string& source_text,
     const std::vector<ScenarioPathWeight> current =
         parse_weighted_path_terms(field.value, field_name);
     if (current.size() != desired.size()) {
-        throw std::runtime_error(std::string("Scenario ") + field_name +
-                                 " candidate count cannot change");
+        add_replacement(replacements, field.value_begin, field.value_end,
+                        serialize_scenario_path_value(desired, field_name));
+        return;
     }
     size_t term_begin = field.value_begin;
     for (size_t i = 0; i < current.size(); ++i) {
@@ -381,12 +404,6 @@ ScenarioDocument save_scenario_document(const std::filesystem::path& scenario_pa
     }
     if (source.loaded.source_hash != request.expected_source_hash) {
         throw std::runtime_error("Scenario source file changed externally; reload before saving");
-    }
-
-    const ScenarioDocument before = parse_scenario_loaded_document(source.loaded);
-    if (before.routes.size() != request.routes.size() ||
-        before.vehicles.size() != request.vehicles.size()) {
-        throw std::runtime_error("Scenario candidate count cannot change");
     }
 
     const auto ranges = find_scenario_field_ranges(source);

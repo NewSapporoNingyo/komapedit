@@ -20,7 +20,6 @@ This file is the active project progress and contains unfinished items only. Com
 ### 用户界面与辅助功能
 
 - [ ] 场景文件新建
-- [ ] 场景文件地图、列车路径支持多个候选项的编辑
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 信号现示列表可新增/删除列
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途

@@ -40,7 +40,7 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
 }
 
 bool same_keys(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 571;
+    constexpr std::size_t expected_key_count = 575;
     if (translation.en.size() != expected_key_count ||
         translation.zh.size() != expected_key_count ||
         translation.ja.size() != expected_key_count) {
@@ -187,6 +187,18 @@ int main() {
     ok = expect_value(translation.zh, "frame.scene_preview", "3D-场景预览") && ok;
     ok = expect_value(translation.en, "frame.scenario_file", "Scenario File") && ok;
     ok = expect_value(translation.ja, "frame.scenario_file", "シナリオファイル") && ok;
+    ok = expect_value(translation.en, "context.scenario.add_candidate", "Add Candidate") && ok;
+    ok = expect_value(translation.en, "context.scenario.delete_candidate", "Delete Candidate") && ok;
+    ok = expect_value(translation.en, "context.scenario.move_up", "Move Up") && ok;
+    ok = expect_value(translation.en, "context.scenario.move_down", "Move Down") && ok;
+    ok = expect_value(translation.zh, "context.scenario.add_candidate", "新增候选项") && ok;
+    ok = expect_value(translation.zh, "context.scenario.delete_candidate", "删除候选项") && ok;
+    ok = expect_value(translation.zh, "context.scenario.move_up", "上移") && ok;
+    ok = expect_value(translation.zh, "context.scenario.move_down", "下移") && ok;
+    ok = expect_value(translation.ja, "context.scenario.add_candidate", "候補を追加") && ok;
+    ok = expect_value(translation.ja, "context.scenario.delete_candidate", "候補を削除") && ok;
+    ok = expect_value(translation.ja, "context.scenario.move_up", "上へ移動") && ok;
+    ok = expect_value(translation.ja, "context.scenario.move_down", "下へ移動") && ok;
     ok = expect_value(translation.en, "frame.rolling_noises", "Rolling Noise Change Point List") && ok;
     ok = expect_value(translation.ja, "frame.rolling_noises", "走行音変化点リスト") && ok;
     ok = expect_no_value_fragment(translation.en, "Running Sound") && ok;

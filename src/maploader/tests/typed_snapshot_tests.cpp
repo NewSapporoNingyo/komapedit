@@ -448,7 +448,9 @@ int scenario_route_contract();
 void light_contract();
 
 int snapshot_contract() {
-    static_assert(KV_MAPLOADER_API_VERSION == 11u, "maploader API contract version");
+    static_assert(KV_MAPLOADER_API_VERSION == 12u, "maploader API contract version");
+    static_assert(KV_SCENARIO_EDIT_DOCUMENT_VERSION == 2u,
+                  "Scenario edit document contract version");
     TempFixture fixture(true);
     check(kv_api_version() == KV_MAPLOADER_API_VERSION, "API version");
 #if defined(_WIN32)
@@ -1398,40 +1400,168 @@ int scenario_route_contract() {
             kv_free_scenario_snapshot(baseline);
         }
     }
+    // Candidate insertion, reordering, and deletion use the same typed save
+    // document. Count changes rewrite only the effective variable-length field
+    // while retaining the surrounding Scenario source structure.
     {
         const std::filesystem::path path = directory / "editable.txt";
         const KvScenarioSnapshot* baseline = load_snapshot(path);
         if (baseline) {
+            struct CandidateSpec {
+                const std::string* path = nullptr;
+                double weight = 1.0;
+                bool explicit_weight = false;
+            };
             std::string hash = scenario_string(*baseline, baseline->source_hash);
             std::string title = scenario_string(*baseline, baseline->title);
-            KvScenarioEditDocument bad{};
-            bad.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
-            bad.structure_size = sizeof(bad);
-            bad.expected_source_hash = utf8_view(hash);
-            bad.title = utf8_view(title);
-            bad.route_count = baseline->route_count + 1;
-            bad.vehicle_count = baseline->vehicle_count;
-            std::string bad_route_path = "maps\\map-a.txt";
-            std::string bad_vehicle_path = "train-a.txt";
-            std::vector<KvScenarioEditPathRow> bad_routes(
-                static_cast<size_t>(bad.route_count),
-                KvScenarioEditPathRow{utf8_view(bad_route_path), 1.0, 0u, 0u});
-            std::vector<KvScenarioEditPathRow> bad_vehicles(
-                static_cast<size_t>(bad.vehicle_count),
-                KvScenarioEditPathRow{utf8_view(bad_vehicle_path), 1.0, 0u, 0u});
-            bad.routes = bad_routes.data();
-            bad.vehicles = bad_vehicles.data();
-            const KvScenarioSnapshot* rejected = kv_save_scenario_document(
-                path.u8string().c_str(), &bad);
-            check(rejected == nullptr, "scenario candidate count change rejected");
+            std::string route_title = scenario_string(*baseline, baseline->route_title);
+            std::string vehicle_title = scenario_string(*baseline, baseline->vehicle_title);
+            std::string author = scenario_string(*baseline, baseline->author);
+            std::string image = scenario_string(*baseline, baseline->image);
+            std::string comment = scenario_string(*baseline, baseline->comment);
+            std::string route0 = "maps\\map-a.txt";
+            std::string route1 = "maps\\map-b.txt";
+            std::string route_added = "maps\\map-c.txt";
+            std::string vehicle0 = "train-a.txt";
+            std::string vehicle1 = "train-c.txt";
+            std::string vehicle_added = "train-d.txt";
+
+            const auto save_draft = [&](const std::string& expected_hash,
+                                        const std::vector<CandidateSpec>& route_specs,
+                                        const std::vector<CandidateSpec>& vehicle_specs) {
+                std::vector<KvScenarioEditPathRow> routes;
+                routes.reserve(route_specs.size());
+                for (const CandidateSpec& spec : route_specs) {
+                    routes.push_back({utf8_view(*spec.path), spec.weight,
+                                      spec.explicit_weight ? 1u : 0u, 0u});
+                }
+                std::vector<KvScenarioEditPathRow> vehicles;
+                vehicles.reserve(vehicle_specs.size());
+                for (const CandidateSpec& spec : vehicle_specs) {
+                    vehicles.push_back({utf8_view(*spec.path), spec.weight,
+                                        spec.explicit_weight ? 1u : 0u, 0u});
+                }
+                KvScenarioEditDocument edit{};
+                edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+                edit.structure_size = sizeof(edit);
+                edit.expected_source_hash = utf8_view(expected_hash);
+                edit.title = utf8_view(title);
+                edit.routes = routes.empty() ? nullptr : routes.data();
+                edit.route_count = routes.size();
+                edit.route_title = utf8_view(route_title);
+                edit.vehicles = vehicles.empty() ? nullptr : vehicles.data();
+                edit.vehicle_count = vehicles.size();
+                edit.vehicle_title = utf8_view(vehicle_title);
+                edit.author = utf8_view(author);
+                edit.image = utf8_view(image);
+                edit.comment = utf8_view(comment);
+                return kv_save_scenario_document(path.u8string().c_str(), &edit);
+            };
+
+            const std::vector<CandidateSpec> added_routes{
+                {&route0, 4.0, true}, {&route1, 1.0, false},
+                {&route_added, 2.5, true}};
+            const std::vector<CandidateSpec> added_vehicles{
+                {&vehicle0, 1.0, false}, {&vehicle1, 2.0, true},
+                {&vehicle_added, 3.5, true}};
+            const auto read_scenario_bytes = [](const std::filesystem::path& source) {
+                std::ifstream file(source, std::ios::binary);
+                return std::string((std::istreambuf_iterator<char>(file)), {});
+            };
+            const KvScenarioSnapshot* added =
+                save_draft(hash, added_routes, added_vehicles);
+            check(added != nullptr, "scenario candidate add save succeeds");
+            std::string added_hash;
+            if (added) {
+                check(added->route_count == baseline->route_count + 1 &&
+                          added->vehicle_count == baseline->vehicle_count + 1 &&
+                          scenario_string(*added, added->routes[2].path) == route_added &&
+                          nearly_equal(added->routes[2].weight, 2.5) &&
+                          added->routes[2].has_explicit_weight != 0 &&
+                          scenario_string(*added, added->vehicles[2].path) == vehicle_added &&
+                          nearly_equal(added->vehicles[2].weight, 3.5) &&
+                          added->vehicles[2].has_explicit_weight != 0,
+                      "scenario candidate add preserves order and weights");
+                added_hash = scenario_string(*added, added->source_hash);
+                kv_free_scenario_snapshot(added);
+            }
+            const std::string added_text = read_scenario_bytes(path);
+            check(added_text.find("Unknown = untouched") != std::string::npos &&
+                      added_text.find("; keep this comment") != std::string::npos &&
+                      added_text.find("maps\\map-c.txt * 2.5") != std::string::npos,
+                  "scenario candidate add preserves surrounding source");
+
+            const std::vector<CandidateSpec> reordered_routes{
+                {&route1, 1.0, false}, {&route0, 4.0, true}};
+            const std::vector<CandidateSpec> reordered_vehicles{
+                {&vehicle1, 2.0, true}, {&vehicle0, 1.0, false}};
+            const KvScenarioSnapshot* reordered =
+                save_draft(added_hash, reordered_routes, reordered_vehicles);
+            check(reordered != nullptr, "scenario candidate delete/reorder save succeeds");
+            std::string reordered_hash;
+            if (reordered) {
+                check(reordered->route_count == baseline->route_count &&
+                          reordered->vehicle_count == baseline->vehicle_count &&
+                          scenario_string(*reordered, reordered->routes[0].path) == route1 &&
+                          nearly_equal(reordered->routes[0].weight, 1.0) &&
+                          reordered->routes[0].has_explicit_weight == 0 &&
+                          scenario_string(*reordered, reordered->routes[1].path) == route0 &&
+                          nearly_equal(reordered->routes[1].weight, 4.0) &&
+                          reordered->routes[1].has_explicit_weight != 0 &&
+                          scenario_string(*reordered, reordered->vehicles[0].path) == vehicle1 &&
+                          nearly_equal(reordered->vehicles[0].weight, 2.0) &&
+                          reordered->vehicles[0].has_explicit_weight != 0 &&
+                          scenario_string(*reordered, reordered->vehicles[1].path) == vehicle0 &&
+                          nearly_equal(reordered->vehicles[1].weight, 1.0) &&
+                          reordered->vehicles[1].has_explicit_weight == 0,
+                      "scenario candidate deletion and reorder preserve requested order");
+                reordered_hash = scenario_string(*reordered, reordered->source_hash);
+                kv_free_scenario_snapshot(reordered);
+            }
+
+            const std::vector<CandidateSpec> restored_routes{
+                {&route0, 4.0, true}, {&route1, 1.0, false}};
+            const std::vector<CandidateSpec> restored_vehicles{
+                {&vehicle0, 1.0, false}, {&vehicle1, 2.0, true}};
+            const KvScenarioSnapshot* restored =
+                save_draft(reordered_hash, restored_routes, restored_vehicles);
+            check(restored != nullptr, "scenario candidate order restore succeeds");
+            std::string restored_hash;
+            if (restored) {
+                check(restored->route_count == baseline->route_count &&
+                          restored->vehicle_count == baseline->vehicle_count &&
+                          scenario_string(*restored, restored->routes[0].path) == route0 &&
+                          nearly_equal(restored->routes[0].weight, 4.0) &&
+                          restored->routes[0].has_explicit_weight != 0 &&
+                          scenario_string(*restored, restored->routes[1].path) == route1 &&
+                          nearly_equal(restored->routes[1].weight, 1.0) &&
+                          restored->routes[1].has_explicit_weight == 0 &&
+                          scenario_string(*restored, restored->vehicles[0].path) == vehicle0 &&
+                          nearly_equal(restored->vehicles[0].weight, 1.0) &&
+                          restored->vehicles[0].has_explicit_weight == 0 &&
+                          scenario_string(*restored, restored->vehicles[1].path) == vehicle1 &&
+                          nearly_equal(restored->vehicles[1].weight, 2.0) &&
+                          restored->vehicles[1].has_explicit_weight != 0,
+                      "scenario candidate order restore matches baseline");
+                restored_hash = scenario_string(*restored, restored->source_hash);
+                kv_free_scenario_snapshot(restored);
+            }
+
+            const std::string restored_text = read_scenario_bytes(path);
+            const std::vector<CandidateSpec> empty_routes;
+            const KvScenarioSnapshot* rejected =
+                save_draft(restored_hash, empty_routes, restored_vehicles);
+            check(rejected == nullptr, "scenario deletion to zero candidates rejected");
             kv_free_scenario_snapshot(rejected);
+            check(read_scenario_bytes(path) == restored_text,
+                  "scenario deletion to zero candidates keeps source bytes");
             kv_free_scenario_snapshot(baseline);
         }
     }
 
     // Missing scalar fields are inserted only when the draft contains a
-    // non-empty value. Existing Route/Vehicle candidates remain the fixed
-    // source order; no candidate is synthesized by the save path.
+    // non-empty value. Missing Route/Vehicle fields remain outside the
+    // candidate insertion surface.
     {
         const std::filesystem::path path = directory / "missing-scalars.txt";
         write_bytes(path,

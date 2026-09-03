@@ -1287,52 +1287,161 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
                               static_cast<uint64_t>(value.size())};
         };
         std::string edited_title = preview.title + " [headless]";
-        std::vector<KvScenarioEditPathRow> edit_routes;
-        edit_routes.reserve(preview.routes.size());
-        for (const ScenarioPreviewPath& row : preview.routes) {
-            edit_routes.push_back({make_view(row.path), row.weight, row.has_explicit_weight ? 1u : 0u, 0u});
-        }
-        std::vector<KvScenarioEditPathRow> edit_vehicles;
-        edit_vehicles.reserve(preview.vehicles.size());
-        for (const ScenarioPreviewPath& row : preview.vehicles) {
-            edit_vehicles.push_back({make_view(row.path), row.weight, row.has_explicit_weight ? 1u : 0u, 0u});
-        }
-        KvScenarioEditDocument edit{};
-        edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
-        edit.structure_size = sizeof(edit);
-        edit.expected_source_hash = make_view(preview.source_hash);
-        edit.title = make_view(edited_title);
-        edit.routes = edit_routes.empty() ? nullptr : edit_routes.data();
-        edit.route_count = edit_routes.size();
-        edit.route_title = make_view(preview.route_title);
-        edit.vehicles = edit_vehicles.empty() ? nullptr : edit_vehicles.data();
-        edit.vehicle_count = edit_vehicles.size();
-        edit.vehicle_title = make_view(preview.vehicle_title);
-        edit.author = make_view(preview.author);
-        edit.image = make_view(preview.image);
-        edit.comment = make_view(preview.comment);
         const std::string temporary_utf8 = wide_to_utf8(temporary_path.wstring());
-        const KvScenarioSnapshot* edited_snapshot = kv_save_scenario_document(
-            temporary_utf8.c_str(), &edit);
-        if (!edited_snapshot) {
+        const auto save_temporary_draft = [&](const std::string& expected_hash,
+                                               const std::string& title,
+                                               const std::vector<ScenarioPreviewPath>& routes,
+                                               const std::vector<ScenarioPreviewPath>& vehicles) {
+            std::vector<KvScenarioEditPathRow> edit_routes;
+            edit_routes.reserve(routes.size());
+            for (const ScenarioPreviewPath& row : routes) {
+                edit_routes.push_back({make_view(row.path), row.weight,
+                                       row.has_explicit_weight ? 1u : 0u, 0u});
+            }
+            std::vector<KvScenarioEditPathRow> edit_vehicles;
+            edit_vehicles.reserve(vehicles.size());
+            for (const ScenarioPreviewPath& row : vehicles) {
+                edit_vehicles.push_back({make_view(row.path), row.weight,
+                                         row.has_explicit_weight ? 1u : 0u, 0u});
+            }
+            KvScenarioEditDocument edit{};
+            edit.version = KV_SCENARIO_EDIT_DOCUMENT_VERSION;
+            edit.structure_size = sizeof(edit);
+            edit.expected_source_hash = make_view(expected_hash);
+            edit.title = make_view(title);
+            edit.routes = edit_routes.empty() ? nullptr : edit_routes.data();
+            edit.route_count = edit_routes.size();
+            edit.route_title = make_view(preview.route_title);
+            edit.vehicles = edit_vehicles.empty() ? nullptr : edit_vehicles.data();
+            edit.vehicle_count = edit_vehicles.size();
+            edit.vehicle_title = make_view(preview.vehicle_title);
+            edit.author = make_view(preview.author);
+            edit.image = make_view(preview.image);
+            edit.comment = make_view(preview.comment);
+            return kv_save_scenario_document(temporary_utf8.c_str(), &edit);
+        };
+        const auto added_snapshot_string = [](const KvScenarioSnapshot& snapshot,
+                                              KvStringRef value) {
+            if (!snapshot.string_data || value.offset > snapshot.string_size ||
+                value.length > snapshot.string_size - value.offset) {
+                return std::string{};
+            }
+            return std::string(snapshot.string_data + value.offset,
+                               static_cast<size_t>(value.length));
+        };
+
+        const bool route_candidates_available = !preview.routes.empty();
+        const bool vehicle_candidates_available = !preview.vehicles.empty();
+        if (route_candidates_available || vehicle_candidates_available) {
+        std::vector<ScenarioPreviewPath> expanded_routes = preview.routes;
+        std::vector<ScenarioPreviewPath> expanded_vehicles = preview.vehicles;
+        if (route_candidates_available) {
+            expanded_routes.push_back(
+                ScenarioPreviewPath{preview.routes.front().path, 2.5, true});
+        }
+        if (vehicle_candidates_available) {
+            expanded_vehicles.push_back(
+                ScenarioPreviewPath{preview.vehicles.front().path, 3.5, true});
+        }
+        const KvScenarioSnapshot* added_snapshot = save_temporary_draft(
+            preview.source_hash, edited_title, expanded_routes, expanded_vehicles);
+        if (!added_snapshot) {
             const char* error = kv_get_last_error();
-            return fail(std::string("scenario edit roundtrip save failed: ") +
+            return fail(std::string("scenario candidate add save failed: ") +
                         (error && *error ? error : "maploader failed"));
         }
-        bool roundtrip_ok = false;
-        if (edited_snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
-            edited_snapshot->route_count == preview.routes.size() &&
-            edited_snapshot->vehicle_count == preview.vehicles.size() &&
-            edited_snapshot->title.length == edited_title.size()) {
-            roundtrip_ok = true;
+        bool add_ok = added_snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
+            added_snapshot->title.length == edited_title.size();
+        add_ok = add_ok &&
+            added_snapshot->route_count == expanded_routes.size() &&
+            added_snapshot->vehicle_count == expanded_vehicles.size();
+        if (route_candidates_available) {
+            add_ok = add_ok && added_snapshot->route_count == preview.routes.size() + 1 &&
+                added_snapshot_string(*added_snapshot, added_snapshot->routes[
+                    added_snapshot->route_count - 1].path) == preview.routes.front().path &&
+                std::abs(added_snapshot->routes[added_snapshot->route_count - 1].weight - 2.5) < 1e-12 &&
+                added_snapshot->routes[added_snapshot->route_count - 1].has_explicit_weight != 0;
         }
-        kv_free_scenario_snapshot(edited_snapshot);
-        if (!roundtrip_ok) return fail("scenario edit roundtrip validation failed");
-        *out << "scenario_edit_roundtrip=PASS\n"
+        if (vehicle_candidates_available) {
+            add_ok = add_ok && added_snapshot->vehicle_count == preview.vehicles.size() + 1 &&
+                added_snapshot_string(*added_snapshot, added_snapshot->vehicles[
+                    added_snapshot->vehicle_count - 1].path) == preview.vehicles.front().path &&
+                std::abs(added_snapshot->vehicles[added_snapshot->vehicle_count - 1].weight - 3.5) < 1e-12 &&
+                added_snapshot->vehicles[added_snapshot->vehicle_count - 1].has_explicit_weight != 0;
+        }
+        std::string added_hash;
+        if (added_snapshot) {
+            added_hash = added_snapshot_string(*added_snapshot, added_snapshot->source_hash);
+            kv_free_scenario_snapshot(added_snapshot);
+        }
+        if (!add_ok) return fail("scenario candidate add roundtrip validation failed");
+
+        std::vector<ScenarioPreviewPath> reduced_routes = expanded_routes;
+        std::vector<ScenarioPreviewPath> reduced_vehicles = expanded_vehicles;
+        if (route_candidates_available) reduced_routes.pop_back();
+        if (vehicle_candidates_available) reduced_vehicles.pop_back();
+        const KvScenarioSnapshot* deleted_snapshot = save_temporary_draft(
+            added_hash, edited_title, reduced_routes, reduced_vehicles);
+        if (!deleted_snapshot) {
+            const char* error = kv_get_last_error();
+            return fail(std::string("scenario candidate delete save failed: ") +
+                        (error && *error ? error : "maploader failed"));
+        }
+        bool delete_ok = deleted_snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
+            deleted_snapshot->route_count == preview.routes.size() &&
+            deleted_snapshot->vehicle_count == preview.vehicles.size();
+        for (size_t i = 0; delete_ok && i < preview.routes.size(); ++i) {
+            delete_ok = added_snapshot_string(*deleted_snapshot, deleted_snapshot->routes[i].path) ==
+                preview.routes[i].path &&
+                std::abs(deleted_snapshot->routes[i].weight - preview.routes[i].weight) < 1e-12 &&
+                (deleted_snapshot->routes[i].has_explicit_weight != 0) ==
+                    preview.routes[i].has_explicit_weight;
+        }
+        for (size_t i = 0; delete_ok && i < preview.vehicles.size(); ++i) {
+            delete_ok = added_snapshot_string(*deleted_snapshot, deleted_snapshot->vehicles[i].path) ==
+                preview.vehicles[i].path &&
+                std::abs(deleted_snapshot->vehicles[i].weight - preview.vehicles[i].weight) < 1e-12 &&
+                (deleted_snapshot->vehicles[i].has_explicit_weight != 0) ==
+                    preview.vehicles[i].has_explicit_weight;
+        }
+        if (deleted_snapshot) kv_free_scenario_snapshot(deleted_snapshot);
+        if (!delete_ok) return fail("scenario candidate delete roundtrip validation failed");
+        *out << "scenario_candidate_add=PASS\n"
+             << "scenario_candidate_delete=PASS\n"
+             << "scenario_candidate_route_add_count=" << expanded_routes.size() << "\n"
+             << "scenario_candidate_route_delete_count=" << reduced_routes.size() << "\n"
+             << "scenario_candidate_vehicle_add_count=" << expanded_vehicles.size() << "\n"
+             << "scenario_candidate_vehicle_delete_count=" << reduced_vehicles.size() << "\n"
+             << "scenario_edit_roundtrip=PASS\n"
              << "history_entry=scenario\n"
              << "reload_entry=scenario\n"
              << "scenario_save_stage=direct\n"
              << "scenario_save_stage_map_priority=verified\n";
+        } else {
+            // Preserve the existing scalar-only roundtrip for a standalone
+            // Scenario that has neither Route nor Vehicle candidates. Missing
+            // Route/Vehicle fields remain outside the candidate insertion
+            // surface and are handled by the resolver below.
+            const KvScenarioSnapshot* edited_snapshot = save_temporary_draft(
+                preview.source_hash, edited_title, preview.routes, preview.vehicles);
+            if (!edited_snapshot) {
+                const char* error = kv_get_last_error();
+                return fail(std::string("scenario edit roundtrip save failed: ") +
+                            (error && *error ? error : "maploader failed"));
+            }
+            const bool roundtrip_ok =
+                edited_snapshot->version == KV_SCENARIO_SNAPSHOT_VERSION &&
+                edited_snapshot->route_count == 0 &&
+                edited_snapshot->vehicle_count == 0 &&
+                edited_snapshot->title.length == edited_title.size();
+            kv_free_scenario_snapshot(edited_snapshot);
+            if (!roundtrip_ok) return fail("scenario edit roundtrip validation failed");
+            *out << "scenario_edit_roundtrip=PASS\n"
+                 << "history_entry=scenario\n"
+                 << "reload_entry=scenario\n"
+                 << "scenario_save_stage=direct\n"
+                 << "scenario_save_stage_map_priority=verified\n";
+        }
     }
 
     uint64_t candidate_count = 0;

@@ -4526,7 +4526,28 @@ void App::render_scenario_file_window() {
         if (!error.empty()) KME_ADD_LOG(LogSeverity::Warning,
                                         "Open in Explorer failed: " + error);
     };
-    const auto render_context_menu = [&](const char* id, std::string& path, bool image) {
+    enum class ScenarioCandidateActionKind {
+        None,
+        AddAfter,
+        Delete,
+        MoveUp,
+        MoveDown,
+    };
+    ScenarioCandidateActionKind pending_candidate_action =
+        ScenarioCandidateActionKind::None;
+    std::vector<ScenarioPreviewPath>* pending_candidate_paths = nullptr;
+    size_t pending_candidate_index = 0;
+    const auto defer_candidate_action =
+        [&](ScenarioCandidateActionKind kind,
+            std::vector<ScenarioPreviewPath>& paths, size_t index) {
+            if (pending_candidate_action != ScenarioCandidateActionKind::None) return;
+            pending_candidate_action = kind;
+            pending_candidate_paths = &paths;
+            pending_candidate_index = index;
+        };
+    const auto render_context_menu = [&](const char* id, std::string& path, bool image,
+                                         std::vector<ScenarioPreviewPath>* candidate_paths,
+                                         size_t candidate_index) {
         if (!ImGui::BeginPopupContextItem(id, ImGuiPopupFlags_MouseButtonRight)) return;
         if (!editable) ImGui::BeginDisabled();
         if (ImGui::MenuItem(tr("menu.select_file").c_str()) && editable) {
@@ -4539,6 +4560,49 @@ void App::render_scenario_file_window() {
             open_scenario_path(path);
         }
         if (!can_open) ImGui::EndDisabled();
+        if (candidate_paths) {
+            ImGui::Separator();
+            ImGui::BeginDisabled(!editable);
+            if (ImGui::MenuItem(tr("context.scenario.add_candidate").c_str())) {
+                defer_candidate_action(ScenarioCandidateActionKind::AddAfter,
+                                       *candidate_paths, candidate_index);
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
+            ImGui::EndDisabled();
+
+            ImGui::BeginDisabled(!editable || candidate_paths->size() <= 1);
+            if (ImGui::MenuItem(tr("context.scenario.delete_candidate").c_str())) {
+                defer_candidate_action(ScenarioCandidateActionKind::Delete,
+                                       *candidate_paths, candidate_index);
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
+            ImGui::EndDisabled();
+
+            ImGui::BeginDisabled(!editable || candidate_index == 0);
+            if (ImGui::MenuItem(tr("context.scenario.move_up").c_str())) {
+                defer_candidate_action(ScenarioCandidateActionKind::MoveUp,
+                                       *candidate_paths, candidate_index);
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
+            ImGui::EndDisabled();
+
+            ImGui::BeginDisabled(!editable ||
+                                 candidate_index + 1 >= candidate_paths->size());
+            if (ImGui::MenuItem(tr("context.scenario.move_down").c_str())) {
+                defer_candidate_action(ScenarioCandidateActionKind::MoveDown,
+                                       *candidate_paths, candidate_index);
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
+            ImGui::EndDisabled();
+        }
         ImGui::EndPopup();
     };
     if (ImGui::BeginTable("scenario_file", 2,
@@ -4560,7 +4624,9 @@ void App::render_scenario_file_window() {
                              editable && allow_edit
                                  ? ImGuiInputTextFlags_None
                                  : ImGuiInputTextFlags_ReadOnly);
-            if (path_context) render_context_menu("##scenario_path_context", value, image);
+            if (path_context) {
+                render_context_menu("##scenario_path_context", value, image, nullptr, 0);
+            }
             ImGui::PopID();
         };
         const auto render_paths = [&](const char* field,
@@ -4577,6 +4643,19 @@ void App::render_scenario_file_window() {
                 render_value(field, empty, false, false, false);
                 return;
             }
+            const auto render_path_input = [&](std::string& value, float width) {
+                ImVec4 hovered_frame = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
+                hovered_frame.x = clamp_color_component(hovered_frame.x * 1.15f);
+                hovered_frame.y = clamp_color_component(hovered_frame.y * 1.15f);
+                hovered_frame.z = clamp_color_component(hovered_frame.z * 1.15f);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, hovered_frame);
+                ImGui::SetNextItemWidth(width);
+                const bool changed = ImGui::InputText(
+                    "##path", &value,
+                    editable ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_ReadOnly);
+                ImGui::PopStyleColor();
+                return changed;
+            };
             ImGui::PushID(field);
             for (size_t index = 0; index < paths.size(); ++index) {
                 ScenarioPreviewPath& path = paths[index];
@@ -4587,23 +4666,21 @@ void App::render_scenario_file_window() {
                 if (index == 0) ImGui::TextUnformatted(field);
                 ImGui::TableSetColumnIndex(1);
                 if (!show_weight) {
-                    ImGui::SetNextItemWidth(-1.0f);
-                    if (ImGui::InputText("##path", &path.path,
-                                         editable ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_ReadOnly)) {
+                    if (render_path_input(path.path, -1.0f)) {
                         update_scenario_route_warning();
                     }
-                    render_context_menu("##scenario_path_context", path.path, false);
+                    render_context_menu("##scenario_path_context", path.path, false,
+                                       &paths, index);
                 } else {
                     const float weight_width = 72.0f;
                     const float path_width = std::max(
                         80.0f, ImGui::GetContentRegionAvail().x - weight_width -
                                    ImGui::GetStyle().ItemSpacing.x);
-                    ImGui::SetNextItemWidth(path_width);
-                    if (ImGui::InputText("##path", &path.path,
-                                         editable ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_ReadOnly)) {
+                    if (render_path_input(path.path, path_width)) {
                         update_scenario_route_warning();
                     }
-                    render_context_menu("##scenario_path_context", path.path, false);
+                    render_context_menu("##scenario_path_context", path.path, false,
+                                       &paths, index);
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(weight_width);
                     double edited_weight = path.weight;
@@ -4630,6 +4707,45 @@ void App::render_scenario_file_window() {
         render_value("Image", preview.image, true, true);
         render_value("Comment", preview.comment);
         ImGui::EndTable();
+
+        if (pending_candidate_paths &&
+            pending_candidate_action != ScenarioCandidateActionKind::None) {
+            std::vector<ScenarioPreviewPath>& paths = *pending_candidate_paths;
+            const size_t index = pending_candidate_index;
+            bool changed = false;
+            switch (pending_candidate_action) {
+            case ScenarioCandidateActionKind::AddAfter:
+                if (index < paths.size()) {
+                    paths.insert(paths.begin() + static_cast<std::ptrdiff_t>(index + 1),
+                                 ScenarioPreviewPath{});
+                    changed = true;
+                }
+                break;
+            case ScenarioCandidateActionKind::Delete:
+                if (paths.size() > 1 && index < paths.size()) {
+                    paths.erase(paths.begin() + static_cast<std::ptrdiff_t>(index));
+                    changed = true;
+                }
+                break;
+            case ScenarioCandidateActionKind::MoveUp:
+                if (index > 0 && index < paths.size()) {
+                    std::swap(paths[index], paths[index - 1]);
+                    changed = true;
+                }
+                break;
+            case ScenarioCandidateActionKind::MoveDown:
+                if (index + 1 < paths.size()) {
+                    std::swap(paths[index], paths[index + 1]);
+                    changed = true;
+                }
+                break;
+            case ScenarioCandidateActionKind::None:
+                break;
+            }
+            if (changed && pending_candidate_paths == &preview.routes) {
+                update_scenario_route_warning();
+            }
+        }
     }
     focus_scenario_file_next_ = false;
     ImGui::End();

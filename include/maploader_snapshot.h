@@ -12,10 +12,10 @@
 extern "C" {
 #endif
 
-#define KV_MAPLOADER_API_VERSION 11u
+#define KV_MAPLOADER_API_VERSION 12u
 #define KV_MAP_SNAPSHOT_VERSION 8u
 #define KV_SCENARIO_SNAPSHOT_VERSION 2u
-#define KV_SCENARIO_EDIT_DOCUMENT_VERSION 1u
+#define KV_SCENARIO_EDIT_DOCUMENT_VERSION 2u
 #define KV_SCENE_GEOMETRY_SNAPSHOT_VERSION 1u
 #define KV_EDIT_TARGET_SNAPSHOT_VERSION 1u
 #define KV_EDIT_REPORT_SNAPSHOT_VERSION 1u
@@ -93,9 +93,10 @@ typedef struct KvScenarioEditPathRow {
     uint32_t reserved;
 } KvScenarioEditPathRow;
 
-/* Call-scoped Scenario draft. The route and vehicle counts must remain equal
-   to the loaded document; Scenario files do not support candidate insertion,
-   deletion, or reordering through this API. */
+/* Call-scoped Scenario draft. Existing Route/Vehicle fields accept one or
+   more candidates (at least one is required) in the order supplied by the
+   caller. Missing Route/Vehicle fields are not created. The arrays are
+   call-scoped views and remain valid only for the duration of the save call. */
 typedef struct KvScenarioEditDocument {
     uint32_t version;
     uint32_t reserved;

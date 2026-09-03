@@ -83,11 +83,12 @@ KV_API void kv_free_scenario_snapshot(const KvScenarioSnapshot* snapshot);
 
 /* Writes a Scenario draft directly to scenario_path. The expected source hash
    is compared with the current on-disk bytes before any replacement. Existing
-   Route/Vehicle candidate counts and order are fixed; scalar fields may be
-   inserted when a non-empty value is supplied. On success a newly parsed v2
-   snapshot is returned and must be released with kv_free_scenario_snapshot().
-   On failure NULL is returned and kv_get_last_error() contains an English
-   diagnostic. */
+   Route/Vehicle fields accept one or more candidates (at least one
+   is required), and the supplied order is written back; missing Route/Vehicle
+   fields are not created. Scalar fields may be inserted when a non-empty value
+   is supplied. On success a newly parsed v2 snapshot is returned and must be
+   released with kv_free_scenario_snapshot(). On failure NULL is returned and
+   kv_get_last_error() contains an English diagnostic. */
 KV_API const KvScenarioSnapshot* kv_save_scenario_document(
     const char* scenario_path, const KvScenarioEditDocument* document);
 
