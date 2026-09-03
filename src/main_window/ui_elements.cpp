@@ -608,6 +608,7 @@ void App::save_runtime_settings_if_changed() {
 void App::render_menu() {
     if (!ImGui::BeginMainMenuBar()) return;
     const bool operation_pending = edit_ui_operation_pending();
+    std::optional<RecentMapEntry> recent_document_to_open;
     if (ImGui::BeginMenu(tr("menu.file").c_str())) {
         if (ImGui::MenuItem(tr("menu.new_file").c_str(), nullptr, false,
                             !operation_pending)) {
@@ -627,7 +628,7 @@ void App::render_menu() {
                     std::string label = display_name_from_path(entry.path) + "###recent_map_" + std::to_string(i);
                     if (ImGui::MenuItem(label.c_str(), nullptr, false,
                                         !operation_pending && !load_state_.running)) {
-                        open_document(entry.path, true, entry.background);
+                        recent_document_to_open = entry;
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.path.c_str());
                 }
@@ -891,6 +892,10 @@ void App::render_menu() {
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
+    if (recent_document_to_open) {
+        open_document(std::move(recent_document_to_open->path), true,
+                      std::move(recent_document_to_open->background));
+    }
 }
 
 void App::render_toolbar() {
