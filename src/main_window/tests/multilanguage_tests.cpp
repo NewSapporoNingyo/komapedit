@@ -40,7 +40,7 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
 }
 
 bool same_keys(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 575;
+    constexpr std::size_t expected_key_count = 577;
     if (translation.en.size() != expected_key_count ||
         translation.zh.size() != expected_key_count ||
         translation.ja.size() != expected_key_count) {
@@ -166,6 +166,12 @@ int main() {
     ok = expect_value(translation.ja, "value.curve_function.linear", "直線逓減") && ok;
     ok = expect_value(translation.en, "new_file.usage.sound", "Create a blank Sound List file for Sound.Load.") && ok;
     ok = expect_value(translation.en, "new_file.usage.sound3d", "Create a blank Sound List file for Sound3D.Load.") && ok;
+    ok = expect_value(translation.en, "new_file.category.scenario", "Scenarios") && ok;
+    ok = expect_value(translation.en, "new_file.usage.scenario", "Create a BveTs Scenario 2.00 file with route and vehicle metadata.") && ok;
+    ok = expect_value(translation.zh, "new_file.category.scenario", "场景文件") && ok;
+    ok = expect_value(translation.zh, "new_file.usage.scenario", "新建含线路与车辆信息的 BveTs Scenario 2.00 场景文件。") && ok;
+    ok = expect_value(translation.ja, "new_file.category.scenario", "シナリオファイル") && ok;
+    ok = expect_value(translation.ja, "new_file.usage.scenario", "路線と車両情報を含む BveTs Scenario 2.00 シナリオファイルを作成します。") && ok;
     ok = expect_value(translation.ja, "new_file.usage.structure", "マップストラクチャー用の空のストラクチャーリストファイルを作成します。") && ok;
     ok = expect_value(translation.ja, "new_file.usage.signal", "信号現示定義用の空の信号現示リストファイルを作成します。") && ok;
     ok = expect_value(translation.ja, "new_file.usage.sound", "Sound.Load 用の空のサウンドリストファイルを作成します。") && ok;

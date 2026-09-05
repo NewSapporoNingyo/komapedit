@@ -496,6 +496,42 @@ HeadlessNewFileWizardOptions parse_headless_new_file_wizard_options(
         [](HeadlessNewFileWizardOptions&) {});
 }
 
+HeadlessScenarioCreateOptions parse_headless_scenario_create_options(
+    const std::vector<std::string>& args) {
+    HeadlessScenarioCreateOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-scenario-create") {
+            options.requested = true;
+            const std::string* value =
+                take_option_value(args, i, arg, "a new scenario path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--route") {
+            const std::string* value = take_option_value(
+                args, i, arg, "a route map path", options.error);
+            if (!value) return options;
+            options.route = *value;
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(
+                args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-scenario-create requires a new scenario path";
+    }
+    if (options.requested && options.error.empty() &&
+        (options.route.empty() ||
+         !std::filesystem::is_regular_file(
+             std::filesystem::path(utf8_to_wide(options.route))))) {
+        options.error = "--debug-headless-scenario-create requires --route pointing "
+                        "to an existing map file";
+    }
+    return options;
+}
+
 HeadlessFreshResourceListWorkflowOptions
 parse_headless_fresh_resource_list_workflow_options(
     const std::vector<std::string>& args) {

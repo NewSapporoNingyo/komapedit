@@ -3286,7 +3286,7 @@ int App::run_debug_headless_new_file_wizard(
             const std::string map_name = wide_to_utf8(map_path.stem().wstring());
             const bool map_uses_csv_extension = map_path.extension() == L".csv";
             app.request_new_file_create(
-                {NewFileKind::Map, map_name, directory, {}, map_uses_csv_extension});
+                {NewFileKind::Map, map_name, directory, {}, map_uses_csv_extension, false, {}});
             app.process_pending_new_file_create();
             check("blank_map_created",
                   std::filesystem::exists(map_path) &&
@@ -3360,7 +3360,7 @@ int App::run_debug_headless_new_file_wizard(
                 app.request_new_file_create(
                     {resource.kind,
                      std::filesystem::path(resource.name).stem().string(),
-                     directory, target_file_path, true});
+                     directory, target_file_path, true, false, {}});
                 app.process_pending_new_file_create();
                 check((std::string(resource.reuse_existing
                                        ? "reused_content_unchanged_"
@@ -3442,6 +3442,216 @@ int App::run_debug_headless_new_file_wizard(
         *out << "exception=" << e.what() << "\n";
         ++failed_cases;
     }
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    *out << "result=" << (failed_cases == 0 ? "PASS" : "FAIL") << "\n";
+    out->flush();
+    return failed_cases == 0 ? 0 : 22;
+}
+
+int App::run_debug_headless_scenario_create(
+    const HeadlessScenarioCreateOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) {
+            std::cerr << "failed to open headless output: " << options.output_path << "\n";
+            return 1;
+        }
+        out = &output_file;
+    }
+    *out << "command=debug-headless-scenario-create\n"
+         << "scenario_path=" << options.path << "\n"
+         << "route_map=" << options.route << "\n";
+
+    const auto read_file_bytes = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    };
+    std::error_code path_error;
+    const std::filesystem::path tests_directory =
+        std::filesystem::absolute(std::filesystem::path(L"tests"), path_error).lexically_normal();
+    const std::filesystem::path requested_path(utf8_to_wide(options.path));
+    const std::filesystem::path scenario_path =
+        std::filesystem::absolute(requested_path, path_error).lexically_normal();
+    const std::filesystem::path relative_to_tests =
+        scenario_path.lexically_relative(tests_directory);
+    const bool path_is_under_tests = !path_error && !requested_path.empty() &&
+        !scenario_path.filename().empty() && !relative_to_tests.empty() &&
+        !relative_to_tests.is_absolute() && relative_to_tests.begin() != relative_to_tests.end() &&
+        *relative_to_tests.begin() != "..";
+    std::error_code exists_error;
+    if (!path_is_under_tests || !std::filesystem::is_directory(scenario_path.parent_path(), path_error) ||
+        path_error || std::filesystem::exists(scenario_path, exists_error) || exists_error) {
+        *out << "error=scenario-create headless path must be a nonexistent file below tests/\n"
+             << "result=FAIL\n";
+        out->flush();
+        return 2;
+    }
+
+    int failed_cases = 0;
+    auto check = [&](const char* label, bool value) {
+        *out << label << "=" << (value ? 1 : 0) << "\n";
+        if (!value) ++failed_cases;
+        return value;
+    };
+
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+
+        // The Route draft is stored as a path relative to the future Scenario
+        // file's directory, exactly as the GUI picker would produce it.
+        const std::filesystem::path route_map_path(utf8_to_wide(options.route));
+        std::filesystem::path route_relative =
+            std::filesystem::relative(route_map_path, scenario_path.parent_path(), path_error);
+        if (path_error || route_relative.empty() || route_relative.is_absolute()) {
+            throw std::runtime_error(
+                "failed to derive a Scenario-relative Route path for " + options.route);
+        }
+        NewFileScenarioDraft draft;
+        draft.title = "Headless Scenario";
+        draft.route = kme::maploader::path_to_utf8(route_relative.lexically_normal());
+        draft.route_title = "Headless Route";
+        draft.vehicle = "trains\\headless.veh";
+        draft.vehicle_title = "Headless Vehicle";
+        draft.author = "komapedit headless";
+        draft.comment = "Created by --debug-headless-scenario-create";
+
+        const std::string directory = wide_to_utf8(scenario_path.parent_path().wstring());
+        const std::string scenario_name = wide_to_utf8(scenario_path.stem().wstring());
+        const bool scenario_uses_csv_extension = scenario_path.extension() == L".csv";
+        app.request_new_file_create(
+            {NewFileKind::Scenario, scenario_name, directory, {}, scenario_uses_csv_extension,
+             false, draft});
+        app.process_pending_new_file_create();
+
+        std::string expected_content;
+        std::string expected_error;
+        if (!build_new_scenario_file_content(draft, expected_content, expected_error)) {
+            throw std::runtime_error("expected content build failed: " + expected_error);
+        }
+        if (!std::filesystem::exists(scenario_path)) {
+            throw std::runtime_error("scenario confirmation did not create the requested file");
+        }
+        check("scenario_created_with_requested_content",
+              read_file_bytes(scenario_path) == expected_content);
+
+        std::string overwrite_error;
+        check("scenario_overwrite_rejected",
+              !create_utf8_bve_file_exclusive(
+                  scenario_path, expected_content, overwrite_error) &&
+              read_file_bytes(scenario_path) == expected_content);
+
+        // Verify the maploader-side semantic contract independently from the
+        // App: declared fields, order, and the relative Route resolution.
+        {
+            const std::string scenario_utf8 = wide_to_utf8(scenario_path.wstring());
+            const KvScenarioSnapshot* snapshot = kv_load_scenario_snapshot(
+                scenario_utf8.c_str(), KV_SCENARIO_SNAPSHOT_VERSION);
+            if (!snapshot) {
+                const char* error = kv_get_last_error();
+                throw std::runtime_error(
+                    std::string("created scenario reparse failed: ") +
+                    (error && *error ? error : "maploader failed"));
+            }
+            const auto scenario_string = [&](KvStringRef ref) {
+                if (ref.offset > snapshot->string_size ||
+                    ref.length > snapshot->string_size - ref.offset ||
+                    (ref.length != 0 && !snapshot->string_data)) {
+                    throw std::runtime_error("created scenario snapshot has an invalid string reference");
+                }
+                return std::string(
+                    snapshot->string_data ? snapshot->string_data + ref.offset : "",
+                    static_cast<size_t>(ref.length));
+            };
+            const bool present_mask_ok =
+                (snapshot->present_fields & 0xBFu) == 0xBFu &&
+                (snapshot->present_fields & 0x40u) == 0x00u;
+            check("scenario_reparse_present_fields", present_mask_ok);
+            check("scenario_reparse_title",
+                  scenario_string(snapshot->title) == draft.title);
+            check("scenario_reparse_route_count", snapshot->route_count == 1);
+            if (snapshot->route_count == 1) {
+                check("scenario_reparse_route_path",
+                      scenario_string(snapshot->routes[0].path) == draft.route);
+                check("scenario_reparse_route_default_weight",
+                      snapshot->routes[0].weight == 1.0 &&
+                      snapshot->routes[0].has_explicit_weight == 0);
+            }
+            check("scenario_reparse_route_title",
+                  scenario_string(snapshot->route_title) == draft.route_title);
+            check("scenario_reparse_vehicle_count", snapshot->vehicle_count == 1);
+            check("scenario_reparse_vehicle_title",
+                  scenario_string(snapshot->vehicle_title) == draft.vehicle_title);
+            check("scenario_reparse_author",
+                  scenario_string(snapshot->author) == draft.author);
+            check("scenario_reparse_image_empty", snapshot->image.length == 0);
+            check("scenario_reparse_comment",
+                  scenario_string(snapshot->comment) == draft.comment);
+            kv_free_scenario_snapshot(snapshot);
+        }
+
+        // "Confirm and Load" path: open the created Scenario through the
+        // normal document lifecycle and wait for the asynchronous map load.
+        {
+            const std::string scenario_utf8 = wide_to_utf8(scenario_path.wstring());
+            app.open_document(scenario_utf8, false);
+            int wait_frames = 0;
+            while ((app.load_state_.running || !app.has_model_) && wait_frames < 10000) {
+                app.poll_loader();
+                if (app.load_state_.running || !app.has_model_) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                ++wait_frames;
+            }
+            check("scenario_open_loaded_map", app.has_model_);
+            check("scenario_preview_loaded", app.scenario_preview_.has_value());
+            if (app.scenario_preview_) {
+                check("scenario_preview_title",
+                      app.scenario_preview_->title == draft.title);
+                check("scenario_preview_route_count",
+                      app.scenario_preview_->routes.size() == 1);
+                if (app.scenario_preview_->routes.size() == 1) {
+                    check("scenario_preview_route_path",
+                          app.scenario_preview_->routes[0].path == draft.route);
+                }
+            }
+            const std::filesystem::path expected_map =
+                std::filesystem::path(route_map_path).lexically_normal();
+            const std::filesystem::path loaded_map =
+                std::filesystem::path(utf8_to_wide(app.file_path_)).lexically_normal();
+            check("scenario_loaded_route_matches_request",
+                  app.has_model_ && loaded_map == expected_map);
+            // open_document(record_history=false) must not add a new recent
+            // entry for the Scenario during this headless run.
+            check("scenario_history_not_recorded",
+                  std::none_of(app.recent_maps_.begin(), app.recent_maps_.end(),
+                               [&](const RecentMapEntry& entry) {
+                                   return entry.path == scenario_utf8;
+                               }));
+        }
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed_cases;
+    }
+    std::error_code cleanup_error;
+    std::filesystem::remove(scenario_path, cleanup_error);
+    check("scenario_file_cleaned", !std::filesystem::exists(scenario_path));
     ImGui::EndFrame();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();

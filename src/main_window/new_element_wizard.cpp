@@ -106,15 +106,17 @@ struct NewFileTemplate {
     const char* usage_key;
 };
 
-constexpr std::array<NewFileTemplateCategoryInfo, 3>
+constexpr std::array<NewFileTemplateCategoryInfo, 4>
     k_new_file_template_categories = {{
         {"presets", "new_file.category.presets"},
         {"map", "new_file.category.map"},
+        {"scenario", "new_file.category.scenario"},
         {"resource_lists", "new_file.category.resource_lists"},
     }};
 
-constexpr std::array<NewFileTemplate, 6> k_new_file_templates = {{
+constexpr std::array<NewFileTemplate, 7> k_new_file_templates = {{
     {NewFileKind::Map, "map", "BveTs Map 2.02", "new_file.usage.map"},
+    {NewFileKind::Scenario, "scenario", "BveTs Scenario 2.00", "new_file.usage.scenario"},
     {NewFileKind::Structure, "resource_lists", "Structure List", "new_file.usage.structure"},
     {NewFileKind::Signal, "resource_lists", "Signal Aspects List", "new_file.usage.signal"},
     {NewFileKind::Sound, "resource_lists", "Sound List", "new_file.usage.sound"},
@@ -2109,46 +2111,115 @@ void App::render_new_file_wizard() {
         if (!selected.empty()) wizard.directory = selected;
     }
 
-    ImGui::TextUnformatted(tr("label.new_file_reference").c_str());
-    const std::string target_preview = wizard.target_file_path.empty()
-        ? tr("status.new_file.no_reference_target")
-        : display_name_from_path(wizard.target_file_path);
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::BeginDisabled(wizard.target_file_candidates.empty() ||
-                         resource_list_already_referenced);
-    if (ImGui::BeginCombo("##NewFileTargetFile", target_preview.c_str())) {
-        for (const std::string& file_path : wizard.target_file_candidates) {
-            const bool selected = file_path == wizard.target_file_path;
-            if (ImGui::Selectable(display_name_from_path(file_path).c_str(), selected)) {
-                wizard.target_file_path = file_path;
+    const bool scenario_template = tpl.kind == NewFileKind::Scenario;
+    if (scenario_template) {
+        // The Scenario form mirrors the Scenario File tab's eight official
+        // fields. Scalar values are raw strings; Route/Vehicle/Image stay
+        // single paths with the official default weight, and weighted
+        // multi-candidate editing remains in the Scenario File tab.
+        NewFileScenarioDraft& draft = wizard.scenario_draft;
+        ImGui::Separator();
+        const auto path_picker_button = [&](const std::string& field,
+                                            std::string& value, bool image) {
+            ImGui::SameLine();
+            ImGui::PushID(field.c_str());
+            if (ImGui::Button(tr("menu.select_file").c_str())) {
+                const std::string initial = list_asset_picker_initial_directory(
+                    value, !wizard.directory.empty()
+                        ? wizard.directory
+                        : has_model_ ? model_.path : std::string{});
+                const std::string selected = image
+                    ? open_image_dialog(initial)
+                    : open_map_dialog(initial);
+                if (!selected.empty()) {
+                    // make_list_asset_source_path() resolves against the
+                    // parent of its first argument, so anchor the relative
+                    // path at the future Scenario file location.
+                    const std::filesystem::path anchor =
+                        std::filesystem::path(utf8_to_wide(wizard.directory)) /
+                        L"scenario.txt";
+                    ListAssetSourcePathResult result = make_list_asset_source_path(
+                        wide_to_utf8(anchor.wstring()), selected);
+                    value = result.source_path;
+                    if (!result.fallback_reason.empty()) {
+                        KME_ADD_LOG(LogSeverity::Warning,
+                                    "Scenario path kept absolute: " + result.fallback_reason);
+                        set_program_status("status.scenario_path_absolute_fallback");
+                    }
+                }
             }
-            if (selected) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
+            ImGui::PopID();
+        };
+        const auto scenario_field_row = [&](const char* field,
+                                            std::string& value, bool path, bool image = false) {
+            ImGui::PushID(field);
+            ImGui::TextUnformatted(field);
+            const float picker_width = path
+                ? ImGui::CalcTextSize(tr("menu.select_file").c_str()).x +
+                      style.FramePadding.x * 2.0f + style.ItemSpacing.x
+                : 0.0f;
+            ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x -
+                                             picker_width));
+            ImGui::InputText("##value", &value);
+            if (path) path_picker_button(field, value, image);
+            ImGui::PopID();
+        };
+        scenario_field_row("Title", draft.title, false);
+        scenario_field_row("Route", draft.route, true);
+        scenario_field_row("RouteTitle", draft.route_title, false);
+        scenario_field_row("Vehicle", draft.vehicle, true);
+        scenario_field_row("VehicleTitle", draft.vehicle_title, false);
+        scenario_field_row("Author", draft.author, false);
+        scenario_field_row("Image", draft.image, true, true);
+        scenario_field_row("Comment", draft.comment, false);
     }
-    ImGui::EndDisabled();
 
-    const bool reference_requested = !wizard.target_file_path.empty();
-    if (reference_requested && !edit_actions_available()) {
-        ImGui::TextWrapped("%s", tr("status.new_file.reference_requires_edit").c_str());
+    if (!scenario_template) {
+        ImGui::TextUnformatted(tr("label.new_file_reference").c_str());
+        const std::string target_preview = wizard.target_file_path.empty()
+            ? tr("status.new_file.no_reference_target")
+            : display_name_from_path(wizard.target_file_path);
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::BeginDisabled(wizard.target_file_candidates.empty() ||
+                             resource_list_already_referenced);
+        if (ImGui::BeginCombo("##NewFileTargetFile", target_preview.c_str())) {
+            for (const std::string& file_path : wizard.target_file_candidates) {
+                const bool selected = file_path == wizard.target_file_path;
+                if (ImGui::Selectable(display_name_from_path(file_path).c_str(), selected)) {
+                    wizard.target_file_path = file_path;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+
+        const bool reference_requested = !wizard.target_file_path.empty();
+        if (reference_requested && !edit_actions_available()) {
+            ImGui::TextWrapped("%s", tr("status.new_file.reference_requires_edit").c_str());
+        }
     }
     ImGui::Separator();
     const bool create_disabled =
-        (reference_requested && !edit_actions_available()) || resource_list_already_referenced;
-    ImGui::BeginDisabled(create_disabled);
-    if (ImGui::Button(tr("button.confirm").c_str())) {
+        (!scenario_template && !wizard.target_file_path.empty() &&
+         !edit_actions_available()) ||
+        resource_list_already_referenced;
+    const auto request_create = [&](bool load_after_create) {
         request_new_file_create(NewFileCreateRequest{
             tpl.kind, wizard.file_name, wizard.directory, wizard.target_file_path,
-            wizard.use_csv_extension});
+            wizard.use_csv_extension, load_after_create,
+            scenario_template ? wizard.scenario_draft : NewFileScenarioDraft{}});
+    };
+    ImGui::BeginDisabled(create_disabled);
+    if (ImGui::Button(tr("button.confirm").c_str())) {
+        request_create(false);
     }
     ImGui::EndDisabled();
-    if (tpl.kind == NewFileKind::Map) {
+    if (tpl.kind == NewFileKind::Map || scenario_template) {
         ImGui::SameLine();
         ImGui::BeginDisabled(create_disabled || load_state_.running);
         if (ImGui::Button(tr("button.confirm_and_load").c_str())) {
-            request_new_file_create(NewFileCreateRequest{
-                tpl.kind, wizard.file_name, wizard.directory, wizard.target_file_path,
-                wizard.use_csv_extension, true});
+            request_create(true);
         }
         ImGui::EndDisabled();
     }

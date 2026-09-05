@@ -261,7 +261,8 @@ std::optional<ResourceListKind> resource_list_kind_for_new_file(NewFileKind kind
     case NewFileKind::Sound: return ResourceListKind::Sound;
     case NewFileKind::Sound3D: return ResourceListKind::Sound3D;
     case NewFileKind::Station: return ResourceListKind::Station;
-    case NewFileKind::Map: return std::nullopt;
+    case NewFileKind::Map:
+    case NewFileKind::Scenario: return std::nullopt;
     }
     return std::nullopt;
 }
@@ -439,12 +440,41 @@ void App::process_pending_new_file_create() {
         return;
     }
     if (!existing_file) {
+        std::string initial_content(new_bve_file_header(request.kind));
+        if (request.kind == NewFileKind::Scenario) {
+            std::string scenario_content;
+            std::string scenario_error;
+            if (!build_new_scenario_file_content(request.scenario_draft,
+                                                 scenario_content, scenario_error)) {
+                KME_ADD_LOG("[error]" + scenario_error);
+                set_program_status("status.new_file.create_failed");
+                return;
+            }
+            initial_content = std::move(scenario_content);
+        }
         std::string create_error;
-        if (!create_utf8_bve_file_exclusive(path, new_bve_file_header(request.kind), create_error)) {
+        if (!create_utf8_bve_file_exclusive(path, initial_content, create_error)) {
             KME_ADD_LOG("[error]" + create_error + ": " +
                     wide_to_utf8(path.wstring()));
             set_program_status("status.new_file.create_failed");
             return;
+        }
+        if (request.kind == NewFileKind::Scenario) {
+            // Prove the emitted text parses as an official Scenario document
+            // before reporting success.
+            const std::string path_utf8 = wide_to_utf8(path.wstring());
+            const KvScenarioSnapshot* snapshot =
+                kv_load_scenario_snapshot(path_utf8.c_str(),
+                                          KV_SCENARIO_SNAPSHOT_VERSION);
+            if (!snapshot) {
+                const char* error = kv_get_last_error();
+                KME_ADD_LOG("[error]new Scenario file failed reparse validation: " +
+                        std::string(error && *error ? error : "maploader failed") +
+                        ": " + path_utf8);
+                set_program_status("status.new_file.create_failed");
+                return;
+            }
+            kv_free_scenario_snapshot(snapshot);
         }
     }
 
@@ -457,7 +487,8 @@ void App::process_pending_new_file_create() {
         return;
     }
     new_file_wizard_.open = false;
-    if (request.load_after_create && request.kind == NewFileKind::Map) {
+    if (request.load_after_create &&
+        (request.kind == NewFileKind::Map || request.kind == NewFileKind::Scenario)) {
         open_document(selected_file, true);
         return;
     }

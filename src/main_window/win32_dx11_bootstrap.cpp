@@ -505,6 +505,18 @@ int main(int, char**) {
         return App::run_debug_headless_new_file_wizard(new_file_wizard);
     }
 
+    HeadlessScenarioCreateOptions scenario_create =
+        parse_headless_scenario_create_options(args);
+    if (scenario_create.requested) {
+        if (!scenario_create.error.empty()) {
+            std::cerr << scenario_create.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-scenario-create <new-scenario-path-under-tests> "
+                      << "--route <existing-map-path> [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_scenario_create(scenario_create);
+    }
+
     HeadlessFreshResourceListWorkflowOptions fresh_resource_list =
         parse_headless_fresh_resource_list_workflow_options(args);
     if (fresh_resource_list.requested) {

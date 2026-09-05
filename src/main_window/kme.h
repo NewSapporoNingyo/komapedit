@@ -69,6 +69,7 @@ struct HeadlessSparseNewElementOptions;
 struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
 struct HeadlessNewFileWizardOptions;
+struct HeadlessScenarioCreateOptions;
 struct HeadlessFreshResourceListWorkflowOptions;
 struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
@@ -1464,6 +1465,22 @@ enum class NewFileKind : std::uint8_t {
     Sound,
     Sound3D,
     Station,
+    Scenario,
+};
+
+// Wizard draft for the eight official BveTs Scenario 2.00 fields. Empty
+// scalar fields omit the row; Route/Vehicle/Image stay single paths with the
+// official default weight 1. Weighted multi-candidate editing belongs to the
+// Scenario File tab, not to file creation.
+struct NewFileScenarioDraft {
+    std::string title;
+    std::string route;
+    std::string route_title;
+    std::string vehicle;
+    std::string vehicle_title;
+    std::string author;
+    std::string image;
+    std::string comment;
 };
 
 struct NewFileWizardState {
@@ -1475,6 +1492,7 @@ struct NewFileWizardState {
     std::string target_file_path;
     std::string file_name;
     std::string directory;
+    NewFileScenarioDraft scenario_draft;
 };
 
 struct NewFileCreateRequest {
@@ -1484,6 +1502,7 @@ struct NewFileCreateRequest {
     std::string target_file_path;
     bool use_csv_extension = false;
     bool load_after_create = false;
+    NewFileScenarioDraft scenario_draft;
 };
 
 enum class RepeaterDeleteMode {
@@ -1840,6 +1859,8 @@ public:
         const HeadlessResourceListInsertOptions& options);
     static int run_debug_headless_new_file_wizard(
         const HeadlessNewFileWizardOptions& options);
+    static int run_debug_headless_scenario_create(
+        const HeadlessScenarioCreateOptions& options);
     static int run_debug_headless_fresh_resource_list_workflow(
         const HeadlessFreshResourceListWorkflowOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
@@ -2861,6 +2882,12 @@ bool create_utf8_bve_file_exclusive(const std::filesystem::path& path,
                                     std::string& error);
 bool create_utf8_bve_map_file_exclusive(const std::filesystem::path& path,
                                         std::string& error);
+// Builds the official BveTs Scenario 2.00 file body for a new file from the
+// wizard draft. Returns false and fills |error| when a value cannot be
+// represented in a single-path official Scenario file.
+bool build_new_scenario_file_content(const NewFileScenarioDraft& draft,
+                                     std::string& content,
+                                     std::string& error);
 std::string_view new_bve_file_header(NewFileKind kind);
 std::string_view new_file_resource_list_kind(NewFileKind kind);
 std::optional<ResourceListKind> resource_list_kind_for_new_file(NewFileKind kind);

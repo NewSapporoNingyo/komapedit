@@ -280,6 +280,7 @@ std::string_view new_bve_file_header(NewFileKind kind) {
     case NewFileKind::Sound:
     case NewFileKind::Sound3D: return "BveTs Sound List 2.00:utf-8\r\n";
     case NewFileKind::Station: return "BveTs Station List 2.00:utf-8\r\n";
+    case NewFileKind::Scenario: return "BveTs Scenario 2.00:utf-8\r\n";
     }
     return {};
 }
@@ -291,9 +292,51 @@ std::string_view new_file_resource_list_kind(NewFileKind kind) {
     case NewFileKind::Sound: return "sound";
     case NewFileKind::Sound3D: return "sound3d";
     case NewFileKind::Station: return "station";
-    case NewFileKind::Map: return {};
+    case NewFileKind::Map:
+    case NewFileKind::Scenario: return {};
     }
     return {};
+}
+
+bool build_new_scenario_file_content(const NewFileScenarioDraft& draft,
+                                     std::string& content,
+                                     std::string& error) {
+    struct ScenarioField {
+        const char* key;
+        const std::string& value;
+        bool path;
+    };
+    const ScenarioField fields[] = {
+        {"Title", draft.title, false},
+        {"Route", draft.route, true},
+        {"RouteTitle", draft.route_title, false},
+        {"Vehicle", draft.vehicle, true},
+        {"VehicleTitle", draft.vehicle_title, false},
+        {"Author", draft.author, false},
+        {"Image", draft.image, true},
+        {"Comment", draft.comment, false},
+    };
+    content = new_bve_file_header(NewFileKind::Scenario);
+    for (const ScenarioField& field : fields) {
+        std::string value = trim_gui_ascii_copy(field.value);
+        if (value.empty()) continue;
+        // A Scenario value must round-trip as one official key = value row:
+        // '#' or ';' start a comment, and '|' or '*' start weighted
+        // multi-candidate syntax that the single-path wizard draft does not
+        // model. Reject instead of emitting text with different semantics.
+        if (value.find_first_of("#;\r\n") != std::string::npos ||
+            (field.path && value.find_first_of("|*") != std::string::npos)) {
+            error = std::string("new Scenario ") + field.key +
+                " value contains characters that are invalid in a single-path"\
+                " official Scenario row: \"" + value + "\"";
+            return false;
+        }
+        content += field.key;
+        content += " = ";
+        content += value;
+        content += "\r\n";
+    }
+    return true;
 }
 
 bool create_utf8_bve_file_exclusive(const std::filesystem::path& path,
@@ -303,8 +346,10 @@ bool create_utf8_bve_file_exclusive(const std::filesystem::path& path,
         error = "new BVE file path is empty";
         return false;
     }
+    // |header| carries the initial file bytes: a bare format header for map
+    // and list files, or the complete official body for Scenario files.
     if (header.empty() || header.size() > static_cast<size_t>(std::numeric_limits<DWORD>::max())) {
-        error = "new BVE file header is invalid";
+        error = "new BVE file content is invalid";
         return false;
     }
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
@@ -321,7 +366,7 @@ bool create_utf8_bve_file_exclusive(const std::filesystem::path& path,
     const DWORD write_error = wrote ? ERROR_SUCCESS : GetLastError();
     const BOOL closed = CloseHandle(file);
     if (!wrote || written != header.size() || !closed) {
-        error = "failed to write BVE file header (Win32 error " +
+        error = "failed to write BVE file content (Win32 error " +
             std::to_string(static_cast<unsigned long>(
                 wrote && closed ? ERROR_WRITE_FAULT : write_error)) + ")";
         return false;
