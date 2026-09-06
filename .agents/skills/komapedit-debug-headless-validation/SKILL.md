@@ -1,6 +1,6 @@
 ---
 name: komapedit-debug-headless-validation
-description: Select and run komapedit's Debug builds, registered CTests, DLL checks, and GUI-subsystem headless validation. Use when a change needs parser, edit-roundtrip, table, plan, scene, camera, touch, load, or performance proof without manual GUI operation, especially when PowerShell process behavior or real-route safety matters.
+description: Select and run komapedit's Debug builds, registered CTests, DLL checks, and GUI-subsystem headless validation. Use when a change needs localization, parser, Scenario, file-creation, edit-roundtrip, table, plan, scene, camera, touch, load, or performance proof without manual GUI operation, especially when PowerShell process behavior or real-route safety matters.
 ---
 
 # Komapedit Debug and Headless Validation
@@ -17,6 +17,7 @@ description: Select and run komapedit's Debug builds, registered CTests, DLL che
 - Normal Debug: `.\build_dev.bat`.
 - Strict maintenance validation: configure with `-DKOMAPEDIT_STRICT_WARNINGS=ON -DBUILD_TESTING=ON`, then build Debug.
 - Registered non-headless CTest contracts:
+  - `multilanguage_contract`;
   - `typed_snapshot_contract`;
   - `maploader_gradient_projection_contract`;
   - `typed_edit_contract`;
@@ -30,6 +31,7 @@ Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is conf
 ## Select the narrow headless mode
 
 - Load/GUI wiring: `--headless-load-map`.
+- Scenario preview/resolution/direct-save lifecycle: `--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]`.
 - Open latency/cache lifecycle: `--debug-headless-open-bench`.
 - 2D plan/render markers: `--debug-headless-plan-bench`.
 - 3D scene building/rendering: `--debug-headless-scene3d-bench`.
@@ -41,6 +43,8 @@ Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is conf
 - Cached table search: `--debug-headless-table-find`.
 - Touch state machine: `--debug-headless-touch-input`.
 - Canonical settings/history persistence: `--debug-headless-settings-persistence`.
+- New-map/list wizard workflow: `--debug-headless-new-file-wizard`.
+- New Scenario creation and normal-open workflow: `--debug-headless-scenario-create`.
 
 Always pass `--headless-output <file>` when the mode supports it.
 

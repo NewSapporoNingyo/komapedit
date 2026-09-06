@@ -25,7 +25,7 @@ AI 工具应自行阅读 [`AGENTS.md`](../AGENTS.md)。可重复执行的工作�
 
 凡新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑，都必须使用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。其范围包括[官方来源基线](../.agents/skills/komapedit-bve-format-compliance/references/official-bve-format-baseline.md)所覆盖的 Map、Structure List、Signal Aspects List、Sound List、他列车和 Scenario 格式。
 
-该合规技能必须与 `komapedit-develop`、`komapedit-fix`、`komapedit-source-backed-editing` 或其他匹配的子系统技能同时使用。它要求智能体重新打开受影响的在线官方页面，分别标明当前官方语法、官方旧式别名、项目兼容形式与未支持形式，并在实现前建立合规矩阵。若官方页面、需求与当前实现之间存在会改变行为的差异，智能体必须停止并请人决定。
+该合规技能必须与 `komapedit-develop`、`komapedit-fix`、`komapedit-source-backed-editing` 或其他匹配的子系统技能同时使用。它要求智能体先检查带日期的本地官方页面缓存，仅在时间戳无效或超过 30 天时刷新整套缓存，然后阅读受影响的已缓存页面，分别标明当前官方语法、官方旧式别名、项目兼容形式与未支持形式，并在实现前建立合规矩阵。若官方页面、需求与当前实现之间存在会改变行为的差异，智能体必须停止并请人决定。
 
 ```text
 同时使用 $komapedit-bve-format-compliance 与 $komapedit-develop（或 $komapedit-fix）。

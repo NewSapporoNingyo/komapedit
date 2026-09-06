@@ -23,6 +23,7 @@ description: Make a small komapedit user-visible UI text, menu, toolbar, dialog,
 ## Validate
 
 1. Confirm the key exists exactly once in each of the three language blocks.
-2. Run `git diff --check` on the touched files.
-3. Build Debug for code changes.
-4. Leave actual truncation, alignment, menu ordering, and browser launch as manual checks unless exercised by an available runtime test.
+2. Run the registered `multilanguage_contract` for translation-map parity, expected key count, and exact critical terminology.
+3. Run `git diff --check` on the touched files.
+4. Build Debug for code changes.
+5. Leave actual truncation, alignment, menu ordering, and browser launch as manual checks unless exercised by an available runtime test.

@@ -46,7 +46,7 @@ You should read the following notes related to your current agent. If a note app
 ### BVE parsing, geometry, and source fidelity
 
 - Implement official BVE map/list syntax; do not add private route syntax extensions.
-- Always invoke `komapedit-bve-format-compliance` before implementation when changing or adding BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback logic, including the covered Map, Structure List, Signal Aspects List, Sound List, other-train, and Scenario formats. Combine it with the matching scenario/subsystem skills; its live official-source check and compliance matrix are mandatory.
+- Always invoke `komapedit-bve-format-compliance` before implementation when changing or adding BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback logic, including the covered Map, Structure List, Signal Aspects List, Sound List, other-train, and Scenario formats. Combine it with the matching scenario/subsystem skills; its dated local official-page cache check and compliance matrix are mandatory.
 - Preserve currently supported encodings, BOMs, line endings, Include behavior, variables/expressions, parse order, comments, legacy syntax where already supported, and existing geometry semantics.
 - Keep source ownership in maploader records: physical source path, Include stack, source span, original statement/arguments, evaluated values, distance expression, global parse order, and stable edit identity.
 - Do not reparse route source in GUI tables/canvases or create a parallel GUI-owned source document model.
@@ -127,7 +127,7 @@ Use `docs/dev.md` for the detailed source map. Start with these owners:
 | Model import | `src/model_loader/model_loader.cpp` |
 | Main GUI/settings/runtime loading | `src/main_window/` |
 | 2D plan/profile | `src/canvas2d/` |
-| 3D model/scene preview | `src/canvas3d/canvas3D.cpp`, `include/canvas3D.h` |
+| 3D model/scene preview | `src/canvas3d/canvas3D.cpp`, `src/canvas3d/scene_track_sampling.cpp`, `src/canvas3d/scene_track_sampling.h`, `include/canvas3D.h` |
 | Tables/navigation | `src/table/` |
 | Shared marker/linkage rules | `include/map_marker_visuals.h`, linkage headers, corresponding sources |
 | Contract/headless validation | `src/maploader/tests/`, `src/main_window/debug_headless.*`, `src/main_window/headless_entrypoints.cpp` |
@@ -144,8 +144,8 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 | `komapedit-fix` | Evidence-led diagnosis and minimal repair of a concrete defect |
 | `komapedit-slop-fix` | Sustainability audit and evidence-backed cleanup without behavior drift |
 | `komapedit-write-docs` | Documentation ownership, synchronization, bilingual updates, and AGENTS/TODO maintenance |
-| `komapedit-source-backed-editing` | Typed editable rows, source spans, Apply/Save, insertion/deletion, writeback, and edit ABI |
-| `komapedit-debug-headless-validation` | Debug/CTest/headless command selection, real-route safety, and result interpretation |
+| `komapedit-source-backed-editing` | Typed map/list edits plus Scenario direct-save drafts, source spans, insertion/deletion, writeback, and edit ABI |
+| `komapedit-debug-headless-validation` | Debug/CTest/headless command selection, localization/file-creation contracts, real-route safety, and result interpretation |
 | `komapedit-3d-preview-workflow` | Canvas3D, scene geometry/cache, models, markers, gizmos, camera/depth, and packaging |
 | `komapedit-table-feature-workflow` | Typed snapshot table features, caching/find, and table↔plan/scene navigation |
 | `komapedit-station-edit-workflow` | `Station.List`/`Station.Put` identity, drafts, source order, markers, and writeback |
@@ -165,7 +165,7 @@ Initial third-party setup uses `.\get_3rd_party_packages.bat`; install Assimp fo
 - Debug output: `build\`; Release output: `build_release\`.
 - Normal changes use Debug first. Release is required only for release packaging/distribution, runtime dependency layout, optimization-specific behavior, or explicit request.
 - Strict self-owned warnings require an explicit configure with `-DKOMAPEDIT_STRICT_WARNINGS=ON -DBUILD_TESTING=ON`.
-- Registered non-headless CTest contracts are `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `canvas3d_camera_contract`. Headless validation must be invoked explicitly and must not be registered with CTest.
+- Registered non-headless CTest contracts are `multilanguage_contract`, `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `canvas3d_camera_contract`. Headless validation must be invoked explicitly and must not be registered with CTest.
 - The diagnostics contract needs ignored local fixtures under `tests/`; verify availability before interpreting a clean-checkout failure.
 - Use `komapedit-debug-headless-validation` for current headless commands. Because `komapedit.exe` is a GUI-subsystem executable, PowerShell capture must use `Start-Process -Wait -WindowStyle Hidden -PassThru` and `--headless-output`.
 - Separate build/contract/headless evidence from unperformed manual GUI or visual checks.

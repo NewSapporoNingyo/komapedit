@@ -1,4 +1,4 @@
 interface:
   display_name: "Komapedit Source Editing"
-  short_description: "Extend source-backed map editing safely"
-  default_prompt: "Use $komapedit-source-backed-editing to extend or repair the typed source-backed editing workflow."
+  short_description: "Extend map/list and Scenario source editing"
+  default_prompt: "Use $komapedit-source-backed-editing to extend or repair the typed map/list editing or Scenario direct-save workflow."

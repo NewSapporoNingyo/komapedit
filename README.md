@@ -129,7 +129,7 @@ section, and loose value forms are ignored and use defaults. Loading an existing
 partial or obsolete file does not rewrite it; an explicit settings save writes a
 complete current-format file.
 
-The bundled executable requires maploader API v9 and loads maps only through
+The bundled executable requires maploader API v12 and loads maps only through
 `kv_load_map_ex()`. Earlier DLLs are rejected by the exact API-version check.
 Build and distribution-cleanup scripts do not migrate or delete obsolete
 root-level INIs or DLLs: if either is present, they stop and require a clean
@@ -156,7 +156,7 @@ If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or 
 
 #### File
 
-- `New...`: Opens the New File Wizard. It can create a map or resource-list file. See section 10 for details.
+- `New...`: Opens the New File Wizard. It can create a map, Scenario, or resource-list file. See section 10 for details.
 - `Open...`: Selects a `.txt` or `.csv` map or scenario file. The toolbar `Open` button does the same thing.
 - `Recent Maps`: Opens a recently used map. `Clear List` removes only the history entries; it does not delete map files.
 - `Reload`: Reads the current map again and reloads the current Structure Model Preview. The shortcut is `F5`. If there are unsaved changes, the program asks for confirmation first.

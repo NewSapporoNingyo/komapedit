@@ -15,7 +15,7 @@ Do not create a new sidecar file when one of these owners already fits.
 
 ## Extend the existing lifecycle
 
-1. Inspect `app_settings.cpp/.h`, `runtime_paths.cpp/.h`, `gui_kme.cpp`, and the relevant state in `kme.h`.
+1. Inspect `app_settings.cpp/.h`, `runtime_paths.cpp/.h`, the menu/settings projection in `ui_elements.cpp`, and the relevant state in `kme.h`. `gui_kme.cpp` now retains only App construction/destruction and log wiring.
 2. Find initialization defaults, canonical load/parsing, runtime application, change detection, and save paths before editing.
 3. Add one source of truth in the existing state object. Bind menu checkmarks directly to the actual visibility/control boolean where practical.
 4. Distinguish code defaults from a valid saved value. Invalid, obsolete, unknown, or wrong-section entries use code defaults.
@@ -34,7 +34,7 @@ Do not create a new sidecar file when one of these owners already fits.
 
 1. Build Debug.
 2. Inspect the emitted config file for the exact section/key/value and verify a load/save round trip when feasible.
-3. Run `settings_persistence_contract` when settings or history parsing changes; inspect its stage markers and `result=PASS`.
+3. Run `--debug-headless-settings-persistence --headless-output <file>` when settings or history parsing changes; inspect its stage markers and `result=PASS`. This is an explicit headless mode, not a registered CTest.
 4. Test missing-file defaults plus rejection and non-mutation of an existing obsolete or malformed file when schema/default behavior changes.
 5. Confirm no unexpected settings/history/imgui artifacts are staged or committed.
 6. Leave visual docking, focus, and menu checkmark behavior as manual checks unless a runtime test actually exercised them.

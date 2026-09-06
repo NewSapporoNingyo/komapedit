@@ -15,7 +15,7 @@ description: Plan and implement scoped feature or behavior changes in komapedit.
 ## Route the work
 
 - Use `komapedit-bve-format-compliance` whenever work changes or adds BVE map/list/scenario/train reading, parsing, validation, typed representation, editing, creation, serialization, or writeback. This compliance layer is mandatory in addition to every matching skill below.
-- Use `komapedit-source-backed-editing` for parser-to-save editing work.
+- Use `komapedit-source-backed-editing` for parser-to-save map/list editing and Scenario direct-save or creation work.
 - Use `komapedit-table-feature-workflow` for typed snapshot rows, Map Info tables, table search, and cross-view navigation.
 - Use `komapedit-3d-preview-workflow` for scene/model preview work.
 - Use `komapedit-station-edit-workflow` for `Station.List` or `Station.Put` behavior.
@@ -46,6 +46,6 @@ Read every triggered skill before changing files.
 
 ## Finish the change
 
-1. Update documentation according to ownership: user behavior in `README.md`, unfinished status in `TODO.md`, completed work in `docs/TODO_done.md`, human development facts in `docs/dev*.md`, and reusable AI workflows in `.agents/skills`.
+1. Update documentation according to ownership: user behavior in the paired `README.md`/`docs/README_zhcn.md`, unfinished status in `TODO.md`, completed work in `docs/TODO_done.md`, human development facts in the paired `docs/dev*.md`, AI-operator guidance in the paired `docs/ai-dev*.md`, and reusable AI workflows in `.agents/skills`.
 2. Run `git diff --check` and review the final diff for unrelated churn, encoding damage, generated files, and accidental ABI changes.
 3. Report the outcome first, then changed behavior, validation performed, remaining manual checks, and an English commit-title suggestion when useful.

@@ -130,7 +130,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### User Interface and Utilities
 
-- [x] Add `File -> New...` and a trilingual New File Wizard that creates header-only `BveTs Map 2.02` maps or Structure, Signal, Sound, Sound3D, and Station list files without overwriting existing files. A selected loaded map receives a preview-only typed `include`/`*.Load` reference that normal Save commits; Revert keeps the created file. Presets remain empty, and the wizard does not create Scenario files or list rows.
+- [x] Add the initial `File -> New...` and trilingual New File Wizard for header-only `BveTs Map 2.02` maps or Structure, Signal, Sound, Sound3D, and Station list files without overwriting existing files. A selected loaded map receives a preview-only typed `include`/`*.Load` reference that normal Save commits; Revert keeps the created file. Presets remain empty, and this initial scope did not create Scenario files or list rows; Scenario creation was added in the later item below.
 - [x] Add existing resource-list import/reuse to the five New File Wizard list templates and empty-state `New or Import File` entry points to their tables. Import fills editable path/name/suffix fields, existing regular files are referenced without modification, duplicate list references are disabled, and replacement remains the top-path `Change File...` action.
 - [x] Add a `Scenarios` category and a `BveTs Scenario 2.00` template to the New File Wizard. The scenario form drops `Import File` and `Reference in` and instead shows the same eight official fields as the Scenario File tab; Confirm writes the non-empty fields in official key order as a UTF-8/CRLF file with exclusive creation and reparse validation, `Confirm and Load` opens the created file through the normal document flow, and values containing weights, multi-candidates, or comment characters are rejected while weighted multi-candidate editing stays in the Scenario File tab.
 - [x] Dear ImGui docking-based multi-window layout.
@@ -285,7 +285,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 用户界面与辅助功能
 
-- [x] 新增 `文件 -> 新建...` 及三语“新建文件向导”，可在不覆盖已有文件的前提下新建仅含文件头的 `BveTs Map 2.02` 地图或 Structure、Signal、Sound、Sound3D、Station 列表文件。选择已加载地图时，会暂存类型化 `include`/`*.Load` 引用，正常“保存”才提交；“撤销”会保留已创建文件。预设仍为空，向导不新建场景文件或列表行。
+- [x] 新增初版 `文件 -> 新建...` 及三语“新建文件向导”，可在不覆盖已有文件的前提下新建仅含文件头的 `BveTs Map 2.02` 地图或 Structure、Signal、Sound、Sound3D、Station 列表文件。选择已加载地图时，会暂存类型化 `include`/`*.Load` 引用，正常“保存”才提交；“撤销”会保留已创建文件。预设仍为空；该初始范围不新建场景文件或列表行，场景文件新建功能见下方后续事项。
 - [x] 为五种资源列表“新建文件向导”模板加入已有文件导入/复用，并在对应表格空态加入“新建或导入文件”入口。导入会填入仍可编辑的路径/文件名/后缀，已有普通文件只会被引用而不修改，重复资源列表引用会禁用，替换仍通过顶部路径的“更换文件...”。
 - [x] 在“新建文件向导”中新增“场景文件”分类与 `BveTs Scenario 2.00` 模板。场景表单不再提供“导入文件”和“在以下文件中引用”，改为显示与“Scenario 文件”标签页相同的 8 个官方字段；“确定”以排他方式创建文件并按官方键序写入非空字段（UTF-8/CRLF），写入后重新解析验证；“确定并载入”按普通打开流程载入新建文件；含权重、多候选或注释字符的值会被拒绝，权重与多候选编辑仍在“Scenario 文件”标签页进行。
 - [x] Dear ImGui Docking 多窗口布局

@@ -8,20 +8,20 @@ description: Diagnose and repair a specific komapedit defect or regression. Use 
 ## Prove the problem
 
 1. Read `AGENTS.md` and inspect the exact code path before changing anything.
-2. For any syntax-related reading, parsing, validation, editing, creation, serialization, or writeback defect, use `komapedit-bve-format-compliance` to establish the live official contract before deciding what is incorrect.
+2. For any syntax-related reading, parsing, validation, editing, creation, serialization, or writeback defect, use `komapedit-bve-format-compliance` to establish the official contract from its dated local cache before deciding what is incorrect.
 3. Record expected behavior, observed behavior, inputs, build type, and the narrowest reproducible condition.
 4. Reproduce with the smallest existing fixture, CTest, headless mode, direct DLL call, or controlled real route that exercises the failure.
 5. If the request is diagnosis-only, stop after establishing the cause and evidence. Do not implement without authorization.
 
 ## Find the owning boundary
 
-- Parsing/source anchors: `src/maploader/maploader_parser.cpp` and maploader-owned records.
+- Parsing/source anchors: `src/maploader/maploader_core.cpp`, `maploader_parser.cpp`, `scenario_route.cpp`, and maploader-owned records.
 - Geometry: `src/maploader/maploader_geometry.cpp`.
 - Typed transport/snapshot lifetime: `maploader_snapshot.cpp`, `include/maploader_snapshot.h`, and runtime dispatch.
-- Source edits: `maploader_edits.cpp`, `maploader_semantic.cpp`, and the GUI pending-edit lifecycle.
+- Source edits: `maploader_edits.cpp`, `maploader_semantic.cpp`, Scenario direct save in `scenario_route.cpp`, and the GUI pending-edit lifecycle in `edit_ledger.cpp`/`editable_list_drafts.cpp`.
 - Tables/navigation: `src/table/` and cached `MapModel` data.
 - 2D/3D behavior: the relevant canvas plus shared marker/linkage helpers.
-- Settings/window lifecycle: `app_settings.*`, `gui_kme.cpp`, and `kme.h`.
+- Settings/window lifecycle: `app_settings.*`, `ui_elements.cpp`, `scene_preview_lifecycle.cpp`, and shared state in `kme.h`.
 - Release/runtime dependencies: CMake, build scripts, runtime paths, and actual toolchain cache.
 
 Trace the value or state through its full owner chain. Do not patch the visible symptom in a downstream view when the invariant is broken upstream.

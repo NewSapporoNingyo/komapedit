@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Five non-headless contracts are registered: `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `canvas3d_camera_contract`. Headless validation must be run explicitly and is not registered with CTest. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
+`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Six non-headless contracts are registered: `multilanguage_contract`, `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `canvas3d_camera_contract`. Headless validation must be run explicitly and is not registered with CTest. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
 
 Runtime output is organized as follows:
 
@@ -89,18 +89,18 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 | Map lifecycle | `src/maploader/maploader.cpp`: C ABI entry points, handles, regeneration, dispatch, source retrieval, and boundary error handling |
 | Map state | `src/maploader/maploader_internal.h`: `MapContext`, parsed rows, source spans, include stacks, edit references, reports, and timing |
 | Parsing | `maploader_core.cpp`, `maploader_parser.cpp`, `text_decoder.cpp/.h`: statements, values, includes, variables, encodings, source anchors, uniqueness checks |
-| Scenario parsing | `scenario_route.cpp/.h`: BVE file-kind probe, full official Scenario snapshot parsing, and `Route` candidate resolution for open-from-scenario |
+| Scenario parsing and direct save | `scenario_route.cpp/.h`: BVE file-kind probe, full official Scenario snapshot parsing, source-safe direct save, and `Route` candidate resolution for open-from-scenario |
 | Geometry | `maploader_geometry.cpp`: own/other-track geometry, relocation, curves, gradients, placement buffers, scene control points |
 | Identity and snapshots | `maploader_identity.cpp`, `maploader_snapshot.cpp`, `maploader_semantic.cpp`: stable IDs, typed snapshots, revisions, comparisons, fingerprints |
 | Editing | `maploader_edits.cpp`: dry run, in-memory Apply, direct Apply, commit, reset, source patching, encoding-aware writeback, distance adjustment; Include statements support restricted path-argument updates validated by full reparse with old/new subtree masks |
 | Shared linkage | `include/repeater_linkage.h`, `include/own_track_transition_linkage.h`: Repeater chains and Curve/Gradient transition pairing |
 | Model loading | `src/model_loader/model_loader.cpp`, `include/model_loader.h`: Assimp isolation and model-loader API v2 |
-| Main window | `src/main_window/gui_kme.cpp`, `kme.h`, and focused `src/main_window/` modules: App-state coordination; Win32/D3D11 bootstrap; shared GUI utilities/backgrounds; snapshot hydration/loading; edit, distance, Inspector, list-draft, new-file, and new-element workflows; dialogs/UI; scene previews; headless entry points |
+| Main window | `src/main_window/gui_kme.cpp`, `kme.h`, and focused `src/main_window/` modules: App-state coordination; Win32/D3D11 bootstrap; shared GUI utilities/backgrounds; snapshot hydration/loading; edit, distance, Inspector, list-draft, new-file, and new-element workflows; dialogs/UI; scene previews; headless entry points. New-file rendering is in `new_element_wizard.cpp`, content/dialog helpers in `app_dialogs.cpp`, deferred creation in `element_inspector_data.cpp`, and workflow contracts in `headless_entrypoints.cpp` |
 | Runtime/settings | `app_settings.cpp/.h`, `runtime_paths.cpp/.h`, `maploader_runtime.cpp`: INI persistence, executable-relative paths, DLL loading, exact API checks |
 | Source tools | `file_structure_diagram.cpp`, `text_preview.cpp`: Include graph, working-copy source preview, source actions (change included file, unlink Include), distance-boundary selection |
 | Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `touch_input.cpp/.h`: headless contracts, benchmarks, camera transfer, find, touch, edit, and file-creation checks |
 | 2D views | `src/canvas2d/canvas2D.cpp`, `profile_plots.cpp`: plan, charts, transforms, markers, measurement, background images |
-| 3D views | `src/canvas3d/canvas3D.cpp`, `include/canvas3D.h`: model/scene rendering, camera, picking, markers, overlays, gizmos |
+| 3D views | `src/canvas3d/canvas3D.cpp`, `src/canvas3d/scene_track_sampling.cpp`, `src/canvas3d/scene_track_sampling.h`, `include/canvas3D.h`: model/scene rendering, CPU track/camera sampling, camera, picking, markers, overlays, gizmos |
 | Tables/navigation | `src/table/datatable.cpp`, `table_navigation.cpp`: cached tables, inline editing, find, row/plan/scene navigation |
 | Shared marker visuals | `include/map_marker_visuals.h`, `src/main_window/map_marker_visuals.cpp`: canonical 2D/3D marker recipes |
 | Localization | `include/multilanguage.h`: Simplified Chinese, English, and Japanese UI strings |
@@ -132,7 +132,7 @@ Implement general rules matching official BVE syntax; do not add private route s
 
 `Light.Ambient`, `Light.Diffuse`, and `Light.Direction` are source-backed editable rows with stable `light.ambient`, `light.diffuse`, and `light.direction` targets. The Lighting Effects tab keeps all three parameter forms visible; Edit mode gates Apply, Delete, and New without hiding the controls. Apply batches changed forms into the normal memory-only edit ledger, Delete uses the normal deferred deletion path, and the Effects wizard creates the official statement in the selected editable source file at fixed route distance `0` without exposing a distance field. After the root map and all Includes are merged, each kind may have one syntactically valid declaration: duplicate kinds invalidate every conflicting row and emit one English warning containing every physical source location. Ambient/Diffuse RGB values must be in `[0, 1]`, Direction must be declared at route distance `0`, and invalid rows are omitted from the typed snapshot. Updates preserve unchanged source expressions; complete reparse/semantic proof protects Apply and Save. `KvLightColorRow` and `KvLightDirectionRow` preserve file/order/source metadata and do not affect 2D/3D rendering.
 
-When an AI coding tool changes or adds BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback, it must invoke [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md) in addition to the matching scenario/subsystem skill. Recheck the affected live official page and complete the skill's compliance matrix before implementation.
+When an AI coding tool changes or adds BVE map-element reading, parsing, validation, typed representation, editing, creation, serialization, or writeback, it must invoke [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md) in addition to the matching scenario/subsystem skill. Check the dated local official-page cache, refresh the complete cache only when required by that skill, read the affected cached page, and complete the compliance matrix before implementation.
 
 Editable rows must retain source path, include stack, source span, original statement and arguments, evaluated values, distance expression, parse order, and stable ID. Keep `KvMapSnapshot` exhaustive and strongly typed. Source writeback preserves original encoding and line endings where possible and blocks unrepresentable characters; there is no Save-as-UTF-8 fallback.
 

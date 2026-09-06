@@ -7,8 +7,9 @@ description: Add, diagnose, or repair komapedit 3D model/scene preview behavior.
 
 ## Locate the owning layer
 
-- Main-window wiring, Inspector refresh, menu/dock state: `src/main_window/gui_kme.cpp` and `kme.h`.
+- Main-window scene/model window lifecycle: `src/main_window/scene_preview_lifecycle.cpp`; menu and dock visibility: `ui_elements.cpp`; Inspector/gizmo draft state: `element_inspector_data.cpp` and `element_inspector_render.cpp`; shared App state: `kme.h`. `gui_kme.cpp` now retains only App construction/destruction and log wiring.
 - Scene/model rendering, camera, picking, overlays, gizmos, caches: `src/canvas3d/canvas3D.cpp` and `include/canvas3D.h`.
+- CPU-only camera range and track sampling shared with the scene: `src/canvas3d/scene_track_sampling.cpp` and `src/canvas3d/scene_track_sampling.h`.
 - Scene geometry generation and revisions: `src/maploader/maploader_geometry.cpp`, snapshot code, and `MapContext`.
 - Shared symbols: `src/main_window/map_marker_visuals.cpp` and `include/map_marker_visuals.h`.
 - Structure model import/materials/textures: `src/model_loader/model_loader.cpp` and `include/model_loader.h`.
@@ -40,7 +41,7 @@ Determine whether the defect is UI wiring, scene-cache data, geometry/placement 
 ## Validate
 
 1. Build Debug.
-2. Run `--debug-headless-scene3d-bench` for scene changes and `--debug-headless-scene-camera-transfer` for camera/station transfer.
+2. Run `canvas3d_camera_contract` for camera-range/sampling changes, `--debug-headless-scene3d-bench` for scene changes, and `--debug-headless-scene-camera-transfer` for camera/station transfer.
 3. Use the affected real route only when scale or resource layout matters; compare identical benchmark parameters and report strict budget failures honestly.
 4. Build Release and verify runtime DLLs only for packaging, dependency, or optimization-specific work.
 5. Run a short manual model/scene preview check when visual materials, picking, gizmos, labels, or startup layout changed; headless proof does not replace it.

@@ -1,11 +1,11 @@
 ---
 name: komapedit-source-backed-editing
-description: Extend or repair komapedit's typed source-backed map/list editing pipeline. Use for editable statement support, Properties/Edit, inline resource-list drafts, New Map Element insertion, deletion, Apply/Revert/Save/Reload behavior, stable edit IDs, source spans, distance moves, semantic validation, encoding-aware writeback, or edit-related C ABI changes.
+description: Extend or repair komapedit's typed source-backed map/list editing pipeline or Scenario direct-save workflow. Use for editable statement support, Properties/Edit, inline resource-list drafts, New Map Element insertion, Scenario candidate editing/creation, deletion, Apply/Revert/Save/Reload behavior, stable edit IDs, source spans, distance moves, semantic validation, encoding-aware writeback, or edit-related C ABI changes.
 ---
 
 # Komapedit Source-Backed Editing
 
-Use `komapedit-bve-format-compliance` first for every touched BVE statement or list-row shape. Its live official-source check and compliance matrix are mandatory for reading, editing, creation, serialization, and writeback; this skill supplies the separate source-lifecycle contract.
+Use `komapedit-bve-format-compliance` first for every touched BVE statement, list-row, or Scenario field shape. Its dated local official-page cache check and compliance matrix are mandatory for reading, editing, creation, serialization, and writeback; this skill supplies the separate source-lifecycle contract.
 
 ## Trace the complete lifecycle
 
@@ -15,11 +15,11 @@ Read the relevant portions of:
 - `maploader_identity.cpp` and `maploader_snapshot.cpp`;
 - `include/maploader_snapshot.h` and `include/maploader.h`;
 - `maploader_semantic.cpp` and `maploader_edits.cpp`;
-- `gui_kme.cpp`, `kme.h`, relevant tables/canvases, and `debug_headless.cpp`.
+- GUI owners in `edit_ledger.cpp`, `editable_list_drafts.cpp`, `element_inspector_data.cpp`, `element_inspector_render.cpp`, `new_element_wizard.cpp`, `app_dialogs.cpp`, `kme.h`, relevant tables/canvases, `debug_headless.cpp`, and `headless_entrypoints.cpp`.
 
-Map every requested operation through parse → source identity → typed snapshot → GUI draft → dry run → source patch → full reparse → semantic proof → memory Apply or commit → refreshed snapshot. A change is incomplete if only one stage recognizes the row.
+For map/list operations, trace every request through parse → source identity → typed snapshot → GUI draft → dry run → source patch → full reparse → semantic proof → memory Apply or commit → refreshed snapshot. A change is incomplete if only one stage recognizes the row. Use the separate direct-save path below for Scenario documents.
 
-## Preserve the editing contract
+## Preserve the map/list editing contract
 
 1. Keep Apply in memory, Save as the disk-write boundary, Revert as memory reset, and Reload as a fresh disk read after unsaved-change handling.
 2. Keep `sourceHash` as working-copy identity and `expectedSourceHash` as the disk-baseline concurrency guard across repeated Apply/Delete cycles.
@@ -27,6 +27,13 @@ Map every requested operation through parse → source identity → typed snapsh
 4. Reject writes that cannot be represented in the original encoding. Do not silently convert files to UTF-8.
 5. Fully reparse the patched source set and prove target semantics without changing non-target elements or final variable bindings unexpectedly. A valid edit may change the final current `distance`.
 6. Keep typed input views call-scoped and snapshot/report ownership within the documented DLL lifetime.
+
+## Keep Scenario documents on their separate direct-save path
+
+1. Parse, validate, and write existing Scenario documents through `scenario_route.cpp/.h`, `KvScenarioSnapshot` v2, and call-scoped `KvScenarioEditDocument` v2. Do not put Scenario drafts in the map Apply/Revert ledger.
+2. Save Scenario drafts directly through `kv_save_scenario_document()` with the source-byte hash as the external-change guard, full reparse, and transactional preservation of the original encoding, BOM, newline, comments, unknown rows, and duplicate-field behavior.
+3. Existing Route/Vehicle fields may add, delete, or reorder candidates but must retain at least one candidate. Do not create a missing Route or Vehicle field through the existing-document editor.
+4. New Scenario creation is a whole-file operation: `build_new_scenario_file_content()` emits non-empty official fields in key order, the shared creator uses exclusive UTF-8/CRLF creation, and `kv_load_scenario_snapshot()` reparses the result. The wizard accepts one unweighted Route/Vehicle path; weighted multi-candidate editing remains in the Scenario File tab.
 
 ## Merge preview and edit metadata as one contract
 
@@ -60,4 +67,4 @@ When edit mode first displays a preview snapshot and later applies a full edit r
 
 ## Validate source safety
 
-Run the affected registered contracts and the corresponding headless source-anchor/edit mode. For any commit test, prefer temporary fixtures; if a real route is explicitly used, hash every touched source before and after and restore only through a verified, user-authorized path. Confirm Apply leaves disk unchanged, Save survives reload, IDs remain stable, and non-target snapshot content is unchanged.
+Run the affected registered contracts and the corresponding headless source-anchor/edit mode. For Scenario work, use `--headless-load-scenario [--scenario-edit-roundtrip]` or `--debug-headless-scenario-create` as appropriate. For any commit test, prefer temporary fixtures; if a real route is explicitly used, hash every touched source before and after and restore only through a verified, user-authorized path. Confirm map/list Apply leaves disk unchanged, Save survives reload, IDs remain stable, and non-target snapshot content is unchanged; separately confirm that Scenario Save uses only its documented direct-write boundary.

@@ -1,6 +1,6 @@
 ---
 name: komapedit-doc-sync-validation
-description: Validate a narrow komapedit documentation synchronization after content is written. Use for documentation-only diffs, paired English/Simplified-Chinese README or developer-guide updates, syntax/status table parity, UTF-8 and line-ending checks, ignored local documentation, cross-links, or a request to change only necessary documentation.
+description: Validate a komapedit documentation synchronization after content is written. Use for documentation-only diffs, paired English/Simplified-Chinese README, developer-guide, or AI-guide updates, skill/index synchronization, syntax/status table parity, UTF-8 and line-ending checks, ignored local documentation, cross-links, or a request to change only necessary documentation.
 ---
 
 # Komapedit Documentation Sync Validation
@@ -19,6 +19,7 @@ Use `komapedit-write-docs` to choose content ownership and establish facts. Use 
 2. Compare paired English/Chinese sections for meaning, supported-status wording, row count, column count, and links.
 3. Confirm `TODO.md` contains unfinished work only and completed items are archived in `docs/TODO_done.md`.
 4. Confirm `AGENTS.md` indexes detailed skills/memories instead of duplicating their volatile details.
+5. When skills changed, confirm each `SKILL.md` has valid frontmatter, referenced paths and sibling skill names exist, and matching `agents/openai.yaml` metadata is not contradicted by the workflow text.
 
 ## Check files
 

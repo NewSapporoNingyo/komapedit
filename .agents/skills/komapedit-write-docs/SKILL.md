@@ -38,8 +38,9 @@ Do not duplicate the same detailed workflow across several owners. Link to the a
 1. Run `git diff --check` on tracked documents.
 2. Check relative links, referenced paths, headings, code fences, and command names.
 3. Compare paired README/dev/AI-guide tables, row counts, and status language when changed.
-4. Inspect ignored documents directly if the user placed them in scope; Git status cannot prove their contents.
-5. Skip compilation for pure prose changes unless the documentation changes a command that should be smoke-tested.
+4. When skills are in scope, validate every changed `SKILL.md` frontmatter plus any matching `agents/openai.yaml` description or prompt, and confirm the indexes in `AGENTS.md` and the paired AI guides still describe the same routing.
+5. Inspect ignored documents directly if the user placed them in scope; Git status cannot prove their contents.
+6. Skip compilation for pure prose changes unless the documentation changes a command that should be smoke-tested; honor an explicit no-build boundary.
 
 ## Report scope
 

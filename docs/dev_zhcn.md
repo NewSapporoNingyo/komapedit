@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract` 和 `canvas3d_camera_contract` 五项非 headless 契约；headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
+普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `multilanguage_contract`、`typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract` 和 `canvas3d_camera_contract` 六项非 headless 契约；headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
 
 运行时输出布局如下：
 
@@ -89,18 +89,18 @@ ctest --test-dir build --output-on-failure
 | 地图生命周期 | `src/maploader/maploader.cpp`：C ABI 入口、句柄、重建、分发、源码读取与边界错误处理 |
 | 地图状态 | `maploader_internal.h`：`MapContext`、解析行、源码跨度、Include 栈、编辑引用、报告与计时 |
 | 解析 | `maploader_core.cpp`、`maploader_parser.cpp`、`text_decoder.cpp/.h`：语句、值、Include、变量、编码、源码锚点、唯一性检查 |
-| 场景解析 | `scenario_route.cpp/.h`：BVE 文件类型探测、完整官方 Scenario 快照解析与 `Route` 候选解析，支撑“从场景文件打开地图” |
+| 场景解析与直接保存 | `scenario_route.cpp/.h`：BVE 文件类型探测、完整官方 Scenario 快照解析、源码安全的直接保存与 `Route` 候选解析，支撑“从场景文件打开地图” |
 | 几何 | `maploader_geometry.cpp`：自/他轨道几何、重定位、曲线、坡度、放置缓冲区与场景控制点 |
 | 身份与快照 | `maploader_identity.cpp`、`maploader_snapshot.cpp`、`maploader_semantic.cpp`：稳定 ID、强类型快照、修订、比较与指纹 |
 | 编辑 | `maploader_edits.cpp`：试运行、内存应用、直接应用、提交、重置、源码补丁、编码感知写回与距离调整；Include 语句支持受限的路径参数更新，经新旧子树掩码的全量重解析验证 |
 | 共享关联 | `include/repeater_linkage.h`、`include/own_track_transition_linkage.h`：Repeater 链与曲线/坡度过渡配对 |
 | 模型读取 | `src/model_loader/model_loader.cpp`、`include/model_loader.h`：Assimp 隔离与 model-loader API v2 |
-| 主窗口 | `gui_kme.cpp`、`kme.h` 及职责明确的 `src/main_window/` 模块：App 状态协调、Win32/D3D11 启动、通用工具/背景图、快照水合/加载、编辑/距离/Inspector/列表草稿/新建文件/新建元素工作流、对话框/UI、场景预览与无头入口 |
+| 主窗口 | `gui_kme.cpp`、`kme.h` 及职责明确的 `src/main_window/` 模块：App 状态协调、Win32/D3D11 启动、通用工具/背景图、快照水合/加载、编辑/距离/Inspector/列表草稿/新建文件/新建元素工作流、对话框/UI、场景预览与无头入口。新建文件渲染位于 `new_element_wizard.cpp`，正文/对话框辅助位于 `app_dialogs.cpp`，延迟创建位于 `element_inspector_data.cpp`，工作流契约位于 `headless_entrypoints.cpp` |
 | 运行时/设置 | `app_settings.cpp/.h`、`runtime_paths.cpp/.h`、`maploader_runtime.cpp`：INI、相对可执行文件路径、DLL 加载、精确 API 检查 |
 | 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
 | Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找、触摸、编辑与文件创建检查 |
 | 二维视图 | `src/canvas2d/canvas2D.cpp`、`profile_plots.cpp`：平面、图表、变换、标记、测量与背景图 |
-| 三维视图 | `src/canvas3d/canvas3D.cpp`、`include/canvas3D.h`：模型/场景渲染、相机、拾取、标记、叠加层与操纵器 |
+| 三维视图 | `src/canvas3d/canvas3D.cpp`、`src/canvas3d/scene_track_sampling.cpp`、`src/canvas3d/scene_track_sampling.h`、`include/canvas3D.h`：模型/场景渲染、CPU 轨道/相机采样、相机、拾取、标记、叠加层与操纵器 |
 | 表格/导航 | `src/table/datatable.cpp`、`table_navigation.cpp`：缓存表格、行内编辑、查找与行/平面/场景导航 |
 | 共享标记 | `include/map_marker_visuals.h`、`map_marker_visuals.cpp`：二维/三维标记的唯一视觉配方 |
 | 本地化 | `include/multilanguage.h`：简体中文、英语和日语界面文本 |
@@ -283,11 +283,11 @@ ctest --test-dir build --output-on-failure
 #### `src/maploader/diagnostics.h` 与 `src/maploader/diagnostics.cpp`
 
 - 头文件声明日志 callback、last-error 和 info/warn/error 门面。实现以原子读写发布全局 callback，避免日志转发与 callback 替换发生数据竞争；每个调用线程的最后错误仍保存在 `thread_local` 中。
-- `emit_log()` 在 callback 存在时转发完整行；`log_info()`、`log_warn()`、`log_error()` 添加统一级别前缀。ABI 捕获块通过 `set_last_error()` 更新可查询错误，避免混用日志与返回值。
+- `emit_log()` 在 callback 存在时转发完整行；`log_info_at()`、`log_warn_at()`、`log_error_at()` 添加统一级别前缀和源文件名。ABI 捕获块通过 `set_last_error()` 更新可查询错误，避免混用日志与返回值。
 
 #### `src/maploader/c_api.h` 与 `src/maploader/c_api.cpp`
 
-- 这是 DLL 内部的 C 字符串所有权帮助层。`copy_c_string()` 使用 `new[]` 复制带 NUL 的 UTF-8 文本，分配结果只交给公共 ABI，最终由 `kv_free_string()` 的匹配 `delete[]` 路径释放。
+- 这是 DLL 内部的 C 字符串所有权帮助层。`copy_c_string()` 使用 `std::malloc()` 复制带 NUL 的 UTF-8 文本，分配结果只交给公共 ABI，最终由 `kv_free_string()` 的匹配 `std::free()` 路径释放。
 
 ### 模型加载
 
@@ -337,8 +337,8 @@ ctest --test-dir build --output-on-failure
 - `map_snapshot_hydration.cpp` 从 typed snapshot 构建 `MapModel`、行元数据、Station edit id、限速缓存与过渡关联；`map_load_pipeline.cpp` 处理 Map/Scenario 探测、Scenario 快照/草稿基线与 Route 候选、异步地图加载、入口历史、结果应用、元数据合并、加载计时和几何再生成。
 - `edit_ledger.cpp` 处理 typed 批次/报告、账本同步、本地预览、删除、保存/撤销/关闭；`distance_resolution_workflow.cpp` 处理距离消歧请求与继续应用。
 - `element_inspector_data.cpp` 管理 Inspector 打开、定位、字段/场景编辑数据与 Apply；`element_inspector_render.cpp` 只渲染 Inspector 字段、可选插入参数和可变 Repeater/Section UI。
-- `editable_list_drafts.cpp` 管理资源列表草稿；`new_element_wizard.cpp` 拥有新元素模板、向导和结构化插入；`headless_entrypoints.cpp` 承载复用正式 App 工作流的新元素、资源列表替换/插入和新建文件向导契约。
-- `app_dialogs.cpp` 拥有文件对话框、Scenario Route 候选选择和其它模态弹窗；`ui_elements.cpp` 拥有 dockspace、菜单、工具栏、状态栏、控制台、快捷键和设置投影；`scene_preview_lifecycle.cpp` 拥有场景/模型预览的启停、重建、可见性和窗口渲染。
+- `editable_list_drafts.cpp` 管理资源列表草稿；`new_element_wizard.cpp` 拥有新元素模板/向导、结构化插入以及新建文件向导的状态与渲染；`headless_entrypoints.cpp` 承载复用正式 App 工作流的新元素、资源列表替换/插入、新建文件向导和 Scenario 创建契约。
+- `app_dialogs.cpp` 拥有文件对话框、Scenario Route 候选选择、Scenario 新文件正文构建和其它模态弹窗；`element_inspector_data.cpp` 处理新文件请求的延迟、排他创建与创建后打开；`ui_elements.cpp` 拥有 dockspace、菜单、工具栏、状态栏、控制台、快捷键和设置投影；`scene_preview_lifecycle.cpp` 拥有场景/模型预览的启停、重建、可见性和窗口渲染。
 
 
 #### `src/main_window/file_structure_diagram.cpp`
@@ -389,9 +389,10 @@ ctest --test-dir build --output-on-failure
 
 ### 三维渲染与场景构建
 
-#### `src/canvas3d/canvas3D.cpp`
+#### `src/canvas3d/scene_track_sampling.cpp`、`scene_track_sampling.h` 与 `canvas3D.cpp`
 
-- **数学、采样与场景转换**：`Vec3/DVec3/Vec4/Mat4` 及矩阵、投影、包围盒帮助函数构建相机和 world transform；轨道采样、key 规范化、Repeater 区间和 route event 采样函数把 `Canvas3DScene` 转为可渲染数据。
+- **轨道与相机采样**：`scene_track_sampling.cpp`/`scene_track_sampling.h` 提供无 D3D 依赖的普通轨道采样、相机专用起点前外推及相机里程边界；普通几何/放置/标记路径不使用起点前外推。`canvas3D.cpp` 复用该采样结果处理渲染与相机。
+- **数学与场景转换**：`Vec3/DVec3/Vec4/Mat4` 及矩阵、投影、包围盒帮助函数构建相机和 world transform；key 规范化、Repeater 区间和 route event 采样函数把 `Canvas3DScene` 转为可渲染数据。
 - **CPU/GPU 数据结构**：vertex、material、mesh part、texture cache、model、track/marker chunk、instance、highlight batch、pick target 和 placement lookup 结构明确 CPU 装载、GPU 资源、按里程 chunk 及反向定位所有权。
 - **着色器块**：内嵌 HLSL 分别实现模型/轨道的实例化顶点与材质采样、marker billboard、整数颜色 pick、highlight mask 和 outline composite。常量缓冲对应 view、fog、draw distance、pick id 和 outline 参数。
 - **`ModelLoaderClient`**：从 `bin/model_loader.dll` 动态解析 v2 API，`prepare()` 检查版本，`load()`/`free_model()` 保证跨 DLL 所有权成对。
@@ -494,7 +495,7 @@ App / MapModel
 
 保持对 BVE Map 2.0+、当前支持的旧式语法、`Include`、变量、预定义 `distance`、数学函数、注释及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关输入的支持。
 
-场景文件通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取和写回：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取八个官方字段的最后一项，返回相对路径、权重、源哈希和存在位；它不要求存在 Route 或有效 Route 目标。`kv_save_scenario_document()` 接受每个已存在 Route/Vehicle 字段的一个或多个候选并按调用方顺序写回；数量不变时逐候选最小补丁，数量变化时仅重写最后生效字段的完整候选值，要求至少一个候选，拒绝空路径、保留语法字符和非正/非有限权重，完整重解析并通过共享事务基础设施保留原编码/BOM/换行后写盘；Scenario 草稿不进入地图 Apply ledger。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载；`--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]` 通过 `scenario_preview=loaded`、候选增删标记、`scenario_edit_roundtrip=PASS`、Scenario 历史/重载入口标记及 `result=PASS` 断言这些阶段。
+场景文件通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取和写回：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取八个官方字段的最后一项，返回相对路径、权重、源哈希和存在位；它不要求存在 Route 或有效 Route 目标。`kv_save_scenario_document()` 接受每个已存在 Route/Vehicle 字段的一个或多个候选并按调用方顺序写回；数量不变时逐候选最小补丁，数量变化时仅重写最后生效字段的完整候选值，要求至少一个候选，拒绝空路径、保留语法字符和非正/非有限权重，完整重解析并通过共享事务基础设施保留原编码/BOM/换行后写盘；Scenario 草稿不进入地图 Apply ledger。新建文件向导通过 `build_new_scenario_file_content()` 按官方键序构建整份文件，以 UTF-8/CRLF 排他创建，并用 `kv_load_scenario_snapshot()` 重解析验证；向导仅接受单路径、无权重的 Route/Vehicle 初始值，带权多候选编辑仍归 Scenario 文件标签页。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载；`--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]` 通过 `scenario_preview=loaded`、候选增删标记、`scenario_edit_roundtrip=PASS`、Scenario 历史/重载入口标记及 `result=PASS` 断言这些阶段。
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 
@@ -502,7 +503,7 @@ App / MapModel
 
 `Light.Ambient`、`Light.Diffuse` 和 `Light.Direction` 是带稳定 `light.ambient`、`light.diffuse`、`light.direction` 编辑目标的源码关联可编辑行。“光照效果”标签页始终显示三组参数表单；编辑模式只会禁用“应用”“删除”“新建”，不会隐藏控件。“应用”把已改表单合并进正常的仅内存编辑账本，“删除”使用正常的延迟删除路径，“效果”向导会在用户选定的可编辑源文件中固定于里程 `0` 创建官方语句且不显示里程字段。根地图及全部 Include 合并后，每类只能保留一条基础语法正确的语句：同类重复会使所有冲突行无效，并输出一条含所有物理源码位置的英文警告。Ambient/Diffuse 的 RGB 必须在 `[0, 1]`，Direction 必须在里程 `0` 声明；无效行不会进入类型化快照。更新会保留未改参数的原始表达式，完整重解析/语义证明会保护 Apply 与 Save。`KvLightColorRow` 与 `KvLightDirectionRow` 保留文件/顺序/源码元数据，且不影响 2D/3D 渲染。
 
-AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑时，除匹配的场景/子系统技能外，还必须调用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。实现前必须重新核对受影响的在线官方页面，并完成该技能要求的合规矩阵。
+AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强类型表示、编辑、新建、序列化或写回逻辑时，除匹配的场景/子系统技能外，还必须调用 [`komapedit-bve-format-compliance`](../.agents/skills/komapedit-bve-format-compliance/SKILL.md)。实现前必须检查带日期的本地官方页面缓存，仅在该技能要求时刷新整套缓存，阅读受影响的已缓存页面，并完成合规矩阵。
 
 可编辑行必须保留源码路径、Include 栈、源码跨度、原语句和参数、求值结果、距离表达式、解析顺序与稳定 ID。`KvMapSnapshot` 必须全面且强类型。写回尽量保留原编码与行尾；无法表示的新字符会阻止写入，当前没有“另存为 UTF-8”回退。
 
@@ -574,6 +575,7 @@ build\komapedit.exe --debug-headless-include-replace <map-path> --new-path <file
 build\komapedit.exe --debug-headless-resource-list-replace <map-path> --headless-output build\resource-list-replace.txt
 build\komapedit.exe --debug-headless-resource-list-insert <map-path> --kind structure|signal --headless-output build\resource-list-insert.txt
 build\komapedit.exe --debug-headless-new-file-wizard <tests目录下尚不存在的地图路径> --headless-output build\new-file-wizard.txt
+build\komapedit.exe --debug-headless-scenario-create <tests目录下尚不存在的Scenario路径> --route <已存在的地图路径> --headless-output build\scenario-create.txt
 build\komapedit.exe --debug-headless-fresh-resource-list-workflow <地图路径> --headless-output build\fresh-resource-list.txt
 build\komapedit.exe --debug-headless-include-import-create <map-path> --headless-output build\include-import-create.txt
 build\komapedit.exe --debug-headless-new-element-edit <map-path> [--commit] --headless-output build\new-element-edit.txt
@@ -592,6 +594,8 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 `--debug-headless-resource-list-insert <map-path> --kind structure|signal` 是无界面、仅内存的资源列表新增行验证。`structure` 要求列表经 Include 加载，并验证上下新增顺序、2 字段源行、hydration、Reset 与磁盘哈希不变。`signal` 选择已有主行/glare 块，验证新增不会将其拆开，再验证一个无 glare 的 6 字段主行和一个手动新增的 6 字段 glare。`--commit` 会被拒绝。
 
 `--debug-headless-new-file-wizard <tests目录下尚不存在的地图路径>` 要求目标是 `tests/` 下尚不存在的文件。它会新建并重载仅含文件头的地图，验证排他新建与已有资源列表文件复用，依次暂存并保存五种 `*.Load` 引用，重新载入空列表，并在报告结果前删除自身创建的全部文件。
+
+`--debug-headless-scenario-create <tests目录下尚不存在的Scenario路径> --route <已存在的地图路径>` 要求新 Scenario 路径位于 `tests/` 下且 Route 地图已存在。它使 Route 相对于将要创建的 Scenario 目录，验证官方键序字节、排他重建拒绝、Scenario 快照 ABI 重解析（字段存在位、顺序、默认权重与相对 Route），再经正常文档流打开创建的 Scenario，等待异步地图加载后验证 Scenario 预览、已解析 Route 地图与未记入历史。报告前会删除本命令创建的 Scenario。
 
 `--debug-headless-fresh-resource-list-workflow <地图路径>` 在任意已有真实线路上复现空白线路的资源列表工作流。入口先备份线路文件的原始字节，将其临时改写为无距离的仅有文件头地图，并在旁边排他创建一个仅有文件头的 Structure List（`fresh-resource-workflow-structures.csv`）和一个单行 Station List（`fresh-resource-workflow-stations.csv`），随后驱动正式 GUI 路径：引用目标候选包含无距离地图、第一个 `*.Load` 暂存后仍能继续暂存第二个引用、空列表可从对应 `ResourceListSource` 取目标创建首行草稿；两份列表草稿与未保存 Load 同批应用时不会出现任何 `unsupported or unknown editId` 错误，且全程磁盘字节不变。结束后恢复原线路字节，并只删除本命令自建的两个临时列表。
 
