@@ -22,7 +22,6 @@ struct LastPos {
     double theta = 0.0;
     double radius = 0.0;
     double gradient = 0.0;
-    double distance = 0.0;
     std::string interpolate_func = "line";
     double cant = 0.0;
     double center = 0.0;
@@ -753,13 +752,10 @@ void generate_owntrack(MapContext& ctx, double unitdist,
     TrackPointer gauge_p(ctx.own_track, "gauge");
 
     LastPos lp;
-    lp.distance = list_cp.front();
     struct RadiusLast {
-        double distance = 0.0;
         double theta = 0.0;
         double radius = 0.0;
     } rlp;
-    rlp.distance = lp.distance;
 
     CantProcessor cant_gen(std::move(cant_p), ctx.own_track, lp.cant);
     ctx.owntrack_buffer.clear(11);
@@ -793,7 +789,6 @@ void generate_owntrack(MapContext& ctx, double unitdist,
                 double val = as_number(radius_p.event(origin).value);
                 lp.radius = val;
                 rlp.radius = val;
-                rlp.distance = radius_p.event(origin).distance;
                 rlp.theta = lp.theta;
             }
             radius_p.seeknext();
@@ -889,7 +884,6 @@ void generate_owntrack(MapContext& ctx, double unitdist,
         lp.theta += tau;
         lp.radius = radius;
         lp.gradient = projection.gradient;
-        lp.distance = dist;
         lp.cant = cant_tmp;
         lp.center = center_tmp;
         lp.gauge = gauge_tmp;

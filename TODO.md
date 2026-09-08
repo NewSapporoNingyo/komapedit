@@ -43,3 +43,4 @@ This file is the active project progress and contains unfinished items only. Com
 ### 问题修复
 
 - [ ] 修复特殊变量“distance”在本项目中的特性与bve中不一致的问题。
+- [ ] 编辑模式下键盘输入 Ctrl+S 会同时触发3D画布相机向后移动和编辑保存。

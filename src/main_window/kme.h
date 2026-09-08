@@ -70,6 +70,7 @@ struct HeadlessResourceListReplaceOptions;
 struct HeadlessResourceListInsertOptions;
 struct HeadlessNewFileWizardOptions;
 struct HeadlessScenarioCreateOptions;
+struct HeadlessScenarioLifecycleOptions;
 struct HeadlessFreshResourceListWorkflowOptions;
 struct HeadlessDiagnosticsPopupBenchOptions;
 #endif
@@ -1560,6 +1561,22 @@ struct ScenarioRoutePickItem {
 
 struct BackgroundHistory;
 
+// Only view preferences cross a document reset; geometry stays in MapModel.
+struct MapViewRestoreState {
+    struct OtherTrackSettings {
+        bool visible;
+        ImVec4 color;
+        double range_min;
+        double range_max;
+    };
+    std::map<std::string, OtherTrackSettings> other_tracks;
+    bool has_cp = false;
+    std::array<double, 3> cp{0.0, 0.0, 25.0};
+    View2D plan_view;
+    std::optional<double> measure_distance;
+    std::string measure_text;
+};
+
 // Pending multi-candidate Route choice for one opened BVE Scenario file.
 // The dialog shows each candidate's original relative-path text while the
 // load itself always uses the resolved absolute map path.
@@ -1573,6 +1590,7 @@ struct ScenarioRoutePickState {
     std::shared_ptr<BackgroundHistory> background_to_restore;
     bool preserve_scene_preview_models = false;
     bool preserve_scene_preview_camera = false;
+    std::optional<MapViewRestoreState> view_to_restore;
 };
 
 struct ScenarioPreviewPath {
@@ -1815,6 +1833,8 @@ public:
     void refresh_diagnostics_snapshot();
     void request_exit();
     bool on_frame_presented();
+    std::uint32_t idle_wait_timeout_ms() const;
+    void service_pending_settings_save();
 #ifndef NDEBUG
     static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                                  double unit_distance, double pan_pixels,
@@ -1861,9 +1881,16 @@ public:
         const HeadlessNewFileWizardOptions& options);
     static int run_debug_headless_scenario_create(
         const HeadlessScenarioCreateOptions& options);
+    static int run_debug_headless_scenario_lifecycle(
+        const HeadlessScenarioLifecycleOptions& options);
     static int run_debug_headless_fresh_resource_list_workflow(
         const HeadlessFreshResourceListWorkflowOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
+    static bool debug_section_inspector_lifecycle(std::ostream& out);
+    static bool debug_repeater_overview_indices();
+    ImVec2 debug_other_track_change_marker_screen_position(
+        const OtherTrackChangeMarker& marker, double model_angle,
+        ImVec2 origin, ImVec2 size) const;
 #endif
 
 private:
@@ -1923,6 +1950,8 @@ private:
     WindowVisibilitySettings last_saved_window_visibility_;
     View2DSettings last_saved_view_2d_settings_;
     View3DSettings last_saved_view_3d_settings_;
+    bool settings_save_pending_ = false;
+    std::chrono::steady_clock::time_point settings_save_retry_at_{};
     std::filesystem::path history_path_;
     std::vector<RecentMapEntry> recent_maps_;
 
@@ -2002,6 +2031,7 @@ private:
         bool preserve_scene_preview_models = false;
         bool preserve_scene_preview_camera = false;
         bool edit_metadata_only = false;
+        std::optional<MapViewRestoreState> view_to_restore;
         std::optional<BackgroundHistory> background_to_restore;
         void* handle = nullptr;
         MapModel model;
@@ -2030,6 +2060,9 @@ private:
         std::mutex result_mutex;
         std::optional<LoadResult> pending_result;
         std::optional<std::chrono::steady_clock::time_point> pending_started_at;
+#ifndef NDEBUG
+        std::atomic<bool> debug_pause_after_publish{false};
+#endif
     };
     AsyncLoadState load_state_;
 
@@ -2401,6 +2434,9 @@ private:
     static void log_callback(const char* message);
 
     void stop_loader();
+    void discard_pending_load_result();
+    void publish_load_result(LoadResult result);
+    MapViewRestoreState capture_map_view_state() const;
     void handle_loader_start_failure(const std::string& error);
     void poll_loader();
     void set_program_status(const char* key, std::string_view elapsed_seconds = {});
@@ -2416,7 +2452,8 @@ private:
     void begin_map_load(std::string path, bool preserve_settings, bool record_history = false,
                         std::optional<BackgroundHistory> background_to_restore = std::nullopt,
                         bool preserve_scene_preview_models = false,
-                        bool preserve_scene_preview_camera = false);
+                        bool preserve_scene_preview_camera = false,
+                        std::optional<MapViewRestoreState> view_to_restore = std::nullopt);
     void apply_load_result(LoadResult result);
     void begin_edit_metadata_load();
     void apply_edit_metadata_result(LoadResult result);
@@ -2682,6 +2719,7 @@ private:
     void reload_current_map_geometry();
     void render_popups();
     void render_scenario_route_pick_popup();
+    void confirm_scenario_route_selection();
     void setup_initial_dockspace(ImGuiID dockspace_id);
     WindowVisibilitySettings current_window_visibility() const;
     void apply_window_visibility_settings(const WindowVisibilitySettings& visibility);
@@ -2701,6 +2739,7 @@ private:
     bool scene_settings_preview_differs_from_dialog_baseline() const;
     void restore_scene_settings_preview();
     void save_runtime_settings_if_changed();
+    bool persist_user_settings();
     void invalidate_table_cache();
     void ensure_table_cache();
     void refresh_speed_limit_table_cache();

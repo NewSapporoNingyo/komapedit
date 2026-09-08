@@ -42,6 +42,7 @@
 #include <cstring>
 #include <map>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <iterator>
 #include <mutex>
@@ -111,6 +112,7 @@ constexpr size_t k_scene_marker_list_kind_count =
 
 #ifndef NDEBUG
 std::atomic<int> g_debug_put_between_derive_throw_countdown{0};
+std::atomic<size_t> g_debug_put_between_prepare_count{0};
 #endif
 
 bool scene_marker_list_kind_is_navigable(Canvas3DSceneMarkerListKind kind) {
@@ -898,15 +900,16 @@ bool scene_repeater_index_range(const Canvas3DRepeaterSegment& repeater,
         return false;
     }
 
+    const double index_upper = std::ldexp(1.0, std::numeric_limits<long long>::digits);
     long long first_index = 0;
     if (first_index_d > 0.0) {
-        if (first_index_d > static_cast<double>(std::numeric_limits<long long>::max())) return false;
+        if (first_index_d >= index_upper) return false;
         first_index = static_cast<long long>(first_index_d);
     }
 
     const double last_index_d = std::min(last_visible_index_d, last_before_end_index_d);
     if (last_index_d < 0.0) return false;
-    if (last_index_d > static_cast<double>(std::numeric_limits<long long>::max())) {
+    if (last_index_d >= index_upper) {
         out.first = first_index;
         out.last = std::numeric_limits<long long>::max();
         return out.last >= out.first;
@@ -1221,6 +1224,9 @@ bool update_cpu_model_bounds(CpuModelData& model) {
 }
 
 PutBetweenSourceTemplate prepare_put_between_source(const CpuModelData& source) {
+#ifndef NDEBUG
+    g_debug_put_between_prepare_count.fetch_add(1, std::memory_order_relaxed);
+#endif
     PutBetweenSourceTemplate result;
     if (!source.ok) {
         result.error = source.error;
@@ -1472,9 +1478,10 @@ std::optional<size_t> canvas3d_scene_signal_speed_index(
     if (value.empty()) return std::nullopt;
     char* end = nullptr;
     const double parsed = std::strtod(value.c_str(), &end);
+    const double index_upper = std::ldexp(1.0, std::numeric_limits<size_t>::digits);
     if (end == value.c_str() || !end || *end != '\0' ||
         !std::isfinite(parsed) || parsed < 0.0 || std::floor(parsed) != parsed ||
-        parsed > static_cast<double>(std::numeric_limits<size_t>::max())) {
+        parsed >= index_upper) {
         return std::nullopt;
     }
     return static_cast<size_t>(parsed);
@@ -5530,8 +5537,7 @@ struct Canvas3D::Impl {
                                         }
                                     } else {
                                         const SceneModelLoadRequest* regular_request = nullptr;
-                                        const PutBetweenSourceTemplate put_between_source =
-                                            prepare_put_between_source(source_cpu);
+                                        std::optional<PutBetweenSourceTemplate> put_between_source;
                                         std::vector<CpuModelData> derived_models;
                                         derived_models.reserve(source_requests.size());
                                         for (const SceneModelLoadRequest& request : source_requests) {
@@ -5539,8 +5545,12 @@ struct Canvas3D::Impl {
                                                 regular_request = &request;
                                                 continue;
                                             }
+                                            if (!put_between_source) {
+                                                put_between_source.emplace(
+                                                    prepare_put_between_source(source_cpu));
+                                            }
                                             CpuModelData derived = derive_put_between_model(
-                                                source_cpu, put_between_source, request);
+                                                source_cpu, *put_between_source, request);
                                             if (!derived.ok) {
                                                 safe_log(
                                                     "[warn]canvas3D.cpp: failed to deform "
@@ -5661,6 +5671,7 @@ struct Canvas3D::Impl {
             debug_texture_allocation_throw_countdown.store(0);
             debug_scene_index_buffer_failure_countdown.store(0);
             g_debug_put_between_derive_throw_countdown.store(0);
+            g_debug_put_between_prepare_count.store(0);
             release_scene_texture_cache();
         };
         auto pending_uploads = [&]() {
@@ -5669,6 +5680,44 @@ struct Canvas3D::Impl {
         };
 
         try {
+            const auto number_text = [](double value) {
+                char text[64]{};
+                std::snprintf(text, sizeof(text), "%.0f", value);
+                return std::string(text);
+            };
+            const double size_upper = std::ldexp(1.0, std::numeric_limits<size_t>::digits);
+            const double size_previous = std::nextafter(size_upper, 0.0);
+            const auto previous_index = canvas3d_scene_signal_speed_index(number_text(size_previous));
+            result.numeric_boundaries =
+                canvas3d_scene_signal_speed_index("0") == size_t{0} &&
+                canvas3d_scene_signal_speed_index("1") == size_t{1} &&
+                previous_index && *previous_index == static_cast<size_t>(size_previous) &&
+                !canvas3d_scene_signal_speed_index(number_text(size_upper)) &&
+                !canvas3d_scene_signal_speed_index(number_text(std::nextafter(
+                    size_upper, std::numeric_limits<double>::infinity()))) &&
+                !canvas3d_scene_signal_speed_index("-1") &&
+                !canvas3d_scene_signal_speed_index("0.5") &&
+                !canvas3d_scene_signal_speed_index("nan") &&
+                !canvas3d_scene_signal_speed_index("inf");
+            const double signed_upper = std::ldexp(1.0, std::numeric_limits<long long>::digits);
+            const double signed_previous = std::nextafter(signed_upper, 0.0);
+            Canvas3DRepeaterSegment boundary_repeater;
+            boundary_repeater.begin_distance = 0.0;
+            boundary_repeater.end_distance = signed_upper * 2.0;
+            boundary_repeater.interval = 1.0;
+            SceneRepeaterIndexRange boundary_range;
+            result.numeric_boundaries = result.numeric_boundaries &&
+                scene_repeater_index_range(boundary_repeater, signed_previous, signed_previous, boundary_range) &&
+                boundary_range.first == static_cast<long long>(signed_previous) &&
+                boundary_range.last == boundary_range.first &&
+                !scene_repeater_index_range(boundary_repeater, signed_upper, signed_upper, boundary_range) &&
+                !scene_repeater_index_range(boundary_repeater,
+                    std::nextafter(signed_upper, std::numeric_limits<double>::infinity()),
+                    boundary_repeater.end_distance, boundary_range) &&
+                scene_repeater_index_range(boundary_repeater, 0.0, signed_upper, boundary_range) &&
+                boundary_range.first == 0 &&
+                boundary_range.last == std::numeric_limits<long long>::max();
+
             reset_scene_worker_state();
             ModelLoaderClient::debug_reset_counts();
             scene_models.try_emplace("normal");
@@ -5681,6 +5730,7 @@ struct Canvas3D::Impl {
             result.normal_worker = !scene_worker_running.load() &&
                 normal_outputs.size() == 1 && normal_outputs[0].ok &&
                 normal_outputs[0].scene_key == "normal";
+            result.put_between_preparation = g_debug_put_between_prepare_count.load() == 0;
             record_release_counts();
 
             std::string texture_error;
@@ -5739,6 +5789,55 @@ struct Canvas3D::Impl {
                     failed_model->second.materials.empty() &&
                     !failed_model->second.error.empty() && !upload_error.empty();
                 debug_scene_index_buffer_failure_countdown.store(0);
+            }
+
+            Canvas3DTrackPath left_track;
+            left_track.points.push_back(Canvas3DTrackPoint{});
+            Canvas3DTrackPath right_track = left_track;
+            right_track.points.front().x = 1.0;
+            for (const bool include_regular : {false, true}) {
+                reset_scene_worker_state();
+                ModelLoaderClient::debug_reset_counts();
+                SceneModelLoadRequest between = normal;
+                between.key = "between-a";
+                between.put_between.enabled = true;
+                between.put_between.own_track = &left_track;
+                between.put_between.track1 = &left_track;
+                between.put_between.track2 = &right_track;
+                SceneModelLoadRequest second_between = between;
+                second_between.key = "between-b";
+                second_between.put_between.flag = 1;
+                std::vector<SceneModelLoadRequest> requests{between, second_between};
+                if (include_regular) requests.push_back(normal);
+                for (const SceneModelLoadRequest& request : requests) scene_models.try_emplace(request.key);
+                start_scene_model_worker(requests);
+                if (scene_worker.joinable()) scene_worker.join();
+                const std::vector<CpuModelData> outputs = pending_uploads();
+                bool outputs_match = !normal_outputs.empty() && outputs.size() == requests.size();
+                if (outputs_match) {
+                    for (const SceneModelLoadRequest& request : requests) {
+                        const auto output = std::find_if(outputs.begin(), outputs.end(),
+                            [&](const CpuModelData& candidate) { return candidate.scene_key == request.key; });
+                        if (output == outputs.end() || !output->ok ||
+                            output->vertices.size() != normal_outputs[0].vertices.size()) {
+                            outputs_match = false;
+                            break;
+                        }
+                        for (size_t i = 0; i < output->vertices.size(); ++i) {
+                            const GpuVertex& actual = output->vertices[i];
+                            const GpuVertex& expected = normal_outputs[0].vertices[i];
+                            if (std::abs(actual.px - expected.px) > 1e-6f ||
+                                std::abs(actual.py - expected.py) > 1e-6f ||
+                                std::abs(actual.pz - expected.pz) > 1e-6f) {
+                                outputs_match = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                result.put_between_preparation = result.put_between_preparation &&
+                    outputs_match && g_debug_put_between_prepare_count.load() == 1;
+                record_release_counts();
             }
 
             reset_scene_worker_state();
@@ -5845,6 +5944,79 @@ struct Canvas3D::Impl {
                 !scene_worker_running.load() && pending_upload_count() == 0 &&
                 scene_models.empty() && removal_to_load.empty();
             reset_scene_worker_state();
+
+            ModelLoaderClient::debug_reset_counts();
+            Canvas3DScene reload_fixture;
+            reload_fixture.max_distance = 1.0;
+            Canvas3DModelInstance reload_instance;
+            reload_instance.model_path = valid_model_path;
+            reload_fixture.instances.push_back(std::move(reload_instance));
+            const auto load_fixture = [&](bool preserve_models) {
+                std::string load_error;
+                if (!load_scene(reload_fixture, load_error, preserve_models, true)) {
+                    throw std::runtime_error("scene reload fixture failed: " + load_error);
+                }
+                if (scene_worker.joinable()) scene_worker.join();
+                const auto outputs = pending_uploads();
+                upload_pending_scene_models();
+                return outputs;
+            };
+            const auto fixture_model = [&]() -> const SceneModelGpu& {
+                const auto found = scene_models.find(valid_model_path);
+                if (scene_models.size() != 1 || found == scene_models.end()) {
+                    throw std::runtime_error("scene reload fixture model is missing");
+                }
+                return found->second;
+            };
+            const auto ready_with_width = [&](float width) {
+                const auto& model = fixture_model();
+                return model.state == SceneModelGpu::State::Ready &&
+                    model.vertex_buffer && model.index_buffer && model.index_count == 3 &&
+                    model.bounds_max.x == width;
+            };
+            const auto output_has_width = [&](const std::vector<CpuModelData>& outputs, float width) {
+                return outputs.size() == 1 && outputs.front().ok &&
+                    outputs.front().path == valid_model_path &&
+                    outputs.front().scene_key == valid_model_path &&
+                    outputs.front().bounds_max.x == width &&
+                    std::any_of(outputs.front().vertices.begin(), outputs.front().vertices.end(),
+                        [width](const GpuVertex& vertex) { return vertex.px == width; });
+            };
+            const auto initial_outputs = load_fixture(false);
+            const bool initial_ready = output_has_width(initial_outputs, 1.0f) &&
+                ready_with_width(1.0f) && ModelLoaderClient::debug_successful_load_count() == 1;
+            ID3D11Buffer* const initial_vertex_buffer = fixture_model().vertex_buffer;
+
+            // The caller owns this model in its temporary fixture directory.
+            // Change the source at the same path after the first real load.
+            {
+                std::ofstream model(std::filesystem::path(utf8_to_wide(valid_model_path)),
+                                    std::ios::binary | std::ios::trunc);
+                model << "xof 0303txt 0032\n"
+                         "Mesh {\n"
+                         "3;\n"
+                         "0.0;0.0;0.0;,\n"
+                         "2.0;0.0;0.0;,\n"
+                         "0.0;1.0;0.0;;\n"
+                         "1;\n"
+                         "3;0,1,2;;\n"
+                         "}\n";
+                model.close();
+                if (!model) throw std::runtime_error("could not update scene reload fixture");
+            }
+            const auto geometry_outputs = load_fixture(true);
+            result.geometry_model_load_count = ModelLoaderClient::debug_successful_load_count();
+            result.geometry_model_bounds_max_x = fixture_model().bounds_max.x;
+            result.geometry_model_reuse = initial_ready && geometry_outputs.empty() &&
+                !scene_worker_running.load() && result.geometry_model_load_count == 1 &&
+                ready_with_width(1.0f) && fixture_model().vertex_buffer == initial_vertex_buffer;
+            const auto full_outputs = load_fixture(false);
+            result.full_model_load_count = ModelLoaderClient::debug_successful_load_count();
+            result.full_model_bounds_max_x = fixture_model().bounds_max.x;
+            result.full_model_reload = initial_ready && output_has_width(full_outputs, 2.0f) &&
+                !scene_worker_running.load() && result.full_model_load_count == 2 && ready_with_width(2.0f);
+            record_release_counts();
+            clear_scene();
         } catch (const std::exception& error) {
             result.error = error.what();
             stop_scene_put_between_preview_worker();

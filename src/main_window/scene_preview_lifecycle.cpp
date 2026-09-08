@@ -507,7 +507,7 @@ void App::perform_reload_current_map_and_model_preview() {
         PendingDocumentOpen request;
         request.path = scenario_source_path_;
         request.preserve_settings = true;
-        request.preserve_scene_preview_models = true;
+        request.preserve_scene_preview_models = false;
         request.preserve_scene_preview_camera = true;
         BackgroundHistory background = current_background_history();
         if (background.has_image) request.background_to_restore = std::move(background);

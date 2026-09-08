@@ -131,6 +131,40 @@ void App::stop_loader() {
     if (load_state_.worker.joinable()) load_state_.worker.join();
 }
 
+void App::discard_pending_load_result() {
+    std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+    if (load_state_.pending_result && load_state_.pending_result->handle) {
+        kv_free(load_state_.pending_result->handle);
+    }
+    load_state_.pending_result.reset();
+}
+
+void App::publish_load_result(LoadResult result) {
+    {
+        std::lock_guard<std::mutex> lock(load_state_.result_mutex);
+        load_state_.running = false;
+        load_state_.pending_result = std::move(result);
+    }
+#ifndef NDEBUG
+    while (load_state_.debug_pause_after_publish.load()) std::this_thread::yield();
+#endif
+    wake_main_window();
+}
+
+MapViewRestoreState App::capture_map_view_state() const {
+    MapViewRestoreState state;
+    for (const auto& track : model_.other_tracks) {
+        state.other_tracks.emplace(track.key, MapViewRestoreState::OtherTrackSettings{
+            track.visible, track.color, track.range_min, track.range_max});
+    }
+    state.has_cp = has_model_ && model_.has_cp_arb;
+    std::copy(std::begin(model_.cp_arb), std::end(model_.cp_arb), state.cp.begin());
+    state.plan_view = plan_view_;
+    state.measure_distance = measure_distance_;
+    state.measure_text = measure_text_;
+    return state;
+}
+
 void App::handle_loader_start_failure(const std::string& error) {
     load_state_.running = false;
     load_state_.pending_started_at.reset();
@@ -178,13 +212,7 @@ void App::open_document(std::string path, bool record_history,
 
 void App::reset_document_for_open(bool preserve_scene_preview) {
     stop_loader();
-    std::optional<LoadResult> stale_result;
-    {
-        std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-        stale_result = std::move(load_state_.pending_result);
-        load_state_.pending_result.reset();
-    }
-    if (stale_result && stale_result->handle) kv_free(stale_result->handle);
+    discard_pending_load_result();
     if (handle_) {
         kv_free(handle_);
         handle_ = nullptr;
@@ -245,6 +273,8 @@ void App::reset_document_for_open(bool preserve_scene_preview) {
 
 void App::perform_open_document(PendingDocumentOpen request) {
     if (request.path.empty() || load_state_.running || edit_ui_operation_pending()) return;
+    std::optional<MapViewRestoreState> view_to_restore;
+    if (request.preserve_settings) view_to_restore = capture_map_view_state();
     reset_document_for_open(request.preserve_scene_preview_models ||
                             request.preserve_scene_preview_camera);
 
@@ -252,7 +282,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
         begin_map_load(std::move(request.path), request.preserve_settings, request.record_history,
                        std::move(request.background_to_restore),
                        request.preserve_scene_preview_models,
-                       request.preserve_scene_preview_camera);
+                       request.preserve_scene_preview_camera, std::move(view_to_restore));
         return;
     }
 
@@ -314,7 +344,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
         begin_map_load(item.resolved_path, request.preserve_settings, request.record_history,
                        std::move(request.background_to_restore),
                        request.preserve_scene_preview_models,
-                       request.preserve_scene_preview_camera);
+                       request.preserve_scene_preview_camera, std::move(view_to_restore));
         KME_ADD_LOG("Opened via scenario: " + request.path);
         KME_ADD_LOG("Resolved route: " + item.route_text + " -> " + item.resolved_path);
         return;
@@ -328,6 +358,7 @@ void App::perform_open_document(PendingDocumentOpen request) {
     scenario_route_pick_.record_history = request.record_history;
     scenario_route_pick_.preserve_scene_preview_models = request.preserve_scene_preview_models;
     scenario_route_pick_.preserve_scene_preview_camera = request.preserve_scene_preview_camera;
+    scenario_route_pick_.view_to_restore = std::move(view_to_restore);
     if (request.background_to_restore) {
         scenario_route_pick_.background_to_restore =
             std::make_shared<BackgroundHistory>(*request.background_to_restore);
@@ -339,14 +370,12 @@ void App::perform_open_document(PendingDocumentOpen request) {
 void App::begin_map_load(std::string path, bool preserve_settings, bool record_history,
                          std::optional<BackgroundHistory> background_to_restore,
                          bool preserve_scene_preview_models,
-                         bool preserve_scene_preview_camera) {
+                         bool preserve_scene_preview_camera,
+                         std::optional<MapViewRestoreState> view_to_restore) {
     if (path.empty() || load_state_.running || edit_ui_operation_pending()) return;
     auto load_started_at = std::chrono::steady_clock::now();
 
-    std::map<std::string, OtherTrack> old_other;
-    if (preserve_settings) {
-        for (const auto& t : model_.other_tracks) old_other[t.key] = t;
-    }
+    if (preserve_settings && !view_to_restore) view_to_restore = capture_map_view_state();
 
     stop_loader();
     {
@@ -362,16 +391,17 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
     set_program_status("status.map_loading");
     KME_ADD_LOG(std::string("Start loading file: ") + path);
 
-    bool has_cp = preserve_settings && has_model_ && model_.has_cp_arb;
-    double cp0 = has_cp ? model_.cp_arb[0] : 0.0;
-    double cp1 = has_cp ? model_.cp_arb[1] : 0.0;
-    double cp2 = has_cp ? model_.cp_arb[2] : 25.0;
+    bool has_cp = view_to_restore && view_to_restore->has_cp;
+    double cp0 = has_cp ? view_to_restore->cp[0] : 0.0;
+    double cp1 = has_cp ? view_to_restore->cp[1] : 0.0;
+    double cp2 = has_cp ? view_to_restore->cp[2] : 25.0;
     LoadModelOptions load_options;
     load_options.full_edit_registry = false;
     load_options.load_profile = "preview";
 
     try {
-        load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2, old_other, preserve_settings,
+        load_state_.worker = std::thread([this, path, has_cp, cp0, cp1, cp2,
+                               view_to_restore = std::move(view_to_restore), preserve_settings,
                                record_history, background_to_restore, load_started_at,
                                preserve_scene_preview_models,
                                preserve_scene_preview_camera, load_options]() mutable {
@@ -382,10 +412,11 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
             result.preserve_scene_preview_models = preserve_scene_preview_models;
             result.preserve_scene_preview_camera = preserve_scene_preview_camera;
             result.background_to_restore = background_to_restore;
-            if (result.ok && preserve_settings) {
+            result.view_to_restore = std::move(view_to_restore);
+            if (result.ok && result.view_to_restore) {
                 for (auto& t : result.model.other_tracks) {
-                    auto it = old_other.find(t.key);
-                    if (it != old_other.end()) {
+                    auto it = result.view_to_restore->other_tracks.find(t.key);
+                    if (it != result.view_to_restore->other_tracks.end()) {
                         t.visible = it->second.visible;
                         t.color = it->second.color;
                         t.range_min = it->second.range_min;
@@ -393,12 +424,7 @@ void App::begin_map_load(std::string path, bool preserve_settings, bool record_h
                     }
                 }
             }
-            {
-                std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-                load_state_.pending_result = std::move(result);
-            }
-            load_state_.running = false;
-            wake_main_window();
+            publish_load_result(std::move(result));
         });
     } catch (const std::exception& e) {
         handle_loader_start_failure(e.what());
@@ -429,12 +455,7 @@ void App::begin_edit_metadata_load() {
             LoadResult result = load_map_worker(path, unit_distance_, has_cp, cp0, cp1, cp2, load_options);
             result.started_at = load_started_at;
             result.edit_metadata_only = true;
-            {
-                std::lock_guard<std::mutex> lock(load_state_.result_mutex);
-                load_state_.pending_result = std::move(result);
-            }
-            load_state_.running = false;
-            wake_main_window();
+            publish_load_result(std::move(result));
         });
     } catch (const std::exception& e) {
         handle_loader_start_failure(e.what());
@@ -491,6 +512,11 @@ void App::apply_load_result(LoadResult result) {
     cp_start_ = model_.cp_arb[0];
     cp_end_ = model_.cp_arb[1];
     cp_interval_ = model_.cp_arb[2];
+    if (result.view_to_restore) {
+        plan_view_ = result.view_to_restore->plan_view;
+        measure_distance_ = result.view_to_restore->measure_distance;
+        measure_text_ = std::move(result.view_to_restore->measure_text);
+    }
     if (!result.preserve_settings) {
         plan_view_.fitted = false;
         clear_measure();

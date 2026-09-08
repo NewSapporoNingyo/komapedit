@@ -125,7 +125,7 @@ bool parse_integer_option(const std::vector<std::string>& args, size_t& index,
     if (!text) return false;
     char* end = nullptr;
     long parsed = std::strtol(text->c_str(), &end, 10);
-    if (!end || *end != '\0' || parsed < minimum || parsed > maximum) {
+    if (end == text->c_str() || *end != '\0' || parsed < minimum || parsed > maximum) {
         error = invalid_message;
         return false;
     }
@@ -142,7 +142,7 @@ bool parse_double_option(const std::vector<std::string>& args, size_t& index,
     if (!text) return false;
     char* end = nullptr;
     double parsed = std::strtod(text->c_str(), &end);
-    if (!end || *end != '\0' || !valid(parsed)) {
+    if (end == text->c_str() || *end != '\0' || !valid(parsed)) {
         error = invalid_message;
         return false;
     }
@@ -528,6 +528,39 @@ HeadlessScenarioCreateOptions parse_headless_scenario_create_options(
              std::filesystem::path(utf8_to_wide(options.route))))) {
         options.error = "--debug-headless-scenario-create requires --route pointing "
                         "to an existing map file";
+    }
+    return options;
+}
+
+HeadlessScenarioLifecycleOptions parse_headless_scenario_lifecycle_options(
+    const std::vector<std::string>& args) {
+    HeadlessScenarioLifecycleOptions options;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--debug-headless-scenario-lifecycle") {
+            options.requested = true;
+            const std::string* value = take_option_value(args, i, arg, "a scenario path", options.error);
+            if (!value) return options;
+            options.path = *value;
+        } else if (arg == "--scenario-index") {
+            if (!parse_integer_option(args, i, arg, 0, 1000000,
+                                      "--scenario-index must be between 0 and 1000000",
+                                      options.scenario_index, options.error)) return options;
+        } else if (arg == "--unit-distance") {
+            if (!parse_double_option(args, i, arg, "a number",
+                                     "--unit-distance must be a positive finite number",
+                                     options.unit_distance, options.error,
+                                     [](double value) { return value > 0.0 && std::isfinite(value); })) return options;
+        } else if (arg == "--headless-output") {
+            const std::string* value = take_option_value(args, i, arg, "a path", options.error);
+            if (!value) return options;
+            options.output_path = *value;
+        } else if (arg == "--commit") {
+            options.error = "--debug-headless-scenario-lifecycle writes only its own fixtures";
+        }
+    }
+    if (options.requested && options.path.empty() && options.error.empty()) {
+        options.error = "--debug-headless-scenario-lifecycle requires a scenario path";
     }
     return options;
 }
@@ -1535,10 +1568,7 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
              << "scenario_candidate_vehicle_add_count=" << expanded_vehicles.size() << "\n"
              << "scenario_candidate_vehicle_delete_count=" << reduced_vehicles.size() << "\n"
              << "scenario_edit_roundtrip=PASS\n"
-             << "history_entry=scenario\n"
-             << "reload_entry=scenario\n"
-             << "scenario_save_stage=direct\n"
-             << "scenario_save_stage_map_priority=verified\n";
+             << "scenario_save_stage=direct\n";
         } else {
             // Preserve the existing scalar-only roundtrip for a standalone
             // Scenario that has neither Route nor Vehicle candidates. Missing
@@ -1559,10 +1589,7 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
             kv_free_scenario_snapshot(edited_snapshot);
             if (!roundtrip_ok) return fail("scenario edit roundtrip validation failed");
             *out << "scenario_edit_roundtrip=PASS\n"
-                 << "history_entry=scenario\n"
-                 << "reload_entry=scenario\n"
-                 << "scenario_save_stage=direct\n"
-                 << "scenario_save_stage_map_priority=verified\n";
+                 << "scenario_save_stage=direct\n";
         }
     }
 
@@ -1689,6 +1716,315 @@ int run_headless_load_scenario(const HeadlessLoadScenarioOptions& options) {
     *out << "result=PASS\n";
     out->flush();
     return 0;
+}
+
+bool App::debug_section_inspector_lifecycle(std::ostream& out) {
+    struct TempFixture {
+        std::filesystem::path directory;
+        std::array<std::filesystem::path, 2> files;
+        std::array<bool, 2> created{};
+        ~TempFixture() {
+            std::error_code error;
+            for (size_t index = 0; index < files.size(); ++index) {
+                if (created[index]) std::filesystem::remove(files[index], error);
+            }
+            if (!directory.empty()) std::filesystem::remove(directory, error);
+        }
+    };
+    struct MapHandle {
+        void* value = nullptr;
+        ~MapHandle() { if (value) kv_free(value); }
+    };
+    auto require = [&](bool condition, const std::string& label) {
+        out << label << "=" << (condition ? "PASS" : "FAIL") << "\n";
+        out.flush();
+        if (!condition) throw std::runtime_error(label);
+    };
+    auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) throw std::runtime_error("cannot read Section fixture");
+        const std::string bytes(std::istreambuf_iterator<char>(input),
+                                std::istreambuf_iterator<char>{});
+        if (input.bad()) throw std::runtime_error("cannot finish reading Section fixture");
+        return bytes;
+    };
+
+    try {
+        TempFixture fixture;
+        const std::filesystem::path temp_parent = std::filesystem::temp_directory_path();
+        const std::string prefix = "komapedit-section-inspector-" +
+            std::to_string(GetCurrentProcessId()) + "-" +
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        for (int attempt = 0; attempt < 32; ++attempt) {
+            const std::filesystem::path candidate =
+                temp_parent / (prefix + "-" + std::to_string(attempt));
+            std::error_code error;
+            if (std::filesystem::create_directory(candidate, error)) {
+                fixture.directory = candidate;
+                break;
+            }
+            if (error) throw std::runtime_error(error.message());
+        }
+        require(!fixture.directory.empty(), "section_inspector_fixture_owned");
+        fixture.files[0] = fixture.directory / "begin.map";
+        fixture.files[1] = fixture.directory / "speed-limit.map";
+        const std::string baseline_bytes =
+            "BveTs Map 2.02:utf-8\r\n"
+            "0;\r\n"
+            "Section.Begin(0, 1, 1, 2); Track['fixture'].X.Interpolate(3, 0);\r\n"
+            "Section.SetSpeedLimit(0, 40, 40, 80); Track['fixture'].Y.Interpolate(0, 0);\r\n"
+            "100;\r\n"
+            "Track['fixture'].X.Interpolate(3, 0);\r\n"
+            "Track['fixture'].Y.Interpolate(0, 0);\r\n";
+
+        for (const bool begins : {true, false}) {
+            const size_t fixture_index = begins ? 0 : 1;
+            const std::filesystem::path& path = fixture.files[fixture_index];
+            {
+                std::ofstream file(path, std::ios::binary | std::ios::trunc);
+                fixture.created[fixture_index] = static_cast<bool>(file);
+                require(fixture.created[fixture_index], "section_inspector_fixture_created");
+                file.write(baseline_bytes.data(),
+                           static_cast<std::streamsize>(baseline_bytes.size()));
+                file.close();
+                require(static_cast<bool>(file), "section_inspector_fixture_written");
+            }
+            const std::string path_utf8 = wide_to_utf8(path.wstring());
+            const std::string row_kind = begins ? "section.begin" : "section.speedLimit";
+            const std::string label_prefix = row_kind + "_inspector_";
+            UserSettings settings;
+            settings.language = Language::En;
+            settings.path = fixture.directory / "settings.ini";
+            App app(nullptr, settings, 1.0f, false, false);
+            app.history_path_ = fixture.directory / "history.ini";
+            app.handle_ = kv_load_map_ex(path_utf8.c_str(), 25.0, KV_LOAD_EDIT_METADATA);
+            require(app.handle_ != nullptr, label_prefix + "fixture_loaded");
+            app.model_ = build_model_from_handle(
+                app.handle_, path_utf8, LoadModelOptions{true, "edit"});
+            app.file_path_ = path_utf8;
+            app.has_model_ = true;
+            app.edit_mode_enabled_ = true;
+            app.edit_registry_loaded_ = true;
+            app.edit_memory_matches_pending_ledger_ = true;
+            app.dmin_ = app.model_.default_min;
+            app.dmax_ = app.model_.default_max;
+            auto rows_for_kind = [&](const MapModel& model) -> const std::vector<TableRow>& {
+                return begins ? model.section_begins : model.section_speed_limits;
+            };
+            require(app.model_.section_begins.size() == 1 &&
+                        app.model_.section_speed_limits.size() == 1 &&
+                        !rows_for_kind(app.model_)[0].edit_id.empty() &&
+                        !app.model_.other_track_changes.empty(),
+                    label_prefix + "fixture_rows");
+            const std::string edit_id = rows_for_kind(app.model_)[0].edit_id;
+            const std::vector<std::string> original = begins
+                ? std::vector<std::string>{"0", "1", "1", "2"}
+                : std::vector<std::string>{"0", "40", "40", "80"};
+            const std::vector<TableRow> original_other_tracks = app.model_.other_track_changes;
+            const std::vector<std::string> untouched_values = section_row_values(
+                begins ? app.model_.section_speed_limits[0] : app.model_.section_begins[0]);
+            require(section_row_values(rows_for_kind(app.model_)[0]) == original &&
+                        app.open_element_inspector(MapElementInspectorRequest{edit_id, row_kind}),
+                    label_prefix + "opened");
+            auto value_indices = [&]() {
+                std::vector<size_t> indices;
+                for (size_t index = 0; index < app.inspector_.fields.size(); ++index) {
+                    if (is_section_values_field(app.inspector_.fields[index])) {
+                        indices.push_back(index);
+                    }
+                }
+                return indices;
+            };
+            auto swap_values = [&](size_t left, size_t right) {
+                const std::vector<size_t> indices = value_indices();
+                if (left >= indices.size() || right >= indices.size()) {
+                    throw std::runtime_error("Section fixture swap index is out of range");
+                }
+                std::swap(app.inspector_.fields[indices[left]],
+                          app.inspector_.fields[indices[right]]);
+                reindex_section_values_fields(app.inspector_);
+            };
+            auto append_value = [&](const std::string& value) {
+                app.inspector_.fields.push_back(make_section_values_field(
+                    app.inspector_, value_indices().size(), value));
+            };
+            auto apply = [&]() {
+                app.apply_inspector_changes();
+                app.process_pending_element_inspector();
+            };
+            auto expect_preview = [&](const std::vector<std::string>& expected,
+                                      bool pending, const char* stage) {
+                const MapModel typed_model = build_model_from_handle(
+                    app.handle_, path_utf8, LoadModelOptions{true, "edit"});
+                const std::vector<TableRow>& local_rows = rows_for_kind(app.model_);
+                const std::vector<TableRow>& typed_rows = rows_for_kind(typed_model);
+                const bool matches =
+                    local_rows.size() == 1 && typed_rows.size() == 1 &&
+                    local_rows[0].edit_id == edit_id &&
+                    section_row_values(local_rows[0]) == expected &&
+                    section_row_values(typed_rows[0]) == expected &&
+                    app.inspector_.open && app.has_pending_edits() == pending &&
+                    (!pending || (app.pending_edit_changes_.size() == 1 &&
+                                  app.pending_edit_changes_.count(edit_id) == 1)) &&
+                    app.distance_resolution_workflow_.phase == DistanceResolutionPhase::None &&
+                    !app.distance_resolution_workflow_.retry_requested &&
+                    read_bytes(path) == baseline_bytes;
+                if (!matches) {
+                    out << "section_inspector_status=" << app.program_status_key_
+                        << " local_rows=" << local_rows.size() << " typed_rows=" << typed_rows.size()
+                        << " open=" << app.inspector_.open << " pending=" << app.has_pending_edits()
+                        << " ledger=" << app.pending_edit_changes_.size()
+                        << " target_in_ledger=" << app.pending_edit_changes_.count(edit_id)
+                        << " phase=" << static_cast<int>(app.distance_resolution_workflow_.phase)
+                        << " retry=" << app.distance_resolution_workflow_.retry_requested
+                        << " disk_unchanged=" << (read_bytes(path) == baseline_bytes) << "\n";
+                    if (!local_rows.empty()) {
+                        out << "section_local_id=" << local_rows[0].edit_id
+                            << " expected_id=" << edit_id << " values=";
+                        for (const auto& value : section_row_values(local_rows[0])) out << value << ",";
+                        out << "\n";
+                    }
+                    if (!typed_rows.empty()) {
+                        out << "section_typed_values=";
+                        for (const auto& value : section_row_values(typed_rows[0])) out << value << ",";
+                        out << "\n";
+                    }
+                }
+                require(matches, label_prefix + stage);
+            };
+
+            std::vector<std::string> swapped = original;
+            std::swap(swapped[0], swapped[1]);
+            swap_values(0, 1);
+            apply();
+            expect_preview(swapped, true, "swap_apply");
+            swap_values(0, 1);
+            apply();
+            expect_preview(original, false, "swap_back_apply");
+            swap_values(1, 2);
+            apply();
+            expect_preview(original, false, "equal_value_swap");
+
+            swap_values(0, 1);
+            apply();
+            expect_preview(swapped, true, "before_partial_restore");
+            set_edit_field_buffer(app.inspector_.fields[value_indices()[0]], original[0]);
+            std::vector<std::string> partially_restored = swapped;
+            partially_restored[0] = original[0];
+            apply();
+            expect_preview(partially_restored, true, "partial_restore_keeps_other_change");
+            require(app.revert_all_pending_edits(), label_prefix + "partial_restore_revert");
+            expect_preview(original, false, "partial_restore_revert_restores_original");
+
+            swap_values(0, 1);
+            apply();
+            expect_preview(swapped, true, "before_revert");
+            require(app.revert_all_pending_edits(), label_prefix + "revert");
+            expect_preview(original, false, "revert_restores_original");
+
+            const std::vector<size_t> indices = value_indices();
+            require(indices.size() == original.size(), label_prefix + "delete_index");
+            app.inspector_.fields.erase(
+                app.inspector_.fields.begin() + static_cast<std::ptrdiff_t>(indices[1]));
+            reindex_section_values_fields(app.inspector_);
+            std::vector<std::string> shortened = original;
+            shortened.erase(shortened.begin() + 1);
+            apply();
+            expect_preview(shortened, true, "delete_parameter_apply");
+            append_value(original[1]);
+            swap_values(3, 2);
+            swap_values(2, 1);
+            apply();
+            expect_preview(original, false, "restore_deleted_parameter");
+
+            const std::vector<size_t> same_count_indices = value_indices();
+            app.inspector_.fields.erase(app.inspector_.fields.begin() +
+                static_cast<std::ptrdiff_t>(same_count_indices.front()));
+            reindex_section_values_fields(app.inspector_);
+            append_value(original.front());
+            std::vector<std::string> rotated(original.begin() + 1, original.end());
+            rotated.push_back(original.front());
+            apply();
+            expect_preview(rotated, true, "same_count_delete_append");
+            require(app.revert_all_pending_edits(), label_prefix + "same_count_revert");
+            expect_preview(original, false, "same_count_revert_restores_original");
+
+            const std::string new_value = begins ? "3" : "120";
+            append_value(new_value);
+            std::vector<std::string> added = original;
+            added.push_back(new_value);
+            apply();
+            expect_preview(added, true, "new_parameter_apply");
+            require(app.revert_all_pending_edits(), label_prefix + "new_parameter_revert");
+            expect_preview(original, false, "new_parameter_revert_restores_original");
+
+            append_value(new_value);
+            apply();
+            expect_preview(added, true, "before_count_restore");
+            app.inspector_.fields.erase(app.inspector_.fields.begin() +
+                static_cast<std::ptrdiff_t>(value_indices().back()));
+            reindex_section_values_fields(app.inspector_);
+            swap_values(0, 1);
+            apply();
+            expect_preview(swapped, true, "count_restore_keeps_value_change");
+            require(app.revert_all_pending_edits(), label_prefix + "count_restore_revert");
+            expect_preview(original, false, "count_restore_revert_restores_original");
+
+            swap_values(0, 1);
+            append_value(new_value);
+            std::vector<std::string> saved_values = swapped;
+            saved_values.push_back(new_value);
+            apply();
+            expect_preview(saved_values, true, "before_save");
+            require(app.save_pending_edits(true), label_prefix + "save");
+            require(!app.has_pending_edits() &&
+                        app.inspector_.section_values_original == saved_values &&
+                        read_bytes(path) != baseline_bytes,
+                    label_prefix + "save_updates_baseline");
+
+            MapHandle reopened;
+            reopened.value = kv_load_map_ex(path_utf8.c_str(), 25.0, KV_LOAD_EDIT_METADATA);
+            require(reopened.value != nullptr, label_prefix + "saved_file_reopened");
+            const MapModel disk_model = build_model_from_handle(
+                reopened.value, path_utf8, LoadModelOptions{true, "edit"});
+            const std::vector<TableRow>& saved_rows = rows_for_kind(disk_model);
+            const std::vector<TableRow>& untouched_rows =
+                begins ? disk_model.section_speed_limits : disk_model.section_begins;
+            require(saved_rows.size() == 1 && untouched_rows.size() == 1 &&
+                        section_row_values(saved_rows[0]) == saved_values &&
+                        section_row_values(untouched_rows[0]) == untouched_values,
+                    label_prefix + "saved_values_reparsed");
+
+            bool metadata_matches =
+                app.model_.other_track_changes.size() == disk_model.other_track_changes.size() &&
+                disk_model.other_track_changes.size() == original_other_tracks.size();
+            bool source_position_changed = false;
+            if (metadata_matches) {
+                for (size_t index = 0; index < original_other_tracks.size(); ++index) {
+                    const TableRow& before = original_other_tracks[index];
+                    const TableRow& local = app.model_.other_track_changes[index];
+                    const TableRow& disk = disk_model.other_track_changes[index];
+                    metadata_matches = metadata_matches && local.edit_id == before.edit_id &&
+                        table_cell(local, "method") == table_cell(disk, "method") &&
+                        table_cell(local, "distance") == table_cell(disk, "distance") &&
+                        local.source.file_path == disk.source.file_path &&
+                        local.source.line == disk.source.line &&
+                        local.source.column == disk.source.column &&
+                        local.source.raw_text_preview == disk.source.raw_text_preview;
+                    source_position_changed = source_position_changed ||
+                        before.source.line != disk.source.line ||
+                        before.source.column != disk.source.column;
+                }
+            }
+            require(metadata_matches && source_position_changed,
+                    label_prefix + "committed_other_track_source_refresh");
+        }
+        return true;
+    } catch (const std::exception& error) {
+        out << "section_inspector_lifecycle_error=" << error.what() << "\n";
+        out.flush();
+        return false;
+    }
 }
 
 int App::run_debug_headless_table_find(const std::string& output_path) {
@@ -1867,6 +2203,58 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
                   {"1", "50", "100", "500", "128", "129", "130", "cache-source.map"},
                   "legacy-fog-cache-row", 50),
               "caches_legacy_fog_change_point_row");
+        for (const size_t count : {size_t{508}, size_t{509}}) {
+            std::array<KvValue, 509> values{};
+            for (size_t i = 0; i < values.size(); ++i) {
+                values[i].kind = KV_VALUE_NUMBER;
+                values[i].number_value = static_cast<double>(i);
+            }
+            std::array<KvSectionRow, 2> section_rows{};
+            section_rows[0].values = {0, static_cast<std::uint64_t>(count)};
+            section_rows[0].file_path = {0, static_cast<std::uint64_t>(cache_source_path.size())};
+            section_rows[0].metadata.source_file_index = KV_INDEX_NONE;
+            section_rows[1] = section_rows[0];
+            section_rows[1].values.count = 2;
+            KvMapSnapshot snapshot{};
+            snapshot.version = KV_MAP_SNAPSHOT_VERSION;
+            snapshot.structure_size = sizeof(snapshot);
+            snapshot.string_data = cache_source_path.data();
+            snapshot.string_size = cache_source_path.size();
+            snapshot.values = values.data();
+            snapshot.value_count = values.size();
+            snapshot.section_begins = section_rows.data();
+            snapshot.section_begin_count = section_rows.size();
+            snapshot.section_speed_limits = section_rows.data();
+            snapshot.section_speed_limit_count = section_rows.size();
+            MapModel hydrated = hydrate_map_snapshot(snapshot, cache_source_path, 0.0);
+            app.model_.section_begins = std::move(hydrated.section_begins);
+            app.model_.section_speed_limits = std::move(hydrated.section_speed_limits);
+            app.invalidate_table_cache();
+            app.ensure_table_cache();
+            auto section_cache_matches = [&](const std::vector<CachedTableRow>& cached,
+                                             const std::vector<TableRow>& source) {
+                if (cached.size() != 2 || source.size() != 2 ||
+                    cached[0].cells.size() != 511 || cached[1].cells.size() != 511) return false;
+                const auto inspector_values = section_row_values(source[0]);
+                return cached[0].cells[2] == "0" && cached[0].cells[509] == "507" &&
+                    cached[0].cells[510] == "cache-source.map" &&
+                    cached[1].cells[3] == "1" && cached[1].cells[4].empty() &&
+                    cached[1].cells[510] == "cache-source.map" &&
+                    inspector_values.size() == count &&
+                    inspector_values.back() == std::to_string(count - 1);
+            };
+            const std::string label = "section_" + std::to_string(count) + "_column_boundary";
+            check(app.table_cache_.section_begin_value_columns == count &&
+                      app.table_cache_.section_speed_limit_value_columns == count &&
+                      section_cache_matches(app.table_cache_.section_begin_rows, app.model_.section_begins) &&
+                      section_cache_matches(app.table_cache_.section_speed_limit_rows, app.model_.section_speed_limits) &&
+                      section_rows[0].values.count == count &&
+                      values[count - 1].number_value == static_cast<double>(count - 1),
+                  label.c_str());
+            app.show_sections_window_ = true;
+            app.render_sections_window();
+        }
+        check(debug_repeater_overview_indices(), "repeater_overview_17000_quads_indexed");
         app.legacy_fog_list_scroll_row_ = 4;
         app.legacy_fog_list_highlight_row_ = 5;
         app.invalidate_table_cache();
@@ -1878,7 +2266,10 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
         exit_code = 3;
     }
 
-    ImGui::EndFrame();
+    // The earlier App must be destroyed before this helper owns g_app.
+    if (exit_code == 0 && !debug_section_inspector_lifecycle(*out)) exit_code = 2;
+
+    ImGui::Render();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
     if (exit_code == 0) *out << "result=PASS\n";
@@ -2079,6 +2470,8 @@ int run_debug_headless_scene_loader_contract(
         contract.subset_requeue && contract.removal_only_cancel &&
         contract.release_balance && contract.texture_allocation_cleanup &&
         contract.texture_cache_reuse && contract.upload_failure_cleanup &&
+        contract.numeric_boundaries && contract.put_between_preparation &&
+        contract.geometry_model_reuse && contract.full_model_reload &&
         resource_safety.image_layout &&
         resource_safety.image_decode && resource_safety.numeric_conversion;
     *out << "stage=worker-contract-complete\n"
@@ -2099,6 +2492,14 @@ int run_debug_headless_scene_loader_contract(
          << (contract.texture_cache_reuse ? "PASS" : "FAIL") << "\n"
          << "upload_failure_cleanup="
          << (contract.upload_failure_cleanup ? "PASS" : "FAIL") << "\n"
+         << "numeric_boundaries=" << (contract.numeric_boundaries ? "PASS" : "FAIL") << "\n"
+         << "put_between_preparation=" << (contract.put_between_preparation ? "PASS" : "FAIL") << "\n"
+         << "geometry_model_reuse=" << (contract.geometry_model_reuse ? "PASS" : "FAIL")
+         << " loads=" << contract.geometry_model_load_count
+         << " bounds_max_x=" << contract.geometry_model_bounds_max_x << "\n"
+         << "full_model_reload=" << (contract.full_model_reload ? "PASS" : "FAIL")
+         << " loads=" << contract.full_model_load_count
+         << " bounds_max_x=" << contract.full_model_bounds_max_x << "\n"
          << "image_layout=" << (resource_safety.image_layout ? "PASS" : "FAIL") << "\n"
          << "image_decode=" << (resource_safety.image_decode ? "PASS" : "FAIL") << "\n"
          << "numeric_conversion="
@@ -2131,6 +2532,7 @@ int run_debug_headless_settings_persistence(
         *out << label << "=" << (condition ? "PASS" : "FAIL") << "\n";
         if (!condition) exit_code = 2;
     };
+    check(debug_settings_write_failure_contract(), "settings_write_and_flush_failures");
     auto color_equal = [](const ImVec4& lhs, const ImVec4& rhs) {
         return std::abs(lhs.x - rhs.x) < 0.0001f &&
             std::abs(lhs.y - rhs.y) < 0.0001f &&
@@ -3029,6 +3431,22 @@ int App::run_debug_headless_other_track_edit(
                 app.model_.other_tracks[marker->track_index].visible &&
                 marker->d >= app.model_.other_tracks[marker->track_index].range_min &&
                 marker->d <= app.model_.other_tracks[marker->track_index].range_max;
+            if (marker_2d_ok) {
+                constexpr double quarter_turn = 1.57079632679489661923;
+                app.plan_view_.cx = 3.0;
+                app.plan_view_.cy = 5.0;
+                app.plan_view_.scale = 2.0;
+                app.plan_view_.rotation = quarter_turn;
+                const ImVec2 actual = app.debug_other_track_change_marker_screen_position(
+                    *marker, -quarter_turn, ImVec2(7.0f, 11.0f), ImVec2(100.0f, 80.0f));
+                const ImVec2 expected(
+                    57.0f + static_cast<float>(2.0 * (marker->x + 5.0)),
+                    51.0f + static_cast<float>(2.0 * (marker->y - 3.0)));
+                const float tolerance = 4.0f * std::numeric_limits<float>::epsilon() *
+                    std::max({1.0f, std::abs(expected.x), std::abs(expected.y)});
+                marker_2d_ok = std::abs(actual.x - expected.x) <= tolerance &&
+                    std::abs(actual.y - expected.y) <= tolerance;
+            }
             const std::string method = table_cell(*applied_row, "method");
             const std::string method_suffix =
                 method.compare(0, 6, "Track.") == 0 ? method.substr(6) : method;
@@ -3236,7 +3654,10 @@ int App::run_debug_headless_own_track_edit(
     const auto curve_update_it = std::find_if(
         load.model.curve_rows.begin(), load.model.curve_rows.end(),
         [&](const TableRow& row) {
-            return editable_value_row(row, "curve.begintransition", "radius");
+            const std::string method = ascii_lower(table_cell(row, "method"));
+            return (method == "curve.begin" || method == "curve.begincircular" ||
+                    method == "curve.change" || method == "legacy.curve") &&
+                editable_value_row(row, "curve.begintransition", "radius");
         });
     const auto gradient_update_it = std::find_if(
         load.model.gradient_rows.begin(), load.model.gradient_rows.end(),
@@ -3250,6 +3671,11 @@ int App::run_debug_headless_own_track_edit(
 
     *out << "curve_row_count=" << load.model.curve_rows.size() << "\n"
          << "gradient_row_count=" << load.model.gradient_rows.size() << "\n";
+    if (curve_update) {
+        *out << "curve_update_method=" << table_cell(*curve_update, "method") << "\n"
+             << "curve_update_source=" << curve_update->source.file_path << "\n"
+             << "curve_update_distance=" << table_cell(*curve_update, "distance") << "\n";
+    }
     apply_update_case("curve_update", "curve", curve_update, "radius", 1.0);
     apply_update_case("gradient_update", "gradient", gradient_update, "gradient", 0.001);
 
@@ -4465,6 +4891,7 @@ struct FixtureFacts {
     bool terminal_unique_target_reused = false;
     bool repeated_include_partial_blocked = false;
     bool repeated_include_all_targets_coalesced = false;
+    std::string repeated_include_details;
     bool unordered_requires_resolution_without_patch = false;
     bool variable_environment_change_blocked = false;
     bool derived_station_collision_blocked = false;
@@ -4666,6 +5093,18 @@ FixtureFacts run_fixture_checks(double unit_distance) {
             EditReport complete = typed_edit_headless::dry_run(
                 handle.value, build_changes(edits));
             ReportFacts complete_summary = report_facts(complete);
+            std::ostringstream details;
+            details << "ok=" << complete_summary.ok
+                    << " full=" << complete_summary.full_reparse_ok
+                    << " targets=" << complete_summary.target_distance_match_count
+                    << " non_target=" << complete_summary.non_target_changed_count
+                    << " groups=" << complete_summary.distance_group_count
+                    << " created=" << complete_summary.created_distance_block_count
+                    << " reused=" << complete_summary.reused_distance_block_count
+                    << " wrapper=" << preview_has_local_wrapper(complete, edits);
+            for (const auto& error : complete.blocking_errors) details << " error=" << error;
+            for (const auto& request : complete.resolution_requests) details << " reason=" << request.reason;
+            facts.repeated_include_details = details.str();
             facts.repeated_include_all_targets_coalesced =
                 complete_summary.ok && complete_summary.full_reparse_ok &&
                 complete_summary.target_distance_match_count == 2 &&
@@ -5093,6 +5532,7 @@ void write_batch_result(std::ostream& out, const BatchRunFacts& facts) {
         << boolean(facts.fixtures.repeated_include_partial_blocked) << "\n"
         << "fixture.repeated_include_all_targets_coalesced="
         << boolean(facts.fixtures.repeated_include_all_targets_coalesced) << "\n"
+        << "fixture.repeated_include_details=" << facts.fixtures.repeated_include_details << "\n"
         << "fixture.increasing_target_match_count="
         << facts.fixtures.increasing_target_match_count << "\n"
         << "fixture.unordered_requires_resolution_without_patch="
@@ -5571,7 +6011,7 @@ int run_debug_headless_include_replace(const HeadlessIncludeReplaceOptions& opti
         // include arguments resolve against the entry map directory.
         std::filesystem::path expected_absolute;
         std::error_code ec;
-        std::filesystem::path requested(options.new_path);
+        std::filesystem::path requested(utf8_to_wide(options.new_path));
         if (requested.is_absolute()) {
             expected_absolute = requested.lexically_normal();
         } else {
@@ -10330,7 +10770,7 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
             std::abs(app.repeater_marker_cache_.front().segment.first_point.x - 10.0) < 1e-9 &&
             std::abs(app.repeater_marker_cache_.front().segment.last_point.x - 20.0) < 1e-9;
 
-    workflow_ok = repeated_load_hash_ok && station_jump_ok && measure_ok && csv_export_ok &&
+    workflow_ok = workflow_ok && repeated_load_hash_ok && station_jump_ok && measure_ok && csv_export_ok &&
         repeater_alias_fallback_ok;
     *out << "headless_ui_workflow repeated_load_hash="
          << (repeated_load_hash_ok ? "PASS" : "FAIL")
@@ -10417,6 +10857,16 @@ int App::run_debug_headless_diagnostics_popup_benchmark(
         App app(nullptr, settings, 1.0f, false, false);
         *out << "stage=app-ready\n";
         out->flush();
+        const int errors_before = app.error_count_.load(std::memory_order_relaxed);
+        const int warnings_before = app.warn_count_.load(std::memory_order_relaxed);
+        app.add_forwarded_log("[INFO]forwarded informational diagnostic");
+        app.add_forwarded_log("[WARN]forwarded warning diagnostic");
+        app.add_forwarded_log("[ERROR]forwarded error diagnostic");
+        const bool forwarded_severity_ok =
+            app.error_count_.load(std::memory_order_relaxed) == errors_before + 1 &&
+            app.warn_count_.load(std::memory_order_relaxed) == warnings_before + 1;
+        *out << "forwarded_log_severity=" << (forwarded_severity_ok ? "PASS" : "FAIL") << "\n";
+        if (!forwarded_severity_ok) throw std::runtime_error("forwarded log severity was lost");
         {
             std::lock_guard<std::mutex> lock(app.log_mutex_);
             app.logs_.clear();

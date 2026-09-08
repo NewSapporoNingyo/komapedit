@@ -337,6 +337,7 @@ std::pair<size_t, size_t> safe_statement_removal_range(
     const std::pair<size_t, size_t>& statement_range) {
     const size_t line_start = text_line_start_at(patch.text, statement_range.first);
     const TextLineSpan source_line = text_line_span(patch.text, line_start);
+    if (statement_range.second > source_line.content_end) return statement_range;
     size_t line_end = source_line.content_end;
     auto whitespace_only = [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
@@ -1991,17 +1992,23 @@ bool line_tail_starts_comment(const std::string& text, size_t offset, size_t end
 ReferenceInsertionPlan plan_reference_insertion(const MapContext& ctx,
                                                 size_t source_file_index,
                                                 const SourcePatch& patch,
-                                                const std::string& statement_text) {
+                                                const std::string& statement_text,
+                                                bool require_zero_distance = false) {
     std::map<std::pair<size_t, size_t>, size_t> physical_statements;
+    std::set<std::pair<size_t, size_t>> nonzero_distance_anchors;
     for (size_t i = 0; i < ctx.parsed_statements.size(); ++i) {
         const ParsedStatement& statement = ctx.parsed_statements[i];
         if (statement.source.source_file_index != source_file_index ||
-            (statement.statement_kind != "Include" &&
+            (!require_zero_distance && statement.statement_kind != "Include" &&
              !resource_list_edit_spec_for_statement(statement.statement_kind) &&
              !is_distance_statement(statement))) {
             continue;
         }
         const auto key = std::make_pair(statement.source.byte_start, statement.source.byte_end);
+        if (require_zero_distance && is_distance_statement(statement) &&
+            statement.distance_value != 0.0) {
+            nonzero_distance_anchors.insert(key);
+        }
         auto found = physical_statements.find(key);
         if (found == physical_statements.end() ||
             statement.global_order < ctx.parsed_statements[found->second].global_order) {
@@ -2043,11 +2050,39 @@ ReferenceInsertionPlan plan_reference_insertion(const MapContext& ctx,
         plan.identity_end = plan.identity_begin + statement_text.size();
     };
 
-    if (last_zero_distance_reference != k_no_source_ref) {
-        const ParsedStatement& anchor = ctx.parsed_statements[last_zero_distance_reference];
+    size_t after_anchor = last_zero_distance_reference;
+    if (require_zero_distance) {
+        if (ctx.source_files[source_file_index].source_key ==
+            normalized_source_key(ctx.entry_file_path)) {
+            // The entry file starts at distance zero before any Include runs.
+            if (statements.empty()) {
+                finish(patch.text.size(), {}, k_no_source_ref);
+            } else {
+                const size_t first = statements.front();
+                const ParsedStatement& anchor = ctx.parsed_statements[first];
+                const auto range = source_range_in_text(patch, anchor.source);
+                const std::string indent = line_indent_of(patch, anchor);
+                finish(range.first - indent.size(), indent, first);
+            }
+            return plan;
+        }
+        for (size_t index : statements) {
+            const ParsedStatement& anchor = ctx.parsed_statements[index];
+            const auto key = std::make_pair(anchor.source.byte_start, anchor.source.byte_end);
+            if (is_distance_statement(anchor) && anchor.distance_value == 0.0 &&
+                nonzero_distance_anchors.find(key) == nonzero_distance_anchors.end()) {
+                // Every invocation must evaluate this physical anchor to zero.
+                after_anchor = index;
+                break;
+            }
+        }
+    }
+
+    if (after_anchor != k_no_source_ref) {
+        const ParsedStatement& anchor = ctx.parsed_statements[after_anchor];
         const auto range = source_range_in_text(patch, anchor.source);
         const size_t line_start = offset_from_line_column(
-            patch.text, patch.line_starts, anchor.source.line, 1);
+            patch.text, patch.line_starts, anchor.source.line_end, 1);
         if (line_start == std::string::npos) {
             throw std::runtime_error("failed to locate reference insertion line");
         }
@@ -2061,7 +2096,7 @@ ReferenceInsertionPlan plan_reference_insertion(const MapContext& ctx,
             tail == line.content_end ||
             line_tail_starts_comment(patch.text, tail, line.content_end);
         finish(keep_tail_with_anchor ? line.next_begin : range.second,
-               line_indent_of(patch, anchor), last_zero_distance_reference);
+               line_indent_of(patch, anchor), after_anchor);
         return plan;
     }
 
@@ -2072,7 +2107,11 @@ ReferenceInsertionPlan plan_reference_insertion(const MapContext& ctx,
         if (line_start == std::string::npos) {
             throw std::runtime_error("failed to locate distance insertion line");
         }
-        finish(line_start, line_indent_of(patch, anchor), first_distance);
+        const std::string indent = line_indent_of(patch, anchor);
+        const size_t offset = require_zero_distance
+            ? source_range_in_text(patch, anchor.source).first - indent.size()
+            : line_start;
+        finish(offset, indent, first_distance);
         return plan;
     }
 
@@ -3956,11 +3995,8 @@ void collect_subtree_element_ids(
     exclude_rows(baseline.beacons, "beacon.put");
     exclude_rows(baseline.pretrains, "preTrain.pass");
     {
-        size_t sound_index = 0;
-        size_t sound_3d_index = 0;
         for (const SoundListEntry& row : baseline.sound_list) {
             const char* kind = row.is_3d ? "sound3D.list" : "sound.list";
-            if (row.is_3d) ++sound_3d_index; else ++sound_index;
             const EditSourceRef& ref = row.edit_ref;
             if (ref.valid() && ref.statement_index < removed_statements.size() &&
                 removed_statements[ref.statement_index]) {
@@ -6434,7 +6470,6 @@ void validate_edit_report(MapContext& baseline,
                     include_subtree_additions.end() &&
                 include_subtree_additions.find(it->second) !=
                     include_subtree_additions.end()) {
-                expected_links.pairs.insert(*it);
                 it = candidate_links.pairs.erase(it);
             } else {
                 ++it;
@@ -7257,7 +7292,7 @@ MapEditReport build_edit_report(MapContext& ctx,
                         validate_light_insert_distance(change);
                         const std::string inserted_statement = build_insert_statement(change);
                         const ReferenceInsertionPlan insertion = plan_reference_insertion(
-                            ctx, target_file_index, target_patch, inserted_statement);
+                            ctx, target_file_index, target_patch, inserted_statement, true);
                         PreparedEdit edit;
                         edit.change = &change;
                         edit.input_ordinal = input_ordinal;
@@ -7895,7 +7930,7 @@ MapEditReport build_edit_report(MapContext& ctx,
             if (inserted.second) {
                 InsertionStatement statement;
                 statement.source_offset = edit.source_range.first;
-                statement.input_ordinal = edit.input_ordinal;
+                statement.input_ordinal = edit.operation == "insert" ? edit.input_ordinal : 0;
                 const std::string statement_indent =
                     edit.operation == "insert" ? part_statement_indent : edit.source_indent;
                 statement.text = statement_indent + edit.replacement_statement;

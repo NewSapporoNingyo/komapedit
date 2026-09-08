@@ -38,6 +38,19 @@ std::string first_line_of(std::string text) {
     return text.substr(0, line.content_end);
 }
 
+std::string first_utf16_line(std::string bytes, bool little_endian) {
+    // The probe may stop inside a later surrogate pair. Decode only the header.
+    for (size_t i = 2; i + 1 < bytes.size(); i += 2) {
+        const auto low = static_cast<unsigned char>(bytes[i + (little_endian ? 0 : 1)]);
+        const auto high = static_cast<unsigned char>(bytes[i + (little_endian ? 1 : 0)]);
+        if (high == 0 && (low == '\r' || low == '\n')) {
+            bytes.resize(i);
+            break;
+        }
+    }
+    return decode_utf16(bytes, little_endian);
+}
+
 bool ascii_starts_with(const std::string& lower_text, const char* prefix) {
     return lower_text.rfind(prefix, 0) == 0;
 }
@@ -53,11 +66,11 @@ BveFileKind probe_bve_file_kind(const std::filesystem::path& path) {
         if (bytes.size() >= 2 &&
             static_cast<unsigned char>(bytes[0]) == 0xff &&
             static_cast<unsigned char>(bytes[1]) == 0xfe) {
-            first_line = first_line_of(decode_utf16(bytes, true));
+            first_line = first_utf16_line(std::move(bytes), true);
         } else if (bytes.size() >= 2 &&
                    static_cast<unsigned char>(bytes[0]) == 0xfe &&
                    static_cast<unsigned char>(bytes[1]) == 0xff) {
-            first_line = first_line_of(decode_utf16(bytes, false));
+            first_line = first_utf16_line(std::move(bytes), false);
         } else if (has_utf8_bom(bytes)) {
             first_line = first_line_of(bytes.substr(3));
         } else {

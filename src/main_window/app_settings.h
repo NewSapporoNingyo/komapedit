@@ -24,6 +24,9 @@ std::filesystem::path default_imgui_ini_path();
 UserSettings load_user_settings();
 UserSettings load_user_settings(const std::filesystem::path& path);
 bool save_user_settings(const UserSettings& settings);
+#ifndef NDEBUG
+bool debug_settings_write_failure_contract();
+#endif
 bool load_imgui_layout(const std::filesystem::path& path);
 bool save_imgui_layout(const std::filesystem::path& path);
 void save_imgui_layout_if_requested(const std::filesystem::path& path);

@@ -40,7 +40,7 @@ bool expect_no_value_fragment(const Map& translations, const char* fragment) {
 }
 
 bool same_keys(const Translation& translation) {
-    constexpr std::size_t expected_key_count = 577;
+    constexpr std::size_t expected_key_count = 578;
     if (translation.en.size() != expected_key_count ||
         translation.zh.size() != expected_key_count ||
         translation.ja.size() != expected_key_count) {
@@ -84,6 +84,12 @@ bool same_keys(const Translation& translation) {
 int main() {
     const Translation translation;
     bool ok = same_keys(translation);
+    ok = expect_value(translation.en, "table.section_values_truncated",
+        "Only the first {shown} parameters are shown (largest row: {total}). All parameters remain available in Properties/Edit.") && ok;
+    ok = expect_value(translation.zh, "table.section_values_truncated",
+        "仅显示前 {shown} 个参数（最长行有 {total} 个）。完整参数可在属性/编辑中查看。") && ok;
+    ok = expect_value(translation.ja, "table.section_values_truncated",
+        "先頭の {shown} 個のパラメータのみ表示しています（最長行: {total} 個）。すべてのパラメータはプロパティ/編集で確認できます。") && ok;
 
     ok = expect_value(translation.en, "column.field", "Field") && ok;
     ok = expect_value(translation.zh, "column.field", "字段") && ok;

@@ -128,6 +128,7 @@ App::App(ID3D11Device* device, UserSettings settings, float dpi_scale, bool view
 
 App::~App() {
     stop_loader();
+    discard_pending_load_result();
     if (handle_) kv_free(handle_);
     bg_image_.release();
     g_app = nullptr;

@@ -292,7 +292,7 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 - **轨道变位、粘着特性变化点、限速点**：显示相应变化位置，并可定位到 2D/3D。限速 Begin 和 End 可以独立存在；End 只编辑里程。
 - **信号现示**：显示信号现示定义和引用的布景 key，可反查布景模型。
 - **地图信号**：显示 `Signal.Put` 的位置和参数。“显示”勾选框控制该信号在平面图中的标记。
-- **闭塞**：分别显示 `Section.Begin`/`BeginNew` 和 `Section.SetSpeedLimit`/`Signal.SpeedLimit`，保留可变数量参数和显式 `null`。
+- **闭塞**：分别显示 `Section.Begin`/`BeginNew` 和 `Section.SetSpeedLimit`/`Signal.SpeedLimit`，保留可变数量参数和显式 `null`。 表格每行最多显示 508 个参数，超长行会显示提示；属性/编辑仍保留完整参数。
 - **应答器**：显示并定位 `Beacon.Put`。
 - **变量**：按不区分大小写的变量名分组显示全部赋值。悬停可查看原表达式；该表只读。
 

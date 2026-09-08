@@ -297,7 +297,7 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 - **Track Irregularity, Adhesion Change Point, and Speed Limit Point lists**: Show the corresponding positions and can locate them in 2D or 3D. Speed-limit Begin and End may exist independently; End edits only its mileage.
 - **Signal Aspects List**: Shows signal aspect definitions and their structure keys. You can jump from a structure key to its model.
 - **Ground Signal List**: Shows `Signal.Put` positions and parameters. Each row's `Show` checkbox controls its Plan marker.
-- **Section List**: Shows `Section.Begin`/`BeginNew` separately from `Section.SetSpeedLimit`/`Signal.SpeedLimit`, including variable-length parameters and explicit `null` values.
+- **Section List**: Shows `Section.Begin`/`BeginNew` separately from `Section.SetSpeedLimit`/`Signal.SpeedLimit`, including variable-length parameters and explicit `null` values. The table displays up to 508 parameters per row; longer rows show a notice, and Properties/Edit retains all parameters.
 - **Beacon List**: Shows and locates `Beacon.Put` statements.
 - **Variable List**: Groups all assignments by case-insensitive variable name. Hover to see the original expression. This table is read-only.
 

@@ -387,6 +387,7 @@ bool App::stage_new_file_reference(NewFileKind kind,
 }
 
 void App::request_new_file_create(NewFileCreateRequest request) {
+    if (request.kind == NewFileKind::Scenario) request.target_file_path.clear();
     pending_new_file_create_request_ = std::move(request);
 }
 
@@ -923,10 +924,9 @@ void set_inspector_row_field_value(TableRow& row,
                 }
                 const size_t count = static_cast<size_t>(parsed_count);
                 for (size_t index = 0; index < count; ++index) {
-                    const std::string key = "_values." + std::to_string(index);
+                    const std::string key = "value" + std::to_string(index);
                     const auto item = row.cells.find(key);
                     if (item == row.cells.end() || item->second.empty()) return;
-                    row.cells["value" + std::to_string(index)] = item->second;
                 }
                 for (size_t stale_index = count;; ++stale_index) {
                     const auto stale = row.cells.find(
@@ -936,7 +936,7 @@ void set_inspector_row_field_value(TableRow& row,
                 }
                 row.cells["valueCount"] = std::to_string(count);
             } else {
-                row.cells["_" + field_key] = value;
+                row.cells["value" + field_key.substr(k_values_prefix.size())] = value;
             }
             return;
         }
@@ -1160,6 +1160,8 @@ void reindex_section_values_fields(MapElementInspectorState& inspector) {
         field.backend_key = field.key;
         field.label = std::string(section_values_label_prefix(inspector.row_kind)) +
             std::to_string(index);
+        field.original_value = index < inspector.section_values_original.size()
+            ? inspector.section_values_original[index] : std::string{};
         ++index;
     }
 }

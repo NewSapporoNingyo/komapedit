@@ -505,6 +505,18 @@ int main(int, char**) {
         return App::run_debug_headless_new_file_wizard(new_file_wizard);
     }
 
+    HeadlessScenarioLifecycleOptions scenario_lifecycle =
+        parse_headless_scenario_lifecycle_options(args);
+    if (scenario_lifecycle.requested) {
+        if (!scenario_lifecycle.error.empty()) {
+            std::cerr << scenario_lifecycle.error << "\n"
+                      << "usage: komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> "
+                         "[--scenario-index N] [--unit-distance M] [--headless-output FILE]\n";
+            return 2;
+        }
+        return App::run_debug_headless_scenario_lifecycle(scenario_lifecycle);
+    }
+
     HeadlessScenarioCreateOptions scenario_create =
         parse_headless_scenario_create_options(args);
     if (scenario_create.requested) {
@@ -711,79 +723,85 @@ int main(int, char**) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-    App app(g_pd3dDevice, std::move(settings), scale, viewports_enabled, has_saved_layout);
+    {
+        App app(g_pd3dDevice, std::move(settings), scale, viewports_enabled, has_saved_layout);
 
-    bool done = false;
-    bool needs_render = true;
-    int warmup_frames = 2;
-    while (!done) {
-        bool received_message = false;
-        MSG msg;
-        while (PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
-            received_message = true;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-            if (msg.message == WM_QUIT) done = true;
-        }
-        if (done) break;
-
-        if (!needs_render && !received_message) {
-            MsgWaitForMultipleObjectsEx(0, nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-            continue;
-        }
-        needs_render = false;
-
-        if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
-            continue;
-        }
-        g_SwapChainOccluded = false;
-
-        if (g_ResizeWidth != 0 && g_ResizeHeight != 0) {
-            CleanupRenderTarget();
-            const HRESULT resize_hr = g_pSwapChain->ResizeBuffers(
-                0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
-            if (FAILED(resize_hr)) {
-                std::cerr << "ResizeBuffers: failed to resize the main swap chain\n";
-            } else {
-                g_ResizeWidth = g_ResizeHeight = 0;
+        bool done = false;
+        bool needs_render = true;
+        int warmup_frames = 2;
+        while (!done) {
+            bool received_message = false;
+            MSG msg;
+            while (PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
+                received_message = true;
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+                if (msg.message == WM_QUIT) done = true;
             }
+            if (done) break;
+
+            app.service_pending_settings_save();
+
+            if (!needs_render && !received_message) {
+                const DWORD wait_result = MsgWaitForMultipleObjectsEx(
+                    0, nullptr, app.idle_wait_timeout_ms(), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+                if (wait_result == WAIT_TIMEOUT) needs_render = true;
+                continue;
+            }
+            needs_render = false;
+
+            if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
+                continue;
+            }
+            g_SwapChainOccluded = false;
+
+            if (g_ResizeWidth != 0 && g_ResizeHeight != 0) {
+                CleanupRenderTarget();
+                const HRESULT resize_hr = g_pSwapChain->ResizeBuffers(
+                    0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
+                if (FAILED(resize_hr)) {
+                    std::cerr << "ResizeBuffers: failed to resize the main swap chain\n";
+                } else {
+                    g_ResizeWidth = g_ResizeHeight = 0;
+                }
+            }
+            if (!g_mainRenderTargetView && !CreateRenderTarget()) {
+                continue;
+            }
+
+            ImGui_ImplDX11_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            ImGui::NewFrame();
+            app.render();
+
+            ImGui::Render();
+            const float clear_color[4] = {0.06f, 0.07f, 0.08f, 1.0f};
+            g_pd3dDeviceContext->OMSetRenderTargets(
+                1, &g_mainRenderTargetView, nullptr);
+            g_pd3dDeviceContext->ClearRenderTargetView(
+                g_mainRenderTargetView, clear_color);
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+            if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+                ImGui::UpdatePlatformWindows();
+                ImGui::RenderPlatformWindowsDefault();
+            }
+
+            HRESULT hr = g_pSwapChain->Present(1, 0);
+            g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
+            if (!g_SwapChainOccluded && app.on_frame_presented()) needs_render = true;
+            if (warmup_frames > 0) {
+                --warmup_frames;
+                needs_render = true;
+            }
+            save_imgui_layout_if_requested(layout_path);
+            if (GImGui && GImGui->InputEventsQueue.Size > 0) needs_render = true;
+            if (touch_input::wants_continuous_render()) needs_render = true;
+            if (imgui_layout_save_pending()) needs_render = true;
         }
-        if (!g_mainRenderTargetView && !CreateRenderTarget()) {
-            continue;
-        }
 
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-        app.render();
-
-        ImGui::Render();
-        const float clear_color[4] = {0.06f, 0.07f, 0.08f, 1.0f};
-        g_pd3dDeviceContext->OMSetRenderTargets(
-            1, &g_mainRenderTargetView, nullptr);
-        g_pd3dDeviceContext->ClearRenderTargetView(
-            g_mainRenderTargetView, clear_color);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-        }
-
-        HRESULT hr = g_pSwapChain->Present(1, 0);
-        g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
-        if (!g_SwapChainOccluded && app.on_frame_presented()) needs_render = true;
-        if (warmup_frames > 0) {
-            --warmup_frames;
-            needs_render = true;
-        }
-        save_imgui_layout_if_requested(layout_path);
-        if (GImGui && GImGui->InputEventsQueue.Size > 0) needs_render = true;
-        if (touch_input::wants_continuous_render()) needs_render = true;
-        if (imgui_layout_save_pending()) needs_render = true;
-    }
-
-    save_imgui_layout(layout_path);
+        save_imgui_layout(layout_path);
+    } // Join application workers before tearing down their Win32/D3D environment.
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

@@ -495,7 +495,7 @@ App / MapModel
 
 保持对 BVE Map 2.0+、当前支持的旧式语法、`Include`、变量、预定义 `distance`、数学函数、注释及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关输入的支持。
 
-场景文件通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取和写回：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取八个官方字段的最后一项，返回相对路径、权重、源哈希和存在位；它不要求存在 Route 或有效 Route 目标。`kv_save_scenario_document()` 接受每个已存在 Route/Vehicle 字段的一个或多个候选并按调用方顺序写回；数量不变时逐候选最小补丁，数量变化时仅重写最后生效字段的完整候选值，要求至少一个候选，拒绝空路径、保留语法字符和非正/非有限权重，完整重解析并通过共享事务基础设施保留原编码/BOM/换行后写盘；Scenario 草稿不进入地图 Apply ledger。新建文件向导通过 `build_new_scenario_file_content()` 按官方键序构建整份文件，以 UTF-8/CRLF 排他创建，并用 `kv_load_scenario_snapshot()` 重解析验证；向导仅接受单路径、无权重的 Route/Vehicle 初始值，带权多候选编辑仍归 Scenario 文件标签页。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载；`--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]` 通过 `scenario_preview=loaded`、候选增删标记、`scenario_edit_roundtrip=PASS`、Scenario 历史/重载入口标记及 `result=PASS` 断言这些阶段。
+场景文件通过 `scenario_route.cpp/.h` 按官方 Scenario 规范读取和写回：`kv_probe_file_kind()` 仅读取文件首部字节即可区分 Map/Scenario/未知；`kv_load_scenario_snapshot()` 校验 `BveTs Scenario 2.00` 头部并按声明编码解码，剥离 `#`/`;` 注释，读取八个官方字段的最后一项，返回相对路径、权重、源哈希和存在位；它不要求存在 Route 或有效 Route 目标。`kv_save_scenario_document()` 接受每个已存在 Route/Vehicle 字段的一个或多个候选并按调用方顺序写回；数量不变时逐候选最小补丁，数量变化时仅重写最后生效字段的完整候选值，要求至少一个候选，拒绝空路径、保留语法字符和非正/非有限权重，完整重解析并通过共享事务基础设施保留原编码/BOM/换行后写盘；Scenario 草稿不进入地图 Apply ledger。新建文件向导通过 `build_new_scenario_file_content()` 按官方键序构建整份文件，以 UTF-8/CRLF 排他创建，并用 `kv_load_scenario_snapshot()` 重解析验证；向导仅接受单路径、无权重的 Route/Vehicle 初始值，带权多候选编辑仍归 Scenario 文件标签页。`kv_resolve_scenario_routes()` 复用同一解析，仍要求 Route 候选及其目标存在。语法解析与目标可用性分属不同阶段：Vehicle 数据缺失或目标不可用时仅作预览数据，绝不阻断有效 Route 地图的加载；Route 缺失或目标不存在时在 resolver 阶段失败，GUI 场景预览保持加载且不启动地图加载；`--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]` 通过 `scenario_preview=loaded`、候选增删标记、`scenario_edit_roundtrip=PASS`及 `result=PASS` 断言这些阶段。
 
 实现符合官方 BVE 语法的通用规则；不得为单条线路写特例或增加私有线路语法。预设必须生成普通 BVE 地图/列表语句。
 
@@ -528,7 +528,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 普通应用 UI 的每一条用户可见文本都要同步加入简体中文、英语和日语，并保持工具栏/菜单措辞简短、语言切换时 ImGui ID 稳定。
 - 直接对应 BVE 地图语句参数的标签必须使用官方英文名称或缩写（例如 `distance`、`trackKey`、`x`、`ry`），不得通过本地化函数翻译。
 - 应用生成的诊断正文和 headless 输出必须全部使用英语；控制台窗口标题、按钮及其他周边普通 UI 仍保持三语。
-- 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。
+- 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。 仅在完整写入并关闭文件成功后推进已保存状态；失败保存保持待重试，一秒后重试，渲染空闲或窗口被遮挡时也会处理。
 - 设置与历史只接受保存端写出的精确节、键和值语法。未知项、旧项、错节项或格式错误项使用默认值；读取已有文件绝不自动重写，显式保存才输出完整规范格式。
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
 - hydration 将曲线参数行分类为带 row index 与 edit ID 的 `CurveGauge`、`CurveCenter` 和 `CurveFunction` 标记。平面图绘制独立白色矩形 `CG`/`CC`/`CF` 标记；场景绘制上方代码、下方求值参数的白色双行标牌。场景继续复用现有拾取与蓝色高亮样式。精确 `[View2D]` 键 `show_curve_gauge_markers`、`show_curve_center_markers` 和 `show_curve_function_markers` 默认关闭，分别更新标记可见性而不重建轨道或模型几何。
@@ -553,6 +553,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 ```bat
 build\komapedit.exe --headless-load-map <map-path> --headless-output build\headless-load-map.txt
 build\komapedit.exe --headless-load-scenario <scenario-path> [--scenario-index N] [--expect-no-map] [--scenario-edit-roundtrip] --headless-output build\headless-load-scenario.txt
+build\komapedit.exe --debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M] --headless-output build\scenario-lifecycle.txt
 build\komapedit.exe --debug-headless-plan-bench <map-path> --interaction pan|measure-stationary|measure-moving --headless-output build\headless-plan-bench.txt
 build\komapedit.exe --debug-headless-open-bench <map-path> --repeat 3 --headless-output build\headless-open-bench.txt
 build\komapedit.exe --debug-headless-scene3d-bench <map-path> --window-back-m 100 --window-forward-m 1200 --headless-output build\headless-scene3d-bench.txt
@@ -597,7 +598,9 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 `--debug-headless-scenario-create <tests目录下尚不存在的Scenario路径> --route <已存在的地图路径>` 要求新 Scenario 路径位于 `tests/` 下且 Route 地图已存在。它使 Route 相对于将要创建的 Scenario 目录，验证官方键序字节、排他重建拒绝、Scenario 快照 ABI 重解析（字段存在位、顺序、默认权重与相对 Route），再经正常文档流打开创建的 Scenario，等待异步地图加载后验证 Scenario 预览、已解析 Route 地图与未记入历史。报告前会删除本命令创建的 Scenario。
 
-`--debug-headless-fresh-resource-list-workflow <地图路径>` 在任意已有真实线路上复现空白线路的资源列表工作流。入口先备份线路文件的原始字节，将其临时改写为无距离的仅有文件头地图，并在旁边排他创建一个仅有文件头的 Structure List（`fresh-resource-workflow-structures.csv`）和一个单行 Station List（`fresh-resource-workflow-stations.csv`），随后驱动正式 GUI 路径：引用目标候选包含无距离地图、第一个 `*.Load` 暂存后仍能继续暂存第二个引用、空列表可从对应 `ResourceListSource` 取目标创建首行草稿；两份列表草稿与未保存 Load 同批应用时不会出现任何 `unsupported or unknown editId` 错误，且全程磁盘字节不变。结束后恢复原线路字节，并只删除本命令自建的两个临时列表。
+`--debug-headless-scenario-lifecycle` 通过实际 App 打开输入 Scenario，检查 Scenario 历史入口、预览到编辑元数据的发布状态，以及几何/完整 Reload 的视图恢复。独占临时目录中的单/多 Route Scenario 覆盖候选选择、编辑关闭/开启时独立新建与新建并加载、Map 内存 Apply 不写盘、Map 优先保存后再保存 Scenario，以及空闲时设置重试。真实源文件保持只读并逐字节比较。该入口的场景策略断言验证 App 请求传递；`--debug-headless-scene-loader-contract` 另用临时模型和 headless D3D 检查同路径模型实际复用与重载。
+
+`--debug-headless-fresh-resource-list-workflow <地图路径>` 仅读取输入地图以保护其原始字节。它在独占临时目录中创建无距离、仅有文件头的 Map、仅有文件头的 Structure List 和单行 Station List，再使用这些夹具驱动正式 App 工作流：引用目标候选包含无距离地图，可连续暂存多个 `*.Load`，空列表的首行草稿使用其 `ResourceListSource`。两份列表草稿与未保存 Load 同批应用必须成功，且不出现 `unsupported or unknown editId` 错误。命令检查 `input_map_bytes_unchanged` 和 `fixture_files_cleaned`，不会改写输入地图。
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 

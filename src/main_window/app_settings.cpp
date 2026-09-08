@@ -462,9 +462,7 @@ static constexpr std::array<std::pair<std::string_view, bool View3DSettings::*>,
         {"scene_performance_warning_enabled", &View3DSettings::scene_performance_warning_enabled},
     }};
 
-bool save_user_settings(const UserSettings& settings) {
-    std::ofstream out(settings.path, std::ios::binary | std::ios::trunc);
-    if (!out) return false;
+static bool write_user_settings(std::ostream& out, const UserSettings& settings) {
     out << "[General]\n";
     out << "language=" << language_to_string(settings.language) << "\n";
     out << "font_size=" << std::fixed << std::setprecision(1) << clamp_font_size(settings.font_size) << "\n";
@@ -500,7 +498,16 @@ bool save_user_settings(const UserSettings& settings) {
     out << "scene_instance_warning_threshold=" << scene_instance_warning_threshold << "\n";
     out << "scene_instance_critical_warning_threshold="
         << scene_instance_critical_warning_threshold << "\n";
-    return true;
+    out.flush();
+    return static_cast<bool>(out);
+}
+
+bool save_user_settings(const UserSettings& settings) {
+    std::ofstream out(settings.path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    const bool written = write_user_settings(out, settings);
+    out.close();
+    return written && static_cast<bool>(out);
 }
 
 UserSettings load_user_settings(const std::filesystem::path& path) {
@@ -807,10 +814,11 @@ std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& pa
     return entries;
 }
 
-bool save_history_entries(const std::filesystem::path& path, const std::vector<RecentMapEntry>& entries) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) return false;
-    if (entries.empty()) return true;
+static bool write_history_entries(std::ostream& out, const std::vector<RecentMapEntry>& entries) {
+    if (entries.empty()) {
+        out.flush();
+        return static_cast<bool>(out);
+    }
     size_t count = std::min(entries.size(), k_max_recent_maps);
     out << "[Recent]\n";
     out << "count=" << count << "\n\n";
@@ -830,8 +838,42 @@ bool save_history_entries(const std::filesystem::path& path, const std::vector<R
         }
         out << "\n";
     }
+    out.flush();
+    return static_cast<bool>(out);
+}
+
+bool save_history_entries(const std::filesystem::path& path, const std::vector<RecentMapEntry>& entries) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    const bool written = write_history_entries(out, entries);
+    out.close();
+    return written && static_cast<bool>(out);
+}
+
+#ifndef NDEBUG
+bool debug_settings_write_failure_contract() {
+    class FailingBuffer : public std::streambuf {
+    public:
+        explicit FailingBuffer(bool fail_on_flush) : fail_on_flush_(fail_on_flush) {}
+    private:
+        bool fail_on_flush_;
+        std::streamsize xsputn(const char*, std::streamsize count) override {
+            return fail_on_flush_ ? count : 0;
+        }
+        int_type overflow(int_type value) override {
+            return fail_on_flush_ ? traits_type::not_eof(value) : traits_type::eof();
+        }
+        int sync() override { return -1; }
+    };
+    for (bool fail_on_flush : {false, true}) {
+        FailingBuffer settings_buffer(fail_on_flush), history_buffer(fail_on_flush);
+        std::ostream settings_out(&settings_buffer), history_out(&history_buffer);
+        if (write_user_settings(settings_out, UserSettings{}) ||
+            write_history_entries(history_out, {RecentMapEntry{"map.txt", {}}})) return false;
+    }
     return true;
 }
+#endif
 
 void apply_ui_font_size(float font_size) {
     ImGui::GetStyle().FontScaleMain = clamp_font_size(font_size) / k_default_font_size;

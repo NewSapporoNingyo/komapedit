@@ -410,15 +410,6 @@ std::string App::choose_folder_dialog(const char* title_key) {
 }
 
 void App::render_popups() {
-    auto sync_runtime_settings_before_save = [&]() {
-        settings_.window_visibility = current_window_visibility();
-        last_saved_window_visibility_ = settings_.window_visibility;
-        settings_.view_2d = current_view_2d_settings();
-        last_saved_view_2d_settings_ = settings_.view_2d;
-        settings_.view_3d = current_view_3d_settings();
-        last_saved_view_3d_settings_ = settings_.view_3d;
-    };
-
     if (other_track_rename_.popup_requested) {
         ImGui::OpenPopup(tr("dialog.other_track_rename_title").c_str());
         other_track_rename_.popup_requested = false;
@@ -811,8 +802,7 @@ void App::render_popups() {
             settings_.font_size = font_size_;
             settings_.ui_component_size = ui_component_size_;
             settings_.theme_color = theme_color_;
-            sync_runtime_settings_before_save();
-            save_user_settings(settings_);
+            persist_user_settings();
             apply_ui_settings(font_size_, ui_component_size_, theme_color_, dpi_scale_, viewports_enabled_);
             ImGui::CloseCurrentPopup();
         }
@@ -904,8 +894,7 @@ void App::render_popups() {
             canvas_line_widths_before_dialog_ = canvas_line_widths_;
             settings_.marker_size_percent = marker_size_percent_;
             settings_.canvas_line_widths = canvas_line_widths_;
-            sync_runtime_settings_before_save();
-            save_user_settings(settings_);
+            persist_user_settings();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -1061,8 +1050,7 @@ void App::render_popups() {
                 scene_performance_warning_enabled_,
                 scene_instance_warning_threshold_,
                 scene_instance_critical_warning_threshold_);
-            sync_runtime_settings_before_save();
-            save_user_settings(settings_);
+            persist_user_settings();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -1390,22 +1378,24 @@ void App::render_scenario_route_pick_popup() {
         scenario_route_pick_ = ScenarioRoutePickState{};
         ImGui::CloseCurrentPopup();
     }
-    if (confirm_requested && !scenario_route_pick_.items.empty()) {
-        const ScenarioRoutePickItem chosen =
-            scenario_route_pick_.items[static_cast<size_t>(
-                scenario_route_pick_.selected)];
-        const bool preserve_settings = scenario_route_pick_.preserve_settings;
-        const bool record_history = scenario_route_pick_.record_history;
-        const bool preserve_models = scenario_route_pick_.preserve_scene_preview_models;
-        const bool preserve_camera = scenario_route_pick_.preserve_scene_preview_camera;
-        std::optional<BackgroundHistory> background;
-        if (scenario_route_pick_.background_to_restore) {
-            background = *scenario_route_pick_.background_to_restore;
-        }
-        scenario_route_pick_ = ScenarioRoutePickState{};
-        ImGui::CloseCurrentPopup();
-        begin_map_load(chosen.resolved_path, preserve_settings, record_history,
-                       std::move(background), preserve_models, preserve_camera);
-    }
+    if (confirm_requested) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
+    if (confirm_requested) confirm_scenario_route_selection();
+}
+
+void App::confirm_scenario_route_selection() {
+    if (scenario_route_pick_.selected < 0 ||
+        static_cast<size_t>(scenario_route_pick_.selected) >= scenario_route_pick_.items.size()) return;
+    const ScenarioRoutePickItem chosen =
+        scenario_route_pick_.items[static_cast<size_t>(scenario_route_pick_.selected)];
+    const bool preserve_settings = scenario_route_pick_.preserve_settings;
+    const bool record_history = scenario_route_pick_.record_history;
+    const bool preserve_models = scenario_route_pick_.preserve_scene_preview_models;
+    const bool preserve_camera = scenario_route_pick_.preserve_scene_preview_camera;
+    auto view_to_restore = std::move(scenario_route_pick_.view_to_restore);
+    std::optional<BackgroundHistory> background;
+    if (scenario_route_pick_.background_to_restore) background = *scenario_route_pick_.background_to_restore;
+    scenario_route_pick_ = ScenarioRoutePickState{};
+    begin_map_load(chosen.resolved_path, preserve_settings, record_history,
+                   std::move(background), preserve_models, preserve_camera, std::move(view_to_restore));
 }

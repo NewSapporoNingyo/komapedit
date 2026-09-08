@@ -291,6 +291,14 @@ struct Canvas3DSceneLoaderContractResult {
     bool texture_allocation_cleanup = false;
     bool texture_cache_reuse = false;
     bool upload_failure_cleanup = false;
+    bool numeric_boundaries = false;
+    bool put_between_preparation = false;
+    bool geometry_model_reuse = false;
+    bool full_model_reload = false;
+    size_t geometry_model_load_count = 0;
+    size_t full_model_load_count = 0;
+    float geometry_model_bounds_max_x = 0.0f;
+    float full_model_bounds_max_x = 0.0f;
     size_t successful_load_count = 0;
     size_t free_count = 0;
     std::string error;

@@ -2293,6 +2293,7 @@ private:
                 ctx_.light_diffuse.push_back(std::move(row));
             }
         } else if (fn == "direction") {
+            note_distance_use(ctx_);
             LightDirection row;
             row.distance = ctx_.distance;
             row.pitch = as_number(a[0]);

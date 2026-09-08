@@ -1074,6 +1074,39 @@ int scenario_route_contract() {
               KV_FILE_KIND_UNKNOWN,
           "probe rejects plain text");
 
+    for (const bool little_endian : {true, false}) {
+        for (const bool scenario : {false, true}) {
+            const std::string name = std::string("probe-boundary-") +
+                (little_endian ? "le-" : "be-") +
+                (scenario ? "scenario.txt" : "map.txt");
+            const std::filesystem::path path = directory / name;
+            std::u16string text = scenario
+                ? u"BveTs Scenario 2.00" : u"BveTs Map 2.02";
+            text += little_endian ? u":utf-16le\r\n" : u":utf-16be\r\n";
+            text += scenario
+                ? u"Route = maps\\map-a.txt\r\nVehicle = train.txt\r\nTitle = "
+                : u"0;\r\n# ";
+            // With the BOM, the high surrogate occupies bytes 1022-1023.
+            text.resize(510, u'x');
+            text += u"\U0001F682\r\n";
+            write_utf16_file(path, text, little_endian);
+            check(kv_probe_file_kind(path.u8string().c_str()) ==
+                      (scenario ? KV_FILE_KIND_SCENARIO : KV_FILE_KIND_MAP),
+                  (name + " probe ignores the truncated body surrogate").c_str());
+            if (scenario) {
+                const KvScenarioSnapshot* snapshot = load_snapshot(path);
+                check(snapshot && scenario_string(*snapshot, snapshot->title).find(
+                          "\xF0\x9F\x9A\x82") != std::string::npos,
+                      (name + " full decode retains the surrogate pair").c_str());
+                kv_free_scenario_snapshot(snapshot);
+            } else {
+                MapHandle handle(kv_load_map_ex(path.u8string().c_str(), 25.0, 0));
+                check(handle.value != nullptr,
+                      (name + " full map decode succeeds").c_str());
+            }
+        }
+    }
+
     // Official single-candidate form with comments, an unrelated key, CRLF
     // endings, and a trailing comment after the value.
     write_bytes(directory / "utf8.txt",
@@ -5708,6 +5741,270 @@ struct SimpleEditBatch {
     }
 };
 
+void multiline_statement_removal_contract() {
+    for (const std::string& newline :
+         {std::string("\n"), std::string("\r\n"), std::string("\r")}) {
+        TempFixture fixture;
+        const std::string statement =
+            "Beacon.Put(" + newline + "    1, 0, 7" + newline + ");";
+        const std::string before =
+            "BveTs Map 2.02:utf-8" + newline + "0;" + newline +
+            "// before beacon" + newline + "  " + statement +
+            " // after beacon" + newline + "50;" + newline +
+            "SpeedLimit.Begin(80);" + newline + "100;" + newline;
+        {
+            std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+            map << before;
+        }
+        const auto disk_text = [&]() {
+            std::ifstream input(fixture.map_path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input),
+                               std::istreambuf_iterator<char>());
+        };
+        MapHandle handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot baseline{};
+        check(handle.value && kv_get_map_snapshot(
+                  handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline,
+                  sizeof(baseline)) != 0 && baseline.beacon_count == 1,
+              "multiline removal baseline loads");
+        if (!baseline.beacons || baseline.beacon_count != 1) continue;
+        const KvRowMetadata& metadata = baseline.beacons[0].metadata;
+        if (metadata.source_file_index >= baseline.source_file_count) {
+            check(false, "multiline removal source index");
+            continue;
+        }
+        const std::string edit_id = map_string(baseline, metadata.edit_id);
+        const std::string hash = map_string(
+            baseline, baseline.source_files[metadata.source_file_index].source_hash);
+        for (const bool remove : {true, false}) {
+            SimpleEditBatch delete_batch(edit_id, KV_EDIT_DELETE, hash);
+            UpdateBatch move_batch(edit_id, hash, "25", "distance");
+            const KvEditBatch* batch = remove ? &delete_batch.batch : &move_batch.batch;
+            KvEditReportSnapshot report{};
+            const bool applied = kv_edit_apply_to_memory_typed(
+                handle.value, batch, &report, sizeof(report)) != 0;
+            check(applied && report.ok && report.full_reparse_ok &&
+                      report.non_target_changed_count == 0,
+                  remove ? "multiline Delete reparses" : "multiline Move reparses");
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0 &&
+                      snapshot.beacon_count == (remove ? 0U : 1U) &&
+                      snapshot.speed_limit_count == 1 && snapshot.speed_limits &&
+                      nearly_equal(snapshot.speed_limits[0].distance, 50.0),
+                  "multiline edit preserves the neighboring statement");
+            if (!remove && snapshot.beacon_count == 1 && snapshot.beacons) {
+                const KvBeaconRow& row = snapshot.beacons[0];
+                check(nearly_equal(row.distance, 25.0) &&
+                          row.send_data.kind == KV_VALUE_NUMBER &&
+                          nearly_equal(row.send_data.number_value, 7.0) &&
+                          map_string(snapshot, row.metadata.edit_id) == edit_id,
+                      "multiline Move preserves values and stable identity");
+            }
+            const char* raw = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+            const std::string memory = raw ? raw : "";
+            kv_free_string(raw);
+            if (remove) {
+                std::string expected = before;
+                expected.erase(expected.find(statement), statement.size());
+                check(memory == expected,
+                      "multiline Delete preserves surrounding whitespace and comments");
+            } else {
+                const std::string arguments = "    1, 0, 7";
+                const size_t first_arguments = memory.find(arguments);
+                check(memory.find("25;" + newline) != std::string::npos &&
+                          memory.find(statement) != std::string::npos &&
+                          memory.find("// before beacon" + newline) != std::string::npos &&
+                          memory.find("// after beacon" + newline) != std::string::npos &&
+                          first_arguments != std::string::npos &&
+                          memory.find(arguments, first_arguments + arguments.size()) == std::string::npos,
+                      "multiline Move preserves comments and leaves no old argument fragment");
+            }
+            check(disk_text() == before, "multiline Apply leaves disk unchanged");
+            check(kv_edit_reset_memory(handle.value) != 0, "multiline edit resets to baseline");
+        }
+    }
+}
+
+void include_transition_pair_contract() {
+    const std::array<std::pair<bool, bool>, 3> cases{{
+        {false, false}, {true, false}, {true, true},
+    }};
+    for (const bool curve : {true, false}) {
+        for (const auto& [replace, crossing] : cases) {
+            TempFixture fixture;
+            const std::string header = "BveTs Map 2.02:utf-8\n";
+            const std::string transition = curve
+                ? "Curve.BeginTransition();\n" : "Gradient.BeginTransition();\n";
+            const std::string primary = curve
+                ? "Curve.Begin(500,0.05);\n" : "Gradient.Begin(10);\n";
+            const std::string root = header +
+                (crossing ? "0;\n" + transition : std::string{}) +
+                "Include 'old.txt';\n" +
+                (crossing ? "10;\n" + primary : std::string{}) +
+                "100;\nBeacon.Put(1,0,7);\n";
+            const std::string child = header + "0;\n" + transition +
+                (crossing ? std::string{} : "10;\n" + primary);
+            const std::filesystem::path child_path = fixture.directory / "new.txt";
+            {
+                std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+                map << root;
+                std::ofstream old(fixture.directory / "old.txt", std::ios::binary);
+                old << header;
+                std::ofstream added(child_path, std::ios::binary);
+                added << child;
+            }
+            MapHandle handle(kv_load_map_ex(
+                fixture.path_utf8().c_str(), 25.0, KV_LOAD_EDIT_METADATA));
+            KvMapSnapshot baseline{};
+            check(handle.value && kv_get_map_snapshot(
+                      handle.value, KV_MAP_SNAPSHOT_VERSION, &baseline,
+                      sizeof(baseline)) != 0,
+                  "Include transition fixture loads");
+            std::string include_id;
+            std::string hash;
+            for (std::uint64_t index = 0; index < baseline.statement_count; ++index) {
+                const KvStatementRow& row = baseline.statements[index];
+                if (map_string(baseline, row.statement_kind) != "Include" ||
+                    row.source.source_file_index >= baseline.source_file_count) continue;
+                include_id = map_string(baseline, row.edit_id);
+                hash = map_string(
+                    baseline, baseline.source_files[row.source.source_file_index].source_hash);
+            }
+            check(!include_id.empty() && !hash.empty(), "Include transition target resolves");
+            if (include_id.empty() || hash.empty()) continue;
+            SimpleInsertBatch insert(
+                fixture.path_utf8(), "include-transition-insert",
+                {{"rowKind", "include"}, {"includePath", "new.txt"}});
+            UpdateBatch update(include_id, hash, "new.txt", "includePath");
+            const KvEditBatch* batch = replace ? &update.batch : &insert.batch;
+            KvEditReportSnapshot report{};
+            const bool called = kv_edit_dry_run_typed(
+                handle.value, batch, &report, sizeof(report)) != 0;
+            if (crossing) {
+                check(called && !report.ok && edit_report_has_error_containing(
+                          report, "BeginTransition pairing"),
+                      "Include swap cannot steal an existing external transition pair");
+                continue;
+            }
+            check(called && report.ok && report.full_reparse_ok,
+                  "Include internal transition pair dry-runs");
+            check(kv_edit_apply_to_memory_typed(
+                      handle.value, batch, &report, sizeof(report)) != 0 &&
+                      report.ok && report.full_reparse_ok &&
+                      report.non_target_changed_count == 0,
+                  "Include internal transition pair applies");
+            KvMapSnapshot snapshot{};
+            check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                      &snapshot, sizeof(snapshot)) != 0 &&
+                      snapshot.beacon_count == 1 && snapshot.beacons &&
+                      nearly_equal(snapshot.beacons[0].distance, 100.0),
+                  "Include transition edit preserves the parent element");
+            const bool paired_rows = curve
+                ? snapshot.curve_count == 2 && snapshot.curves &&
+                    nearly_equal(snapshot.curves[0].distance, 0.0) &&
+                    nearly_equal(snapshot.curves[1].distance, 10.0) &&
+                    map_string(snapshot, snapshot.curves[0].file_path) == child_path.u8string()
+                : snapshot.gradient_count == 2 && snapshot.gradients &&
+                    nearly_equal(snapshot.gradients[0].distance, 0.0) &&
+                    nearly_equal(snapshot.gradients[1].distance, 10.0) &&
+                    map_string(snapshot, snapshot.gradients[0].file_path) == child_path.u8string();
+            check(paired_rows, "Include transition pair retains child provenance and distances");
+            std::ifstream disk(fixture.map_path, std::ios::binary);
+            const std::string disk_text{
+                std::istreambuf_iterator<char>(disk), std::istreambuf_iterator<char>()};
+            check(disk_text == root, "Include transition Apply leaves disk unchanged");
+            check(kv_edit_reset_memory(handle.value) != 0, "Include transition reset");
+        }
+    }
+}
+
+void light_insertion_anchor_contract() {
+    const std::array<std::pair<bool, bool>, 3> cases{{
+        {true, false}, {false, true}, {false, false},
+    }};
+    const std::string header = "BveTs Map 2.02:utf-8\n";
+    const std::string light = "Light.Direction(1.25,-0.5);";
+    const auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file),
+                           std::istreambuf_iterator<char>());
+    };
+    for (const auto& [target_root, child_zero] : cases) {
+        TempFixture fixture;
+        const std::filesystem::path child_path = fixture.directory / "child.txt";
+        const std::string root = header +
+            (target_root ? "// entry comment\n" : "100;\n") +
+            "Include 'child.txt';\n";
+        const std::string child = header +
+            (target_root ? "100;\n" : "$guard=1; ") +
+            (child_zero ? "0; " : "") + "Beacon.Put(1,0,7);\n";
+        {
+            std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+            map << root;
+            std::ofstream included(child_path, std::ios::binary | std::ios::trunc);
+            included << child;
+        }
+        const std::string label = target_root ? "light entry before Include" :
+            child_zero ? "light child after inline zero" : "light child without zero";
+        const std::string target_file = target_root ? fixture.path_utf8() : child_path.u8string();
+        const std::string before = target_root ? root : child;
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                       KV_LOAD_EDIT_METADATA));
+        check(handle.value != nullptr, (label + " loads").c_str());
+        if (!handle.value) continue;
+        SimpleInsertBatch insert(target_file, "light-anchor-insert",
+            {{"rowKind", "light.direction"}, {"distance", "0"},
+             {"pitch", "1.25"}, {"yaw", "-0.5"}});
+        KvEditReportSnapshot report{};
+        const bool called = kv_edit_apply_to_memory_typed(
+            handle.value, &insert.batch, &report, sizeof(report)) != 0;
+        const bool accepted = target_root || child_zero;
+        if (accepted) {
+            check(called && report.ok && report.full_reparse_ok &&
+                      report.insert_count == 1 && report.non_target_changed_count == 0,
+                  (label + " applies at zero").c_str());
+        } else {
+            check(called && !report.ok && edit_report_has_error_containing(
+                      report, "edited target could not be uniquely reconnected"),
+                  (label + " is rejected after full reparse").c_str());
+        }
+        KvMapSnapshot snapshot{};
+        const bool loaded = kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                                &snapshot, sizeof(snapshot)) != 0;
+        check(loaded && snapshot.light_direction_count == (accepted ? 1U : 0U) &&
+                  snapshot.beacon_count == 1 && snapshot.beacons &&
+                  nearly_equal(snapshot.beacons[0].distance, child_zero ? 0.0 : 100.0),
+              (label + " preserves typed rows").c_str());
+        if (loaded && accepted && snapshot.light_direction_count == 1 &&
+            snapshot.light_direction) {
+            const KvLightDirectionRow& row = snapshot.light_direction[0];
+            check(nearly_equal(row.pitch, 1.25) && nearly_equal(row.yaw, -0.5) &&
+                      map_string(snapshot, row.file_path) == target_file &&
+                      map_string(snapshot, row.metadata.edit_id) == "light-anchor-insert",
+                  (label + " retains values and identity").c_str());
+        }
+        const char* raw = kv_get_source_text(handle.value, target_file.c_str());
+        const std::string memory = raw ? raw : "";
+        kv_free_string(raw);
+        std::string expected = before;
+        if (target_root) {
+            expected.insert(expected.find("Include 'child.txt';"), light + "\n");
+        } else if (child_zero) {
+            expected.insert(expected.find("0;") + 2, "\n" + light + "\n");
+        }
+        check(memory == expected, (label + " preserves source placement").c_str());
+        check(read_bytes(fixture.map_path) == root && read_bytes(child_path) == child,
+              (label + " leaves disk unchanged").c_str());
+        check(kv_edit_reset_memory(handle.value) != 0, (label + " resets").c_str());
+        raw = kv_get_source_text(handle.value, target_file.c_str());
+        const std::string reset = raw ? raw : "";
+        kv_free_string(raw);
+        check(reset == before, (label + " restores the source").c_str());
+    }
+}
+
 void light_edit_contract() {
     TempFixture fixture;
     const std::string source_before =
@@ -5993,7 +6290,8 @@ void include_delete_contract() {
 
     {
         KvEditReportSnapshot report{};
-        SimpleEditBatch stale_batch(include_edit_id, KV_EDIT_DELETE, "deadbeef");
+        const std::string stale_source_hash = "deadbeef";
+        SimpleEditBatch stale_batch(include_edit_id, KV_EDIT_DELETE, stale_source_hash);
         check(!(kv_edit_dry_run_typed(
                     handle.value, &stale_batch.batch, &report,
                     sizeof(report)) != 0 && report.ok),
@@ -6208,15 +6506,15 @@ void include_variable_dependency_blocks_deletion_contract() {
         check(dep_include != nullptr, "dependency include located");
         if (dep_include) {
             KvEditReportSnapshot report{};
-            SimpleEditBatch batch(
-                map_string(baseline, dep_include->edit_id), KV_EDIT_DELETE,
-                map_string(baseline,
-                    baseline.source_files[dep_include->source.source_file_index]
-                        .source_hash));
+            const std::string edit_id = map_string(baseline, dep_include->edit_id);
+            const std::string source_hash = map_string(
+                baseline,
+                baseline.source_files[dep_include->source.source_file_index].source_hash);
+            SimpleEditBatch batch(edit_id, KV_EDIT_DELETE, source_hash);
             const bool ran = kv_edit_apply_to_memory_typed(
                 handle.value, &batch.batch, &report, sizeof(report));
-            check(!ran || !report.ok ||
-                      report.blocking_error_count > 0,
+            check(ran && !report.ok && report.non_target_changed_count != 0 &&
+                      edit_report_has_error_containing(report, "Include subtree: derived"),
                   "deleting an include that feeds surviving variables is blocked");
         }
     }
@@ -6323,8 +6621,9 @@ void include_replace_contract() {
 
     {
         KvEditReportSnapshot report{};
+        const std::string stale_source_hash = "deadbeef";
         SimpleEditBatch stale_batch =
-            build_batch(replacement_text, "deadbeef");
+            build_batch(replacement_text, stale_source_hash);
         check(!(kv_edit_dry_run_typed(
                     handle.value, &stale_batch.batch, &report,
                     sizeof(report)) != 0 && report.ok),
@@ -7416,18 +7715,20 @@ void include_replace_variable_dependency_blocks_contract() {
                     .source_hash);
             static const std::string field_name = "includePath";
             static const std::string replacement_text = "other.txt";
-            SimpleEditBatch batch(map_string(baseline, dep_include->edit_id),
-                                  KV_EDIT_UPDATE, source_hash);
+            const std::string edit_id = map_string(baseline, dep_include->edit_id);
+            SimpleEditBatch batch(edit_id, KV_EDIT_UPDATE, source_hash);
             batch.fields.clear();
             batch.fields.push_back(
                 {utf8_view(field_name), utf8_view(replacement_text)});
             batch.changes[0].fields = KvSpan{0, 1};
+            batch.batch.fields = batch.fields.data();
             batch.batch.field_count = 1;
             KvEditReportSnapshot report{};
             const bool ran = kv_edit_apply_to_memory_typed(
                 handle.value, &batch.batch, &report,
                 sizeof(report)) != 0;
-            check(!ran || !report.ok || report.blocking_error_count > 0,
+            check(ran && !report.ok && report.non_target_changed_count != 0 &&
+                      edit_report_has_error_containing(report, "Include subtree: derived"),
                   "replacing an include that feeds surviving variables is blocked");
         }
     }
@@ -7782,6 +8083,8 @@ void staged_resource_list_workflow_contract() {
 }
 
 int edit_contract() {
+    multiline_statement_removal_contract();
+    include_transition_pair_contract();
     include_insert_contract();
     empty_submap_insert_contract();
     include_insert_repeated_source_contract();
@@ -7804,6 +8107,7 @@ int edit_contract() {
     other_track_insert_contract();
     environment_argument_shape_edit_contract();
     sound3d_edit_contract();
+    light_insertion_anchor_contract();
     light_edit_contract();
     TempFixture fixture;
     check_coordinate_offset_method_conversions(fixture.path_utf8());
@@ -8999,6 +9303,60 @@ void light_contract() {
     }
     check(diagnostics_contain("Light.Direction must be declared at route distance 0."),
           "light direction distance warning");
+
+    const std::array<std::pair<const char*, bool>, 3> inherited_distance_cases{{
+        {"0", false}, {"100", false}, {"100", true},
+    }};
+    const std::array<std::uint32_t, 4> inherited_distance_profiles{{
+        0U, KV_LOAD_PREVIEW, KV_LOAD_EDIT_METADATA,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA,
+    }};
+    for (const auto& [initial_distance, child_resets_distance] : inherited_distance_cases) {
+        check(write_map(
+                  fixture.directory / "light-distance.txt",
+                  std::string("BveTs Map 2.02:utf-8\n") + initial_distance + ";\n"),
+              "light inherited-distance child write");
+        check(write_map(
+                  child_path,
+                  std::string("BveTs Map 2.02:utf-8\n") +
+                      (child_resets_distance ? "0;\n" : "") +
+                      "Light.Direction(1.25,-0.5);\n"),
+              "light inherited-direction child write");
+        for (const bool siblings : {false, true}) {
+            check(write_map(
+                      fixture.map_path,
+                      std::string("BveTs Map 2.02:utf-8\n") +
+                          (siblings ? "Include 'light-distance.txt';\n"
+                                    : std::string(initial_distance) + ";\n") +
+                          "Include 'light-child.txt';\n"),
+                  "light inherited-distance root write");
+            for (const std::uint32_t flags : inherited_distance_profiles) {
+                const std::string label =
+                    std::string("light inherited distance=") + initial_distance +
+                    (child_resets_distance ? " reset" : " retained") +
+                    (siblings ? " siblings" : " serial") +
+                    " flags=" + std::to_string(flags);
+                clear_diagnostics();
+                MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0, flags));
+                KvMapSnapshot snapshot{};
+                const bool loaded = handle.value && kv_get_map_snapshot(
+                    handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) != 0;
+                const bool rejected = !child_resets_distance &&
+                    std::string_view(initial_distance) != "0";
+                check(loaded && snapshot.light_direction_count == (rejected ? 0U : 1U),
+                      (label + " typed row count").c_str());
+                check(diagnostics_contain(
+                          "Light.Direction must be declared at route distance 0.") == rejected,
+                      (label + " distance diagnostic").c_str());
+                if (loaded && !rejected && snapshot.light_direction_count == 1 &&
+                    snapshot.light_direction) {
+                    check(nearly_equal(snapshot.light_direction[0].pitch, 1.25) &&
+                              nearly_equal(snapshot.light_direction[0].yaw, -0.5),
+                          (label + " direction values").c_str());
+                }
+            }
+        }
+    }
 
     check(write_map(
               fixture.map_path,

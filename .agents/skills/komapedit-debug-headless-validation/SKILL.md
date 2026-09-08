@@ -32,6 +32,7 @@ Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is conf
 
 - Load/GUI wiring: `--headless-load-map`.
 - Scenario preview/resolution/direct-save lifecycle: `--headless-load-scenario [--expect-no-map] [--scenario-edit-roundtrip]`.
+- Actual App Scenario open/history/reload and Save ordering: `--debug-headless-scenario-lifecycle <scenario-path> [--scenario-index N] [--unit-distance M]`. The supplied Scenario and loaded Map sources are read-only; creation, Map/Scenario Save, and settings retry checks use exclusive temporary fixtures.
 - Open latency/cache lifecycle: `--debug-headless-open-bench`.
 - 2D plan/render markers: `--debug-headless-plan-bench`.
 - 3D scene building/rendering: `--debug-headless-scene3d-bench`.
@@ -44,6 +45,7 @@ Use `ctest --test-dir build -C Debug --output-on-failure` after the tree is conf
 - Touch state machine: `--debug-headless-touch-input`.
 - Canonical settings/history persistence: `--debug-headless-settings-persistence`.
 - New-map/list wizard workflow: `--debug-headless-new-file-wizard`.
+- Empty-map resource drafts: `--debug-headless-fresh-resource-list-workflow <map-path>`; the input is read-only and the workflow uses an exclusive temporary Map/list directory.
 - New Scenario creation and normal-open workflow: `--debug-headless-scenario-create`.
 
 Always pass `--headless-output <file>` when the mode supports it.
@@ -58,6 +60,7 @@ Use `Start-Process -Wait -WindowStyle Hidden -PassThru` from PowerShell, then in
 2. Use `--commit` only when the test specifically requires disk writeback and the target is authorized.
 3. Hash every potentially touched source before and after; verify rollback or reload results explicitly.
 4. Never infer a route path from history and write to it without confirming that the current task placed it in scope.
+5. The new-file-wizard headless mode requires a nonexistent Map below `tests/` and preflights every fixed resource target before creating anything. Existing targets must cause failure and remain untouched.
 
 ## Interpret results
 

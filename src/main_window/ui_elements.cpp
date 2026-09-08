@@ -140,7 +140,8 @@ void App::add_log_at(std::string_view source_path, LogSeverity severity, std::st
 }
 
 void App::add_forwarded_log(std::string text) {
-    append_log(classify_log_severity(text), std::move(text));
+    const LogSeverity severity = classify_log_severity(text);
+    append_log(severity, std::move(text));
 }
 
 void App::append_log(LogSeverity severity, std::string text) {
@@ -582,27 +583,44 @@ void App::restore_scene_settings_preview() {
         scene_instance_critical_warning_threshold_);
 }
 
+bool App::persist_user_settings() {
+    settings_.window_visibility = current_window_visibility();
+    settings_.view_2d = current_view_2d_settings();
+    settings_.view_3d = current_view_3d_settings();
+    if (!save_user_settings(settings_)) {
+        if (!settings_save_pending_) KME_ADD_LOG(LogSeverity::Warning, "[WARN]Failed to save settings; retrying.");
+        settings_save_pending_ = true;
+        settings_save_retry_at_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        return false;
+    }
+    last_saved_window_visibility_ = settings_.window_visibility;
+    last_saved_view_2d_settings_ = settings_.view_2d;
+    last_saved_view_3d_settings_ = settings_.view_3d;
+    settings_save_pending_ = false;
+    return true;
+}
+
+std::uint32_t App::idle_wait_timeout_ms() const {
+    if (!settings_save_pending_) return INFINITE;
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        settings_save_retry_at_ - std::chrono::steady_clock::now()).count();
+    return static_cast<std::uint32_t>(std::clamp<std::chrono::milliseconds::rep>(remaining, 0, 1000));
+}
+
+void App::service_pending_settings_save() {
+    if (settings_save_pending_ && std::chrono::steady_clock::now() >= settings_save_retry_at_) {
+        persist_user_settings();
+    }
+}
+
 void App::save_runtime_settings_if_changed() {
-    bool changed = false;
-    WindowVisibilitySettings visibility = current_window_visibility();
-    if (visibility != last_saved_window_visibility_) {
-        settings_.window_visibility = visibility;
-        last_saved_window_visibility_ = visibility;
-        changed = true;
+    const bool changed = current_window_visibility() != last_saved_window_visibility_ ||
+        current_view_2d_settings() != last_saved_view_2d_settings_ ||
+        current_view_3d_settings() != last_saved_view_3d_settings_;
+    if ((changed || settings_save_pending_) &&
+        (!settings_save_pending_ || std::chrono::steady_clock::now() >= settings_save_retry_at_)) {
+        persist_user_settings();
     }
-    View2DSettings view_2d = current_view_2d_settings();
-    if (view_2d != last_saved_view_2d_settings_) {
-        settings_.view_2d = view_2d;
-        last_saved_view_2d_settings_ = view_2d;
-        changed = true;
-    }
-    View3DSettings view_3d = current_view_3d_settings();
-    if (view_3d != last_saved_view_3d_settings_) {
-        settings_.view_3d = view_3d;
-        last_saved_view_3d_settings_ = view_3d;
-        changed = true;
-    }
-    if (changed) save_user_settings(settings_);
 }
 
 void App::render_menu() {
@@ -868,13 +886,7 @@ void App::render_menu() {
             if (lang_ == lang) return;
             lang_ = lang;
             settings_.language = lang_;
-            settings_.window_visibility = current_window_visibility();
-            last_saved_window_visibility_ = settings_.window_visibility;
-            settings_.view_2d = current_view_2d_settings();
-            last_saved_view_2d_settings_ = settings_.view_2d;
-            settings_.view_3d = current_view_3d_settings();
-            last_saved_view_3d_settings_ = settings_.view_3d;
-            save_user_settings(settings_);
+            persist_user_settings();
         };
         if (ImGui::MenuItem("简体中文", nullptr, lang_ == Language::Zh)) set_language(Language::Zh);
         if (ImGui::MenuItem("English", nullptr, lang_ == Language::En)) set_language(Language::En);

@@ -286,7 +286,7 @@ void App::set_edit_mode_enabled(bool enabled) {
 void App::apply_edit_mode_enabled(bool enabled) {
     edit_mode_enabled_ = enabled;
     settings_.edit_mode_enabled = edit_mode_enabled_;
-    save_user_settings(settings_);
+    persist_user_settings();
 
     if (!edit_mode_enabled_) {
         clear_scene_placement_edit_target();
@@ -393,6 +393,9 @@ bool App::apply_local_preview_change(const MapElementPendingChange& change,
 
     if (change.operation != "update" || !row_found) return false;
     TableRow& row = (*rows)[row_index];
+    // The ledger is replayed from its baseline, including fields removed by a
+    // later Apply. Mirror the backend reset before applying its sparse fields.
+    row = original_edit_rows_.at(change.edit_id).row;
     for (const auto& field : change.field_changes) {
         set_inspector_row_field_value(
             row, change.row_kind, field.first, field.second,
@@ -1179,7 +1182,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         }
     }
 
-    static constexpr std::array<const char*, 30> k_committed_row_kinds = {
+    static constexpr std::array<const char*, 31> k_committed_row_kinds = {
         "curve", "gradient", "structure.model", "structure.put", "structure.between", "station.put",
         "station.list", "sound.list", "sound3D.list", "repeater", "signal.put",
         "signal.aspect", "irregularity.change",
@@ -1188,7 +1191,7 @@ bool apply_committed_edit_state(MapModel& model, const KvEditReportSnapshot& rep
         "background.change", "adhesion.change", "cabIlluminance.change",
         "fog.change", "light.ambient", "light.diffuse", "light.direction",
         "drawDistance.change", "speedlimit",
-        "section.begin", "section.speedLimit",
+        "section.begin", "section.speedLimit", "otherTrack.change",
     };
     std::map<std::string, std::map<std::string, const CommittedEditRowState*>>
         states_by_edit_id;
@@ -1600,6 +1603,16 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
         if (!targets.empty() && targets.front().empty()) return;
         targets.push_back(edit_id);
     };
+    auto needs_full_refresh = [](const MapElementPendingChange& change) {
+        return change.operation == "delete" ||
+            (change.row_kind == "structure.put" && change.field_changes.count("structureKey") != 0) ||
+            (change.row_kind == "signal.put" && change.field_changes.count("signalAspectKey") != 0) ||
+            (change.row_kind == "repeater" &&
+             std::any_of(change.field_changes.begin(), change.field_changes.end(),
+                         [](const auto& field) {
+                             return field.first != "x" && field.first != "y" && field.first != "z";
+                         }));
+    };
     if (signal_aspects_hydrated) {
         note_refresh_target("signal.aspect", std::string{}, true);
     }
@@ -1627,13 +1640,7 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             KME_ADD_LOG("[error]failed to restore local edit preview: " + kv.first);
             return rollback_local_preview();
         }
-        const bool force_full_refresh = kv.second.operation == "delete" ||
-            (kv.second.row_kind == "structure.put" &&
-             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end()) ||
-            (kv.second.row_kind == "signal.put" &&
-             kv.second.field_changes.find("signalAspectKey") !=
-                 kv.second.field_changes.end());
-        note_refresh_target(kv.second.row_kind, kv.first, force_full_refresh);
+        note_refresh_target(kv.second.row_kind, kv.first, needs_full_refresh(kv.second));
     }
 
     for (const auto& kv : changes) {
@@ -1648,12 +1655,11 @@ bool App::apply_edit_ledger_to_preview(const std::map<std::string, MapElementPen
             KME_ADD_LOG("[error]failed to apply local edit preview: " + kv.first);
             return rollback_local_preview();
         }
-        const bool force_full_refresh = kv.second.operation == "delete" ||
-            (kv.second.row_kind == "structure.put" &&
-             kv.second.field_changes.find("structureKey") != kv.second.field_changes.end()) ||
-            (kv.second.row_kind == "signal.put" &&
-             kv.second.field_changes.find("signalAspectKey") !=
-                 kv.second.field_changes.end());
+        // A reverted resource field is absent from the new baseline-relative
+        // ledger, but its previous preview still needs a dynamic refresh.
+        const auto previous = pending_edit_changes_.find(kv.first);
+        const bool force_full_refresh = needs_full_refresh(kv.second) ||
+            (previous != pending_edit_changes_.end() && needs_full_refresh(previous->second));
         note_refresh_target(kv.second.row_kind, kv.first, force_full_refresh);
     }
     if (alignment_hydrated) {

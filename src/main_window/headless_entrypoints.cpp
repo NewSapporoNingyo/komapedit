@@ -1842,7 +1842,7 @@ int App::run_debug_headless_new_element_edit(
             find_inspector_field(gradient_begin_wizard.form, "transitionStart") &&
             !find_inspector_field(gradient_begin_wizard.form, "transitionStart")->disabled &&
             edit_field_buffer_text(*find_inspector_field(
-                gradient_begin_wizard.form, "transitionStart")) == format_double(end_distance, 6) &&
+                gradient_begin_wizard.form, "transitionStart")) == "0" &&
             find_inspector_field(gradient_begin_wizard.form, "gradient") &&
             set_field(gradient_begin_wizard.form, "transitionStart", format_double(begin_distance, 6)) &&
             set_field(gradient_begin_wizard.form, "gradient", "12");
@@ -3254,6 +3254,17 @@ int App::run_debug_headless_new_file_wizard(
          "Station.Load('new-station.csv');\r\n", false},
     }};
 
+    for (const ResourceFile& resource : resources) {
+        const std::filesystem::path resource_path = map_path.parent_path() / resource.name;
+        std::error_code resource_error;
+        if (std::filesystem::exists(resource_path, resource_error) || resource_error) {
+            *out << "error=new-file wizard headless resource target must not exist: "
+                 << wide_to_utf8(resource_path.wstring()) << "\nresult=FAIL\n";
+            out->flush();
+            return 2;
+        }
+    }
+
     int failed_cases = 0;
     auto check = [&](const char* label, bool value) {
         *out << label << '=' << (value ? 1 : 0) << "\n";
@@ -3344,17 +3355,18 @@ int App::run_debug_headless_new_file_wizard(
                         throw std::runtime_error("could not prepare existing resource list " +
                                                  std::string(resource.name));
                     }
+                    created_files.push_back(resource_path);
                     {
                         std::ofstream existing_file(
                             resource_path, std::ios::binary | std::ios::app);
                         existing_file << "\r\n";
+                        existing_file.close();
                         if (!existing_file) {
                             throw std::runtime_error("could not extend existing resource list " +
                                                      std::string(resource.name));
                         }
                     }
                     expected_bytes += "\r\n";
-                    created_files.push_back(resource_path);
                 }
                 const size_t pending_before = app.pending_edit_changes_.size();
                 app.request_new_file_create(
@@ -3660,6 +3672,427 @@ int App::run_debug_headless_scenario_create(
     return failed_cases == 0 ? 0 : 22;
 }
 
+int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOptions& options) {
+    std::ofstream output_file;
+    std::ostream* out = &std::cout;
+    if (!options.output_path.empty()) {
+        output_file.open(std::filesystem::path(utf8_to_wide(options.output_path)),
+                         std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!output_file) return 1;
+        out = &output_file;
+    }
+    *out << "command=debug-headless-scenario-lifecycle\nscenario_path=" << options.path << "\n";
+    std::error_code error;
+    const auto temp_root = std::filesystem::temp_directory_path(error);
+    const auto directory = temp_root / ("komapedit-scenario-lifecycle-" +
+        std::to_string(static_cast<unsigned long>(GetCurrentProcessId())) + "-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    if (error || !std::filesystem::create_directory(directory, error) || error) {
+        *out << "error=failed to create exclusive fixture directory\nresult=FAIL\n";
+        return 2;
+    }
+    const auto map_path = directory / "map.txt";
+    const auto alternate_map = directory / "alternate.txt";
+    const auto single_scenario = directory / "single.txt";
+    const auto multiple_scenario = directory / "multiple.txt";
+    const std::array<const char*, 11> fixture_names{
+        "map.txt", "alternate.txt", "single.txt", "multiple.txt", "new-disabled.txt",
+        "new-enabled.txt", "new-empty.txt", "new-load-disabled.txt", "new-load-enabled.txt",
+        "settings.ini", "history.ini"};
+    const auto read_bytes = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) throw std::runtime_error("cannot read " + wide_to_utf8(path.wstring()));
+        std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        if (input.bad()) throw std::runtime_error("read failed");
+        return bytes;
+    };
+    const auto utf8 = [](const std::filesystem::path& path) { return wide_to_utf8(path.wstring()); };
+    const auto same_path = [](const std::string& a, const std::string& b) {
+        return std::filesystem::path(utf8_to_wide(a)).lexically_normal() ==
+            std::filesystem::path(utf8_to_wide(b)).lexically_normal();
+    };
+    int failed = 0;
+    const auto check = [&](const std::string& name, bool value) {
+        *out << name << "=" << (value ? "PASS" : "FAIL") << "\n";
+        out->flush();
+        if (!value) ++failed;
+        return value;
+    };
+    const auto require = [&](const std::string& name, bool value) {
+        if (!check(name, value)) throw std::runtime_error(name);
+    };
+    std::map<std::filesystem::path, std::string> protected_sources;
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.Fonts->AddFontDefault();
+    io.Fonts->Build();
+    ImGui::NewFrame();
+    try {
+        const auto input_scenario = std::filesystem::absolute(
+            std::filesystem::path(utf8_to_wide(options.path))).lexically_normal();
+        protected_sources.emplace(input_scenario, read_bytes(input_scenario));
+        const std::string map_bytes =
+            "BveTs Map 2.02:utf-8\r\n0;\r\nTrack['lifecycle'].Position(3,0);\r\n"
+            "DrawDistance.Change(600);\r\n1000;\r\nTrack['lifecycle'].Position(3,0);\r\n";
+        const std::string scenario_bytes =
+            "BveTs Scenario 2.00:utf-8\r\nTitle = Before\r\nRoute = map.txt\r\n";
+        const auto create = [&](const std::filesystem::path& path, std::string_view bytes) {
+            std::string reason;
+            if (!create_utf8_bve_file_exclusive(path, bytes, reason)) throw std::runtime_error(reason);
+        };
+        create(map_path, map_bytes);
+        create(alternate_map, map_bytes);
+        create(single_scenario, scenario_bytes);
+        create(multiple_scenario,
+            "BveTs Scenario 2.00:utf-8\r\nTitle = Multiple\r\nRoute = map.txt * 2 | alternate.txt\r\n");
+        UserSettings settings;
+        settings.language = Language::En;
+        settings.edit_mode_enabled = true;
+        settings.path = directory / "settings.ini";
+        require("isolated_settings_created", save_user_settings(settings));
+        struct ReleasePublicationPause {
+            std::atomic<bool>& pause;
+            ~ReleasePublicationPause() { pause.store(false); }
+        };
+        const auto wait_for_unconsumed_result = [&](App& target, const std::string& expected_map) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(300);
+            while (std::chrono::steady_clock::now() < deadline) {
+                {
+                    std::lock_guard<std::mutex> lock(target.load_state_.result_mutex);
+                    if (target.load_state_.pending_result) {
+                        const LoadResult& pending = *target.load_state_.pending_result;
+                        return target.load_state_.debug_pause_after_publish.load() &&
+                            !target.load_state_.running && target.load_state_.worker.joinable() &&
+                            pending.ok && pending.handle && !pending.edit_metadata_only &&
+                            same_path(pending.path, expected_map) && !target.handle_ && !target.has_model_;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return false;
+        };
+        {
+            App exit_app(nullptr, settings, 1.0f, false, false);
+            exit_app.history_path_ = directory / "history.ini";
+            exit_app.recent_maps_.clear();
+            exit_app.unit_distance_ = options.unit_distance;
+            exit_app.scene_auto_load_on_map_open_ = false;
+            ReleasePublicationPause release_pause{exit_app.load_state_.debug_pause_after_publish};
+            exit_app.load_state_.debug_pause_after_publish = true;
+            exit_app.open_document(utf8(single_scenario), false);
+            require("unconsumed_result_before_exit",
+                wait_for_unconsumed_result(exit_app, utf8(map_path)));
+        }
+        require("unconsumed_result_exit_completed", g_app == nullptr);
+        {
+            App app(nullptr, settings, 1.0f, false, false);
+            app.history_path_ = directory / "history.ini";
+            app.recent_maps_.clear();
+            app.unit_distance_ = options.unit_distance;
+            app.scene_auto_load_on_map_open_ = false;
+            ReleasePublicationPause release_pause{app.load_state_.debug_pause_after_publish};
+            const auto wait_for_map = [&](std::optional<bool> preserve_models) {
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(300);
+                bool saw_map = false;
+                for (;;) {
+                    if (std::chrono::steady_clock::now() >= deadline) return false;
+                    if (app.load_state_.running) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                        continue;
+                    }
+                    app.stop_loader();
+                    bool pending = false;
+                    {
+                        std::lock_guard<std::mutex> lock(app.load_state_.result_mutex);
+                        if (app.load_state_.pending_result) {
+                            pending = true;
+                            const LoadResult& result = *app.load_state_.pending_result;
+                            if (!result.ok) return false;
+                            if (!result.edit_metadata_only) {
+                                saw_map = true;
+                                if (preserve_models && (!result.preserve_settings || !result.view_to_restore ||
+                                    result.preserve_scene_preview_models != *preserve_models ||
+                                    !result.preserve_scene_preview_camera)) return false;
+                            }
+                        }
+                    }
+                    if (pending) {
+                        app.poll_loader();
+                        continue;
+                    }
+                    return saw_map && app.has_model_ && app.handle_ &&
+                        (!app.edit_mode_enabled_ || app.edit_registry_loaded_);
+                }
+            };
+            const auto select_route = [&](int index) {
+                if (app.scenario_route_pick_.items.empty()) {
+                    require("single_route_index_valid", index == 0);
+                    return;
+                }
+                require("route_selection_index_valid", index >= 0 &&
+                    static_cast<size_t>(index) < app.scenario_route_pick_.items.size());
+                app.scenario_route_pick_.selected = index;
+                app.confirm_scenario_route_selection();
+            };
+            const auto same_view = [](const MapViewRestoreState& a, const MapViewRestoreState& b) {
+                if (a.has_cp != b.has_cp || a.cp != b.cp || a.measure_distance != b.measure_distance ||
+                    a.measure_text != b.measure_text || a.plan_view.cx != b.plan_view.cx ||
+                    a.plan_view.cy != b.plan_view.cy || a.plan_view.scale != b.plan_view.scale ||
+                    a.plan_view.rotation != b.plan_view.rotation || a.plan_view.fitted != b.plan_view.fitted ||
+                    a.other_tracks.size() != b.other_tracks.size()) return false;
+                for (const auto& entry : a.other_tracks) {
+                    const auto found = b.other_tracks.find(entry.first);
+                    if (found == b.other_tracks.end()) return false;
+                    const auto& x = entry.second;
+                    const auto& y = found->second;
+                    if (x.visible != y.visible || x.range_min != y.range_min || x.range_max != y.range_max ||
+                        x.color.x != y.color.x || x.color.y != y.color.y ||
+                        x.color.z != y.color.z || x.color.w != y.color.w) return false;
+                }
+                return true;
+            };
+            const auto exercise = [&](const std::string& entry, int index,
+                                      const std::string& label, bool real, bool multiple) {
+                uint64_t count = 0;
+                std::unique_ptr<const KvScenarioRouteCandidate, decltype(&kv_free_scenario_candidates)>
+                    candidates(kv_resolve_scenario_routes(entry.c_str(), &count), &kv_free_scenario_candidates);
+                require(label + "_route_resolves", candidates && index >= 0 && static_cast<uint64_t>(index) < count);
+                const std::string expected_map = candidates.get()[static_cast<size_t>(index)].resolved_path;
+                candidates.reset();
+                app.load_state_.debug_pause_after_publish = true;
+                app.open_document(entry, true);
+                if (multiple) require(label + "_multiple_route_picker", app.scenario_route_pick_.items.size() == 2);
+                select_route(index);
+                bool published = false, completed = false;
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(300);
+                while (!published && std::chrono::steady_clock::now() < deadline) {
+                    {
+                        std::lock_guard<std::mutex> lock(app.load_state_.result_mutex);
+                        published = app.load_state_.pending_result.has_value();
+                        completed = !app.load_state_.running;
+                    }
+                    if (!published) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                app.load_state_.debug_pause_after_publish = false;
+                require(label + "_publication_is_completed", published && completed);
+                require(label + "_open_with_edit_metadata", wait_for_map(std::nullopt));
+                require(label + "_scenario_entry", app.scenario_preview_ &&
+                    same_path(app.current_document_entry_path(), entry) && same_path(app.file_path_, expected_map));
+                const auto history = load_history_entries(app.history_path_);
+                require(label + "_history_entry", !history.empty() && same_path(history.front().path, entry) &&
+                    std::none_of(history.begin(), history.end(), [&](const RecentMapEntry& item) {
+                        return same_path(item.path, expected_map);
+                    }));
+                if (real) {
+                    require("real_edit_source_set_available", !app.model_.edit_files.empty());
+                    for (const auto& file : app.model_.edit_files) {
+                        const std::filesystem::path path(utf8_to_wide(file.file_path));
+                        if (!protected_sources.count(path)) protected_sources.emplace(path, read_bytes(path));
+                    }
+                }
+                app.cp_start_ = std::max(0.0, app.model_.default_min);
+                app.cp_end_ = std::max(app.cp_start_ + 100.0, app.model_.default_max);
+                app.cp_interval_ = 17.0;
+                app.regenerate_geometry();
+                require(label + "_custom_control_points", app.model_.has_cp_arb && app.model_.cp_arb[2] == 17.0);
+                if (!real) require(label + "_other_track_fixture_available", !app.model_.other_tracks.empty());
+                for (auto& track : app.model_.other_tracks) {
+                    track.visible = !track.visible;
+                    track.color = ImVec4(0.125f, 0.25f, 0.5f, 1.0f);
+                    track.range_min = app.cp_start_ + 1.0;
+                    track.range_max = app.cp_end_ - 1.0;
+                }
+                app.plan_view_.cx = 123.5;
+                app.plan_view_.cy = -456.75;
+                app.plan_view_.scale = 1.5;
+                app.plan_view_.rotation = 0.25;
+                app.plan_view_.fitted = true;
+                app.measure_distance_ = app.cp_start_ + 50.0;
+                app.measure_text_ = "headless lifecycle measurement";
+                const auto expected = app.capture_map_view_state();
+                app.scene_preview_started_ = true;
+                for (const bool geometry : {true, false}) {
+                    const std::string stage = label + (geometry ? "_geometry_reload" : "_full_reload");
+                    if (geometry) app.reload_current_map_geometry();
+                    else app.reload_current_map_and_model_preview();
+                    if (multiple) require(stage + "_picker_retains_view",
+                        app.scenario_route_pick_.items.size() == 2 && app.scenario_route_pick_.view_to_restore.has_value());
+                    select_route(index);
+                    require(stage + "_completed", wait_for_map(geometry));
+                    require(stage + "_entry", app.scenario_preview_ &&
+                        same_path(app.current_document_entry_path(), entry) && same_path(app.file_path_, expected_map));
+                    require(stage + "_view_preserved", same_view(expected, app.capture_map_view_state()));
+                    require(stage + "_scene_preserve_policy",
+                        app.scene_preview_preserve_models_on_rebuild_ == geometry &&
+                        app.scene_preview_preserve_camera_on_rebuild_);
+                }
+            };
+            // Empty-App creation also receives a nonempty stale target.
+            NewFileScenarioDraft draft;
+            draft.title = "Independent Scenario";
+            draft.route = "map.txt";
+            app.request_new_file_create({NewFileKind::Scenario, "new-empty", utf8(directory),
+                utf8(map_path), false, false, draft});
+            app.process_pending_new_file_create();
+            require("empty_app_independent_scenario", std::filesystem::exists(directory / "new-empty.txt") &&
+                app.pending_edit_changes_.empty());
+
+            app.load_state_.debug_pause_after_publish = true;
+            app.open_document(utf8(single_scenario), false);
+            const bool unconsumed_before_reset = wait_for_unconsumed_result(app, utf8(map_path));
+            app.load_state_.debug_pause_after_publish = false;
+            require("unconsumed_result_before_reset", unconsumed_before_reset);
+            app.reset_document_for_open();
+            bool pending_cleared = false;
+            {
+                std::lock_guard<std::mutex> lock(app.load_state_.result_mutex);
+                pending_cleared = !app.load_state_.pending_result;
+            }
+            require("unconsumed_result_reset_clears_document", pending_cleared &&
+                !app.load_state_.running && !app.load_state_.worker.joinable() &&
+                !app.handle_ && !app.has_model_ && app.current_document_entry_path().empty());
+            app.open_document(utf8(single_scenario), false);
+            select_route(0);
+            require("unconsumed_result_reset_allows_reopen", wait_for_map(std::nullopt) &&
+                same_path(app.current_document_entry_path(), utf8(single_scenario)) &&
+                same_path(app.file_path_, utf8(map_path)));
+
+            exercise(utf8(input_scenario), options.scenario_index, "real", true, false);
+            exercise(utf8(single_scenario), 0, "single", false, false);
+            for (bool enabled : {false, true}) {
+                app.edit_mode_enabled_ = enabled;
+                const std::string name = enabled ? "new-enabled" : "new-disabled";
+                std::string expected, reason;
+                require(name + "_content_valid", build_new_scenario_file_content(draft, expected, reason));
+                app.request_new_file_create({NewFileKind::Scenario, name, utf8(directory),
+                    app.file_path_, false, false, draft});
+                app.process_pending_new_file_create();
+                require(name + "_independent_creation",
+                    read_bytes(directory / (name + ".txt")) == expected && app.pending_edit_changes_.empty() &&
+                    same_path(app.current_document_entry_path(), utf8(single_scenario)) && read_bytes(map_path) == map_bytes);
+            }
+            app.edit_mode_enabled_ = true;
+
+            for (bool enabled : {false, true}) {
+                app.edit_mode_enabled_ = enabled;
+                const std::string name = enabled ? "new-load-enabled" : "new-load-disabled";
+                const auto created_path = directory / (name + ".txt");
+                std::string expected, reason;
+                require(name + "_content_valid", build_new_scenario_file_content(draft, expected, reason));
+                require(name + "_target_absent", !std::filesystem::exists(created_path));
+                app.request_new_file_create({NewFileKind::Scenario, name, utf8(directory),
+                    app.file_path_, false, true, draft});
+                app.process_pending_new_file_create();
+                select_route(0);
+                require(name + "_created_and_loaded", wait_for_map(std::nullopt));
+                require(name + "_independent_document",
+                    read_bytes(created_path) == expected && app.pending_edit_changes_.empty() &&
+                    app.scenario_preview_ && app.scenario_preview_->title == draft.title &&
+                    same_path(app.current_document_entry_path(), utf8(created_path)) &&
+                    same_path(app.file_path_, utf8(map_path)) &&
+                    app.edit_registry_loaded_ == enabled && read_bytes(map_path) == map_bytes);
+                const auto history = load_history_entries(app.history_path_);
+                require(name + "_history_entry", !history.empty() &&
+                    same_path(history.front().path, utf8(created_path)) &&
+                    std::none_of(history.begin(), history.end(), [&](const RecentMapEntry& item) {
+                        return same_path(item.path, utf8(map_path));
+                    }));
+            }
+            app.edit_mode_enabled_ = true;
+            app.open_document(utf8(single_scenario), true);
+            select_route(0);
+            require("single_fixture_restored_after_creation", wait_for_map(std::nullopt) &&
+                same_path(app.current_document_entry_path(), utf8(single_scenario)));
+
+            const auto saved_visibility = app.last_saved_window_visibility_;
+            app.show_sections_window_ = !app.show_sections_window_;
+            app.settings_.path = directory;
+            require("settings_open_failure_retains_dirty_state", !app.persist_user_settings() &&
+                app.settings_save_pending_ && app.last_saved_window_visibility_ == saved_visibility &&
+                app.idle_wait_timeout_ms() <= 1000);
+            app.settings_.path = directory / "settings.ini";
+            const auto settings_before_retry = read_bytes(app.settings_.path);
+            app.settings_save_retry_at_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            app.save_runtime_settings_if_changed();
+            require("settings_retry_is_throttled", app.settings_save_pending_ &&
+                read_bytes(app.settings_.path) == settings_before_retry);
+            app.settings_save_retry_at_ = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+            app.service_pending_settings_save();
+            require("settings_retry_recovers", !app.settings_save_pending_ &&
+                app.last_saved_window_visibility_ == app.current_window_visibility() &&
+                load_user_settings(app.settings_.path).window_visibility == app.current_window_visibility() &&
+                app.idle_wait_timeout_ms() == INFINITE);
+
+            require("fixture_draw_distance_available", !app.model_.draw_distances.empty());
+            const auto& row = app.model_.draw_distances.front();
+            MapElementPendingChange change;
+            change.change_id = "lifecycle-map-update";
+            change.edit_id = row.edit_id;
+            change.row_kind = "drawDistance.change";
+            change.field_changes.emplace("value", "750");
+            for (const auto& file : app.model_.edit_files) {
+                if (file.file_path == row.source.file_path) change.expected_source_hash = file.source_hash;
+            }
+            require("fixture_map_target_identity", !change.edit_id.empty() && !change.expected_source_hash.empty());
+            std::map<std::string, MapElementPendingChange> ledger;
+            ledger.emplace(change.edit_id, change);
+            require("fixture_map_apply", app.apply_edit_ledger_to_preview(ledger, std::nullopt, false));
+            require("fixture_apply_is_memory_only", read_bytes(map_path) == map_bytes &&
+                read_bytes(single_scenario) == scenario_bytes);
+            require("fixture_scenario_route_available", app.scenario_preview_ && app.scenario_preview_->routes.size() == 1);
+            app.scenario_preview_->title = "After";
+            app.scenario_preview_->routes.front().path = "alternate.txt";
+            app.update_scenario_route_warning();
+            require("fixture_both_documents_dirty", app.has_pending_edits() &&
+                app.has_scenario_unsaved_changes() && app.scenario_route_changed_);
+            require("scenario_save_stage_map_priority", !app.save_pending_document_changes(false) &&
+                !app.has_pending_edits() && app.has_scenario_unsaved_changes() &&
+                read_bytes(map_path).find("DrawDistance.Change(750);") != std::string::npos &&
+                read_bytes(single_scenario) == scenario_bytes);
+            require("scenario_direct_save", app.save_pending_document_changes(false));
+            const auto saved_scenario = read_bytes(single_scenario);
+            require("scenario_direct_save_content", !app.has_scenario_unsaved_changes() &&
+                saved_scenario.find("Title = After") != std::string::npos &&
+                saved_scenario.find("Route = alternate.txt") != std::string::npos &&
+                same_path(app.file_path_, utf8(map_path)));
+            app.reload_current_map_geometry();
+            select_route(0);
+            require("saved_scenario_reload_completed", wait_for_map(true));
+            require("saved_scenario_reload_uses_new_route", same_path(app.file_path_, utf8(alternate_map)));
+            exercise(utf8(multiple_scenario), 1, "multiple", false, true);
+        }
+    } catch (const std::exception& e) {
+        *out << "exception=" << e.what() << "\n";
+        ++failed;
+    }
+    try {
+        bool unchanged = !protected_sources.empty();
+        for (const auto& file : protected_sources) unchanged = (read_bytes(file.first) == file.second) && unchanged;
+        check("real_sources_unchanged", unchanged);
+        *out << "protected_real_source_count=" << protected_sources.size() << "\n";
+    } catch (const std::exception& e) {
+        *out << "source_verification_error=" << e.what() << "\n";
+        ++failed;
+    }
+    bool cleaned = true;
+    for (const char* name : fixture_names) {
+        std::error_code remove_error;
+        std::filesystem::remove(directory / name, remove_error);
+        cleaned = !remove_error && cleaned;
+    }
+    std::filesystem::remove(directory, error);
+    check("fixture_files_cleaned", cleaned && !error);
+    ImGui::EndFrame();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+    *out << "result=" << (failed == 0 ? "PASS" : "FAIL") << "\n";
+    return failed == 0 ? 0 : 22;
+}
+
 int App::run_debug_headless_fresh_resource_list_workflow(
     const HeadlessFreshResourceListWorkflowOptions& options) {
     std::ofstream output_file;
@@ -3676,32 +4109,52 @@ int App::run_debug_headless_fresh_resource_list_workflow(
     *out << "command=debug-headless-fresh-resource-list-workflow\n"
          << "map_path=" << options.path << "\n";
 
-    const auto read_file_bytes = [](const std::filesystem::path& path) {
+    const auto read_file_bytes = [](const std::filesystem::path& path)
+        -> std::optional<std::string> {
         std::ifstream file(path, std::ios::binary);
-        return std::string((std::istreambuf_iterator<char>(file)),
-                           std::istreambuf_iterator<char>());
+        if (!file) return std::nullopt;
+        std::string bytes((std::istreambuf_iterator<char>(file)),
+                          std::istreambuf_iterator<char>());
+        if (file.bad()) return std::nullopt;
+        return bytes;
     };
     std::error_code path_error;
     const std::filesystem::path requested_path(utf8_to_wide(options.path));
-    const std::filesystem::path map_path =
+    const std::filesystem::path input_map_path =
         std::filesystem::absolute(requested_path, path_error).lexically_normal();
-    if (path_error || requested_path.empty() || map_path.filename().empty() ||
-        !std::filesystem::is_regular_file(map_path, path_error) || path_error) {
+    if (path_error || requested_path.empty() || input_map_path.filename().empty() ||
+        !std::filesystem::is_regular_file(input_map_path, path_error) || path_error) {
         *out << "error=fresh resource-list workflow requires an existing map file\n"
              << "result=FAIL\n";
         out->flush();
         return 2;
     }
 
-    // The entry rewrites the real route in place and restores its exact bytes
-    // afterwards; only files created by this run with the exclusive prefix are
-    // ever deleted.
+    const auto original_map_bytes = read_file_bytes(input_map_path);
+    if (!original_map_bytes) {
+        *out << "error=failed to read the input map file\nresult=FAIL\n";
+        out->flush();
+        return 2;
+    }
+    // All writable files belong to this run's exclusively created directory.
+    const std::filesystem::path temp_root = std::filesystem::temp_directory_path(path_error);
+    const std::filesystem::path fixture_directory = temp_root /
+        ("komapedit-fresh-resource-workflow-" +
+         std::to_string(static_cast<unsigned long>(GetCurrentProcessId())) + "-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    if (path_error ||
+        !std::filesystem::create_directory(fixture_directory, path_error) || path_error) {
+        *out << "error=failed to create an exclusive fixture directory\nresult=FAIL\n";
+        out->flush();
+        return 2;
+    }
+    const std::filesystem::path map_path = fixture_directory / "map.txt";
     constexpr const char* k_temp_prefix = "fresh-resource-workflow-";
     const std::filesystem::path structures_path =
         map_path.parent_path() / (std::string(k_temp_prefix) + "structures.csv");
     const std::filesystem::path stations_path =
         map_path.parent_path() / (std::string(k_temp_prefix) + "stations.csv");
-    const std::string original_map_bytes = read_file_bytes(map_path);
+    *out << "fixture_map_path=" << wide_to_utf8(map_path.wstring()) << "\n";
     int failed_cases = 0;
     auto check = [&](const char* label, bool value) {
         *out << label << '=' << (value ? 1 : 0) << "\n";
@@ -3727,26 +4180,32 @@ int App::run_debug_headless_fresh_resource_list_workflow(
     const std::string station_list_bytes =
         "BveTs Station List 2.00:utf-8\r\n"
         "sta1,Before,,,,,,,,,,,,\r\n";
-    {
-        std::ofstream map_file(map_path, std::ios::binary | std::ios::trunc);
-        map_file << blank_map_bytes;
-        std::ofstream structures(structures_path,
-                                 std::ios::binary | std::ios::trunc);
-        structures << structure_list_bytes;
-        std::ofstream stations(stations_path,
-                               std::ios::binary | std::ios::trunc);
-        stations << station_list_bytes;
-    }
-    const auto restore_route = [&]() noexcept {
-        std::error_code restore_error;
-        std::filesystem::remove(structures_path, restore_error);
-        std::filesystem::remove(stations_path, restore_error);
-        std::ofstream map_file(map_path, std::ios::binary | std::ios::trunc);
-        map_file << original_map_bytes;
+    const std::array<std::filesystem::path, 3> fixture_files = {
+        stations_path, structures_path, map_path};
+    const auto cleanup_fixture = [&]() {
+        bool cleaned = true;
+        for (const std::filesystem::path& path : fixture_files) {
+            std::error_code error;
+            std::filesystem::remove(path, error);
+            cleaned = !error && cleaned;
+        }
+        std::error_code error;
+        std::filesystem::remove(fixture_directory, error);
+        return !error && cleaned;
     };
 
     try {
-        try {
+        const auto create_fixture_file = [](const std::filesystem::path& path,
+                                            std::string_view bytes) {
+            std::string error;
+            if (!create_utf8_bve_file_exclusive(path, bytes, error)) {
+                throw std::runtime_error("failed to create workflow fixture: " + error);
+            }
+        };
+        create_fixture_file(map_path, blank_map_bytes);
+        create_fixture_file(structures_path, structure_list_bytes);
+        create_fixture_file(stations_path, station_list_bytes);
+        {
             LoadModelOptions edit_options;
             edit_options.full_edit_registry = true;
             edit_options.load_profile = "edit";
@@ -3892,22 +4351,13 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             check("preview_shows_updated_station_name", station_name_updated);
             check("preview_normalizes_empty_station_numeric_fields",
                   station_preview_defaults_normalized);
-        } catch (...) {
-            restore_route();
-            throw;
         }
-
-        restore_route();
-        check("route_bytes_restored",
-              read_file_bytes(map_path) == original_map_bytes);
-        check("temp_lists_removed",
-              !std::filesystem::exists(structures_path) &&
-                  !std::filesystem::exists(stations_path));
     } catch (const std::exception& e) {
-        restore_route();
         *out << "exception=" << e.what() << "\n";
         ++failed_cases;
     }
+    check("fixture_files_cleaned", cleanup_fixture());
+    check("input_map_bytes_unchanged", read_file_bytes(input_map_path) == original_map_bytes);
     ImGui::EndFrame();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();

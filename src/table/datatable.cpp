@@ -37,6 +37,8 @@
 
 namespace {
 
+constexpr size_t k_max_section_value_columns = 508;
+
 std::string normalize_train_lookup_key(const std::string& key) {
     return ascii_lower(trim_gui_ascii_copy(key));
 }
@@ -1836,19 +1838,21 @@ void App::ensure_table_cache() {
                 value_columns,
                 static_cast<size_t>(std::max(0.0, table_cell_number(row, "valueCount"))));
         }
+        const size_t displayed_value_columns =
+            std::min(value_columns, k_max_section_value_columns);
         output.reserve(rows.size());
         for (size_t row_index = 0; row_index < rows.size(); ++row_index) {
             const TableRow& row = rows[row_index];
             CachedTableRow cached;
-            cached.cells.resize(3 + value_columns);
+            cached.cells.resize(3 + displayed_value_columns);
             cached.cells[0] = std::to_string(row_index + 1);
             cached.cells[1] = table_cell(row, "distance");
-            for (size_t value_index = 0; value_index < value_columns; ++value_index) {
+            for (size_t value_index = 0; value_index < displayed_value_columns; ++value_index) {
                 cached.cells[2 + value_index] =
                     table_cell(row, "value" + std::to_string(value_index));
             }
             cached.open_path = table_cell(row, "filePath");
-            cached.cells[2 + value_columns] = display_name_from_path(cached.open_path);
+            cached.cells[2 + displayed_value_columns] = display_name_from_path(cached.open_path);
             cached.tooltip_text = cached.open_path;
             output.push_back(std::move(cached));
         }
@@ -4332,7 +4336,15 @@ void App::render_sections_window() {
                                     const std::vector<TableRow>* source_rows,
                                     const char* row_kind) {
         ImGui::TextUnformatted(heading.c_str());
-        const int column_count = static_cast<int>(3 + value_columns);
+        const size_t displayed_value_columns =
+            std::min(value_columns, k_max_section_value_columns);
+        if (value_columns > displayed_value_columns) {
+            std::string notice = tr("table.section_values_truncated");
+            replace_all(notice, "{shown}", std::to_string(displayed_value_columns));
+            replace_all(notice, "{total}", std::to_string(value_columns));
+            ImGui::TextWrapped("%s", notice.c_str());
+        }
+        const int column_count = static_cast<int>(3 + displayed_value_columns);
         if (!ImGui::BeginTable(
                 table_id, column_count,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -4344,7 +4356,7 @@ void App::render_sections_window() {
         }
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 45.0f);
         ImGui::TableSetupColumn("distance", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-        for (size_t i = 0; i < value_columns; ++i) {
+        for (size_t i = 0; i < displayed_value_columns; ++i) {
             const std::string header = value_prefix + std::to_string(i);
             ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
         }

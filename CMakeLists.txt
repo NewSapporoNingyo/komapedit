@@ -329,6 +329,7 @@ foreach(komapedit_owned_target IN ITEMS
         maploader
         model_loader
         typed_snapshot_tests
+        multilanguage_tests
         canvas3d_camera_tests
         komapedit)
     if(TARGET ${komapedit_owned_target})

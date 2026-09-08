@@ -1699,10 +1699,13 @@ struct PlanScreenTransform {
         return {cx + dx, cy + dy};
     }
 
+    std::pair<double, double> model_to_plan(double x, double y) const {
+        return {model_c * x - model_s * y, model_s * x + model_c * y};
+    }
+
     ImVec2 model_to_screen(double x, double y) const {
-        double px = model_c * x - model_s * y;
-        double py = model_s * x + model_c * y;
-        return plan_to_screen(px, py);
+        const auto point = model_to_plan(x, y);
+        return plan_to_screen(point.first, point.second);
     }
 };
 
@@ -1720,6 +1723,15 @@ static PlanScreenTransform make_plan_transform(const View2D& view, double model_
     transform.screen_cy = origin.y + size.y * 0.5f;
     return transform;
 }
+
+#ifndef NDEBUG
+ImVec2 App::debug_other_track_change_marker_screen_position(
+    const OtherTrackChangeMarker& marker, double model_angle,
+    ImVec2 origin, ImVec2 size) const {
+    return make_plan_transform(plan_view_, model_angle, origin, size)
+        .model_to_screen(marker.x, marker.y);
+}
+#endif
 
 class ScreenPolylineBuilder {
 public:
@@ -1996,10 +2008,8 @@ static void draw_repeater_segment_overview(ImDrawList* draw,
     constexpr float coarse_margin = 96.0f;
     const float half_thickness = std::max(0.5f, thickness * 0.5f);
     const ImVec2 uv = draw->_Data->TexUvWhitePixel;
-    const int reserved_lines = static_cast<int>(std::min<size_t>(row_count, static_cast<size_t>(std::numeric_limits<int>::max() / 6)));
-    if (reserved_lines <= 0) return;
-    draw->PrimReserve(reserved_lines * 6, reserved_lines * 4);
-    int emitted_lines = 0;
+    constexpr size_t batch_line_limit = 4096;
+    int unused_lines = 0;
     for (size_t row = 0; row < row_count; ++row) {
         if (!visible[row]) continue;
         const PlanRepeaterSegment& segment = rows[row].segment;
@@ -2019,12 +2029,70 @@ static void draw_repeater_segment_overview(ImDrawList* draw,
         float dy = b.y - a.y;
         if (dx * dx + dy * dy < 4.0f) continue;
         if (!screen_line_overlaps_canvas(a, b, origin, size, coarse_margin)) continue;
+        if (unused_lines == 0) {
+            unused_lines = static_cast<int>(std::min(batch_line_limit, row_count - row));
+            draw->PrimReserve(unused_lines * 6, unused_lines * 4);
+        }
         write_overview_line_quad(draw, a, b, color, half_thickness, uv);
-        ++emitted_lines;
+        --unused_lines;
     }
-    int unused_lines = reserved_lines - emitted_lines;
     if (unused_lines > 0) draw->PrimUnreserve(unused_lines * 6, unused_lines * 4);
 }
+
+#ifndef NDEBUG
+bool App::debug_repeater_overview_indices() {
+    constexpr size_t row_count = 17004;
+    std::vector<RepeaterOverlayRow> rows(row_count);
+    std::vector<unsigned char> visible(row_count, 1);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        PlanRepeaterSegment& segment = rows[i].segment;
+        segment.bounds_valid = true;
+        segment.endpoints_valid = true;
+        segment.d_min = 0.0;
+        segment.d_max = 1.0;
+        segment.first_point.d = 0.0;
+        segment.first_point.x = 10.0;
+        segment.first_point.y = 10.0 + static_cast<double>(i % 50);
+        segment.last_point = segment.first_point;
+        segment.last_point.d = 1.0;
+        segment.last_point.x = 30.0;
+    }
+    visible.front() = 0;
+    visible.back() = 0;
+    rows[1].segment.last_point.x = rows[1].segment.first_point.x;
+    rows[2].segment.first_point.x = 1000.0;
+    rows[2].segment.last_point.x = 1020.0;
+    ImDrawList& draw = *ImGui::GetBackgroundDrawList();
+    draw.Flags |= ImDrawListFlags_AllowVtxOffset;
+    draw.PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(200.0f, 200.0f));
+    draw_repeater_segment_overview(
+        &draw, rows, visible, 0.0, 1.0, PlanScreenTransform{},
+        ImVec2(0.0f, 0.0f), ImVec2(200.0f, 200.0f), IM_COL32_WHITE, 1.0f);
+    draw.PopClipRect();
+    // Exercise the buffer assertions also used by ImGui::Render().
+    ImDrawData draw_data;
+    draw_data.AddDrawList(&draw);
+    constexpr size_t emitted_lines = row_count - 4;
+    if (draw.VtxBuffer.Size != static_cast<int>(emitted_lines * 4) ||
+        draw.IdxBuffer.Size != static_cast<int>(emitted_lines * 6)) return false;
+    constexpr size_t quad_indices[] = {0, 1, 2, 0, 2, 3};
+    size_t covered_indices = 0;
+    bool used_vertex_offset = false;
+    for (const ImDrawCmd& command : draw.CmdBuffer) {
+        used_vertex_offset = used_vertex_offset || command.VtxOffset != 0;
+        for (unsigned int i = 0; i < command.ElemCount; ++i) {
+            const size_t index = static_cast<size_t>(command.IdxOffset) + i;
+            if (index >= static_cast<size_t>(draw.IdxBuffer.Size)) return false;
+            const size_t vertex = static_cast<size_t>(command.VtxOffset) +
+                draw.IdxBuffer[static_cast<int>(index)];
+            if (vertex != (index / 6) * 4 + quad_indices[index % 6]) return false;
+        }
+        covered_indices += command.ElemCount;
+    }
+    return covered_indices == emitted_lines * 6 &&
+        (sizeof(ImDrawIdx) != 2 || used_vertex_offset);
+}
+#endif
 
 static void draw_repeater_segment_chunks(ImDrawList* draw,
                                          const std::vector<RepeaterOverlayRow>& rows,
@@ -2616,7 +2684,7 @@ void App::render_plan_canvas(ImVec2 size) {
             const OtherTrack& track = model_.other_tracks[marker.track_index];
             if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
                 marker.d > std::min(dmax_, track.range_max)) continue;
-            const ImVec2 point = hit_transform.plan_to_screen(marker.x, marker.y);
+            const ImVec2 point = hit_transform.model_to_screen(marker.x, marker.y);
             if (!point_near_canvas(point, origin, avail, marker_canvas_margin)) continue;
             const double dx = static_cast<double>(point.x - mouse.x);
             const double dy = static_cast<double>(point.y - mouse.y);
@@ -2846,8 +2914,9 @@ void App::render_plan_canvas(ImVec2 size) {
                     marker.d > std::min(dmax_, track.range_max)) {
                     continue;
                 }
+                const auto point = hit_transform.model_to_plan(marker.x, marker.y);
                 add_candidate(PlanMarkerKind::OtherTrackChange, marker.row_index,
-                              marker.x, marker.y, marker.edit_id, "otherTrack.change");
+                              point.first, point.second, marker.edit_id, "otherTrack.change");
             }
         }
         for (const OwnTrackEditMarker& marker : data.curve_edit_markers) {
@@ -3122,7 +3191,7 @@ void App::render_plan_canvas(ImVec2 size) {
             const OtherTrack& track = model_.other_tracks[marker.track_index];
             if (!track.visible || marker.d < std::max(dmin_, track.range_min) ||
                 marker.d > std::min(dmax_, track.range_max)) continue;
-            const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
+            const ImVec2 point = transform.model_to_screen(marker.x, marker.y);
             if (!point_near_canvas(point, origin, avail)) continue;
             const bool hovered_marker = hovered_other_track_change_hit &&
                 hovered_other_track_change_hit->row_index == marker.row_index;
