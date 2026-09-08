@@ -12,6 +12,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Handle UTF-8, UTF-8 with BOM, UTF-16LE, UTF-16BE, CP932/Shift_JIS, and related text encodings.
 - [x] Support `Include` references to other map files.
 - [x] Support `$variable = expression;`, the predefined `distance` variable, and basic math functions.
+- [x] Keep `distance` local to each Map file across Includes, following Moboso's parser behavior while retaining shared ordinary variables. Synthetic variable-based Structure fixtures reproduce and fix the chained-Include mileage offset; the original reported map was unavailable for direct verification.
 - [x] Support `#` and `//` comments.
 - [x] Load maps asynchronously and show logs, warnings, and errors in the console window.
 - [x] Expose source anchors and stable edit metadata for editable map/list statements through the versioned typed map snapshot.
@@ -167,6 +168,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 支持 UTF-8、UTF-8 BOM、UTF-16LE、UTF-16BE、CP932/Shift_JIS 等文本编码处理
 - [x] 支持 `Include` 引用其他地图文件
 - [x] 支持 `$变量 = 表达式;`、`distance` 预定义变量和基础数学函数
+- [x] 参照 Moboso 的解析行为，将 Include 中的 `distance` 限定在各 Map 文件内，并保留普通变量共享。通过变量布景合成地图复现并修复连续 Include 导致的里程偏移；原报告地图未提供，未直接验证。
 - [x] 支持 `#`、`//` 注释
 - [x] 支持异步加载地图，并在控制台窗口显示加载日志、警告和错误
 - [x] 通过带版本的 typed map snapshot 为可编辑 map/list 语句提供源锚点和稳定编辑 metadata

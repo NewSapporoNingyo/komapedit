@@ -204,13 +204,13 @@ ctest --test-dir build --output-on-failure
 - **源码注册与定位**：`normalized_source_path/key()`、`current_source_text()`、`register_source_file_index()`、Include 栈和 invocation key intern 函数去重源码身份；`line_column_for_body_pos()`、`make_source_span()` 把正文偏移转换为稳定物理锚点。
 - **语句与环境登记**：`current_variable_environment_snapshot()`、`rebuild_variable_environment_snapshot()`、`add_parsed_statement()`、`next_active_edit_ref()` 建立语句、环境和 edit ref；merge/offset 函数把 Include 子上下文合入父上下文而保持索引正确。
 - **列表行源码块**：`add_loaded_line_statement()`、`extend_loaded_line_statement()` 为 CSV/list 物理行建立可编辑语句；`parse_signal_aspect_source_values()` 和字段名帮助函数保留可变结构 key 列及 glare 行形状。
-- **依赖与状态更新**：`value_equal()`、变量读写/距离使用记录、`log_load_timing()` 支持语义验证和性能日志；`add_controlpoint()`、`set_distance()`、`put_own()`、`ensure_othertrack()`、`put_other()` 是 parser dispatch 写入轨道事件状态的统一入口。
+- **依赖与状态更新**：`value_equal()`、变量读写记录、`log_load_timing()` 支持语义验证和性能日志；`add_controlpoint()`、`set_distance()`、`put_own()`、`ensure_othertrack()`、`put_other()` 是 parser dispatch 写入轨道事件状态的统一入口。
 
 #### `src/maploader/maploader_parser.cpp`
 
 - **词法/语句循环**：`Parser::parse()` 驱动整文件；`eof()`、`peek()`、`skip()`、`accept()`、`expect()` 处理空白、注释和标点；诊断函数记录位置并在 `finish_statement()`/`synchronize_statement()` 中恢复到下一条语句。
 - **对象、函数与表达式**：`parse_label()`、`parse_variable_name()`、`parse_map_object()`、`parse_map_function()`、`parse_map_args()` 构造 `MapObject`/`MapFunction`；`parse_expression()`、`parse_prefix()`、`parse_primary()`、`apply_binary()`、`call_function()` 实现优先级、变量、字符串、数值和受支持数学函数。
-- **Include 流程**：`include_path_is_simple_string()` 检查可预览路径；`make_child_seed()` 继承变量/距离与 Include 身份；`parse_include_context()` 可并行解析子文件；`queue_include()`、`flush_pending_includes()`、stale 检测和 merge 函数按原始顺序合并子上下文、源码表、诊断和事件。
+- **Include 流程**：`include_path_is_simple_string()` 检查可预览路径；`make_child_seed()` 继承普通变量与 Include 身份，保留子文件独立的零里程和空距离表达式；`parse_include_context()` 可并行解析子文件；`queue_include()`、`flush_pending_includes()`、基于普通变量依赖的 stale 检测和 merge 函数按原始顺序合并源码表、诊断、事件及变量写入，不覆盖父文件里程和距离表达式。
 - **语法验证与总分派**：`method_rules()` 是方法参数个数/空值规则表；`object_path()`、`validate_statement()` 形成一般语法门；`dispatch()` 再按顶层对象路由到专用函数。`record_deferred_semantics()` 记录需要等资源列表全部读完后才可验证的 key。
 - **自轨道与他轨道**：`dispatch_curve()`、`dispatch_gradient()`、`dispatch_legacy()` 记录曲线、坡度和旧式事件；`dispatch_track()`、`setposition_interpolate()`、`track_position()` 记录他轨道位置、插值、轨距、中心和超高事件。
 - **资源列表**：`load_resource_list()` 与 `record_resource_list_load()` 保存 Load 的原表达式、求值路径和源码身份；`parse_station_list()`、`parse_structure_list()`、`parse_signal_aspect_list()`、`parse_sound_list()` 把物理列表行转成强类型且可回写的记录；`parse_other_train_file()` 读取他列车文件。
@@ -492,6 +492,8 @@ App / MapModel
 - 公共 ABI 变更必须明确决定版本/结构尺寸，同步修改 EXE、DLL 和调用方，并记录所有权与有效期。
 
 ### 解析、几何与源码保真
+
+每个 Map 解析上下文拥有从零开始的里程和本地距离表达式。Include 子上下文继承普通变量和源码身份，不继承里程；合并时保留父文件里程及表达式，同时合入子文件的事件、控制点和变量写入。并行预解析结果仍按普通变量依赖检查是否需要重解析。文件级里程行为参照 Moboso 的解析栈实现；官方 Map 页面未明确规定 Include 的里程作用域。回归契约覆盖连续、嵌套、重复 Include、全部加载模式、变量布景参数、源码元数据及 memory Apply/Reset。原报告地图未提供，偏移通过合成地图复现并验证。
 
 保持对 BVE Map 2.0+、当前支持的旧式语法、`Include`、变量、预定义 `distance`、数学函数、注释及 UTF-8/BOM、UTF-16LE/BE、CP932/Shift_JIS 相关输入的支持。
 

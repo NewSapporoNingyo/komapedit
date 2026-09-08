@@ -82,7 +82,6 @@ private:
         std::filesystem::path path;
         std::string include_path;
         std::string include_invocation_key;
-        double seed_distance = 0.0;
         std::unordered_map<std::string, Value> seed_variables;
         MapDiagnostic source;
         std::future<IncludeResult> future;
@@ -405,8 +404,8 @@ private:
             normalized_source_key(seed.include_stack.back()) != normalized_source_key(child_path)) {
             seed.include_stack.push_back(child_path);
         }
-        seed.distance = ctx_.distance;
-        seed.distance_expression = ctx_.distance_expression;
+        // Each Map file owns its distance; only ordinary variables cross Includes.
+        // Keep the fresh context's zero distance and empty distance expression.
         seed.variables = ctx_.variables;
         if (seed.parse_options.collect_edit_metadata) {
             seed.variable_environment_snapshot = current_variable_environment_snapshot(ctx_);
@@ -471,7 +470,6 @@ private:
         pending.path = child;
         pending.include_path = path_text;
         pending.include_invocation_key = std::move(include_invocation_key);
-        pending.seed_distance = seed.distance;
         pending.seed_variables = seed.variables;
         pending.source = diagnostic_source(body_start, "Include");
         pending.future = launch_bounded_maploader_task(
@@ -482,9 +480,6 @@ private:
     }
 
     bool include_result_is_stale(const PendingInclude& pending, const MapContext& parsed) const {
-        if (parsed.depends_on_initial_distance && ctx_.distance != pending.seed_distance) {
-            return true;
-        }
         if (ctx_.parse_options.collect_edit_metadata) {
             if (ctx_.variables.size() != pending.seed_variables.size()) return true;
             for (const auto& variable : ctx_.variables) {
@@ -524,9 +519,6 @@ private:
 
     void merge_include_context(MapContext& child) {
         ctx_.timing.read_decode_seconds += child.timing.read_decode_seconds;
-        if (child.depends_on_initial_distance && !ctx_.has_distance_assignment) {
-            ctx_.depends_on_initial_distance = true;
-        }
         for (const std::string& key : child.external_variable_reads) {
             if (ctx_.variable_writes.find(key) == ctx_.variable_writes.end()) {
                 ctx_.external_variable_reads.insert(key);
@@ -650,11 +642,6 @@ private:
         for (auto& row : child.resource_list_loads) offset_order(row.order);
         ctx_.parse_order += child.parse_order;
 
-        if (child.has_distance_assignment) {
-            ctx_.distance = child.distance;
-            ctx_.distance_expression = child.distance_expression;
-            ctx_.has_distance_assignment = true;
-        }
         bool parent_variable_environment_changed = false;
         for (const std::string& key : child.variable_writes) {
             auto it = child.variables.find(key);
@@ -922,7 +909,6 @@ private:
             }
             if (lower == "null") return Value::null();
             if (lower == "distance") {
-                note_distance_use(ctx_);
                 return Value::num(ctx_.distance);
             }
             throw std::runtime_error("Unknown predefined variable: " + label);
@@ -1521,7 +1507,6 @@ private:
         } else if (fn == "pitch") {
             put_own(ctx_, "gradient", arg_or_null(a));
         } else if (fn == "fog") {
-            note_distance_use(ctx_);
             LegacyFogChange row;
             row.distance = ctx_.distance;
             row.start = as_number(a[0]);
@@ -1576,7 +1561,6 @@ private:
     void dispatch_station(const std::string& fn, const std::vector<Value>& a,
                           const std::string& raw_arguments) {
         if (fn == "put" && !a.empty()) {
-            note_distance_use(ctx_);
             std::string key = key_text(a.at(0));
             ctx_.station_position[ctx_.distance] = key;
             StationPut row;
@@ -1844,7 +1828,6 @@ private:
 
     void dispatch_speedlimit(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "begin") {
-            note_distance_use(ctx_);
             SpeedLimitEvent row;
             row.distance = ctx_.distance;
             row.speed = a.empty() ? Value::num(0.0) : a[0];
@@ -1853,7 +1836,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.speedlimits.push_back(std::move(row));
         } else if (fn == "end") {
-            note_distance_use(ctx_);
             SpeedLimitEvent row;
             row.distance = ctx_.distance;
             row.speed = Value::null();
@@ -1866,7 +1848,6 @@ private:
 
     void dispatch_section(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "begin" || fn == "beginnew") {
-            note_distance_use(ctx_);
             SectionBegin row;
             row.distance = ctx_.distance;
             row.method = fn == "beginnew" ? "Section.BeginNew" : "Section.Begin";
@@ -1876,7 +1857,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.section_begins.push_back(std::move(row));
         } else if (fn == "setspeedlimit") {
-            note_distance_use(ctx_);
             SectionSpeedLimit row;
             row.distance = ctx_.distance;
             row.method = "Section.SetSpeedLimit";
@@ -1900,7 +1880,6 @@ private:
                                "signal.load",
                                [&](const LoadedText& loaded) { parse_signal_aspect_list(loaded); });
         } else if (fn == "speedlimit" && !has_signal_key) {
-            note_distance_use(ctx_);
             SectionSpeedLimit row;
             row.distance = ctx_.distance;
             row.method = "Signal.SpeedLimit";
@@ -1910,7 +1889,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.section_speed_limits.push_back(std::move(row));
         } else if (fn == "put" && has_signal_key && a.size() >= 4) {
-            note_distance_use(ctx_);
             SignalPut row;
             row.distance = ctx_.distance;
             row.signal_aspect_key = a[0];
@@ -1935,7 +1913,6 @@ private:
 
     void dispatch_beacon(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "put" || a.size() < 3) return;
-        note_distance_use(ctx_);
         BeaconPut row;
         row.distance = ctx_.distance;
         row.type = a[0];
@@ -1949,7 +1926,6 @@ private:
 
     void dispatch_pretrain(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "pass" || a.empty()) return;
-        note_distance_use(ctx_);
         PreTrainPass row;
         row.distance = ctx_.distance;
         row.pass_time = a[0];
@@ -1962,7 +1938,6 @@ private:
     void dispatch_structure(const std::string& fn, const std::vector<Value>& a,
                             const std::string& raw_arguments) {
         if (fn == "load") {
-            note_distance_use(ctx_);
             StructureLoad row;
             row.distance = ctx_.distance;
             row.method = "Load";
@@ -1979,7 +1954,6 @@ private:
                                "structure.load",
                                [&](const LoadedText& loaded) { parse_structure_list(loaded); });
         } else if (fn == "put" && a.size() >= 10) {
-            note_distance_use(ctx_);
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "Put";
@@ -1993,7 +1967,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.structure_puts.push_back(row);
         } else if (fn == "put0" && a.size() >= 4) {
-            note_distance_use(ctx_);
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "Put0";
@@ -2005,7 +1978,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.structure_puts.push_back(row);
         } else if (fn == "putbetween" && a.size() >= 3) {
-            note_distance_use(ctx_);
             StructurePut row;
             row.distance = ctx_.distance;
             row.method = "PutBetween";
@@ -2034,7 +2006,6 @@ private:
                 is_3d ? "sound3d.load" : "sound.load",
                 [&](const LoadedText& loaded) { parse_sound_list(loaded, is_3d); });
         } else if (!is_3d && fn == "play" && has_key) {
-            note_distance_use(ctx_);
             MapSoundPlay row;
             row.distance = ctx_.distance;
             row.sound_key = sound_key;
@@ -2043,7 +2014,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.map_sounds.push_back(std::move(row));
         } else if (is_3d && fn == "put" && has_key && a.size() >= 2) {
-            note_distance_use(ctx_);
             MapSound3DPut row;
             row.distance = ctx_.distance;
             row.sound_key = sound_key;
@@ -2061,7 +2031,6 @@ private:
                                     const Value& file_path,
                                     const Value& track_key,
                                     const Value& direction) {
-        note_distance_use(ctx_);
         OtherTrainDefinition row;
         row.distance = ctx_.distance;
         row.method = method;
@@ -2098,7 +2067,6 @@ private:
         } else if (fn == "load" && has_train_key && a.size() >= 4) {
             add_other_train_definition("Load", a[0], a[1], a[2], a[3]);
         } else if (fn == "enable" && has_train_key && a.size() >= 2) {
-            note_distance_use(ctx_);
             OtherTrainEnable row;
             row.distance = ctx_.distance;
             row.train_key = a[0];
@@ -2109,7 +2077,6 @@ private:
             attach_active_noneditable_ref(ctx_, row);
             ctx_.other_train_enables.push_back(std::move(row));
         } else if (fn == "stop" && has_train_key && a.size() >= 5) {
-            note_distance_use(ctx_);
             OtherTrainStop row;
             row.distance = ctx_.distance;
             row.train_key = a[0];
@@ -2126,7 +2093,6 @@ private:
 
     void dispatch_rolling_noise(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "change" || a.empty()) return;
-        note_distance_use(ctx_);
         RollingNoiseChange row;
         row.distance = ctx_.distance;
         row.index = a[0];
@@ -2138,7 +2104,6 @@ private:
 
     void dispatch_flange_noise(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "change" || a.empty()) return;
-        note_distance_use(ctx_);
         FlangeNoiseChange row;
         row.distance = ctx_.distance;
         row.index = a[0];
@@ -2150,7 +2115,6 @@ private:
 
     void dispatch_joint_noise(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "play" || a.empty()) return;
-        note_distance_use(ctx_);
         JointNoisePlay row;
         row.distance = ctx_.distance;
         row.index = a[0];
@@ -2162,7 +2126,6 @@ private:
 
     void dispatch_repeater(const std::string& fn, const std::vector<Value>& a) {
         if (fn == "begin" && a.size() >= 11) {
-            note_distance_use(ctx_);
             RepeaterEvent row;
             row.distance = ctx_.distance;
             row.method = "Begin";
@@ -2176,7 +2139,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.repeaters.push_back(row);
         } else if (fn == "begin0" && a.size() >= 5) {
-            note_distance_use(ctx_);
             RepeaterEvent row;
             row.distance = ctx_.distance;
             row.method = "Begin0";
@@ -2188,7 +2150,6 @@ private:
             attach_active_edit_ref(ctx_, row);
             ctx_.repeaters.push_back(row);
         } else if (fn == "end" && !a.empty()) {
-            note_distance_use(ctx_);
             RepeaterEvent row;
             row.distance = ctx_.distance;
             row.method = "End";
@@ -2203,7 +2164,6 @@ private:
 
     void dispatch_irregularity(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "change" || a.size() < 6) return;
-        note_distance_use(ctx_);
         IrregularityChange row;
         row.distance = ctx_.distance;
         row.x = as_number(a[0]);
@@ -2220,7 +2180,6 @@ private:
 
     void dispatch_background(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "change" || a.empty() || a[0].is_null()) return;
-        note_distance_use(ctx_);
         BackgroundChange row;
         row.distance = ctx_.distance;
         row.structure_key = a[0];
@@ -2232,7 +2191,6 @@ private:
 
     void dispatch_adhesion(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "change" || a.empty()) return;
-        note_distance_use(ctx_);
         AdhesionChange row;
         row.distance = ctx_.distance;
         row.a = a[0];
@@ -2249,7 +2207,6 @@ private:
     void dispatch_cab_illuminance(const std::string& fn, const std::vector<Value>& a) {
         const bool no_value = a.empty() || a[0].is_null();
         if ((fn != "interpolate" && fn != "set") || (fn == "set" && no_value)) return;
-        note_distance_use(ctx_);
         CabIlluminanceChange row;
         row.distance = ctx_.distance;
         row.value = no_value ? Value::cont() : a[0];
@@ -2262,7 +2219,6 @@ private:
     void dispatch_fog(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "interpolate" && fn != "set") return;
         if (fn == "set" && (a.empty() || a[0].is_null())) return;
-        note_distance_use(ctx_);
         FogChange row;
         row.distance = ctx_.distance;
         if (!a.empty()) row.density = a[0];
@@ -2293,7 +2249,6 @@ private:
                 ctx_.light_diffuse.push_back(std::move(row));
             }
         } else if (fn == "direction") {
-            note_distance_use(ctx_);
             LightDirection row;
             row.distance = ctx_.distance;
             row.pitch = as_number(a[0]);
@@ -2308,7 +2263,6 @@ private:
 
     void dispatch_draw_distance(const std::string& fn, const std::vector<Value>& a) {
         if (fn != "change" || a.empty() || a[0].is_null()) return;
-        note_distance_use(ctx_);
         DrawDistanceChange row;
         row.distance = ctx_.distance;
         row.value = as_number(a[0]);

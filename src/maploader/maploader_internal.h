@@ -956,8 +956,6 @@ struct MapContext {
     VariableEnvironmentSnapshot variable_environment_snapshot;
     std::set<std::string> external_variable_reads;
     std::set<std::string> variable_writes;
-    bool depends_on_initial_distance = false;
-    bool has_distance_assignment = false;
     std::vector<double> controlpoints;
     std::vector<OwnTrackEvent> own_track;
     std::vector<CurveEditRow> curves;
@@ -1197,7 +1195,6 @@ bool value_equal(const Value& a, const Value& b);
 bool variable_value_matches(const std::unordered_map<std::string, Value>& current,
                             const std::unordered_map<std::string, Value>& seed,
                             const std::string& key);
-void note_distance_use(MapContext& ctx);
 void note_variable_read(MapContext& ctx, const std::string& key);
 void note_variable_write(MapContext& ctx, const std::string& key);
 std::string format_seconds(double seconds);

@@ -902,10 +902,6 @@ bool variable_value_matches(const std::unordered_map<std::string, Value>& curren
     return value_equal(current_it->second, seed_it->second);
 }
 
-void note_distance_use(MapContext& ctx) {
-    if (!ctx.has_distance_assignment) ctx.depends_on_initial_distance = true;
-}
-
 void note_variable_read(MapContext& ctx, const std::string& key) {
     if (ctx.variable_writes.find(key) == ctx.variable_writes.end()) {
         ctx.external_variable_reads.insert(key);
@@ -938,13 +934,11 @@ void add_controlpoint(MapContext& ctx, double value) {
 }
 
 void set_distance(MapContext& ctx, double value) {
-    ctx.has_distance_assignment = true;
     ctx.distance = value;
     add_controlpoint(ctx, value);
 }
 
 void put_own(MapContext& ctx, const std::string& key, const Value& value, const std::string& flag) {
-    note_distance_use(ctx);
     Value stored = value.is_null() ? Value::cont() : value;
     OwnTrackEvent row;
     row.distance = ctx.distance;
@@ -964,7 +958,6 @@ void ensure_othertrack(MapContext& ctx, const std::string& key) {
 
 void put_other(MapContext& ctx, const Value& track_key, const std::string& element_key,
                const Value& value, const std::string& flag) {
-    note_distance_use(ctx);
     // The legacy containers use text keys, so retain the BVE value kind in that text:
     // numeric 1 is "1", while string '1' remains "'1'".
     std::string key = ascii_lower(track_key_display_text(track_key));

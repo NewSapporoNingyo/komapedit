@@ -326,6 +326,8 @@ The map is rejected if the entry map and its Includes load the same unkeyed reso
 
 ### 7. File Structure Diagram Functions
 
+Each Map file starts with its own `distance` at `0`. An Include does not change the parent file's current distance when it returns; ordinary `$variables` are shared. To position a submap relative to the parent, assign `$dis=distance;` before the Include and use `$dis+offset;` inside it. Structure coordinate/rotation arguments can independently use variables and expressions.
+
 Open this window from `Auxiliary Info -> Other -> File Structure Diagram`. The entry map is on the left, and its included submaps are shown by level to the right. Hover over a node to see the Include argument and absolute path.
 
 #### Viewing Files

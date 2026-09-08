@@ -4377,6 +4377,155 @@ void other_track_insert_contract() {
           "other-track insert source uses only the official current forms");
 }
 
+void include_distance_scope_contract() {
+    // Moboso keeps distance per file while sharing ordinary variables.
+    const std::array<double, 13> offsets{{
+        0, 0, 4.8, 9.6, 14.4, 20, 24.8, 29.6, 34.4, 40, 44.8, 49.6, 54.4,
+    }};
+    for (const bool legacy_encoding : {false, true}) {
+        TempFixture fixture;
+        const auto directory = fixture.directory / std::filesystem::u8path(u8"里程");
+        std::filesystem::create_directory(directory);
+        fixture.map_path = directory / "map.txt";
+        const std::string header = legacy_encoding
+            ? "BveTs Map 2.02:shift_jis\n" : "BveTs Map 2.02:utf-8\n";
+        std::vector<std::pair<std::filesystem::path, std::string>> originals;
+        auto write = [&](const char* name, std::string text) {
+            if (legacy_encoding) {
+                size_t at = 0;
+                while ((at = text.find('\n', at)) != std::string::npos) {
+                    text.insert(at, 1, '\r');
+                    at += 2;
+                }
+            }
+            const auto path = directory / name;
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << text;
+            output.close();
+            check(!output.fail(), "distance scope fixture write");
+            originals.emplace_back(path, std::move(text));
+        };
+        write("structures.csv", "BveTs Structure List 2.00:utf-8\npole,pole.x\n");
+        write("first.txt", header + "$dis+20;\n");
+        write("second.txt", header + "$dis+40;\n");
+        std::string psd = header;
+        for (double offset : offsets) {
+            psd += "$dis+" + std::to_string(offset) + ";\n"
+                "Structure['pole'].Put($rail,$x+0,$y+0,$z+0,$rx+0,$ry+0,$rz+0,1,24.99);\n";
+        }
+        write("psd.txt", psd);
+        write("grandchild.txt", header +
+            "distance+5;Structure['pole'].Put(0,91,0,0,0,0,0,1,25);\n"
+            "$shared=$shared+1;\n");
+        write("nested.txt", header +
+            "Structure['pole'].Put(0,90,0,0,0,0,0,1,25);\n"
+            "distance+11;include 'grandchild.txt';\n"
+            "Structure['pole'].Put(0,92,0,0,0,0,0,1,25);\n");
+        write("repeat.txt", header +
+            "distance+2;Structure['pole'].Put(0,93,0,0,0,0,0,1,25);\n"
+            "$shared=$shared+1;\n");
+        write("map.txt", header +
+            "Structure.Load('structures.csv');\n0;Curve.SetGauge(1.067);\n"
+            "2500;$dis=distance;include 'first.txt';\n"
+            "$dis=distance;include 'second.txt';\n"
+            "$dis=distance;$rail='';$x=-1.6;$y=2;$z=3;$rx=4;$ry=5;$rz=6;\n"
+            "include 'psd.txt';\nStructure['pole'].Put(0,99,0,0,0,0,0,1,25);\n"
+            "distance+7;Structure['pole'].Put(0,98,0,0,0,0,0,1,25);\n"
+            "$shared=10;include 'nested.txt';include 'repeat.txt';include 'repeat.txt';\n"
+            "Structure['pole'].Put(0,$shared,0,0,0,0,0,1,25);\n");
+        for (unsigned flags = 0; flags < 4; ++flags) {
+            for (int reload = 0; reload < 2; ++reload) {
+                MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 1.0, flags));
+                KvMapSnapshot snapshot{};
+                check(handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                    &snapshot, sizeof(snapshot)), "distance scope snapshot");
+                if (!handle.value || !snapshot.structure_puts) continue;
+                check(snapshot.structure_put_count == 21, "distance scope row count");
+                size_t psd_index = 0;
+                size_t repeats = 0;
+                std::set<std::string> repeated_ids;
+                std::string parent_id;
+                std::string parent_hash;
+                for (uint64_t i = 0; i < snapshot.structure_put_count; ++i) {
+                    const auto& row = snapshot.structure_puts[i];
+                    double expected = 2507;
+                    if (nearly_equal(row.x, -1.6)) {
+                        if (psd_index >= offsets.size()) { check(false, "extra PSD row"); continue; }
+                        expected = 2500 + offsets[psd_index++];
+                        check(nearly_equal(row.y, 2) && nearly_equal(row.z, 3) &&
+                            nearly_equal(row.rx, 4) && nearly_equal(row.ry, 5) &&
+                            nearly_equal(row.rz, 6) && nearly_equal(row.span, 24.99) &&
+                            nearly_equal(row.tilt, 1), "all variable placement parameters");
+                        check(map_string(snapshot, row.file_path) ==
+                            (directory / "psd.txt").u8string(), "PSD physical source");
+                    } else if (row.x == 99) {
+                        expected = 2500;
+                        parent_id = map_string(snapshot, row.metadata.edit_id);
+                        if (row.metadata.source_file_index < snapshot.source_file_count) {
+                            parent_hash = map_string(snapshot,
+                                snapshot.source_files[row.metadata.source_file_index].source_hash);
+                        }
+                    } else if (row.x == 90) expected = 0;
+                    else if (row.x == 91) expected = 5;
+                    else if (row.x == 92) expected = 11;
+                    else if (row.x == 93) {
+                        expected = 2;
+                        ++repeats;
+                        repeated_ids.insert(map_string(snapshot, row.metadata.edit_id));
+                    } else {
+                        check(row.x == 98 || row.x == 13,
+                            "shared variables propagate through nested and speculative Includes");
+                    }
+                    check(nearly_equal(row.distance, expected), "file-local placement distance");
+                }
+                check(psd_index == offsets.size() && repeats == 2, "PSD and repeated Include counts");
+                if ((snapshot.capabilities & KV_MAP_CAP_EDIT_METADATA) != 0) {
+                    check(repeated_ids.size() == 2, "repeated Include edit identities distinct");
+                    bool parent_expression = false;
+                    bool psd_expression = false;
+                    for (uint64_t i = 0; i < snapshot.statement_count; ++i) {
+                        const auto& statement = snapshot.statements[i];
+                        if (map_string(snapshot, statement.statement_kind) == "Structure.Put" &&
+                            map_string(snapshot, statement.raw_arguments) == "0,99,0,0,0,0,0,1,25") {
+                            parent_expression = map_string(snapshot, statement.distance_expression) == "2500";
+                        }
+                        if (map_string(snapshot, statement.raw_arguments).find("$rail,$x+0") == 0) {
+                            psd_expression = map_string(snapshot, statement.distance_expression).find("$dis+") == 0 &&
+                                statement.source.include_stack.count == 2;
+                        }
+                    }
+                    check(parent_expression && psd_expression, "file-local distance source expressions");
+                    UpdateBatch update(parent_id, parent_hash, "100");
+                    KvEditReportSnapshot report{};
+                    check(kv_edit_dry_run_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                        report.ok && report.full_reparse_ok, "distance scope edit dry run");
+                    check(kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                        report.ok && report.full_reparse_ok && report.non_target_changed_count == 0,
+                        "distance scope memory Apply preserves non-target semantics");
+                    KvMapSnapshot applied{};
+                    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &applied, sizeof(applied)),
+                        "distance scope applied snapshot");
+                    const auto* changed = find_structure(applied, parent_id);
+                    check(changed && nearly_equal(changed->x, 100) && nearly_equal(changed->distance, 2500),
+                        "parent edit retains local distance");
+                    check(kv_edit_reset_memory(handle.value), "distance scope Reset");
+                    KvMapSnapshot restored{};
+                    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &restored, sizeof(restored)),
+                        "distance scope restored snapshot");
+                    const auto* original = find_structure(restored, parent_id);
+                    check(original && nearly_equal(original->x, 99) && nearly_equal(original->distance, 2500),
+                        "distance scope Reset restores parent");
+                }
+                for (const auto& [path, original] : originals) {
+                    std::ifstream input(path, std::ios::binary);
+                    const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+                    check(bytes == original, "distance scope fixture source bytes unchanged");
+                }
+            }
+        }
+    }
+}
+
 void line_ending_edit_contract() {
     TempFixture fixture;
     const std::filesystem::path include_path = fixture.directory / "include.txt";
@@ -5960,24 +6109,17 @@ void light_insertion_anchor_contract() {
         KvEditReportSnapshot report{};
         const bool called = kv_edit_apply_to_memory_typed(
             handle.value, &insert.batch, &report, sizeof(report)) != 0;
-        const bool accepted = target_root || child_zero;
-        if (accepted) {
-            check(called && report.ok && report.full_reparse_ok &&
-                      report.insert_count == 1 && report.non_target_changed_count == 0,
-                  (label + " applies at zero").c_str());
-        } else {
-            check(called && !report.ok && edit_report_has_error_containing(
-                      report, "edited target could not be uniquely reconnected"),
-                  (label + " is rejected after full reparse").c_str());
-        }
+        check(called && report.ok && report.full_reparse_ok &&
+                  report.insert_count == 1 && report.non_target_changed_count == 0,
+              (label + " applies at zero").c_str());
         KvMapSnapshot snapshot{};
         const bool loaded = kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
                                                 &snapshot, sizeof(snapshot)) != 0;
-        check(loaded && snapshot.light_direction_count == (accepted ? 1U : 0U) &&
+        check(loaded && snapshot.light_direction_count == 1 &&
                   snapshot.beacon_count == 1 && snapshot.beacons &&
-                  nearly_equal(snapshot.beacons[0].distance, child_zero ? 0.0 : 100.0),
+                  nearly_equal(snapshot.beacons[0].distance, target_root ? 100.0 : 0.0),
               (label + " preserves typed rows").c_str());
-        if (loaded && accepted && snapshot.light_direction_count == 1 &&
+        if (loaded && snapshot.light_direction_count == 1 &&
             snapshot.light_direction) {
             const KvLightDirectionRow& row = snapshot.light_direction[0];
             check(nearly_equal(row.pitch, 1.25) && nearly_equal(row.yaw, -0.5) &&
@@ -5993,6 +6135,8 @@ void light_insertion_anchor_contract() {
             expected.insert(expected.find("Include 'child.txt';"), light + "\n");
         } else if (child_zero) {
             expected.insert(expected.find("0;") + 2, "\n" + light + "\n");
+        } else {
+            expected += light + "\n";
         }
         check(memory == expected, (label + " preserves source placement").c_str());
         check(read_bytes(fixture.map_path) == root && read_bytes(child_path) == child,
@@ -9341,14 +9485,12 @@ void light_contract() {
                 KvMapSnapshot snapshot{};
                 const bool loaded = handle.value && kv_get_map_snapshot(
                     handle.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) != 0;
-                const bool rejected = !child_resets_distance &&
-                    std::string_view(initial_distance) != "0";
-                check(loaded && snapshot.light_direction_count == (rejected ? 0U : 1U),
+                check(loaded && snapshot.light_direction_count == 1,
                       (label + " typed row count").c_str());
-                check(diagnostics_contain(
-                          "Light.Direction must be declared at route distance 0.") == rejected,
+                check(!diagnostics_contain(
+                          "Light.Direction must be declared at route distance 0."),
                       (label + " distance diagnostic").c_str());
-                if (loaded && !rejected && snapshot.light_direction_count == 1 &&
+                if (loaded && snapshot.light_direction_count == 1 &&
                     snapshot.light_direction) {
                     check(nearly_equal(snapshot.light_direction[0].pitch, 1.25) &&
                               nearly_equal(snapshot.light_direction[0].yaw, -0.5),
@@ -9908,6 +10050,7 @@ int main(int argc, char** argv) {
     const std::string mode = argv[1];
     if (mode == "snapshot") {
         snapshot_contract();
+        include_distance_scope_contract();
         light_contract();
         return failures == 0 ? 0 : 1;
     }
