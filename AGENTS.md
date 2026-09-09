@@ -66,7 +66,7 @@ You should read the following notes related to your current agent. If a note app
 
 - Extend the shared source-first path (`SourceSpan`, parsed rows/statements, `EditSourceRef`, typed edit batches/reports). Do not duplicate string rewrite logic in UI features.
 - Preserve operation roles: dry run validates; memory Apply reparses the working copy for preview; direct Apply is the existing direct-write path; commit saves the validated working copy; reset discards overrides only when needed.
-- Properties/Edit `Apply` must not write disk. Toolbar/Ctrl+S `Save` commits. `Revert` discards pending in-memory changes. `Reload` rereads disk after unsaved-change confirmation.
+- Properties/Edit `Apply` must not write disk. Toolbar/Ctrl+Shift+S `Save` commits. `Revert` discards pending in-memory changes. `Reload` rereads disk after unsaved-change confirmation.
 - Pending inline-list drafts must be applied in their table before Save is allowed.
 - `sourceHash` identifies the working copy. `expectedSourceHash` remains the disk-baseline concurrency guard across repeated Apply/Delete operations.
 - Before Apply or Save succeeds, fully reparse the patched sources, prove each target semantic value, and reject unexpected non-target or final-variable-binding changes. A valid edit may change the final current `distance`.

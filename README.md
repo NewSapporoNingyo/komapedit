@@ -168,7 +168,7 @@ When you open a `BveTs Scenario 2.00` scenario file, the Scenario document remai
 - `Map Info List -> Other -> Scenario File` shows the scenario fields, the original Route/Vehicle paths, and their weights. With Edit mode enabled, the existing rows are editable; right-click Route or Vehicle paths to select a file, open its directory in Explorer, add a candidate below the current row, delete the current candidate, or move it up/down. Added rows start with an empty path and implicit weight `1`; a Route/Vehicle field must retain at least one candidate, and the first/last row disables the corresponding move action. Image paths retain the file-selection and Explorer actions only.
 - If there is one valid Route, its map loads directly. If there are several candidates, you choose one.
 - If Route is missing, its target does not exist, or you cancel the choice, you can still view the scenario file, but no map is loaded. The same degradation applies when the Route target exists but is not a valid BVE map. A missing Vehicle entry or a Vehicle path whose target does not exist never blocks loading the map of a valid Route; Vehicle data is preview-only.
-- Scenario changes are saved directly with the toolbar `Save`/`Ctrl+S`; they are not part of the map Apply ledger. If map edits and Scenario edits are both pending, map changes are committed first. A changed Scenario Route path is warned in the console and status bar and can be saved on a subsequent click after map changes are clear. Weights are validated but are not used to choose a Route automatically.
+- Scenario changes are saved directly with the toolbar `Save`/`Ctrl+Shift+S`; they are not part of the map Apply ledger. If map edits and Scenario edits are both pending, map changes are committed first. A changed Scenario Route path is warned in the console and status bar and can be saved on a subsequent click after map changes are clear. Weights are validated but are not used to choose a Route automatically.
 - `Recent Maps`, background alignment history, `Reload`, and geometry-only reload use the Scenario path as the document entry. Reload reparses the Scenario and shows the candidate selector again when needed, then refreshes the model preview; geometry-only reload keeps existing scene models/camera where possible. Opening a map file directly keeps the existing map-entry behavior.
 
 #### Options
@@ -216,12 +216,12 @@ Signal markers are also controlled by the `Show` checkbox in each `Ground Signal
 - **Reload Track Geometry**: Reads the map geometry again while keeping already loaded 3D scene models where possible. Use it after changing only route code.
 - **Enable Edit**: Turns editing on or off. A risk warning appears the first time you enable it.
 - **Add Map Element**: Opens the New Map Element Wizard. It is available only after editing is enabled and the edit metadata is ready.
-- **Save**: Writes changes already applied to the in-memory preview back to the source files. The shortcut is `Ctrl+S`. Save is blocked while a resource-list table still has an unapplied draft.
+- **Save**: Writes changes already applied to the in-memory preview back to the source files. The shortcut is `Ctrl+Shift+S`. Save is blocked while a resource-list table still has an unapplied draft.
 - **Revert**: Discards all unsaved changes and restores the version on disk. The program asks for confirmation first.
 - **Station Jump**: Selects a station and moves the 2D View to it. If the 3D scene is running, its camera also moves.
 - **Jump to distance(m)**: Enter a number and click `Jump`, or press `Enter` in the input box. If the 3D scene is running, its camera also moves.
 
-The currently implemented global shortcuts are `F5` for Reload and `Ctrl+S` for Save. Mouse and keyboard controls for the 2D and 3D canvases are listed in sections 5 and 9.
+The currently implemented global shortcuts are `F5` for Reload and `Ctrl+Shift+S` for Save. Mouse and keyboard controls for the 2D and 3D canvases are listed in sections 5 and 9.
 
 ### 4. Bottom Status Bar and Console Functions
 
@@ -416,7 +416,7 @@ Editing has three stages:
 
 1. **Window draft**: You have entered values in `Properties/Edit`, a resource-list table, or a wizard. The map may show only some live draft effects, and no source file has changed.
 2. **Apply to preview**: Click `Apply` in the window. The program validates and reparses its in-memory working copy, then refreshes the 2D View, tables, and 3D preview. Files on disk still have not changed.
-3. **Save to disk**: Click toolbar `Save` or press `Ctrl+S`. Only now are all applied changes written to their map, Include, or resource-list source files.
+3. **Save to disk**: Click toolbar `Save` or press `Ctrl+Shift+S`. Only now are all applied changes written to their map, Include, or resource-list source files.
 
 Toolbar `Revert` discards every unsaved change and restores the disk version. `Reload` also reads the files from disk again, but first asks before discarding unsaved changes. If a resource list still has an unapplied draft, click `Apply` in that table before saving.
 

@@ -9977,8 +9977,11 @@ struct Canvas3D::Impl {
         float distance_delta = 0.0f;
         float lateral_delta = 0.0f;
         float vertical_delta = 0.0f;
+        const bool save_shortcut_down =
+            io.KeyMods == (ImGuiMod_Ctrl | ImGuiMod_Shift) &&
+            ImGui::IsKeyDown(ImGuiKey_S);
         if (ImGui::IsKeyDown(ImGuiKey_W)) distance_delta += step;
-        if (ImGui::IsKeyDown(ImGuiKey_S)) distance_delta -= step;
+        if (ImGui::IsKeyDown(ImGuiKey_S) && !save_shortcut_down) distance_delta -= step;
         if (ImGui::IsKeyDown(ImGuiKey_D)) lateral_delta += step;
         if (ImGui::IsKeyDown(ImGuiKey_A)) lateral_delta -= step;
         if (ImGui::IsKeyDown(ImGuiKey_R)) vertical_delta += step;

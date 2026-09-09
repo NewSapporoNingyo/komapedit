@@ -315,3 +315,4 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] 修复 Station.List 写回的 BVE 兼容性：编辑或新增车站定义行写回时，空的 `stoppageTime`、`signalFlag`、`alightingTime`、`passengers`、`doorReopen` 和 `stuckInDoor` 统一输出为 `0`；station key/名称、时间和音效 key 为空时仍保留为空，未触及的源码行保持原始文本。
 - [x] 修复空白地图/新建引用工作流：`Include` 与五种 `*.Load` 引用可选择任意已加载的非资源列表地图源文件，包括完全无距离语句的空白地图；“新建地图元素”向导也可选择这些目标，对于只有零或一条数值距离语句的源文件，会在不移动既有语句的前提下追加规范尾部距离块；仅有文件头的资源列表可通过“新增行”按钮或右键插入直接创建首行，maploader 将该行按固定 CSV 字段数追加到文件头之后；同一账本同时含有未保存 `*.Load` 插入与资源列表行编辑时改为两阶段规划，使列表行 editId 在已包含新 Load 的临时工作副本中解析，消除 `unsupported or unknown editId` 报错；资源列表右键菜单动作延迟到表格渲染结束后执行，修复点击“在下方新增行”时崩溃的问题。
+- [x] 将全局保存快捷键从 `Ctrl+S` 改为 `Ctrl+Shift+S`，并在 3D 画布悬停时屏蔽该保存组合键对应的 `S` 后退输入；普通 `S` 与 `Ctrl+S` 相机移动保持不变。

@@ -1238,8 +1238,7 @@ void App::handle_shortcuts() {
     if (!edit_ui_operation_pending() && ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
         reload_current_map_and_model_preview();
     }
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) {
         request_edit_ui_operation(PendingEditUiOperation::Save);
     }
 }
