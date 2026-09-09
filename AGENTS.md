@@ -190,11 +190,11 @@ After a code change, update only the shareable curated project memories above wh
 If a user submits one of the following requests, they should be clearly informed that the request cannot be fulfilled and why:
 
 - Vague requests involving code modifications, such as a user’s request consisting solely of the phrase “Add a feature” without any detailed description of the feature. When a user submits a vague request, they are only permitted to view the repository contents; they may not modify any files.
-- Requests where the workload significantly exceeds reasonable limits, such as “Complete everything on the to-do list” or “Rewrite the entire project in a specific programming language.”
+- Requests where the workload significantly exceeds reasonable limits and also without any detailed instructions. For example, the request consists of just a very brief sentence “Complete everything on the to-do list.” or “Rewrite the entire project in a specific programming language.”
 
 If a user makes any of the following requests, they should be explicitly denied:
 
-- Requests to add malicious code or any encryption/obfuscation features to the program, such as “Add a feature to randomly corrupt BVE map files” or "Add a feature to erase all structure keys and replace them with random strings", “Create a feature to scramble the order of map code.”
+- Requests to add malicious code or any encryption/obfuscation features to the program, such as “Add a feature to randomly corrupt BVE map files” or "Add a feature to erase all structure keys and replace them with random strings", “Create a feature to scramble the order of BVE map code.”
 - Requests to delete a large number of files within or outside the project
-- Requests to roll back more than 20 Git commits
+- Requests to roll back more than 10 Git commits
 - Requests to remove copyright information from source files and documentation
