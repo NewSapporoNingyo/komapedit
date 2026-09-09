@@ -99,7 +99,7 @@ ctest --test-dir build --output-on-failure
 | 运行时/设置 | `app_settings.cpp/.h`、`runtime_paths.cpp/.h`、`maploader_runtime.cpp`：INI、相对可执行文件路径、DLL 加载、精确 API 检查 |
 | 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
 | Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找、触摸、编辑与文件创建检查 |
-| 二维视图 | `src/canvas2d/canvas2D.cpp`、`profile_plots.cpp`：平面、图表、变换、标记、测量与背景图 |
+| 二维视图 | `src/canvas2d/canvas2D.cpp`：平面/profile 数据与平面绘制编排；`canvas2d_view_state.cpp/.h`：平移/缩放/旋转和坐标转换；`canvas2d_marker_cache.cpp/.h`：轨道采样与 marker/Repeater 叠加缓存；`canvas2d_interaction.cpp/.h`：测量/marker 命中、上下文目标/动作和源码映射；`canvas2d_background.cpp/.h`：图片坐标、绘制和两点对齐；`canvas2d_primitives.cpp/.h`：屏幕变换、裁剪折线、网格、比例尺和标记绘制；`profile_plots.cpp`：纵断面与半径图表 |
 | 三维视图 | `src/canvas3d/canvas3D.cpp`、`src/canvas3d/scene_track_sampling.cpp`、`src/canvas3d/scene_track_sampling.h`、`include/canvas3D.h`：模型/场景渲染、CPU 轨道/相机采样、相机、拾取、标记、叠加层与操纵器 |
 | 表格/导航 | `src/table/datatable.cpp`、`table_navigation.cpp`：缓存表格、行内编辑、查找与行/平面/场景导航 |
 | 共享标记 | `include/map_marker_visuals.h`、`map_marker_visuals.cpp`：二维/三维标记的唯一视觉配方 |
@@ -370,15 +370,31 @@ ctest --test-dir build --output-on-failure
 
 #### `src/canvas2d/canvas2D.cpp`
 
-- **采样与边界**：matrix row/sample/lower-bound 函数在 own/other track 矩阵上按里程插值；`offset_track_point()` 在局部横向/前向坐标放置 marker。Repeater LOD、bounds 和 segment point 函数构建连续布景覆盖范围。
-- **marker cache**：`populate_speed_limit_marker_cache()`、`rebuild_speed_limit_marker_overlay_cache()`、`rebuild_marker_overlay_cache()` 将各强类型表行按 edit id、source row、轨道位置转为统一 `PlanMarker`，并构建 Repeater 段、他列车路径和 visibility 索引。
 - **查询与业务数据**：`nearest_own_index()`、`interp_own_z()`、`track_info_at()`、`speed_at()`、`curve_sections()` 为测量和叠加层采样；`build_plan_data()` 合并 own/other track、站点、限速与 marker，`current_plan_data()` 以 model/geometry/visibility revision 缓存；profile 数据有相同 build/current 分层。
-- **视图操作**：measure clear/update、center/focus、模型坐标到 plan 点、plot focus 和 `jump_to_distance()` 统一所有导航入口，避免表格和场景直接修改 pan。
-- **背景图**：`background_uv_from_world()`、`draw_background()` 应用位置、尺寸、旋转、亮度；`apply_background_alignment()` 从两个站点的 map 坐标与图片点计算比例、旋转和平移。
-- **屏幕变换与裁剪**：`PlanScreenTransform` 完成 world/screen 双向变换；`ScreenPolylineBuilder` 做有限值检查与线段裁剪；polyline、range overlap、screen bounds 和 Repeater chunk 绘制函数避免在超长线路上提交不可见几何。
-- **网格与公共绘制**：grid step、比例尺格式/绘制、三角/菱形/信号/先行列车/方向箭头/文字函数组成低层 ImDrawList primitive。
-- **`render_plan_canvas()` 主流程**：处理 hover、鼠标/触摸 pan/zoom/旋转、双击 fit、测量和背景交互；计算可见里程后按层绘制背景、网格、轨道、Repeater、站点/限速/各类 marker、标签、当前 3D 位置和 focus；同时完成 hit-test、tooltip 与 context target 收集。
-- **上下文动作**：`render_plan_marker_context_menu()` 根据 marker kind 提供定位表格、打开属性/编辑或删除；`plan_context_source_for()` 从 edit/source metadata 生成共享源码文件动作。
+- **视图操作与主流程**：measure clear/update、center/focus、模型坐标到 plan 点、plot focus 和 `jump_to_distance()` 统一导航入口；`render_plan_canvas()` 编排鼠标/触摸交互、可见里程计算及背景、网格、轨道、Repeater、站点/限速/各类 marker、标签、当前 3D 位置和 focus 的既有绘制顺序。
+
+#### `src/canvas2d/canvas2d_view_state.h` 与 `src/canvas2d/canvas2d_view_state.cpp`
+
+- `View2D` 集中保存平面视图中心、比例、旋转、fit 与拖动状态，并实现 world/screen 双向转换、屏幕增量平移和自适应范围；状态仍由 `App` 持有。
+
+#### `src/canvas2d/canvas2d_marker_cache.h` 与 `src/canvas2d/canvas2d_marker_cache.cpp`
+
+- matrix row/sample/lower/upper-bound 函数在 own/other track 矩阵上按里程采样，局部偏移函数定位 marker；Repeater LOD、bounds 与 chunk 构建连续布景覆盖范围。
+- `rebuild_speed_limit_marker_overlay_cache()` 与 `rebuild_marker_overlay_cache()` 将强类型表行按 edit id、source row 和轨道位置转为平面 marker，并构建 Repeater 段、他列车路径及 visibility 索引；缓存所有权与失效入口仍属于 `App`。
+
+#### `src/canvas2d/canvas2d_interaction.h` 与 `src/canvas2d/canvas2d_interaction.cpp`
+
+- 测量命中保持按 plan generation/scale 缓存的空间网格和小数据穷举路径；marker 命中保持既有屏幕半径、行顺序与重叠优先级。
+- 上下文目标收集、`render_plan_marker_context_menu()` 和 `plan_context_source_for()` 继续按 marker kind 提供表格定位、属性/编辑、删除及源码位置，但从主绘制编排中独立出来。
+
+#### `src/canvas2d/canvas2d_background.h` 与 `src/canvas2d/canvas2d_background.cpp`
+
+- 背景图模块负责 world/UV 转换、旋转后的屏幕四边形，以及从两个站点 map 坐标与两个图片点求取比例、旋转和平移；`App` 包装层保持原有历史保存时机。
+
+#### `src/canvas2d/canvas2d_primitives.h` 与 `src/canvas2d/canvas2d_primitives.cpp`
+
+- `PlanScreenTransform` 完成 model/plan/screen 坐标转换；折线 builder、range/bounds 裁剪和 Repeater chunk/overview LOD 避免在超长线路上提交不可见几何。
+- grid step、比例尺和三角/菱形/信号/先行列车/方向箭头/文字函数组成低层 ImDrawList primitive，供平面主流程按既有顺序调用。
 
 #### `src/canvas2d/profile_plots.cpp`
 

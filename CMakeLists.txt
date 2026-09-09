@@ -278,6 +278,11 @@ add_executable(komapedit
     src/main_window/touch_input.cpp
     src/main_window/map_marker_visuals.cpp
     src/canvas2d/canvas2D.cpp
+    src/canvas2d/canvas2d_background.cpp
+    src/canvas2d/canvas2d_interaction.cpp
+    src/canvas2d/canvas2d_marker_cache.cpp
+    src/canvas2d/canvas2d_primitives.cpp
+    src/canvas2d/canvas2d_view_state.cpp
     src/canvas2d/profile_plots.cpp
     src/canvas3d/canvas3D.cpp
     src/canvas3d/scene_track_sampling.cpp

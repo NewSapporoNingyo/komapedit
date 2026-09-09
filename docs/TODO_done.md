@@ -47,6 +47,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 2D Plan View and Charts
 
+- [x] Split the 2D canvas internals into dedicated `.h/.cpp` modules for view state, marker caches, hit testing/context menus, background images, and drawing primitives while preserving the existing cache ownership, interaction thresholds, and draw order.
 - [x] Display the own-track plan view.
 - [x] Display enabled other tracks, with configurable visible range and color.
 - [x] Display station positions, names, and mileage.
@@ -203,6 +204,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 ### 2D 平面图与图表显示
 
+- [x] 将 2D 画布内部的视图状态、marker cache、hit-test/context menu、背景图和绘制 primitive 分拆为职责独立的 `.h/.cpp` 模块，并保持既有缓存所有权、交互阈值与绘制顺序。
 - [x] 显示自轨道平面图
 - [x] 显示已启用的他轨道，并可设置显示范围和颜色
 - [x] 显示站点位置、站名、站点里程

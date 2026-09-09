@@ -8,6 +8,7 @@
 #pragma once
 
 #include "multilanguage.h"
+#include "../canvas2d/canvas2d_view_state.h"
 
 #include "imgui.h"
 
@@ -704,56 +705,6 @@ auto inspector_rows_for_kind(Model& model, const std::string& row_kind)
 bool find_row_index_by_edit_id(const std::vector<TableRow>& rows,
                                const std::string& edit_id,
                                size_t& row_index);
-
-struct View2D {
-    double cx = 0.0;
-    double cy = 0.0;
-    double scale = 1.0;
-    double rotation = 0.0;
-    bool fitted = false;
-    bool dragging = false;
-    bool rotating = false;
-    ImVec2 last_mouse = ImVec2(0, 0);
-
-    ImVec2 world_to_screen(double x, double y, ImVec2 origin, ImVec2 size) const {
-        double dx = x - cx;
-        double dy = y - cy;
-        double c = std::cos(rotation);
-        double s = std::sin(rotation);
-        double rx = c * dx - s * dy;
-        double ry = s * dx + c * dy;
-        return ImVec2(origin.x + size.x * 0.5f + static_cast<float>(rx * scale),
-                      origin.y + size.y * 0.5f + static_cast<float>(ry * scale));
-    }
-
-    ImVec2 screen_to_world(ImVec2 p, ImVec2 origin, ImVec2 size) const {
-        double rx = (p.x - origin.x - size.x * 0.5) / scale;
-        double ry = (p.y - origin.y - size.y * 0.5) / scale;
-        double c = std::cos(rotation);
-        double s = std::sin(rotation);
-        return ImVec2(static_cast<float>(c * rx + s * ry + cx),
-                      static_cast<float>(-s * rx + c * ry + cy));
-    }
-
-    void pan_by_screen_delta(ImVec2 delta) {
-        double c = std::cos(rotation);
-        double s = std::sin(rotation);
-        double wx = -(c * delta.x / scale + s * delta.y / scale);
-        double wy = (s * delta.x / scale - c * delta.y / scale);
-        cx += wx;
-        cy += wy;
-    }
-
-    void fit(double xmin, double ymin, double xmax, double ymax, ImVec2 size) {
-        double dx = std::max(xmax - xmin, 1e-6);
-        double dy = std::max(ymax - ymin, 1e-6);
-        cx = (xmin + xmax) * 0.5;
-        cy = (ymin + ymax) * 0.5;
-        scale = std::clamp(
-            std::min(size.x / dx, size.y / dy) * 0.88, 0.001, 10000.0);
-        fitted = true;
-    }
-};
 
 struct TrackPoint {
     double d = 0.0;
@@ -2630,6 +2581,12 @@ private:
     void reset_plot_axes();
     void render_plots();
     void render_plan_canvas(ImVec2 size);
+    std::optional<double> nearest_plan_measure_distance(
+        const PlanData& data, ImVec2 origin, ImVec2 size, ImVec2 mouse);
+    std::vector<PlanContextMenuEntry> collect_plan_context_entries(
+        const PlanData& data, ImVec2 mouse, ImVec2 origin, ImVec2 size,
+        float marker_canvas_margin, double marker_hover_radius_squared,
+        bool enabled) const;
     void render_profile_plot(const ProfileData& data, ImVec2 size);
     void render_radius_plot(const ProfileData& data, ImVec2 size);
     void render_plan_marker_context_menu(
