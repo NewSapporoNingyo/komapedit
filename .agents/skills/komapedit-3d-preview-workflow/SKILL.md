@@ -41,7 +41,7 @@ Determine whether the defect is UI wiring, scene-cache data, geometry/placement 
 ## Validate
 
 1. Build Debug.
-2. Run `canvas3d_camera_contract` for camera-range/sampling changes, `--debug-headless-scene3d-bench` for scene changes, and `--debug-headless-scene-camera-transfer` for camera/station transfer.
+2. Run `canvas3d_camera_contract` for camera-range/track-sampling changes, `route_value_sampling_contract` for route-overlay value/interval changes, `--debug-headless-scene3d-bench` for scene changes, and `--debug-headless-scene-camera-transfer` for camera/station transfer.
 3. Use the affected real route only when scale or resource layout matters; compare identical benchmark parameters and report strict budget failures honestly.
 4. Build Release and verify runtime DLLs only for packaging, dependency, or optimization-specific work.
 5. Run a short manual model/scene preview check when visual materials, picking, gizmos, labels, or startup layout changed; headless proof does not replace it.

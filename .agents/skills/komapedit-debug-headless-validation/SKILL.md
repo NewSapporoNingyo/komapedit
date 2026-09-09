@@ -23,6 +23,7 @@ description: Select and run komapedit's Debug builds, registered CTests, DLL che
   - `typed_edit_contract`;
   - `maploader_diagnostics_contract`;
   - `canvas3d_camera_contract`;
+  - `route_value_sampling_contract`;
 - Headless validation is invoked explicitly and is never registered with CTest.
 - Specialized unregistered `typed_snapshot_tests.exe` modes, such as `signal-glare`, must be invoked explicitly when relevant.
 

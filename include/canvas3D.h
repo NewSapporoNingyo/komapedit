@@ -8,6 +8,7 @@
 
 #include "imgui.h"
 #include "map_marker_visuals.h"
+#include "route_value_sampling.h"
 
 #include <array>
 #include <cstddef>
@@ -158,19 +159,6 @@ struct Canvas3DSceneDrawDistanceChange {
     double value = 0.0;
 };
 
-enum class Canvas3DSceneRouteEventKind {
-    Value,
-    BeginTransition,
-    Interpolate,
-};
-
-struct Canvas3DSceneRouteValueEvent {
-    double distance = 0.0;
-    double previous_value = 0.0;
-    double value = 0.0;
-    Canvas3DSceneRouteEventKind kind = Canvas3DSceneRouteEventKind::Value;
-};
-
 struct Canvas3DSceneRouteStation {
     double distance = 0.0;
     std::string name;
@@ -190,9 +178,9 @@ struct Canvas3DSceneSectionSignalEvent {
 };
 
 struct Canvas3DSceneRouteInfo {
-    std::vector<Canvas3DSceneRouteValueEvent> radius_events;
-    std::vector<Canvas3DSceneRouteValueEvent> cant_events;
-    std::vector<Canvas3DSceneRouteValueEvent> gradient_events;
+    std::vector<route_value_sampling::Event> radius_events;
+    std::vector<route_value_sampling::Event> cant_events;
+    std::vector<route_value_sampling::Event> gradient_events;
     std::vector<Canvas3DSceneSpeedLimitEvent> speed_limit_events;
     std::vector<Canvas3DSceneSectionSignalEvent> section_signal_events;
     std::vector<Canvas3DSceneRouteStation> stations;
@@ -360,7 +348,7 @@ struct Canvas3DSceneUiText {
     const char* jump_to_repeater_end_or_change_position = "Jump to End/Change Position";
     const char* loading = "Loading...";
     const char* straight = "Straight";
-    const char* interpolate_unsupported = "interpolate(unsupported)";
+    const char* interpolate = "(Interpolate)";
     const char* next_station = "Next sta. :";
     const char* speed_limit = "Speedlimit:";
     const char* signal = "Signal:";

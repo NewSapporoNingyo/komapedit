@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `multilanguage_contract`、`typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract` 和 `canvas3d_camera_contract` 六项非 headless 契约；headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
+普通脚本默认关闭 `KOMAPEDIT_STRICT_WARNINGS`。当前注册了 `multilanguage_contract`、`typed_snapshot_contract`、`maploader_gradient_projection_contract`、`typed_edit_contract`、`maploader_diagnostics_contract`、`canvas3d_camera_contract` 和 `route_value_sampling_contract` 七项非 headless 契约；headless 验证必须显式运行，不得注册为 CTest。诊断测试依赖被忽略的本地 `tests/` 固件；将干净检出中的失败归因于代码前，先确认这些固件存在。
 
 运行时输出布局如下：
 
@@ -153,10 +153,15 @@ ctest --test-dir build --output-on-failure
 - `MapMarkerPrimitiveKind`、`MapMarkerColorRole`、`MapMarkerIconVariant` 定义图标原语、主题色角色和变体；`MapMarkerIconPrimitive`、`MapMarkerIconRecipe` 保存归一化点、线宽、闭合/填充和 glyph 信息。
 - `map_marker_theme_color()`、`map_marker_role_color()`、`map_marker_icon_recipe()` 与 `draw_map_marker_icon()` 是颜色、配方和 ImDrawList 绘制的公共接口，保证 2D 与 3D 不维护两套符号语义。
 
+#### `include/route_value_sampling.h` 与 `src/main_window/route_value_sampling.cpp`
+
+- `Event` 保留 maploader 已求值、按稳定里程顺序输出的线路值及事件类型；`append_event()` 统一识别普通值、`BeginTransition` 和 `Interpolate`，无参数 Interpolate 沿用前值。
+- `sample()` 返回当前常量值或所在过渡/插值区间的起止里程与两端值，供 2D/3D 共用；它不臆造未由 BVE 曲线函数定义的线性当前半径。
+
 #### `include/canvas3D.h`
 
 - **场景输入模型**：`Canvas3DTrackPoint/Path/Visibility` 描述轨道采样与显示；`Canvas3DSceneObject`、`Canvas3DModelInstance`、`Canvas3DRepeaterSegment`、背景/雾/绘制距离事件构成场景实体输入。
-- **线路信息与标记**：`Canvas3DSceneRouteValueEvent`、站点、限速、Section 信号事件用于相机里程采样；`Canvas3DSceneMarker` 保存视觉 kind、里程、轨道位置、表格目标和 edit id，`Canvas3DSceneMarkerVisibility` 以分类型位控制索引重建。
+- **线路信息与标记**：`route_value_sampling::Event`、站点、限速、Section 信号事件用于相机里程采样；`Canvas3DSceneMarker` 保存视觉 kind、里程、轨道位置、表格目标和 edit id，`Canvas3DSceneMarkerVisibility` 以分类型位控制索引重建。
 - **构建与刷新结构**：`Canvas3DScene` 是完整不可知渲染器的 CPU 描述；`Canvas3DSceneBuildOptions/Result`、`Canvas3DSceneMapRefreshOptions` 区分首次构建、动态内容刷新和地图内容刷新；`Canvas3DSceneStats` 暴露实例、模型和帧率统计。
 - **交互结构**：相机姿态、上下文动作、拾取目标、`Canvas3DPlacementEditTarget`、拖动轴与 `Canvas3DPlacementDragUpdate` 将渲染交互转换为 GUI 可应用的源码字段更新。
 - **`Canvas3D` 门面类**：模型预览方法负责加载/重载/清理单模型；场景方法负责 `load_scene()`、刷新、轨道/标记可见性、窗口距离和质量偏好；跳转、placement/repeater edit target、`render_scene_preview()` 与调试读取方法委托给 PImpl，避免在头文件泄露 D3D/Assimp 实现。
@@ -405,10 +410,11 @@ ctest --test-dir build --output-on-failure
 
 ### 三维渲染与场景构建
 
-#### `src/canvas3d/scene_track_sampling.cpp`、`scene_track_sampling.h` 与 `canvas3D.cpp`
+#### `src/canvas3d/scene_track_sampling.cpp/.h`、`scene_route_overlay.cpp/.h` 与 `canvas3D.cpp`
 
 - **轨道与相机采样**：`scene_track_sampling.cpp`/`scene_track_sampling.h` 提供无 D3D 依赖的普通轨道采样、相机专用起点前外推及相机里程边界；普通几何/放置/标记路径不使用起点前外推。`canvas3D.cpp` 复用该采样结果处理渲染与相机。
-- **数学与场景转换**：`Vec3/DVec3/Vec4/Mat4` 及矩阵、投影、包围盒帮助函数构建相机和 world transform；key 规范化、Repeater 区间和 route event 采样函数把 `Canvas3DScene` 转为可渲染数据。
+- **线路信息格式化**：`scene_route_overlay.cpp`/`scene_route_overlay.h` 是无 D3D/ImGui 依赖的纯文本格式化边界；它复用共享线路值采样，在 `Curve.Interpolate` 区间显示两个端点的半径、超高、方向箭头和三角分隔符。
+- **数学与场景转换**：`Vec3/DVec3/Vec4/Mat4` 及矩阵、投影、包围盒帮助函数构建相机和 world transform；key 规范化与 Repeater 区间函数把 `Canvas3DScene` 转为可渲染数据。
 - **CPU/GPU 数据结构**：vertex、material、mesh part、texture cache、model、track/marker chunk、instance、highlight batch、pick target 和 placement lookup 结构明确 CPU 装载、GPU 资源、按里程 chunk 及反向定位所有权。
 - **着色器块**：内嵌 HLSL 分别实现模型/轨道的实例化顶点与材质采样、marker billboard、整数颜色 pick、highlight mask 和 outline composite。常量缓冲对应 view、fog、draw distance、pick id 和 outline 参数。
 - **`ModelLoaderClient`**：从 `bin/model_loader.dll` 动态解析 v2 API，`prepare()` 检查版本，`load()`/`free_model()` 保证跨 DLL 所有权成对。
@@ -420,7 +426,7 @@ ctest --test-dir build --output-on-failure
 - **相机与放置坐标**：own/other track sampling、cant frame、`make_track_placement_frame()`、`make_track_world()`、Repeater instance world 函数把 BVE distance/x/y/z/yaw/pitch/roll 转为世界矩阵；camera reset/jump 保持线路朝向和目标中心。
 - **可见性、绘制和拾取**：visible range/chunk 筛选后批量绘制 track、model、marker；pick pass 写入 object/marker id 并回读单像素；highlight mask/batch 与 outline composite 绘制 hover、表格跳转和选择轮廓。
 - **placement/repeater 实时编辑**：设置 target 时查找源实例、Sound3D 标记或 Repeater 段并建立 edit state；update 函数只改对应 chunk/marker/segment 数据。gizmo projection、mouse ray、轴最近点和 drag handler 为普通放置生成毫米截断的 `Canvas3DPlacementDragUpdate`，Sound3D 将 X/Y 写回相对音源偏移并以整米 Z 拖动 distance，显式 Repeater End 也以整米 Z 操纵器更新段尾；`Structure.PutBetween` 只启用沿自轨前向的 Z 轴，并把拖动吸附为整米 `distance`。其顶点预览在线程中按最新目标合并重算，按模型纵向 slice 复用轨道采样，完成后通过可复用动态顶点缓冲原子替换。
-- **雾、背景和线路信息**：按相机距离采样 BVE fog、Map DrawDistance、背景模型和有效场景窗口；route overlay 采样 radius/cant、gradient、活动限速、Section signal speed 与下一站，metrics/loading overlay 显示性能和加载状态。
+- **雾、背景和线路信息**：按相机距离采样 BVE fog、Map DrawDistance、背景模型和有效场景窗口；route overlay 采样 radius/cant、gradient、活动限速、Section signal speed 与下一站；位于 `Curve.Interpolate` 区间时显示求值后的两端 radius/cant，而不虚构线性当前半径；metrics/loading overlay 显示性能和加载状态。
 - **`render_scene_preview()`**：每帧处理异步上传、相机输入、gizmo、可见实例收集、主 pass、pick/highlight、marker/object context popup，并返回导航、编辑、删除或 drag action。文件末 `Canvas3D::*` 公共方法都是到 Impl 的薄委托。
 
 ### 数据表格与跨视图导航
@@ -473,6 +479,10 @@ ctest --test-dir build --output-on-failure
 - geometry 测试构造坡度/曲线 fixture，比较线路长度、平面投影、高程和事件距离，防止纵坡投影回归。
 - `UpdateBatch`、`RepeaterTrimBatch` 等包装器构造 typed edits；edit 测试覆盖 dry-run、memory Apply/Reset、直接 Apply、Commit、concurrency hash、距离消歧、方法/参数形状、语义保护、编码和事务回滚。
 - diagnostics 测试装载 `tests/` 本地 fixture，验证缺文件、错误语法、重复 Load/Enable、未配对 transition、未知 key 及日志/last-error 文本。`main()` 根据 `snapshot`、`geometry`、`edit`、`diagnostics` 和专项参数选择测试组，返回进程状态供 CTest 使用。
+
+#### `src/main_window/tests/route_value_sampling_tests.cpp`
+
+- 无窗口 CPU 契约覆盖插值区间两端、端点所属下一段、无参数值继承、BeginTransition、非法数值，以及 3D 曲线线路信息的正/负/零半径格式；测试不依赖 parser、D3D、ImGui 或真实线路文件。
 
 ### 静态调用链摘要
 

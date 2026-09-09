@@ -13,7 +13,6 @@ This file is the active project progress and contains unfinished items only. Com
 ### 3D画布
 
 - [ ] 3D 场景画质设置：render scale、MSAA、纹理过滤和轮廓质量
-- [ ] 为 3D 线路信息叠加层补充当前不支持的插值（interpolate）情况
 - [ ] 支持通过3D操纵器编辑布景旋转
 
 ### 用户界面与辅助功能

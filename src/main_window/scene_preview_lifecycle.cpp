@@ -419,7 +419,7 @@ void App::render_scene_preview_window() {
             tr("menu.jump_to_repeater_end_or_change_position").c_str();
         scene_ui_text.loading = tr("status.scene_loading").c_str();
         scene_ui_text.straight = tr("scene.route_info.straight").c_str();
-        scene_ui_text.interpolate_unsupported = tr("scene.route_info.interpolate_unsupported").c_str();
+        scene_ui_text.interpolate = tr("scene.route_info.interpolate").c_str();
         scene_ui_text.next_station = tr("scene.route_info.next_station").c_str();
         scene_ui_text.speed_limit = tr("scene.route_info.speed_limit").c_str();
         scene_ui_text.signal = tr("scene.route_info.signal").c_str();

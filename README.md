@@ -398,7 +398,7 @@ Set the camera speed in `3D Canvas Settings`. Toolbar station and mileage jumps 
 
 #### Scene Overlay and Settings
 
-The canvas shows the camera offset, height, and mileage; current curve radius and cant; gradient; speed limit; section signal speed; and next-station information. The bottom also shows scene chunks, instances, loaded models, and frame rate.
+The canvas shows the camera offset, height, and mileage; current curve radius and cant; gradient; speed limit; section signal speed; and next-station information. Inside a `Curve.Interpolate` interval, the curve line shows both endpoint radii and cants, each nonzero endpoint's curve direction, and a triangular arrow between them. The bottom also shows scene chunks, instances, loaded models, and frame rate.
 
 `3D Canvas Settings` can immediately toggle fog, map-driven draw distance, and performance warnings, and can change the normal draw distance. Related marker visibility stays synchronized with `Auxiliary Info`.
 

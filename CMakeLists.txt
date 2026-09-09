@@ -155,6 +155,20 @@ if(BUILD_TESTING)
     add_test(NAME canvas3d_camera_contract
         COMMAND $<TARGET_FILE:canvas3d_camera_tests>
     )
+
+    add_executable(route_value_sampling_tests
+        src/main_window/tests/route_value_sampling_tests.cpp
+        src/main_window/route_value_sampling.cpp
+        src/canvas3d/scene_route_overlay.cpp
+    )
+    target_compile_features(route_value_sampling_tests PRIVATE cxx_std_17)
+    target_include_directories(route_value_sampling_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/canvas3d
+    )
+    add_test(NAME route_value_sampling_contract
+        COMMAND $<TARGET_FILE:route_value_sampling_tests>
+    )
 endif()
 
 find_package(assimp CONFIG REQUIRED)
@@ -277,6 +291,7 @@ add_executable(komapedit
     src/main_window/debug_headless.cpp
     src/main_window/touch_input.cpp
     src/main_window/map_marker_visuals.cpp
+    src/main_window/route_value_sampling.cpp
     src/canvas2d/canvas2D.cpp
     src/canvas2d/canvas2d_background.cpp
     src/canvas2d/canvas2d_interaction.cpp
@@ -285,6 +300,7 @@ add_executable(komapedit
     src/canvas2d/canvas2d_view_state.cpp
     src/canvas2d/profile_plots.cpp
     src/canvas3d/canvas3D.cpp
+    src/canvas3d/scene_route_overlay.cpp
     src/canvas3d/scene_track_sampling.cpp
     src/table/datatable.cpp
     src/table/table_navigation.cpp
@@ -336,6 +352,7 @@ foreach(komapedit_owned_target IN ITEMS
         typed_snapshot_tests
         multilanguage_tests
         canvas3d_camera_tests
+        route_value_sampling_tests
         komapedit)
     if(TARGET ${komapedit_owned_target})
         komapedit_enable_strict_warnings(${komapedit_owned_target})

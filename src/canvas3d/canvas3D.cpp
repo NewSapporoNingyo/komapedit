@@ -13,6 +13,7 @@
 
 #include "repeater_linkage.h"
 
+#include "scene_route_overlay.h"
 #include "scene_track_sampling.h"
 
 #include "kme.h"
@@ -1399,25 +1400,11 @@ CpuModelData derive_put_between_model(const CpuModelData& source,
 }
 
 void append_scene_route_value_event(
-    std::vector<Canvas3DSceneRouteValueEvent>& events,
+    std::vector<route_value_sampling::Event>& events,
     const TrackEvent& source,
     double& current_value) {
-    if (!std::isfinite(source.distance) ||
-        (!source.value_number && source.flag != "bt" && source.flag != "i")) {
-        return;
-    }
-
-    Canvas3DSceneRouteValueEvent event;
-    event.distance = source.distance;
-    event.previous_value = current_value;
-    if (source.value_number && std::isfinite(source.number)) current_value = source.number;
-    event.value = current_value;
-    if (source.flag == "bt") {
-        event.kind = Canvas3DSceneRouteEventKind::BeginTransition;
-    } else if (source.flag == "i") {
-        event.kind = Canvas3DSceneRouteEventKind::Interpolate;
-    }
-    events.push_back(event);
+    route_value_sampling::append_event(events, source.distance, source.value_number,
+                                       source.number, source.flag, current_value);
 }
 
 void populate_canvas3d_scene_route_values(Canvas3DSceneRouteInfo& route_info,
@@ -1587,17 +1574,10 @@ void populate_canvas3d_scene_route_info(Canvas3DScene& scene, const MapModel& mo
     scene.route_info = std::move(route_info);
 }
 
-void format_scene_route_number(char* output, size_t output_size, double value);
-
 double canvas3d_scene_route_value_at(
-    const std::vector<Canvas3DSceneRouteValueEvent>& events,
+    const std::vector<route_value_sampling::Event>& events,
     double distance) {
-    const auto next = std::upper_bound(
-        events.begin(), events.end(), distance,
-        [](double value, const Canvas3DSceneRouteValueEvent& event) {
-            return value < event.distance;
-        });
-    return next == events.begin() ? 0.0 : (next - 1)->value;
+    return route_value_sampling::sample(events, distance).value;
 }
 
 std::string canvas3d_scene_curve_marker_label(
@@ -1605,10 +1585,11 @@ std::string canvas3d_scene_curve_marker_label(
     const TrackEvent& event) {
     char radius_text[64] = {};
     char cant_text[64] = {};
-    format_scene_route_number(radius_text, sizeof(radius_text), std::abs(event.number));
+    scene_route_overlay::format_number(radius_text, sizeof(radius_text),
+                                       std::abs(event.number));
     const double cant =
         canvas3d_scene_route_value_at(route_info.cant_events, event.distance);
-    format_scene_route_number(cant_text, sizeof(cant_text), cant);
+    scene_route_overlay::format_number(cant_text, sizeof(cant_text), cant);
     char label[192] = {};
     std::snprintf(label, sizeof(label), "R %s m  %s %s",
                   radius_text, cant_text, event.number < 0.0 ? u8"←" : u8"→");
@@ -1617,7 +1598,8 @@ std::string canvas3d_scene_curve_marker_label(
 
 std::string canvas3d_scene_gradient_marker_label(double gradient) {
     char gradient_text[64] = {};
-    format_scene_route_number(gradient_text, sizeof(gradient_text), std::abs(gradient));
+    scene_route_overlay::format_number(gradient_text, sizeof(gradient_text),
+                                       std::abs(gradient));
     char label[128] = {};
     std::snprintf(label, sizeof(label), "%s %s‰",
                   gradient > 0.0 ? u8"↗" : u8"↘", gradient_text);
@@ -1858,7 +1840,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         const std::string edit_id = source ? source->edit_id : std::string{};
         char value[64] = {};
         if (speed.has_speed && std::isfinite(speed.speed)) {
-            format_scene_route_number(value, sizeof(value), speed.speed);
+            scene_route_overlay::format_number(value, sizeof(value), speed.speed);
             append_marker(
                 MapMarkerVisualKind::SpeedLimit, speed.distance, value,
                 MapMarkerIconVariant::SpeedLimitBegin,
@@ -2110,62 +2092,6 @@ SceneFogSample sample_canvas3d_scene_fog(
     }
     sample.enabled = sample.density > 0.0f;
     return sample;
-}
-
-enum class SceneRouteValueMode {
-    Constant,
-    Transition,
-    Interpolate,
-};
-
-struct SceneRouteValueSample {
-    SceneRouteValueMode mode = SceneRouteValueMode::Constant;
-    double value = 0.0;
-    double from_value = 0.0;
-    double to_value = 0.0;
-};
-
-SceneRouteValueSample sample_scene_route_value(
-    const std::vector<Canvas3DSceneRouteValueEvent>& events,
-    double distance) {
-    auto next = std::upper_bound(
-        events.begin(), events.end(), distance,
-        [](double value, const Canvas3DSceneRouteValueEvent& event) {
-            return value < event.distance;
-        });
-    const Canvas3DSceneRouteValueEvent* previous =
-        next == events.begin() ? nullptr : &*(next - 1);
-
-    SceneRouteValueSample result;
-    result.value = previous ? previous->value : 0.0;
-    result.from_value = result.value;
-    result.to_value = result.value;
-    if (previous && next != events.end() &&
-        next->kind == Canvas3DSceneRouteEventKind::Interpolate) {
-        result.mode = SceneRouteValueMode::Interpolate;
-        result.from_value = previous->value;
-        result.to_value = next->value;
-    } else if (previous && previous->kind == Canvas3DSceneRouteEventKind::BeginTransition &&
-               next != events.end() &&
-               next->kind != Canvas3DSceneRouteEventKind::BeginTransition) {
-        result.mode = SceneRouteValueMode::Transition;
-        result.from_value = previous->previous_value;
-        result.to_value = next->value;
-    }
-    return result;
-}
-
-void format_scene_route_number(char* output, size_t output_size, double value) {
-    if (!output || output_size == 0) return;
-    if (!std::isfinite(value)) value = 0.0;
-    if (std::abs(value) <= k_scene_route_display_zero_epsilon) value = 0.0;
-    std::snprintf(output, output_size, "%.6f", value);
-    char* end = output + std::strlen(output);
-    char* decimal = std::strchr(output, '.');
-    if (!decimal) return;
-    while (end > decimal + 1 && end[-1] == '0') --end;
-    if (end > decimal && end[-1] == '.') --end;
-    *end = '\0';
 }
 
 bool populate_canvas3d_scene_dynamic_content(Canvas3DScene& scene,
@@ -10336,45 +10262,20 @@ struct Canvas3D::Impl {
                                   const Canvas3DSceneUiText& ui_text) const {
         if (!draw || size.x <= 0.0f || size.y <= 0.0f || !scene_active) return;
 
-        const SceneRouteValueSample radius =
-            sample_scene_route_value(scene_data.route_info.radius_events, scene_camera_distance);
-        const SceneRouteValueSample cant =
-            sample_scene_route_value(scene_data.route_info.cant_events, scene_camera_distance);
-        const SceneRouteValueSample gradient =
-            sample_scene_route_value(scene_data.route_info.gradient_events, scene_camera_distance);
+        char curve_line[512] = {};
+        scene_route_overlay::format_curve_line(
+            curve_line,
+            sizeof(curve_line),
+            scene_data.route_info.radius_events,
+            scene_data.route_info.cant_events,
+            scene_camera_distance,
+            ui_text.straight,
+            ui_text.interpolate);
+        const route_value_sampling::Sample gradient = route_value_sampling::sample(
+            scene_data.route_info.gradient_events, scene_camera_distance);
 
-        char curve_line[192] = {};
-        if (radius.mode == SceneRouteValueMode::Interpolate) {
-            std::snprintf(curve_line, sizeof(curve_line), "%s",
-                          ui_text.interpolate_unsupported);
-        } else {
-            const bool transition = radius.mode == SceneRouteValueMode::Transition;
-            const bool use_transition_target =
-                !transition || std::abs(radius.to_value) > k_scene_route_display_zero_epsilon ||
-                std::abs(radius.from_value) <= k_scene_route_display_zero_epsilon;
-            const double displayed_radius = transition
-                ? (use_transition_target ? radius.to_value : radius.from_value)
-                : radius.value;
-            const double displayed_cant = transition
-                ? (use_transition_target ? cant.to_value : cant.from_value)
-                : cant.value;
-            const char* prefix = transition ? "[Tr.] " : "";
-            if (std::abs(displayed_radius) <= k_scene_route_display_zero_epsilon) {
-                std::snprintf(curve_line, sizeof(curve_line), "%s%s",
-                              prefix, ui_text.straight);
-            } else {
-                char radius_text[64] = {};
-                char cant_text[64] = {};
-                format_scene_route_number(radius_text, sizeof(radius_text),
-                                          std::abs(displayed_radius));
-                format_scene_route_number(cant_text, sizeof(cant_text), displayed_cant);
-                std::snprintf(curve_line, sizeof(curve_line), "%sR %s m %s %s",
-                              prefix, radius_text, cant_text,
-                              displayed_radius < 0.0 ? u8"←" : u8"→");
-            }
-        }
-
-        const bool gradient_transition = gradient.mode != SceneRouteValueMode::Constant;
+        const bool gradient_transition =
+            gradient.mode != route_value_sampling::Mode::Constant;
         const bool use_gradient_target =
             !gradient_transition || std::abs(gradient.to_value) > k_scene_route_display_zero_epsilon ||
             std::abs(gradient.from_value) <= k_scene_route_display_zero_epsilon;
@@ -10382,8 +10283,8 @@ struct Canvas3D::Impl {
             ? (use_gradient_target ? gradient.to_value : gradient.from_value)
             : gradient.value;
         char gradient_text[64] = {};
-        format_scene_route_number(gradient_text, sizeof(gradient_text),
-                                  std::abs(displayed_gradient));
+        scene_route_overlay::format_number(gradient_text, sizeof(gradient_text),
+                                           std::abs(displayed_gradient));
         char gradient_line[160] = {};
         const char* gradient_prefix = gradient_transition ? "[Tr.] " : "";
         if (std::abs(displayed_gradient) <= k_scene_route_display_zero_epsilon) {
@@ -10408,8 +10309,8 @@ struct Canvas3D::Impl {
                           ui_text.speed_limit);
         } else {
             char speed_text[64] = {};
-            format_scene_route_number(speed_text, sizeof(speed_text),
-                                      (speed_limit_next - 1)->speed);
+            scene_route_overlay::format_number(speed_text, sizeof(speed_text),
+                                               (speed_limit_next - 1)->speed);
             std::snprintf(speed_limit_line, sizeof(speed_limit_line),
                           "%s %s km/h", ui_text.speed_limit, speed_text);
         }

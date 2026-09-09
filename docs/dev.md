@@ -69,7 +69,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Six non-headless contracts are registered: `multilanguage_contract`, `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, and `canvas3d_camera_contract`. Headless validation must be run explicitly and is not registered with CTest. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
+`KOMAPEDIT_STRICT_WARNINGS` is off in the normal scripts. Seven non-headless contracts are registered: `multilanguage_contract`, `typed_snapshot_contract`, `maploader_gradient_projection_contract`, `typed_edit_contract`, `maploader_diagnostics_contract`, `canvas3d_camera_contract`, and `route_value_sampling_contract`. Headless validation must be run explicitly and is not registered with CTest. The diagnostics test requires the ignored local fixtures under `tests/`; confirm that they exist before interpreting a clean-checkout failure.
 
 Runtime output is organized as follows:
 
@@ -94,13 +94,14 @@ Do not commit build directories, cloned `third_party` source trees, settings fil
 | Identity and snapshots | `maploader_identity.cpp`, `maploader_snapshot.cpp`, `maploader_semantic.cpp`: stable IDs, typed snapshots, revisions, comparisons, fingerprints |
 | Editing | `maploader_edits.cpp`: dry run, in-memory Apply, direct Apply, commit, reset, source patching, encoding-aware writeback, distance adjustment; Include statements support restricted path-argument updates validated by full reparse with old/new subtree masks |
 | Shared linkage | `include/repeater_linkage.h`, `include/own_track_transition_linkage.h`: Repeater chains and Curve/Gradient transition pairing |
+| Shared route-value sampling | `include/route_value_sampling.h`, `src/main_window/route_value_sampling.cpp`: stable evaluated value-event series, BeginTransition/Interpolate interval classification, inherited omitted values, and endpoint distances for 2D/3D consumers |
 | Model loading | `src/model_loader/model_loader.cpp`, `include/model_loader.h`: Assimp isolation and model-loader API v2 |
 | Main window | `src/main_window/gui_kme.cpp`, `kme.h`, and focused `src/main_window/` modules: App-state coordination; Win32/D3D11 bootstrap; shared GUI utilities/backgrounds; snapshot hydration/loading; edit, distance, Inspector, list-draft, new-file, and new-element workflows; dialogs/UI; scene previews; headless entry points. New-file rendering is in `new_element_wizard.cpp`, content/dialog helpers in `app_dialogs.cpp`, deferred creation in `element_inspector_data.cpp`, and workflow contracts in `headless_entrypoints.cpp` |
 | Runtime/settings | `app_settings.cpp/.h`, `runtime_paths.cpp/.h`, `maploader_runtime.cpp`: INI persistence, executable-relative paths, DLL loading, exact API checks |
 | Source tools | `file_structure_diagram.cpp`, `text_preview.cpp`: Include graph, working-copy source preview, source actions (change included file, unlink Include), distance-boundary selection |
 | Debug validation | `debug_headless.cpp/.h`, `headless_entrypoints.cpp`, `touch_input.cpp/.h`: headless contracts, benchmarks, camera transfer, find, touch, edit, and file-creation checks |
 | 2D views | `src/canvas2d/canvas2D.cpp`: plan/profile data and plan-render orchestration; `canvas2d_view_state.cpp/.h`: pan/zoom/rotation and coordinate conversion; `canvas2d_marker_cache.cpp/.h`: track sampling and marker/Repeater overlay caches; `canvas2d_interaction.cpp/.h`: measurement and marker hit tests, context targets/actions, and source mapping; `canvas2d_background.cpp/.h`: image coordinates, drawing, and two-point alignment; `canvas2d_primitives.cpp/.h`: screen transforms, clipped polylines, grids, scale bars, and marker drawing; `profile_plots.cpp`: profile and radius charts |
-| 3D views | `src/canvas3d/canvas3D.cpp`, `src/canvas3d/scene_track_sampling.cpp`, `src/canvas3d/scene_track_sampling.h`, `include/canvas3D.h`: model/scene rendering, CPU track/camera sampling, camera, picking, markers, overlays, gizmos |
+| 3D views | `src/canvas3d/canvas3D.cpp`, `src/canvas3d/scene_track_sampling.cpp/.h`, `src/canvas3d/scene_route_overlay.cpp/.h`, `include/canvas3D.h`: model/scene rendering, CPU track/camera sampling, camera, picking, markers, pure route-overlay formatting, and gizmos |
 | Tables/navigation | `src/table/datatable.cpp`, `table_navigation.cpp`: cached tables, inline editing, find, row/plan/scene navigation |
 | Shared marker visuals | `include/map_marker_visuals.h`, `src/main_window/map_marker_visuals.cpp`: canonical 2D/3D marker recipes |
 | Localization | `include/multilanguage.h`: Simplified Chinese, English, and Japanese UI strings |
@@ -168,7 +169,7 @@ When any Station List row uses a non-empty `arrivalSoundKey` or `depertureSoundK
 - Hydration classifies curve-parameter rows into `CurveGauge`, `CurveCenter`, and `CurveFunction` markers with row index and edit ID. The plan draws independent white rectangular `CG`/`CC`/`CF` markers; the scene draws white two-line boards with the code above and evaluated parameter below. Existing scene picking and blue highlight styling remain shared. The exact `[View2D]` keys `show_curve_gauge_markers`, `show_curve_center_markers`, and `show_curve_function_markers` default off and independently update marker visibility without rebuilding track or model geometry.
 - Keep table content cached, dynamic Section arguments and explicit `null` values intact, Variable List ordering stable, and row/plan/scene navigation side effects synchronized.
 - Keep Assimp isolated in `model_loader.dll`; handle missing textures, invalid files, and unsupported models without crashing.
-- Preserve scene camera transfers, picking/highlights, visibility synchronization, marker recipes, route overlay, X/Y/Z gizmo synchronization, and the exact coalesced vertex preview used by the Z-only `Structure.PutBetween` distance gizmo.
+- Preserve scene camera transfers, picking/highlights, visibility synchronization, marker recipes, route overlay, X/Y/Z gizmo synchronization, and the exact coalesced vertex preview used by the Z-only `Structure.PutBetween` distance gizmo. The route overlay reuses the shared route-value sampler; inside a `Curve.Interpolate` interval it displays both evaluated radius/cant endpoints rather than inventing a linear current-radius value.
 
 ### Performance
 
