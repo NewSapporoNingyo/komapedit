@@ -13,6 +13,9 @@ This file is the active project progress and contains unfinished items only. Com
 
 ### 用户界面与辅助功能
 
+- [ ] 3D画布曲线interpolate信息修正：2个半径0m的插值点之间应视为直线。
+- [ ] 曲线interpolate语句编辑与删除
+- [ ] 曲线interpolate语句新建
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 信号现示列表可新增/删除列
 - [ ] 通过 `kme.json` 在资源文件列表中标记文件类型和用途
