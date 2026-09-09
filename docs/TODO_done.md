@@ -53,6 +53,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Display station positions, names, and mileage.
 - [x] Display speed-limit markers.
 - [x] Display curve-radius sections and transition-curve sections.
+- [x] Display every official `Curve.Interpolate` endpoint on the 2D plan using the speed-limit line-marker shape in curve-radius green, with the evaluated signed radius to its right; omitted radius arguments retain their inherited values.
 - [x] Display the profile/elevation chart.
 - [x] Display the curve-radius chart.
 - [x] Support panning, mouse-wheel zooming, rotation, and double-click fit-to-view in the plan view.
@@ -211,6 +212,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 显示站点位置、站名、站点里程
 - [x] 显示限速标记
 - [x] 显示曲线半径区间和缓和曲线区间
+- [x] 在 2D 平面图中以曲线半径绿色的限速线形标记显示每个官方 `Curve.Interpolate` 端点，并在右侧显示求值后的有符号半径；省略半径参数时保持其继承值
 - [x] 显示纵断面/标高图
 - [x] 显示曲线半径图
 - [x] 支持平面图拖动、滚轮缩放、旋转、双击自适应范围

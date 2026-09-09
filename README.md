@@ -264,6 +264,7 @@ For touch input, drag with one finger to pan. Use two fingers to pan, zoom, and 
 #### Markers, Navigation, and Editing
 
 - Use `Auxiliary Info` to choose which markers are visible. This avoids showing too much information at once on a large map.
+- When `Curve Radius` is enabled, every `Curve.Interpolate` endpoint appears in the plan as the speed-limit line marker recolored to curve-radius green, with its evaluated signed radius immediately to the right. An omitted radius displays its inherited value.
 - Right-click a marker to locate its table row. Items with a 3D object can also be located in the 3D scene.
 - Enabled `CG`/`CC`/`CF` parameter markers remain visible outside Edit mode; their context actions are disabled until editing is enabled. Editable own-track curve and gradient change points and other-track change points otherwise follow the existing edit-mode visibility rules. Right-click an enabled editable marker to open `Properties/Edit` or delete it.
 - In the Profile and Curve Radius charts, only correctly paired curve or gradient change points have an edit menu.

@@ -16,6 +16,7 @@
 #include "canvas2d_primitives.h"
 #include "canvas3D.h"
 #include "map_marker_visuals.h"
+#include "route_value_sampling.h"
 #include "touch_input.h"
 #include "repeater_linkage.h"
 
@@ -460,6 +461,32 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     if (show_curve_values_) {
         out.curve_sections = curve_sections(false);
         out.transition_sections = curve_sections(true);
+
+        std::vector<route_value_sampling::Event> radius_events;
+        radius_events.reserve(model_.own_events.size());
+        double current_radius = 0.0;
+        for (const TrackEvent& event : model_.own_events) {
+            if (event.key != "radius") continue;
+            route_value_sampling::append_event(
+                radius_events, event.distance, event.value_number,
+                event.number, event.flag, current_radius);
+        }
+        out.curve_interpolate_markers.reserve(radius_events.size());
+        for (const route_value_sampling::Event& event : radius_events) {
+            if (event.kind != route_value_sampling::EventKind::Interpolate ||
+                event.distance < dmin_ || event.distance > dmax_) {
+                continue;
+            }
+            const size_t index = nearest_own_index(event.distance);
+            TrackPoint point;
+            point.x = model_.own.at(index, 1);
+            point.y = model_.own.at(index, 2);
+            point.theta = model_.own.at(index, 4);
+            point = rotate_point(point);
+            out.curve_interpolate_markers.push_back({
+                event.distance, point.x, point.y, point.theta,
+                event.value, format_double(event.value, 0)});
+        }
     }
     if (edit_mode_enabled_) {
         for (const OwnTrackEditMarker& source : own_track_edit_marker_cache_) {
@@ -1427,6 +1454,30 @@ void App::render_plan_canvas(ImVec2 size) {
                     ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15),
                     marker_color,
                     sp.label.c_str());
+            }
+        }
+    }
+
+    if (show_curve_values_) {
+        const ImU32 curve_color = IM_COL32(136, 255, 136, 255);
+        const ImVec4 curve_theme = ImGui::ColorConvertU32ToFloat4(curve_color);
+        for (const PlanCurveInterpolateMarker& marker : data.curve_interpolate_markers) {
+            const ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
+            if (!point_near_canvas(p, origin, avail)) continue;
+            const double wx = marker.x - std::sin(marker.theta);
+            const double wy = marker.y + std::cos(marker.theta);
+            const ImVec2 q = transform.plan_to_screen(wx, wy);
+            const ImVec2 direction(q.x - p.x, q.y - p.y);
+            const float length = std::max(
+                1.0f, std::sqrt(direction.x * direction.x + direction.y * direction.y));
+            const float rotation = std::atan2(direction.y / length, direction.x / length);
+            draw_map_marker_icon(
+                draw, MapMarkerVisualKind::SpeedLimit, p,
+                8.0f * marker_size_scale / 0.88f, rotation, &curve_theme);
+            if (!overview_marker_lod) {
+                draw->AddText(
+                    ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15),
+                    curve_color, marker.label.c_str());
             }
         }
     }

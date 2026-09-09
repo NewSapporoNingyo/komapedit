@@ -99,7 +99,7 @@ ctest --test-dir build --output-on-failure
 | 运行时/设置 | `app_settings.cpp/.h`、`runtime_paths.cpp/.h`、`maploader_runtime.cpp`：INI、相对可执行文件路径、DLL 加载、精确 API 检查 |
 | 源码工具 | `file_structure_diagram.cpp`、`text_preview.cpp`：Include 图、工作副本预览、源码操作（更换 Include 文件、解除引用）与距离边界选择 |
 | Debug 验证 | `debug_headless.cpp/.h`、`headless_entrypoints.cpp`、`touch_input.cpp/.h`：无界面契约、基准、相机传递、查找、触摸、编辑与文件创建检查 |
-| 二维视图 | `src/canvas2d/canvas2D.cpp`：平面/profile 数据与平面绘制编排；`canvas2d_view_state.cpp/.h`：平移/缩放/旋转和坐标转换；`canvas2d_marker_cache.cpp/.h`：轨道采样与 marker/Repeater 叠加缓存；`canvas2d_interaction.cpp/.h`：测量/marker 命中、上下文目标/动作和源码映射；`canvas2d_background.cpp/.h`：图片坐标、绘制和两点对齐；`canvas2d_primitives.cpp/.h`：屏幕变换、裁剪折线、网格、比例尺和标记绘制；`profile_plots.cpp`：纵断面与半径图表 |
+| 二维视图 | `src/canvas2d/canvas2D.cpp`：平面/profile 数据、缓存化的 `Curve.Interpolate` 端点标记水合与平面绘制编排；`canvas2d_view_state.cpp/.h`：平移/缩放/旋转和坐标转换；`canvas2d_marker_cache.cpp/.h`：轨道采样与 marker/Repeater 叠加缓存；`canvas2d_interaction.cpp/.h`：测量/marker 命中、上下文目标/动作和源码映射；`canvas2d_background.cpp/.h`：图片坐标、绘制和两点对齐；`canvas2d_primitives.cpp/.h`：屏幕变换、裁剪折线、网格、比例尺和标记绘制；`profile_plots.cpp`：纵断面与半径图表 |
 | 三维视图 | `src/canvas3d/canvas3D.cpp`、`src/canvas3d/scene_track_sampling.cpp`、`src/canvas3d/scene_track_sampling.h`、`include/canvas3D.h`：模型/场景渲染、CPU 轨道/相机采样、相机、拾取、标记、叠加层与操纵器 |
 | 表格/导航 | `src/table/datatable.cpp`、`table_navigation.cpp`：缓存表格、行内编辑、查找与行/平面/场景导航 |
 | 共享标记 | `include/map_marker_visuals.h`、`map_marker_visuals.cpp`：二维/三维标记的唯一视觉配方 |
@@ -632,7 +632,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 
-plan benchmark 默认使用 `--interaction pan`。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
+plan benchmark 默认使用 `--interaction pan`。它会切换“曲线半径”，比较缓存/非缓存的曲线区间、缓和曲线区间与 `Curve.Interpolate` 端点标记，并输出其可见数量。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 

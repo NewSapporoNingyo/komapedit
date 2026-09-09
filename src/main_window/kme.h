@@ -743,6 +743,15 @@ struct PlanSpeed {
     std::string label;
 };
 
+struct PlanCurveInterpolateMarker {
+    double d = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double theta = 0.0;
+    double radius = 0.0;
+    std::string label;
+};
+
 struct PlanMarker {
     double d = 0.0;
     double x = 0.0;
@@ -919,6 +928,7 @@ struct PlanData {
     std::vector<OwnTrackEditMarker> gradient_edit_markers;
     std::vector<Section> curve_sections;
     std::vector<Section> transition_sections;
+    std::vector<PlanCurveInterpolateMarker> curve_interpolate_markers;
     double origin_angle = 0.0;
     double xmin = -1.0;
     double ymin = -1.0;

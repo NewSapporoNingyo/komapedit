@@ -181,7 +181,7 @@ FrameTimingStats calculate_frame_timing_stats(const std::vector<double>& frame_m
     return stats;
 }
 
-std::array<size_t, 27> plan_data_size_summary(const PlanData& data) {
+std::array<size_t, 28> plan_data_size_summary(const PlanData& data) {
     return {
         data.own.size(),
         data.stations.size(),
@@ -210,6 +210,7 @@ std::array<size_t, 27> plan_data_size_summary(const PlanData& data) {
         data.gradient_edit_markers.size(),
         data.curve_sections.size(),
         data.transition_sections.size(),
+        data.curve_interpolate_markers.size(),
     };
 }
 
@@ -11321,12 +11322,19 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             app.plan_data_cache_.show_curve_values &&
             visible_curves.curve_sections.size() == visible_curves_uncached.curve_sections.size() &&
             visible_curves.transition_sections.size() == visible_curves_uncached.transition_sections.size() &&
+            visible_curves.curve_interpolate_markers.size() ==
+                visible_curves_uncached.curve_interpolate_markers.size() &&
             plan_data_summary_matches(visible_curves, visible_curves_uncached);
+        *out << "plan_curve_overlay curve_sections=" << visible_curves.curve_sections.size()
+             << " transition_sections=" << visible_curves.transition_sections.size()
+             << " interpolate_markers=" << visible_curves.curve_interpolate_markers.size()
+             << "\n";
         app.show_curve_values_ = false;
         const PlanData& hidden_curves = app.current_plan_data();
         const PlanData hidden_curves_uncached = app.build_plan_data(false);
         curve_toggle_pass = curve_toggle_pass && !app.plan_data_cache_.show_curve_values &&
             hidden_curves.curve_sections.empty() && hidden_curves.transition_sections.empty() &&
+            hidden_curves.curve_interpolate_markers.empty() &&
             plan_data_summary_matches(hidden_curves, hidden_curves_uncached);
         app.show_curve_values_ = original_curve_visibility;
         app.current_plan_data();

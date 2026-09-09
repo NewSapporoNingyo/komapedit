@@ -105,6 +105,8 @@ void omitted_value_contract() {
                "omitted event records its inherited previous value");
     check_near(events.back().value, -600.0,
                "omitted event keeps the inherited current value");
+    check(events.back().kind == route_value_sampling::EventKind::Interpolate,
+          "omitted Interpolate retains its endpoint kind for plan markers");
 
     const auto sample = route_value_sampling::sample(events, 25.0);
     check(sample.mode == route_value_sampling::Mode::Interpolate,

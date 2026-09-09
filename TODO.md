@@ -6,10 +6,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 ## 待办事项列表
 
-### 2D 平面图与图表显示
-
-- [ ] 为 2D 平面图中的曲线半径信息补充当前不支持的插值（interpolate）情况
-
 ### 3D画布
 
 - [ ] 3D 场景画质设置：render scale、MSAA、纹理过滤和轮廓质量
