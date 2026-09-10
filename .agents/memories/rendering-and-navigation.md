@@ -3,6 +3,7 @@
 ## Scene ownership and caching
 
 - Scene geometry belongs at the maploader/Canvas3D boundary. Avoid GUI-side regeneration or a second parsed route model.
+- Canvas2D keeps orchestration in `canvas2D.cpp` while view state, marker caching, interaction, background work, and drawing primitives live in their corresponding `canvas2d_*` modules. Extend the owning module instead of rebuilding those responsibilities in the orchestrator.
 - Keep regular map snapshots and scene geometry lifetimes/revisions distinct. Scene regeneration must not invalidate ordinary geometry accidentally, and ordinary geometry mutation must invalidate dependent scene data.
 - Preserve control points until scene generation completes. Earlier cache work showed that moving ordinary geometry state too early can drop event boundaries or leave partial restore state.
 - Build marker layout, edit identity, and navigation metadata during scene-cache construction. Visibility toggles should update visibility/index data rather than rebuilding geometry.
@@ -18,6 +19,7 @@
 
 ## Rendering precision and overlays
 
+- `route_value_sampling` is the shared evaluated-event path used by 2D and 3D radius/cant/gradient consumers. Its append step carries the previous value forward when `BeginTransition` or `Interpolate` omits the value; consumers must not independently reinterpret the raw arguments.
 - Far-distance flicker is a scene-wide precision/depth issue, not a model-specific defect. Reversed-Z state, depth clear/compare, camera-relative or chunk-local transforms, and fog must be inspected together.
 - A correct-looking scene can still expose a wrong overlay statistic. Verify whether a label expects total chunk count, current-frame drawn count, or another field before changing generation.
 - Route information depends on current radius/cant, gradient, active speed limit, Section-selected signal speed, and next-station sampling; camera-distance changes must preserve this event lookup.

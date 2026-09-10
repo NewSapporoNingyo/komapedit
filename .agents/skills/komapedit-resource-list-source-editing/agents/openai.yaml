@@ -1,0 +1,4 @@
+interface:
+  display_name: "Komapedit Resource List Editing"
+  short_description: "Maintain source-backed resource-list workflows"
+  default_prompt: "Use $komapedit-resource-list-source-editing to implement or diagnose this resource-list loading, creation, replacement, or insertion workflow."

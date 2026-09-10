@@ -6,6 +6,8 @@
 
 AI 工具应自行阅读 [`AGENTS.md`](../AGENTS.md)。可重复执行的工作流位于 [`.agents/skills`](../.agents/skills)，长期历史经验位于 [`.agents/memories`](../.agents/memories/INDEX.md)。不要把这些文档全部复制进提示词。操作者仍需对范围、产品决策、验证和最终验收负责。
 
+仅适用于 komapedit 的 AI 资产应保存在上述项目目录中；用户级 Codex skills 与 memories 只保存真正跨项目的指导。若全局 registry 混有多个项目，只精炼其中与当前源码一致、可共享的结论，不要整份复制；原始任务总结只能保存在项目中被 Git 忽略的本地档案内。
+
 ## 了解 AI 工具的局限性
 
 不要将AI智能体当做“只需一句指令就可以完成任何工作”的神仙。AI 编程工具可能生成看似合理但实际错误的代码，在长任务中遗漏约束，过度适配某一条示例线路，或声称完成了实际并未执行的验证。使用 AI 并不意味着可以不了解基础 C/C++、Windows 构建环境、代码差异、测试与受影响的程序行为。
@@ -64,6 +66,8 @@ AI 工具应自行阅读 [`AGENTS.md`](../AGENTS.md)。可重复执行的工作�
 ```
 
 根因未知时不要授权大规模重写。修复结果应说明根因所在的负责层，并证明原始复现条件不再失败。
+
+无论从上述哪种场景路由，涉及 `Station.Load`、`Structure.Load`、`Signal.Load`、`Sound.Load` 或 `Sound3D.Load` 的导入/替换、列表新建、空列表首行或基于源码的行插入时，还应使用 [`komapedit-resource-list-source-editing`](../.agents/skills/komapedit-resource-list-source-editing/SKILL.md)。它必须与 `komapedit-bve-format-compliance` 和 `komapedit-source-backed-editing` 配合使用；该专项技能不能取代官方格式审查或共用的 Apply/Save 契约。
 
 ### slop-fix
 

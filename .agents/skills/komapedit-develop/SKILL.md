@@ -16,6 +16,7 @@ description: Plan and implement scoped feature or behavior changes in komapedit.
 
 - Use `komapedit-bve-format-compliance` whenever work changes or adds BVE map/list/scenario/train reading, parsing, validation, typed representation, editing, creation, serialization, or writeback. This compliance layer is mandatory in addition to every matching skill below.
 - Use `komapedit-source-backed-editing` for parser-to-save map/list editing and Scenario direct-save or creation work.
+- Use `komapedit-resource-list-source-editing` with both skills above for `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, or `Sound3D.Load` import/replacement, list creation, blank-list first rows, and source-backed row insertion.
 - Use `komapedit-table-feature-workflow` for typed snapshot rows, Map Info tables, table search, and cross-view navigation.
 - Use `komapedit-3d-preview-workflow` for scene/model preview work.
 - Use `komapedit-station-edit-workflow` for `Station.List` or `Station.Put` behavior.

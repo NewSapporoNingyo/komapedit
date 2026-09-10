@@ -21,6 +21,8 @@ Use the documents by ownership:
 - `.agents/skills/*`: repeatable AI execution workflows.
 - `.agents/memories/*`: durable lessons and historical task evidence.
 
+Keep every skill or distilled memory that applies only to komapedit in these project `.agents` directories. User-level Codex directories are for genuinely cross-project assets. Do not replace curated project memories by copying a mixed global memory registry; distill only shareable conclusions that still agree with current source.
+
 Current implementation status comes from source and `TODO.md`, not from an old memory or an exhaustive list copied into this file.
 
 ## Important Notes in the Various Types of Coding Agents Listed Below (Very Important)
@@ -145,6 +147,7 @@ All project skills live under `.agents/skills/<name>/SKILL.md`.
 | `komapedit-slop-fix` | Sustainability audit and evidence-backed cleanup without behavior drift |
 | `komapedit-write-docs` | Documentation ownership, synchronization, bilingual updates, and AGENTS/TODO maintenance |
 | `komapedit-source-backed-editing` | Typed map/list edits plus Scenario direct-save drafts, source spans, insertion/deletion, writeback, and edit ABI |
+| `komapedit-resource-list-source-editing` | Station/Structure/Signal/Sound/Sound3D list loading, replacement, creation, blank-list first rows, insertion order, and glare-row workflows |
 | `komapedit-debug-headless-validation` | Debug/CTest/headless command selection, localization/file-creation contracts, real-route safety, and result interpretation |
 | `komapedit-3d-preview-workflow` | Canvas3D, scene geometry/cache, models, markers, gizmos, camera/depth, and packaging |
 | `komapedit-table-feature-workflow` | Typed snapshot table features, caching/find, and table↔plan/scene navigation |
@@ -181,9 +184,9 @@ Start at [`.agents/memories/INDEX.md`](.agents/memories/INDEX.md). Read only the
 - [Validation and maintenance](.agents/memories/validation-and-maintenance.md)
 - [Build, Release, runtime, and documentation](.agents/memories/build-release-and-docs.md)
 
-A local `.agents/memories/rollout-summaries/` archive may exist for the current user. It is Git-ignored and must not be committed because it can contain user-specific operating preferences, Codex task/session metadata, absolute local file paths, and environment-specific commands or validation records. When present, search it narrowly and treat it only as historical evidence, never as current truth.
+A local `.agents/memories/rollout-summaries/` archive may exist for the current user. It is Git-ignored and must not be committed because it can contain user-specific operating preferences, Codex task/session metadata, absolute local file paths, and environment-specific commands or validation records. When present, search it narrowly and treat it only as historical evidence, never as current truth. When importing summaries, classify them by a normalized header `cwd`, compare same-name content before copying, and verify each copy; do not use filename keywords as project ownership.
 
-After a code change, update only the shareable curated project memories above when the change creates a durable, reusable lesson. Do not copy raw task transcripts or user-specific data into tracked memories.
+After a code change, update only the shareable curated project memories above when the change creates a durable, reusable lesson. Do not copy raw task transcripts, a mixed global memory registry, or user-specific data into tracked memories.
 
 ## Identify user requests and prevent users from performing harmful actions
 

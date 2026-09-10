@@ -21,6 +21,7 @@
 - `docs/dev*.md` describes human development facts and architecture.
 - `docs/ai-dev*.md` guides people supervising AI coding tools.
 - `AGENTS.md` holds non-negotiable constraints, general workflow, and indexes. Detailed repeatable execution belongs in `.agents/skills`; durable historical lessons belong in `.agents/memories`.
+- Komapedit-only skills and distilled, shareable memories are tracked under the project `.agents` tree; user-level Codex storage is for cross-project assets. Raw rollout summaries remain in the ignored local archive and never enter a commit. Mixed global registries must be distilled against current source rather than copied wholesale.
 
 ## Documentation validation
 

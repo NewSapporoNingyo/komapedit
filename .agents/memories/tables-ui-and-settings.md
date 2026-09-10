@@ -10,6 +10,7 @@
 
 ## Layout lessons
 
+- A recent-document menu must copy the selected entry while rendering, finish the menu/menu-bar, and only then open it. Opening inside the iteration can rebuild `recent_maps_` and invalidate the active container or ImGui render state.
 - Frozen headers and scroll ownership must be deliberate. Station Definitions needed horizontal table scrolling with outer-page vertical scrolling; nested `ScrollY` hid or constrained rows.
 - Keep find panels responsive at narrow widths: stable button widths and an input field that consumes remaining space.
 - Dynamic tables preserve their source shape. Section argument counts, Signal aspect structure-key columns/glare rows, and untouched excess fields must not be flattened by the GUI.

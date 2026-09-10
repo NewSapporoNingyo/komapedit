@@ -7,6 +7,8 @@ description: Extend or repair komapedit's typed source-backed map/list editing p
 
 Use `komapedit-bve-format-compliance` first for every touched BVE statement, list-row, or Scenario field shape. Its dated local official-page cache check and compliance matrix are mandatory for reading, editing, creation, serialization, and writeback; this skill supplies the separate source-lifecycle contract.
 
+Also use `komapedit-resource-list-source-editing` for `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, or `Sound3D.Load` import/replacement, list creation, blank-list first rows, and source-backed row insertion. That narrower skill traces the resource-list owners while this skill remains authoritative for the shared edit lifecycle.
+
 ## Trace the complete lifecycle
 
 Read the relevant portions of:
@@ -62,7 +64,7 @@ When edit mode first displays a preview snapshot and later applies a full edit r
 - Preserve untouched raw argument expressions. Rewrite a whole variable-length list only when its count changes.
 - Use `repeater_linkage` and `own_track_transition_linkage` for linked rows; do not reconstruct chains independently in one UI path.
 - Keep orphan `BeginTransition` rows read-only. Use the explicit Inspector coordinate-offset controls for `Put`/`Put0` and `Begin`/`Begin0`, confirming before nonzero offsets are discarded; keep the documented confirmation paths for short-form `Signal.Put` and permitted Repeater trim conversion.
-- Treat inline Station/Structure/Signal/Sound/Sound3D list editing as a shared draft workflow. Preserve physical source file, source order, unknown trailing fields, and optional Signal glare-row shape.
+- Treat inline Station/Structure/Signal/Sound/Sound3D list editing as a shared draft workflow. Use `komapedit-resource-list-source-editing` for loading, replacement, creation, and insertion details. Preserve physical source file, source order, unknown trailing fields, and optional Signal glare-row shape.
 - For `KV_EDIT_INSERT`, use structured fields and the same distance/environment/full-reparse validation as updates. Do not accept arbitrary replacement statements.
 
 ## Validate source safety

@@ -7,6 +7,7 @@
 - `komapedit.exe` is a GUI-subsystem executable. PowerShell proof should use `Start-Process -Wait -WindowStyle Hidden -PassThru`, `--headless-output`, the exit code, and output-file stage markers.
 - Headless harnesses that construct `App` may need live ImGui and ImPlot contexts even without rendering. Disable `imgui.ini` writes.
 - Select the smallest proof: direct DLL/CTest for contracts, load/open for lifecycle, plan/table for 2D/data interaction, scene/camera for 3D, and statement-family edit modes for writeback.
+- `Ninja: no work to do` proves only that the current build graph considers its outputs up to date; it is not evidence of a fresh compilation. Before reporting the registered test set or strict-warning coverage, reread the current CMake configuration and targets instead of relying on a historical list.
 
 ## Real-route safety
 

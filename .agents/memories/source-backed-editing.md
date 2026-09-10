@@ -3,6 +3,7 @@
 ## Durable contracts
 
 - Apply changes the in-memory working copy and preview. Save commits that validated working copy to disk. Revert resets memory overrides. Reload rereads disk after unsaved-change handling.
+- Scenario editing is a separate direct-save document workflow through `KvScenarioEditDocument` and `kv_save_scenario_document()`. It does not participate in the Map working-copy Apply/Revert ledger; its Save performs the guarded reparse and transactional disk write directly.
 - `sourceHash` identifies the current working copy; `expectedSourceHash` remains the disk-baseline concurrency guard. Repeated Apply/Delete must not replace the disk baseline with an in-memory hash.
 - The complete lifecycle matters: parser row and source ref, stable identity, typed snapshot, target lookup/count, semantic writer, source patch, full reparse/reconnection, committed metadata, GUI refresh, and regression proof. A row added to only one stage will fail later or lose identity.
 - Preserve physical source path, Include stack, parse order, source span, raw expressions, method/argument shape, encoding, BOM, line ending, and unknown fields. Do not reconstruct source ownership from GUI display text.
@@ -19,6 +20,7 @@
 
 ## Distance and linked statements
 
+- Each included Map file owns a local distance context that starts at zero. Ordinary variables are inherited into the child parse and child writes merge back into the parent, so variable scope across Include must not be confused with distance scope.
 - Group distance moves by physical source file, Include context/source section, and target distance. Reuse a compatible distance block; otherwise use a parser-confirmed gap or the existing manual boundary/expression resolution.
 - Preserve safe variable expressions and untouched arguments. Do not globally sort a file or delete user-authored empty distance/comment structure.
 - Pair Curve/Gradient transitions and Repeater chains through shared linkage helpers. Orphan `BeginTransition` remains read-only. Repeater deletion/editing may touch several physical statements atomically.

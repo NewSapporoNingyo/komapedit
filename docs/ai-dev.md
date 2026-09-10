@@ -6,6 +6,8 @@ This document is for people who use AI coding tools to work on komapedit. It exp
 
 AI tools should read [`AGENTS.md`](../AGENTS.md) themselves. Repeatable execution workflows live in [`.agents/skills`](../.agents/skills), and durable historical lessons live in [`.agents/memories`](../.agents/memories/INDEX.md). Do not paste all of these documents into a prompt. The operator remains responsible for scope, product decisions, validation, and final acceptance.
 
+Keep AI assets that apply only to komapedit in those project directories. User-level Codex skills and memories are reserved for genuinely cross-project guidance. If a global registry mixes several projects, distill only shareable conclusions that still match current source instead of copying it wholesale; keep raw task summaries only in the Git-ignored local project archive.
+
 ## Understand the limitations
 
 Don’t treat AI agents as some kind of magical beings that can “do anything with just a single command.”AI agents can produce plausible but incorrect code, lose constraints in long tasks, overfit to one example route, and claim more validation than they performed. Using an AI tool does not remove the need to understand basic C/C++, the Windows build environment, diffs, tests, and the affected application behavior.
@@ -64,6 +66,8 @@ Validation: [original reproduction plus the relevant Debug/Release/headless chec
 ```
 
 Do not authorize a broad rewrite while the cause is unknown. A fix should explain the owning-layer root cause and prove the original reproduction no longer fails.
+
+For resource-list work routed through either scenario, also use [`komapedit-resource-list-source-editing`](../.agents/skills/komapedit-resource-list-source-editing/SKILL.md) for `Station.Load`, `Structure.Load`, `Signal.Load`, `Sound.Load`, or `Sound3D.Load` import/replacement, list creation, blank-list first rows, and source-backed row insertion. Combine it with `komapedit-bve-format-compliance` and `komapedit-source-backed-editing`; the focused skill does not replace official-format review or the shared Apply/Save contract.
 
 ### slop-fix
 

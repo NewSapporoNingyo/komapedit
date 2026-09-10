@@ -21,6 +21,14 @@ Use `komapedit-write-docs` to choose content ownership and establish facts. Use 
 4. Confirm `AGENTS.md` indexes detailed skills/memories instead of duplicating their volatile details.
 5. When skills changed, confirm each `SKILL.md` has valid frontmatter, referenced paths and sibling skill names exist, and matching `agents/openai.yaml` metadata is not contradicted by the workflow text.
 
+## Check project AI-asset migrations
+
+1. Confirm komapedit-only skills and distilled memories live under the project `.agents` tree, while user-level locations retain only cross-project material or a pending managed-cleanup copy.
+2. Do not copy a mixed global registry into tracked project memories. Check that each distilled conclusion is shareable and still agrees with current source, tests, or build scripts.
+3. Classify raw rollout summaries by normalized header `cwd`, not filename keywords. Compare same-name files and stop on a material conflict; verify copied bytes or an explicitly documented path-prefix-only equivalence.
+4. Confirm `.agents/memories/rollout-summaries/` is ignored and absent from the tracked diff, and check any required external cleanup request independently of Git status.
+5. Confirm the new or moved skill is synchronized across `AGENTS.md`, `.agents/memories/INDEX.md` when relevant, both AI guides, and routing skills.
+
 ## Check files
 
 1. Require valid UTF-8 without BOM and no mojibake.

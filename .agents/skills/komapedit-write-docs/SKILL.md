@@ -17,6 +17,8 @@ description: Create or synchronize komapedit project documentation from current 
 
 Do not duplicate the same detailed workflow across several owners. Link to the authoritative document instead.
 
+Komapedit-only skills and distilled memories belong in the repository's `.agents/skills` and `.agents/memories` trees. Keep user-level Codex skills and memories for genuinely cross-project guidance. When a global registry mixes projects, extract only shareable, durable conclusions that still match current source; never copy the mixed registry wholesale. Raw rollout summaries may be kept only in the Git-ignored `.agents/memories/rollout-summaries/` archive and must not enter a commit.
+
 ## Establish facts
 
 1. Read the current implementation, tests, CMake/build scripts, and `TODO.md` relevant to each statement.
@@ -40,7 +42,8 @@ Do not duplicate the same detailed workflow across several owners. Link to the a
 3. Compare paired README/dev/AI-guide tables, row counts, and status language when changed.
 4. When skills are in scope, validate every changed `SKILL.md` frontmatter plus any matching `agents/openai.yaml` description or prompt, and confirm the indexes in `AGENTS.md` and the paired AI guides still describe the same routing.
 5. Inspect ignored documents directly if the user placed them in scope; Git status cannot prove their contents.
-6. Skip compilation for pure prose changes unless the documentation changes a command that should be smoke-tested; honor an explicit no-build boundary.
+6. For AI-asset migration, verify project ownership from content, classify raw summaries by normalized header `cwd`, compare same-name files before copying, and confirm ignored archives remain ignored. If external mixed registries need cleanup, use their managed update mechanism rather than treating the project copy as physical deletion.
+7. Skip compilation for pure prose changes unless the documentation changes a command that should be smoke-tested; honor an explicit no-build boundary.
 
 ## Report scope
 
