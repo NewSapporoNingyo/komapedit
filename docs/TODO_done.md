@@ -114,7 +114,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] Locate Structure, Repeater, signal, and supported map-marker table rows in the 3D scene preview, and locate picked scene objects or markers back in their tables.
 - [x] In non-edit mode, keep 3D curve/gradient change-marker context menus at the clicked marker and show only disabled Properties/Edit and Delete actions instead of incorrectly reporting an unpaired BeginTransition.
 - [x] Display the current curve radius/cant, gradient, active speed limit, section-selected signal speeds, and distance to the next station in the 3D scene route overlay.
-- [x] Display both endpoint radii and cants in the 3D route overlay while the camera is inside an official `Curve.Interpolate` interval, with curve-direction arrows for nonzero endpoints and a triangular separator; omitted Interpolate arguments retain their evaluated inherited values.
+- [x] Display both endpoint radii and cants in the 3D route overlay while the camera is inside an official `Curve.Interpolate` interval, with curve-direction arrows for nonzero endpoints and a triangular separator; omitted Interpolate arguments retain their evaluated inherited values, while two evaluated zero-radius endpoints use the localized `Straight` label.
 - [x] Edit `Structure.Put`, `Signal.Put`, and `Repeater.Begin` positions along X/Y/Z with live 3D gizmos and configurable gizmo size; Inspector buttons convert `Put`/`Put0` and `Begin`/`Begin0` in either direction, while Put0/Begin0 expose a Z-only whole-metre placement/begin-distance gizmo.
 - [x] Place each `Sound3D.Put` label tip at its fixed X/Y source relative to the own track, and edit X/Y in 0.001 m steps or `distance` in whole metres through the live X/Y/Z gizmo without changing `Put(x, y)` syntax or adding audio playback.
 - [x] Preview all `Structure.PutBetween` Inspector fields with exact live vertex deformation and edit `distance` through a Z-only, whole-metre 3D gizmo.
@@ -162,6 +162,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 
 - [x] Fix Station.List serialization for BVE: when an edited or inserted station-definition row is written, blank `stoppageTime`, `signalFlag`, `alightingTime`, `passengers`, `doorReopen`, and `stuckInDoor` fields are emitted as `0`; station keys/names, times, and sound keys remain empty when blank, while untouched source rows retain their original text.
 - [x] Fix the blank-map/new-reference workflow: `Include` and the five `*.Load` references may target any loaded non-resource-list map source file, including completely distance-free blank maps; the New Map Element wizard accepts the same targets and appends a canonical tail distance block for a source with zero or one numeric distance statement without moving existing statements; a header-only resource list takes its first row directly from an `Add Row` button or context-menu insertion, and maploader appends that row after the header with fixed CSV field counts; one ledger batch that mixes unsaved `*.Load` insertions with resource-list row edits is now planned in two stages so list-row editIds resolve against a working copy that already contains the new Loads, eliminating `unsupported or unknown editId` failures; and editable-list context-menu actions are deferred until after table rendering, fixing the crash when choosing `Insert Row Below`.
+- [x] Treat a `Curve.Interpolate` interval whose evaluated endpoint radii are both zero as straight in the 3D scene route overlay, reusing the localized `Straight` label while preserving the two-endpoint display when either radius is nonzero.
 
 ## 简体中文
 
@@ -273,7 +274,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 可从布景、连续布景、信号和支持的地图元素标记表格行定位到 3D 场景，也可从场景对象或标记定位回对应表格
 - [x] 在编辑模式未开启时，右键点击3D场景中的曲线变化点或坡度变化点标记，右键菜单仅显示禁用的“属性/编辑”和“删除”，不再错误显示“此BeginTransition没有对应的Begin/End，无法编辑或删除”或发生位置偏移
 - [x] 在 3D 场景线路信息叠加层显示当前曲线半径/超高、坡度、生效限速、闭塞选择出的信号限速和距下一站距离
-- [x] 当相机位于官方 `Curve.Interpolate` 区间内时，在 3D 线路信息叠加层同时显示两个端点的曲线半径与超高，以非零端点方向箭头和三角箭头分隔；省略参数的 Interpolate 保持其求值后的继承值
+- [x] 当相机位于官方 `Curve.Interpolate` 区间内时，在 3D 线路信息叠加层同时显示两个端点的曲线半径与超高，以非零端点方向箭头和三角箭头分隔；省略参数的 Interpolate 保持其求值后的继承值，两端求值半径均为零时使用本地化“直线”标签
 - [x] 通过尺寸可调的实时 3D 操纵器编辑 `Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 的 X/Y/Z 位置；检查器按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，Put0/Begin0 提供仅 Z 轴、整米步进的放置/起始里程操纵器
 - [x] 在 3D 场景中将 `Sound3D.Put` 的标签尖端定位到相对自轨道的固定 X/Y 音源；通过实时 X/Y/Z 操纵器编辑 X/Y（0.001 m）或 distance（Z 轴整米），不改变 `Put(x, y)` 语法或音频播放行为
 - [x] 为 `Structure.PutBetween` 的全部检查器字段提供精确的实时顶点变形预览，并通过仅 Z 轴、整米步进的 3D 操纵器编辑 `distance`
@@ -322,3 +323,4 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 修复 Station.List 写回的 BVE 兼容性：编辑或新增车站定义行写回时，空的 `stoppageTime`、`signalFlag`、`alightingTime`、`passengers`、`doorReopen` 和 `stuckInDoor` 统一输出为 `0`；station key/名称、时间和音效 key 为空时仍保留为空，未触及的源码行保持原始文本。
 - [x] 修复空白地图/新建引用工作流：`Include` 与五种 `*.Load` 引用可选择任意已加载的非资源列表地图源文件，包括完全无距离语句的空白地图；“新建地图元素”向导也可选择这些目标，对于只有零或一条数值距离语句的源文件，会在不移动既有语句的前提下追加规范尾部距离块；仅有文件头的资源列表可通过“新增行”按钮或右键插入直接创建首行，maploader 将该行按固定 CSV 字段数追加到文件头之后；同一账本同时含有未保存 `*.Load` 插入与资源列表行编辑时改为两阶段规划，使列表行 editId 在已包含新 Load 的临时工作副本中解析，消除 `unsupported or unknown editId` 报错；资源列表右键菜单动作延迟到表格渲染结束后执行，修复点击“在下方新增行”时崩溃的问题。
 - [x] 将全局保存快捷键从 `Ctrl+S` 改为 `Ctrl+Shift+S`，并在 3D 画布悬停时屏蔽该保存组合键对应的 `S` 后退输入；普通 `S` 与 `Ctrl+S` 相机移动保持不变。
+- [x] 修复 3D 场景线路信息中的 `Curve.Interpolate` 显示：两端求值后的半径均为零时复用现有本地化“直线”标签；任一端半径非零时仍显示两个端点。

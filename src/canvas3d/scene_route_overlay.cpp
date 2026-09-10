@@ -76,7 +76,12 @@ void format_curve_line(
     const route_value_sampling::Sample cant =
         route_value_sampling::sample(cant_events, distance);
 
-    if (radius.mode == route_value_sampling::Mode::Interpolate) {
+    const bool zero_radius_interpolation =
+        radius.mode == route_value_sampling::Mode::Interpolate &&
+        std::abs(radius.from_value) <= k_display_zero_epsilon &&
+        std::abs(radius.to_value) <= k_display_zero_epsilon;
+    if (radius.mode == route_value_sampling::Mode::Interpolate &&
+        !zero_radius_interpolation) {
         const double from_cant =
             route_value_sampling::sample(cant_events, radius.from_distance).value;
         const double to_cant =

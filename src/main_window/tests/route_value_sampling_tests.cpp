@@ -166,6 +166,17 @@ void curve_overlay_contract() {
     cant = 0.0;
     append(radii, 0.0, true, 0.0, "i", radius);
     append(cants, 0.0, true, 0.0, "i", cant);
+    append(radii, 100.0, false, 0.0, "i", radius);
+    append(cants, 100.0, false, 0.0, "i", cant);
+    check(formatted_curve_line(radii, cants, 50.0) == "Straight",
+          "overlay treats zero-radius interpolation endpoints as straight");
+
+    radii.clear();
+    cants.clear();
+    radius = 0.0;
+    cant = 0.0;
+    append(radii, 0.0, true, 0.0, "i", radius);
+    append(cants, 0.0, true, 0.0, "i", cant);
     append(radii, 100.0, true, -1200.0, "i", radius);
     append(cants, 100.0, true, -0.04, "i", cant);
     check(formatted_curve_line(radii, cants, 25.0) ==

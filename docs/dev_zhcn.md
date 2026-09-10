@@ -413,7 +413,7 @@ ctest --test-dir build --output-on-failure
 #### `src/canvas3d/scene_track_sampling.cpp/.h`、`scene_route_overlay.cpp/.h` 与 `canvas3D.cpp`
 
 - **轨道与相机采样**：`scene_track_sampling.cpp`/`scene_track_sampling.h` 提供无 D3D 依赖的普通轨道采样、相机专用起点前外推及相机里程边界；普通几何/放置/标记路径不使用起点前外推。`canvas3D.cpp` 复用该采样结果处理渲染与相机。
-- **线路信息格式化**：`scene_route_overlay.cpp`/`scene_route_overlay.h` 是无 D3D/ImGui 依赖的纯文本格式化边界；它复用共享线路值采样，在 `Curve.Interpolate` 区间显示两个端点的半径、超高、方向箭头和三角分隔符。
+- **线路信息格式化**：`scene_route_overlay.cpp`/`scene_route_overlay.h` 是无 D3D/ImGui 依赖的纯文本格式化边界；它复用共享线路值采样，在 `Curve.Interpolate` 区间显示两个端点的半径、超高、方向箭头和三角分隔符；两端都是显示意义上的零半径时复用本地化“直线”标签。
 - **数学与场景转换**：`Vec3/DVec3/Vec4/Mat4` 及矩阵、投影、包围盒帮助函数构建相机和 world transform；key 规范化与 Repeater 区间函数把 `Canvas3DScene` 转为可渲染数据。
 - **CPU/GPU 数据结构**：vertex、material、mesh part、texture cache、model、track/marker chunk、instance、highlight batch、pick target 和 placement lookup 结构明确 CPU 装载、GPU 资源、按里程 chunk 及反向定位所有权。
 - **着色器块**：内嵌 HLSL 分别实现模型/轨道的实例化顶点与材质采样、marker billboard、整数颜色 pick、highlight mask 和 outline composite。常量缓冲对应 view、fog、draw distance、pick id 和 outline 参数。
@@ -426,7 +426,7 @@ ctest --test-dir build --output-on-failure
 - **相机与放置坐标**：own/other track sampling、cant frame、`make_track_placement_frame()`、`make_track_world()`、Repeater instance world 函数把 BVE distance/x/y/z/yaw/pitch/roll 转为世界矩阵；camera reset/jump 保持线路朝向和目标中心。
 - **可见性、绘制和拾取**：visible range/chunk 筛选后批量绘制 track、model、marker；pick pass 写入 object/marker id 并回读单像素；highlight mask/batch 与 outline composite 绘制 hover、表格跳转和选择轮廓。
 - **placement/repeater 实时编辑**：设置 target 时查找源实例、Sound3D 标记或 Repeater 段并建立 edit state；update 函数只改对应 chunk/marker/segment 数据。gizmo projection、mouse ray、轴最近点和 drag handler 为普通放置生成毫米截断的 `Canvas3DPlacementDragUpdate`，Sound3D 将 X/Y 写回相对音源偏移并以整米 Z 拖动 distance，显式 Repeater End 也以整米 Z 操纵器更新段尾；`Structure.PutBetween` 只启用沿自轨前向的 Z 轴，并把拖动吸附为整米 `distance`。其顶点预览在线程中按最新目标合并重算，按模型纵向 slice 复用轨道采样，完成后通过可复用动态顶点缓冲原子替换。
-- **雾、背景和线路信息**：按相机距离采样 BVE fog、Map DrawDistance、背景模型和有效场景窗口；route overlay 采样 radius/cant、gradient、活动限速、Section signal speed 与下一站；位于 `Curve.Interpolate` 区间时显示求值后的两端 radius/cant，而不虚构线性当前半径；metrics/loading overlay 显示性能和加载状态。
+- **雾、背景和线路信息**：按相机距离采样 BVE fog、Map DrawDistance、背景模型和有效场景窗口；route overlay 采样 radius/cant、gradient、活动限速、Section signal speed 与下一站；位于 `Curve.Interpolate` 区间时显示求值后的两端 radius/cant，而不虚构线性当前半径，但两端均为显示零时改为显示本地化“直线”；metrics/loading overlay 显示性能和加载状态。
 - **`render_scene_preview()`**：每帧处理异步上传、相机输入、gizmo、可见实例收集、主 pass、pick/highlight、marker/object context popup，并返回导航、编辑、删除或 drag action。文件末 `Canvas3D::*` 公共方法都是到 Impl 的薄委托。
 
 ### 数据表格与跨视图导航
@@ -482,7 +482,7 @@ ctest --test-dir build --output-on-failure
 
 #### `src/main_window/tests/route_value_sampling_tests.cpp`
 
-- 无窗口 CPU 契约覆盖插值区间两端、端点所属下一段、无参数值继承、BeginTransition、非法数值，以及 3D 曲线线路信息的正/负/零半径格式；测试不依赖 parser、D3D、ImGui 或真实线路文件。
+- 无窗口 CPU 契约覆盖插值区间两端、端点所属下一段、无参数值继承、BeginTransition、非法数值，以及 3D 曲线线路信息的正/负/零半径格式和零到零插值直线显示；测试不依赖 parser、D3D、ImGui 或真实线路文件。
 
 ### 静态调用链摘要
 
