@@ -1653,7 +1653,14 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         model.backgrounds.size() + model.adhesions.size() +
         model.cab_illuminance.size() + model.fogs.size() +
         model.draw_distances.size();
-    scene.markers.reserve(estimated_count);
+    // Curve.Interpolate carries no curve row, so count its shared evaluated
+    // events separately before the boards below are appended.
+    const size_t interpolate_marker_count = static_cast<size_t>(std::count_if(
+        scene.route_info.radius_events.begin(), scene.route_info.radius_events.end(),
+        [](const route_value_sampling::Event& event) {
+            return event.kind == route_value_sampling::EventKind::Interpolate;
+        }));
+    scene.markers.reserve(estimated_count + interpolate_marker_count);
 
     auto append_marker = [&](MapMarkerVisualKind kind,
                              double distance,
@@ -1748,6 +1755,22 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                           Canvas3DSceneMarkerListKind::None, "curve", row_index,
                           edit_id);
         }
+    }
+    // Interpolate points have no source row or edit identity, so their boards
+    // reuse the curve-radius visuals and stay selectable/highlightable only.
+    for (const route_value_sampling::Event& event : scene.route_info.radius_events) {
+        if (event.kind != route_value_sampling::EventKind::Interpolate) continue;
+        if (std::abs(event.value) <= k_scene_route_display_zero_epsilon) {
+            append_marker(MapMarkerVisualKind::CurveCircularStart, event.distance,
+                          "Intpl. 0");
+            continue;
+        }
+        TrackEvent display;
+        display.distance = event.distance;
+        display.value_number = true;
+        display.number = event.value;
+        append_marker(MapMarkerVisualKind::CurveCircularStart, event.distance,
+                      canvas3d_scene_curve_marker_label(scene.route_info, display));
     }
     for (size_t row_index = 0; row_index < model.gradient_rows.size(); ++row_index) {
         const TableRow& row = model.gradient_rows[row_index];

@@ -57,7 +57,7 @@ komapedit 是一款面向 Windows 的轻量级 BVE Trainsim 地图查看与编�
 | `Curve.Begin(radius, cant)` / `[旧式] Curve.BeginCircular(radius, cant)`                                                                                                                    |   √   |    √     |    △     |     ✕      | `Curve.*` 表单仅将当前 `Curve.Begin(radius, cant)` 与独立里程的前置缓和曲线一同输出；旧式 `Curve.BeginCircular` 仍仅可编辑 |
 | `Curve.Begin(radius)` / `Curve.Change(radius)`                                                                                                                                              |   √   |    √     |    √     |     ✕      | `Curve.*` 表单可选择当前 Begin 或 Change，并可原子添加受支持的结束位置；已有行保持原方法                      |
 | `Curve.End()`                                                                                                                                                                               |   √   |    √     |    √     |     ✕      | `Curve.*` 表单可单独或随起始位置添加 End，并可带独立里程的前置缓和曲线；已有行仍可编辑或删除                  |
-| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |   √   |    ✕     |    ✕     |     ✕      | 官方 0/1/2 参数形式均进入几何，但不生成可编辑曲线行                                                            |
+| `Curve.Interpolate(radius, cant)` / `Curve.Interpolate(radius)` / `Curve.Interpolate()`                                                                                                     |   √   |    ✕     |    ✕     |     ✕      | 官方 0/1/2 参数形式均进入几何，但不生成可编辑曲线行。开启“曲线半径”后，每个插值点还会显示与其他曲线半径标牌同款的 3D 场景标牌，显示求值后的半径、超高和曲线方向，求值半径为零时改为显示 `Intpl. 0`，且仅支持拾取和共享的蓝色高亮                                                            |
 | `Gradient.BeginTransition()`                                                                                                                                                                |   √   |    △     |    △     |     ✕      | 合并后的 `Gradient.*` 表单可在选定 Begin/End 前添加；起止缓和选项联动且各自保留独立里程                      |
 | `Gradient.Begin(gradient)` / `[旧式] Gradient.BeginConst(gradient)`                                                                                                                         |   √   |    √     |    √     |     ✕      | `Gradient.*` 表单可单独或随 End 添加当前 `Gradient.Begin(gradient)`，并可带前置缓和曲线；旧式 `Gradient.BeginConst` 仍仅可编辑 |
 | `Gradient.End()`                                                                                                                                                                            |   √   |    √     |    √     |     ✕      | `Gradient.*` 表单可单独或随 Begin 添加 End，并可带独立里程的前置缓和曲线；已有行仍可编辑或删除               |
@@ -397,6 +397,10 @@ API 版本检查会拒绝旧 DLL。构建及发布清理脚本不会迁移或删
 画布会显示相机横向偏移、高度和里程，以及当前曲线半径/超高、坡度、限速、闭塞信号速度和下一站信息。相机位于 `Curve.Interpolate` 区间内时，曲线信息会同时显示两个端点的半径、超高和各非零端点的曲线方向，并以三角箭头分隔；如果两端求值后的半径均为零，则改为显示本地化的“直线”标签。底部还显示场景块、实例、模型加载数量和帧率。
 
 `3D画布设置` 可即时切换雾效果、地图语句驱动的绘制距离和性能警告，并可调整普通绘制距离。相关标记的显示状态与 `辅助信息` 菜单同步。
+
+#### 场景标牌
+
+标记可见性由 `辅助信息` 控制。开启“曲线半径”后，每个 `Curve.Interpolate` 插值点都会显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向；求值半径为零时改为显示 `Intpl. 0`，不显示方向箭头。插值点标牌支持拾取和共享的蓝色高亮，但 `Curve.Interpolate` 语句仍不提供编辑、删除和新建操作。
 
 ### 10. 编辑与新建地图元素/新建文件向导、更改的应用与保存
 

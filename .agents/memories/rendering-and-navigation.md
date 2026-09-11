@@ -20,6 +20,7 @@
 ## Rendering precision and overlays
 
 - `route_value_sampling` is the shared evaluated-event path used by 2D and 3D radius/cant/gradient consumers. Its append step carries the previous value forward when `BeginTransition` or `Interpolate` omits the value; consumers must not independently reinterpret the raw arguments.
+- A statement without an editable source row can still need scene boards. `Curve.Interpolate` builds them from the shared evaluated events with the existing `CurveCircularStart` visuals, kind, visibility, and picking instead of a new marker kind or a second sampler; boards that must stay read-only leave `row_kind`, `list_kind`, and `edit_id` empty.
 - Far-distance flicker is a scene-wide precision/depth issue, not a model-specific defect. Reversed-Z state, depth clear/compare, camera-relative or chunk-local transforms, and fog must be inspected together.
 - A correct-looking scene can still expose a wrong overlay statistic. Verify whether a label expects total chunk count, current-frame drawn count, or another field before changing generation.
 - Route information depends on current radius/cant, gradient, active speed limit, Section-selected signal speed, and next-station sampling; camera-distance changes must preserve this event lookup.

@@ -13,7 +13,6 @@ This file is the active project progress and contains unfinished items only. Com
 
 ### 用户界面与辅助功能
 
-- [ ] 3D画布曲线interpolate位置标牌
 - [ ] 曲线interpolate语句编辑与删除
 - [ ] 曲线interpolate语句新建
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件

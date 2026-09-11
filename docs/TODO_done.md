@@ -115,6 +115,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] In non-edit mode, keep 3D curve/gradient change-marker context menus at the clicked marker and show only disabled Properties/Edit and Delete actions instead of incorrectly reporting an unpaired BeginTransition.
 - [x] Display the current curve radius/cant, gradient, active speed limit, section-selected signal speeds, and distance to the next station in the 3D scene route overlay.
 - [x] Display both endpoint radii and cants in the 3D route overlay while the camera is inside an official `Curve.Interpolate` interval, with curve-direction arrows for nonzero endpoints and a triangular separator; omitted Interpolate arguments retain their evaluated inherited values, while two evaluated zero-radius endpoints use the localized `Straight` label.
+- [x] Show a board styled like the other curve-radius boards at every `Curve.Interpolate` point in the 3D scene, with the evaluated radius, cant, and curve direction, or `Intpl. 0` when the evaluated radius is zero; the boards support picking and the shared blue highlight only and expose no edit, delete, or creation action.
 - [x] Edit `Structure.Put`, `Signal.Put`, and `Repeater.Begin` positions along X/Y/Z with live 3D gizmos and configurable gizmo size; Inspector buttons convert `Put`/`Put0` and `Begin`/`Begin0` in either direction, while Put0/Begin0 expose a Z-only whole-metre placement/begin-distance gizmo.
 - [x] Place each `Sound3D.Put` label tip at its fixed X/Y source relative to the own track, and edit X/Y in 0.001 m steps or `distance` in whole metres through the live X/Y/Z gizmo without changing `Put(x, y)` syntax or adding audio playback.
 - [x] Preview all `Structure.PutBetween` Inspector fields with exact live vertex deformation and edit `distance` through a Z-only, whole-metre 3D gizmo.
@@ -275,6 +276,7 @@ This file archives completed items moved from [`TODO.md`](../TODO.md). Keep new 
 - [x] 在编辑模式未开启时，右键点击3D场景中的曲线变化点或坡度变化点标记，右键菜单仅显示禁用的“属性/编辑”和“删除”，不再错误显示“此BeginTransition没有对应的Begin/End，无法编辑或删除”或发生位置偏移
 - [x] 在 3D 场景线路信息叠加层显示当前曲线半径/超高、坡度、生效限速、闭塞选择出的信号限速和距下一站距离
 - [x] 当相机位于官方 `Curve.Interpolate` 区间内时，在 3D 线路信息叠加层同时显示两个端点的曲线半径与超高，以非零端点方向箭头和三角箭头分隔；省略参数的 Interpolate 保持其求值后的继承值，两端求值半径均为零时使用本地化“直线”标签
+- [x] 在 3D 场景中为每个 `Curve.Interpolate` 插值点显示与其他曲线半径标牌同款的标牌，内容为求值后的半径、超高和曲线方向，求值半径为零时显示 `Intpl. 0`；标牌仅支持拾取和共享的蓝色高亮，不提供编辑、删除和新建操作
 - [x] 通过尺寸可调的实时 3D 操纵器编辑 `Structure.Put`、`Signal.Put` 和 `Repeater.Begin` 的 X/Y/Z 位置；检查器按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，Put0/Begin0 提供仅 Z 轴、整米步进的放置/起始里程操纵器
 - [x] 在 3D 场景中将 `Sound3D.Put` 的标签尖端定位到相对自轨道的固定 X/Y 音源；通过实时 X/Y/Z 操纵器编辑 X/Y（0.001 m）或 distance（Z 轴整米），不改变 `Put(x, y)` 语法或音频播放行为
 - [x] 为 `Structure.PutBetween` 的全部检查器字段提供精确的实时顶点变形预览，并通过仅 Z 轴、整米步进的 3D 操纵器编辑 `distance`
