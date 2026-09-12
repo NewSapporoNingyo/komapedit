@@ -16,7 +16,8 @@ bool append_event(std::vector<Event>& events,
                   bool has_value,
                   double value,
                   std::string_view flag,
-                  double& current_value) {
+                  double& current_value,
+                  size_t source_row_index) {
     if (!std::isfinite(distance) || (has_value && !std::isfinite(value)) ||
         (!has_value && flag != "bt" && flag != "i")) {
         return false;
@@ -25,6 +26,7 @@ bool append_event(std::vector<Event>& events,
     Event event;
     event.distance = distance;
     event.previous_value = current_value;
+    event.source_row_index = source_row_index;
     if (has_value) current_value = value;
     event.value = current_value;
     if (flag == "bt") {

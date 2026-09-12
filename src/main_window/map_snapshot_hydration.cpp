@@ -700,6 +700,42 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         }
         model.other_tracks.push_back(std::move(track));
     }
+    // Track events are distance-sorted, while curve rows retain parse order.
+    // The typed element registry preserves the statement's global order for
+    // both rows, including repeated Includes at equal or decreasing distances.
+    // Preview-only snapshots have no registry and must not invent provenance.
+    std::unordered_map<std::int32_t, size_t> interpolate_rows_by_statement;
+    interpolate_rows_by_statement.reserve(static_cast<size_t>(snapshot.curve_count));
+    for (std::uint64_t i = 0; i < snapshot.element_count; ++i) {
+        const KvElementRow& element = snapshot.elements[i];
+        if (map_snapshot_string(snapshot, element.row_kind) == "curve" &&
+            element.row_index < snapshot.curve_count &&
+            map_snapshot_string(snapshot, snapshot.curves[element.row_index].method) ==
+                "Curve.Interpolate") {
+            interpolate_rows_by_statement.emplace(
+                element.global_order, static_cast<size_t>(element.row_index));
+        }
+    }
+    std::vector<size_t> interpolate_event_sources(
+        static_cast<size_t>(snapshot.own_track_event_count),
+        std::numeric_limits<size_t>::max());
+    for (std::uint64_t i = 0; i < snapshot.element_count; ++i) {
+        const KvElementRow& element = snapshot.elements[i];
+        if (map_snapshot_string(snapshot, element.row_kind) != "own_track" ||
+            element.row_index >= snapshot.own_track_event_count) continue;
+        const auto source = interpolate_rows_by_statement.find(element.global_order);
+        if (source == interpolate_rows_by_statement.end()) continue;
+        const KvTrackEventRow& event = snapshot.own_track_events[element.row_index];
+        const KvRowMetadata& row_source = snapshot.curves[source->second].metadata;
+        if (map_snapshot_string(snapshot, event.key) == "radius" &&
+            map_snapshot_string(snapshot, event.flag) == "i" &&
+            event.metadata.source_file_index == row_source.source_file_index &&
+            event.metadata.line == row_source.line &&
+            event.metadata.column == row_source.column) {
+            interpolate_event_sources[element.row_index] = source->second;
+        }
+    }
+
     model.own_events.reserve(static_cast<size_t>(snapshot.own_track_event_count));
     for (std::uint64_t i = 0; i < snapshot.own_track_event_count; ++i) {
         const KvTrackEventRow& input = snapshot.own_track_events[i];
@@ -713,6 +749,7 @@ MapModel hydrate_map_snapshot(const KvMapSnapshot& snapshot,
         } else {
             event.text = map_snapshot_value_text(snapshot, input.value);
         }
+        event.source_row_index = interpolate_event_sources[static_cast<size_t>(i)];
         model.own_events.push_back(std::move(event));
     }
     model.curve_rows.reserve(static_cast<size_t>(snapshot.curve_count));

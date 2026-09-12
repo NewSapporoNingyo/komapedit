@@ -88,6 +88,14 @@ std::optional<PlanMarkerHit> nearest_marker_hit(
 }
 
 std::optional<PlanMarkerHit> nearest_marker_hit(
+    const std::vector<PlanCurveInterpolateMarker>& markers,
+    const PlanScreenTransform& transform, ImVec2 mouse,
+    ImVec2 origin, ImVec2 size, float canvas_margin, bool enabled) {
+    return nearest_marker_hit_impl(
+        markers, transform, mouse, origin, size, canvas_margin, enabled);
+}
+
+std::optional<PlanMarkerHit> nearest_marker_hit(
     const std::vector<OwnTrackEditMarker>& markers,
     const PlanScreenTransform& transform, ImVec2 mouse,
     ImVec2 origin, ImVec2 size, float canvas_margin, bool enabled) {
@@ -402,6 +410,12 @@ std::vector<PlanContextMenuEntry> App::collect_plan_context_entries(
         add_candidate(PlanMarkerKind::Gradient, marker.row_index, marker.x, marker.y,
                       marker.edit_id, marker.row_kind, marker);
     }
+    if (show_curve_values_) {
+        for (const PlanCurveInterpolateMarker& marker : data.curve_interpolate_markers) {
+            add_candidate(PlanMarkerKind::Curve, marker.row_index, marker.x, marker.y,
+                          marker.edit_id, "curve");
+        }
+    }
     add_plan_markers(data.curve_gauge_markers, PlanMarkerKind::CurveGauge);
     add_plan_markers(data.curve_center_markers, PlanMarkerKind::CurveCenter);
     add_plan_markers(data.curve_function_markers, PlanMarkerKind::CurveFunction);
@@ -658,14 +672,18 @@ void App::render_plan_marker_context_menu(
             case PlanMarkerKind::Gradient: {
                 const OwnTrackEditMarker* marker =
                     entry.own_track_marker ? &*entry.own_track_marker : nullptr;
-                const bool can_edit_own_track = edit_available && marker &&
-                    marker->paired && !marker->target_edit_id.empty();
+                const std::string& target_edit_id = marker
+                    ? marker->target_edit_id : entry.edit_id;
+                const std::string& target_row_kind = marker
+                    ? marker->row_kind : entry.row_kind;
+                const bool can_edit_own_track = edit_available &&
+                    (!marker || marker->paired) && !target_edit_id.empty();
                 ImGui::BeginDisabled(!can_edit_own_track);
                 if (ImGui::MenuItem(tr("dialog.element_properties").c_str())) {
-                    request_element_inspector(marker->target_edit_id, marker->row_kind);
+                    request_element_inspector(target_edit_id, target_row_kind);
                 }
                 if (ImGui::MenuItem(tr("button.delete").c_str())) {
-                    request_element_delete(marker->target_edit_id, marker->row_kind);
+                    request_element_delete(target_edit_id, target_row_kind);
                 }
                 ImGui::EndDisabled();
                 break;

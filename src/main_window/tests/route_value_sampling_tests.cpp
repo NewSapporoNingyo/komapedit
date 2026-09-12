@@ -115,6 +115,21 @@ void omitted_value_contract() {
     check_near(sample.to_value, -600.0, "omitted interval keeps its end value");
 }
 
+void source_provenance_contract() {
+    std::vector<route_value_sampling::Event> events;
+    double current = 0.0;
+    constexpr size_t source_row_index = 42;
+    check(route_value_sampling::append_event(
+              events, 25.0, true, 600.0, "i", current, source_row_index),
+          "route value event with source provenance is appended");
+    check(events.size() == 1 &&
+              events.front().source_row_index == source_row_index,
+          "route value event retains its source row index");
+    const auto sampled = route_value_sampling::sample(events, 25.0);
+    check_near(sampled.value, 600.0,
+               "source provenance does not change sampled values");
+}
+
 void transition_contract() {
     std::vector<route_value_sampling::Event> events;
     double current = 0.0;
@@ -193,6 +208,7 @@ void curve_overlay_contract() {
 int main() {
     interpolation_contract();
     omitted_value_contract();
+    source_provenance_contract();
     transition_contract();
     invalid_event_contract();
     curve_overlay_contract();

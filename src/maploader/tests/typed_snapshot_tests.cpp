@@ -4129,6 +4129,313 @@ void curve_parameter_edit_contract() {
           "Curve parameter Save and Reload retain legacy method fidelity");
 }
 
+void curve_interpolate_edit_contract() {
+    TempFixture fixture;
+    const std::filesystem::path include_path = fixture.directory / "curves.txt";
+    const std::filesystem::path random_path = fixture.directory / "random.txt";
+    const std::string root_before =
+        "BveTs Map 2.02:utf-8\n"
+        "include 'curves.txt';\n";
+    const std::string random_before =
+        "BveTs Map 2.02:utf-8\n"
+        "Train['random'].Load('missing'+ceil(rand(1000000000))+'.txt','0',-1);\n";
+    const std::string include_before =
+        "BveTs Map 2.02:shift_jis\r\n"
+        "$radius=400+50;\r\n"
+        "10;\r\n"
+        "Curve.Interpolate(); # keep zero-argument form\r\n"
+        "20;\r\n"
+        "Curve.Interpolate($radius); # keep radius expression\r\n"
+        "30;\r\n"
+        "Curve.Interpolate(700,0.08); # keep cant comment\r\n"
+        "include 'random.txt'; # replay after changed byte offsets\r\n";
+    {
+        std::ofstream root(fixture.map_path, std::ios::binary | std::ios::trunc);
+        root << root_before;
+        std::ofstream included(include_path, std::ios::binary | std::ios::trunc);
+        included << include_before;
+        std::ofstream random(random_path, std::ios::binary | std::ios::trunc);
+        random << random_before;
+    }
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+    };
+    auto count_interpolate_radius_events = [](const KvMapSnapshot& snapshot) {
+        std::uint64_t count = 0;
+        for (std::uint64_t index = 0; index < snapshot.own_track_event_count;
+             ++index) {
+            const KvTrackEventRow& event = snapshot.own_track_events[index];
+            if (map_string(snapshot, event.key) == "radius" &&
+                map_string(snapshot, event.flag) == "i") {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    const auto random_train_path_for_profile = [&](unsigned flags) {
+        MapHandle profile_handle(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 5.0, flags));
+        KvMapSnapshot profile_snapshot{};
+        if (!profile_handle.value ||
+            kv_get_map_snapshot(profile_handle.value, KV_MAP_SNAPSHOT_VERSION,
+                                &profile_snapshot,
+                                sizeof(profile_snapshot)) == 0 ||
+            profile_snapshot.other_train_definition_count != 1 ||
+            !profile_snapshot.other_train_definitions) {
+            return std::string{};
+        }
+        const KvValue& path =
+            profile_snapshot.other_train_definitions[0].load_file_path;
+        return path.kind == KV_VALUE_STRING
+            ? map_string(profile_snapshot, path.string_value)
+            : std::string{};
+    };
+    const std::string preview_random_path =
+        random_train_path_for_profile(KV_LOAD_PREVIEW);
+    const std::string edit_random_path =
+        random_train_path_for_profile(KV_LOAD_EDIT_METADATA);
+    check(!preview_random_path.empty() &&
+              preview_random_path == edit_random_path,
+          "Preview and edit profiles share one random evaluation session");
+
+    MapHandle handle(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 5.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "Curve.Interpolate edit fixture load");
+    if (!handle.value) return;
+    KvMapSnapshot baseline{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &baseline, sizeof(baseline)) != 0 &&
+              baseline.curve_count == 3 &&
+              count_interpolate_radius_events(baseline) == 3,
+          "Curve.Interpolate 0/1/2-argument rows and events are typed");
+    if (baseline.curve_count != 3 || !baseline.curves) return;
+
+    const std::array<std::uint32_t, 3> expected_argument_counts{{0, 1, 2}};
+    const std::array<double, 3> expected_distances{{10.0, 20.0, 30.0}};
+    std::array<std::string, 3> edit_ids{};
+    bool baseline_rows_match = true;
+    for (size_t index = 0; index < edit_ids.size(); ++index) {
+        const KvCurveRow& row = baseline.curves[index];
+        edit_ids[index] = map_string(baseline, row.metadata.edit_id);
+        baseline_rows_match = baseline_rows_match &&
+            map_string(baseline, row.method) == "Curve.Interpolate" &&
+            row.argument_count == expected_argument_counts[index] &&
+            nearly_equal(row.distance, expected_distances[index]) &&
+            !edit_ids[index].empty() &&
+            row.metadata.source_file_index < baseline.source_file_count &&
+            map_string(baseline, row.file_path) == include_path.u8string();
+        if (index == 0) {
+            baseline_rows_match = baseline_rows_match &&
+                row.radius.kind == KV_VALUE_NULL && row.cant.kind == KV_VALUE_NULL;
+        } else if (index == 1) {
+            baseline_rows_match = baseline_rows_match &&
+                row.radius.kind == KV_VALUE_NUMBER &&
+                nearly_equal(row.radius.number_value, 450.0) &&
+                row.cant.kind == KV_VALUE_NULL;
+        } else {
+            baseline_rows_match = baseline_rows_match &&
+                row.radius.kind == KV_VALUE_NUMBER &&
+                nearly_equal(row.radius.number_value, 700.0) &&
+                row.cant.kind == KV_VALUE_NUMBER &&
+                nearly_equal(row.cant.number_value, 0.08);
+        }
+        if (index != 0) {
+            baseline_rows_match = baseline_rows_match &&
+                baseline.curves[index - 1].order < row.order;
+        }
+    }
+    check(baseline_rows_match,
+          "Curve.Interpolate rows retain method, arity, values, source, order, and ids");
+
+    bool event_sources_match = true;
+    size_t radius_event_index = 0;
+    for (std::uint64_t index = 0; index < baseline.own_track_event_count; ++index) {
+        const KvTrackEventRow& event = baseline.own_track_events[index];
+        if (map_string(baseline, event.key) != "radius" ||
+            map_string(baseline, event.flag) != "i") {
+            continue;
+        }
+        event_sources_match = event_sources_match && radius_event_index < 3;
+        if (radius_event_index < 3) {
+            const KvCurveRow& row = baseline.curves[radius_event_index];
+            event_sources_match = event_sources_match &&
+                event.metadata.source_file_index == row.metadata.source_file_index &&
+                event.metadata.line == row.metadata.line &&
+                event.metadata.column == row.metadata.column;
+        }
+        ++radius_event_index;
+    }
+    check(event_sources_match && radius_event_index == 3,
+          "Curve.Interpolate evaluated radius events retain statement source anchors");
+
+    const KvSourceFileRow& include_source =
+        baseline.source_files[baseline.curves[0].metadata.source_file_index];
+    const std::string source_hash = map_string(baseline, include_source.source_hash);
+    check(map_string(baseline, include_source.encoding) == "cp932" &&
+              map_string(baseline, include_source.newline) == "crlf",
+          "Curve.Interpolate fixture detects Shift-JIS and CRLF source fidelity");
+
+    {
+        MapHandle fresh(kv_load_map_ex(
+            fixture.path_utf8().c_str(), 5.0,
+            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot snapshot{};
+        bool stable = fresh.value && kv_get_map_snapshot(
+            fresh.value, KV_MAP_SNAPSHOT_VERSION, &snapshot, sizeof(snapshot)) != 0 &&
+            snapshot.curve_count == 3;
+        for (size_t index = 0; stable && index < edit_ids.size(); ++index) {
+            stable = map_string(snapshot, snapshot.curves[index].metadata.edit_id) ==
+                edit_ids[index];
+        }
+        check(stable, "Curve.Interpolate edit ids are stable across fresh reload");
+    }
+
+    UpdateBatch invalid_zero(edit_ids[0], source_hash, "500", "radius");
+    KvEditReportSnapshot invalid_zero_report{};
+    check(kv_edit_dry_run_typed(
+              handle.value, &invalid_zero.batch, &invalid_zero_report,
+              sizeof(invalid_zero_report)) != 0,
+          "zero-argument Curve.Interpolate invalid field dry-run call");
+    validate_report(invalid_zero_report);
+    check(!invalid_zero_report.ok && edit_report_has_error_containing(
+              invalid_zero_report,
+              "Curve.Interpolate has no editable value fields"),
+          "zero-argument Curve.Interpolate rejects radius changes");
+
+    MultiFieldUpdateBatch zero_update(
+        "curve-interpolate-zero-distance", edit_ids[0], source_hash,
+        {{"distance", "12"}});
+    KvEditReportSnapshot zero_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &zero_update.batch, &zero_report,
+              sizeof(zero_report)) != 0 && zero_report.ok &&
+              zero_report.full_reparse_ok && zero_report.non_target_changed_count == 0,
+          "zero-argument Curve.Interpolate distance update applies to memory");
+
+    UpdateBatch one_update(edit_ids[1], source_hash, "500", "radius");
+    KvEditReportSnapshot one_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &one_update.batch, &one_report,
+              sizeof(one_report)) != 0 && one_report.ok &&
+              one_report.full_reparse_ok && one_report.non_target_changed_count == 0,
+          "one-argument Curve.Interpolate radius update applies to memory");
+
+    MultiFieldUpdateBatch two_update(
+        "curve-interpolate-two-values", edit_ids[2], source_hash,
+        {{"radius", "800"}, {"cant", "0.1"}});
+    KvEditReportSnapshot two_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &two_update.batch, &two_report,
+              sizeof(two_report)) != 0 && two_report.ok &&
+              two_report.full_reparse_ok && two_report.non_target_changed_count == 0,
+          "two-argument Curve.Interpolate radius/cant update applies to memory");
+    check(read_source(fixture.map_path) == root_before &&
+              read_source(include_path) == include_before &&
+              read_source(random_path) == random_before,
+          "Curve.Interpolate Apply leaves root and Include files unchanged on disk");
+
+    KvMapSnapshot updated{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &updated, sizeof(updated)) != 0,
+          "Curve.Interpolate updated snapshot");
+    check(updated.other_train_definition_count == 1 &&
+              map_string(updated,
+                         updated.other_train_definitions[0].load_file_path.string_value) ==
+                  preview_random_path,
+          "Curve edits preserve nested Include random values after source offsets move");
+    const KvCurveRow* zero_row = find_curve(updated, edit_ids[0]);
+    const KvCurveRow* one_row = find_curve(updated, edit_ids[1]);
+    const KvCurveRow* two_row = find_curve(updated, edit_ids[2]);
+    check(zero_row && one_row && two_row &&
+              nearly_equal(zero_row->distance, 12.0) &&
+              zero_row->argument_count == 0 &&
+              zero_row->radius.kind == KV_VALUE_NULL &&
+              one_row->argument_count == 1 &&
+              nearly_equal(one_row->radius.number_value, 500.0) &&
+              one_row->cant.kind == KV_VALUE_NULL &&
+              two_row->argument_count == 2 &&
+              nearly_equal(two_row->radius.number_value, 800.0) &&
+              nearly_equal(two_row->cant.number_value, 0.1),
+          "Curve.Interpolate updates preserve each original argument shape");
+
+    const std::string delete_change_id = "curve-interpolate-delete-zero";
+    KvEditChange delete_change{};
+    delete_change.change_id = utf8_view(delete_change_id);
+    delete_change.edit_id = utf8_view(edit_ids[0]);
+    delete_change.operation = KV_EDIT_DELETE;
+    delete_change.expected_source_hash = utf8_view(source_hash);
+    KvEditBatch delete_batch{&delete_change, 1, nullptr, 0};
+    KvEditReportSnapshot delete_report{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &delete_batch, &delete_report,
+              sizeof(delete_report)) != 0 && delete_report.ok &&
+              delete_report.full_reparse_ok && delete_report.delete_count == 1,
+          "Curve.Interpolate delete applies to memory");
+    KvMapSnapshot deleted{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &deleted, sizeof(deleted)) != 0 &&
+              deleted.curve_count == 2 &&
+              count_interpolate_radius_events(deleted) == 2 &&
+              !find_curve(deleted, edit_ids[0]),
+          "Curve.Interpolate delete removes only its row and evaluated event");
+
+    check(kv_edit_reset_memory(handle.value) != 0,
+          "Curve.Interpolate Revert resets the memory working copy");
+    KvMapSnapshot reset{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                              &reset, sizeof(reset)) != 0 &&
+              reset.curve_count == 3 &&
+              count_interpolate_radius_events(reset) == 3 &&
+              find_curve(reset, edit_ids[0]) &&
+              read_source(include_path) == include_before,
+          "Curve.Interpolate Revert restores all rows and source bytes");
+
+    UpdateBatch save_update(edit_ids[2], source_hash, "0.125", "cant");
+    KvEditReportSnapshot save_apply{};
+    check(kv_edit_apply_to_memory_typed(
+              handle.value, &save_update.batch, &save_apply,
+              sizeof(save_apply)) != 0 && save_apply.ok &&
+              save_apply.full_reparse_ok,
+          "Curve.Interpolate update reapplies before Save");
+    KvEditReportSnapshot commit_report{};
+    check(kv_edit_commit_typed(handle.value, &commit_report,
+                               sizeof(commit_report)) != 0 &&
+              commit_report.ok && commit_report.full_reparse_ok &&
+              commit_report.changed_file_count == 1,
+          "Curve.Interpolate Save commits only the validated Include working copy");
+    const std::string include_after = read_source(include_path);
+    check(read_source(fixture.map_path) == root_before &&
+              include_after.find("BveTs Map 2.02:shift_jis\r\n") == 0 &&
+              include_after.find("Curve.Interpolate(); # keep zero-argument form\r\n") !=
+                  std::string::npos &&
+              include_after.find("Curve.Interpolate($radius); # keep radius expression\r\n") !=
+                  std::string::npos &&
+              include_after.find("Curve.Interpolate(700,0.125); # keep cant comment\r\n") !=
+                  std::string::npos,
+          "Curve.Interpolate Save preserves method shapes, expression, comments, Shift-JIS, and CRLF");
+
+    MapHandle reloaded(kv_load_map_ex(
+        fixture.path_utf8().c_str(), 5.0,
+        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot reloaded_snapshot{};
+    check(reloaded.value && kv_get_map_snapshot(
+              reloaded.value, KV_MAP_SNAPSHOT_VERSION, &reloaded_snapshot,
+              sizeof(reloaded_snapshot)) != 0 &&
+              reloaded_snapshot.curve_count == 3,
+          "Curve.Interpolate committed source fresh reload");
+    const KvCurveRow* reloaded_two = reloaded.value
+        ? find_curve(reloaded_snapshot, edit_ids[2]) : nullptr;
+    check(reloaded_two && reloaded_two->argument_count == 2 &&
+              nearly_equal(reloaded_two->cant.number_value, 0.125) &&
+              map_string(reloaded_snapshot, reloaded_two->method) ==
+                  "Curve.Interpolate",
+          "Curve.Interpolate fresh reload retains identity, arity, and edited value");
+}
+
 void other_track_insert_contract() {
     TempFixture fixture;
     MapHandle handle(kv_load_map_ex(
@@ -8247,6 +8554,7 @@ int edit_contract() {
     repeater_key_edit_contract();
     repeater_insert_contract();
     curve_parameter_edit_contract();
+    curve_interpolate_edit_contract();
     own_track_insert_contract();
     other_track_insert_contract();
     environment_argument_shape_edit_contract();

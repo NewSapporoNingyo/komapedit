@@ -259,6 +259,7 @@ struct TrackEvent {
     bool value_number = false;
     double number = 0.0;
     std::string text;
+    size_t source_row_index = std::numeric_limits<size_t>::max();
 };
 
 struct OwnTrackEditMarker {
@@ -749,6 +750,8 @@ struct PlanCurveInterpolateMarker {
     double y = 0.0;
     double theta = 0.0;
     double radius = 0.0;
+    std::string edit_id;
+    size_t row_index = std::numeric_limits<size_t>::max();
     std::string label;
 };
 

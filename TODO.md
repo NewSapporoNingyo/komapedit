@@ -10,10 +10,10 @@ This file is the active project progress and contains unfinished items only. Com
 
 - [ ] 3D 场景画质设置：render scale、MSAA、纹理过滤和轮廓质量
 - [ ] 支持通过3D操纵器编辑布景旋转
+- [ ] 单独排查 Scene headless 的 fog 像素探针门槛失败：2026-09-12 的 Debug 测试中雾数据、着色器及像素变化均存在，但 `max_channel_diff=5` 低于 `min_visible_channel_diff=8`。保留原门槛，补充同设备、同参数的基线后判断原因；此项不阻塞 Curve.Interpolate 编辑/删除与新建验收。
 
 ### 用户界面与辅助功能
 
-- [ ] 曲线interpolate语句编辑与删除
 - [ ] 曲线interpolate语句新建
 - [ ] 新建空白地图模板功能，包括1个场景文件、1个基本地图文件、各种资源列表文件
 - [ ] 信号现示列表可新增/删除列

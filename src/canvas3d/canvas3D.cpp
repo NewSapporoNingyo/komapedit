@@ -1404,11 +1404,15 @@ void append_scene_route_value_event(
     const TrackEvent& source,
     double& current_value) {
     route_value_sampling::append_event(events, source.distance, source.value_number,
-                                       source.number, source.flag, current_value);
+                                       source.number, source.flag, current_value,
+                                       source.source_row_index);
 }
 
 void populate_canvas3d_scene_route_values(Canvas3DSceneRouteInfo& route_info,
                                           const MapModel& model) {
+    route_info.radius_events.clear();
+    route_info.cant_events.clear();
+    route_info.gradient_events.clear();
     size_t radius_count = 0;
     size_t cant_count = 0;
     size_t gradient_count = 0;
@@ -1653,14 +1657,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         model.backgrounds.size() + model.adhesions.size() +
         model.cab_illuminance.size() + model.fogs.size() +
         model.draw_distances.size();
-    // Curve.Interpolate carries no curve row, so count its shared evaluated
-    // events separately before the boards below are appended.
-    const size_t interpolate_marker_count = static_cast<size_t>(std::count_if(
-        scene.route_info.radius_events.begin(), scene.route_info.radius_events.end(),
-        [](const route_value_sampling::Event& event) {
-            return event.kind == route_value_sampling::EventKind::Interpolate;
-        }));
-    scene.markers.reserve(estimated_count + interpolate_marker_count);
+    scene.markers.reserve(estimated_count);
 
     auto append_marker = [&](MapMarkerVisualKind kind,
                              double distance,
@@ -1707,6 +1704,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
     for (size_t row_index = 0; row_index < model.curve_rows.size(); ++row_index) {
         const TableRow& row = model.curve_rows[row_index];
         const std::string method = ascii_lower(table_cell(row, "method"));
+        if (method == "curve.interpolate") continue;
         if (method == "curve.setgauge" || method == "curve.gauge" ||
             method == "curve.setcenter" || method == "curve.setfunction") {
             const MapMarkerVisualKind kind = method == "curve.setcenter"
@@ -1756,21 +1754,33 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
                           edit_id);
         }
     }
-    // Interpolate points have no source row or edit identity, so their boards
-    // reuse the curve-radius visuals and stay selectable/highlightable only.
     for (const route_value_sampling::Event& event : scene.route_info.radius_events) {
         if (event.kind != route_value_sampling::EventKind::Interpolate) continue;
-        if (std::abs(event.value) <= k_scene_route_display_zero_epsilon) {
-            append_marker(MapMarkerVisualKind::CurveCircularStart, event.distance,
-                          "Intpl. 0");
-            continue;
+        std::optional<size_t> row_index;
+        std::string edit_id;
+        std::string row_kind;
+        if (event.source_row_index < model.curve_rows.size()) {
+            const TableRow& row = model.curve_rows[event.source_row_index];
+            if (ascii_lower(table_cell(row, "method")) == "curve.interpolate") {
+                row_index = event.source_row_index;
+                edit_id = row.edit_id;
+                row_kind = "curve";
+            }
         }
-        TrackEvent display;
-        display.distance = event.distance;
-        display.value_number = true;
-        display.number = event.value;
+        std::string label;
+        if (std::abs(event.value) <= k_scene_route_display_zero_epsilon) {
+            label = "Intpl. 0";
+        } else {
+            TrackEvent display;
+            display.distance = event.distance;
+            display.value_number = true;
+            display.number = event.value;
+            label = canvas3d_scene_curve_marker_label(scene.route_info, display);
+        }
         append_marker(MapMarkerVisualKind::CurveCircularStart, event.distance,
-                      canvas3d_scene_curve_marker_label(scene.route_info, display));
+                      std::move(label), MapMarkerIconVariant::Default,
+                      Canvas3DSceneMarkerListKind::None, std::move(row_kind),
+                      row_index, std::move(edit_id));
     }
     for (size_t row_index = 0; row_index < model.gradient_rows.size(); ++row_index) {
         const TableRow& row = model.gradient_rows[row_index];
@@ -3275,6 +3285,9 @@ struct Canvas3D::Impl {
             populate_canvas3d_scene_section_signals(scene_data.route_info, model);
         }
         if (options.markers) {
+            // Preview-to-Edit metadata merges can supply event provenance after
+            // the scene was built. Refresh the shared events before their boards.
+            populate_canvas3d_scene_route_values(scene_data.route_info, model);
             populate_canvas3d_scene_markers(scene_data, model);
             release_scene_marker_chunks();
             if (!build_scene_marker_chunks(error)) {

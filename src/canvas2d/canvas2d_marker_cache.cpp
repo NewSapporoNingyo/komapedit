@@ -308,6 +308,7 @@ void App::rebuild_marker_overlay_cache() {
                 curve_parameter_marker_cache_.push_back(std::move(marker));
                 continue;
             }
+            if (!gradient && method == "curve.interpolate") continue;
             const bool transition = method == (gradient
                 ? "gradient.begintransition" : "curve.begintransition");
             std::string label;

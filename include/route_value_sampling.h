@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <cstddef>
+#include <limits>
 #include <string_view>
 #include <vector>
 
@@ -22,6 +24,7 @@ struct Event {
     double previous_value = 0.0;
     double value = 0.0;
     EventKind kind = EventKind::Value;
+    size_t source_row_index = std::numeric_limits<size_t>::max();
 };
 
 enum class Mode {
@@ -46,7 +49,8 @@ bool append_event(std::vector<Event>& events,
                   bool has_value,
                   double value,
                   std::string_view flag,
-                  double& current_value);
+                  double& current_value,
+                  size_t source_row_index = std::numeric_limits<size_t>::max());
 
 // Events must retain maploader's stable, nondecreasing distance order.
 Sample sample(const std::vector<Event>& events, double distance);

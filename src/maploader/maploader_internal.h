@@ -159,6 +159,8 @@ struct LoadedText {
 
 struct MapParseOptions {
     bool collect_edit_metadata = true;
+    bool has_random_seed = false;
+    std::uint64_t random_seed = 0;
 };
 
 struct SourceTextOverride {

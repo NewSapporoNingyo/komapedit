@@ -469,7 +469,8 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             if (event.key != "radius") continue;
             route_value_sampling::append_event(
                 radius_events, event.distance, event.value_number,
-                event.number, event.flag, current_radius);
+                event.number, event.flag, current_radius,
+                event.source_row_index);
         }
         out.curve_interpolate_markers.reserve(radius_events.size());
         for (const route_value_sampling::Event& event : radius_events) {
@@ -483,9 +484,22 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             point.y = model_.own.at(index, 2);
             point.theta = model_.own.at(index, 4);
             point = rotate_point(point);
-            out.curve_interpolate_markers.push_back({
-                event.distance, point.x, point.y, point.theta,
-                event.value, format_double(event.value, 0)});
+            PlanCurveInterpolateMarker marker;
+            marker.d = event.distance;
+            marker.x = point.x;
+            marker.y = point.y;
+            marker.theta = point.theta;
+            marker.radius = event.value;
+            if (event.source_row_index < model_.curve_rows.size()) {
+                const TableRow& source_row = model_.curve_rows[event.source_row_index];
+                if (ascii_lower(table_cell(source_row, "method")) ==
+                    "curve.interpolate") {
+                    marker.edit_id = source_row.edit_id;
+                    marker.row_index = event.source_row_index;
+                }
+            }
+            marker.label = format_double(event.value, 0);
+            out.curve_interpolate_markers.push_back(std::move(marker));
         }
     }
     if (edit_mode_enabled_) {
@@ -985,6 +999,9 @@ void App::render_plan_canvas(ImVec2 size) {
         nearest_marker_hit(data.speedlimits, hit_transform, !show_speedlimits_);
     std::optional<MarkerHit> hovered_curve_edit_hit =
         nearest_marker_hit(data.curve_edit_markers, hit_transform);
+    std::optional<MarkerHit> hovered_curve_interpolate_hit =
+        nearest_marker_hit(data.curve_interpolate_markers, hit_transform,
+                           !show_curve_values_);
     std::optional<MarkerHit> hovered_gradient_edit_hit =
         nearest_marker_hit(data.gradient_edit_markers, hit_transform);
     std::optional<MarkerHit> hovered_curve_gauge_hit =
@@ -1109,6 +1126,7 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_draw_distance_hit, PlanMarkerKind::DrawDistance);
         note(hovered_speed_limit_hit, PlanMarkerKind::SpeedLimit);
         note(hovered_curve_edit_hit, PlanMarkerKind::Curve);
+        note(hovered_curve_interpolate_hit, PlanMarkerKind::Curve);
         note(hovered_gradient_edit_hit, PlanMarkerKind::Gradient);
         note(hovered_curve_gauge_hit, PlanMarkerKind::CurveGauge);
         note(hovered_curve_center_hit, PlanMarkerKind::CurveCenter);
@@ -1464,6 +1482,12 @@ void App::render_plan_canvas(ImVec2 size) {
         for (const PlanCurveInterpolateMarker& marker : data.curve_interpolate_markers) {
             const ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
+            const bool marker_hovered = hovered_curve_interpolate_hit &&
+                hovered_curve_interpolate_hit->row_index == marker.row_index;
+            const bool marker_active = marker_emphasized(
+                PlanMarkerKind::Curve, marker.row_index, marker_hovered);
+            draw_selected_marker_ring(
+                p, PlanMarkerKind::Curve, marker.row_index, curve_color);
             const double wx = marker.x - std::sin(marker.theta);
             const double wy = marker.y + std::cos(marker.theta);
             const ImVec2 q = transform.plan_to_screen(wx, wy);
@@ -1473,8 +1497,10 @@ void App::render_plan_canvas(ImVec2 size) {
             const float rotation = std::atan2(direction.y / length, direction.x / length);
             draw_map_marker_icon(
                 draw, MapMarkerVisualKind::SpeedLimit, p,
-                8.0f * marker_size_scale / 0.88f, rotation, &curve_theme);
-            if (!overview_marker_lod) {
+                8.0f * marker_size_scale * (marker_active ? 1.28f : 1.0f) /
+                    0.88f,
+                rotation, &curve_theme);
+            if (!overview_marker_lod || marker_active) {
                 draw->AddText(
                     ImVec2(p.x + std::max(10.0f, 10.0f * marker_size_scale), p.y - 15),
                     curve_color, marker.label.c_str());

@@ -47,6 +47,16 @@ public:
             ctx_.current_include_invocation_key = k_root_include_invocation_key;
             ctx_.current_include_invocation_index = k_no_source_ref;
         }
+        const std::uint64_t local_seed = stable_hash64(
+            std::to_string(ctx_.parse_options.random_seed) + "\n" +
+            loaded_.normalized_key);
+        std::seed_seq seed{
+            static_cast<std::uint32_t>(local_seed),
+            static_cast<std::uint32_t>(local_seed >> 32),
+            static_cast<std::uint32_t>(ctx_.parse_options.random_seed),
+            static_cast<std::uint32_t>(ctx_.parse_options.random_seed >> 32),
+        };
+        random_engine_.seed(seed);
     }
 
     void parse() {
@@ -82,6 +92,7 @@ private:
         std::filesystem::path path;
         std::string include_path;
         std::string include_invocation_key;
+        std::uint64_t random_seed = 0;
         std::unordered_map<std::string, Value> seed_variables;
         MapDiagnostic source;
         std::future<IncludeResult> future;
@@ -96,6 +107,8 @@ private:
     std::vector<size_t> diagnostic_line_starts_ = build_line_starts(src_);
     std::vector<PendingInclude> pending_includes_;
     std::unordered_map<std::string, size_t> include_call_occurrences_;
+    size_t include_random_ordinal_ = 0;
+    std::mt19937 random_engine_;
 
     bool eof() const { return pos_ >= src_.size(); }
     char peek() const { return eof() ? '\0' : src_[pos_]; }
@@ -387,7 +400,8 @@ private:
 
     MapContext make_child_seed(const std::filesystem::path& child,
                                const std::string& include_path,
-                               const std::string& include_invocation_key) {
+                               const std::string& include_invocation_key,
+                               std::uint64_t random_seed) {
         MapContext seed;
         seed.rootpath = ctx_.rootpath;
         seed.rootpath_utf8 = ctx_.rootpath_utf8;
@@ -397,6 +411,7 @@ private:
         seed.current_include_invocation_key = include_invocation_key;
         seed.source_overrides = ctx_.source_overrides;
         seed.parse_options = ctx_.parse_options;
+        seed.parse_options.random_seed = random_seed;
         seed.unit_distance = ctx_.unit_distance;
         std::string child_path = normalized_source_path(child);
         seed.file_structure.push_back({k_no_source_ref, include_path, child_path});
@@ -465,11 +480,19 @@ private:
         std::string include_invocation_key = make_include_invocation_key(
             ctx_.current_include_invocation_key, loaded_.normalized_key,
             byte_start, byte_end, occurrence);
-        MapContext seed = make_child_seed(child, path_text, include_invocation_key);
+        // Include byte offsets move when an earlier statement is edited. Use
+        // lexical Include order for random replay, independently of edit identity.
+        const std::uint64_t random_seed = stable_hash64(
+            std::to_string(ctx_.parse_options.random_seed) + "\n" +
+            loaded_.normalized_key + "\n" +
+            std::to_string(include_random_ordinal_++));
+        MapContext seed = make_child_seed(
+            child, path_text, include_invocation_key, random_seed);
         PendingInclude pending;
         pending.path = child;
         pending.include_path = path_text;
         pending.include_invocation_key = std::move(include_invocation_key);
+        pending.random_seed = random_seed;
         pending.seed_variables = seed.variables;
         pending.source = diagnostic_source(body_start, "Include");
         pending.future = launch_bounded_maploader_task(
@@ -738,7 +761,8 @@ private:
             if (include_result_is_stale(pending, result.context)) {
                 result = parse_include_context(
                     make_child_seed(pending.path, pending.include_path,
-                                    pending.include_invocation_key), pending.path);
+                                    pending.include_invocation_key,
+                                    pending.random_seed), pending.path);
             }
             if (!result.error.empty()) {
                 for (auto& diagnostic : result.context.diagnostics) {
@@ -974,12 +998,13 @@ private:
     }
 
     Value call_function(const std::string& label, const std::vector<Value>& args) {
-        static thread_local std::mt19937 rng{std::random_device{}()};
         if (label == "rand") {
             if (args.empty()) {
-                return Value::num(std::uniform_real_distribution<double>(0.0, 1.0)(rng));
+                return Value::num(
+                    std::uniform_real_distribution<double>(0.0, 1.0)(random_engine_));
             }
-            return Value::num(std::uniform_real_distribution<double>(0.0, as_number(args[0]))(rng));
+            return Value::num(std::uniform_real_distribution<double>(
+                0.0, as_number(args[0]))(random_engine_));
         }
         if (label == "abs") return Value::num(std::fabs(as_number(args.at(0))));
         if (label == "sin") return Value::num(std::sin(as_number(args.at(0))));
@@ -1458,6 +1483,7 @@ private:
             put_own(ctx_, "radius", Value::num(0.0));
             put_own(ctx_, "cant", Value::num(0.0));
         } else if (fn == "interpolate") {
+            add_edit_row("Curve.Interpolate");
             put_own(ctx_, "radius", arg_or_null(a), "i");
             put_own(ctx_, "cant", a.size() > 1 ? a.at(1) : Value::null(), "i");
         }
@@ -2275,6 +2301,15 @@ private:
 
 namespace {
 
+std::uint64_t maploader_session_random_seed() {
+    static const std::uint64_t seed = [] {
+        std::random_device device;
+        return (static_cast<std::uint64_t>(device()) << 32) ^
+            static_cast<std::uint64_t>(device());
+    }();
+    return seed;
+}
+
 std::string deferred_key_kind_name(DeferredKeyKind kind) {
     switch (kind) {
     case DeferredKeyKind::Structure: return "StructureKey";
@@ -2625,6 +2660,10 @@ std::unique_ptr<MapContext> parse_map_context(std::filesystem::path map_path,
                                               bool has_arbitrary_distribution,
                                               const std::array<double, 3>& arbitrary_distribution,
                                               MapParseOptions options) {
+    if (!options.has_random_seed) {
+        options.random_seed = maploader_session_random_seed();
+        options.has_random_seed = true;
+    }
     auto ctx = std::make_unique<MapContext>();
     ctx->source_overrides = std::move(overrides);
     ctx->parse_options = options;

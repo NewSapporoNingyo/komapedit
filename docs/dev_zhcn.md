@@ -215,7 +215,7 @@ ctest --test-dir build --output-on-failure
 
 - **词法/语句循环**：`Parser::parse()` 驱动整文件；`eof()`、`peek()`、`skip()`、`accept()`、`expect()` 处理空白、注释和标点；诊断函数记录位置并在 `finish_statement()`/`synchronize_statement()` 中恢复到下一条语句。
 - **对象、函数与表达式**：`parse_label()`、`parse_variable_name()`、`parse_map_object()`、`parse_map_function()`、`parse_map_args()` 构造 `MapObject`/`MapFunction`；`parse_expression()`、`parse_prefix()`、`parse_primary()`、`apply_binary()`、`call_function()` 实现优先级、变量、字符串、数值和受支持数学函数。
-- **Include 流程**：`include_path_is_simple_string()` 检查可预览路径；`make_child_seed()` 继承普通变量与 Include 身份，保留子文件独立的零里程和空距离表达式；`parse_include_context()` 可并行解析子文件；`queue_include()`、`flush_pending_includes()`、基于普通变量依赖的 stale 检测和 merge 函数按原始顺序合并源码表、诊断、事件及变量写入，不覆盖父文件里程和距离表达式。
+- **Include 流程**：`include_path_is_simple_string()` 检查可预览路径；`make_child_seed()` 继承普通变量与 Include 身份，保留子文件独立的零里程和空距离表达式；`parse_include_context()` 可并行解析子文件；`queue_include()`、`flush_pending_includes()`、基于普通变量依赖的 stale 检测和 merge 函数按原始顺序合并源码表、诊断、事件及变量写入，不覆盖父文件里程和距离表达式。每个 maploader 进程会话只生成一个随机种子，各解析上下文按源码路径和 Include 的词法顺序派生独立随机引擎；过期结果重解析时保留对应排队 Include 的种子。因此，即使编辑使 Include 字节偏移变化，Preview/Edit 加载和内存工作副本重解析仍能一致重放未修改的 `rand()` 调用。
 - **语法验证与总分派**：`method_rules()` 是方法参数个数/空值规则表；`object_path()`、`validate_statement()` 形成一般语法门；`dispatch()` 再按顶层对象路由到专用函数。`record_deferred_semantics()` 记录需要等资源列表全部读完后才可验证的 key。
 - **自轨道与他轨道**：`dispatch_curve()`、`dispatch_gradient()`、`dispatch_legacy()` 记录曲线、坡度和旧式事件；`dispatch_track()`、`setposition_interpolate()`、`track_position()` 记录他轨道位置、插值、轨距、中心和超高事件。
 - **资源列表**：`load_resource_list()` 与 `record_resource_list_load()` 保存 Load 的原表达式、求值路径和源码身份；`parse_station_list()`、`parse_structure_list()`、`parse_signal_aspect_list()`、`parse_sound_list()` 把物理列表行转成强类型且可回写的记录；`parse_other_train_file()` 读取他列车文件。
@@ -560,7 +560,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 设置与历史只接受保存端写出的精确节、键和值语法。未知项、旧项、错节项或格式错误项使用默认值；读取已有文件绝不自动重写，显式保存才输出完整规范格式。
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
 - hydration 将曲线参数行分类为带 row index 与 edit ID 的 `CurveGauge`、`CurveCenter` 和 `CurveFunction` 标记。平面图绘制独立白色矩形 `CG`/`CC`/`CF` 标记；场景绘制上方代码、下方求值参数的白色双行标牌。场景继续复用现有拾取与蓝色高亮样式。精确 `[View2D]` 键 `show_curve_gauge_markers`、`show_curve_center_markers` 和 `show_curve_function_markers` 默认关闭，分别更新标记可见性而不重建轨道或模型几何。
-- `Curve.Interpolate` 不含曲线行。其 3D 标牌由 `Canvas3DSceneRouteInfo::radius_events` 生成，复用 `CurveCircularStart` 的视觉、可见性与拾取，保持编辑身份为空因此不出现上下文操作，并在求值半径为零时显示 `Intpl. 0`。
+- 每条 `Curve.Interpolate` 都是保留原 0/1/2 参数形状和稳定编辑身份的类型化 Curve 行。hydration 使用既有 `KvElementRow` 的源文件索引和语句全局顺序，以线性复杂度关联求值后的 radius 插值事件；事件按里程排序后、以及 Include 在同里程重复出现时仍能正确配对。Preview 标记保留原外观且不猜测编辑目标，经过验证的 Edit 元数据合并补入来源行索引并刷新两个视图。2D 端点与复用 `CurveCircularStart` 外观的 3D 标牌共同消费这份来源行索引，使用既有“属性/编辑”和延迟“删除”路径，并跳过通用曲线标记副本。标牌继续显示求值后的半径/超高，求值半径为零时显示 `Intpl. 0`。
 - 缓存表格内容；保持 Section 动态参数与显式 `null`、变量列表顺序及行/平面/场景导航副作用。
 - 将 Assimp 隔离在 `model_loader.dll`；纹理缺失、文件无效和模型不支持时不得崩溃。
 - 保持场景相机传递、拾取/高亮、可见性同步、标记配方、线路叠加层和 X/Y/Z 操纵器同步。
@@ -633,7 +633,7 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 
-plan benchmark 默认使用 `--interaction pan`。它会切换“曲线半径”，比较缓存/非缓存的曲线区间、缓和曲线区间与 `Curve.Interpolate` 端点标记，并输出其可见数量。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
+plan benchmark 默认使用 `--interaction pan`。它会切换“曲线半径”，比较缓存/非缓存的曲线区间、缓和曲线区间与 `Curve.Interpolate` 端点标记，并验证每条类型化 Interpolate 行恰好对应一个带来源的标记和右键目标，不生成通用曲线标记副本。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。`--debug-headless-own-track-edit` 会先执行正式的 Preview→Edit 元数据合并（包括由 `rand()` 选择源码文件的地图），再按方法及参数个数从真实线路选择 Interpolate 目标，验证 0/2 参数的检查器、编辑、删除与重置；1 参数由临时夹具覆盖。scene benchmark 同样验证每条类型化行恰好产生一个求值事件和可编辑标牌，同时保持既有视觉标签。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 
