@@ -1,5 +1,4 @@
 /third_party
-/tests
 /build
 /build_release
 install_Assimp(local).bat

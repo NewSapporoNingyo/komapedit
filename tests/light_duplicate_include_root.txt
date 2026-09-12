@@ -1,0 +1,4 @@
+BveTs Map 2.02:utf-8
+0;
+Light.Diffuse(0.1, 0.2, 0.3);
+Include 'light_duplicate_include_child.txt';

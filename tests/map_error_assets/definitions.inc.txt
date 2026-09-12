@@ -1,0 +1,7 @@
+BveTs Map 2.02:utf-8
+Structure.Load('map_error_assets/structures.csv');
+Sound.Load('map_error_assets/sounds.csv');
+Sound3D.Load('map_error_assets/sounds3d.csv');
+Station.Load('map_error_assets/stations.csv');
+Signal.Load('map_error_assets/signals.csv');
+Train['local'].Load('map_error_assets/train.txt','0',1);

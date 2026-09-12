@@ -1,0 +1,5 @@
+BveTs Train 1.00:utf-8
+[Structure]
+Key = pole
+[Sound3D]
+Key = ambient

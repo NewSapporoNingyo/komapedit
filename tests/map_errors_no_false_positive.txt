@@ -1,0 +1,8 @@
+BveTs Map 2.02:utf-8
+0;
+Include 'map_error_assets/definitions.inc.txt';
+Curve.Begin(100);
+Repeater['missing-repeater'].End();
+Repeater['r'].Begin0('0',1,25,5,'rail-a');
+25;
+SpeedLimit.Begin(80);

@@ -1,0 +1,10 @@
+BveTs Map 2.02:utf-8
+0;
+Station.Load('station_margin_stations.csv');
+Station['a'].Put(1, -2.5, 2.5);
+100;
+Station['a'].Put(1, 0, 0);
+200;
+Station['a'].Put(1, 1.5, -0.5);
+300;
+Station['a'].Put(-1, -5.0, 5.0);
