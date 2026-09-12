@@ -139,44 +139,42 @@ std::optional<SpeedLimit> App::speed_at(double distance) const {
     return result;
 }
 
-std::vector<Section> App::curve_sections(bool transition) const {
+static std::vector<Section> curve_sections(
+    const std::vector<const TrackEvent*>& radius, bool transition,
+    double dmin, double dmax, double route_end) {
     std::vector<Section> sections;
-    std::vector<TrackEvent> radius;
-    for (const auto& e : model_.own_events) {
-        if (e.key == "radius") radius.push_back(e);
-    }
     for (size_t i = 0; i < radius.size();) {
-        const auto& e = radius[i];
+        const auto& e = *radius[i];
         if (!transition && e.flag.empty() && e.value_number && e.number != 0.0) {
             double start = e.distance;
             double value = e.number;
             ++i;
-            double end = model_.own.empty() ? start : model_.own.at(model_.own.rows - 1, 0);
+            double end = route_end;
             while (i < radius.size()) {
-                if (radius[i].flag.empty()) {
-                    end = radius[i].distance;
+                if (radius[i]->flag.empty()) {
+                    end = radius[i]->distance;
                     break;
                 }
                 ++i;
             }
-            if (start < dmax_ && end > dmin_) {
-                sections.push_back({std::max(start, dmin_), std::min(end, dmax_), value,
+            if (start < dmax && end > dmin) {
+                sections.push_back({std::max(start, dmin), std::min(end, dmax), value,
                                     format_double(value, 0)});
             }
         } else if (transition && e.flag == "bt") {
             double start = e.distance;
             ++i;
-            double end = model_.own.empty() ? start : model_.own.at(model_.own.rows - 1, 0);
+            double end = route_end;
             while (i < radius.size()) {
-                if (radius[i].flag.empty()) {
-                    end = radius[i].distance;
+                if (radius[i]->flag.empty()) {
+                    end = radius[i]->distance;
                     break;
                 }
                 ++i;
             }
-            if (start < dmax_ && end > dmin_) {
+            if (start < dmax && end > dmin) {
                 sections.push_back(
-                    {std::max(start, dmin_), std::min(end, dmax_), 0.0, {}});
+                    {std::max(start, dmin), std::min(end, dmax), 0.0, {}});
             }
         } else {
             ++i;
@@ -351,11 +349,8 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
             if (!is_other_train_path_visible(source.definition_row_index)) continue;
             if (source.d_max < dmin_ || source.d_min > dmax_ || source.points.empty()) continue;
             OtherTrainPathOverlay path = source;
-            path.points.clear();
-            path.points.reserve(source.points.size());
-            for (TrackPoint p : source.points) {
+            for (TrackPoint& p : path.points) {
                 p = rotate_point(p);
-                path.points.push_back(p);
                 append_marker_bounds(p.x, p.y);
             }
             out.other_train_paths.push_back(std::move(path));
@@ -459,19 +454,20 @@ PlanData App::build_plan_data(bool include_other_tracks) const {
     }
 
     if (show_curve_values_) {
-        out.curve_sections = curve_sections(false);
-        out.transition_sections = curve_sections(true);
-
+        std::vector<const TrackEvent*> radius;
         std::vector<route_value_sampling::Event> radius_events;
-        radius_events.reserve(model_.own_events.size());
         double current_radius = 0.0;
         for (const TrackEvent& event : model_.own_events) {
             if (event.key != "radius") continue;
+            radius.push_back(&event);
             route_value_sampling::append_event(
                 radius_events, event.distance, event.value_number,
                 event.number, event.flag, current_radius,
                 event.source_row_index);
         }
+        const double route_end = model_.own.at(model_.own.rows - 1, 0);
+        out.curve_sections = curve_sections(radius, false, dmin_, dmax_, route_end);
+        out.transition_sections = curve_sections(radius, true, dmin_, dmax_, route_end);
         out.curve_interpolate_markers.reserve(radius_events.size());
         for (const route_value_sampling::Event& event : radius_events) {
             if (event.kind != route_value_sampling::EventKind::Interpolate ||

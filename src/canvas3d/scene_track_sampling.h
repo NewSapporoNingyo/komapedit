@@ -19,6 +19,17 @@
 
 namespace scene_track_sampling {
 
+struct SegmentRange {
+    size_t first = 1;
+    size_t end = 1;
+};
+
+// Validate once when building track chunks. Unordered or nonfinite distances
+// keep the existing full scan; finite ordered paths permit binary search.
+bool has_ordered_finite_distances(const Canvas3DTrackPath& path);
+SegmentRange chunk_segment_range(const Canvas3DTrackPath& path, double minimum,
+                                double maximum, bool ordered_finite);
+
 // How far the 3D scene camera may travel behind the first own-track point.
 inline constexpr double k_camera_back_offset_m = 100.0;
 

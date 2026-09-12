@@ -3831,10 +3831,11 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
     const auto alternate_map = directory / "alternate.txt";
     const auto single_scenario = directory / "single.txt";
     const auto multiple_scenario = directory / "multiple.txt";
-    const std::array<const char*, 11> fixture_names{
+    const std::array<const char*, 15> fixture_names{
         "map.txt", "alternate.txt", "single.txt", "multiple.txt", "new-disabled.txt",
         "new-enabled.txt", "new-empty.txt", "new-load-disabled.txt", "new-load-enabled.txt",
-        "settings.ini", "history.ini"};
+        "settings.ini", "history.ini", "layout.ini", "csv/csv_owntrack.csv",
+        "csv/csv_other.csv", "csv"};
     const auto read_bytes = [](const std::filesystem::path& path) {
         std::ifstream input(path, std::ios::binary);
         if (!input) throw std::runtime_error("cannot read " + wide_to_utf8(path.wstring()));
@@ -4157,11 +4158,74 @@ int App::run_debug_headless_scenario_lifecycle(const HeadlessScenarioLifecycleOp
             require("settings_retry_is_throttled", app.settings_save_pending_ &&
                 read_bytes(app.settings_.path) == settings_before_retry);
             app.settings_save_retry_at_ = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
-            app.service_pending_settings_save();
+            const auto layout_path = directory / "layout.ini";
+            ImGui::GetIO().WantSaveIniSettings = false;
+            app.service_pending_persistence(layout_path);
             require("settings_retry_recovers", !app.settings_save_pending_ &&
                 app.last_saved_window_visibility_ == app.current_window_visibility() &&
                 load_user_settings(app.settings_.path).window_visibility == app.current_window_visibility() &&
                 app.idle_wait_timeout_ms() == INFINITE);
+
+            ImGui::Begin("Persistence contract");
+            ImGui::End();
+            ImGui::GetIO().WantSaveIniSettings = true;
+            app.service_pending_persistence(directory);
+            require("layout_open_failure_retains_request",
+                ImGui::GetIO().WantSaveIniSettings && app.idle_wait_timeout_ms() <= 1000);
+            const auto layout_retry = app.imgui_layout_save_retry_at_;
+            app.service_pending_persistence(layout_path);
+            require("layout_retry_is_throttled", ImGui::GetIO().WantSaveIniSettings &&
+                app.imgui_layout_save_retry_at_ == layout_retry && !std::filesystem::exists(layout_path));
+            app.settings_.path = directory;
+            require("settings_and_layout_retry_independent", !app.persist_user_settings() &&
+                app.imgui_layout_save_retry_at_ == layout_retry);
+            app.settings_.path = directory / "settings.ini";
+            app.settings_save_retry_at_ = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+            app.imgui_layout_save_retry_at_ = app.settings_save_retry_at_;
+            app.service_pending_persistence(layout_path);
+            require("settings_and_layout_retry_recover", !app.settings_save_pending_ &&
+                !ImGui::GetIO().WantSaveIniSettings && app.idle_wait_timeout_ms() == INFINITE &&
+                load_imgui_layout(layout_path));
+
+            const auto csv_directory = directory / "csv";
+            require("csv_fixture_directory_created", std::filesystem::create_directory(csv_directory));
+            const auto own_csv = csv_directory / "csv_owntrack.csv";
+            const auto other_csv = csv_directory / "csv_other.csv";
+            std::string csv_error;
+            Matrix saved_own = std::move(app.model_.own);
+            auto saved_tracks = std::move(app.model_.other_tracks);
+            app.model_.own = Matrix{{1.25, 2.5}, 1, 2};
+            OtherTrack export_track;
+            export_track.key = "other";
+            export_track.points = Matrix{{3.75}, 1, 1};
+            app.model_.other_tracks = {export_track};
+            require("csv_export_success", app.export_csv_to_directory(csv_directory, csv_error) && csv_error.empty());
+            const auto own_csv_bytes = read_bytes(own_csv);
+            require("csv_export_preserves_format", own_csv_bytes ==
+                "#distance,x,y,z,direction,radius,gradient,interpolate_func,cant,center,gauge\n1.250000,2.500000\n" &&
+                read_bytes(other_csv) == "#distance,x,y,z,interpolate_func,cant,center,gauge\n3.750000\n");
+            require("csv_stream_failures_reported", debug_csv_write_failure_contract());
+            require("csv_open_failure_reported", !app.export_csv_to_directory(directory / "missing", csv_error) &&
+                !csv_error.empty());
+            std::filesystem::remove(other_csv);
+            app.model_.own.data.front() = 99.0;
+            for (const auto& keys : std::vector<std::vector<std::string>>{
+                     {"owntrack"}, {"OWNTRACK"}, {"a?b", "a*b"}, {"\xC3\x84", "\xC3\xA4"}}) {
+                app.model_.other_tracks.clear();
+                for (const auto& key : keys) {
+                    export_track.key = key;
+                    app.model_.other_tracks.push_back(export_track);
+                }
+                require("csv_collision_rejected_before_writes",
+                    !app.export_csv_to_directory(csv_directory, csv_error) && !csv_error.empty() &&
+                    csv_error.find(keys.size() == 1 ? "own track" : "other track '" + keys.front() + "'") != std::string::npos &&
+                    csv_error.find("other track '" + keys.back() + "'") != std::string::npos &&
+                    read_bytes(own_csv) == own_csv_bytes &&
+                    std::distance(std::filesystem::directory_iterator(csv_directory),
+                                  std::filesystem::directory_iterator{}) == 1);
+            }
+            app.model_.own = std::move(saved_own);
+            app.model_.other_tracks = std::move(saved_tracks);
 
             require("fixture_draw_distance_available", !app.model_.draw_distances.empty());
             const auto& row = app.model_.draw_distances.front();
@@ -4290,6 +4354,7 @@ int App::run_debug_headless_fresh_resource_list_workflow(
         map_path.parent_path() / (std::string(k_temp_prefix) + "structures.csv");
     const std::filesystem::path stations_path =
         map_path.parent_path() / (std::string(k_temp_prefix) + "stations.csv");
+    const auto signals_path = fixture_directory / "signals.csv";
     *out << "fixture_map_path=" << wide_to_utf8(map_path.wstring()) << "\n";
     int failed_cases = 0;
     auto check = [&](const char* label, bool value) {
@@ -4316,8 +4381,8 @@ int App::run_debug_headless_fresh_resource_list_workflow(
     const std::string station_list_bytes =
         "BveTs Station List 2.00:utf-8\r\n"
         "sta1,Before,,,,,,,,,,,,\r\n";
-    const std::array<std::filesystem::path, 3> fixture_files = {
-        stations_path, structures_path, map_path};
+    const std::array<std::filesystem::path, 4> fixture_files = {
+        signals_path, stations_path, structures_path, map_path};
     const auto cleanup_fixture = [&]() {
         bool cleaned = true;
         for (const std::filesystem::path& path : fixture_files) {
@@ -4487,6 +4552,143 @@ int App::run_debug_headless_fresh_resource_list_workflow(
             check("preview_shows_updated_station_name", station_name_updated);
             check("preview_normalizes_empty_station_numeric_fields",
                   station_preview_defaults_normalized);
+
+            const std::string signal_baseline = "BveTs Signal Aspects List 2.00:utf-8\r\n";
+            create_fixture_file(signals_path, signal_baseline);
+            const auto require_signal = [&](const char* name, bool value) {
+                if (!check(name, value)) {
+                    for (const LogLine& line : app.logs_) *out << "app_log=" << line.text << "\n";
+                    throw std::runtime_error(name);
+                }
+            };
+            const auto add_second_structure = [&]() {
+                require_signal("signal_second_structure_inserted",
+                    app.insert_editable_list_row(structure_edit, k_structure_model_edit_spec, 0, false));
+                structure_edit.rows.back().values = {"stOther", "stOther.x"};
+                app.apply_editable_list_drafts(structure_edit, k_structure_model_edit_spec);
+                require_signal("signal_second_structure_applied",
+                    !app.has_editable_list_drafts(structure_edit, k_structure_model_edit_spec) &&
+                    app.model_.structure_models.size() == 2);
+            };
+            add_second_structure();
+            require_signal("signal_fixture_reference_staged", app.stage_new_file_reference(
+                NewFileKind::Signal, map_path_utf8, wide_to_utf8(signals_path.wstring())));
+            auto& signal_edit = app.signal_aspect_edit_;
+            const auto& signal_spec = k_signal_aspect_edit_spec;
+            const auto signal_visible_row = [&](const std::string& key) {
+                require_signal("signal_fixture_draft_initialized",
+                    app.initialize_editable_list_draft_rows(signal_edit, signal_spec));
+                for (size_t i = 0; i < signal_edit.visible_rows.size(); ++i) {
+                    const auto& row = signal_edit.rows[signal_edit.visible_rows[i]];
+                    if (!row.deleted && !row.values.empty() && row.values[0] == key) {
+                        return static_cast<int>(i);
+                    }
+                }
+                throw std::runtime_error("signal draft key not found: " + key);
+            };
+            const auto signal_draft = [&](const std::string& key) -> EditableListDraftRow& {
+                const int visible = signal_visible_row(key);
+                return signal_edit.rows[signal_edit.visible_rows[static_cast<size_t>(visible)]];
+            };
+            const auto signal_value = [&](const std::string& key, const std::string& field) {
+                for (const TableRow& row : app.model_.signal_aspects) {
+                    if (table_cell(row, "signalAspectKey") == key) return table_cell(row, field);
+                }
+                return std::string{};
+            };
+            const auto exercise_signal = [&](bool compact) {
+                const std::string key = compact ? "aspectCompact" : "aspectFull";
+                const std::string count = compact ? "1" : "5";
+                *out << "signal_fixture_shape=" << (compact ? "compact" : "full") << "\n";
+                require_signal("signal_fixture_rows_initialized",
+                    app.initialize_editable_list_draft_rows(signal_edit, signal_spec));
+                require_signal("signal_fixture_row_inserted",
+                    app.insert_editable_list_row(signal_edit, signal_spec,
+                        static_cast<int>(signal_edit.visible_rows.size()) - 1, false));
+                auto& row = signal_edit.rows.back();
+                row.values[0] = key;
+                row.values[1] = "stNew";
+                if (!compact) row.values[5] = "stNew";
+                require_signal("signal_fixture_glare_added",
+                    app.add_editable_list_secondary_row(signal_edit, signal_spec, signal_visible_row(key)));
+                signal_draft(key).values[6] = "stNew";
+                if (!compact) signal_draft(key).values[10] = "stNew";
+                app.apply_editable_list_drafts(signal_edit, signal_spec);
+                require_signal("signal_fixture_initial_apply",
+                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    signal_value(key, "_signalMainStructureKeyCount") == count &&
+                    signal_value(key, "_signalGlareStructureKeyCount") == count);
+                signal_draft(key).values[1] = "stOther";
+                app.apply_editable_list_drafts(signal_edit, signal_spec);
+                require_signal("signal_pending_insert_main_reapply",
+                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    signal_value(key, "structureKey1") == "stOther");
+                const size_t glare_begin = 1 + signal_draft(key).primary_structure_field_count;
+                signal_draft(key).values[glare_begin] = "stOther";
+                app.apply_editable_list_drafts(signal_edit, signal_spec);
+                require_signal("signal_pending_insert_glare_reapply",
+                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    signal_value(key, "structureKey" + std::to_string(glare_begin)) == "stOther");
+                require_signal("signal_pending_insert_delete_glare_draft",
+                    app.delete_editable_list_secondary_row(signal_edit, signal_spec, signal_visible_row(key)));
+                app.apply_editable_list_drafts(signal_edit, signal_spec);
+                require_signal("signal_pending_insert_delete_glare_apply",
+                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    signal_value(key, "_signalGlareStructureKeyCount") == "0");
+                require_signal("signal_pending_insert_readd_glare_draft",
+                    app.add_editable_list_secondary_row(signal_edit, signal_spec, signal_visible_row(key)));
+                signal_draft(key).values[glare_begin] = "stNew";
+                if (!compact) signal_draft(key).values[10] = "stNew";
+                app.apply_editable_list_drafts(signal_edit, signal_spec);
+                require_signal("signal_pending_insert_readd_glare_apply",
+                    !app.has_editable_list_drafts(signal_edit, signal_spec) &&
+                    signal_value(key, "_signalMainStructureKeyCount") == count &&
+                    signal_value(key, "_signalGlareStructureKeyCount") == count &&
+                    read_file_bytes(signals_path) == signal_baseline);
+            };
+            exercise_signal(false);
+            exercise_signal(true);
+            require_signal("signal_pending_insert_revert", app.revert_all_pending_edits() &&
+                read_file_bytes(signals_path) == signal_baseline &&
+                read_file_bytes(map_path) == blank_map_bytes &&
+                read_file_bytes(structures_path) == structure_list_bytes &&
+                read_file_bytes(stations_path) == station_list_bytes);
+
+            // Reconnect the temporary lists and prove Save/reload independently.
+            require_signal("signal_save_structure_reference", app.stage_new_file_reference(
+                NewFileKind::Structure, map_path_utf8, wide_to_utf8(structures_path.wstring())));
+            require_signal("signal_save_structure_insert",
+                app.insert_editable_list_row(structure_edit, k_structure_model_edit_spec, -1, false));
+            structure_edit.rows.front().values = {"stNew", "stNew.x"};
+            app.apply_editable_list_drafts(structure_edit, k_structure_model_edit_spec);
+            add_second_structure();
+            require_signal("signal_save_reference", app.stage_new_file_reference(
+                NewFileKind::Signal, map_path_utf8, wide_to_utf8(signals_path.wstring())));
+            exercise_signal(false);
+            exercise_signal(true);
+            require_signal("signal_pending_insert_save", app.save_pending_edits(false));
+            const auto saved_signal = read_file_bytes(signals_path);
+            require_signal("signal_saved_block_adjacency", saved_signal &&
+                saved_signal->find("aspectFull,stOther,,,,stNew\r\n,stNew,,,,stNew\r\n") != std::string::npos &&
+                saved_signal->find("aspectCompact,stOther,,,,\r\n,stNew,,,,\r\n") != std::string::npos);
+            LoadResult reloaded = load_map_worker(map_path_utf8, options.unit_distance,
+                false, 0.0, 0.0, options.unit_distance, edit_options);
+            size_t verified_signal_rows = 0;
+            for (const TableRow& row : reloaded.model.signal_aspects) {
+                const std::string key = table_cell(row, "signalAspectKey");
+                const bool compact = key == "aspectCompact";
+                if ((compact || key == "aspectFull") &&
+                    table_cell(row, "structureKey1") == "stOther" &&
+                    table_cell(row, compact ? "structureKey2" : "structureKey6") == "stNew" &&
+                    table_cell(row, "_signalMainStructureKeyCount") == (compact ? "1" : "5") &&
+                    table_cell(row, "_signalGlareStructureKeyCount") == (compact ? "1" : "5")) {
+                    ++verified_signal_rows;
+                }
+            }
+            const bool signal_reloaded = reloaded.ok && reloaded.model.signal_aspects.size() == 2 &&
+                verified_signal_rows == 2;
+            if (reloaded.handle) kv_free(reloaded.handle);
+            require_signal("signal_pending_insert_saved_reload", signal_reloaded);
         }
     } catch (const std::exception& e) {
         *out << "exception=" << e.what() << "\n";

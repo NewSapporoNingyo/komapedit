@@ -245,7 +245,8 @@ bool build_editable_list_pending_changes(
         change.field_changes[field_name] = value;
         return true;
     };
-    const auto validate_insert_shape = [&](const EditableListDraftRow& row) {
+    const auto validate_insert_shape = [&](const EditableListDraftRow& row,
+                                           bool replay = false) {
         if (!spec.numbered_structure_key_fields) {
             if (row.values.size() != spec.field_count) {
                 error_message = std::string(spec.row_kind) +
@@ -254,20 +255,51 @@ bool build_editable_list_pending_changes(
             }
             return true;
         }
-        const size_t glare_count = row.secondary_row_added
-            ? row.secondary_structure_field_count : 0;
-        if (row.primary_structure_field_count != 5 ||
-            (glare_count != 0 && glare_count != 5) ||
-            row.values.size() != 6 + glare_count) {
+        const size_t glare_count = row.secondary_structure_field_count;
+        const size_t main_count = row.primary_structure_field_count;
+        if ((replay ? main_count == 0 || main_count > 5 : main_count != 5) ||
+            (replay ? glare_count > 5 : glare_count != 0 && glare_count != 5) ||
+            row.values.size() != 1 + main_count + glare_count) {
             error_message = "signal.aspect insert must contain one aspect key and five structure keys";
             return false;
         }
         return true;
     };
-    const auto append_all_fields = [&](MapElementPendingChange& change,
-                                       const EditableListDraftRow& row) {
-        for (size_t field = 0; field < row.values.size(); ++field) {
-            if (!set_field(change, field, row.values[field])) return false;
+    const auto append_insert_fields = [&](MapElementPendingChange& change,
+                                          const EditableListDraftRow& row) {
+        // A replayed insert describes the final block. A glare row removed
+        // after Apply still has draft cells, but never existed on disk.
+        if (!spec.numbered_structure_key_fields) {
+            for (size_t field = 0; field < row.values.size(); ++field) {
+                if (!set_field(change, field, row.values[field])) return false;
+            }
+            return true;
+        }
+        if (!set_field(change, 0, row.values[0])) return false;
+        // The parser trims trailing empty columns in each physical row.
+        // Rebuild the fixed five-column insert form from each typed row's
+        // own boundary so compact glare keys never shift into the main row.
+        for (size_t index = 0; index < 5; ++index) {
+            if (!set_field(change, 1 + index,
+                    index < row.primary_structure_field_count
+                        ? row.values[1 + index] : std::string{})) return false;
+        }
+        if (!row.secondary_row_deleted && row.secondary_structure_field_count != 0) {
+            const size_t glare_begin = 1 + row.primary_structure_field_count;
+            const bool has_glare_key = std::any_of(
+                row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
+                row.values.end(),
+                [](const std::string& value) { return !value.empty(); });
+            if (!has_glare_key) {
+                error_message = "signal.aspect glare requires at least one structure key";
+                return false;
+            }
+            for (size_t index = 0; index < 5; ++index) {
+                if (!set_field(change, 6 + index,
+                        index < row.secondary_structure_field_count
+                            ? row.values[glare_begin + index] : std::string{})) return false;
+            }
+            change.field_changes["addGlare"] = "5";
         }
         return true;
     };
@@ -292,21 +324,7 @@ bool build_editable_list_pending_changes(
             change.expected_source_hash = row.target_expected_source_hash;
             change.resource_list_insert_order =
                 static_cast<std::uint64_t>(row_index + 1);
-            if (!append_all_fields(change, row)) return false;
-            if (row.secondary_row_added) {
-                const size_t glare_begin = row.values.size() -
-                    row.secondary_structure_field_count;
-                const bool has_glare_key = std::any_of(
-                    row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
-                    row.values.end(),
-                    [](const std::string& value) { return !value.empty(); });
-                if (!has_glare_key) {
-                    error_message = "signal.aspect glare requires at least one structure key";
-                    return false;
-                }
-                change.field_changes["addGlare"] =
-                    std::to_string(row.secondary_structure_field_count);
-            }
+            if (!append_insert_fields(change, row)) return false;
             for (size_t next = row_index + 1; next < rows.size(); ++next) {
                 const EditableListDraftRow& anchor = rows[next];
                 if (!anchor.inserted && !anchor.deleted &&
@@ -363,25 +381,10 @@ bool build_editable_list_pending_changes(
             change.operation = pending_insert ? "insert" : "update";
             const bool moved = row.payload_edit_id != row.target_edit_id;
             if (pending_insert) {
-                if (!validate_insert_shape(row)) return false;
+                if (!validate_insert_shape(row, true)) return false;
                 change.field_changes.clear();
                 change.replacement_statement.clear();
-                if (!append_all_fields(change, row)) return false;
-                if (spec.numbered_structure_key_fields &&
-                    row.secondary_structure_field_count != 0) {
-                    const size_t glare_begin = row.values.size() -
-                        row.secondary_structure_field_count;
-                    const bool has_glare_key = std::any_of(
-                        row.values.begin() + static_cast<std::ptrdiff_t>(glare_begin),
-                        row.values.end(),
-                        [](const std::string& value) { return !value.empty(); });
-                    if (!has_glare_key) {
-                        error_message = "signal.aspect glare requires at least one structure key";
-                        return false;
-                    }
-                    change.field_changes["addGlare"] =
-                        std::to_string(row.secondary_structure_field_count);
-                }
+                if (!append_insert_fields(change, row)) return false;
             } else if (moved) {
                 if (row.payload_source_file != row.target_source_file ||
                     row.payload_raw_statement.empty()) {
@@ -411,10 +414,10 @@ bool build_editable_list_pending_changes(
                     }
                 }
             }
-            if (row.secondary_row_deleted) {
+            if (!pending_insert && row.secondary_row_deleted) {
                 change.field_changes["deleteGlare"] = "1";
             }
-            if (row.secondary_row_added) {
+            if (!pending_insert && row.secondary_row_added) {
                 const size_t glare_begin = row.values.size() -
                     row.secondary_structure_field_count;
                 const bool has_glare_key = std::any_of(

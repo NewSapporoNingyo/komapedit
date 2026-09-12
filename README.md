@@ -150,7 +150,7 @@ The main window contains these areas:
 - **Console window**: Usually docked at the lower right. It shows detailed messages from map loading, model loading, editing, and saving.
 - **Bottom status bar**: Shows the current operation and the number of errors and warnings.
 
-If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or `Auxiliary Info`. Window visibility and docking layout are saved automatically.
+If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or `Auxiliary Info`. Window visibility and docking layout are saved automatically. Failed settings or layout saves remain pending and retry after one second, including while the window is idle or occluded.
 
 ### 2. Top Menu Functions
 
@@ -160,7 +160,7 @@ If you close a window, reopen it from `Map Info List`, `2D View`, `3D View`, or 
 - `Open...`: Selects a `.txt` or `.csv` map or scenario file. The toolbar `Open` button does the same thing.
 - `Recent Maps`: Opens a recently used map. `Clear List` removes only the history entries; it does not delete map files.
 - `Reload`: Reads the current map again and reloads the current Structure Model Preview. The shortcut is `F5`. If there are unsaved changes, the program asks for confirmation first.
-- `Export CSV...`: Selects a directory and exports geometry data for the own track and every other track. See the appendix for the CSV fields.
+- `Export CSV...`: Selects a directory and exports geometry data for the own track and every other track. Conflicting output filenames, including names that differ only in case, reject the export before any file is written; the console identifies the conflicting tracks. File-write failures are also reported. See the appendix for the CSV fields.
 - `Exit`: Closes the program. If there are unsaved changes, you can save them, discard them, or cancel the exit.
 
 When you open a `BveTs Scenario 2.00` scenario file, the Scenario document remains available independently of whether its Route can be loaded:
@@ -280,6 +280,7 @@ After importing an image from `2D View -> Background Image`, you can show it, ad
 - Open the required table from `Map Info List`. Right-click a mileage cell that has a locate menu to move to that position in the Plan or a running 3D scene.
 - Right-click a source-file or resource-file path to open its directory. Hover over a path to see the original argument and resolved absolute path when available.
 - The Structure List, Signal Aspects List, Sound File List, and 3D Sound File List tables support partial or exact searches, previous and next results, and searches for unused entries.
+- Unused Sound File searches include station arrival/departure sound references and current station-list drafts, including inserted or deleted rows. These references belong to the ordinary Sound List, not the 3D Sound List.
 - In a map-placement row, right-click a resource key to jump to the matching Structure List, Signal Aspects List, or sound definition.
 - Without editing, tables provide only viewing, searching, navigation, and preview actions. With editing enabled, right-clicking an editable map element also shows `Properties/Edit` and `Delete`. Some tables also open `Properties/Edit` on double-click.
 

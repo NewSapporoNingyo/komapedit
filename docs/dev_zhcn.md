@@ -544,6 +544,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - `sourceHash` 标识工作副本；多次内存编辑期间 `expectedSourceHash` 始终是磁盘并发基线。
 - 按源文件、Include 上下文/区段和目标距离规划批量移动；保持语句顺序及用户注释或空距离结构。
 - 应用或保存前完整重解析，证明目标语义值，并拒绝非目标元素或最终变量绑定的意外变化；合法编辑可改变最终当前 `distance`。
+- 只读 `Legacy.Fog` 值也参与非目标语义证明，包括替换 Include 引起的变化。Include 自身子树仍使用既有目标排除规则，不增加 Legacy.Fog 编辑 API。
 - 除显式检查器操作外保持方法与参数形状：Structure/Repeater 坐标偏移按钮可在 `Put`/`Put0`、`Begin`/`Begin0` 间双向转换，丢弃非零偏移前必须确认；短式 `Signal.Put` 与 Repeater 修剪沿用原确认流程。
 - 已加载的 Station、Structure、Signal、Sound 和 Sound3D 行使用共享行内草稿流程。编辑模式右键可在上下新增行，固定 BVE CSV 字段数为 Structure 2、Sound/Sound3D 3、Station 13、Signal 主行 6；Signal 主行/glare 成对作为一个插入块，glare 需显式新增。
 - maploader、表格、二维和三维统一使用 `repeater_linkage` 与过渡关联规则。
@@ -556,7 +557,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 普通应用 UI 的每一条用户可见文本都要同步加入简体中文、英语和日语，并保持工具栏/菜单措辞简短、语言切换时 ImGui ID 稳定。
 - 直接对应 BVE 地图语句参数的标签必须使用官方英文名称或缩写（例如 `distance`、`trackKey`、`x`、`ry`），不得通过本地化函数翻译。
 - 应用生成的诊断正文和 headless 输出必须全部使用英语；控制台窗口标题、按钮及其他周边普通 UI 仍保持三语。
-- 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。 仅在完整写入并关闭文件成功后推进已保存状态；失败保存保持待重试，一秒后重试，渲染空闲或窗口被遮挡时也会处理。
+- 真正的偏好存入 `settings/settings.ini`，最近地图/背景对齐存入 `settings/history.ini`，布局存入 `settings/imgui.ini`。设置和布局仅在完整写入并关闭文件成功后推进已保存状态。`App::service_pending_persistence` 通过共享空闲等待机制服务两者独立的一秒重试期限，窗口被遮挡时也会处理。布局的待保存状态仍由 ImGui 请求标志持有，磁盘重试不要求持续渲染。
 - 设置与历史只接受保存端写出的精确节、键和值语法。未知项、旧项、错节项或格式错误项使用默认值；读取已有文件绝不自动重写，显式保存才输出完整规范格式。
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
 - hydration 将曲线参数行分类为带 row index 与 edit ID 的 `CurveGauge`、`CurveCenter` 和 `CurveFunction` 标记。平面图绘制独立白色矩形 `CG`/`CC`/`CF` 标记；场景绘制上方代码、下方求值参数的白色双行标牌。场景继续复用现有拾取与蓝色高亮样式。精确 `[View2D]` 键 `show_curve_gauge_markers`、`show_curve_center_markers` 和 `show_curve_function_markers` 默认关闭，分别更新标记可见性而不重建轨道或模型几何。
@@ -628,13 +629,17 @@ build\bin\typed_snapshot_tests.exe signal-glare <map-path> [--commit]
 
 `--debug-headless-scenario-create <tests目录下尚不存在的Scenario路径> --route <已存在的地图路径>` 要求新 Scenario 路径位于 `tests/` 下且 Route 地图已存在。它使 Route 相对于将要创建的 Scenario 目录，验证官方键序字节、排他重建拒绝、Scenario 快照 ABI 重解析（字段存在位、顺序、默认权重与相对 Route），再经正常文档流打开创建的 Scenario，等待异步地图加载后验证 Scenario 预览、已解析 Route 地图与未记入历史。报告前会删除本命令创建的 Scenario。
 
-`--debug-headless-scenario-lifecycle` 通过实际 App 打开输入 Scenario，检查 Scenario 历史入口、预览到编辑元数据的发布状态，以及几何/完整 Reload 的视图恢复。独占临时目录中的单/多 Route Scenario 覆盖候选选择、编辑关闭/开启时独立新建与新建并加载、Map 内存 Apply 不写盘、Map 优先保存后再保存 Scenario，以及空闲时设置重试。真实源文件保持只读并逐字节比较。该入口的场景策略断言验证 App 请求传递；`--debug-headless-scene-loader-contract` 另用临时模型和 headless D3D 检查同路径模型实际复用与重载。
+`--debug-headless-scenario-lifecycle` 通过实际 App 打开输入 Scenario，检查 Scenario 历史入口、预览到编辑元数据的发布状态，以及几何/完整 Reload 的视图恢复。独占临时目录中的单/多 Route Scenario 覆盖候选选择、编辑关闭/开启时独立新建与新建并加载、Map 内存 Apply 不写盘、Map 优先保存后再保存 Scenario，以及空闲时设置和布局的独立重试。它还检查 CSV 内容、任何写入前的输出名冲突，以及打开/写入/flush 失败。真实源文件保持只读并逐字节比较。该入口的场景策略断言验证 App 请求传递；`--debug-headless-scene-loader-contract` 另用临时模型和 headless D3D 检查同路径模型实际复用与重载。
 
 `--debug-headless-fresh-resource-list-workflow <地图路径>` 仅读取输入地图以保护其原始字节。它在独占临时目录中创建无距离、仅有文件头的 Map、仅有文件头的 Structure List 和单行 Station List，再使用这些夹具驱动正式 App 工作流：引用目标候选包含无距离地图，可连续暂存多个 `*.Load`，空列表的首行草稿使用其 `ResourceListSource`。两份列表草稿与未保存 Load 同批应用必须成功，且不出现 `unsupported or unknown editId` 错误。命令检查 `input_map_bytes_unchanged` 和 `fixture_files_cleaned`，不会改写输入地图。
 
+同一工作流还加入隔离的 Signal List，验证待保存主行/glare 插入的多轮 Apply、删除及重加 glare、Revert，以及保持行相邻的 Save/reload。`--debug-headless-table-find` 还检查车站列表缓存和修改/新增/删除草稿（包括活动单元格）对普通 Sound 的引用，并验证这些引用不计入 Sound3D。
+
 为保证可移植性，应显式传入地图路径；Repeater key 与新建元素后续编辑命令始终要求路径，自轨道、他轨道、距离、Repeater 批量、仅 Repeater 插入和 Section 工具在省略时会回退到开发者机器上的线路路径。`--repeater-only` 会对恰好一条唯一 key 的 `Repeater.Begin` 和一条 `Begin0` 执行 dry-run、内存应用/重置，以及在请求时执行提交/重载验证。Repeater key 与仅 Repeater 插入的提交验证会保留经授权的线路修改，以便检查物理 diff。
 
-plan benchmark 默认使用 `--interaction pan`。它会切换“曲线半径”，比较缓存/非缓存的曲线区间、缓和曲线区间与 `Curve.Interpolate` 端点标记，并验证每条类型化 Interpolate 行恰好对应一个带来源的标记和右键目标，不生成通用曲线标记副本。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。`--debug-headless-own-track-edit` 会先执行正式的 Preview→Edit 元数据合并（包括由 `rand()` 选择源码文件的地图），再按方法及参数个数从真实线路选择 Interpolate 目标，验证 0/2 参数的检查器、编辑、删除与重置；1 参数由临时夹具覆盖。scene benchmark 同样验证每条类型化行恰好产生一个求值事件和可编辑标牌，同时保持既有视觉标签。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
+plan benchmark 默认使用 `--interaction pan`。它会切换“曲线半径”，比较缓存/非缓存的曲线区间、缓和曲线区间与 `Curve.Interpolate` 端点标记，并验证每条类型化 Interpolate 行恰好对应一个带来源的标记和右键目标，不生成通用曲线标记副本。两种测量交互都会把实际选用的命中结果与穷举扫描对照；小点集保留精确线性路径，较大点集使用精确空间网格。`measure-stationary` 固定指针，`measure-moving` 使用确定性移动轨迹。scene benchmark 同样验证每条类型化行恰好产生一个求值事件和可编辑标牌，同时保持既有视觉标签。
+
+plan、scene 和 `--debug-headless-own-track-edit` 共用临时 Map/Include 合同，覆盖 Interpolate 全部 0/1/2 参数形式的检查器字段、内存 Apply、Delete、Reset、来源身份及磁盘字节不变。真实线路无需包含 Interpolate：空的行/事件/标记集合必须一致，仅依赖具体实例的检查标记为不适用。自轨道编辑仍执行正式的 Preview→Edit 元数据合并（包括由 `rand()` 选择源码文件的地图），并验证真实线路实际存在的目标。scene-loader contract 注入模型复制和 PutBetween worker 故障，并检查取消、请求集合协调及 DLL 分配/释放平衡。diagnostics-popup benchmark 对 100,000 条混合日志生成快照，检查并发顺序、修订缓存和裁剪渲染。
 
 `--debug-headless-new-element-edit` 直接驱动正式的新建地图元素向导、Inspector“应用”与删除/取消路径。除既有资源、Repeater、Structure 和他轨道序列外，它还验证合并后的 `Curve.*`/`Gradient.*` 模板、起止位置及缓和/cant 启用关系、缓和起点里程拒绝、组合后的源语句顺序、目标文件来源、Inspector 后续修改及取消。未指定 `--commit` 时，它会重置并重载工作副本，确认磁盘哈希不变。指定 `--commit` 时，它经正常 Save 边界向选定源文件写入一组成对曲线和一组成对坡度，并报告提交目标、哈希和重新加载验证；经授权的线路改动会保留供检查物理 diff。
 

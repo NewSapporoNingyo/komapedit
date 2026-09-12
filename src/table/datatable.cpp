@@ -1210,6 +1210,8 @@ static const TableColumnDef k_station_definition_columns[] = {
     {"doorReopen", "reopen", 70.0f},
     {"stuckInDoor", "stuck", 65.0f},
 };
+constexpr size_t k_station_definition_arrival_sound_column = 9;
+constexpr size_t k_station_definition_departure_sound_column = 10;
 
 const std::string& table_cell(const TableRow& row, const std::string& key) {
     static const std::string empty;
@@ -2066,51 +2068,14 @@ void App::ensure_table_cache() {
         }
     }
 
-    cache.signal_distance_width = 0.0f;
-    expand_width_for_text(cache.signal_distance_width, k_signal_columns[k_signal_distance_column].header);
-    cache.signal_rows.reserve(model_.signals.size());
-    for (size_t row_index = 0; row_index < model_.signals.size(); ++row_index) {
-        const TableRow& row = model_.signals[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_signal_columns));
-        cached.open_path = table_cell(row, "filePath");
-        cached.tooltip_text = cached.open_path;
-        for (int i = 0; i < IM_ARRAYSIZE(k_signal_columns); ++i) {
-            if (i == k_signal_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.signal_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_signal_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.signal_distance_width, cached.cells[k_signal_distance_column]);
-        cache.signal_rows.push_back(std::move(cached));
-    }
-
-    cache.beacon_distance_width = 0.0f;
-    expand_width_for_text(cache.beacon_distance_width, k_beacon_columns[k_beacon_distance_column].header);
-    cache.beacon_rows.reserve(model_.beacons.size());
-    for (size_t row_index = 0; row_index < model_.beacons.size(); ++row_index) {
-        const TableRow& row = model_.beacons[row_index];
-        CachedTableRow cached;
-        copy_table_row_metadata(row, cached);
-        cached.cells.resize(IM_ARRAYSIZE(k_beacon_columns));
-        cached.open_path = table_cell(row, "filePath");
-        cached.tooltip_text = cached.open_path;
-        for (int i = 0; i < IM_ARRAYSIZE(k_beacon_columns); ++i) {
-            if (i == k_beacon_file_path_column) {
-                cached.cells[i] = display_name_from_path(cached.open_path);
-                expand_width_for_text(cache.beacon_file_path_width, cached.cells[i]);
-            } else {
-                cached.cells[i] = table_cell(row, k_beacon_columns[i].key);
-            }
-        }
-        cached.cells[0] = std::to_string(row_index + 1);
-        expand_width_for_text(cache.beacon_distance_width, cached.cells[k_beacon_distance_column]);
-        cache.beacon_rows.push_back(std::move(cached));
-    }
+    append_change_point_rows(model_.signals, k_signal_columns,
+                             k_signal_distance_column, k_signal_file_path_column,
+                             cache.signal_rows,
+                             cache.signal_distance_width, cache.signal_file_path_width);
+    append_change_point_rows(model_.beacons, k_beacon_columns,
+                             k_beacon_distance_column, k_beacon_file_path_column,
+                             cache.beacon_rows,
+                             cache.beacon_distance_width, cache.beacon_file_path_width);
 
     cache.irregularity_distance_width = 0.0f;
     expand_width_for_text(cache.irregularity_distance_width, k_irregularity_columns[k_irregularity_distance_column].header);
@@ -2443,6 +2408,9 @@ void App::run_unused_sound_file_search(bool is_3d) {
     const EditableListSpec& spec =
         is_3d ? k_sound_3d_list_edit_spec : k_sound_list_edit_spec;
     commit_editable_list_active_edit(edit, spec);
+    if (!is_3d) {
+        commit_editable_list_active_edit(station_definition_edit_, k_station_definition_edit_spec);
+    }
     ensure_table_cache();
     KME_ADD_LOG(is_3d
         ? "[INFO]Searching unused 3D sounds..."
@@ -2469,6 +2437,19 @@ void App::run_unused_sound_file_search(bool is_3d) {
             if (is_3d) {
                 for (const TableRow& row : model_.other_train_sound_3d_keys) {
                     note_sound_key(table_cell(row, "key"));
+                }
+            } else {
+                const auto station_rows = editable_table_find_rows(
+                    table_cache_.station_definition_rows,
+                    station_definition_edit_, k_station_definition_edit_spec);
+                for (size_t row = 0; row < station_rows.size(); ++row) {
+                    if (!station_rows.searchable(row)) continue;
+                    for (const size_t column : {k_station_definition_arrival_sound_column,
+                                                k_station_definition_departure_sound_column}) {
+                        if (const std::string* key = station_rows.cell(row, column)) {
+                            note_sound_key(*key);
+                        }
+                    }
                 }
             }
         },

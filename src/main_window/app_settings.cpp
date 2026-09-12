@@ -677,6 +677,12 @@ bool load_imgui_layout(const std::filesystem::path& path) {
     return true;
 }
 
+static bool write_imgui_layout(std::ostream& out, const char* data, size_t size) {
+    out.write(data, static_cast<std::streamsize>(size));
+    out.flush();
+    return static_cast<bool>(out);
+}
+
 bool save_imgui_layout(const std::filesystem::path& path) {
     size_t size = 0;
     const char* data = ImGui::SaveIniSettingsToMemory(&size);
@@ -684,15 +690,9 @@ bool save_imgui_layout(const std::filesystem::path& path) {
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) return false;
-    out.write(data, static_cast<std::streamsize>(size));
-    return static_cast<bool>(out);
-}
-
-void save_imgui_layout_if_requested(const std::filesystem::path& path) {
-    ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantSaveIniSettings) return;
-    save_imgui_layout(path);
-    io.WantSaveIniSettings = false;
+    const bool written = write_imgui_layout(out, data, size);
+    out.close();
+    return written && static_cast<bool>(out);
 }
 
 bool imgui_layout_save_pending() {
@@ -866,10 +866,11 @@ bool debug_settings_write_failure_contract() {
         int sync() override { return -1; }
     };
     for (bool fail_on_flush : {false, true}) {
-        FailingBuffer settings_buffer(fail_on_flush), history_buffer(fail_on_flush);
-        std::ostream settings_out(&settings_buffer), history_out(&history_buffer);
+        FailingBuffer settings_buffer(fail_on_flush), history_buffer(fail_on_flush), layout_buffer(fail_on_flush);
+        std::ostream settings_out(&settings_buffer), history_out(&history_buffer), layout_out(&layout_buffer);
         if (write_user_settings(settings_out, UserSettings{}) ||
-            write_history_entries(history_out, {RecentMapEntry{"map.txt", {}}})) return false;
+            write_history_entries(history_out, {RecentMapEntry{"map.txt", {}}}) ||
+            write_imgui_layout(layout_out, "[Window][Test]\nPos=0,0\n", 23)) return false;
     }
     return true;
 }

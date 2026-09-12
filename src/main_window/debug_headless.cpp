@@ -2169,6 +2169,64 @@ int App::run_debug_headless_table_find(const std::string& output_path) {
               app.signal_aspect_find_.scroll_row == 2,
               "marks_only_unused_signal_aspect_row");
 
+        for (const char* key : {"Arrival", "Departure", "Draft", "Unused", "", "ARRIVAL"}) {
+            app.model_.sound_list.push_back(make_row({{"soundKey", key}, {"filePath", "sound.wav"}}));
+        }
+        app.model_.sound_3d_list = app.model_.sound_list;
+        app.model_.station_definition_rows.push_back(make_row({
+            {"stationKey", "A"}, {"arrivalSoundKey", "arrival"},
+            {"depertureSoundKey", "DEPARTURE"}}));
+        app.model_.station_definition_rows.push_back(make_row({
+            {"stationKey", "B"}, {"arrivalSoundKey", ""}, {"depertureSoundKey", "arrival"}}));
+        app.invalidate_table_cache();
+        auto sound_usage_matches = [&](std::initializer_list<size_t> used, bool is_3d = false) {
+            app.run_unused_sound_file_search(is_3d);
+            const auto& matches = (is_3d ? app.sound_3d_file_find_ : app.sound_file_find_).unused_row_matches;
+            if (matches.size() != app.model_.sound_list.size()) return false;
+            for (size_t index = 0; index < matches.size(); ++index) {
+                const bool expected_unused =
+                    std::find(used.begin(), used.end(), index) == used.end();
+                if ((matches[index] != 0) != expected_unused) return false;
+            }
+            return true;
+        };
+        check(sound_usage_matches({0, 1, 5}), "station_sound_cached_references_case_empty_duplicate");
+        check(sound_usage_matches({}, true), "station_sound_references_do_not_use_sound3d");
+        auto station_draft = [](const char* id, const char* arrival, const char* departure) {
+            EditableListDraftRow row;
+            row.target_edit_id = id;
+            row.values.resize(k_station_list_field_names.size());
+            row.values[0] = id;
+            row.values[9] = arrival;
+            row.values[10] = departure;
+            row.original_values = row.values;
+            return row;
+        };
+        auto& station_edit = app.station_definition_edit_;
+        station_edit.rows_initialized = true;
+        station_edit.rows = {station_draft("existing", "Arrival", "Departure")};
+        station_edit.visible_rows = editable_list_visible_row_indices(station_edit.rows);
+        station_edit.rows[0].values[9] = "Draft";
+        check(sound_usage_matches({1, 2}), "station_sound_modified_draft_replaces_cache");
+        auto inserted_station = station_draft("", "aRrIvAl", "");
+        inserted_station.inserted = true;
+        inserted_station.local_draft_id = "new-station";
+        station_edit.rows.push_back(std::move(inserted_station));
+        station_edit.visible_rows = editable_list_visible_row_indices(station_edit.rows);
+        check(sound_usage_matches({0, 1, 2, 5}), "station_sound_inserted_draft_reference");
+        station_edit.rows[0].deleted = true;
+        station_edit.visible_rows = editable_list_visible_row_indices(station_edit.rows);
+        check(sound_usage_matches({0, 5}), "station_sound_deleted_draft_not_referenced");
+        station_edit.editing_edit_id = "new-station";
+        station_edit.editing_column = 9;
+        station_edit.editing_baseline = "aRrIvAl";
+        station_edit.edit_buffer = "Departure";
+        check(sound_usage_matches({1}) && station_edit.editing_edit_id.empty() &&
+                  station_edit.rows[1].values[9] == "Departure",
+              "station_sound_active_cell_committed_before_search");
+        check(sound_usage_matches({}, true), "station_sound_drafts_do_not_use_sound3d");
+        station_edit = {};
+
         app.ensure_table_cache();
         auto cached_row_matches = [&](const std::vector<CachedTableRow>& rows,
                                       const std::vector<std::string>& expected_cells,
@@ -3540,6 +3598,337 @@ int App::run_debug_headless_other_track_edit(
     return failed_cases == 0 ? 0 : 3;
 }
 
+bool App::debug_curve_interpolate_contract(double unit_distance, std::ostream& output) {
+    std::ostream* out = &output;
+    LoadModelOptions preview_options;
+    preview_options.load_profile = "preview";
+    LoadModelOptions edit_options;
+    edit_options.full_edit_registry = true;
+    edit_options.load_profile = "edit";
+    struct TempFixture {
+        std::filesystem::path directory;
+        ~TempFixture() {
+            if (directory.empty()) return;
+            std::error_code error;
+            std::filesystem::remove(directory / "map.txt", error);
+            std::filesystem::remove(directory / "curve.txt", error);
+            std::filesystem::remove(directory, error);
+        }
+    } fixture;
+    try {
+        const auto directory = std::filesystem::temp_directory_path() /
+            ("komapedit-interpolate-provenance-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        if (!std::filesystem::create_directory(directory)) {
+            throw std::runtime_error("cannot create provenance fixture directory");
+        }
+        fixture.directory = directory;
+        {
+            std::ofstream root(directory / "map.txt", std::ios::binary);
+            std::ofstream child(directory / "curve.txt", std::ios::binary);
+            root << "BveTs Map 2.02:utf-8\n"
+                    "$base=100; $radius=300; include 'curve.txt';\n"
+                    "$base=0; $radius=100; include 'curve.txt';\n"
+                    "$radius=200; include 'curve.txt';\n"
+                    "20; Curve.Interpolate();\n30; Curve.Interpolate(250);\n"
+                    "40; Curve.Interpolate(350,0.03);\n120;\n";
+            child << "BveTs Map 2.02:utf-8\n"
+                     "$base+10; Curve.Interpolate($radius,0.02);\n";
+            root.close();
+            child.close();
+            if (!root || !child) throw std::runtime_error("cannot write provenance fixture");
+        }
+        const std::string path = (directory / "map.txt").u8string();
+        LoadResult fixture_preview = load_map_worker(
+            path, unit_distance, false, 0.0, 0.0,
+            unit_distance, preview_options);
+        LoadResult fixture_edit = load_map_worker(
+            path, unit_distance, false, 0.0, 0.0,
+            unit_distance, edit_options);
+        if (!fixture_preview.ok || !fixture_edit.ok) {
+            if (fixture_preview.handle) kv_free(fixture_preview.handle);
+            if (fixture_edit.handle) kv_free(fixture_edit.handle);
+            throw std::runtime_error("cannot load provenance fixture");
+        }
+        UserSettings settings;
+        settings.language = Language::En;
+        App app(nullptr, settings, 1.0f, false, false);
+        app.handle_ = fixture_preview.handle;
+        fixture_preview.handle = nullptr;
+        app.model_ = std::move(fixture_preview.model);
+        app.file_path_ = path;
+        app.has_model_ = true;
+        app.edit_mode_enabled_ = false;
+        app.edit_memory_matches_pending_ledger_ = true;
+        app.show_curve_values_ = true;
+        app.dmin_ = app.model_.default_min;
+        app.dmax_ = app.model_.default_max;
+        app.unit_distance_ = unit_distance;
+        bool preview_unbound = std::all_of(
+            app.model_.own_events.begin(), app.model_.own_events.end(),
+            [](const TrackEvent& event) {
+                return event.source_row_index == std::numeric_limits<size_t>::max();
+            });
+        const PlanData& preview_plan = app.current_plan_data();
+        preview_unbound = preview_unbound &&
+            preview_plan.curve_interpolate_markers.size() == 6 &&
+            std::all_of(preview_plan.curve_interpolate_markers.begin(),
+                        preview_plan.curve_interpolate_markers.end(),
+                        [](const PlanCurveInterpolateMarker& marker) {
+                            return marker.edit_id.empty() &&
+                                marker.row_index == std::numeric_limits<size_t>::max();
+                        });
+        // Preview markers deliberately have no source row. Hit identity must
+        // still distinguish them, including ties at an identical position.
+        auto hit_markers = preview_plan.curve_interpolate_markers;
+        bool preview_hits_unique = hit_markers.size() == 6;
+        const canvas2d::PlanScreenTransform hit_transform;
+        for (size_t i = 0; i < hit_markers.size(); ++i) {
+            hit_markers[i].x = 30.0 + 50.0 * i;
+            hit_markers[i].y = 0.0;
+        }
+        for (size_t i = 0; i < hit_markers.size(); ++i) {
+            const auto hit = canvas2d::nearest_marker_hit(
+                hit_markers, hit_transform,
+                hit_transform.plan_to_screen(hit_markers[i].x, hit_markers[i].y),
+                ImVec2(0, 0), ImVec2(400, 100), 12.0f, true);
+            preview_hits_unique = preview_hits_unique && hit &&
+                hit->marker_index == i &&
+                hit->row_index == std::numeric_limits<size_t>::max();
+        }
+        preview_hits_unique = preview_hits_unique &&
+            !canvas2d::nearest_marker_hit(hit_markers, hit_transform,
+                ImVec2(390, 90), ImVec2(0, 0), ImVec2(400, 100), 12.0f, true);
+        if (hit_markers.size() == 6) {
+            hit_markers[1].x = hit_markers[0].x;
+            const auto tie = canvas2d::nearest_marker_hit(hit_markers, hit_transform,
+                ImVec2(30, 0), ImVec2(0, 0), ImVec2(400, 100), 12.0f, true);
+            preview_hits_unique = preview_hits_unique && tie && tie->marker_index == 1;
+        }
+        const auto scene_markers_match = [&](bool bound) {
+            Canvas3DSceneBuildOptions scene_options;
+            scene_options.model = &app.model_;
+            scene_options.map_handle = app.handle_;
+            scene_options.unit_distance = unit_distance;
+            scene_options.control_point_interval = unit_distance;
+            const Canvas3DSceneBuildResult scene =
+                build_canvas3d_scene_preview(scene_options);
+            size_t marker_count = 0;
+            for (const Canvas3DSceneMarker& marker : scene.scene.markers) {
+                if (marker.kind != MapMarkerVisualKind::CurveCircularStart) continue;
+                const std::array<size_t, 6> expected_rows{{1, 2, 3, 4, 5, 0}};
+                if (marker_count >= expected_rows.size()) return false;
+                if (bound) {
+                    const size_t row_index = expected_rows[marker_count];
+                    if (!marker.row_index || *marker.row_index != row_index ||
+                        marker.row_kind != "curve" || marker.edit_id.empty() ||
+                        marker.edit_id != app.model_.curve_rows[row_index].edit_id) {
+                        return false;
+                    }
+                } else if (marker.row_index || !marker.edit_id.empty() ||
+                           marker.row_kind != "curve") {
+                    return false;
+                }
+                ++marker_count;
+            }
+            return marker_count == 6;
+        };
+        const bool preview_scene_unbound = scene_markers_match(false);
+        app.edit_mode_enabled_ = true;
+        app.apply_edit_metadata_result(std::move(fixture_edit));
+        fixture_edit.handle = nullptr;
+        const std::array<size_t, 6> expected_rows{{1, 2, 3, 4, 5, 0}};
+        const std::array<double, 6> expected_distances{{10.0, 10.0, 20.0, 30.0, 40.0, 110.0}};
+        const std::array<bool, 6> expected_explicit_radius{{true, true, false, true, true, true}};
+        const std::array<double, 6> expected_radii{{100.0, 200.0, 200.0, 250.0, 350.0, 300.0}};
+        size_t event_index = 0;
+        bool merged_sources = app.edit_registry_loaded_;
+        for (const TrackEvent& event : app.model_.own_events) {
+            if (event.key != "radius" || event.flag != "i") continue;
+            if (event_index >= expected_rows.size()) {
+                merged_sources = false;
+                break;
+            }
+            merged_sources = merged_sources &&
+                event.source_row_index == expected_rows[event_index] &&
+                event.distance == expected_distances[event_index] &&
+                event.value_number == expected_explicit_radius[event_index] &&
+                (!event.value_number || event.number == expected_radii[event_index]);
+            ++event_index;
+        }
+        const PlanData& merged_plan = app.current_plan_data();
+        bool merged_markers = merged_plan.curve_interpolate_markers.size() == 6;
+        for (size_t i = 0; merged_markers && i < expected_rows.size(); ++i) {
+            const PlanCurveInterpolateMarker& marker =
+                merged_plan.curve_interpolate_markers[i];
+            merged_markers = marker.row_index == expected_rows[i] &&
+                marker.radius == expected_radii[i] &&
+                !marker.edit_id.empty() &&
+                marker.edit_id == app.model_.curve_rows[expected_rows[i]].edit_id;
+        }
+        const bool merged_scene_targets = scene_markers_match(true);
+        bool context_target = false;
+        if (!merged_plan.curve_interpolate_markers.empty()) {
+            const auto& marker = merged_plan.curve_interpolate_markers.front();
+            app.plan_view_.cx = marker.x;
+            app.plan_view_.cy = marker.y;
+            app.plan_view_.scale = 1.0;
+            app.plan_view_.rotation = 0.0;
+            const ImVec2 origin(0, 0), size(800, 600);
+            const auto entries = app.collect_plan_context_entries(
+                merged_plan, app.plan_view_.world_to_screen(marker.x, marker.y, origin, size),
+                origin, size, 12.0f, 144.0, true);
+            for (const auto& entry : entries) {
+                if (entry.kind == PlanMarkerKind::Curve && !entry.own_track_marker &&
+                    entry.row_kind == "curve" && entry.row_index == marker.row_index &&
+                    entry.edit_id == marker.edit_id) {
+                    context_target = app.plan_context_source_for(entry).statement.find(
+                        "Curve.Interpolate") != std::string::npos;
+                }
+            }
+        }
+        auto read_bytes = [](const std::filesystem::path& file) {
+            std::ifstream input(file, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input), {});
+        };
+        const auto root_bytes = read_bytes(directory / "map.txt");
+        const auto child_bytes = read_bytes(directory / "curve.txt");
+        bool arity_contract = true;
+        for (int arity = 0; arity <= 2; ++arity) {
+            // The root-file statements can be edited independently of the
+            // repeated Include statement used by the provenance assertions.
+            const auto found = std::find_if(app.model_.curve_rows.begin(),
+                app.model_.curve_rows.end(), [&](const TableRow& row) {
+                    return ascii_lower(table_cell(row, "method")) == "curve.interpolate" &&
+                        static_cast<int>(table_cell_number(row, "argumentCount")) == arity &&
+                        std::filesystem::path(row.source.file_path).filename() == "map.txt";
+                });
+            if (found == app.model_.curve_rows.end()) {
+                arity_contract = false;
+                continue;
+            }
+            std::vector<std::string> fields;
+            if (app.open_element_inspector(found->edit_id, "curve")) {
+                for (const auto& field : app.inspector_.fields) fields.push_back(field.key);
+            }
+            app.inspector_ = {};
+            std::vector<std::string> expected_fields{"distance"};
+            if (arity > 0) expected_fields.push_back("radius");
+            if (arity > 1) expected_fields.push_back("cant");
+            bool case_pass = fields == expected_fields;
+            const auto source = std::find_if(app.model_.edit_files.begin(),
+                app.model_.edit_files.end(), [&](const EditSourceFileInfo& file) {
+                    return file.file_path == found->source.file_path;
+                });
+            const std::string hash = source == app.model_.edit_files.end()
+                ? std::string{} : source->source_hash;
+            auto change = typed_edit_headless::update("interpolate-arity", found->edit_id,
+                hash, {{"radius", "501"}});
+            if (arity == 0) {
+                const auto invalid = typed_edit_headless::dry_run(app.handle_, {change});
+                case_pass = case_pass && !invalid.ok && std::any_of(
+                    invalid.blocking_errors.begin(), invalid.blocking_errors.end(),
+                    [](const std::string& error) {
+                        return error.find("no editable value fields") != std::string::npos;
+                    });
+                change.fields = {{"distance", "21"}};
+            } else if (arity == 2) {
+                change.fields.push_back({"cant", "0.031"});
+            }
+            const auto report = typed_edit_headless::apply_to_memory(app.handle_, {change});
+            case_pass = case_pass && report.ok && report.full_reparse_ok &&
+                report.non_target_changed_count == 0;
+            if (report.ok) {
+                const MapModel updated = build_model_from_handle(app.handle_, path, edit_options);
+                const auto row = std::find_if(updated.curve_rows.begin(), updated.curve_rows.end(),
+                    [&](const TableRow& candidate) { return candidate.edit_id == found->edit_id; });
+                case_pass = case_pass && row != updated.curve_rows.end() &&
+                    table_cell_number(*row, "argumentCount") == arity &&
+                    (arity == 0 ? table_cell_number(*row, "distance") == 21.0
+                                : table_cell_number(*row, "radius") == 501.0) &&
+                    (arity != 2 || std::abs(table_cell_number(*row, "cant") - 0.031) < 1e-9);
+            }
+            const bool reset_ok = kv_edit_reset_memory(app.handle_) != 0;
+            change.operation = KV_EDIT_DELETE;
+            change.fields.clear();
+            const auto deleted_report = typed_edit_headless::apply_to_memory(app.handle_, {change});
+            bool delete_ok = reset_ok && deleted_report.ok && deleted_report.full_reparse_ok &&
+                deleted_report.non_target_changed_count == 0;
+            if (deleted_report.ok) {
+                const MapModel deleted = build_model_from_handle(app.handle_, path, edit_options);
+                delete_ok = delete_ok && deleted.curve_rows.size() + 1 == app.model_.curve_rows.size() &&
+                    std::none_of(deleted.curve_rows.begin(), deleted.curve_rows.end(),
+                        [&](const TableRow& row) { return row.edit_id == found->edit_id; });
+            }
+            const bool delete_reset_ok = kv_edit_reset_memory(app.handle_) != 0;
+            arity_contract = arity_contract && case_pass && reset_ok && delete_ok && delete_reset_ok;
+            *out << "curve_interpolate_fixture_arity=" << arity
+                 << " apply=" << (case_pass ? "PASS" : "FAIL")
+                 << " reset=" << (reset_ok ? "PASS" : "FAIL")
+                 << " delete=" << (delete_ok ? "PASS" : "FAIL")
+                 << " delete_reset=" << (delete_reset_ok ? "PASS" : "FAIL")
+                 << " result=" << (case_pass && reset_ok && delete_ok && delete_reset_ok
+                     ? "PASS" : "FAIL") << "\n";
+        }
+        const bool disk_unchanged = root_bytes == read_bytes(directory / "map.txt") &&
+            child_bytes == read_bytes(directory / "curve.txt");
+
+        // Exercise the shared radius view with transitions, interpolation,
+        // zero radius and clipping, independent of the loaded route syntax.
+        app.model_.own_events.clear();
+        auto radius_event = [&](double distance, double radius, const char* flag) {
+            TrackEvent event;
+            event.key = "radius";
+            event.distance = distance;
+            event.value_number = true;
+            event.number = radius;
+            event.flag = flag;
+            app.model_.own_events.push_back(std::move(event));
+        };
+        radius_event(0, 300, "");
+        radius_event(10, 0, "bt");
+        radius_event(15, 400, "i");
+        radius_event(20, 600, "");
+        radius_event(30, 0, "");
+        app.dmin_ = 5;
+        app.dmax_ = 25;
+        const auto sections = app.build_plan_data(false);
+        const bool radius_sections = sections.curve_sections.size() == 2 &&
+            sections.curve_sections[0].start == 5 && sections.curve_sections[0].end == 20 &&
+            sections.curve_sections[0].value == 300 && sections.curve_sections[1].start == 20 &&
+            sections.curve_sections[1].end == 25 && sections.curve_sections[1].value == 600 &&
+            sections.transition_sections.size() == 1 &&
+            sections.transition_sections[0].start == 10 && sections.transition_sections[0].end == 20 &&
+            sections.curve_interpolate_markers.size() == 1;
+        const bool passed = preview_unbound && preview_hits_unique && merged_sources && merged_markers &&
+            preview_scene_unbound && merged_scene_targets &&
+            event_index == expected_rows.size() && context_target && arity_contract &&
+            disk_unchanged && radius_sections;
+        *out << "curve_interpolate_fixture_context_source=" << (context_target ? "PASS" : "FAIL")
+             << "\ncurve_interpolate_fixture_disk_unchanged=" << (disk_unchanged ? "PASS" : "FAIL")
+             << "\nplan_radius_sections_contract=" << (radius_sections ? "PASS" : "FAIL") << "\n";
+        *out << "curve_interpolate_provenance_fixture_preview_unbound="
+             << (preview_unbound ? 1 : 0) << "\n"
+             << "curve_interpolate_preview_hits_unique="
+             << (preview_hits_unique ? 1 : 0) << "\n"
+             << "curve_interpolate_provenance_fixture_merge_sources="
+             << (merged_sources ? 1 : 0) << "\n"
+             << "curve_interpolate_provenance_fixture_plan_targets="
+             << (merged_markers ? 1 : 0) << "\n"
+             << "curve_interpolate_provenance_fixture_preview_scene_unbound="
+             << (preview_scene_unbound ? 1 : 0) << "\n"
+             << "curve_interpolate_provenance_fixture_scene_targets="
+             << (merged_scene_targets ? 1 : 0) << "\n"
+             << "curve_interpolate_provenance_fixture="
+             << (passed ? "PASS" : "FAIL") << "\n";
+        return passed;
+    } catch (const std::exception& error) {
+        *out << "curve_interpolate_provenance_fixture_error=" << error.what()
+             << "\ncurve_interpolate_provenance_fixture=FAIL\n";
+        return false;
+    }
+}
+
 int App::run_debug_headless_own_track_edit(
     const HeadlessOwnTrackEditOptions& options) {
     using typed_edit_headless::Change;
@@ -3593,189 +3982,8 @@ int App::run_debug_headless_own_track_edit(
     ImGui::CreateContext();
     ImPlot::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
-    const bool interpolate_provenance_fixture_ok = [&]() {
-        struct TempFixture {
-            std::filesystem::path directory;
-            ~TempFixture() {
-                if (directory.empty()) return;
-                std::error_code error;
-                std::filesystem::remove(directory / "map.txt", error);
-                std::filesystem::remove(directory / "curve.txt", error);
-                std::filesystem::remove(directory, error);
-            }
-        } fixture;
-        try {
-            const auto directory = std::filesystem::temp_directory_path() /
-                ("komapedit-interpolate-provenance-" + std::to_string(
-                    std::chrono::steady_clock::now().time_since_epoch().count()));
-            if (!std::filesystem::create_directory(directory)) {
-                throw std::runtime_error("cannot create provenance fixture directory");
-            }
-            fixture.directory = directory;
-            {
-                std::ofstream root(directory / "map.txt", std::ios::binary);
-                std::ofstream child(directory / "curve.txt", std::ios::binary);
-                root << "BveTs Map 2.02:utf-8\n"
-                        "$base=100; $radius=300; include 'curve.txt';\n"
-                        "$base=0; $radius=100; include 'curve.txt';\n"
-                        "$radius=200; include 'curve.txt';\n120;\n";
-                child << "BveTs Map 2.02:utf-8\n"
-                         "$base+10; Curve.Interpolate($radius,0.02);\n";
-                root.close();
-                child.close();
-                if (!root || !child) throw std::runtime_error("cannot write provenance fixture");
-            }
-            const std::string path = (directory / "map.txt").u8string();
-            LoadResult fixture_preview = load_map_worker(
-                path, options.unit_distance, false, 0.0, 0.0,
-                options.unit_distance, preview_options);
-            LoadResult fixture_edit = load_map_worker(
-                path, options.unit_distance, false, 0.0, 0.0,
-                options.unit_distance, edit_options);
-            if (!fixture_preview.ok || !fixture_edit.ok) {
-                if (fixture_preview.handle) kv_free(fixture_preview.handle);
-                if (fixture_edit.handle) kv_free(fixture_edit.handle);
-                throw std::runtime_error("cannot load provenance fixture");
-            }
-            UserSettings settings;
-            settings.language = Language::En;
-            App app(nullptr, settings, 1.0f, false, false);
-            app.handle_ = fixture_preview.handle;
-            fixture_preview.handle = nullptr;
-            app.model_ = std::move(fixture_preview.model);
-            app.file_path_ = path;
-            app.has_model_ = true;
-            app.edit_mode_enabled_ = false;
-            app.edit_memory_matches_pending_ledger_ = true;
-            app.show_curve_values_ = true;
-            app.dmin_ = app.model_.default_min;
-            app.dmax_ = app.model_.default_max;
-            app.unit_distance_ = options.unit_distance;
-            bool preview_unbound = std::all_of(
-                app.model_.own_events.begin(), app.model_.own_events.end(),
-                [](const TrackEvent& event) {
-                    return event.source_row_index == std::numeric_limits<size_t>::max();
-                });
-            const PlanData& preview_plan = app.current_plan_data();
-            preview_unbound = preview_unbound &&
-                preview_plan.curve_interpolate_markers.size() == 3 &&
-                std::all_of(preview_plan.curve_interpolate_markers.begin(),
-                            preview_plan.curve_interpolate_markers.end(),
-                            [](const PlanCurveInterpolateMarker& marker) {
-                                return marker.edit_id.empty() &&
-                                    marker.row_index == std::numeric_limits<size_t>::max();
-                            });
-            // Preview markers deliberately have no source row. Hit identity must
-            // still distinguish them, including ties at an identical position.
-            auto hit_markers = preview_plan.curve_interpolate_markers;
-            bool preview_hits_unique = hit_markers.size() == 3;
-            const canvas2d::PlanScreenTransform hit_transform;
-            for (size_t i = 0; i < hit_markers.size(); ++i) {
-                hit_markers[i].x = 30.0 + 50.0 * i;
-                hit_markers[i].y = 0.0;
-            }
-            for (size_t i = 0; i < hit_markers.size(); ++i) {
-                const auto hit = canvas2d::nearest_marker_hit(
-                    hit_markers, hit_transform,
-                    hit_transform.plan_to_screen(hit_markers[i].x, hit_markers[i].y),
-                    ImVec2(0, 0), ImVec2(200, 100), 12.0f, true);
-                preview_hits_unique = preview_hits_unique && hit &&
-                    hit->marker_index == i &&
-                    hit->row_index == std::numeric_limits<size_t>::max();
-            }
-            preview_hits_unique = preview_hits_unique &&
-                !canvas2d::nearest_marker_hit(hit_markers, hit_transform,
-                    ImVec2(190, 90), ImVec2(0, 0), ImVec2(200, 100), 12.0f, true);
-            if (hit_markers.size() == 3) {
-                hit_markers[1].x = hit_markers[0].x;
-                const auto tie = canvas2d::nearest_marker_hit(hit_markers, hit_transform,
-                    ImVec2(30, 0), ImVec2(0, 0), ImVec2(200, 100), 12.0f, true);
-                preview_hits_unique = preview_hits_unique && tie && tie->marker_index == 1;
-            }
-            const auto scene_markers_match = [&](bool bound) {
-                Canvas3DSceneBuildOptions scene_options;
-                scene_options.model = &app.model_;
-                scene_options.map_handle = app.handle_;
-                scene_options.unit_distance = options.unit_distance;
-                scene_options.control_point_interval = options.unit_distance;
-                const Canvas3DSceneBuildResult scene =
-                    build_canvas3d_scene_preview(scene_options);
-                size_t marker_count = 0;
-                for (const Canvas3DSceneMarker& marker : scene.scene.markers) {
-                    if (marker.kind != MapMarkerVisualKind::CurveCircularStart) continue;
-                    const std::array<size_t, 3> expected_rows{{1, 2, 0}};
-                    if (marker_count >= expected_rows.size()) return false;
-                    if (bound) {
-                        const size_t row_index = expected_rows[marker_count];
-                        if (!marker.row_index || *marker.row_index != row_index ||
-                            marker.row_kind != "curve" || marker.edit_id.empty() ||
-                            marker.edit_id != app.model_.curve_rows[row_index].edit_id) {
-                            return false;
-                        }
-                    } else if (marker.row_index || !marker.edit_id.empty() ||
-                               marker.row_kind != "curve") {
-                        return false;
-                    }
-                    ++marker_count;
-                }
-                return marker_count == 3;
-            };
-            const bool preview_scene_unbound = scene_markers_match(false);
-            app.edit_mode_enabled_ = true;
-            app.apply_edit_metadata_result(std::move(fixture_edit));
-            fixture_edit.handle = nullptr;
-            const std::array<size_t, 3> expected_rows{{1, 2, 0}};
-            const std::array<double, 3> expected_distances{{10.0, 10.0, 110.0}};
-            const std::array<double, 3> expected_radii{{100.0, 200.0, 300.0}};
-            size_t event_index = 0;
-            bool merged_sources = app.edit_registry_loaded_;
-            for (const TrackEvent& event : app.model_.own_events) {
-                if (event.key != "radius" || event.flag != "i") continue;
-                if (event_index >= expected_rows.size()) {
-                    merged_sources = false;
-                    break;
-                }
-                merged_sources = merged_sources &&
-                    event.source_row_index == expected_rows[event_index] &&
-                    event.distance == expected_distances[event_index] &&
-                    event.number == expected_radii[event_index];
-                ++event_index;
-            }
-            const PlanData& merged_plan = app.current_plan_data();
-            bool merged_markers = merged_plan.curve_interpolate_markers.size() == 3;
-            for (size_t i = 0; merged_markers && i < expected_rows.size(); ++i) {
-                const PlanCurveInterpolateMarker& marker =
-                    merged_plan.curve_interpolate_markers[i];
-                merged_markers = marker.row_index == expected_rows[i] &&
-                    marker.radius == expected_radii[i] &&
-                    !marker.edit_id.empty() &&
-                    marker.edit_id == app.model_.curve_rows[expected_rows[i]].edit_id;
-            }
-            const bool merged_scene_targets = scene_markers_match(true);
-            const bool passed = preview_unbound && preview_hits_unique && merged_sources && merged_markers &&
-                preview_scene_unbound && merged_scene_targets &&
-                event_index == expected_rows.size();
-            *out << "curve_interpolate_provenance_fixture_preview_unbound="
-                 << (preview_unbound ? 1 : 0) << "\n"
-                 << "curve_interpolate_preview_hits_unique="
-                 << (preview_hits_unique ? 1 : 0) << "\n"
-                 << "curve_interpolate_provenance_fixture_merge_sources="
-                 << (merged_sources ? 1 : 0) << "\n"
-                 << "curve_interpolate_provenance_fixture_plan_targets="
-                 << (merged_markers ? 1 : 0) << "\n"
-                 << "curve_interpolate_provenance_fixture_preview_scene_unbound="
-                 << (preview_scene_unbound ? 1 : 0) << "\n"
-                 << "curve_interpolate_provenance_fixture_scene_targets="
-                 << (merged_scene_targets ? 1 : 0) << "\n"
-                 << "curve_interpolate_provenance_fixture="
-                 << (passed ? "PASS" : "FAIL") << "\n";
-            return passed;
-        } catch (const std::exception& error) {
-            *out << "curve_interpolate_provenance_fixture_error=" << error.what()
-                 << "\ncurve_interpolate_provenance_fixture=FAIL\n";
-            return false;
-        }
-    }();
+    const bool interpolate_provenance_fixture_ok =
+        debug_curve_interpolate_contract(options.unit_distance, *out);
     {
         UserSettings settings;
         settings.language = Language::En;
@@ -3921,114 +4129,6 @@ int App::run_debug_headless_own_track_edit(
 
     *out << "curve_row_count=" << load.model.curve_rows.size() << "\n"
          << "gradient_row_count=" << load.model.gradient_rows.size() << "\n";
-    auto find_interpolate_arity = [&](int argument_count) -> const TableRow* {
-        const auto found = std::find_if(
-            load.model.curve_rows.begin(), load.model.curve_rows.end(),
-            [&](const TableRow& row) {
-                return !row.edit_id.empty() &&
-                    ascii_lower(table_cell(row, "method")) ==
-                        "curve.interpolate" &&
-                    static_cast<int>(table_cell_number(row, "argumentCount")) ==
-                        argument_count;
-            });
-        return found == load.model.curve_rows.end() ? nullptr : &*found;
-    };
-    const TableRow* interpolate_zero = find_interpolate_arity(0);
-    const TableRow* interpolate_two = find_interpolate_arity(2);
-    const std::string interpolate_zero_id = interpolate_zero
-        ? interpolate_zero->edit_id : std::string{};
-    const std::string interpolate_two_id = interpolate_two
-        ? interpolate_two->edit_id : std::string{};
-    *out << "curve_interpolate_zero_target_found="
-         << (interpolate_zero ? 1 : 0) << "\n"
-         << "curve_interpolate_two_target_found="
-         << (interpolate_two ? 1 : 0) << "\n";
-    if (!interpolate_zero || !interpolate_two) {
-        ++failed_cases;
-    } else {
-        const double expected_radius =
-            table_cell_number(*interpolate_two, "radius") + 1.0;
-        const double expected_cant =
-            table_cell_number(*interpolate_two, "cant") + 0.001;
-        const Report update_report = typed_edit_headless::apply_to_memory(
-            load.handle,
-            {typed_edit_headless::update(
-                "curve-interpolate-two-update", interpolate_two->edit_id,
-                source_hash(*interpolate_two),
-                std::vector<Field>{{"radius", format_double(expected_radius, 9)},
-                                   {"cant", format_double(expected_cant, 9)}})});
-        const MapModel updated = update_report.ok
-            ? build_model_from_handle(
-                load.handle, options.path, LoadModelOptions{true})
-            : MapModel{};
-        const TableRow* updated_row = update_report.ok
-            ? find_row(updated, "curve", interpolate_two->edit_id) : nullptr;
-        const bool update_values_ok = updated_row &&
-            static_cast<int>(table_cell_number(*updated_row, "argumentCount")) == 2 &&
-            std::abs(table_cell_number(*updated_row, "radius") -
-                     expected_radius) < 1e-8 &&
-            std::abs(table_cell_number(*updated_row, "cant") - expected_cant) <
-                1e-8;
-        const bool update_ok = update_report.ok &&
-            update_report.full_reparse_ok &&
-            update_report.non_target_changed_count == 0 && update_values_ok;
-        *out << "curve_interpolate_two_apply_ok="
-             << (update_report.ok ? 1 : 0) << "\n"
-             << "curve_interpolate_two_full_reparse_ok="
-             << (update_report.full_reparse_ok ? 1 : 0) << "\n"
-             << "curve_interpolate_two_non_target_clean="
-             << (update_report.non_target_changed_count == 0 ? 1 : 0) << "\n"
-             << "curve_interpolate_two_values_ok="
-             << (update_values_ok ? 1 : 0) << "\n";
-        print_report_errors(update_report);
-        if (!update_ok) ++failed_cases;
-        if (!kv_edit_reset_memory(load.handle)) {
-            *out << "curve_interpolate_two_reset_ok=0\n";
-            ++failed_cases;
-        } else {
-            *out << "curve_interpolate_two_reset_ok=1\n";
-        }
-
-        const Report invalid_zero_report = typed_edit_headless::dry_run(
-            load.handle,
-            {typed_edit_headless::update(
-                "curve-interpolate-zero-invalid", interpolate_zero->edit_id,
-                source_hash(*interpolate_zero),
-                std::vector<Field>{{"radius", "500"}})});
-        const bool zero_rejected = !invalid_zero_report.ok && std::any_of(
-            invalid_zero_report.blocking_errors.begin(),
-            invalid_zero_report.blocking_errors.end(),
-            [](const std::string& error) {
-                return error.find("no editable value fields") != std::string::npos;
-            });
-        *out << "curve_interpolate_zero_radius_rejected="
-             << (zero_rejected ? 1 : 0) << "\n";
-        print_report_errors(invalid_zero_report);
-        if (!zero_rejected) ++failed_cases;
-
-        const size_t baseline_curve_count = load.model.curve_rows.size();
-        const Report delete_report = typed_edit_headless::apply_to_memory(
-            load.handle, {delete_change(*interpolate_zero)});
-        const MapModel deleted = delete_report.ok
-            ? build_model_from_handle(
-                load.handle, options.path, LoadModelOptions{true})
-            : MapModel{};
-        const bool delete_ok = delete_report.ok &&
-            delete_report.full_reparse_ok &&
-            delete_report.non_target_changed_count == 0 &&
-            deleted.curve_rows.size() + 1 == baseline_curve_count &&
-            find_row(deleted, "curve", interpolate_zero->edit_id) == nullptr;
-        *out << "curve_interpolate_zero_delete_ok="
-             << (delete_ok ? 1 : 0) << "\n";
-        print_report_errors(delete_report);
-        if (!delete_ok) ++failed_cases;
-        if (!kv_edit_reset_memory(load.handle)) {
-            *out << "curve_interpolate_zero_delete_reset_ok=0\n";
-            ++failed_cases;
-        } else {
-            *out << "curve_interpolate_zero_delete_reset_ok=1\n";
-        }
-    }
     if (curve_update) {
         *out << "curve_update_method=" << table_cell(*curve_update, "method") << "\n"
              << "curve_update_source=" << curve_update->source.file_path << "\n"
@@ -4144,28 +4244,6 @@ int App::run_debug_headless_own_track_edit(
             app.edit_memory_matches_pending_ledger_ = true;
             app.dmin_ = app.model_.default_min;
             app.dmax_ = app.model_.default_max;
-
-            auto inspector_field_keys = [&](const std::string& edit_id) {
-                std::vector<std::string> keys;
-                if (!app.open_element_inspector(edit_id, "curve")) return keys;
-                keys.reserve(app.inspector_.fields.size());
-                for (const MapElementEditFieldState& field : app.inspector_.fields) {
-                    keys.push_back(field.key);
-                }
-                app.inspector_ = {};
-                return keys;
-            };
-            const std::vector<std::string> zero_fields =
-                inspector_field_keys(interpolate_zero_id);
-            const std::vector<std::string> two_fields =
-                inspector_field_keys(interpolate_two_id);
-            const bool interpolate_inspector_ok =
-                zero_fields == std::vector<std::string>{"distance"} &&
-                two_fields ==
-                    std::vector<std::string>{"distance", "radius", "cant"};
-            *out << "curve_interpolate_inspector_arity_ok="
-                 << (interpolate_inspector_ok ? 1 : 0) << "\n";
-            if (!interpolate_inspector_ok) ++failed_cases;
 
             MapElementPendingChange pending;
             pending.change_id = "own-track-gui-station-sync";
@@ -11094,7 +11172,9 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
         const std::filesystem::path temp_dir = temp_root / temp_name;
         if (!temp_error && std::filesystem::create_directories(temp_dir, temp_error) && !temp_error) {
             temp_created = true;
-            app.export_csv_to_directory(temp_dir);
+            std::string export_error;
+            const bool export_succeeded = app.export_csv_to_directory(temp_dir, export_error);
+            if (!export_succeeded) *out << "csv_export_error=" << export_error << "\n";
             const std::filesystem::path own_csv = temp_dir / (temp_name + "_owntrack.csv");
             std::ifstream input(own_csv, std::ios::binary);
             std::string header;
@@ -11109,7 +11189,7 @@ int App::run_debug_headless_open_benchmark(const HeadlessOpenBenchmarkOptions& o
                  !scan_error && it != end; it.increment(scan_error)) {
                 if (it->is_regular_file() && it->path().extension() == ".csv") ++csv_files;
             }
-            csv_export_ok = input.eof() &&
+            csv_export_ok = export_succeeded && input.eof() &&
                 header == "#distance,x,y,z,direction,radius,gradient,interpolate_func,cant,center,gauge" &&
                 data_rows == app.model_.own.rows &&
                 csv_files == app.model_.other_tracks.size() + 1 && !scan_error;
@@ -11466,6 +11546,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
 
     int exit_code = 0;
     try {
+        const bool interpolate_fixture_pass = debug_curve_interpolate_contract(unit_distance, *out);
         g_debug_plan_benchmark_log = profile_stages ? out : nullptr;
         UserSettings settings;
         App app(nullptr, settings, 1.0f, false, false);
@@ -11721,7 +11802,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
             }
         }
         std::set<size_t> interpolate_marker_rows;
-        bool interpolate_identity_pass = expected_interpolate_markers > 0 &&
+        bool interpolate_identity_pass =
             visible_curves.curve_interpolate_markers.size() ==
                 expected_interpolate_markers;
         for (const PlanCurveInterpolateMarker& marker :
@@ -11743,8 +11824,8 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
                 break;
             }
         }
-        bool interpolate_context_target_pass = false;
-        bool interpolate_source_hint_pass = false;
+        bool interpolate_context_target_pass = expected_interpolate_markers == 0;
+        bool interpolate_source_hint_pass = expected_interpolate_markers == 0;
         if (!visible_curves.curve_interpolate_markers.empty()) {
             const PlanCurveInterpolateMarker& marker =
                 visible_curves.curve_interpolate_markers.front();
@@ -11795,9 +11876,11 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
              << " generic_duplicate_absent="
              << (interpolate_generic_duplicate_absent ? "PASS" : "FAIL")
              << " context_target="
-             << (interpolate_context_target_pass ? "PASS" : "FAIL")
+             << (expected_interpolate_markers == 0 ? "SKIP_NO_INTERPOLATE" :
+                 interpolate_context_target_pass ? "PASS" : "FAIL")
              << " source_hint="
-             << (interpolate_source_hint_pass ? "PASS" : "FAIL")
+             << (expected_interpolate_markers == 0 ? "SKIP_NO_INTERPOLATE" :
+                 interpolate_source_hint_pass ? "PASS" : "FAIL")
              << "\n";
         app.show_curve_values_ = false;
         const PlanData& hidden_curves = app.current_plan_data();
@@ -11911,7 +11994,7 @@ int App::run_debug_headless_plan_benchmark(const std::string& path, int frames,
         const bool measure_index_pass = !measure_interaction ||
             (app.debug_measure_validation_passed_ && app.debug_measure_query_count_ > 0 &&
              measure_pan_rotation_hit);
-        const bool cache_checks_pass = uncached_match && stable_hit && pan_rotation_hit &&
+        const bool cache_checks_pass = interpolate_fixture_pass && uncached_match && stable_hit && pan_rotation_hit &&
             marker_toggles_pass && curve_toggle_pass && edit_marker_toggle_pass &&
             row_visibility_pass && keyed_state_pass && source_revision_pass &&
             measure_index_pass;
@@ -12141,7 +12224,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
             !marker.edit_id.empty() && marker.edit_id == row.edit_id && label_ok &&
             interpolate_marker_rows.insert(*marker.row_index).second;
     }
-    const bool interpolate_scene_contract_pass = interpolate_row_count > 0 &&
+    const bool interpolate_scene_contract_pass =
         interpolate_event_count == interpolate_row_count &&
         interpolate_marker_count == interpolate_row_count &&
         interpolate_event_sources_ok && interpolate_marker_targets_ok;
@@ -12167,6 +12250,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
 
     int exit_code = 0;
     try {
+        const bool interpolate_fixture_pass = debug_curve_interpolate_contract(unit_distance, *out);
         UserSettings settings;
         App app(device, settings, 1.0f, false, false);
         app.handle_ = result.handle;
@@ -12307,7 +12391,7 @@ int App::run_debug_headless_scene3d_benchmark(const std::string& path, int frame
 
         const FrameTimingStats timing = calculate_frame_timing_stats(frame_ms);
         bool pass = load_completed && terminal_model_state &&
-            inspector_cache_checks_ok && interpolate_scene_contract_pass &&
+            inspector_cache_checks_ok && interpolate_scene_contract_pass && interpolate_fixture_pass &&
             timing.p95_ms <= max_frame_ms;
         Canvas3DSceneStats final_stats = app.scene_preview_canvas_->scene_stats();
 

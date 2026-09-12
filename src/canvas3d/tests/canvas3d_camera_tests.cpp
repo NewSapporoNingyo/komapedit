@@ -12,6 +12,8 @@
 #include "scene_track_sampling.h"
 
 #include <cmath>
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -219,6 +221,90 @@ void camera_sampling_safety_contract() {
           "camera sampling extrapolates for a single-point track before its distance");
 }
 
+void chunk_segment_range_contract() {
+    const auto selected = [](const Canvas3DTrackPath& path, double minimum,
+                             double maximum, bool optimized) {
+        std::vector<size_t> indices;
+        const auto range = scene_track_sampling::chunk_segment_range(path, minimum, maximum,
+            optimized && scene_track_sampling::has_ordered_finite_distances(path));
+        for (size_t index = range.first; index < range.end; ++index) {
+            if (path.points[index].distance < minimum ||
+                path.points[index - 1].distance > maximum) continue;
+            indices.push_back(index);
+        }
+        return indices;
+    };
+    for (const std::vector<double>& distances : std::vector<std::vector<double>>{
+             {}, {0}, {0, 100}, {0, 100, 100, 100, 200}, {200, 0, 100},
+             {0, std::numeric_limits<double>::quiet_NaN(), 200},
+             {0, std::numeric_limits<double>::infinity()}}) {
+        Canvas3DTrackPath path;
+        for (double distance : distances) {
+            Canvas3DTrackPoint point;
+            point.distance = distance;
+            path.points.push_back(point);
+        }
+        for (double minimum : {-100.0, 0.0, 50.0, 100.0, 200.0, 300.0}) {
+            for (double width : {0.0, 25.0, 100.0}) {
+                check(selected(path, minimum, minimum + width, true) ==
+                          selected(path, minimum, minimum + width, false),
+                      "chunk candidates preserve full-scan boundary and fallback results");
+            }
+        }
+    }
+
+    // Fixed multiple-track input compares only CPU segment selection, not GPU
+    // upload or steady-frame rendering. Include one validity scan per run.
+    std::vector<Canvas3DTrackPath> tracks(6);
+    for (auto& track : tracks) {
+        for (size_t index = 0; index <= 2000; ++index) {
+            Canvas3DTrackPoint point;
+            point.distance = static_cast<double>(index) * 10.0;
+            track.points.push_back(point);
+        }
+    }
+    auto build = [&](bool optimized) {
+        std::vector<bool> ordered;
+        for (const auto& track : tracks) ordered.push_back(
+            optimized && scene_track_sampling::has_ordered_finite_distances(track));
+        std::vector<size_t> selected_indices;
+        for (size_t chunk = 0; chunk < 200; ++chunk) {
+            const double minimum = static_cast<double>(chunk) * 100.0;
+            for (size_t track_index = 0; track_index < tracks.size(); ++track_index) {
+                const auto& path = tracks[track_index];
+                const auto range = scene_track_sampling::chunk_segment_range(
+                    path, minimum, minimum + 100.0, ordered[track_index]);
+                for (size_t index = range.first; index < range.end; ++index) {
+                    if (path.points[index].distance < minimum ||
+                        path.points[index - 1].distance > minimum + 100.0) continue;
+                    selected_indices.push_back(index);
+                }
+            }
+        }
+        return selected_indices;
+    };
+    const auto expected = build(false);
+    std::vector<double> baseline_ms, optimized_ms;
+    for (int sample = 0; sample < 7; ++sample) {
+        for (bool optimized : {false, true}) {
+            const auto started = std::chrono::steady_clock::now();
+            const auto actual = build(optimized);
+            const double elapsed = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+            check(actual == expected, "fixed multi-track chunk indices match the original scan");
+            (optimized ? optimized_ms : baseline_ms).push_back(elapsed);
+        }
+    }
+    std::sort(baseline_ms.begin(), baseline_ms.end());
+    std::sort(optimized_ms.begin(), optimized_ms.end());
+    std::cout << "chunk_selection_benchmark tracks=6 points_per_track=2001 chunks=200"
+              << " samples=7 indices=" << expected.size()
+              << " baseline_median_ms=" << baseline_ms[3]
+              << " baseline_p95_ms=" << baseline_ms.back()
+              << " optimized_median_ms=" << optimized_ms[3]
+              << " optimized_p95_ms=" << optimized_ms.back() << '\n';
+}
+
 } // namespace
 
 int main() {
@@ -226,6 +312,7 @@ int main() {
     camera_sampling_normal_range_contract();
     camera_sampling_before_start_contract();
     camera_sampling_safety_contract();
+    chunk_segment_range_contract();
     std::cout << "canvas3d camera contract " << (failures ? "FAIL" : "PASS") << '\n';
     return failures == 0 ? 0 : 1;
 }

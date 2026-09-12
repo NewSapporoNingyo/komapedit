@@ -927,6 +927,14 @@ size_t scene_repeater_index_count(const SceneRepeaterIndexRange& range) {
     return static_cast<size_t>(std::min<double>(count, static_cast<double>(k_scene_repeater_instance_limit)));
 }
 
+template <typename Visitor>
+void visit_scene_repeater_indices(const SceneRepeaterIndexRange& range, Visitor visit) {
+    if (range.last < range.first) return;
+    for (long long index = range.first;; ++index) {
+        if (!visit(index) || index == range.last) break;
+    }
+}
+
 size_t scene_repeater_instance_count(const Canvas3DRepeaterSegment& repeater) {
     if (repeater.model_paths.empty() || repeater.end_distance < repeater.begin_distance) return 0;
     if (!scene_repeater_has_interval(repeater)) return 1;
@@ -5678,6 +5686,30 @@ struct Canvas3D::Impl {
                 boundary_range.first == 0 &&
                 boundary_range.last == std::numeric_limits<long long>::max();
 
+            const auto check_index_visit = [](SceneRepeaterIndexRange range,
+                                             size_t expected_count) {
+                size_t count = 0;
+                long long last = range.first;
+                visit_scene_repeater_indices(range, [&](long long index) {
+                    last = index;
+                    return ++count <= expected_count;
+                });
+                return count == expected_count &&
+                    (count == 0 || last == range.last);
+            };
+            result.numeric_boundaries = result.numeric_boundaries &&
+                check_index_visit({1, 0}, 0) && check_index_visit({0, 0}, 1) &&
+                check_index_visit({2, 5}, 4) &&
+                check_index_visit({static_cast<long long>(signed_previous),
+                                   std::numeric_limits<long long>::max()}, 1024) &&
+                check_index_visit({std::numeric_limits<long long>::max(),
+                                   std::numeric_limits<long long>::max()}, 1);
+            size_t limited_count = 0;
+            visit_scene_repeater_indices({0, std::numeric_limits<long long>::max()},
+                [&](long long) { return ++limited_count < k_scene_repeater_instance_limit; });
+            result.numeric_boundaries = result.numeric_boundaries &&
+                limited_count == k_scene_repeater_instance_limit;
+
             reset_scene_worker_state();
             ModelLoaderClient::debug_reset_counts();
             scene_models.try_emplace("normal");
@@ -7883,6 +7915,11 @@ struct Canvas3D::Impl {
     bool build_scene_track_chunks(std::string& error) {
         scene_track_chunks.clear();
         scene_track_chunks.resize(scene_chunks.size());
+        std::vector<bool> ordered_tracks;
+        ordered_tracks.reserve(scene_data.tracks.size());
+        for (const Canvas3DTrackPath& track : scene_data.tracks) {
+            ordered_tracks.push_back(scene_track_sampling::has_ordered_finite_distances(track));
+        }
         for (size_t chunk_index = 0; chunk_index < scene_chunks.size(); ++chunk_index) {
             const SceneChunk& scene_chunk = scene_chunks[chunk_index];
             SceneTrackChunkGpu& gpu_chunk = scene_track_chunks[chunk_index];
@@ -7892,7 +7929,8 @@ struct Canvas3D::Impl {
             std::vector<GpuVertex> vertices;
             std::vector<unsigned int> indices;
 
-            for (const Canvas3DTrackPath& track : scene_data.tracks) {
+            for (size_t track_index = 0; track_index < scene_data.tracks.size(); ++track_index) {
+                const Canvas3DTrackPath& track = scene_data.tracks[track_index];
                 if (!track.visible || track.points.size() < 2) continue;
                 size_t part_start = indices.size();
                 UINT material_index = static_cast<UINT>(gpu_chunk.materials.size());
@@ -7903,7 +7941,9 @@ struct Canvas3D::Impl {
                 material.diffuse[3] = k_scene_track_marker_alpha;
                 gpu_chunk.materials.push_back(material);
 
-                for (size_t i = 1; i < track.points.size(); ++i) {
+                const auto range = scene_track_sampling::chunk_segment_range(
+                    track, scene_chunk.d_min, scene_chunk.d_max, ordered_tracks[track_index]);
+                for (size_t i = range.first; i < range.end; ++i) {
                     const Canvas3DTrackPoint& a = track.points[i - 1];
                     const Canvas3DTrackPoint& b = track.points[i];
                     if (b.distance < scene_chunk.d_min || a.distance > scene_chunk.d_max) continue;
@@ -9246,14 +9286,14 @@ struct Canvas3D::Impl {
             if (!scene_repeater_index_range(repeater, begin, end, range)) continue;
             long long emitted = 0;
             const double end_epsilon = scene_repeater_index_epsilon(repeater);
-            for (long long index = range.first; index <= range.last; ++index) {
+            visit_scene_repeater_indices(range, [&](long long index) {
                 double distance = repeater.begin_distance + static_cast<double>(index) * repeater.interval;
-                if (distance < begin - k_scene_repeater_distance_epsilon) continue;
-                if (distance > end + k_scene_repeater_distance_epsilon) break;
-                if (distance >= repeater.end_distance - end_epsilon) break;
+                if (distance < begin - k_scene_repeater_distance_epsilon) return true;
+                if (distance > end + k_scene_repeater_distance_epsilon) return false;
+                if (distance >= repeater.end_distance - end_epsilon) return false;
                 emit(distance, static_cast<size_t>(index));
-                if (++emitted >= k_scene_repeater_instance_limit) break;
-            }
+                return ++emitted < k_scene_repeater_instance_limit;
+            });
         }
     }
 

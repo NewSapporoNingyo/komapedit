@@ -740,7 +740,7 @@ int main(int, char**) {
             }
             if (done) break;
 
-            app.service_pending_settings_save();
+            app.service_pending_persistence(layout_path);
 
             if (!needs_render && !received_message) {
                 const DWORD wait_result = MsgWaitForMultipleObjectsEx(
@@ -794,13 +794,15 @@ int main(int, char**) {
                 --warmup_frames;
                 needs_render = true;
             }
-            save_imgui_layout_if_requested(layout_path);
+            app.service_pending_persistence(layout_path);
             if (GImGui && GImGui->InputEventsQueue.Size > 0) needs_render = true;
             if (touch_input::wants_continuous_render()) needs_render = true;
             if (imgui_layout_save_pending()) needs_render = true;
         }
 
-        save_imgui_layout(layout_path);
+        if (!save_imgui_layout(layout_path)) {
+            app.add_log_at(__FILE__, LogSeverity::Warning, "Failed to save ImGui layout on exit.");
+        }
     } // Join application workers before tearing down their Win32/D3D environment.
 
     ImGui_ImplDX11_Shutdown();

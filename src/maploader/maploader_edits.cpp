@@ -124,7 +124,7 @@ std::string_view resource_list_content_statement_kind(
     switch (kind) {
     case ResourceListLoadKind::Station: return "StationList.Row";
     case ResourceListLoadKind::Structure: return "StructureList.Row";
-    case ResourceListLoadKind::Signal: return "SignalAspectList.Row";
+    case ResourceListLoadKind::Signal: return "SignalList.Row";
     case ResourceListLoadKind::Sound: return "SoundList.Row";
     case ResourceListLoadKind::Sound3D: return "Sound3DList.Row";
     }
@@ -1230,8 +1230,7 @@ bool has_non_distance_field_change(const MapEditChange& change) {
                        [](const auto& field) { return field.first != "distance"; });
 }
 
-std::string raw_object_key_argument(const ParsedStatement& statement) {
-    const std::string& text = statement.raw_text;
+std::optional<std::pair<size_t, size_t>> raw_object_key_span(const std::string& text) {
     const size_t open = text.find('[');
     if (open == std::string::npos) return {};
     bool single_quoted = false;
@@ -1244,11 +1243,17 @@ std::string raw_object_key_argument(const ParsedStatement& statement) {
         else if (!single_quoted && !double_quoted) {
             if (ch == '[') ++nested;
             else if (ch == ']' && nested-- == 0) {
-                return trim_field_copy(text.substr(open + 1, i - open - 1));
+                return std::make_pair(open + 1, i);
             }
         }
     }
     return {};
+}
+
+std::string raw_object_key_argument(const ParsedStatement& statement) {
+    const auto span = raw_object_key_span(statement.raw_text);
+    return span ? trim_field_copy(statement.raw_text.substr(
+        span->first, span->second - span->first)) : std::string{};
 }
 
 std::string object_key_field_as_bve_arg(const MapEditChange& change,
@@ -1271,33 +1276,17 @@ std::string replace_raw_object_key_argument(const ParsedStatement& statement,
     if (open == std::string::npos) {
         throw std::runtime_error("source statement has no object key");
     }
-    bool single_quoted = false;
-    bool double_quoted = false;
-    int nested = 0;
-    for (size_t index = open + 1; index < text.size(); ++index) {
-        const char ch = text[index];
-        if (ch == '\'' && !double_quoted) single_quoted = !single_quoted;
-        else if (ch == '"' && !single_quoted) double_quoted = !double_quoted;
-        else if (!single_quoted && !double_quoted) {
-            if (ch == '[') {
-                ++nested;
-            } else if (ch == ']' && nested-- == 0) {
-                size_t value_begin = open + 1;
-                while (value_begin < index &&
-                       (text[value_begin] == ' ' || text[value_begin] == '\t')) {
-                    ++value_begin;
-                }
-                size_t value_end = index;
-                while (value_end > value_begin &&
-                       (text[value_end - 1] == ' ' || text[value_end - 1] == '\t')) {
-                    --value_end;
-                }
-                return text.substr(0, value_begin) + replacement +
-                    text.substr(value_end);
-            }
-        }
+    const auto span = raw_object_key_span(text);
+    if (!span) {
+        throw std::runtime_error("source statement has an unterminated object key");
     }
-    throw std::runtime_error("source statement has an unterminated object key");
+    size_t value_begin = span->first;
+    size_t value_end = span->second;
+    while (value_begin < value_end &&
+           (text[value_begin] == ' ' || text[value_begin] == '\t')) ++value_begin;
+    while (value_end > value_begin &&
+           (text[value_end - 1] == ' ' || text[value_end - 1] == '\t')) --value_end;
+    return text.substr(0, value_begin) + replacement + text.substr(value_end);
 }
 
 std::string string_value_field_as_bve_arg(const MapEditChange& change,
@@ -1666,9 +1655,16 @@ std::string build_other_track_change_statement(
         raw_arguments.replace(begin, end - begin, *replacements[index]);
     }
 
-    const size_t open = source_text.find('(');
-    const size_t close = source_text.rfind(')');
-    if (open == std::string::npos || close == std::string::npos || close < open) {
+    const auto key_span = raw_object_key_span(source_text);
+    const size_t open = key_span ? source_text.find('(', key_span->second + 1) :
+                                  std::string::npos;
+    if (open == std::string::npos ||
+        statement.raw_arguments.size() >= source_text.size() - open - 1) {
+        throw std::runtime_error("other-track source statement shape is invalid");
+    }
+    const size_t close = open + 1 + statement.raw_arguments.size();
+    if (source_text[close] != ')' ||
+        source_text.compare(open + 1, statement.raw_arguments.size(), statement.raw_arguments) != 0) {
         throw std::runtime_error("other-track source statement shape is invalid");
     }
     std::string output = source_text.substr(0, open + 1);
@@ -1955,18 +1951,19 @@ std::string statement_insertion_text(const std::string& source,
 std::string line_indent_of(const SourcePatch& patch, const ParsedStatement& statement) {
     const size_t line_start = offset_from_line_column(
         patch.text, patch.line_starts, statement.source.line, 1);
-    const size_t statement_start = source_range_in_text(patch, statement.source).first;
-    if (line_start == std::string::npos || line_start > statement_start) {
+    const auto range = source_range_in_text(patch, statement.source);
+    if (line_start == std::string::npos || line_start > range.first) {
         return {};
     }
-    std::string indent = patch.text.substr(
-        line_start, statement_start - line_start);
-    if (!std::all_of(indent.begin(), indent.end(), [](char ch) {
-            return ch == ' ' || ch == '\t';
-        })) {
-        return {};
+    // Map spans start at their first token; resource-list spans include the
+    // physical line's leading whitespace. Accept either source convention.
+    size_t indent_end = line_start;
+    while (indent_end < range.second &&
+           (patch.text[indent_end] == ' ' || patch.text[indent_end] == '\t')) {
+        ++indent_end;
     }
-    return indent;
+    if (indent_end < range.first) return {};
+    return patch.text.substr(line_start, indent_end - line_start);
 }
 
 struct ReferenceInsertionPlan {
@@ -7250,7 +7247,8 @@ MapEditReport build_edit_report(MapContext& ctx,
                         edit.removal_range = {};
                         edit.replacement_statement = insertion.indent + inserted_statement;
                         edit.has_custom_identity_range = true;
-                        edit.identity_range_begin = insertion.indent.size();
+                        // Resource-list spans include the physical line's indentation.
+                        edit.identity_range_begin = 0;
                         edit.identity_range_end = edit.replacement_statement.size();
                         ++report.insert_count;
                         prepared.push_back(std::move(edit));

@@ -9,6 +9,13 @@
 #pragma execution_character_set("utf-8")
 #endif
 
+#ifndef WINVER
+#define WINVER 0x0600
+#endif
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+
 #include "kme.h"
 #include "app_settings.h"
 #include "debug_headless.h"
@@ -193,34 +200,105 @@ void App::set_program_status(const char* key, std::string_view elapsed_seconds) 
     program_status_elapsed_suffix_ += "s)";
 }
 
-void App::export_csv_to_directory(const std::filesystem::path& dir) const {
+namespace {
+
+bool write_csv_matrix(std::ostream& out, const Matrix& matrix, const char* header) {
+    out << "#" << header << "\n";
+    for (size_t r = 0; r < matrix.rows; ++r) {
+        for (size_t c = 0; c < matrix.cols; ++c) {
+            if (c) out << ",";
+            out << std::fixed << std::setprecision(6) << matrix.at(r, c);
+        }
+        out << "\n";
+    }
+    out.flush();
+    return static_cast<bool>(out);
+}
+
+} // namespace
+
+bool App::export_csv_to_directory(const std::filesystem::path& dir, std::string& error) const {
+    error.clear();
     std::string base = narrow_path(dir.filename());
     if (base.empty()) base = "kobushi";
 
-    auto write_matrix = [&](const std::filesystem::path& path, const Matrix& m, const std::string& header) {
-        std::ofstream out(path, std::ios::binary);
-        out << "#" << header << "\n";
-        for (size_t r = 0; r < m.rows; ++r) {
-            for (size_t c = 0; c < m.cols; ++c) {
-                if (c) out << ",";
-                out << std::fixed << std::setprecision(6) << m.at(r, c);
-            }
-            out << "\n";
-        }
+    struct Output {
+        std::filesystem::path path;
+        const Matrix* matrix;
+        const char* header;
+        std::string owner;
     };
-    write_matrix(dir / utf8_to_wide(base + "_owntrack.csv"), model_.own,
-                 "distance,x,y,z,direction,radius,gradient,interpolate_func,cant,center,gauge");
+    std::vector<Output> outputs;
+    outputs.reserve(model_.other_tracks.size() + 1);
+    outputs.push_back({dir / utf8_to_wide(base + "_owntrack.csv"), &model_.own,
+        "distance,x,y,z,direction,radius,gradient,interpolate_func,cant,center,gauge", "own track"});
     for (const auto& t : model_.other_tracks) {
-        write_matrix(dir / utf8_to_wide(base + "_" + sanitize_filename(t.key) + ".csv"), t.points,
-                     "distance,x,y,z,interpolate_func,cant,center,gauge");
+        outputs.push_back({dir / utf8_to_wide(base + "_" + sanitize_filename(t.key) + ".csv"),
+            &t.points, "distance,x,y,z,interpolate_func,cant,center,gauge", "other track '" + t.key + "'"});
     }
+    // Compare Windows filenames before opening any target, including the own
+    // track output. Sanitization and case folding may merge distinct keys.
+    const auto filename_less = [](const std::wstring& left, const std::wstring& right) {
+        return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+    };
+    std::map<std::wstring, const Output*, decltype(filename_less)> names(filename_less);
+    for (const Output& output : outputs) {
+        const auto inserted = names.emplace(output.path.filename().wstring(), &output);
+        if (!inserted.second) {
+            error = "CSV output filename conflict between " + inserted.first->second->owner +
+                " and " + output.owner + ": " + wide_to_utf8(output.path.wstring());
+            return false;
+        }
+    }
+    for (const Output& output : outputs) {
+        std::ofstream out(output.path, std::ios::binary);
+        if (!out) {
+            error = "Failed to open CSV output: " + wide_to_utf8(output.path.wstring());
+            return false;
+        }
+        const bool written = write_csv_matrix(out, *output.matrix, output.header);
+        out.close();
+        if (!written || !out) {
+            error = "Failed to write CSV output: " + wide_to_utf8(output.path.wstring());
+            return false;
+        }
+    }
+    return true;
 }
+
+#ifndef NDEBUG
+bool App::debug_csv_write_failure_contract() {
+    class FailingBuffer : public std::streambuf {
+    public:
+        explicit FailingBuffer(bool fail_on_flush) : fail_on_flush_(fail_on_flush) {}
+    private:
+        bool fail_on_flush_;
+        std::streamsize xsputn(const char*, std::streamsize count) override {
+            return fail_on_flush_ ? count : 0;
+        }
+        int_type overflow(int_type value) override {
+            return fail_on_flush_ ? traits_type::not_eof(value) : traits_type::eof();
+        }
+        int sync() override { return -1; }
+    };
+    for (bool fail_on_flush : {false, true}) {
+        FailingBuffer buffer(fail_on_flush);
+        std::ostream out(&buffer);
+        if (write_csv_matrix(out, Matrix{{1.0}, 1, 1}, "distance")) return false;
+    }
+    return true;
+}
+#endif
 
 void App::export_csv() {
     if (!has_model_) return;
     std::string folder = choose_folder_dialog();
     if (folder.empty()) return;
-    export_csv_to_directory(std::filesystem::path(utf8_to_wide(folder)));
+    std::string error;
+    if (!export_csv_to_directory(std::filesystem::path(utf8_to_wide(folder)), error)) {
+        KME_ADD_LOG(LogSeverity::Error, error);
+        return;
+    }
     KME_ADD_LOG("CSV exported: " + folder);
 }
 
@@ -601,15 +679,31 @@ bool App::persist_user_settings() {
 }
 
 std::uint32_t App::idle_wait_timeout_ms() const {
-    if (!settings_save_pending_) return INFINITE;
+    const bool layout_pending = ImGui::GetCurrentContext() && ImGui::GetIO().WantSaveIniSettings;
+    if (!settings_save_pending_ && !layout_pending) return INFINITE;
+    auto deadline = settings_save_pending_ ? settings_save_retry_at_ : imgui_layout_save_retry_at_;
+    if (layout_pending) deadline = std::min(deadline, imgui_layout_save_retry_at_);
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-        settings_save_retry_at_ - std::chrono::steady_clock::now()).count();
+        deadline - std::chrono::steady_clock::now()).count();
     return static_cast<std::uint32_t>(std::clamp<std::chrono::milliseconds::rep>(remaining, 0, 1000));
 }
 
-void App::service_pending_settings_save() {
+void App::service_pending_persistence(const std::filesystem::path& layout_path) {
     if (settings_save_pending_ && std::chrono::steady_clock::now() >= settings_save_retry_at_) {
         persist_user_settings();
+    }
+    if (!ImGui::GetCurrentContext()) return;
+    ImGuiIO& io = ImGui::GetIO();
+    const auto now = std::chrono::steady_clock::now();
+    if (!io.WantSaveIniSettings || now < imgui_layout_save_retry_at_) return;
+    if (save_imgui_layout(layout_path)) {
+        io.WantSaveIniSettings = false;
+        imgui_layout_save_retry_at_ = {};
+    } else {
+        if (imgui_layout_save_retry_at_ == std::chrono::steady_clock::time_point{}) {
+            KME_ADD_LOG(LogSeverity::Warning, "Failed to save ImGui layout; retrying.");
+        }
+        imgui_layout_save_retry_at_ = now + std::chrono::seconds(1);
     }
 }
 

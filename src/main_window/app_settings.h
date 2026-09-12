@@ -29,7 +29,6 @@ bool debug_settings_write_failure_contract();
 #endif
 bool load_imgui_layout(const std::filesystem::path& path);
 bool save_imgui_layout(const std::filesystem::path& path);
-void save_imgui_layout_if_requested(const std::filesystem::path& path);
 bool imgui_layout_save_pending();
 std::vector<RecentMapEntry> load_history_entries(const std::filesystem::path& path);
 bool save_history_entries(const std::filesystem::path& path, const std::vector<RecentMapEntry>& entries);

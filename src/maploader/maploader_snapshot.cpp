@@ -210,6 +210,16 @@ private:
         }
 
         storage_.other_tracks.reserve(ctx_.othertrack_order.size());
+        size_t event_count = 0;
+        for (const std::string& key : ctx_.othertrack_order) {
+            const auto events = ctx_.othertrack.find(key);
+            if (events == ctx_.othertrack.end()) continue;
+            if (events->second.size() > storage_.other_track_events.max_size() - event_count) {
+                throw std::length_error("other-track event snapshot exceeds maximum size");
+            }
+            event_count += events->second.size();
+        }
+        storage_.other_track_events.reserve(event_count);
         for (const std::string& key : ctx_.othertrack_order) {
             KvOtherTrackRow track{};
             track.key = string_ref(key);
@@ -223,7 +233,6 @@ private:
             track.events.offset = static_cast<std::uint64_t>(storage_.other_track_events.size());
             auto events = ctx_.othertrack.find(key);
             if (events != ctx_.othertrack.end()) {
-                storage_.other_track_events.reserve(storage_.other_track_events.size() + events->second.size());
                 for (const OtherTrackEvent& input : events->second) {
                     KvTrackEventRow row{};
                     row.distance = input.distance;

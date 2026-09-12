@@ -1940,11 +1940,11 @@ int scenario_route_contract() {
         {"utf16-le", utf16_bytes(
              "BveTs Scenario 2.00:utf-16le\r\nTitle = Before\r\n"
              "Route = maps\\map-a.txt\r\nVehicle = train.txt\r\n", true),
-         "\xff\xfe", "\x0d\x00\x0a\x00"},
+         "\xff\xfe", std::string("\x0d\x00\x0a\x00", 4)},
         {"utf16-be", utf16_bytes(
              "BveTs Scenario 2.00:utf-16be\nTitle = Before\n"
              "Route = maps\\map-a.txt\nVehicle = train.txt\n", false),
-         "\xfe\xff", "\x00\x0a\x00"},
+         "\xfe\xff", std::string("\x00\x0a", 2)},
         {"cp932", ascii_scenario_crlf, "BveTs Scenario", "\r\n"},
     }};
     for (const EncodingCase& encoding_case : encoding_cases) {
@@ -1957,6 +1957,21 @@ int scenario_route_contract() {
         if (!baseline) continue;
         std::string hash = scenario_string(*baseline, baseline->source_hash);
         std::string title = std::string("After ") + encoding_case.name;
+        std::string original_title_bytes = "Title = Before";
+        std::string replacement_title_bytes = "Title = " + title;
+        const std::string_view encoding_name = encoding_case.name;
+        if (encoding_name == "utf16-le" || encoding_name == "utf16-be") {
+            const bool little_endian = encoding_name == "utf16-le";
+            original_title_bytes = utf16_bytes(original_title_bytes, little_endian).substr(2);
+            replacement_title_bytes = utf16_bytes(replacement_title_bytes, little_endian).substr(2);
+        }
+        std::string expected_bytes = encoding_case.bytes;
+        const size_t title_offset = expected_bytes.find(original_title_bytes);
+        check(title_offset != std::string::npos,
+              "encoding fixture contains the original encoded Title");
+        if (title_offset != std::string::npos) {
+            expected_bytes.replace(title_offset, original_title_bytes.size(), replacement_title_bytes);
+        }
         std::string route = "maps\\map-a.txt";
         std::string vehicle = "train.txt";
         KvScenarioEditPathRow route_row{utf8_view(route), 1.0, 0u, 0u};
@@ -1984,6 +1999,9 @@ int scenario_route_contract() {
               (std::string(encoding_case.name) + " BOM/encoding prefix preserved").c_str());
         check(encoded.find(encoding_case.newline_bytes) != std::string::npos,
               (std::string(encoding_case.name) + " newline style preserved").c_str());
+        check(encoded == expected_bytes,
+              (std::string(encoding_case.name) +
+               " complete encoded document changes only Title, preserving every newline and code unit").c_str());
         kv_free_scenario_snapshot(baseline);
     }
 
@@ -8645,7 +8663,163 @@ void staged_resource_list_workflow_contract() {
     check(reload_matches, "staged workflow reloads the committed state");
 }
 
+void legacy_fog_non_target_contract() {
+    TempFixture fixture;
+    auto write = [](const std::filesystem::path& path, const std::string& text) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << text;
+    };
+    // Restoring the final binding must not hide an already evaluated fog change.
+    for (size_t parameter = 0; parameter < 5; ++parameter) {
+        std::array<std::string, 5> arguments{{"50", "600", "128", "128", "128"}};
+        arguments[parameter] = "$fog";
+        std::string fog = "Legacy.Fog(";
+        for (size_t i = 0; i < arguments.size(); ++i) {
+            if (i != 0) fog += ',';
+            fog += arguments[i];
+        }
+        fog += ");\n";
+        write(fixture.map_path, "BveTs Map 2.02:utf-8\n0;Include('old.txt');\n" +
+              fog + "$fog=0;\n");
+        write(fixture.directory / "old.txt", "BveTs Map 2.02:utf-8\n$fog=50;\n");
+        write(fixture.directory / "new.txt", "BveTs Map 2.02:utf-8\n$fog=100;\n");
+        MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                        KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+        KvMapSnapshot baseline{};
+        check(handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+              &baseline, sizeof(baseline)), "legacy fog baseline loads");
+        check(baseline.legacy_fog_count == 1, "legacy fog baseline row exists");
+        if (!handle.value || baseline.legacy_fog_count != 1) continue;
+        std::string include_id;
+        std::string source_hash;
+        for (uint64_t i = 0; i < baseline.statement_count; ++i) {
+            const auto& statement = baseline.statements[i];
+            if (map_string(baseline, statement.statement_kind) != "Include") continue;
+            include_id = map_string(baseline, statement.edit_id);
+            source_hash = map_string(baseline,
+                baseline.source_files[statement.source.source_file_index].source_hash);
+        }
+        UpdateBatch update(include_id, source_hash, "new.txt", "includePath");
+        KvEditReportSnapshot report{};
+        const bool applied = kv_edit_apply_to_memory_typed(handle.value, &update.batch,
+                                                          &report, sizeof(report)) != 0;
+        check(!applied || !report.ok, "include replacement rejects non-target legacy fog change");
+        check(report.non_target_changed_count != 0,
+              "legacy fog rejection identifies changed non-target semantics");
+    }
+
+    // Fog rows inside the explicitly replaced/deleted Include remain legal targets.
+    write(fixture.map_path, "BveTs Map 2.02:utf-8\n0;Include('old.txt');\n");
+    write(fixture.directory / "old.txt", "BveTs Map 2.02:utf-8\nLegacy.Fog(50,600,128,128,128);\n");
+    write(fixture.directory / "new.txt", "BveTs Map 2.02:utf-8\nLegacy.Fog(100,600,128,128,128);\n");
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                    KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    KvMapSnapshot baseline{};
+    check(handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+          &baseline, sizeof(baseline)), "legacy fog subtree loads");
+    if (!handle.value) return;
+    std::string include_id;
+    std::string source_hash;
+    for (uint64_t i = 0; i < baseline.statement_count; ++i) {
+        const auto& statement = baseline.statements[i];
+        if (map_string(baseline, statement.statement_kind) != "Include") continue;
+        include_id = map_string(baseline, statement.edit_id);
+        source_hash = map_string(baseline,
+            baseline.source_files[statement.source.source_file_index].source_hash);
+    }
+    UpdateBatch update(include_id, source_hash, "new.txt", "includePath");
+    KvEditReportSnapshot report{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+          report.ok && report.full_reparse_ok, "include replacement allows its own legacy fog changes");
+    KvMapSnapshot replaced{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &replaced, sizeof(replaced)) &&
+          replaced.legacy_fog_count == 1 && nearly_equal(replaced.legacy_fogs[0].start, 100),
+          "included legacy fog replacement takes effect");
+    check(kv_edit_reset_memory(handle.value) != 0, "legacy fog replacement resets");
+    SimpleEditBatch deletion(include_id, KV_EDIT_DELETE, source_hash);
+    report = {};
+    check(kv_edit_apply_to_memory_typed(handle.value, &deletion.batch, &report, sizeof(report)) &&
+          report.ok && report.full_reparse_ok, "include deletion allows removing its legacy fog");
+    KvMapSnapshot deleted{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &deleted, sizeof(deleted)) &&
+          deleted.legacy_fog_count == 0, "include deletion removes its legacy fog row");
+    SimpleInsertBatch insertion(fixture.path_utf8(), "fog-include-insertion",
+                               {{"rowKind", "include"}, {"includePath", "new.txt"}});
+    report = {};
+    check(kv_edit_apply_to_memory_typed(handle.value, &insertion.batch, &report, sizeof(report)) &&
+          report.ok && report.full_reparse_ok, "include insertion allows its own legacy fog");
+    KvMapSnapshot inserted{};
+    check(kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION, &inserted, sizeof(inserted)) &&
+          inserted.legacy_fog_count == 1 && nearly_equal(inserted.legacy_fogs[0].start, 100),
+          "include insertion adds its legacy fog row");
+}
+
+void other_track_key_argument_layout_contract() {
+    for (const std::string key : {"'a(b'", "'a)b]'", "abs(-1)", "'a]('"}) {
+        for (bool rename : {false, true}) {
+            TempFixture fixture;
+            {
+                std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+                map << "BveTs Map 2.02:utf-8\n$keep=4;\n0;Track[ " << key
+                    << " ].X.Interpolate( 2, $keep ); # keep (comment)\n";
+            }
+            MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                            KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+            KvMapSnapshot baseline{};
+            check(handle.value && kv_get_map_snapshot(handle.value, KV_MAP_SNAPSHOT_VERSION,
+                  &baseline, sizeof(baseline)), "parenthesized track key loads");
+            check(baseline.other_track_change_count == 1, "parenthesized track key row exists");
+            if (!handle.value || baseline.other_track_change_count != 1) continue;
+            const auto& row = baseline.other_track_changes[0];
+            std::vector<std::pair<std::string, std::string>> fields{{"parameter0", "3"}};
+            if (rename) fields.emplace_back("trackKey", "renamed(x]");
+            MultiFieldUpdateBatch update("layout", map_string(baseline, row.metadata.edit_id),
+                map_string(baseline, baseline.source_files[row.metadata.source_file_index].source_hash),
+                std::move(fields));
+            KvEditReportSnapshot report{};
+            check(kv_edit_apply_to_memory_typed(handle.value, &update.batch, &report, sizeof(report)) &&
+                  report.ok && report.full_reparse_ok, "track parameter update respects key delimiters");
+            const char* source = kv_get_source_text(handle.value, fixture.path_utf8().c_str());
+            const std::string expected = "Track[ " + (rename ? "'renamed(x]'" : key) +
+                " ].X.Interpolate( 3, $keep ); # keep (comment)";
+            check(source && std::string(source).find(expected) != std::string::npos,
+                  "track key and untouched argument/comment layout are preserved");
+            if (source) kv_free_string(source);
+        }
+    }
+}
+
+void signal_list_append_layout_contract() {
+    TempFixture fixture;
+    {
+        std::ofstream map(fixture.map_path, std::ios::binary | std::ios::trunc);
+        map << "BveTs Map 2.02:utf-8\r\nSignal.Load('signals.csv');\r\n";
+        std::ofstream signals(fixture.directory / "signals.csv", std::ios::binary | std::ios::trunc);
+        signals << "BveTs Signal Aspects List 2.00:utf-8\r\n  a,main\r\n  ,glare\r\n# trailing\r\n";
+    }
+    MapHandle handle(kv_load_map_ex(fixture.path_utf8().c_str(), 25.0,
+                                    KV_LOAD_PREVIEW | KV_LOAD_EDIT_METADATA));
+    check(handle.value != nullptr, "signal append fixture loads");
+    if (!handle.value) return;
+    const std::string target = (fixture.directory / "signals.csv").u8string();
+    SimpleInsertBatch insert(target, "append", {{"rowKind", "signal.aspect"},
+        {"signalAspectKey", "b"}, {"structureKey1", "main2"}, {"structureKey2", ""},
+        {"structureKey3", ""}, {"structureKey4", ""}, {"structureKey5", ""}});
+    KvEditReportSnapshot report{};
+    check(kv_edit_apply_to_memory_typed(handle.value, &insert.batch, &report, sizeof(report)) &&
+          report.ok && report.full_reparse_ok, "signal append applies");
+    const char* source = kv_get_source_text(handle.value, target.c_str());
+    check(source && std::string(source) ==
+          "BveTs Signal Aspects List 2.00:utf-8\r\n  a,main\r\n  ,glare\r\n"
+          "  b,main2,,,,\r\n# trailing\r\n",
+          "signal append follows final glare row preserving indentation and trailing comments");
+    if (source) kv_free_string(source);
+}
+
 int edit_contract() {
+    legacy_fog_non_target_contract();
+    other_track_key_argument_layout_contract();
+    signal_list_append_layout_contract();
     multiline_statement_removal_contract();
     include_transition_pair_contract();
     include_insert_contract();

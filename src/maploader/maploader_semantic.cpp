@@ -1242,6 +1242,19 @@ SemanticMapSnapshot build_semantic_map_snapshot(MapContext& ctx) {
             write_fog(out, snapshot, row);
         });
     }
+    for (std::uint64_t i = 0; i < snapshot.legacy_fog_count; ++i) {
+        const KvLegacyFogRow& row = snapshot.legacy_fogs[i];
+        emit_element(output, full, snapshot, row.metadata, "legacyFog.change", "legacyFog",
+                     static_cast<size_t>(i), [&](SemanticWriter& out) {
+            field(out, "distance", row.distance);
+            field(out, "start", row.start);
+            field(out, "end", row.end);
+            field(out, "red", row.red);
+            field(out, "green", row.green);
+            field(out, "blue", row.blue);
+            field(out, "filePath", text(snapshot, row.file_path));
+        });
+    }
     for (std::uint64_t i = 0; i < snapshot.light_ambient_count; ++i) {
         const KvLightColorRow& row = snapshot.light_ambient[i];
         emit_element(output, full, snapshot, row.metadata, "light.ambient", "light.ambient",

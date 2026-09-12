@@ -1798,7 +1798,7 @@ public:
     void request_exit();
     bool on_frame_presented();
     std::uint32_t idle_wait_timeout_ms() const;
-    void service_pending_settings_save();
+    void service_pending_persistence(const std::filesystem::path& layout_path);
 #ifndef NDEBUG
     static int run_debug_headless_plan_benchmark(const std::string& path, int frames,
                                                  double unit_distance, double pan_pixels,
@@ -1851,6 +1851,8 @@ public:
         const HeadlessFreshResourceListWorkflowOptions& options);
     static int run_debug_headless_table_find(const std::string& output_path);
     static bool debug_section_inspector_lifecycle(std::ostream& out);
+    static bool debug_curve_interpolate_contract(double unit_distance, std::ostream& out);
+    static bool debug_csv_write_failure_contract();
     static bool debug_repeater_overview_indices();
     ImVec2 debug_other_track_change_marker_screen_position(
         const OtherTrackChangeMarker& marker, double model_angle,
@@ -1916,6 +1918,7 @@ private:
     View3DSettings last_saved_view_3d_settings_;
     bool settings_save_pending_ = false;
     std::chrono::steady_clock::time_point settings_save_retry_at_{};
+    std::chrono::steady_clock::time_point imgui_layout_save_retry_at_{};
     std::filesystem::path history_path_;
     std::vector<RecentMapEntry> recent_maps_;
 
@@ -2794,7 +2797,6 @@ private:
     const PlanData& current_plan_data();
     ProfileData build_profile_data() const;
     const ProfileData& current_profile_data();
-    std::vector<Section> curve_sections(bool transition) const;
     size_t nearest_own_index(double distance) const;
     double interp_own_z(double distance) const;
     std::optional<TrackPoint> track_info_at(double distance) const;
@@ -2808,7 +2810,7 @@ private:
     void request_plot_focus(double distance, bool include_profile, bool include_radius);
     void handle_measure_plot_double_click(bool include_profile, bool include_radius);
     void jump_to_distance(double distance);
-    void export_csv_to_directory(const std::filesystem::path& dir) const;
+    bool export_csv_to_directory(const std::filesystem::path& dir, std::string& error) const;
     void export_csv();
     void save_history();
     void upsert_recent_map(const std::string& path,

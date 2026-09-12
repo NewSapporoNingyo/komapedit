@@ -10,8 +10,33 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace scene_track_sampling {
+
+bool has_ordered_finite_distances(const Canvas3DTrackPath& path) {
+    double previous = -std::numeric_limits<double>::infinity();
+    for (const Canvas3DTrackPoint& point : path.points) {
+        if (!std::isfinite(point.distance) || point.distance < previous) return false;
+        previous = point.distance;
+    }
+    return true;
+}
+
+SegmentRange chunk_segment_range(const Canvas3DTrackPath& path, double minimum,
+                                double maximum, bool ordered_finite) {
+    if (path.points.size() < 2) return {};
+    if (!ordered_finite || !std::isfinite(minimum) || !std::isfinite(maximum)) {
+        return {1, path.points.size()};
+    }
+    const auto first = std::lower_bound(path.points.begin(), path.points.end(), minimum,
+        [](const Canvas3DTrackPoint& point, double distance) { return point.distance < distance; });
+    const auto last = std::upper_bound(path.points.begin(), path.points.end(), maximum,
+        [](double distance, const Canvas3DTrackPoint& point) { return distance < point.distance; });
+    return {std::max<size_t>(1, static_cast<size_t>(first - path.points.begin())),
+            last == path.points.end() ? path.points.size()
+                : static_cast<size_t>(last - path.points.begin()) + 1};
+}
 
 // Ordinary track sampling shared by rendering, placement, markers, and the
 // camera inside the real track range. Semantics must stay identical to the
