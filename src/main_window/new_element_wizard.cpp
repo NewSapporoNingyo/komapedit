@@ -317,9 +317,7 @@ const std::vector<NewElementTemplate>& new_element_templates_internal() {
         {
             "curve.interpolate", NewElementTemplateCategory::TrackGeometry, 1,
             "curve", "Curve.Interpolate",
-            "Curve.Interpolate(radius, cant);\n"
-            "Curve.Interpolate(radius);\n"
-            "Curve.Interpolate();",
+            "Curve.Interpolate(radius, cant);",
             "new_element.usage.curve.interpolate", false,
             {
                 {"distance", "distance", MapElementNumericConstraint::Finite, true, "0"},

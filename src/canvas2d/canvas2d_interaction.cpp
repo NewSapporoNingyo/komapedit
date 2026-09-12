@@ -31,7 +31,8 @@ std::optional<PlanMarkerHit> nearest_marker_hit_impl(
     double best = static_cast<double>(canvas_margin) *
                   static_cast<double>(canvas_margin);
     std::optional<PlanMarkerHit> best_hit;
-    for (const Marker& marker : markers) {
+    for (size_t marker_index = 0; marker_index < markers.size(); ++marker_index) {
+        const Marker& marker = markers[marker_index];
         const ImVec2 point = transform.plan_to_screen(marker.x, marker.y);
         if (!point_near_canvas(point, origin, size, canvas_margin)) continue;
         const double dx = static_cast<double>(point.x - mouse.x);
@@ -39,7 +40,7 @@ std::optional<PlanMarkerHit> nearest_marker_hit_impl(
         const double dist_sq = dx * dx + dy * dy;
         if (dist_sq <= best) {
             best = dist_sq;
-            best_hit = PlanMarkerHit{marker.row_index, dist_sq};
+            best_hit = PlanMarkerHit{marker.row_index, dist_sq, marker_index};
         }
     }
     return best_hit;
@@ -412,6 +413,7 @@ std::vector<PlanContextMenuEntry> App::collect_plan_context_entries(
     }
     if (show_curve_values_) {
         for (const PlanCurveInterpolateMarker& marker : data.curve_interpolate_markers) {
+            if (marker.row_index >= model_.curve_rows.size()) continue;
             add_candidate(PlanMarkerKind::Curve, marker.row_index, marker.x, marker.y,
                           marker.edit_id, "curve");
         }

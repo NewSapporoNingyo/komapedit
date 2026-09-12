@@ -16,6 +16,7 @@
 #include "maploader.h"
 #include "repeater_linkage.h"
 #include "touch_input.h"
+#include "../canvas2d/canvas2d_interaction.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -3644,7 +3645,7 @@ int App::run_debug_headless_own_track_edit(
             app.model_ = std::move(fixture_preview.model);
             app.file_path_ = path;
             app.has_model_ = true;
-            app.edit_mode_enabled_ = true;
+            app.edit_mode_enabled_ = false;
             app.edit_memory_matches_pending_ledger_ = true;
             app.show_curve_values_ = true;
             app.dmin_ = app.model_.default_min;
@@ -3664,6 +3665,33 @@ int App::run_debug_headless_own_track_edit(
                                 return marker.edit_id.empty() &&
                                     marker.row_index == std::numeric_limits<size_t>::max();
                             });
+            // Preview markers deliberately have no source row. Hit identity must
+            // still distinguish them, including ties at an identical position.
+            auto hit_markers = preview_plan.curve_interpolate_markers;
+            bool preview_hits_unique = hit_markers.size() == 3;
+            const canvas2d::PlanScreenTransform hit_transform;
+            for (size_t i = 0; i < hit_markers.size(); ++i) {
+                hit_markers[i].x = 30.0 + 50.0 * i;
+                hit_markers[i].y = 0.0;
+            }
+            for (size_t i = 0; i < hit_markers.size(); ++i) {
+                const auto hit = canvas2d::nearest_marker_hit(
+                    hit_markers, hit_transform,
+                    hit_transform.plan_to_screen(hit_markers[i].x, hit_markers[i].y),
+                    ImVec2(0, 0), ImVec2(200, 100), 12.0f, true);
+                preview_hits_unique = preview_hits_unique && hit &&
+                    hit->marker_index == i &&
+                    hit->row_index == std::numeric_limits<size_t>::max();
+            }
+            preview_hits_unique = preview_hits_unique &&
+                !canvas2d::nearest_marker_hit(hit_markers, hit_transform,
+                    ImVec2(190, 90), ImVec2(0, 0), ImVec2(200, 100), 12.0f, true);
+            if (hit_markers.size() == 3) {
+                hit_markers[1].x = hit_markers[0].x;
+                const auto tie = canvas2d::nearest_marker_hit(hit_markers, hit_transform,
+                    ImVec2(30, 0), ImVec2(0, 0), ImVec2(200, 100), 12.0f, true);
+                preview_hits_unique = preview_hits_unique && tie && tie->marker_index == 1;
+            }
             const auto scene_markers_match = [&](bool bound) {
                 Canvas3DSceneBuildOptions scene_options;
                 scene_options.model = &app.model_;
@@ -3684,7 +3712,8 @@ int App::run_debug_headless_own_track_edit(
                             marker.edit_id != app.model_.curve_rows[row_index].edit_id) {
                             return false;
                         }
-                    } else if (marker.row_index || !marker.edit_id.empty()) {
+                    } else if (marker.row_index || !marker.edit_id.empty() ||
+                               marker.row_kind != "curve") {
                         return false;
                     }
                     ++marker_count;
@@ -3692,6 +3721,7 @@ int App::run_debug_headless_own_track_edit(
                 return marker_count == 3;
             };
             const bool preview_scene_unbound = scene_markers_match(false);
+            app.edit_mode_enabled_ = true;
             app.apply_edit_metadata_result(std::move(fixture_edit));
             fixture_edit.handle = nullptr;
             const std::array<size_t, 3> expected_rows{{1, 2, 0}};
@@ -3722,11 +3752,13 @@ int App::run_debug_headless_own_track_edit(
                     marker.edit_id == app.model_.curve_rows[expected_rows[i]].edit_id;
             }
             const bool merged_scene_targets = scene_markers_match(true);
-            const bool passed = preview_unbound && merged_sources && merged_markers &&
+            const bool passed = preview_unbound && preview_hits_unique && merged_sources && merged_markers &&
                 preview_scene_unbound && merged_scene_targets &&
                 event_index == expected_rows.size();
             *out << "curve_interpolate_provenance_fixture_preview_unbound="
                  << (preview_unbound ? 1 : 0) << "\n"
+                 << "curve_interpolate_preview_hits_unique="
+                 << (preview_hits_unique ? 1 : 0) << "\n"
                  << "curve_interpolate_provenance_fixture_merge_sources="
                  << (merged_sources ? 1 : 0) << "\n"
                  << "curve_interpolate_provenance_fixture_plan_targets="

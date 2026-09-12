@@ -561,6 +561,7 @@ AI 编程工具新增或修改 BVE 地图元素的读取、解析、校验、强
 - 保持平移/缩放/旋转/适配、测量、网格、车站跳转、坐标变换、标记同步、上下文操作与背景图对齐行为。
 - hydration 将曲线参数行分类为带 row index 与 edit ID 的 `CurveGauge`、`CurveCenter` 和 `CurveFunction` 标记。平面图绘制独立白色矩形 `CG`/`CC`/`CF` 标记；场景绘制上方代码、下方求值参数的白色双行标牌。场景继续复用现有拾取与蓝色高亮样式。精确 `[View2D]` 键 `show_curve_gauge_markers`、`show_curve_center_markers` 和 `show_curve_function_markers` 默认关闭，分别更新标记可见性而不重建轨道或模型几何。
 - 每条 `Curve.Interpolate` 都是保留原 0/1/2 参数形状和稳定编辑身份的类型化 Curve 行。hydration 使用既有 `KvElementRow` 的源文件索引和语句全局顺序，以线性复杂度关联求值后的 radius 插值事件；事件按里程排序后、以及 Include 在同里程重复出现时仍能正确配对。Preview 标记保留原外观且不猜测编辑目标，经过验证的 Edit 元数据合并补入来源行索引并刷新两个视图。2D 端点与复用 `CurveCircularStart` 外观的 3D 标牌共同消费这份来源行索引，使用既有“属性/编辑”和延迟“删除”路径，并跳过通用曲线标记副本。标牌继续显示求值后的半径/超高，求值半径为零时显示 `Intpl. 0`。
+- Edit 元数据就绪前，`Curve.Interpolate` 平面悬停使用命中标记的数组索引，独立于尚未绑定的源行；未绑定标记不进入基于源行的选择或右键目标。场景标牌保留 `curve` 分类，因此右键菜单可打开，而“属性/编辑”和“删除”禁用。新建模板只显示 `Curve.Interpolate(radius, cant);`，可选字段仍支持三种官方参数个数。自轨道 headless 夹具检查预览标记独立命中、重叠命中及预览/合并后的场景分类；新建元素 headless 还检查唯一的完整签名。
 - 缓存表格内容；保持 Section 动态参数与显式 `null`、变量列表顺序及行/平面/场景导航副作用。
 - 将 Assimp 隔离在 `model_loader.dll`；纹理缺失、文件无效和模型不支持时不得崩溃。
 - 保持场景相机传递、拾取/高亮、可见性同步、标记配方、线路叠加层和 X/Y/Z 操纵器同步。

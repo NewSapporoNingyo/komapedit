@@ -1758,13 +1758,11 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         if (event.kind != route_value_sampling::EventKind::Interpolate) continue;
         std::optional<size_t> row_index;
         std::string edit_id;
-        std::string row_kind;
         if (event.source_row_index < model.curve_rows.size()) {
             const TableRow& row = model.curve_rows[event.source_row_index];
             if (ascii_lower(table_cell(row, "method")) == "curve.interpolate") {
                 row_index = event.source_row_index;
                 edit_id = row.edit_id;
-                row_kind = "curve";
             }
         }
         std::string label;
@@ -1779,7 +1777,7 @@ void populate_canvas3d_scene_markers(Canvas3DScene& scene, const MapModel& model
         }
         append_marker(MapMarkerVisualKind::CurveCircularStart, event.distance,
                       std::move(label), MapMarkerIconVariant::Default,
-                      Canvas3DSceneMarkerListKind::None, std::move(row_kind),
+                      Canvas3DSceneMarkerListKind::None, "curve",
                       row_index, std::move(edit_id));
     }
     for (size_t row_index = 0; row_index < model.gradient_rows.size(); ++row_index) {

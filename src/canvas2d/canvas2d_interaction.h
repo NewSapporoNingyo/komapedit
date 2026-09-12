@@ -17,6 +17,7 @@ namespace canvas2d {
 struct PlanMarkerHit {
     size_t row_index = 0;
     double dist_sq = 0.0;
+    size_t marker_index = 0;
 };
 
 std::optional<PlanMarkerHit> nearest_marker_hit(

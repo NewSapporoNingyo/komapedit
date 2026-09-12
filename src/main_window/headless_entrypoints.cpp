@@ -1633,6 +1633,9 @@ int App::run_debug_headless_new_element_edit(
                 throw std::runtime_error("missing Curve.Interpolate template");
             }
             auto& form = app.new_element_wizard_.form;
+            check("interpolate_template_single_full_signature",
+                  std::string(new_element_templates()[template_index("curve.interpolate")].syntax) ==
+                      "Curve.Interpolate(radius, cant);");
             const auto* radius = find_inspector_field(form, "radius");
             const auto* cant = find_inspector_field(form, "cant");
             check("interpolate_defaults_two_numeric_arguments",

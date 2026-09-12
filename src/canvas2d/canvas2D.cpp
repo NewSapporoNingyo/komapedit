@@ -1126,7 +1126,10 @@ void App::render_plan_canvas(ImVec2 size) {
         note(hovered_draw_distance_hit, PlanMarkerKind::DrawDistance);
         note(hovered_speed_limit_hit, PlanMarkerKind::SpeedLimit);
         note(hovered_curve_edit_hit, PlanMarkerKind::Curve);
-        note(hovered_curve_interpolate_hit, PlanMarkerKind::Curve);
+        if (hovered_curve_interpolate_hit &&
+            hovered_curve_interpolate_hit->row_index < model_.curve_rows.size()) {
+            note(hovered_curve_interpolate_hit, PlanMarkerKind::Curve);
+        }
         note(hovered_gradient_edit_hit, PlanMarkerKind::Gradient);
         note(hovered_curve_gauge_hit, PlanMarkerKind::CurveGauge);
         note(hovered_curve_center_hit, PlanMarkerKind::CurveCenter);
@@ -1479,15 +1482,22 @@ void App::render_plan_canvas(ImVec2 size) {
     if (show_curve_values_) {
         const ImU32 curve_color = IM_COL32(136, 255, 136, 255);
         const ImVec4 curve_theme = ImGui::ColorConvertU32ToFloat4(curve_color);
-        for (const PlanCurveInterpolateMarker& marker : data.curve_interpolate_markers) {
+        for (size_t marker_index = 0;
+             marker_index < data.curve_interpolate_markers.size(); ++marker_index) {
+            const PlanCurveInterpolateMarker& marker =
+                data.curve_interpolate_markers[marker_index];
             const ImVec2 p = transform.plan_to_screen(marker.x, marker.y);
             if (!point_near_canvas(p, origin, avail)) continue;
             const bool marker_hovered = hovered_curve_interpolate_hit &&
-                hovered_curve_interpolate_hit->row_index == marker.row_index;
-            const bool marker_active = marker_emphasized(
-                PlanMarkerKind::Curve, marker.row_index, marker_hovered);
-            draw_selected_marker_ring(
-                p, PlanMarkerKind::Curve, marker.row_index, curve_color);
+                hovered_curve_interpolate_hit->marker_index == marker_index;
+            const bool source_bound = marker.row_index < model_.curve_rows.size();
+            const bool marker_active = marker_hovered ||
+                (source_bound && plan_marker_selection_.matches(
+                    PlanMarkerKind::Curve, marker.row_index));
+            if (source_bound) {
+                draw_selected_marker_ring(
+                    p, PlanMarkerKind::Curve, marker.row_index, curve_color);
+            }
             const double wx = marker.x - std::sin(marker.theta);
             const double wy = marker.y + std::cos(marker.theta);
             const ImVec2 q = transform.plan_to_screen(wx, wy);
