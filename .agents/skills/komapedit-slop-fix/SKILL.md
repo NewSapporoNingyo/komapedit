@@ -30,6 +30,7 @@ description: Audit and repair evidence-backed maintainability, correctness, safe
 - Overdesign and over-engineering, such as “significantly increasing code complexity for a boundary case that occurs only one in a thousand times.”
 - Module boundaries are unclear; for example, “a function that places a model on 3D canvas is located in a source file related to the main window.”
 - Overly fragmented logic, such as “the implementation required to draw a particular graphic is scattered across more than a dozen source files.”
+- The same set of operational logic uses inconsistent backend implementations; for example, “when setting the number of parameters to be inserted into a statement, two different approaches coexist: enabling parameters via checkboxes and automatically detecting the number of parameters based on the entered data.”
 
 ## Repair conservatively
 
